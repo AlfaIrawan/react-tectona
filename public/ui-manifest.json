@@ -1,0 +1,12 @@
+{
+    "name":  "react-tectona",
+    "service_id":  "frontend-tectona",
+    "version":  "0.0.0",
+    "routes":  [
+                   "/"
+               ],
+    "health":  {
+                   "status":  "ready"
+               }
+}
+

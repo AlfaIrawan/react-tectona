@@ -1,0 +1,16449 @@
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react'
+import { createPortal } from 'react-dom'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
+import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import {
+  AlertTriangle,
+  Archive,
+  ArrowUpDown,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  BarChart3,
+  Briefcase,
+  Building2,
+  Check,
+  CheckCircle2,
+  CircleCheck,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  Clock3,
+  ClipboardCheck,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Edit,
+  Eye,
+  EyeOff,
+  FileStack,
+  Filter,
+  FolderKanban,
+  GripVertical,
+  Columns2,
+  LayoutGrid,
+  Layers,
+  Loader2,
+  PanelLeft,
+  Pin,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Ruler,
+  Save,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+  UnfoldHorizontal,
+  UserPlus,
+  Users,
+  Workflow,
+  Zap,
+  FlaskConical,
+  X,
+  UserRound,
+  ShieldAlert,
+  TextCursorInput,
+  type LucideIcon,
+} from 'lucide-react'
+import {
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  AreaChart,
+  Area,
+  Line,
+  LineChart,
+  Legend,
+  ReferenceLine,
+  ReferenceArea,
+  ReferenceDot,
+} from 'recharts'
+import { MeasuredResponsiveContainer } from '@/components/charts/MeasuredResponsiveContainer'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Tooltip } from '@/components/ui/tooltip'
+import { PlatformServiceLoadingPanel } from '@/components/loading'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { PageHeader } from '@/components/layout/PageHeader'
+import { EnterpriseInfoCallout } from '@/components/layout/EnterpriseInfoCallout'
+import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/EnterpriseDeleteConfirmModal'
+import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
+import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
+import { EditWorkspaceMembershipDrawer } from '@/modules/workspace-management/components/EditWorkspaceMembershipDrawer'
+import { InviteWorkspaceMemberDrawer } from '@/modules/workspace-management/components/InviteWorkspaceMemberDrawer'
+import { buildWorkspaceChatDataSummary } from '@/modules/workspace-management/lib/buildWorkspaceChatDataSummary'
+import { deleteWorkspaceOrgKbMirror, syncWorkspaceOrgEntryToKb } from '@/lib/kb/workspaceOrgKbSync'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
+import { useToast } from '@/components/ui/toast'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { notifyEvent } from '@/lib/api/notificationApi'
+import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
+import { useWorkspaceManagementAuthorization } from '@/auth/useAuthorization'
+import {
+  createWorkspaceOrgOrganization,
+  createWorkspaceOrgWorkspace,
+  createWorkspaceOrgWorkspaceType,
+  deleteWorkspaceOrgWorkspace,
+  deleteWorkspaceOrgWorkspaceType,
+  fetchAllWorkspaceOrgWorkspaces,
+  fetchWorkspaceOrgOrganizations,
+  fetchWorkspaceOrgWorkspaceTypes,
+  patchWorkspaceOrgOrganization,
+  patchWorkspaceOrgWorkspace,
+  patchWorkspaceOrgWorkspaceType,
+  type WorkspaceOrgWorkspaceDto,
+} from '@/lib/api/workspaceOrgApi'
+import type { GovernanceCatalogSnapshot } from '@/lib/api/governanceConfigurationApi'
+import {
+  createApprovalPolicy,
+  createGovernanceTemplate,
+  createNamingConvention,
+  createSlaPolicy,
+  createWorkflowPolicy,
+  deleteApprovalPolicy,
+  deleteGovernanceTemplate,
+  deleteNamingConvention,
+  deleteSlaPolicy,
+  deleteWorkflowPolicy,
+  fetchGovernanceCatalogSnapshot,
+} from '@/lib/api/governanceConfigurationApi'
+import {
+  applyManagedGovernanceToRecord,
+  fetchWorkspaceActivity,
+  fetchWorkspaceCompliance,
+  fetchWorkspaceGovernanceAssignments,
+  postApplyGovernanceTemplate,
+  postWorkspaceActivityEvent,
+  putWorkspaceGovernanceAssignment,
+  type WorkspaceActivityEventDto,
+  type WorkspaceComplianceDto,
+  type WorkspaceGovernanceAssignmentDto,
+} from '@/lib/api/workspaceGovernanceApi'
+import {
+  activateIdentityUser,
+  fetchIdentityUsers,
+  provisionIdentityUser,
+  type IdentityUserDto,
+} from '@/lib/api/identityAdminApi'
+import {
+  createWorkspaceMembership,
+  deleteWorkspaceMembership,
+  fetchWorkspaceMembers,
+  patchWorkspaceMembership,
+  TECTONA_WAC_APP_ID,
+  uiRoleToWacRoleCode,
+  wacRoleCodeToUiRole,
+  type WacMembershipDto,
+} from '@/lib/api/workspaceAccessControlApi'
+import { validateMembershipDeliveryContext } from '@/lib/participationScopeRules'
+import type { EmployeeDirectoryEntry } from '@/modules/workspace-management/components/InviteWorkspaceMemberDrawer'
+import { getSession } from '@/auth/authService'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { cn } from '@/lib/utils'
+import { APP_MAIN_BODY_SELECTOR, useAppMainBodyWidth } from '@/lib/useAppMainBodyWidth'
+import {
+  enterpriseCyanGradientActionButtonClass,
+  enterpriseIndigoGradientActionButtonClass,
+  enterpriseSecondaryButtonClass,
+  registerServicePrimaryButtonClass,
+} from '@/lib/enterpriseButtonClasses'
+import { usePreferencesStore } from '@/stores/preferences-store'
+import { useRightDrawerStore } from '@/stores/right-drawer-store'
+import {
+  isWorkspaceNavDocked,
+  workspaceAsideClass,
+  workspaceDockedContentInsetClass,
+  workspaceMainColumnClass,
+  workspaceNavInnerClass,
+  workspaceNavMenuScrollClass,
+  workspaceOuterGridClass,
+  WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX,
+} from '@/lib/workspaceNavLayout'
+
+/** Organizational & execution boundary classification — not member/project counts. */
+type WorkspaceClassification = string
+
+type WorkspaceTypeRecord = {
+  id: string
+  typeCode: string
+  label: string
+  sortOrder: number
+  isActive: boolean
+  version: number
+}
+
+type WorkspaceLifecycleStage =
+  | 'Draft'
+  | 'Onboarding'
+  | 'Active'
+  | 'Scaling'
+  | 'Suspended'
+  | 'Archived'
+
+type WorkspaceStatus = 'Active' | 'At Risk' | 'Archived'
+type ComplianceStatus = 'Compliant' | 'Needs Review' | 'Non-Compliant' | 'Unconfigured'
+type GovernanceConfigurationStatus = 'Governed' | 'Partial' | 'Unconfigured' | 'Non-Compliant'
+type GovernancePolicyStatus = 'Governed' | 'Draft Policy' | 'Non-Compliant' | 'Deprecated'
+type MemberRole = 'Admin' | 'Manager' | 'Member' | 'Viewer'
+type WorkspacePanel = 'overview' | 'directory' | 'governance' | 'members' | 'assets' | 'activity'
+
+type DirectoryTableSortKey = 'name' | 'type' | 'owner' | 'lifecycle' | 'governanceStatus'
+type DirectoryGroupByKey = 'type' | 'owner' | 'lifecycle' | 'governanceStatus' | null
+
+const DIRECTORY_GROUP_BY_OPTIONS = [
+  { key: 'type' as const, label: 'Type' },
+  { key: 'owner' as const, label: 'Owner' },
+  { key: 'lifecycle' as const, label: 'Lifecycle' },
+  { key: 'governanceStatus' as const, label: 'Governance Status' },
+] as const
+
+const DIRECTORY_COLUMN_WIDTH_MIN_PX = 80
+const DIRECTORY_COLUMN_WIDTH_MAX_PX = 520
+const DIRECTORY_PINNED_FIRST_COLUMN: DirectoryTableSortKey = 'name'
+
+function clampDirectoryColumnWidthPx(px: number): number {
+  return Math.max(
+    DIRECTORY_COLUMN_WIDTH_MIN_PX,
+    Math.min(DIRECTORY_COLUMN_WIDTH_MAX_PX, Math.round(px))
+  )
+}
+type AssetSortKey = 'name' | 'type' | 'owner' | 'version' | 'updated'
+type GovernanceSortKey =
+  | 'workspace'
+  | 'operatingModel'
+  | 'governanceHealth'
+  | 'complianceStatus'
+  | 'riskLevel'
+  | 'auditReadiness'
+  | 'lastReview'
+  | 'governanceOwner'
+
+type GovernanceHealthPosture = 'Healthy' | 'Watch' | 'Critical'
+type GovernanceRiskLevel = 'Low' | 'Medium' | 'High' | 'Critical'
+type GovernanceAuditReadinessLabel = 'Ready' | 'Partial' | 'Missing Evidence'
+type MatrixComplianceBadge = 'Compliant' | 'Watch' | 'Non-Compliant' | 'Draft' | 'Deprecated' | 'Unconfigured'
+type MemberSortKey = 'name' | 'workspace' | 'role' | 'team' | 'scope' | 'lastActivity'
+
+function workspaceStatusSortRank(status: WorkspaceStatus): number {
+  if (status === 'Active') return 0
+  if (status === 'At Risk') return 1
+  return 2
+}
+
+type WorkspaceRecord = {
+  id: string
+  name: string
+  code: string
+  type: WorkspaceClassification
+  owner: string
+  businessOwner?: string
+  technicalOwner?: string
+  primaryOrganizationId: string
+  primaryOrganizationLabel: string
+  relatedOrganizationIds: string[]
+  members: number
+  projects: number
+  status: WorkspaceStatus
+  createdDate: string
+  lastUpdated: string
+  lifecycle: WorkspaceLifecycleStage
+  governance: {
+    template: string
+    workflowPolicy: string
+    namingPolicy: string
+    slaPolicy: string
+    approvalPolicy: string
+    complianceStatus: ComplianceStatus
+    policyStatus: GovernancePolicyStatus | null
+    governanceOwner: string
+    lastReview: string
+    complianceScore: number | null
+    configurationStatus: GovernanceConfigurationStatus
+  }
+  /** Managed row from workspace-governance service overrides free-text metadata display when present. */
+  governanceSource?: 'managed' | 'legacy'
+  integrations: string[]
+  assets: number
+}
+
+function workspaceDirectoryGroupLabel(
+  workspace: WorkspaceRecord,
+  groupBy: Exclude<DirectoryGroupByKey, null>
+) {
+  if (groupBy === 'type') return workspace.type
+  if (groupBy === 'owner') return workspace.owner
+  if (groupBy === 'lifecycle') return workspace.lifecycle
+  return workspace.governance.configurationStatus
+}
+
+const DIRECTORY_GROUP_TINTS = [
+  {
+    row: 'bg-violet-50/75 dark:bg-violet-950/30',
+    first: 'bg-violet-100/90 dark:bg-violet-900/50',
+  },
+  {
+    row: 'bg-sky-50/75 dark:bg-sky-950/30',
+    first: 'bg-sky-100/90 dark:bg-sky-900/50',
+  },
+  {
+    row: 'bg-emerald-50/75 dark:bg-emerald-950/30',
+    first: 'bg-emerald-100/90 dark:bg-emerald-900/50',
+  },
+  {
+    row: 'bg-amber-50/75 dark:bg-amber-950/30',
+    first: 'bg-amber-100/90 dark:bg-amber-900/50',
+  },
+  {
+    row: 'bg-rose-50/75 dark:bg-rose-950/30',
+    first: 'bg-rose-100/90 dark:bg-rose-900/50',
+  },
+  {
+    row: 'bg-cyan-50/75 dark:bg-cyan-950/30',
+    first: 'bg-cyan-100/90 dark:bg-cyan-900/50',
+  },
+  {
+    row: 'bg-fuchsia-50/75 dark:bg-fuchsia-950/30',
+    first: 'bg-fuchsia-100/90 dark:bg-fuchsia-900/50',
+  },
+  {
+    row: 'bg-lime-50/75 dark:bg-lime-950/30',
+    first: 'bg-lime-100/90 dark:bg-lime-900/50',
+  },
+  {
+    row: 'bg-orange-50/75 dark:bg-orange-950/30',
+    first: 'bg-orange-100/90 dark:bg-orange-900/50',
+  },
+  {
+    row: 'bg-indigo-50/75 dark:bg-indigo-950/30',
+    first: 'bg-indigo-100/90 dark:bg-indigo-900/50',
+  },
+] as const
+
+function stableDirectoryGroupTintIndex(
+  groupBy: Exclude<DirectoryGroupByKey, null>,
+  groupLabel: string
+): number {
+  const seed = `${groupBy}:${groupLabel}`
+  let hash = 0
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash) % DIRECTORY_GROUP_TINTS.length
+}
+
+function getDirectoryGroupTint(
+  groupBy: Exclude<DirectoryGroupByKey, null>,
+  groupLabel: string
+) {
+  return DIRECTORY_GROUP_TINTS[stableDirectoryGroupTintIndex(groupBy, groupLabel)]
+}
+
+function directoryColumnHeaderIcon(key: DirectoryTableSortKey): LucideIcon {
+  if (key === 'name') return Building2
+  if (key === 'type') return Briefcase
+  if (key === 'owner') return UserRound
+  if (key === 'lifecycle') return Workflow
+  return ShieldCheck
+}
+
+type MemberRecord = {
+  id: string
+  subjectId: string
+  workspaceId: string
+  workspaceName: string
+  name: string
+  role: MemberRole
+  team: string
+  scope: string
+  scopeCode: string
+  operationalTeamCode: string
+  participationDuration: ParticipationDurationUi
+  participationStartDate: string
+  participationEndDate: string
+  lastActivity: string
+  version: number
+}
+
+type ParticipationDurationUi = 'Permanent' | 'Temporary' | ''
+
+function participationDurationCodeToUi(code?: string | null): ParticipationDurationUi {
+  const normalized = (code ?? '').trim().toLowerCase()
+  if (normalized === 'temporary') return 'Temporary'
+  if (normalized === 'permanent') return 'Permanent'
+  return ''
+}
+
+function participationDurationUiToCode(ui: ParticipationDurationUi): string | undefined {
+  if (ui === 'Permanent') return 'permanent'
+  if (ui === 'Temporary') return 'temporary'
+  return undefined
+}
+
+type AssetRecord = {
+  id: string
+  name: string
+  type: 'Template' | 'Document' | 'Knowledge' | 'Workflow preset'
+  owner: string
+  version: string
+  lastModified: string
+  source:
+    | 'template'
+    | 'workflow_policy'
+    | 'sla_policy'
+    | 'naming_convention'
+    | 'approval_policy'
+    | 'static'
+  sourceId?: string
+}
+
+type ActivityRecord = {
+  id: string
+  timestamp: string
+  actor: string
+  event: string
+  target: string
+}
+
+// â”€â”€â”€ Workspace control tower (governance) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/** Linked portfolio projects per workspace — overload when above this threshold. */
+const WORKSPACE_LOAD_OVERLOAD_PROJECTS = 30
+const WORKSPACE_DELETE_HIGH_PROJECTS_THRESHOLD = 5
+
+const ALL_WORKSPACE_LIFECYCLE_STAGES: WorkspaceLifecycleStage[] = [
+  'Draft',
+  'Onboarding',
+  'Active',
+  'Scaling',
+  'Suspended',
+  'Archived',
+]
+
+type WorkspaceHealthBand = 'Healthy' | 'At Risk' | 'Critical'
+
+type WorkspaceKpiCardKey = 'total' | 'active' | 'risk' | 'members' | 'projects'
+
+const WORKSPACE_KPI_CARD_ORDER_STORAGE_KEY = 'tectona.workspace-management.kpiCardOrder.v1'
+/** Batas lebar konten efektif: KPI 1/slide + floating icon rail. */
+const WORKSPACE_KPI_CAROUSEL_BODY_MAX_PX = 700
+/** Di atas ini: grid KPI penuh; di bawah: carousel (2/slide antara 700–1000, 1/slide di bawah 700). */
+const WORKSPACE_KPI_GRID_BODY_MIN_PX = 1000
+/** Padding bawah saat menghitung tinggi panel utama (Overview & Directory) dari viewport. */
+const WORKSPACE_MAIN_PANEL_VIEWPORT_BOTTOM_PAD_PX = 66
+/** Tambahan tinggi pasangan panel Enterprise Navigation + Control Tower / Directory. */
+const WORKSPACE_PANEL_PAIR_EXTRA_HEIGHT_PX = 15
+
+function computeWorkspaceMainPanelViewportHeightPx(panelTopPx: number): number {
+  const viewportH = window.innerHeight
+  const stickyTopPx = 48
+  const effectiveTop = Math.max(panelTopPx, stickyTopPx)
+  const raw = Math.floor(viewportH - effectiveTop - WORKSPACE_MAIN_PANEL_VIEWPORT_BOTTOM_PAD_PX)
+  return Math.max(240, raw) + WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX + WORKSPACE_PANEL_PAIR_EXTRA_HEIGHT_PX
+}
+
+/** Samakan batas bawah Enterprise Navigation dengan panel konten utama (Control Tower, Directory, …). */
+function measureEnterpriseNavHeightFromMainPanel(navEl: HTMLElement, mainPanelEl: HTMLElement): number {
+  const navTop = navEl.getBoundingClientRect().top
+  const mainBottom = mainPanelEl.getBoundingClientRect().bottom
+  return Math.max(220, Math.floor(mainBottom - navTop))
+}
+
+function workspaceHealthBand(w: WorkspaceRecord): WorkspaceHealthBand {
+  if (w.status === 'Archived' || w.governance.complianceStatus === 'Non-Compliant') return 'Critical'
+  if (
+    w.status === 'At Risk'
+    || w.governance.complianceStatus === 'Needs Review'
+    || w.governance.complianceStatus === 'Unconfigured'
+    || w.governance.configurationStatus === 'Partial'
+  ) {
+    return 'At Risk'
+  }
+  return 'Healthy'
+}
+
+type WorkspacePurposeBucket = 'Strategic' | 'Operational' | 'Innovation' | 'Governance'
+
+function workspacePurposeBucket(type: WorkspaceClassification): WorkspacePurposeBucket {
+  if (type === 'Governance') return 'Governance'
+  if (type === 'Program') return 'Strategic'
+  if (type === 'Department' || type === 'Team') return 'Operational'
+  return 'Innovation'
+}
+
+function workspaceRiskFlags(w: WorkspaceRecord): {
+  noOwner: boolean
+  lowActivity: boolean
+  overloaded: boolean
+  governance: boolean
+} {
+  return {
+    noOwner: w.owner.trim().length === 0,
+    lowActivity: w.members < 15,
+    overloaded: w.projects > WORKSPACE_LOAD_OVERLOAD_PROJECTS,
+    governance: w.governance.configurationStatus !== 'Governed',
+  }
+}
+
+type DirectoryChartFocus =
+  | { kind: 'health'; band: WorkspaceHealthBand }
+  | { kind: 'lifecycle'; stage: WorkspaceLifecycleStage }
+  | { kind: 'purpose'; bucket: WorkspacePurposeBucket }
+  | { kind: 'load'; code: string }
+  | { kind: 'overload' }
+  | { kind: 'owner'; owner: string }
+  | { kind: 'risk'; flag: 'noOwner' | 'lowActivity' | 'overloaded' | 'governance' }
+
+function workspaceMatchesDirectoryChartFocus(w: WorkspaceRecord, focus: DirectoryChartFocus): boolean {
+  switch (focus.kind) {
+    case 'health':
+      return workspaceHealthBand(w) === focus.band
+    case 'lifecycle':
+      return w.lifecycle === focus.stage
+    case 'purpose':
+      return workspacePurposeBucket(w.type) === focus.bucket
+    case 'load':
+      return w.code === focus.code
+    case 'overload':
+      return w.projects > WORKSPACE_LOAD_OVERLOAD_PROJECTS
+    case 'owner':
+      return w.owner === focus.owner
+    case 'risk':
+      return workspaceRiskFlags(w)[focus.flag]
+  }
+}
+
+type WorkspaceOverviewPalette = 'pastel' | 'vivid'
+
+const WORKSPACE_OVERVIEW_PALETTES: Record<
+  WorkspaceOverviewPalette,
+  {
+    shellAccent: string
+    cardBg: string
+    cardBorder: string
+    /* Per-panel icon chips */
+    healthIconBg: string
+    healthIconColor: string
+    trendIconBg: string
+    trendIconColor: string
+    compositionIconBg: string
+    compositionIconColor: string
+    workloadIconBg: string
+    workloadIconColor: string
+    /* Panel accent bars */
+    healthAccent: string
+    trendAccent: string
+    compositionAccent: string
+    workloadAccent: string
+    /* Delivery trend line colors */
+    actualLine: string
+    targetLine: string
+    /* Trend delta badge */
+    trendBadgeUp: string
+    trendBadgeDown: string
+    /* Health donut segment gradient stops */
+    healthSegHealthy: string
+    healthSegHealthyEnd: string
+    healthSegRisk: string
+    healthSegRiskEnd: string
+    healthSegCritical: string
+    healthSegCriticalEnd: string
+    /* Portfolio composition pie colors */
+    compositionPieColors: string[]
+    lifecyclePieColors: string[]
+    /* Workload bar gradient colors */
+    normalBar: string
+    normalBarBottom: string
+    overloadBar: string
+    overloadBarBottom: string
+  }
+> = {
+  pastel: {
+    shellAccent: 'from-sky-200 via-cyan-200 to-emerald-200',
+    cardBg: 'bg-[linear-gradient(160deg,rgba(255,255,255,0.94),rgba(248,250,252,0.90))]',
+    cardBorder: 'border-slate-200/90',
+    healthIconBg: 'bg-emerald-50 ring-1 ring-emerald-100',
+    healthIconColor: 'text-emerald-500',
+    trendIconBg: 'bg-sky-50 ring-1 ring-sky-100',
+    trendIconColor: 'text-sky-500',
+    compositionIconBg: 'bg-violet-50 ring-1 ring-violet-100',
+    compositionIconColor: 'text-violet-400',
+    workloadIconBg: 'bg-amber-50 ring-1 ring-amber-100',
+    workloadIconColor: 'text-amber-500',
+    healthAccent: 'from-emerald-300 via-emerald-400 to-teal-400',
+    trendAccent: 'from-sky-300 via-blue-400 to-indigo-400',
+    compositionAccent: 'from-indigo-300 via-violet-400 to-fuchsia-400',
+    workloadAccent: 'from-amber-300 via-orange-400 to-rose-400',
+    actualLine: '#0284c7',
+    targetLine: '#94a3b8',
+    trendBadgeUp: 'border-emerald-200 bg-emerald-50 text-emerald-600',
+    trendBadgeDown: 'border-rose-200 bg-rose-50 text-rose-600',
+    healthSegHealthy: '#34d399',
+    healthSegHealthyEnd: '#10b981',
+    healthSegRisk: '#fbbf24',
+    healthSegRiskEnd: '#f59e0b',
+    healthSegCritical: '#fb7185',
+    healthSegCriticalEnd: '#f43f5e',
+    compositionPieColors: ['#a78bfa', '#7dd3fc', '#86efac', '#94a3b8'],
+    lifecyclePieColors: ['#94a3b8', '#38bdf8', '#34d399', '#818cf8', '#fbbf24', '#cbd5e1'],
+    normalBar: '#2563eb',
+    normalBarBottom: '#93c5fd',
+    overloadBar: '#f43f5e',
+    overloadBarBottom: '#fda4af',
+  },
+  vivid: {
+    shellAccent: 'from-cyan-400 via-blue-500 to-indigo-500',
+    cardBg: 'bg-[linear-gradient(160deg,rgba(255,255,255,0.98),rgba(241,245,249,0.95))]',
+    cardBorder: 'border-slate-300/80',
+    healthIconBg: 'bg-emerald-50 ring-1 ring-emerald-200',
+    healthIconColor: 'text-emerald-700',
+    trendIconBg: 'bg-sky-50 ring-1 ring-sky-200',
+    trendIconColor: 'text-sky-700',
+    compositionIconBg: 'bg-violet-50 ring-1 ring-violet-200',
+    compositionIconColor: 'text-violet-700',
+    workloadIconBg: 'bg-amber-50 ring-1 ring-amber-200',
+    workloadIconColor: 'text-amber-700',
+    healthAccent: 'from-emerald-500 via-teal-500 to-cyan-500',
+    trendAccent: 'from-sky-500 via-blue-600 to-indigo-600',
+    compositionAccent: 'from-violet-500 via-fuchsia-500 to-rose-500',
+    workloadAccent: 'from-amber-500 via-orange-500 to-rose-500',
+    actualLine: '#0369a1',
+    targetLine: '#64748b',
+    trendBadgeUp: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    trendBadgeDown: 'border-rose-200 bg-rose-50 text-rose-700',
+    healthSegHealthy: '#10b981',
+    healthSegHealthyEnd: '#059669',
+    healthSegRisk: '#f59e0b',
+    healthSegRiskEnd: '#d97706',
+    healthSegCritical: '#f43f5e',
+    healthSegCriticalEnd: '#e11d48',
+    compositionPieColors: ['#6366f1', '#0ea5e9', '#f59e0b', '#64748b'],
+    lifecyclePieColors: ['#64748b', '#0ea5e9', '#10b981', '#6366f1', '#f59e0b', '#94a3b8'],
+    normalBar: '#1d4ed8',
+    normalBarBottom: '#3b82f6',
+    overloadBar: '#e11d48',
+    overloadBarBottom: '#f43f5e',
+  },
+}
+
+function initialsFromDisplayName(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0] ?? '')
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+}
+
+const WORKSPACE_PERSON_AVATAR_PALETTE = [
+  'bg-rose-500 text-white',
+  'bg-orange-500 text-white',
+  'bg-amber-500 text-white',
+  'bg-lime-600 text-white',
+  'bg-emerald-500 text-white',
+  'bg-teal-500 text-white',
+  'bg-cyan-600 text-white',
+  'bg-sky-500 text-white',
+  'bg-blue-600 text-white',
+  'bg-indigo-500 text-white',
+  'bg-violet-500 text-white',
+  'bg-fuchsia-500 text-white',
+  'bg-pink-500 text-white',
+] as const
+
+const WORKSPACE_OWNER_NAME_TAG_PALETTE = [
+  'border-rose-200/80 bg-rose-100/90 text-rose-900 dark:border-rose-800/50 dark:bg-rose-950/60 dark:text-rose-100',
+  'border-orange-200/80 bg-orange-100/90 text-orange-900 dark:border-orange-800/50 dark:bg-orange-950/60 dark:text-orange-100',
+  'border-amber-200/80 bg-amber-100/90 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/60 dark:text-amber-100',
+  'border-lime-200/80 bg-lime-100/90 text-lime-900 dark:border-lime-800/50 dark:bg-lime-950/60 dark:text-lime-100',
+  'border-emerald-200/80 bg-emerald-100/90 text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/60 dark:text-emerald-100',
+  'border-teal-200/80 bg-teal-100/90 text-teal-900 dark:border-teal-800/50 dark:bg-teal-950/60 dark:text-teal-100',
+  'border-cyan-200/80 bg-cyan-100/90 text-cyan-900 dark:border-cyan-800/50 dark:bg-cyan-950/60 dark:text-cyan-100',
+  'border-sky-200/80 bg-sky-100/90 text-sky-900 dark:border-sky-800/50 dark:bg-sky-950/60 dark:text-sky-100',
+  'border-blue-200/80 bg-blue-100/90 text-blue-900 dark:border-blue-800/50 dark:bg-blue-950/60 dark:text-blue-100',
+  'border-indigo-200/80 bg-indigo-100/90 text-indigo-900 dark:border-indigo-800/50 dark:bg-indigo-950/60 dark:text-indigo-100',
+  'border-violet-200/80 bg-violet-100/90 text-violet-900 dark:border-violet-800/50 dark:bg-violet-950/60 dark:text-violet-100',
+  'border-fuchsia-200/80 bg-fuchsia-100/90 text-fuchsia-900 dark:border-fuchsia-800/50 dark:bg-fuchsia-950/60 dark:text-fuchsia-100',
+  'border-pink-200/80 bg-pink-100/90 text-pink-900 dark:border-pink-800/50 dark:bg-pink-950/60 dark:text-pink-100',
+] as const
+
+function hashWorkspacePersonLabel(value: string): number {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0
+  }
+  return hash
+}
+
+function workspacePersonInitials(name: string): string {
+  const normalized = name.trim()
+  if (!normalized) return '?'
+  const parts = normalized.split(/\s+/).filter(Boolean)
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0] ?? ''}${parts[parts.length - 1][0] ?? ''}`.toUpperCase()
+}
+
+function workspacePersonAvatarClass(name: string): string {
+  const normalized = name.trim()
+  if (!normalized) {
+    return 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-200'
+  }
+  const paletteIndex =
+    hashWorkspacePersonLabel(normalized.toLowerCase()) % WORKSPACE_PERSON_AVATAR_PALETTE.length
+  return WORKSPACE_PERSON_AVATAR_PALETTE[paletteIndex]
+}
+
+function workspaceOwnerNameTagClass(name: string): string {
+  const normalized = name.trim()
+  if (!normalized) {
+    return 'border-slate-200 bg-slate-100 text-slate-700'
+  }
+  const paletteIndex =
+    hashWorkspacePersonLabel(normalized.toLowerCase()) % WORKSPACE_OWNER_NAME_TAG_PALETTE.length
+  return WORKSPACE_OWNER_NAME_TAG_PALETTE[paletteIndex]
+}
+
+function WorkspaceDirectoryOwnerCell({ owner }: { owner: string }) {
+  const normalized = owner.trim()
+  if (!normalized || normalized === '—') {
+    return <span className="text-sm text-muted-foreground">—</span>
+  }
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span
+        className={cn(
+          'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold uppercase',
+          workspacePersonAvatarClass(owner)
+        )}
+        aria-hidden
+      >
+        {workspacePersonInitials(owner)}
+      </span>
+      <span
+        className={cn(
+          'inline-flex max-w-full items-center truncate rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+          workspaceOwnerNameTagClass(owner)
+        )}
+      >
+        {owner}
+      </span>
+    </div>
+  )
+}
+
+function mapWacMembershipToMemberRecord(
+  row: WacMembershipDto,
+  userBySubjectId: Map<string, IdentityUserDto>,
+  workspace: { id: string; name: string }
+): MemberRecord {
+  const user = userBySubjectId.get(row.subject_id)
+  const name = user?.display_name?.trim() || user?.email || `User ${row.subject_id.slice(0, 8)}`
+  const role = wacRoleCodeToUiRole(row.role_code)
+  const teamLabel =
+    row.operational_teams?.length
+      ? row.operational_teams.map((t) => t.display_name).filter(Boolean).join(', ')
+      : row.operational_team_display_name?.trim() || ''
+  return {
+    id: row.id,
+    subjectId: row.subject_id,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    name,
+    role,
+    team: teamLabel || '—',
+    scope: row.participation_scope_display_name?.trim() || '—',
+    scopeCode: row.participation_scope_code?.trim() || 'project_only',
+    operationalTeamCode: row.operational_team_code?.trim() || '',
+    participationDuration: participationDurationCodeToUi(row.participation_duration_code),
+    participationStartDate: row.participation_start_date?.trim() || '',
+    participationEndDate: row.participation_end_date?.trim() || '',
+    lastActivity: '—',
+    version: row.version,
+  }
+}
+
+type MemberMembershipRef = {
+  membershipId: string
+  workspaceId: string
+  workspaceName: string
+  role: MemberRole
+  scope: string
+  scopeCode: string
+  operationalTeamCode: string
+  participationDuration: ParticipationDurationUi
+  participationStartDate: string
+  participationEndDate: string
+  lastActivity: string
+  version: number
+}
+
+/** One row per person in the members table (aggregated across workspace memberships). */
+type AggregatedMemberRecord = {
+  subjectId: string
+  name: string
+  team: string
+  memberships: MemberMembershipRef[]
+}
+
+const MEMBER_ROLE_RANK: Record<MemberRole, number> = {
+  Viewer: 0,
+  Member: 1,
+  Manager: 2,
+  Admin: 3,
+}
+
+function aggregateWorkspaceMembers(rows: MemberRecord[]): AggregatedMemberRecord[] {
+  const bySubject = new Map<string, AggregatedMemberRecord>()
+  for (const row of rows) {
+    let agg = bySubject.get(row.subjectId)
+    if (!agg) {
+      agg = { subjectId: row.subjectId, name: row.name, team: row.team, memberships: [] }
+      bySubject.set(row.subjectId, agg)
+    }
+    agg.memberships.push({
+      membershipId: row.id,
+      workspaceId: row.workspaceId,
+      workspaceName: row.workspaceName,
+      role: row.role,
+      scope: row.scope,
+      scopeCode: row.scopeCode,
+      operationalTeamCode: row.operationalTeamCode,
+      participationDuration: row.participationDuration,
+      participationStartDate: row.participationStartDate,
+      participationEndDate: row.participationEndDate,
+      lastActivity: row.lastActivity,
+      version: row.version,
+    })
+  }
+  for (const agg of bySubject.values()) {
+    agg.memberships.sort((a, b) =>
+      a.workspaceName.localeCompare(b.workspaceName, undefined, { sensitivity: 'base' })
+    )
+  }
+  return [...bySubject.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  )
+}
+
+function aggregatedMemberWorkspaceLabel(member: AggregatedMemberRecord): string {
+  return member.memberships.map((m) => m.workspaceName).join(', ')
+}
+
+function aggregatedMemberScopeLabel(member: AggregatedMemberRecord): string {
+  const scopes = [...new Set(member.memberships.map((m) => m.scope).filter((s) => s && s !== '—'))]
+  if (scopes.length === 0) return '—'
+  if (scopes.length === 1) return scopes[0]!
+  return scopes.join(', ')
+}
+
+function aggregatedMemberRoles(member: AggregatedMemberRecord): MemberRole[] {
+  return [...new Set(member.memberships.map((m) => m.role))]
+}
+
+function aggregatedMemberPrimaryRole(member: AggregatedMemberRecord): MemberRole {
+  let best: MemberRole = 'Viewer'
+  for (const ref of member.memberships) {
+    if (MEMBER_ROLE_RANK[ref.role] > MEMBER_ROLE_RANK[best]) best = ref.role
+  }
+  return best
+}
+
+function resolveSingleWorkspaceForMember(
+  member: AggregatedMemberRecord,
+  workspaces: WorkspaceRecord[]
+): WorkspaceRecord | null {
+  if (member.memberships.length !== 1) return null
+  const workspaceId = member.memberships[0]!.workspaceId
+  return workspaces.find((w) => w.id === workspaceId) ?? null
+}
+
+type WorkspaceRowContextMenu = {
+  x: number
+  y: number
+  workspace: WorkspaceRecord
+  variant: 'directory' | 'governance'
+}
+
+type MembersRowContextMenu = {
+  x: number
+  y: number
+  member: AggregatedMemberRecord
+  variant: 'members'
+}
+
+type AssetsRowContextMenu = {
+  x: number
+  y: number
+  asset: AssetRecord
+  variant: 'assets'
+}
+
+type RowContextMenuState = WorkspaceRowContextMenu | MembersRowContextMenu | AssetsRowContextMenu
+
+/** Normatif: docs/standards/Tectona-Workspace-Ownership-Identity-Mode.md */
+type WorkspaceOwnershipIdentityMode = 'local' | 'external'
+
+/** Legacy wizard value; normalized to `local` on read — no longer offered in UI. */
+type WorkspaceOwnershipIdentityModeLegacy = WorkspaceOwnershipIdentityMode | 'hybrid'
+
+const WORKSPACE_OWNERSHIP_IDENTITY_MODE_OPTIONS: WorkspaceOwnershipIdentityMode[] = ['local', 'external']
+
+function normalizeWorkspaceOwnershipIdentityMode(
+  mode: string | undefined | null
+): WorkspaceOwnershipIdentityMode {
+  return mode === 'external' ? 'external' : 'local'
+}
+
+type WorkspaceOwnershipSyncStatus = 'verified' | 'pending_sync' | 'stale'
+
+function workspaceOwnershipIdentityModePillClass(
+  mode: WorkspaceOwnershipIdentityMode,
+  active: boolean
+): string {
+  const base =
+    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors'
+  if (!active) return cn(base, 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300')
+  if (mode === 'external') return cn(base, 'border-blue-300 bg-blue-50 text-blue-700')
+  return cn(base, 'border-emerald-300 bg-emerald-50 text-emerald-700')
+}
+
+function workspaceOwnershipSyncStatusLabel(value: WorkspaceOwnershipSyncStatus): string {
+  if (value === 'verified') return 'Verified'
+  if (value === 'pending_sync') return 'Pending Sync'
+  return 'Stale'
+}
+
+/** UI label for ownership identity mode (`local` = Identity-Lite directory, not “standalone local”). */
+function workspaceOwnershipIdentityModeLabel(mode: WorkspaceOwnershipIdentityModeLegacy): string {
+  if (mode === 'external') return 'Enterprise IAM'
+  return 'Identity-Lite'
+}
+
+function workspaceOwnershipIdentityModeTitle(mode: WorkspaceOwnershipIdentityMode): string {
+  if (mode === 'external') {
+    return 'Enterprise IAM — corporate IdP / Ilex; owner directory from enterprise IAM'
+  }
+  return 'Identity-Lite — platform user directory (identity-lite-service); valid for production without enterprise IAM'
+}
+
+function workspaceOwnershipSourceReadonlyLabel(mode: WorkspaceOwnershipIdentityModeLegacy): string {
+  if (mode === 'external') return 'Enterprise identity provider'
+  return 'Identity-Lite directory'
+}
+
+function filterWorkspaceOwnershipPeople(rows: MemberRecord[], query: string): MemberRecord[] {
+  const t = query.trim().toLowerCase()
+  if (!t) return rows
+  return rows.filter(
+    (m) =>
+      m.name.toLowerCase().includes(t)
+      || m.team.toLowerCase().includes(t)
+      || m.role.toLowerCase().includes(t)
+  )
+}
+
+/** Minimum length before free-typed search text is committed as the selected person name. */
+const MIN_OWNERSHIP_NAME_COMMIT_LEN = 2
+
+function ownershipNameFromManualSearch(query: string): string {
+  const q = query.trim()
+  return q.length >= MIN_OWNERSHIP_NAME_COMMIT_LEN ? q : ''
+}
+
+/** Commit hanya jika query sama persis (case-insensitive) dengan nama di direktori — bukan substring seperti "AI". */
+function ownershipNameFromDirectoryExactMatch(query: string, people: MemberRecord[]): string {
+  const q = query.trim()
+  if (!q) return ''
+  const lower = q.toLowerCase()
+  const matches = people.filter((m) => m.name.trim().toLowerCase() === lower)
+  if (matches.length === 1) return matches[0].name
+  return ''
+}
+
+/** Prevent input blur before picker click so partial search text is not committed as the owner name. */
+function retainFocusForOwnershipPicker(ev: React.MouseEvent) {
+  ev.preventDefault()
+}
+
+const OWNERSHIP_PICKER_LIST_ATTR = 'data-ownership-picker-list'
+
+function ownershipPickerDropdownOpen(ownerSet: boolean, query: string, resultCount: number): boolean {
+  return !ownerSet && query.trim().length > 0 && resultCount > 0
+}
+
+function isFocusMovingToOwnershipPickerList(relatedTarget: EventTarget | null): boolean {
+  return relatedTarget instanceof HTMLElement && relatedTarget.closest(`[${OWNERSHIP_PICKER_LIST_ATTR}]`) != null
+}
+
+function focusOwnershipPickerOption(optionId: string) {
+  document.getElementById(optionId)?.focus()
+}
+
+function handleOwnershipPickerInputKeyDown(
+  e: React.KeyboardEvent<HTMLInputElement>,
+  opts: {
+    listOpen: boolean
+    firstOptionId: string
+    onEnter?: () => void
+    /** Dipanggil sebelum fokus pindah ke listbox (hindari onBlur commit/revert). */
+    onBeforeFocusList?: () => void
+  }
+): void {
+  if (e.key === 'Enter') {
+    if (opts.onEnter) {
+      e.preventDefault()
+      opts.onEnter()
+    }
+    return
+  }
+  if ((e.key === 'Tab' && !e.shiftKey) || e.key === 'ArrowDown') {
+    if (!opts.listOpen || !opts.firstOptionId) return
+    e.preventDefault()
+    opts.onBeforeFocusList?.()
+    focusOwnershipPickerOption(opts.firstOptionId)
+  }
+}
+
+function ownershipPickerInputIdForListbox(listboxId: string | undefined | null): string | null {
+  if (listboxId === 'edit-ws-biz-owner-listbox') return 'edit-ws-biz-owner'
+  if (listboxId === 'edit-ws-tech-owner-listbox') return 'edit-ws-tech-owner'
+  if (listboxId === 'ws-owner-person-listbox') return 'ws-owner-person'
+  if (listboxId === 'ws-business-owner-listbox') return 'ws-business-owner'
+  if (listboxId === 'ws-technical-owner-listbox') return 'ws-technical-owner'
+  return null
+}
+
+function handleOwnershipPickerOptionKeyDown(
+  e: React.KeyboardEvent<HTMLButtonElement>,
+  opts: { inputId: string; optionIds: string[]; index: number; onSelect: () => void }
+): void {
+  const { inputId, optionIds, index, onSelect } = opts
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    onSelect()
+    return
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    focusOwnershipPickerOption(inputId)
+    return
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    if (index < optionIds.length - 1) focusOwnershipPickerOption(optionIds[index + 1]!)
+    return
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (index > 0) focusOwnershipPickerOption(optionIds[index - 1]!)
+    else focusOwnershipPickerOption(inputId)
+  }
+}
+
+/** Edit Workspace drawer: Esc pertama blur field; Esc kedua (tanpa fokus field) tutup drawer. */
+function focusedFormFieldInDrawer(drawerEl: HTMLElement | null): HTMLElement | null {
+  const active = document.activeElement
+  if (!active || !(active instanceof HTMLElement) || !drawerEl?.contains(active)) return null
+  const tag = active.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return active
+  if (active.isContentEditable) return active
+  return null
+}
+
+function mergePendingOwnershipSearchIntoForm(
+  form: NewWorkspaceFormState,
+  people: MemberRecord[]
+): NewWorkspaceFormState {
+  let changed = false
+  const next = { ...form }
+  if (!next.owner.trim()) {
+    const matched = ownershipNameFromDirectoryExactMatch(next.ownershipOwnerSearchQuery, people)
+    if (matched) {
+      next.owner = matched
+      changed = true
+    }
+  }
+  if (!next.businessOwner.trim()) {
+    const matched = ownershipNameFromDirectoryExactMatch(next.ownershipBusinessOwnerSearchQuery, people)
+    if (matched) {
+      next.businessOwner = matched
+      changed = true
+    }
+  }
+  if (!next.technicalOwner.trim()) {
+    const matched = ownershipNameFromDirectoryExactMatch(next.ownershipTechnicalOwnerSearchQuery, people)
+    if (matched) {
+      next.technicalOwner = matched
+      changed = true
+    }
+  }
+  return changed ? next : form
+}
+
+type WorkspaceOwnershipPersonTarget = 'owner' | 'business' | 'technical'
+
+type NewWorkspaceOwnershipOverlay =
+  | { type: 'directory'; target: WorkspaceOwnershipPersonTarget }
+  | { type: 'invite'; target: 'business' | 'technical' }
+
+function ownershipTargetLabel(target: WorkspaceOwnershipPersonTarget): string {
+  if (target === 'owner') return 'Owner'
+  if (target === 'business') return 'Business owner'
+  return 'Technical owner'
+}
+
+type OrganizationDirectoryNode = { id: string; code?: string; label: string; parentId: string | null; version?: number; metadata?: Record<string, unknown> }
+
+/** Default org hierarchy for Primary / Related organization (New Workspace drawer). */
+const DEFAULT_ORGANIZATION_DIRECTORY_NODES: OrganizationDirectoryNode[] = [
+  { id: 'grp-adira', label: 'Adira Group', parentId: null },
+  { id: 'bu-retail', label: 'Retail Banking BU', parentId: 'grp-adira' },
+  { id: 'bu-corp', label: 'Corporate Banking BU', parentId: 'grp-adira' },
+  { id: 'bu-ent-arch', label: 'Enterprise Architecture', parentId: 'grp-adira' },
+  { id: 'bu-risk', label: 'Risk & Compliance', parentId: 'grp-adira' },
+  { id: 'bu-ops', label: 'Operations Excellence', parentId: 'grp-adira' },
+]
+
+function cloneDefaultOrganizationNodes(): OrganizationDirectoryNode[] {
+  return DEFAULT_ORGANIZATION_DIRECTORY_NODES.map((n) => ({ ...n }))
+}
+
+/** Sentinel for "root-level" parent in Manage Primary Organization (native select value). */
+const ORG_PARENT_ROOT_SENTINEL = '__root__'
+
+function normalizeTitleCaseInput(value: string): string {
+  const words = value.split(/(\s+)/)
+  const toWord = (w: string) => {
+    const trimmed = w.trim()
+    if (!trimmed) return w
+    if (/^[A-Z0-9]{2,6}$/.test(trimmed)) return trimmed // BU, MDM, IDP, etc.
+    const parts = trimmed.split(/(-)/)
+    const toPart = (p: string) => {
+      if (p === '-') return p
+      if (/^[A-Z0-9]{2,6}$/.test(p)) return p
+      const lower = p.toLowerCase()
+      return lower.charAt(0).toUpperCase() + lower.slice(1)
+    }
+    return parts.map(toPart).join('')
+  }
+  return words.map((w) => (/^\s+$/.test(w) ? w : toWord(w))).join('')
+}
+
+function orgNodesDepthFirst(nodes: OrganizationDirectoryNode[]): { id: string; label: string; depth: number }[] {
+  const children = (pid: string | null) =>
+    nodes.filter((n) => n.parentId === pid).sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+    )
+  const out: { id: string; label: string; depth: number }[] = []
+  const walk = (pid: string | null, depth: number) => {
+    for (const n of children(pid)) {
+      out.push({ id: n.id, label: n.label, depth })
+      walk(n.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+  return out
+}
+
+function collectOrganizationSubtreeIds(rootId: string, nodes: OrganizationDirectoryNode[]): Set<string> {
+  const rm = new Set<string>([rootId])
+  let growing = true
+  while (growing) {
+    growing = false
+    for (const n of nodes) {
+      if (!rm.has(n.id) && n.parentId != null && rm.has(n.parentId)) {
+        rm.add(n.id)
+        growing = true
+      }
+    }
+  }
+  return rm
+}
+
+/** Selected ownership person — name + inline directory / unverified status. */
+function WorkspaceOwnershipPersonChip({
+  displayName,
+  verified,
+  unverifiedShortLabel = 'Unverified · IAM later',
+  verifiedShortLabel = 'In directory',
+  onChange,
+  disabled,
+}: {
+  displayName: string
+  verified: boolean
+  unverifiedShortLabel?: string
+  verifiedShortLabel?: string
+  onChange: () => void
+  disabled?: boolean
+}) {
+  const primaryName = displayName.includes('(') ? displayName.split('(')[0].trim() : displayName.trim()
+  return (
+    <div className="flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-border/70 bg-muted/10 px-3 py-2">
+      <div
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/15 to-violet-500/10 text-[11px] font-semibold text-indigo-900 ring-1 ring-indigo-200/50 dark:text-indigo-100"
+        aria-hidden
+      >
+        {initialsFromDisplayName(primaryName)}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="max-w-full truncate text-sm font-semibold text-foreground">{displayName}</span>
+          {verified ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:text-emerald-200">
+              <CircleCheck className="h-3 w-3" aria-hidden />
+              {verifiedShortLabel}
+            </span>
+          ) : (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium leading-tight text-amber-900 dark:text-amber-100"
+              title="Will be linked to IAM when identity sync is available."
+            >
+              <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden />
+              {unverifiedShortLabel}
+            </span>
+          )}
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-8 shrink-0 px-2 text-xs"
+        onClick={onChange}
+        disabled={disabled}
+      >
+        Change
+      </Button>
+    </div>
+  )
+}
+
+/** Right-hand wizard content panel — one active step. */
+function NewWorkspaceActiveStepShell({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-card/45 p-5 shadow-sm">
+      <h3 className="text-base font-semibold tracking-tight text-foreground">{title}</h3>
+      {description ? (
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+      ) : null}
+      <div className="mt-5 space-y-4">{children}</div>
+    </div>
+  )
+}
+
+const ASSETS_FALLBACK: AssetRecord[] = [
+  {
+    id: 'a-1',
+    name: 'Workspace Charter Template',
+    type: 'Template',
+    owner: 'PMO Office',
+    version: 'v2.4',
+    lastModified: '2026-04-07',
+    source: 'static',
+  },
+  {
+    id: 'a-2',
+    name: 'Risk Escalation Policy',
+    type: 'Document',
+    owner: 'Governance Board',
+    version: 'v1.8',
+    lastModified: '2026-04-05',
+    source: 'static',
+  },
+  {
+    id: 'a-3',
+    name: 'Governance Playbook',
+    type: 'Knowledge',
+    owner: 'Enterprise PMO',
+    version: 'v3.1',
+    lastModified: '2026-04-02',
+    source: 'static',
+  },
+  {
+    id: 'a-4',
+    name: 'Standard Delivery Workflow',
+    type: 'Workflow preset',
+    owner: 'Delivery Ops',
+    version: 'v1.5',
+    lastModified: '2026-04-08',
+    source: 'static',
+  },
+]
+
+function buildAssetsFromGovernanceCatalog(catalog: GovernanceCatalogSnapshot | null): AssetRecord[] {
+  if (!catalog) return ASSETS_FALLBACK
+
+  const toLastModified = (updated?: string | null, created?: string | null): string => {
+    const raw = updated ?? created
+    if (!raw) return '-'
+    return formatActivityTimestamp(raw)
+  }
+
+  const templates: AssetRecord[] = catalog.templates.map((t) => ({
+    id: `tpl-${t.id}`,
+    name: t.name,
+    type: 'Template',
+    owner: 'Governance Catalog',
+    version: `v${Math.max(1, t.version)}`,
+    lastModified: toLastModified(t.updated_date, t.created_date),
+    source: 'template',
+    sourceId: t.id,
+  }))
+
+  const workflow: AssetRecord[] = catalog.workflowPolicies.map((p) => ({
+    id: `wf-${p.id}`,
+    name: p.name,
+    type: 'Workflow preset',
+    owner: 'Governance Catalog',
+    version: 'v1',
+    lastModified: toLastModified(p.updated_date, p.created_date),
+    source: 'workflow_policy',
+    sourceId: p.id,
+  }))
+
+  const sla: AssetRecord[] = catalog.slaPolicies.map((p) => ({
+    id: `sla-${p.id}`,
+    name: p.name,
+    type: 'Document',
+    owner: 'Governance Catalog',
+    version: 'v1',
+    lastModified: toLastModified(p.updated_date, p.created_date),
+    source: 'sla_policy',
+    sourceId: p.id,
+  }))
+
+  const naming: AssetRecord[] = catalog.namingConventions.map((p) => ({
+    id: `nm-${p.id}`,
+    name: p.name,
+    type: 'Knowledge',
+    owner: 'Governance Catalog',
+    version: 'v1',
+    lastModified: toLastModified(p.updated_date, p.created_date),
+    source: 'naming_convention',
+    sourceId: p.id,
+  }))
+
+  const approval: AssetRecord[] = catalog.approvalPolicies.map((p) => ({
+    id: `apr-${p.id}`,
+    name: p.name,
+    type: 'Document',
+    owner: 'Governance Catalog',
+    version: 'v1',
+    lastModified: toLastModified(p.updated_date, p.created_date),
+    source: 'approval_policy',
+    sourceId: p.id,
+  }))
+
+  const merged = [...templates, ...workflow, ...sla, ...naming, ...approval]
+  return merged.length > 0 ? merged : ASSETS_FALLBACK
+}
+
+function duplicateCode(baseCode: string, prefix: string): string {
+  const normalized = (baseCode || prefix).replace(/[^A-Za-z0-9_-]/g, '').toUpperCase()
+  const root = (normalized || prefix).slice(0, 48)
+  const stamp = Date.now().toString(36).toUpperCase()
+  return `${root}-COPY-${stamp}`.slice(0, 64)
+}
+
+function normalizeActivityActorKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function formatActivityTimestamp(value: string): string {
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return value
+  const yyyy = dt.getFullYear()
+  const mm = String(dt.getMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getDate()).padStart(2, '0')
+  const hh = String(dt.getHours()).padStart(2, '0')
+  const mi = String(dt.getMinutes()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`
+}
+
+function mapBackendActivityToRecord(item: WorkspaceActivityEventDto): ActivityRecord {
+  return {
+    id: item.id,
+    timestamp: formatActivityTimestamp(item.timestamp),
+    actor: item.actor,
+    event: item.event,
+    target: item.target,
+  }
+}
+
+const STATUS_STYLES: Record<WorkspaceStatus, string> = {
+  Active: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  'At Risk': 'border-amber-200 bg-amber-50 text-amber-700',
+  Archived: 'border-slate-200 bg-slate-100 text-slate-700',
+}
+
+/** Health badge styling aligned with Service Catalog (Tilia `ServiceLifecyclePage` — `statusBadgeClass`). */
+function workspaceDirectoryStatusBadgeClass(status: WorkspaceStatus): string {
+  if (status === 'Active') return 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20'
+  if (status === 'At Risk') return 'bg-amber-500/10 text-amber-700 border-amber-500/20'
+  return 'bg-slate-500/10 text-slate-700 border-slate-500/20'
+}
+
+const COMPLIANCE_STYLES: Record<ComplianceStatus, string> = {
+  Compliant: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  'Needs Review': 'border-amber-200 bg-amber-50 text-amber-700',
+  'Non-Compliant': 'border-rose-200 bg-rose-50 text-rose-700',
+  Unconfigured: 'border-slate-200 bg-slate-100 text-slate-700',
+}
+
+const MATRIX_COMPLIANCE_STYLES: Record<MatrixComplianceBadge, string> = {
+  Compliant: 'border-emerald-200/80 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200',
+  Watch: 'border-amber-200/80 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/35 dark:text-amber-100',
+  'Non-Compliant': 'border-rose-200/80 bg-rose-50 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/35 dark:text-rose-100',
+  Draft: 'border-sky-200/80 bg-sky-50 text-sky-900 dark:border-sky-900/40 dark:bg-sky-950/35 dark:text-sky-100',
+  Deprecated: 'border-slate-200/80 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300',
+  Unconfigured: 'border-slate-200/80 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400',
+}
+
+const RISK_LEVEL_STYLES: Record<GovernanceRiskLevel, string> = {
+  Low: 'border-emerald-200/80 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200',
+  Medium: 'border-sky-200/80 bg-sky-50 text-sky-900 dark:border-sky-900/40 dark:bg-sky-950/35 dark:text-sky-100',
+  High: 'border-amber-200/80 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/35 dark:text-amber-100',
+  Critical: 'border-rose-200/80 bg-rose-50 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/35 dark:text-rose-100',
+}
+
+const GOVERNANCE_HEALTH_STYLES: Record<GovernanceHealthPosture, { bar: string; text: string; track: string }> = {
+  Healthy: { bar: 'bg-emerald-600', text: 'text-emerald-700 dark:text-emerald-300', track: 'bg-emerald-100 dark:bg-emerald-950/50' },
+  Watch: { bar: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-300', track: 'bg-amber-100 dark:bg-amber-950/50' },
+  Critical: { bar: 'bg-rose-600', text: 'text-rose-700 dark:text-rose-300', track: 'bg-rose-100 dark:bg-rose-950/50' },
+}
+
+const GOVERNANCE_CONFIGURATION_STYLES: Record<GovernanceConfigurationStatus, string> = {
+  Governed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  Partial: 'border-amber-200 bg-amber-50 text-amber-700',
+  Unconfigured: 'border-slate-200 bg-slate-100 text-slate-700',
+  'Non-Compliant': 'border-rose-200 bg-rose-50 text-rose-700',
+}
+
+const WORKSPACE_LIFECYCLE_STYLES: Record<WorkspaceLifecycleStage, string> = {
+  Draft: 'border-slate-200 bg-slate-100 text-slate-700',
+  Onboarding: 'border-sky-200 bg-sky-50 text-sky-700',
+  Active: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  Scaling: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+  Suspended: 'border-amber-200 bg-amber-50 text-amber-700',
+  Archived: 'border-zinc-200 bg-zinc-100 text-zinc-600',
+}
+
+const roleStyles: Record<MemberRole, string> = {
+  Admin: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+  Manager: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+  Member: 'border-slate-200 bg-slate-100 text-slate-700',
+  Viewer: 'border-zinc-200 bg-zinc-100 text-zinc-700',
+}
+
+const ALL_WORKSPACE_STATUSES: WorkspaceStatus[] = ['Active', 'At Risk', 'Archived']
+const ALL_GOVERNANCE_POLICY_STATUSES: GovernancePolicyStatus[] = [
+  'Governed',
+  'Draft Policy',
+  'Non-Compliant',
+  'Deprecated',
+]
+const ALL_GOVERNANCE_HEALTH_POSTURES: GovernanceHealthPosture[] = ['Healthy', 'Watch', 'Critical']
+const ALL_GOVERNANCE_RISK_LEVELS: GovernanceRiskLevel[] = ['Low', 'Medium', 'High', 'Critical']
+const ALL_GOVERNANCE_CONFIGURATION_STATUSES: GovernanceConfigurationStatus[] = [
+  'Governed',
+  'Partial',
+  'Unconfigured',
+  'Non-Compliant',
+]
+const ALL_WORKSPACE_CLASSIFICATIONS: WorkspaceClassification[] = [
+  'Department',
+  'Team',
+  'Program',
+  'Initiative',
+  'Product',
+  'Shared Service',
+  'Governance',
+]
+
+const ALL_MEMBER_ROLES: MemberRole[] = ['Admin', 'Manager', 'Member', 'Viewer']
+const GOVERNANCE_EMPTY_VALUE = '-'
+
+function cloneDefaultWorkspaceClassifications(): WorkspaceClassification[] {
+  return [...ALL_WORKSPACE_CLASSIFICATIONS]
+}
+
+/** Fallback governance row when Workspace Org metadata has no Tectona extension. */
+const DEFAULT_DIRECTORY_GOVERNANCE: WorkspaceRecord['governance'] = {
+  template: GOVERNANCE_EMPTY_VALUE,
+  workflowPolicy: GOVERNANCE_EMPTY_VALUE,
+  namingPolicy: GOVERNANCE_EMPTY_VALUE,
+  slaPolicy: GOVERNANCE_EMPTY_VALUE,
+  approvalPolicy: GOVERNANCE_EMPTY_VALUE,
+  complianceStatus: 'Unconfigured',
+  policyStatus: null,
+  governanceOwner: GOVERNANCE_EMPTY_VALUE,
+  lastReview: GOVERNANCE_EMPTY_VALUE,
+  complianceScore: null,
+  configurationStatus: 'Unconfigured',
+}
+
+const UUID_ORG_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function parseWorkspaceOrgMetadataClassification(raw: unknown): WorkspaceClassification {
+  if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim()
+  return 'Department'
+}
+
+function parseWorkspaceOrgMetadataLifecycle(raw: unknown): WorkspaceLifecycleStage {
+  if (typeof raw === 'string' && ALL_WORKSPACE_LIFECYCLE_STAGES.includes(raw as WorkspaceLifecycleStage)) {
+    return raw as WorkspaceLifecycleStage
+  }
+  return 'Active'
+}
+
+function parseWorkspaceOrgMetadataCompliance(raw: unknown): ComplianceStatus {
+  if (raw === 'Compliant' || raw === 'Needs Review' || raw === 'Non-Compliant' || raw === 'Unconfigured') return raw
+  return 'Unconfigured'
+}
+
+function parseWorkspaceOrgMetadataGovernancePolicyStatus(raw: unknown): GovernancePolicyStatus | null {
+  if (raw === 'Governed' || raw === 'Draft Policy' || raw === 'Non-Compliant' || raw === 'Deprecated') return raw
+  return null
+}
+
+function governanceConfigurationStatusSortRank(status: GovernanceConfigurationStatus): number {
+  if (status === 'Governed') return 0
+  if (status === 'Partial') return 1
+  if (status === 'Unconfigured') return 2
+  return 3
+}
+
+function isGovernanceMissingValue(value: string): boolean {
+  const normalized = value.trim()
+  return normalized.length === 0 || normalized === GOVERNANCE_EMPTY_VALUE || normalized.includes('\uFFFD')
+}
+
+function formatGovernanceDisplayValue(value: string): string {
+  const cleaned = value.replace(/\uFFFD/g, '').trim()
+  return isGovernanceMissingValue(cleaned) ? GOVERNANCE_EMPTY_VALUE : cleaned
+}
+
+function computeGovernanceConfigurationStatus(gov: Omit<WorkspaceRecord['governance'], 'configurationStatus'>): GovernanceConfigurationStatus {
+  if (gov.complianceStatus === 'Non-Compliant' || gov.policyStatus === 'Non-Compliant') return 'Non-Compliant'
+  if (
+    isGovernanceMissingValue(gov.template)
+    && isGovernanceMissingValue(gov.workflowPolicy)
+    && isGovernanceMissingValue(gov.namingPolicy)
+    && isGovernanceMissingValue(gov.slaPolicy)
+    && isGovernanceMissingValue(gov.approvalPolicy)
+    && gov.policyStatus == null
+  ) {
+    return 'Unconfigured'
+  }
+  if (
+    isGovernanceMissingValue(gov.template)
+    || isGovernanceMissingValue(gov.workflowPolicy)
+    || isGovernanceMissingValue(gov.slaPolicy)
+    || isGovernanceMissingValue(gov.approvalPolicy)
+  ) {
+    return 'Partial'
+  }
+  return 'Governed'
+}
+
+function governanceFromWorkspaceOrgMetadata(meta: Record<string, unknown>): WorkspaceRecord['governance'] {
+  const g = meta.tectona_governance
+  if (g && typeof g === 'object' && !Array.isArray(g)) {
+    const o = g as Record<string, unknown>
+    const parsed = {
+      template: typeof o.template === 'string' ? o.template : GOVERNANCE_EMPTY_VALUE,
+      workflowPolicy: typeof o.workflow === 'string' ? o.workflow : GOVERNANCE_EMPTY_VALUE,
+      namingPolicy: typeof o.naming_policy === 'string' ? o.naming_policy : GOVERNANCE_EMPTY_VALUE,
+      slaPolicy: typeof o.sla === 'string' ? o.sla : GOVERNANCE_EMPTY_VALUE,
+      approvalPolicy:
+        typeof o.approval_policy === 'string'
+          ? o.approval_policy
+          : (typeof o.priority_rule === 'string' ? o.priority_rule : GOVERNANCE_EMPTY_VALUE),
+      complianceStatus: parseWorkspaceOrgMetadataCompliance(o.compliance),
+      policyStatus: parseWorkspaceOrgMetadataGovernancePolicyStatus(o.policy_status),
+      governanceOwner: typeof o.governance_owner === 'string' ? o.governance_owner : GOVERNANCE_EMPTY_VALUE,
+      lastReview: typeof o.last_review === 'string' ? o.last_review : GOVERNANCE_EMPTY_VALUE,
+      complianceScore: typeof o.compliance_score === 'number' ? o.compliance_score : null,
+    }
+    return {
+      ...parsed,
+      configurationStatus: computeGovernanceConfigurationStatus(parsed),
+    }
+  }
+  return { ...DEFAULT_DIRECTORY_GOVERNANCE }
+}
+
+function directoryUiStatusFromOrgStatus(
+  statusCode: string,
+  lifecycle: WorkspaceLifecycleStage
+): WorkspaceStatus {
+  if (statusCode === 'archived' || lifecycle === 'Archived') return 'Archived'
+  if (statusCode === 'inactive' || lifecycle === 'Suspended') return 'At Risk'
+  return 'Active'
+}
+
+function mapWorkspaceOrgWorkspaceDtoToRecord(ws: WorkspaceOrgWorkspaceDto): WorkspaceRecord {
+  const meta = ws.metadata && typeof ws.metadata === 'object' ? ws.metadata : {}
+  const lifecycle = parseWorkspaceOrgMetadataLifecycle(meta.tectona_lifecycle_stage)
+  const status = directoryUiStatusFromOrgStatus(ws.status_code, lifecycle)
+  const relatedRaw = meta.tectona_related_organization_ids
+  const relatedOrganizationIds = Array.isArray(relatedRaw)
+    ? relatedRaw.filter((x): x is string => typeof x === 'string')
+    : []
+
+  const integrationsRaw = meta.tectona_integrations
+  const integrations = Array.isArray(integrationsRaw)
+    ? integrationsRaw.filter((x): x is string => typeof x === 'string')
+    : []
+
+  const owner = typeof meta.tectona_owner === 'string' ? meta.tectona_owner : '…'
+  const businessOwner =
+    typeof meta.tectona_business_owner === 'string' ? meta.tectona_business_owner : undefined
+  const technicalOwner =
+    typeof meta.tectona_technical_owner === 'string' ? meta.tectona_technical_owner : undefined
+
+  const members =
+    typeof meta.tectona_members_count === 'number' && !Number.isNaN(meta.tectona_members_count)
+      ? meta.tectona_members_count
+      : 0
+  const projects =
+    typeof meta.tectona_projects_count === 'number' && !Number.isNaN(meta.tectona_projects_count)
+      ? meta.tectona_projects_count
+      : 0
+  const assets =
+    typeof meta.tectona_assets_count === 'number' && !Number.isNaN(meta.tectona_assets_count)
+      ? meta.tectona_assets_count
+      : 0
+
+  const lastUpdated =
+    typeof meta.tectona_last_updated === 'string'
+      ? meta.tectona_last_updated
+      : (ws.updated_date ?? ws.created_date)
+
+  return {
+    id: ws.id,
+    name: ws.name,
+    code: ws.workspace_key.toUpperCase(),
+    type: parseWorkspaceOrgMetadataClassification(meta.tectona_workspace_classification),
+    owner,
+    businessOwner,
+    technicalOwner,
+    primaryOrganizationId: ws.organization_id,
+    primaryOrganizationLabel: ws.organization_name,
+    relatedOrganizationIds,
+    members,
+    projects,
+    status,
+    createdDate: ws.created_date,
+    lastUpdated,
+    lifecycle,
+    governance: governanceFromWorkspaceOrgMetadata(meta),
+    integrations,
+    assets,
+  }
+}
+
+function lifecycleStageToWorkspaceOrgStatusCode(
+  stage: WorkspaceLifecycleStage
+): 'active' | 'inactive' | 'archived' {
+  if (stage === 'Archived') return 'archived'
+  if (stage === 'Suspended') return 'inactive'
+  return 'active'
+}
+
+/** Tag chrome aligned with Service Catalog & Registry (Tilia): `kindTagChrome` / `slaTagChrome`. */
+function workspaceStatusTagChrome(status: WorkspaceStatus, active: boolean): string {
+  const base =
+    'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on =
+    'ring-2 ring-offset-1 ring-offset-background hover:brightness-95 dark:hover:brightness-110'
+  const off =
+    'border-border/60 bg-background/65 text-muted-foreground hover:bg-background/80 hover:text-foreground'
+  if (!active) return cn(base, off)
+  if (status === 'Active') {
+    return cn(
+      base,
+      on,
+      'border-emerald-400/25 bg-gradient-to-r from-emerald-500/15 to-teal-500/15 text-emerald-950 ring-emerald-500/20 dark:text-emerald-100'
+    )
+  }
+  if (status === 'At Risk') {
+    return cn(
+      base,
+      on,
+      'border-amber-400/25 bg-gradient-to-r from-amber-500/15 to-orange-500/15 text-amber-950 ring-amber-500/20 dark:text-amber-100'
+    )
+  }
+  return cn(
+    base,
+    on,
+    'border-slate-400/25 bg-gradient-to-r from-slate-400/15 to-slate-500/15 text-slate-900 ring-slate-500/20 dark:text-slate-100'
+  )
+}
+
+function memberRoleTagChrome(role: MemberRole, active: boolean): string {
+  const base =
+    'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on =
+    'ring-2 ring-offset-1 ring-offset-background hover:brightness-95 dark:hover:brightness-110'
+  const off =
+    'border-border/60 bg-background/65 text-muted-foreground hover:bg-background/80 hover:text-foreground'
+  if (!active) return cn(base, off)
+  if (role === 'Admin') {
+    return cn(base, on, 'border-indigo-400/25 bg-gradient-to-r from-indigo-500/15 to-violet-500/15 text-indigo-950 ring-indigo-500/20 dark:text-indigo-100')
+  }
+  if (role === 'Manager') {
+    return cn(base, on, 'border-cyan-400/25 bg-gradient-to-r from-cyan-500/15 to-sky-500/15 text-cyan-950 ring-cyan-500/20 dark:text-cyan-100')
+  }
+  if (role === 'Member') {
+    return cn(base, on, 'border-slate-400/25 bg-gradient-to-r from-slate-400/15 to-slate-500/15 text-slate-900 ring-slate-500/20 dark:text-slate-100')
+  }
+  return cn(base, on, 'border-zinc-400/25 bg-gradient-to-r from-zinc-400/15 to-zinc-500/15 text-zinc-900 ring-zinc-500/20 dark:text-zinc-100')
+}
+
+function governanceConfigurationTagChrome(status: GovernanceConfigurationStatus, active: boolean): string {
+  const base =
+    'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on =
+    'ring-2 ring-offset-1 ring-offset-background hover:brightness-95 dark:hover:brightness-110'
+  const off =
+    'border-border/60 bg-background/65 text-muted-foreground hover:bg-background/80 hover:text-foreground'
+  if (!active) return cn(base, off)
+  if (status === 'Governed') {
+    return cn(
+      base,
+      on,
+      'border-indigo-400/30 bg-gradient-to-r from-indigo-500/18 to-violet-500/18 text-indigo-950 ring-indigo-500/25 dark:text-indigo-100'
+    )
+  }
+  if (status === 'Partial') {
+    return cn(
+      base,
+      on,
+      'border-sky-400/30 bg-gradient-to-r from-sky-500/18 to-cyan-500/18 text-sky-950 ring-sky-500/25 dark:text-sky-100'
+    )
+  }
+  if (status === 'Unconfigured') {
+    return cn(
+      base,
+      on,
+      'border-violet-400/25 bg-gradient-to-r from-violet-500/14 to-purple-500/14 text-violet-950 ring-violet-500/20 dark:text-violet-100'
+    )
+  }
+  return cn(
+    base,
+    on,
+    'border-fuchsia-400/30 bg-gradient-to-r from-fuchsia-500/18 to-rose-500/18 text-fuchsia-950 ring-fuchsia-500/25 dark:text-fuchsia-100'
+  )
+}
+
+function governancePolicyTagChrome(status: GovernancePolicyStatus, active: boolean): string {
+  const base =
+    'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on =
+    'ring-2 ring-offset-1 ring-offset-background hover:brightness-95 dark:hover:brightness-110'
+  const off =
+    'border-border/60 bg-background/65 text-muted-foreground hover:bg-background/80 hover:text-foreground'
+  if (!active) return cn(base, off)
+  if (status === 'Governed') {
+    return cn(base, on, 'border-emerald-400/25 bg-gradient-to-r from-emerald-500/15 to-teal-500/15 text-emerald-950 ring-emerald-500/20 dark:text-emerald-100')
+  }
+  if (status === 'Draft Policy') {
+    return cn(base, on, 'border-sky-400/25 bg-gradient-to-r from-sky-500/15 to-blue-500/15 text-sky-950 ring-sky-500/20 dark:text-sky-100')
+  }
+  if (status === 'Deprecated') {
+    return cn(base, on, 'border-slate-400/25 bg-gradient-to-r from-slate-400/15 to-slate-500/15 text-slate-900 ring-slate-500/20 dark:text-slate-100')
+  }
+  return cn(base, on, 'border-rose-400/25 bg-gradient-to-r from-rose-500/15 to-red-500/15 text-rose-950 ring-rose-500/20 dark:text-rose-100')
+}
+
+function governanceHealthPostureTagChrome(posture: GovernanceHealthPosture, active: boolean): string {
+  const base =
+    'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on =
+    'ring-2 ring-offset-1 ring-offset-background hover:brightness-95 dark:hover:brightness-110'
+  const off =
+    'border-border/60 bg-background/65 text-muted-foreground hover:bg-background/80 hover:text-foreground'
+  if (!active) return cn(base, off)
+  if (posture === 'Healthy') {
+    return cn(
+      base,
+      on,
+      'border-teal-400/30 bg-gradient-to-r from-teal-500/18 to-cyan-500/18 text-teal-950 ring-teal-500/25 dark:text-teal-100'
+    )
+  }
+  if (posture === 'Watch') {
+    return cn(
+      base,
+      on,
+      'border-orange-400/30 bg-gradient-to-r from-orange-500/18 to-amber-500/18 text-orange-950 ring-orange-500/25 dark:text-orange-100'
+    )
+  }
+  return cn(
+    base,
+    on,
+    'border-red-400/30 bg-gradient-to-r from-red-500/18 to-rose-500/18 text-red-950 ring-red-500/25 dark:text-red-100'
+  )
+}
+
+function governanceRiskLevelTagChrome(level: GovernanceRiskLevel, active: boolean): string {
+  const base =
+    'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on =
+    'ring-2 ring-offset-1 ring-offset-background hover:brightness-95 dark:hover:brightness-110'
+  const off =
+    'border-border/60 bg-background/65 text-muted-foreground hover:bg-background/80 hover:text-foreground'
+  if (!active) return cn(base, off)
+  if (level === 'Low') {
+    return cn(
+      base,
+      on,
+      'border-lime-400/30 bg-gradient-to-r from-lime-500/18 to-green-500/18 text-lime-950 ring-lime-500/25 dark:text-lime-100'
+    )
+  }
+  if (level === 'Medium') {
+    return cn(
+      base,
+      on,
+      'border-indigo-400/30 bg-gradient-to-r from-indigo-500/18 to-blue-500/18 text-indigo-950 ring-indigo-500/25 dark:text-indigo-100'
+    )
+  }
+  if (level === 'High') {
+    return cn(
+      base,
+      on,
+      'border-amber-400/30 bg-gradient-to-r from-amber-500/18 to-yellow-500/18 text-amber-950 ring-amber-500/25 dark:text-amber-100'
+    )
+  }
+  return cn(
+    base,
+    on,
+    'border-fuchsia-400/30 bg-gradient-to-r from-fuchsia-500/18 to-pink-500/18 text-fuchsia-950 ring-fuchsia-500/25 dark:text-fuchsia-100'
+  )
+}
+
+type GovernanceOperatingModelId =
+  | 'enterprise_controlled'
+  | 'agile_product'
+  | 'innovation_lab'
+  | 'lightweight_team'
+
+function catalogPickIndex(model: GovernanceOperatingModelId, length: number): number {
+  if (length <= 0) return 0
+  switch (model) {
+    case 'enterprise_controlled':
+      return 0
+    case 'agile_product':
+      return Math.min(1, length - 1)
+    case 'innovation_lab':
+      return Math.min(2, length - 1)
+    case 'lightweight_team':
+      return length - 1
+    default:
+      return 0
+  }
+}
+
+function pickIdPreferring<T extends { id: string }>(
+  items: T[],
+  preferredId: string | null | undefined,
+  model: GovernanceOperatingModelId
+): string {
+  if (!items.length) return ''
+  if (preferredId && items.some((x) => x.id === preferredId)) return preferredId
+  return items[catalogPickIndex(model, items.length)]!.id
+}
+
+/** Map executive “operating model” → concrete catalog UUIDs for workspace-governance API. */
+function resolveGovernancePoliciesFromModel(
+  catalog: GovernanceCatalogSnapshot,
+  model: GovernanceOperatingModelId
+): {
+  governanceTemplateId: string
+  workflowPolicyId: string
+  slaPolicyId: string
+  namingConventionId: string
+  approvalPolicyId: string
+} {
+  const templates = [...catalog.templates].sort((a, b) => {
+    const ap = a.status === 'published' ? 0 : 1
+    const bp = b.status === 'published' ? 0 : 1
+    if (ap !== bp) return ap - bp
+    return a.name.localeCompare(b.name)
+  })
+  const templateIdx = catalogPickIndex(model, templates.length)
+  const template = templates[templateIdx] ?? templates[0]
+  const governanceTemplateId = template?.id ?? ''
+
+  const workflowPolicyId = pickIdPreferring(
+    catalog.workflowPolicies,
+    template?.default_workflow_policy_id,
+    model
+  )
+  const slaPolicyId = pickIdPreferring(catalog.slaPolicies, template?.default_sla_policy_id, model)
+  const namingConventionId = pickIdPreferring(
+    catalog.namingConventions,
+    template?.default_naming_convention_id,
+    model
+  )
+  const approvalPolicyId = pickIdPreferring(
+    catalog.approvalPolicies,
+    template?.default_approval_policy_id,
+    model
+  )
+
+  return {
+    governanceTemplateId,
+    workflowPolicyId,
+    slaPolicyId,
+    namingConventionId,
+    approvalPolicyId,
+  }
+}
+
+function governanceAssignmentPoliciesMatchModel(
+  form: GovernanceAssignmentFormState,
+  catalog: GovernanceCatalogSnapshot,
+  model: GovernanceOperatingModelId
+): boolean {
+  const r = resolveGovernancePoliciesFromModel(catalog, model)
+  return (
+    form.governanceTemplateId === r.governanceTemplateId &&
+    form.workflowPolicyId === r.workflowPolicyId &&
+    form.slaPolicyId === r.slaPolicyId &&
+    form.namingConventionId === r.namingConventionId &&
+    form.approvalPolicyId === r.approvalPolicyId
+  )
+}
+
+function inferGovernanceOperatingModel(
+  form: GovernanceAssignmentFormState,
+  catalog: GovernanceCatalogSnapshot | null
+): GovernanceOperatingModelId {
+  if (!catalog?.templates?.length) return 'enterprise_controlled'
+  const models: GovernanceOperatingModelId[] = [
+    'enterprise_controlled',
+    'agile_product',
+    'innovation_lab',
+    'lightweight_team',
+  ]
+  for (const m of models) {
+    const r = resolveGovernancePoliciesFromModel(catalog, m)
+    if (
+      r.governanceTemplateId === form.governanceTemplateId &&
+      r.workflowPolicyId === form.workflowPolicyId &&
+      r.slaPolicyId === form.slaPolicyId &&
+      r.namingConventionId === form.namingConventionId &&
+      r.approvalPolicyId === form.approvalPolicyId
+    ) {
+      return m
+    }
+  }
+  return 'enterprise_controlled'
+}
+
+function governanceImpactForModel(model: GovernanceOperatingModelId): {
+  approvalStrictness: string
+  operationalFlexibility: string
+  complianceCoverage: string
+  auditReadiness: string
+  deliverySpeed: string
+  approvalPct: number
+  flexibilityPct: number
+  coveragePct: number
+  auditPct: number
+  speedPct: number
+} {
+  switch (model) {
+    case 'enterprise_controlled':
+      return {
+        approvalStrictness: 'High',
+        operationalFlexibility: 'Low',
+        complianceCoverage: '96%',
+        auditReadiness: 'Full',
+        deliverySpeed: 'Cautious',
+        approvalPct: 92,
+        flexibilityPct: 28,
+        coveragePct: 96,
+        auditPct: 100,
+        speedPct: 35,
+      }
+    case 'agile_product':
+      return {
+        approvalStrictness: 'Medium',
+        operationalFlexibility: 'High',
+        complianceCoverage: '88%',
+        auditReadiness: 'Standard',
+        deliverySpeed: 'Moderate',
+        approvalPct: 58,
+        flexibilityPct: 78,
+        coveragePct: 88,
+        auditPct: 82,
+        speedPct: 62,
+      }
+    case 'innovation_lab':
+      return {
+        approvalStrictness: 'Low',
+        operationalFlexibility: 'Very high',
+        complianceCoverage: '72%',
+        auditReadiness: 'Lightweight',
+        deliverySpeed: 'Fast',
+        approvalPct: 32,
+        flexibilityPct: 94,
+        coveragePct: 72,
+        auditPct: 48,
+        speedPct: 88,
+      }
+    case 'lightweight_team':
+      return {
+        approvalStrictness: 'Minimal',
+        operationalFlexibility: 'High',
+        complianceCoverage: '68%',
+        auditReadiness: 'Basic',
+        deliverySpeed: 'Fast',
+        approvalPct: 22,
+        flexibilityPct: 88,
+        coveragePct: 68,
+        auditPct: 40,
+        speedPct: 90,
+      }
+    default:
+      return {
+        approvalStrictness: 'High',
+        operationalFlexibility: 'Low',
+        complianceCoverage: '96%',
+        auditReadiness: 'Full',
+        deliverySpeed: 'Cautious',
+        approvalPct: 92,
+        flexibilityPct: 28,
+        coveragePct: 96,
+        auditPct: 100,
+        speedPct: 35,
+      }
+  }
+}
+
+function catalogEntryLabel(
+  items: { id: string; name: string; code: string }[] | undefined,
+  id: string
+): string {
+  const x = items?.find((i) => i.id === id)
+  if (!x) return '—'
+  return x.code ? `${x.name} · ${x.code}` : x.name
+}
+
+function hasGovernanceTemplateAssignment(
+  assignment: WorkspaceGovernanceAssignmentDto | undefined
+): boolean {
+  return Boolean(assignment?.governance_template_id?.trim())
+}
+
+function resolveWorkspaceOperatingModel(
+  _workspace: WorkspaceRecord,
+  assignment: WorkspaceGovernanceAssignmentDto | undefined,
+  catalog: GovernanceCatalogSnapshot | null
+): GovernanceOperatingModelId | null {
+  if (!catalog || !hasGovernanceTemplateAssignment(assignment)) return null
+  const form = buildGovernanceAssignmentForm(_workspace, assignment)
+  return inferGovernanceOperatingModel(form, catalog)
+}
+
+function matrixComplianceBadge(workspace: WorkspaceRecord): MatrixComplianceBadge {
+  if (workspace.governance.policyStatus === 'Deprecated') return 'Deprecated'
+  if (workspace.governance.policyStatus === 'Draft Policy') return 'Draft'
+  if (workspace.governance.complianceStatus === 'Compliant') return 'Compliant'
+  if (workspace.governance.complianceStatus === 'Needs Review') return 'Watch'
+  if (workspace.governance.complianceStatus === 'Non-Compliant') return 'Non-Compliant'
+  return 'Unconfigured'
+}
+
+function healthFromManagedCompliance(
+  workspace: WorkspaceRecord,
+  assignment: WorkspaceGovernanceAssignmentDto | undefined
+): { score: number; posture: GovernanceHealthPosture } | null {
+  if (!hasGovernanceTemplateAssignment(assignment)) return null
+  const raw = workspace.governance.complianceScore
+  if (raw == null || !Number.isFinite(raw)) return null
+  const score = Math.min(100, Math.max(0, Math.round(raw)))
+  const posture = assignment?.compliance_posture
+  if (posture === 'FULL' || score >= 85) return { score, posture: 'Healthy' }
+  if (posture === 'CRITICAL' || score < 70) return { score, posture: 'Critical' }
+  return { score, posture: 'Watch' }
+}
+
+function riskFromManagedCompliance(
+  workspace: WorkspaceRecord,
+  assignment: WorkspaceGovernanceAssignmentDto | undefined,
+  health: { score: number; posture: GovernanceHealthPosture } | null
+): GovernanceRiskLevel | null {
+  if (!hasGovernanceTemplateAssignment(assignment)) return null
+  const posture = assignment?.compliance_posture
+  if (posture === 'CRITICAL') return health != null && health.score < 55 ? 'Critical' : 'High'
+  if (posture === 'PARTIAL') return 'Medium'
+  if (posture === 'FULL') return 'Low'
+  if (health) {
+    if (health.posture === 'Critical') return health.score < 55 ? 'Critical' : 'High'
+    if (health.posture === 'Watch') return 'Medium'
+    return 'Low'
+  }
+  if (workspace.governance.complianceStatus === 'Non-Compliant') return 'High'
+  return null
+}
+
+function auditFromManagedCompliance(
+  workspace: WorkspaceRecord,
+  assignment: WorkspaceGovernanceAssignmentDto | undefined
+): { pct: number; label: GovernanceAuditReadinessLabel } | null {
+  if (!hasGovernanceTemplateAssignment(assignment)) return null
+  const raw = workspace.governance.complianceScore
+  if (raw == null || !Number.isFinite(raw)) return null
+  const pct = Math.min(100, Math.max(0, Math.round(raw)))
+  const posture = assignment?.compliance_posture
+  if (posture === 'FULL') return { pct, label: 'Ready' }
+  if (posture === 'CRITICAL') return { pct, label: 'Missing Evidence' }
+  if (posture === 'PARTIAL') return { pct, label: 'Partial' }
+  const label: GovernanceAuditReadinessLabel =
+    pct >= 88 ? 'Ready' : pct >= 62 ? 'Partial' : 'Missing Evidence'
+  return { pct, label }
+}
+
+function governanceOwnerTeamLabel(model: GovernanceOperatingModelId | null): string {
+  if (model === 'enterprise_controlled') return 'Enterprise PMO'
+  if (model === 'agile_product') return 'Delivery PMO'
+  if (model === 'innovation_lab') return 'Innovation Office'
+  if (model === 'lightweight_team') return 'Operational team'
+  return 'Governance unassigned'
+}
+
+function parseGovernanceReviewDate(value: string): Date | null {
+  const cleaned = formatGovernanceDisplayValue(value)
+  if (cleaned === GOVERNANCE_EMPTY_VALUE) return null
+  const d = new Date(cleaned)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function governanceLastReviewDisplay(value: string): { text: string; overdue: boolean } | null {
+  const d = parseGovernanceReviewDate(value)
+  if (!d) return null
+  const text = d.toISOString().slice(0, 10)
+  const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24))
+  return { text, overdue: days > 90 }
+}
+
+function governanceRiskSortRank(level: GovernanceRiskLevel): number {
+  if (level === 'Critical') return 4
+  if (level === 'High') return 3
+  if (level === 'Medium') return 2
+  return 1
+}
+
+function governanceHealthSortRank(posture: GovernanceHealthPosture): number {
+  if (posture === 'Critical') return 1
+  if (posture === 'Watch') return 2
+  return 3
+}
+
+const GOVERNANCE_MATRIX_EMPTY = '—'
+
+const ALL_MATRIX_COMPLIANCE_BADGES: MatrixComplianceBadge[] = [
+  'Compliant',
+  'Watch',
+  'Non-Compliant',
+  'Draft',
+  'Deprecated',
+  'Unconfigured',
+]
+
+const ALL_GOVERNANCE_AUDIT_READINESS_FILTER_LABELS: readonly string[] = [
+  'Ready',
+  'Partial',
+  'Missing Evidence',
+  GOVERNANCE_MATRIX_EMPTY,
+]
+
+function governanceMatrixOperatingModelLabel(metrics: GovernanceMatrixRowMetrics): string {
+  if (!metrics.operatingModel) return 'Unassigned'
+  return GOVERNANCE_OPERATING_MODEL_DEFS.find((d) => d.id === metrics.operatingModel)?.name ?? 'Unassigned'
+}
+
+function governanceMatrixOwnerLabel(workspace: WorkspaceRecord): string {
+  const ownerName = formatGovernanceDisplayValue(workspace.governance.governanceOwner)
+  return ownerName === GOVERNANCE_EMPTY_VALUE ? workspace.owner : ownerName
+}
+
+function governanceMatrixAuditFilterLabel(metrics: GovernanceMatrixRowMetrics): string {
+  return metrics.audit?.label ?? GOVERNANCE_MATRIX_EMPTY
+}
+
+type GovernanceMatrixRowMetrics = {
+  operatingModel: GovernanceOperatingModelId | null
+  health: { score: number; posture: GovernanceHealthPosture } | null
+  complianceBadge: MatrixComplianceBadge
+  riskLevel: GovernanceRiskLevel | null
+  audit: { pct: number; label: GovernanceAuditReadinessLabel } | null
+  lastReview: { text: string; overdue: boolean } | null
+  ownerTeam: string | null
+  hasManagedGovernance: boolean
+}
+
+function buildGovernanceMatrixMetrics(
+  workspace: WorkspaceRecord,
+  assignment: WorkspaceGovernanceAssignmentDto | undefined,
+  catalog: GovernanceCatalogSnapshot | null
+): GovernanceMatrixRowMetrics {
+  const hasManagedGovernance = hasGovernanceTemplateAssignment(assignment)
+  const operatingModel = resolveWorkspaceOperatingModel(workspace, assignment, catalog)
+  const health = healthFromManagedCompliance(workspace, assignment)
+  return {
+    operatingModel,
+    health,
+    complianceBadge: matrixComplianceBadge(workspace),
+    riskLevel: riskFromManagedCompliance(workspace, assignment, health),
+    audit: auditFromManagedCompliance(workspace, assignment),
+    lastReview: hasManagedGovernance
+      ? governanceLastReviewDisplay(workspace.governance.lastReview)
+      : null,
+    ownerTeam: operatingModel ? governanceOwnerTeamLabel(operatingModel) : null,
+    hasManagedGovernance,
+  }
+}
+
+function buildGovernanceAssignmentForm(
+  workspace: WorkspaceRecord,
+  assignment: WorkspaceGovernanceAssignmentDto | undefined
+): GovernanceAssignmentFormState {
+  const go = workspace.governance.governanceOwner
+  const lr = workspace.governance.lastReview
+  const bad = (x: string) => x.includes('\uFFFD')
+  return {
+    workspaceId: workspace.id,
+    governanceTemplateId: assignment?.governance_template_id ?? '',
+    workflowPolicyId: assignment?.workflow_policy_id ?? '',
+    slaPolicyId: assignment?.sla_policy_id ?? '',
+    namingConventionId: assignment?.naming_convention_id ?? '',
+    approvalPolicyId: assignment?.approval_policy_id ?? '',
+    governanceOwner: assignment?.governance_owner?.trim()
+      ? assignment.governance_owner
+      : bad(go)
+        ? workspace.owner
+        : go,
+    lastReview: assignment?.last_review?.trim()
+      ? assignment.last_review.slice(0, 10)
+      : bad(lr)
+        ? new Date().toISOString().slice(0, 10)
+        : lr,
+  }
+}
+
+function workspaceClassificationTagChrome(t: WorkspaceClassification, active: boolean): string {
+  const base =
+    'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on =
+    'ring-2 ring-offset-1 ring-offset-background hover:brightness-95 dark:hover:brightness-110'
+  const off =
+    'border-border/60 bg-background/65 text-muted-foreground hover:bg-background/80 hover:text-foreground'
+  if (!active) return cn(base, off)
+  if (t === 'Department') {
+    return cn(
+      base,
+      on,
+      'border-sky-400/25 bg-gradient-to-r from-sky-500/15 to-indigo-500/15 text-sky-950 ring-sky-500/20 dark:text-sky-100'
+    )
+  }
+  if (t === 'Team') {
+    return cn(
+      base,
+      on,
+      'border-teal-400/25 bg-gradient-to-r from-teal-500/15 to-cyan-500/15 text-teal-950 ring-teal-500/20 dark:text-teal-100'
+    )
+  }
+  if (t === 'Program') {
+    return cn(
+      base,
+      on,
+      'border-violet-400/25 bg-gradient-to-r from-violet-500/15 to-fuchsia-500/15 text-violet-950 ring-violet-500/20 dark:text-violet-100'
+    )
+  }
+  if (t === 'Initiative') {
+    return cn(
+      base,
+      on,
+      'border-orange-400/25 bg-gradient-to-r from-orange-500/15 to-amber-600/15 text-orange-950 ring-orange-600/20 dark:text-orange-100'
+    )
+  }
+  if (t === 'Product') {
+    return cn(
+      base,
+      on,
+      'border-cyan-400/25 bg-gradient-to-r from-cyan-500/15 to-blue-500/15 text-cyan-950 ring-cyan-500/20 dark:text-cyan-100'
+    )
+  }
+  if (t === 'Shared Service') {
+    return cn(
+      base,
+      on,
+      'border-indigo-400/25 bg-gradient-to-r from-indigo-500/15 to-slate-500/15 text-indigo-950 ring-indigo-500/20 dark:text-indigo-100'
+    )
+  }
+  return cn(
+    base,
+    on,
+    'border-rose-400/25 bg-gradient-to-r from-rose-500/15 to-purple-500/15 text-rose-950 ring-rose-500/20 dark:text-rose-100'
+  )
+}
+
+const workspacePanels: Array<{
+  id: WorkspacePanel
+  label: string
+  description: string
+  badge: string
+  icon: LucideIcon
+}> = [
+  { id: 'overview', label: 'Overview', description: 'Executive summary and health posture', badge: 'Summary', icon: BarChart3 },
+  { id: 'directory', label: 'Workspace Directory', description: 'Master workspace inventory', badge: 'Catalog', icon: Building2 },
+  { id: 'governance', label: 'Governance Matrix', description: 'Operating model, health, compliance, risk, and audit posture per workspace', badge: 'Control', icon: ShieldCheck },
+  { id: 'members', label: 'Workspace Members', description: 'Membership, participation scope, and operational team context', badge: 'Members', icon: Users },
+  { id: 'assets', label: 'Templates & Assets', description: 'Shared workspace templates, reusable assets, and operational standards', badge: 'Assets', icon: Layers },
+  { id: 'activity', label: 'Activity & Audit', description: 'Your workspace activity with optional governance traceability context', badge: 'Audit', icon: ClipboardList },
+]
+
+const workspacePanelGroups: Array<{
+  group: string
+  items: typeof workspacePanels
+}> = [
+  {
+    group: 'Foundation',
+    items: workspacePanels.filter((panel) => panel.id === 'overview' || panel.id === 'directory'),
+  },
+  {
+    group: 'Governance',
+    items: workspacePanels.filter((panel) => panel.id === 'governance' || panel.id === 'members'),
+  },
+  {
+    group: 'Operations',
+    items: workspacePanels.filter((panel) => panel.id === 'assets' || panel.id === 'activity'),
+  },
+]
+
+function SurfaceCard({
+  title,
+  description,
+  children,
+  right,
+  className,
+  bodyClassName,
+}: {
+  title: string
+  description: string
+  children: ReactNode
+  right?: ReactNode
+  className?: string
+  bodyClassName?: string
+}) {
+  return (
+    <section
+      className={cn(
+        'overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_14px_40px_rgba(15,23,42,0.06)]',
+        className
+      )}
+    >
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+          <p className="mt-1 text-xs text-slate-600">{description}</p>
+        </div>
+        {right}
+      </div>
+      <div className={cn('p-5', bodyClassName)}>{children}</div>
+    </section>
+  )
+}
+
+/** Main content panel (pattern aligned with `DocPanelSection` ficus-governance variant in Document & Knowledge Management). */
+function WorkspaceMainPanel({
+  id,
+  title,
+  description,
+  highlight,
+  right,
+  headerIcon,
+  children,
+  className,
+  panelRef,
+  style,
+}: {
+  id: string
+  title: string
+  description: string
+  highlight: boolean
+  right?: ReactNode
+  headerIcon?: ReactNode
+  children: ReactNode
+  className?: string
+  panelRef?: RefObject<HTMLElement | null>
+  style?: CSSProperties
+}) {
+  return (
+    <section
+      id={id}
+      ref={panelRef}
+      style={style}
+      className={cn(
+        'glass-card flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-[0_16px_44px_rgba(15,23,42,0.10)] ring-1 ring-slate-900/[0.04] transition-all',
+        highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80',
+        className
+      )}
+    >
+      <div className="flex h-full min-h-0 w-full flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+      <div className="shrink-0">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="min-w-0 shrink-0">
+            <div className="flex items-center gap-2">
+              {headerIcon ? <span className="text-slate-900">{headerIcon}</span> : null}
+              <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+            </div>
+            <p className="mt-0.5 text-[11px] text-slate-600">{description}</p>
+          </div>
+              {right ? (
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 sm:ml-auto sm:justify-end">
+                  {right}
+        </div>
+              ) : null}
+      </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/** Card inside main panel — `div` to avoid nested `<section>` landmarks. */
+function InsetDashboardCard({ title, description, children, right }: { title: string; description: string; children: ReactNode; right?: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-[0_8px_32px_rgba(15,23,42,0.06)]">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200/90 px-4 py-3 sm:px-5 sm:py-4">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+          <p className="mt-1 text-xs text-slate-600">{description}</p>
+        </div>
+        {right}
+      </div>
+      <div className="p-4 sm:p-5">{children}</div>
+    </div>
+  )
+}
+
+function IntelligenceChartPanel({
+  title,
+  description,
+  icon: Icon,
+  accent,
+  palette,
+  iconBgClass,
+  iconColorClass,
+  right,
+  style,
+  children,
+}: {
+  title: string
+  description: string
+  icon: LucideIcon
+  accent: string
+  palette: (typeof WORKSPACE_OVERVIEW_PALETTES)[WorkspaceOverviewPalette]
+  iconBgClass: string
+  iconColorClass: string
+  right?: ReactNode
+  style?: CSSProperties
+  children: ReactNode
+}) {
+  return (
+    <Card style={style} className={cn('relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl p-5 shadow-[0_12px_34px_rgba(15,23,42,0.08)]', palette.cardBg, palette.cardBorder)}>
+      <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-[2px] rounded-t-2xl bg-gradient-to-r opacity-85', accent)} />
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={cn('inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl', iconBgClass)}>
+              <Icon className={cn('h-4 w-4', iconColorClass)} />
+            </span>
+            <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+          </div>
+          <p className="mt-1 text-xs text-slate-600">{description}</p>
+        </div>
+        {right}
+      </div>
+      <div className="min-h-0 flex-1">{children}</div>
+    </Card>
+  )
+}
+
+function workspaceKpiChrome(cardId: string): string {
+  const base =
+    'rounded-2xl p-4 transition-all duration-200 relative overflow-hidden group border border-white/40 ring-1 ring-black/[0.04] shadow-[0_14px_40px_rgba(15,23,42,0.10)] hover:-translate-y-0.5 hover:shadow-[0_18px_56px_rgba(15,23,42,0.14)]'
+
+  if (cardId === 'total') {
+    return cn(base, 'bg-gradient-to-br from-slate-50/85 via-white/90 to-sky-50/75')
+  }
+  if (cardId === 'active') {
+    return cn(base, 'bg-gradient-to-br from-emerald-50/70 via-white/90 to-cyan-50/70')
+  }
+  if (cardId === 'risk') {
+    return cn(base, 'bg-gradient-to-br from-rose-50/70 via-white/90 to-amber-50/70')
+  }
+  if (cardId === 'members') {
+    return cn(base, 'bg-gradient-to-br from-indigo-50/70 via-white/90 to-violet-50/70')
+  }
+  if (cardId === 'projects') {
+    return cn(base, 'bg-gradient-to-br from-orange-50/70 via-white/90 to-yellow-50/70')
+  }
+  return cn(base, 'bg-gradient-to-br from-cyan-50/70 via-white/90 to-blue-50/70')
+}
+
+function sparklineYDomain(values: number[]): [number, number] {
+  if (values.length === 0) return [0, 1]
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  if (min === max) {
+    const floor = Math.max(0, min)
+    const headroom = Math.max(1, floor * 0.12 + 1)
+    return [Math.max(0, floor - headroom * 0.06), floor + headroom]
+  }
+  const span = max - min || 1
+  const pad = span * 0.14
+  return [Math.max(0, min - pad * 0.3), max + pad]
+}
+
+function KpiSparklineGradientStops({ color }: { color: string }) {
+  const peak = 0.18
+  return (
+    <>
+      <stop offset="0%" stopColor={color} stopOpacity={peak} />
+      <stop offset="22%" stopColor={color} stopOpacity={peak * 0.62} />
+      <stop offset="48%" stopColor={color} stopOpacity={peak * 0.32} />
+      <stop offset="72%" stopColor={color} stopOpacity={peak * 0.12} />
+      <stop offset="90%" stopColor={color} stopOpacity={peak * 0.04} />
+      <stop offset="100%" stopColor={color} stopOpacity={0} />
+    </>
+  )
+}
+
+function KpiSparkline({ data, color }: { data: number[]; color: string }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-background/40 px-2 text-[10px] font-medium text-muted-foreground/80">
+        Historical trend unavailable
+      </div>
+    )
+  }
+
+  const chartData = data.map((value, index) => ({ idx: index, sparkValue: value }))
+  const yDomain = sparklineYDomain(data)
+  const isFlat = Math.min(...data) === Math.max(...data)
+  const gradId = `tectona-workspace-kpi-${color.replace('#', '')}`
+
+  return (
+    <MeasuredResponsiveContainer>
+      <AreaChart data={chartData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+        {!isFlat && (
+        <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <KpiSparklineGradientStops color={color} />
+          </linearGradient>
+        </defs>
+        )}
+        <YAxis hide domain={yDomain} allowDataOverflow />
+        {isFlat ? (
+          <Line
+            type="monotone"
+            dataKey="sparkValue"
+            stroke={color}
+            strokeWidth={1.5}
+            strokeOpacity={isFlat && data[0] === 0 ? 0.42 : 0.72}
+            strokeLinecap="round"
+            dot={false}
+            isAnimationActive={false}
+          />
+        ) : (
+        <Area
+          type="monotone"
+          dataKey="sparkValue"
+          stroke={color}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            fill={`url(#${gradId})`}
+            baseValue={yDomain[0]}
+          isAnimationActive={false}
+        />
+        )}
+      </AreaChart>
+    </MeasuredResponsiveContainer>
+  )
+}
+
+function WorkspaceKpiCard({
+  label,
+  value,
+  subtitle,
+  trend,
+  trendSeries,
+  trendColor,
+  icon: Icon,
+  tooltip,
+}: {
+  label: string
+  value: string
+  subtitle: string
+  trend: string
+  trendSeries: number[]
+  trendColor: string
+  icon: LucideIcon
+  /** Hover explanation — workspace portfolio context, not project delivery. */
+  tooltip?: string
+}) {
+  const cardId = label.toLowerCase().includes('active')
+    ? 'active'
+    : label.toLowerCase().includes('risk')
+      ? 'risk'
+      : label.toLowerCase().includes('member')
+        ? 'members'
+        : label.toLowerCase().includes('project')
+          ? 'projects'
+          : 'total'
+
+  const card = (
+    <Card className={workspaceKpiChrome(cardId)}>
+      <div className="pointer-events-none absolute -right-3 -bottom-4 opacity-[0.08] transition-all duration-500 group-hover:scale-110 group-hover:opacity-[0.12]">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/60 text-slate-700/80 ring-1 ring-white/50 backdrop-blur-sm">
+          <Icon className="h-7 w-7" aria-hidden />
+        </div>
+      </div>
+
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 flex items-center gap-3">
+        <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{value}</div>
+        <div className="h-10 min-w-0 flex-1">
+            <KpiSparkline data={trendSeries} color={trendColor} />
+          </div>
+        </div>
+      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Icon className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
+          <span className="truncate">{subtitle}</span>
+        </span>
+        <span className={cn('shrink-0 font-semibold', trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
+          {trend}
+        </span>
+      </div>
+    </Card>
+  )
+
+  if (!tooltip) return card
+
+  return (
+    <Tooltip content={tooltip} side="top">
+      <div className="h-full">{card}</div>
+    </Tooltip>
+  )
+}
+
+function WorkspaceKpiSortableCard({
+  id,
+  children,
+  onContextMenu,
+}: {
+  id: WorkspaceKpiCardKey
+  children: ReactNode
+  onContextMenu?: (e: React.MouseEvent) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.55 : 1,
+    cursor: isDragging ? 'grabbing' : 'grab',
+  }
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="h-full"
+      onContextMenu={onContextMenu}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  )
+}
+
+type WorkspaceKpiCardProps = Parameters<typeof WorkspaceKpiCard>[0]
+
+function buildWorkspaceKpiCarouselSlides(
+  cardOrder: WorkspaceKpiCardKey[],
+  cardsPerSlide: 1 | 2
+): WorkspaceKpiCardKey[][] {
+  const slides: WorkspaceKpiCardKey[][] = []
+  for (let i = 0; i < cardOrder.length; i += cardsPerSlide) {
+    slides.push(cardOrder.slice(i, i + cardsPerSlide))
+  }
+  return slides
+}
+
+function WorkspaceKpiCardsCarousel({
+  cardOrder,
+  kpiCardMap,
+  cardsPerSlide,
+}: {
+  cardOrder: WorkspaceKpiCardKey[]
+  kpiCardMap: Record<WorkspaceKpiCardKey, WorkspaceKpiCardProps>
+  cardsPerSlide: 1 | 2
+}) {
+  const slides = useMemo(
+    () => buildWorkspaceKpiCarouselSlides(cardOrder, cardsPerSlide),
+    [cardOrder, cardsPerSlide]
+  )
+  const slideCount = slides.length
+  const [activeIndex, setActiveIndex] = useState(0)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    setActiveIndex(0)
+    scrollRef.current?.scrollTo({ left: 0, behavior: 'auto' })
+  }, [cardsPerSlide, cardOrder.length])
+
+  useEffect(() => {
+    setActiveIndex((prev) => Math.min(prev, Math.max(0, slideCount - 1)))
+  }, [slideCount])
+
+  const scrollToIndex = useCallback(
+    (nextIndex: number) => {
+      if (slideCount === 0) return
+      const clamped = ((nextIndex % slideCount) + slideCount) % slideCount
+      setActiveIndex(clamped)
+      const el = scrollRef.current
+      const slide = el?.children.item(clamped) as HTMLElement | null
+      slide?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    },
+    [slideCount]
+  )
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+
+    const onScroll = () => {
+      const slideEls = Array.from(el.children) as HTMLElement[]
+      if (slideEls.length === 0) return
+      const center = el.scrollLeft + el.clientWidth / 2
+      let bestIndex = 0
+      let bestDistance = Number.POSITIVE_INFINITY
+      slideEls.forEach((slide, index) => {
+        const slideCenter = slide.offsetLeft + slide.offsetWidth / 2
+        const distance = Math.abs(center - slideCenter)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          bestIndex = index
+        }
+      })
+      setActiveIndex(bestIndex)
+    }
+
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [slideCount])
+
+  if (slideCount === 0) return null
+
+  return (
+    <div className="space-y-2" aria-roledescription="carousel" aria-label="Workspace KPI cards">
+      <div className="flex items-center gap-2 px-0.5">
+        <p className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
+          {activeIndex + 1} / {slideCount}
+        </p>
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5">
+          {slides.map((keys, index) => (
+            <button
+              key={keys.join('-')}
+              type="button"
+              aria-label={`Show KPI slide ${index + 1}`}
+              aria-current={index === activeIndex ? 'true' : undefined}
+              className={cn(
+                'h-1.5 shrink-0 rounded-full transition-all',
+                index === activeIndex ? 'w-4 bg-primary' : 'w-1.5 bg-muted-foreground/35 hover:bg-muted-foreground/55'
+              )}
+              onClick={() => scrollToIndex(index)}
+            />
+          ))}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border/70 bg-background/90 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-40"
+            aria-label="Previous KPI slide"
+            disabled={slideCount <= 1}
+            onClick={() => scrollToIndex(activeIndex - 1)}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border/70 bg-background/90 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-40"
+            aria-label="Next KPI slide"
+            disabled={slideCount <= 1}
+            onClick={() => scrollToIndex(activeIndex + 1)}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+      </div>
+
+      <div
+        ref={scrollRef}
+        className="flex snap-x snap-mandatory gap-4 overflow-x-auto overflow-y-visible scroll-smooth scrollbar-hide px-0.5 py-2"
+      >
+        {slides.map((keys, slideIndex) => (
+          <div
+            key={`slide-${slideIndex}-${keys.join('-')}`}
+            className="w-full min-w-full shrink-0 snap-center snap-always"
+          >
+            {cardsPerSlide === 2 ? (
+              <div className="grid grid-cols-2 gap-4">
+                {keys.map((key) => (
+                  <WorkspaceKpiCard key={key} {...kpiCardMap[key]} />
+                ))}
+              </div>
+            ) : (
+              <WorkspaceKpiCard {...kpiCardMap[keys[0]!]} />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Floating icon rail — lebar konten &lt; 1000px. */
+function WorkspaceEnterpriseNavFloatRail({
+  items,
+  activePanel,
+  onSelect,
+}: {
+  items: typeof workspacePanels
+  activePanel: WorkspacePanel
+  onSelect: (id: WorkspacePanel) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const slabRef = useRef<HTMLDivElement>(null)
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }, [])
+
+  const openRail = useCallback(() => {
+    clearCloseTimer()
+    setExpanded(true)
+  }, [clearCloseTimer])
+
+  const scheduleCloseRail = useCallback(() => {
+    clearCloseTimer()
+    closeTimerRef.current = setTimeout(() => {
+      setExpanded(false)
+      closeTimerRef.current = null
+    }, 320)
+  }, [clearCloseTimer])
+
+  const handleSlabPointerLeave = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!expanded) return
+      const related = e.relatedTarget
+      if (related instanceof Node && slabRef.current?.contains(related)) return
+      scheduleCloseRail()
+    },
+    [expanded, scheduleCloseRail]
+  )
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    },
+    []
+  )
+
+  if (items.length === 0) return null
+
+  const activeItem = items.find((p) => p.id === activePanel) ?? items[0]
+  const motionEase = 'ease-[cubic-bezier(0.22,0.78,0.18,1)]'
+  const motionDuration = 'duration-[380ms]'
+
+  return (
+    <div
+      ref={slabRef}
+      className={cn(
+        'fixed bottom-6 left-0 top-12 z-30 w-14 sm:w-16',
+        expanded ? 'pointer-events-auto' : 'pointer-events-none'
+      )}
+      onPointerLeave={handleSlabPointerLeave}
+    >
+      <nav
+        className={cn(
+          'pointer-events-auto absolute left-2.5 sm:left-3',
+          motionDuration,
+          motionEase,
+          'transition-[top,transform] will-change-[top,transform]',
+          expanded ? 'top-1/2 -translate-y-1/2' : 'bottom-0 translate-y-0'
+        )}
+        aria-label="Workspace enterprise navigation"
+        aria-expanded={expanded}
+        onPointerEnter={() => {
+          if (!expanded) openRail()
+        }}
+        onPointerLeave={() => {
+          if (!expanded) scheduleCloseRail()
+        }}
+        onFocusCapture={openRail}
+        onBlurCapture={(e) => {
+          const next = e.relatedTarget as Node | null
+          if (!next || !e.currentTarget.contains(next)) scheduleCloseRail()
+        }}
+      >
+        <div
+          className={cn(
+            'flex flex-col items-center overflow-hidden rounded-full border border-slate-200/75',
+            'bg-white/92 shadow-[0_2px_8px_rgba(15,23,42,0.05),0_12px_28px_-10px_rgba(15,23,42,0.12)]',
+            'ring-1 ring-slate-900/[0.04] backdrop-blur-md',
+            'dark:border-slate-700/60 dark:bg-slate-950/88 dark:ring-white/[0.06]',
+            motionDuration,
+            motionEase,
+            'transition-[max-height,gap,padding,transform] will-change-[max-height,transform]',
+            expanded
+              ? 'max-h-[min(70vh,28rem)] origin-center gap-1.5 p-1.5 scale-100'
+              : 'max-h-11 origin-bottom gap-0 p-1 scale-[0.94]'
+          )}
+        >
+          {items.map((panel, index) => {
+            const Icon = panel.icon
+            const active = panel.id === activePanel
+            const visible = expanded || panel.id === activeItem.id
+
+            return (
+              <div
+                key={panel.id}
+                className={cn(
+                  'transition-[max-height,opacity,transform] motion-reduce:transition-none',
+                  motionDuration,
+                  motionEase,
+                  visible
+                    ? 'max-h-11 opacity-100 scale-100'
+                    : 'pointer-events-none max-h-0 opacity-0 scale-90 overflow-hidden'
+                )}
+                style={{
+                  transitionDelay: expanded ? `${index * 42}ms` : '0ms',
+                }}
+              >
+                {expanded ? (
+                  <Tooltip content={panel.label} side="right" sideOffset={14} size="compact">
+                    <button
+                      type="button"
+                      onClick={() => onSelect(panel.id)}
+                      className={cn(
+                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors duration-200',
+                        active
+                          ? 'border-sky-300/90 bg-sky-50 text-sky-700 shadow-[0_8px_20px_-12px_rgba(14,165,233,0.5)] ring-2 ring-sky-400/20 dark:border-sky-700/50 dark:bg-sky-950/55 dark:text-sky-200'
+                          : 'border-transparent bg-transparent text-slate-500 hover:border-slate-200/80 hover:bg-slate-50/95 hover:text-slate-900 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:bg-slate-900/80 dark:hover:text-slate-100'
+                      )}
+                      aria-label={panel.label}
+                      aria-current={active ? 'page' : undefined}
+                    >
+                      <Icon className="h-[18px] w-[18px]" strokeWidth={active ? 2.2 : 1.9} />
+                    </button>
+                  </Tooltip>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onSelect(panel.id)}
+                    title={panel.label}
+                    className={cn(
+                      'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors duration-200',
+                      active
+                        ? 'border-sky-300/90 bg-sky-50 text-sky-700 shadow-[0_8px_20px_-12px_rgba(14,165,233,0.5)] ring-2 ring-sky-400/20 dark:border-sky-700/50 dark:bg-sky-950/55 dark:text-sky-200'
+                        : 'border-transparent bg-transparent text-slate-500'
+                    )}
+                    aria-label={panel.label}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon className="h-[18px] w-[18px]" strokeWidth={active ? 2.2 : 1.9} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </nav>
+    </div>
+  )
+}
+
+function IntelligenceDonut({
+  data,
+  centerLabel,
+  pieColors,
+  isVivid,
+  selectedSlice,
+  onSliceClick,
+}: {
+  data: Array<{ name: string; value: number; color: string; pct: string }>
+  centerLabel: string
+  pieColors?: string[]
+  isVivid?: boolean
+  /** Highlight a segment by `data[].name` (e.g. lifecycle stage or purpose bucket). */
+  selectedSlice?: string | null
+  onSliceClick?: (name: string) => void
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const total = data.reduce((sum, d) => sum + d.value, 0)
+  const donutIdBase = useMemo(() => centerLabel.toLowerCase().replace(/\s+/g, '-'), [centerLabel])
+
+  const renderPctLabel = ({
+    cx, cy, midAngle, innerRadius, outerRadius, percent,
+  }: {
+    cx?: number; cy?: number; midAngle?: number; innerRadius?: number; outerRadius?: number; percent?: number
+  }) => {
+    if ((percent ?? 0) < 0.08) return null
+    const RADIAN = Math.PI / 180
+    const radius = (innerRadius ?? 0) + ((outerRadius ?? 0) - (innerRadius ?? 0)) * 0.5
+    const x = (cx ?? 0) + radius * Math.cos(-(midAngle ?? 0) * RADIAN)
+    const y = (cy ?? 0) + radius * Math.sin(-(midAngle ?? 0) * RADIAN)
+    return (
+      <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800}
+        style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.35))', letterSpacing: '-0.01em' }}>
+        {`${((percent ?? 0) * 100).toFixed(0)}%`}
+      </text>
+    )
+  }
+
+  return (
+    <>
+      <style>{`
+        @keyframes composition-sheen-spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+        @keyframes composition-counter-spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(-360deg); }
+        }
+        .composition-sheen-ring  { animation: composition-sheen-spin   16s linear infinite; }
+        .composition-counter-ring { animation: composition-counter-spin 30s linear infinite; }
+      `}</style>
+
+      <div className="grid items-center gap-5 lg:grid-cols-[224px,1fr]">
+        {/* â”€â”€ Donut container â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        <div className="relative mx-auto h-56 w-56 shrink-0">
+
+          {/* Vivid: deep radial ambient beneath everything */}
+          {isVivid && (
+            <div className="pointer-events-none absolute -inset-6 rounded-full" style={{
+              background: 'radial-gradient(ellipse 78% 78% at 50% 50%, rgba(99,102,241,0.26) 0%, rgba(14,165,233,0.16) 42%, transparent 70%)',
+              filter: 'blur(6px)',
+            }} />
+          )}
+
+          {/* Outer conic halo */}
+          <div className="pointer-events-none absolute -inset-3 rounded-full" style={{
+            background: isVivid
+              ? 'conic-gradient(from 220deg, rgba(99,102,241,0.52), rgba(14,165,233,0.40), rgba(245,158,11,0.36), rgba(99,102,241,0.52))'
+              : 'conic-gradient(from 220deg, rgba(99,102,241,0.15), rgba(14,165,233,0.11), rgba(16,185,129,0.13), rgba(99,102,241,0.15))',
+            filter: isVivid ? 'blur(5px)' : 'blur(1px)',
+          }} />
+
+          {/* Vivid: slow counter-rotating depth ring */}
+          {isVivid && (
+            <div className="composition-counter-ring pointer-events-none absolute -inset-2 rounded-full" style={{
+              background: 'conic-gradient(from 60deg, rgba(99,102,241,0.22), rgba(14,165,233,0.28), rgba(245,158,11,0.20), rgba(99,102,241,0.22))',
+              filter: 'blur(2.5px)',
+              opacity: 0.7,
+            }} />
+          )}
+
+          {/* Vivid: spinning triple-sweep sheen precisely masked to ring */}
+          {isVivid && (
+            <div className="composition-sheen-ring pointer-events-none absolute -inset-1 rounded-full" style={{
+              background: 'conic-gradient(from 0deg, transparent 0%, rgba(255,255,255,0.78) 8%, rgba(255,255,255,0.20) 17%, transparent 25%, transparent 44%, rgba(255,255,255,0.42) 52%, transparent 62%, transparent 78%, rgba(255,255,255,0.22) 85%, transparent 94%, transparent 100%)',
+              maskImage: 'radial-gradient(circle, transparent 43%, black 51%, black 58%, transparent 65%)',
+              WebkitMaskImage: 'radial-gradient(circle, transparent 43%, black 51%, black 58%, transparent 65%)',
+            }} />
+          )}
+
+          {/* Glass backing disc */}
+          <div className={cn(
+            'pointer-events-none absolute inset-2 rounded-full border bg-gradient-to-br from-white/95 via-slate-50/95 to-slate-100/85',
+            isVivid
+              ? 'border-white/75 shadow-[0_22px_52px_rgba(15,23,42,0.20),inset_0_1px_0_rgba(255,255,255,0.95),inset_0_-1px_0_rgba(15,23,42,0.04)]'
+              : 'border-white/90 shadow-[0_14px_32px_rgba(15,23,42,0.10)]'
+          )} />
+
+          <div className="absolute inset-0 min-h-0 min-w-0">
+            <MeasuredResponsiveContainer className="h-full w-full min-h-0 min-w-0">
+            <PieChart>
+              <defs>
+                {data.map((entry, index) => {
+                  const sc = pieColors?.[index] ?? entry.color
+                  return isVivid ? (
+                    <linearGradient key={entry.name} id={`${donutIdBase}-seg-${index}`} x1="0.15" y1="0" x2="0.85" y2="1">
+                      <stop offset="0%"   stopColor={sc} stopOpacity={1} />
+                      <stop offset="35%"  stopColor={sc} stopOpacity={0.94} />
+                      <stop offset="100%" stopColor={sc} stopOpacity={0.68} />
+                    </linearGradient>
+                  ) : (
+                    <linearGradient key={entry.name} id={`${donutIdBase}-seg-${index}`} x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%"   stopColor={sc} stopOpacity={1} />
+                      <stop offset="100%" stopColor={sc} stopOpacity={0.80} />
+                    </linearGradient>
+                  )
+                })}
+              </defs>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={88}
+                cornerRadius={isVivid ? 10 : 7}
+                paddingAngle={isVivid ? 3.5 : 2.5}
+                dataKey="value"
+                labelLine={false}
+                label={renderPctLabel}
+                stroke="white"
+                strokeWidth={isVivid ? 2.5 : 1.5}
+                onMouseEnter={(_, index) => setActiveIndex(index)}
+                onMouseLeave={() => setActiveIndex(null)}
+                onClick={(_, index) => {
+                  const name = data[index]?.name
+                  if (name) onSliceClick?.(name)
+                }}
+                style={{ outline: 'none' }}
+              >
+                {data.map((entry, index) => {
+                  const selectedDim =
+                    selectedSlice != null && selectedSlice !== '' && entry.name !== selectedSlice
+                  const dimmed = selectedDim || (activeIndex !== null && activeIndex !== index)
+                  return (
+                  <Cell
+                    key={entry.name}
+                    fill={`url(#${donutIdBase}-seg-${index})`}
+                    fillOpacity={!dimmed ? 1 : (isVivid ? 0.28 : 0.38)}
+                    style={{
+                      cursor: onSliceClick ? 'pointer' : 'default',
+                      outline: 'none',
+                      filter: activeIndex === index
+                        ? (isVivid ? 'drop-shadow(0 12px 24px rgba(15,23,42,0.40))' : 'drop-shadow(0 8px 14px rgba(15,23,42,0.20))')
+                        : (isVivid ? 'drop-shadow(0 3px 8px rgba(15,23,42,0.16))' : undefined),
+                    }}
+                  />
+                )})}
+              </Pie>
+              <RechartsTooltip formatter={(value: number, name: string) => [`${value} workspace${value !== 1 ? 's' : ''}`, name]} />
+            </PieChart>
+            </MeasuredResponsiveContainer>
+          </div>
+
+          {/* Center badge */}
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+            {isVivid ? (
+              <div className="rounded-2xl border border-white/75 px-4 py-3 text-center backdrop-blur-md"
+                style={{ background: 'linear-gradient(145deg, rgba(255,255,255,0.97) 0%, rgba(241,245,249,0.93) 100%)', boxShadow: '0 12px_32px rgba(15,23,42,0.18), inset 0 1px 0 rgba(255,255,255,0.95)' }}>
+                <div className="mb-1.5 flex justify-center gap-1">
+                  {(pieColors ?? []).slice(0, 3).map((c, i) => (
+                    <span key={i} className="h-1.5 w-1.5 rounded-full shadow-sm" style={{ background: c, boxShadow: `0 0 4px ${c}` }} />
+                  ))}
+                </div>
+                <div className="text-[2.15rem] font-black leading-none tracking-[-0.04em]"
+                  style={{ background: 'linear-gradient(135deg, #0f172a 0%, #334155 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                  {total}
+                </div>
+                <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.22em] text-slate-400">{centerLabel}</div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-white/90 px-4 py-2 text-center backdrop-blur-sm"
+                style={{ background: 'rgba(255,255,255,0.88)', boxShadow: '0 8px 22px rgba(15,23,42,0.10)' }}>
+                <div className="text-3xl font-bold leading-none tracking-tight text-slate-900">{total}</div>
+                <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{centerLabel}</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* â”€â”€ Legend rows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          {data.map((item, idx) => {
+            const sc = pieColors?.[idx] ?? item.color
+            const ratio = total > 0 ? Math.max(0, Math.min(100, Math.round((item.value / total) * 100))) : 0
+            const isActive = activeIndex === idx
+            const rowSelected = selectedSlice === item.name
+            return (
+              <div
+                key={item.name}
+                role={onSliceClick ? 'button' : undefined}
+                tabIndex={onSliceClick ? 0 : undefined}
+                onClick={onSliceClick ? () => onSliceClick(item.name) : undefined}
+                onKeyDown={
+                  onSliceClick
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onSliceClick(item.name)
+                        }
+                      }
+                    : undefined
+                }
+                className={cn(
+                  onSliceClick ? 'cursor-pointer' : 'cursor-default',
+                  'rounded-xl border px-3 py-2.5 transition-all duration-200',
+                  isVivid
+                    ? isActive
+                      ? 'border-slate-200 bg-white shadow-[0_10px_26px_rgba(15,23,42,0.12)]'
+                      : 'border-slate-200/70 bg-gradient-to-r from-white to-slate-50/50 hover:border-slate-200 hover:bg-white hover:shadow-[0_4px_14px_rgba(15,23,42,0.08)]'
+                    : isActive || rowSelected
+                      ? 'border-slate-300 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]'
+                      : 'border-slate-200/90 bg-white/80 hover:border-slate-300 hover:bg-white'
+                )}
+                style={isVivid && (isActive || rowSelected) ? { borderLeftColor: sc, borderLeftWidth: 3 } : undefined}
+                onMouseEnter={() => setActiveIndex(idx)}
+                onMouseLeave={() => setActiveIndex(null)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    {isVivid ? (
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-black shadow-sm"
+                        style={{ background: `${sc}1e`, color: sc, border: `1px solid ${sc}30` }}>
+                        {idx + 1}
+                      </span>
+                    ) : (
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: sc }} />
+                    )}
+                    <span className={cn('font-medium text-slate-700', isVivid ? 'text-[13px]' : 'text-sm')}>
+                      {item.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={cn('font-bold text-slate-900', isVivid ? 'text-[15px]' : 'text-sm')}>
+                      {item.value}
+                    </span>
+                    {isVivid ? (
+                      <span className="min-w-[40px] rounded-md px-1.5 py-0.5 text-center text-[11px] font-bold"
+                        style={{ background: `${sc}18`, color: sc }}>
+                        {item.pct}
+                      </span>
+                    ) : (
+                      <span className="w-10 text-right text-xs font-semibold" style={{ color: sc }}>{item.pct}</span>
+                    )}
+                  </div>
+                </div>
+                <div className={cn('mt-1.5 overflow-hidden rounded-full', isVivid ? 'h-1.5 bg-slate-100/80' : 'h-1.5 bg-slate-100')}>
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${ratio}%`,
+                      background: `linear-gradient(90deg, ${sc}, ${sc}bb)`,
+                      boxShadow: isVivid ? `0 0 8px ${sc}60` : undefined,
+                    }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function WorkspaceHealthExecutiveDonut({
+  data,
+  palette,
+  selectedBand,
+  onBandClick,
+}: {
+  data: Array<{ name: string; value: number; color: string; pct: string }>
+  palette: (typeof WORKSPACE_OVERVIEW_PALETTES)[WorkspaceOverviewPalette]
+  selectedBand?: string | null
+  onBandClick?: (band: string) => void
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const total = data.reduce((sum, d) => sum + d.value, 0)
+  const healthy = data.find((d) => d.name === 'Healthy')?.value ?? 0
+  const atRisk = data.find((d) => d.name === 'At Risk')?.value ?? 0
+  const critical = data.find((d) => d.name === 'Critical')?.value ?? 0
+  const healthIndex = total > 0 ? Math.round((((healthy * 1) + (atRisk * 0.55) + (critical * 0.2)) / total) * 100) : 0
+  const criticalPct = total > 0 ? Math.round((critical / total) * 100) : 0
+  const stabilityScore = Math.max(0, Math.min(100, healthIndex + Math.round((healthy / Math.max(1, total)) * 14) - Math.round((critical / Math.max(1, total)) * 18)))
+  const statusTrends: Record<string, number[]> = {
+    Healthy: [48, 51, 54, 56, 58, 60],
+    'At Risk': [26, 24, 23, 22, 21, 20],
+    Critical: [26, 25, 23, 22, 21, 20],
+  }
+
+  return (
+    <>
+      <style>{`
+        @keyframes ws-sheen-spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+        .ws-sheen-ring {
+          animation: ws-sheen-spin 14s linear infinite;
+        }
+      `}</style>
+    <div className="grid gap-5 lg:grid-cols-[250px,1fr] lg:items-center">
+      <div className="relative mx-auto h-60 w-60">
+        {/* Radial vignette ambient glow */}
+        <div className="pointer-events-none absolute -inset-4 rounded-full" style={{ background: 'radial-gradient(ellipse 90% 90% at 50% 50%, rgba(16,185,129,0.15) 0%, rgba(14,165,233,0.10) 40%, transparent 72%)' }} />
+        {/* Animated spinning sheen ring */}
+        <div className="ws-sheen-ring pointer-events-none absolute -inset-1 rounded-full" style={{
+          background: 'conic-gradient(from 0deg, transparent 0%, rgba(255,255,255,0.55) 12%, transparent 25%, transparent 50%, rgba(255,255,255,0.28) 62%, transparent 75%, transparent 100%)',
+          maskImage: 'radial-gradient(circle, transparent 44%, black 52%, black 56%, transparent 62%)',
+          WebkitMaskImage: 'radial-gradient(circle, transparent 44%, black 52%, black 56%, transparent 62%)',
+        }} />
+        {/* Second counter-slow ring for depth */}
+        <div className="pointer-events-none absolute -inset-2 rounded-full" style={{
+          background: 'conic-gradient(from 180deg, rgba(16,185,129,0.28), rgba(14,165,233,0.22), rgba(244,63,94,0.18), rgba(16,185,129,0.28))',
+          filter: 'blur(2px)',
+          opacity: 0.6,
+        }} />
+        <div className="pointer-events-none absolute inset-3 rounded-full border border-white/80 bg-gradient-to-br from-slate-50/90 via-white/95 to-slate-100/85 shadow-[0_22px_52px_rgba(15,23,42,0.14),inset_0_1px_0_rgba(255,255,255,0.95)]" />
+        <div className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-emerald-200/80 bg-emerald-50/95 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
+          Portfolio Resilience
+        </div>
+        <div className="absolute inset-0 min-h-0 min-w-0">
+          <MeasuredResponsiveContainer className="h-full w-full min-h-0 min-w-0">
+          <PieChart>
+            <defs>
+              <linearGradient id="health-seg-healthy" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor={palette.healthSegHealthy} />
+                <stop offset="100%" stopColor={palette.healthSegHealthyEnd} />
+              </linearGradient>
+              <linearGradient id="health-seg-risk" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor={palette.healthSegRisk} />
+                <stop offset="100%" stopColor={palette.healthSegRiskEnd} />
+              </linearGradient>
+              <linearGradient id="health-seg-critical" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor={palette.healthSegCritical} />
+                <stop offset="100%" stopColor={palette.healthSegCriticalEnd} />
+              </linearGradient>
+            </defs>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={64}
+              outerRadius={96}
+              cornerRadius={8}
+              paddingAngle={2}
+              dataKey="value"
+              stroke="#ffffff"
+              strokeWidth={3}
+              onMouseEnter={(_, index) => setActiveIndex(index)}
+              onMouseLeave={() => setActiveIndex(null)}
+              onClick={(_, index) => {
+                const name = data[index]?.name
+                if (name) onBandClick?.(name)
+              }}
+              isAnimationActive
+              animationDuration={800}
+              animationEasing="ease-out"
+            >
+              {data.map((entry, index) => {
+                const gradientId =
+                  entry.name === 'Healthy'
+                    ? 'health-seg-healthy'
+                    : entry.name === 'At Risk'
+                      ? 'health-seg-risk'
+                      : 'health-seg-critical'
+                const selectedDim =
+                  selectedBand != null && selectedBand !== '' && entry.name !== selectedBand
+                const dimmed = selectedDim || (activeIndex !== null && activeIndex !== index)
+
+                return (
+                  <Cell
+                    key={entry.name}
+                    fill={`url(#${gradientId})`}
+                    fillOpacity={dimmed ? 0.35 : 1}
+                    style={{
+                      cursor: onBandClick ? 'pointer' : 'default',
+                      filter: activeIndex === index ? 'drop-shadow(0 6px 12px rgba(15,23,42,0.22))' : undefined,
+                    }}
+                  />
+                )
+              })}
+            </Pie>
+            <RechartsTooltip
+              formatter={(value: number, name: string) => [`${value} workspace${value !== 1 ? 's' : ''}`, name]}
+            />
+          </PieChart>
+          </MeasuredResponsiveContainer>
+        </div>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <div className="text-4xl font-bold leading-none tracking-tight text-slate-900">{total}</div>
+          <div className="mt-1 text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Workspace Total</div>
+          <div className="mt-2 rounded-full border border-slate-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm">
+            Executive Index {healthIndex}
+          </div>
+        </div>
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-slate-200/80 bg-white/95 px-3 py-1 text-[10px] font-semibold text-slate-600 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+          Stability Score {stabilityScore}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="grid gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/75 to-slate-100/80 px-3 py-2 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Executive Signal</div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {healthIndex >= 80 ? 'Stable Portfolio' : healthIndex >= 65 ? 'Watchlist Required' : 'Immediate Intervention'}
+            </div>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(16,185,129,0.10)]">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-500">Healthy Coverage</div>
+            <div className="mt-1 text-sm font-semibold text-emerald-700">{total > 0 ? Math.round((healthy / total) * 100) : 0}% of portfolio</div>
+          </div>
+          <div className="rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500">Critical Exposure</div>
+            <div className="mt-1 text-sm font-semibold text-rose-700">{criticalPct}% of portfolio</div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          {data.map((item, idx) => (
+            <div
+              key={item.name}
+              role={onBandClick ? 'button' : undefined}
+              tabIndex={onBandClick ? 0 : undefined}
+              onClick={onBandClick ? () => onBandClick(item.name) : undefined}
+              onKeyDown={
+                onBandClick
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onBandClick(item.name)
+                      }
+                    }
+                  : undefined
+              }
+              onMouseEnter={() => setActiveIndex(idx)}
+              onMouseLeave={() => setActiveIndex(null)}
+              className={cn(
+                onBandClick ? 'cursor-pointer' : '',
+                'group flex items-center justify-between rounded-xl border px-3 py-2.5 transition-all duration-200',
+                activeIndex === idx || selectedBand === item.name
+                  ? 'border-slate-300 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]'
+                  : 'border-slate-200 bg-white/80 hover:border-slate-300 hover:bg-white'
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{
+                    background: item.name === 'Healthy'
+                      ? `linear-gradient(135deg,${palette.healthSegHealthy},${palette.healthSegHealthyEnd})`
+                      : item.name === 'At Risk'
+                        ? `linear-gradient(135deg,${palette.healthSegRisk},${palette.healthSegRiskEnd})`
+                        : `linear-gradient(135deg,${palette.healthSegCritical},${palette.healthSegCriticalEnd})`,
+                  }}
+                />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-slate-700">{item.name}</span>
+                  <div className="mt-1 flex items-end gap-1">
+                    {(statusTrends[item.name] ?? [0, 0, 0, 0, 0, 0]).map((v, i, arr) => {
+                      const max = Math.max(...arr)
+                      const minH = 3
+                      const h = Math.round(minH + ((v / Math.max(1, max)) * 11))
+                      return (
+                        <span
+                          key={`${item.name}-${i}`}
+                          className="inline-block w-[4px] rounded-sm"
+                          style={{
+                            height: `${h}px`,
+                            background: item.name === 'Healthy'
+                              ? `linear-gradient(180deg,${palette.healthSegHealthy},${palette.healthSegHealthyEnd})`
+                              : item.name === 'At Risk'
+                                ? `linear-gradient(180deg,${palette.healthSegRisk},${palette.healthSegRiskEnd})`
+                                : `linear-gradient(180deg,${palette.healthSegCritical},${palette.healthSegCriticalEnd})`,
+                            opacity: 0.5 + (i / arr.length) * 0.5,
+                          }}
+                        />
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <span className="w-6 text-right text-sm font-semibold text-slate-900">{item.value}</span>
+                <span className="w-11 text-right text-xs font-semibold text-slate-500">{item.pct}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+    </>
+  )
+}
+
+function ThreeDBar(props: Record<string, unknown>) {
+  const x      = (props.x      as number) ?? 0
+  const y      = (props.y      as number) ?? 0
+  const width  = (props.width  as number) ?? 0
+  const height = (props.height as number) ?? 0
+  const fill        = (props.fill        as string) ?? '#3b82f6'
+  const fillOpacity = (props.fillOpacity as number) ?? 1
+  if (!height || height <= 0) return null
+  const DX = 11   // horizontal depth
+  const DY = 6    // vertical depth
+  return (
+    <g>
+      {/* Ground shadow ellipse */}
+      <ellipse
+        cx={x + width / 2 + DX / 2} cy={y + height + 3}
+        rx={width * 0.50} ry={2.8}
+        fill="rgba(15,23,42,0.12)"
+      />
+      {/* Right face — darker shadow */}
+      <path
+        d={`M ${x + width} ${y} L ${x + width + DX} ${y - DY} L ${x + width + DX} ${y + height - DY} L ${x + width} ${y + height} Z`}
+        fill={fill}
+        fillOpacity={fillOpacity}
+        style={{ filter: 'brightness(0.52) saturate(1.15)' }}
+      />
+      {/* Front face — main gradient */}
+      <path
+        d={`M ${x} ${y} L ${x + width} ${y} L ${x + width} ${y + height} L ${x} ${y + height} Z`}
+        fill={fill}
+        fillOpacity={fillOpacity}
+      />
+      {/* Top face — bright highlight */}
+      <path
+        d={`M ${x} ${y} L ${x + DX} ${y - DY} L ${x + width + DX} ${y - DY} L ${x + width} ${y} Z`}
+        fill={fill}
+        fillOpacity={fillOpacity}
+        style={{ filter: 'brightness(1.55) saturate(0.75)' }}
+      />
+      {/* Specular glint — left half of top face */}
+      <path
+        d={`M ${x + 1} ${y - 0.5} L ${x + DX + 1} ${y - DY - 0.5} L ${x + width * 0.52 + DX} ${y - DY - 0.5} L ${x + width * 0.52} ${y - 0.5} Z`}
+        fill="rgba(255,255,255,0.38)"
+        fillOpacity={fillOpacity}
+      />
+      {/* Front top edge micro highlight */}
+      <line
+        x1={x} y1={y} x2={x + width} y2={y}
+        stroke="rgba(255,255,255,0.60)" strokeWidth={1.5}
+      />
+      {/* Right-top edge micro highlight */}
+      <line
+        x1={x + width} y1={y} x2={x + width + DX} y2={y - DY}
+        stroke="rgba(255,255,255,0.30)" strokeWidth={1}
+      />
+    </g>
+  )
+}
+
+type NewWorkspaceFormState = {
+  name: string
+  code: string
+  description: string
+  primaryOrganizationId: string
+  relatedOrganizationIds: string[]
+  workspaceType: '' | WorkspaceClassification
+  owner: string
+  businessOwner: string
+  technicalOwner: string
+  lifecycleStage: WorkspaceLifecycleStage
+  ownershipIdentityMode: WorkspaceOwnershipIdentityMode
+  ownershipOwnerSearchQuery: string
+  ownershipBusinessOwnerSearchQuery: string
+  ownershipTechnicalOwnerSearchQuery: string
+  ownershipShowAdvanced: boolean
+  ownershipIdentityProvider: string
+  ownershipSyncStatus: WorkspaceOwnershipSyncStatus
+  ownershipLastSyncedAt: string
+}
+
+type GovernanceAssignmentFormState = {
+  workspaceId: string
+  governanceTemplateId: string
+  workflowPolicyId: string
+  slaPolicyId: string
+  namingConventionId: string
+  approvalPolicyId: string
+  governanceOwner: string
+  lastReview: string
+}
+
+const INITIAL_NEW_WORKSPACE_FORM: NewWorkspaceFormState = {
+  name: '',
+  code: '',
+  description: '',
+  primaryOrganizationId: '',
+  relatedOrganizationIds: [],
+  workspaceType: '',
+  owner: '',
+  businessOwner: '',
+  technicalOwner: '',
+  lifecycleStage: 'Draft',
+  ownershipIdentityMode: 'local',
+  ownershipOwnerSearchQuery: '',
+  ownershipBusinessOwnerSearchQuery: '',
+  ownershipTechnicalOwnerSearchQuery: '',
+  ownershipShowAdvanced: false,
+  ownershipIdentityProvider: 'Corporate Entra (OIDC)',
+  ownershipSyncStatus: 'verified',
+  ownershipLastSyncedAt: '',
+}
+
+const NEW_WORKSPACE_WIZARD_DRAFT_KEY = 'tectona-new-workspace-wizard-draft-v1'
+const NEW_WORKSPACE_WIZARD_STEP_TOTAL = 6
+
+const NEW_WORKSPACE_WIZARD_STEPS: ReadonlyArray<{
+  id: number
+  shortTitle: string
+  title: string
+  description: string
+}> = [
+  {
+    id: 1,
+    shortTitle: 'Basic Info',
+    title: 'Basic information',
+    description: 'Workspace identity in the enterprise directory.',
+  },
+  {
+    id: 2,
+    shortTitle: 'Organization',
+    title: 'Organization scope',
+    description: 'Primary organization and related units.',
+  },
+  {
+    id: 3,
+    shortTitle: 'Classification',
+    title: 'Workspace classification',
+    description: 'Type of organizational and execution boundary.',
+  },
+  {
+    id: 4,
+    shortTitle: 'Ownership',
+    title: 'Ownership & responsibility',
+    description:
+      'Assign Owner (required) and optional Business / Technical owners. Choose Identity-Lite or Enterprise IAM as the directory source.',
+  },
+  {
+    id: 5,
+    shortTitle: 'Lifecycle',
+    title: 'Lifecycle',
+    description: 'Lifecycle stage for this boundary.',
+  },
+  {
+    id: 6,
+    shortTitle: 'Review',
+    title: 'Review & create',
+    description: 'Summary before the boundary is registered.',
+  },
+]
+
+function truncateWizardStepSummary(value: string, maxLen: number): string {
+  const t = value.trim()
+  if (t.length <= maxLen) return t
+  return `${t.slice(0, Math.max(1, maxLen - 1))}…`
+}
+
+/** One-line recap shown under completed wizard step labels. */
+function buildNewWorkspaceWizardStepSummaries(
+  form: NewWorkspaceFormState,
+  organizationNodes: OrganizationDirectoryNode[],
+  workspaceTypeOptions: WorkspaceTypeRecord[]
+): Partial<Record<number, string>> {
+  const out: Partial<Record<number, string>> = {}
+
+  const name = form.name.trim()
+  if (name) {
+    const code = form.code.trim()
+    out[1] = code
+      ? truncateWizardStepSummary(`${name} · ${code}`, 40)
+      : truncateWizardStepSummary(name, 36)
+  }
+
+  const primaryLabel = organizationNodes.find((n) => n.id === form.primaryOrganizationId)?.label?.trim()
+  if (primaryLabel) {
+    const rel = form.relatedOrganizationIds.length
+    out[2] =
+      rel > 0
+        ? truncateWizardStepSummary(`${primaryLabel} (+${rel} related)`, 38)
+        : truncateWizardStepSummary(primaryLabel, 38)
+  }
+
+  const typeLabel =
+    workspaceTypeOptions.find((t) => t.typeCode === form.workspaceType)?.label?.trim()
+    || form.workspaceType.trim()
+  if (typeLabel) {
+    out[3] = truncateWizardStepSummary(typeLabel, 36)
+  }
+
+  const owner = form.owner.trim()
+  const business = form.businessOwner.trim()
+  const technical = form.technicalOwner.trim()
+  const ownerParts = [owner, business, technical].filter(Boolean)
+  if (ownerParts.length > 0) {
+    out[4] = truncateWizardStepSummary(
+      ownerParts.length === 1 ? ownerParts[0] : `${ownerParts[0]} +${ownerParts.length - 1} more`,
+      38
+    )
+  }
+
+  if (form.lifecycleStage.trim()) {
+    out[5] = form.lifecycleStage.trim()
+  }
+
+  return out
+}
+
+/** Prefix from workspace name (initials / compact alnum) for system-generated codes. */
+function workspaceCodePrefixFromName(name: string): string {
+  const words = name
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 0)
+  let acc = ''
+  for (const word of words) {
+    const m = word.match(/[A-Za-z0-9]/)
+    if (m) acc += m[0].toUpperCase()
+    if (acc.length >= 6) break
+  }
+  if (acc.length >= 2) return acc
+  const compact = name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+  return compact.length >= 2 ? compact : 'WS'
+}
+
+/** Unique directory code derived from name (never empty when `name` is non-empty). */
+function generateWorkspaceCode(name: string, takenLower: Set<string>): string {
+  const trimmed = name.trim()
+  if (!trimmed) return ''
+  let prefix = workspaceCodePrefixFromName(trimmed)
+  if (prefix.length < 2) prefix = 'WS'
+  const sanitize = (s: string) => s.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 48)
+  for (let i = 0; i < 80; i += 1) {
+    const rand = Math.random().toString(36).slice(2, 6).toUpperCase()
+    const candidate = sanitize(`${prefix}-${rand}`)
+    if (candidate && !takenLower.has(candidate.toLowerCase())) return candidate
+  }
+  const fallback = sanitize(`${prefix}-${Date.now().toString(36).toUpperCase().slice(-8)}`)
+  if (!takenLower.has(fallback.toLowerCase())) return fallback
+  return sanitize(`${prefix}-${performance.now().toString(36).toUpperCase().replace(/\./g, '')}`)
+}
+
+type NewWorkspaceWizardField =
+  | 'name'
+  | 'code'
+  | 'primaryOrganization'
+  | 'workspaceType'
+  | 'owner'
+  | 'businessOwner'
+  | 'technicalOwner'
+  | 'identityMode'
+
+type WizardStepValidation =
+  | { ok: true }
+  | { ok: false; error: string; highlights: Partial<Record<NewWorkspaceWizardField, boolean>> }
+
+function validateNewWorkspaceWizardStep(
+  step: number,
+  form: NewWorkspaceFormState,
+  allWorkspaces: WorkspaceRecord[],
+  options?: { requireOrganizationUuid?: boolean }
+): WizardStepValidation {
+  if (step === 1) {
+    const name = form.name.trim()
+    if (!name) return { ok: false, error: 'Workspace name is required.', highlights: { name: true } }
+    return { ok: true }
+  }
+  if (step === 2) {
+    if (!form.primaryOrganizationId) {
+      return {
+        ok: false,
+        error: 'Primary organization is required.',
+        highlights: { primaryOrganization: true },
+      }
+    }
+    if (options?.requireOrganizationUuid && !UUID_ORG_ID_RE.test(form.primaryOrganizationId.trim())) {
+      return {
+        ok: false,
+        error: 'Primary organization must come from Workspace Org (reload page when the service is running).',
+        highlights: { primaryOrganization: true },
+      }
+    }
+    return { ok: true }
+  }
+  if (step === 3) {
+    if (!form.workspaceType) {
+      return {
+        ok: false,
+        error: 'Workspace type is required.',
+        highlights: { workspaceType: true },
+      }
+    }
+    return { ok: true }
+  }
+  if (step === 4) {
+    if (!form.owner.trim()) {
+      return { ok: false, error: 'Workspace Owner is required.', highlights: { owner: true } }
+    }
+    return { ok: true }
+  }
+  if (step === 5) {
+    return { ok: true }
+  }
+  if (step === 6) {
+    for (let s = 1; s <= 5; s += 1) {
+      const r = validateNewWorkspaceWizardStep(s, form, allWorkspaces, options)
+      if (!r.ok) return r
+    }
+    const taken = new Set(allWorkspaces.map((w) => w.code.toLowerCase()))
+    const nameTrim = form.name.trim()
+    const code = (form.code.trim() || generateWorkspaceCode(nameTrim, taken)).toUpperCase()
+    if (!code) {
+      return { ok: false, error: 'Workspace name is required.', highlights: { name: true } }
+    }
+    const dup = allWorkspaces.some((w) => w.code.toLowerCase() === code.toLowerCase())
+    if (dup) {
+      return {
+        ok: false,
+        error: 'Could not allocate a unique code. Change the workspace name slightly and try again.',
+        highlights: { name: true },
+      }
+    }
+    return { ok: true }
+  }
+  return { ok: true }
+}
+
+function complianceMonitoringLabel(model: GovernanceOperatingModelId): string {
+  switch (model) {
+    case 'innovation_lab':
+      return 'Adaptive'
+    case 'lightweight_team':
+      return 'Basic'
+    default:
+      return 'Enabled'
+  }
+}
+
+function auditTrailSummaryLabel(model: GovernanceOperatingModelId): string {
+  switch (model) {
+    case 'enterprise_controlled':
+      return 'Full chain'
+    case 'agile_product':
+      return 'Standard'
+    case 'innovation_lab':
+      return 'Lightweight'
+    case 'lightweight_team':
+      return 'Basic'
+    default:
+      return 'Standard'
+  }
+}
+
+const GOVERNANCE_OPERATING_MODEL_DEFS: ReadonlyArray<{
+  id: GovernanceOperatingModelId
+  icon: LucideIcon
+  name: string
+  description: string
+  bestFor: string
+  characteristics: readonly string[]
+  policyPreview: string
+  indicator: string
+  indicatorClass: string
+}> = [
+  {
+    id: 'enterprise_controlled',
+    icon: Building2,
+    name: 'Enterprise Controlled',
+    description: 'Strict governance with approval gates and compliance monitoring.',
+    bestFor: 'PMO, enterprise delivery, regulated operations',
+    characteristics: [
+      'Stage gate workflow',
+      'Risk-based approval',
+      'Mandatory audit trail',
+      'SLA enforcement',
+    ],
+    policyPreview: 'Stage-gate · Risk approval · Full audit',
+    indicator: 'High Governance',
+    indicatorClass:
+      'border-rose-200/80 bg-gradient-to-r from-rose-500/12 to-orange-500/10 text-rose-900 dark:border-rose-900/40 dark:text-rose-100',
+  },
+  {
+    id: 'agile_product',
+    icon: Workflow,
+    name: 'Agile Product',
+    description: 'Flexible iterative delivery with lightweight approvals.',
+    bestFor: 'Product squads, digital delivery',
+    characteristics: ['Agile workflow', 'Lightweight approval', 'Sprint-oriented', 'Faster execution'],
+    policyPreview: 'Sprint cadence · Streamlined approvals',
+    indicator: 'Balanced Governance',
+    indicatorClass:
+      'border-sky-200/80 bg-gradient-to-r from-sky-500/12 to-indigo-500/10 text-sky-950 dark:border-sky-900/40 dark:text-sky-100',
+  },
+  {
+    id: 'innovation_lab',
+    icon: FlaskConical,
+    name: 'Innovation Lab',
+    description: 'Experimental workspace optimized for rapid innovation and AI initiatives.',
+    bestFor: 'R&D, AI experimentation, incubator teams',
+    characteristics: [
+      'Minimal approval',
+      'Flexible workflow',
+      'Experimental lifecycle',
+      'Reduced compliance overhead',
+    ],
+    policyPreview: 'Fast path · Sandbox controls',
+    indicator: 'Flexible Governance',
+    indicatorClass:
+      'border-violet-200/80 bg-gradient-to-r from-violet-500/12 to-fuchsia-500/10 text-violet-950 dark:border-violet-900/40 dark:text-violet-100',
+  },
+  {
+    id: 'lightweight_team',
+    icon: Users,
+    name: 'Lightweight Team',
+    description: 'Simple operational workspace with minimal process overhead.',
+    bestFor: 'Small internal teams and operational support',
+    characteristics: ['Simplified workflow', 'Minimal SLA', 'Basic tracking', 'Lightweight audit'],
+    policyPreview: 'Lean ops · Essentials only',
+    indicator: 'Minimal Governance',
+    indicatorClass:
+      'border-emerald-200/80 bg-gradient-to-r from-emerald-500/12 to-teal-500/10 text-emerald-950 dark:border-emerald-900/40 dark:text-emerald-100',
+  },
+]
+
+function governanceMatrixSearchBlob(
+  workspace: WorkspaceRecord,
+  assignment: WorkspaceGovernanceAssignmentDto | undefined,
+  catalog: GovernanceCatalogSnapshot | null
+): string {
+  const metrics = buildGovernanceMatrixMetrics(workspace, assignment, catalog)
+  const modelDef = metrics.operatingModel
+    ? GOVERNANCE_OPERATING_MODEL_DEFS.find((d) => d.id === metrics.operatingModel)
+    : null
+  const ownerName = formatGovernanceDisplayValue(workspace.governance.governanceOwner)
+  const ownerDisplay = ownerName === GOVERNANCE_EMPTY_VALUE ? workspace.owner : ownerName
+
+  return [
+    workspace.name,
+    workspace.code,
+    workspace.type,
+    workspace.lifecycle,
+    workspace.primaryOrganizationLabel,
+    workspace.owner,
+    ownerDisplay,
+    modelDef?.name ?? 'Unassigned',
+    modelDef?.indicator ?? '',
+    metrics.health != null ? String(metrics.health.score) : '',
+    metrics.health?.posture ?? '',
+    metrics.complianceBadge,
+    metrics.riskLevel ?? '',
+    metrics.audit != null ? String(metrics.audit.pct) : '',
+    metrics.audit?.label ?? '',
+    metrics.lastReview?.text ?? '',
+    metrics.lastReview?.overdue ? 'review overdue' : '',
+    metrics.ownerTeam ?? '',
+    workspace.governance.configurationStatus,
+    workspace.governance.policyStatus ?? '',
+  ]
+    .join(' ')
+    .toLowerCase()
+}
+
+export function WorkspaceManagementPage() {
+  const { addToast } = useToast()
+  const navigate = useNavigate()
+  const wmAuth = useWorkspaceManagementAuthorization()
+  const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)
+  const sidebarMini = usePreferencesStore((s) => s.preferences.sidebarMini ?? true)
+  const navDocked = isWorkspaceNavDocked(sidebarFixed)
+  const enterpriseNavTitlesOnly = usePreferencesStore((s) => s.preferences.enterpriseNavTitlesOnly ?? false)
+  const enterpriseNavSimpleList = usePreferencesStore((s) => s.preferences.enterpriseNavSimpleList ?? false)
+  const enterpriseNavCompact = enterpriseNavTitlesOnly || enterpriseNavSimpleList
+  /** Theme Settings → Fixed Sidebar ON = `preferences.sidebarFixed === true`. */
+  const fixedSidebarUiOn = sidebarFixed
+  const enterpriseNavUltra = fixedSidebarUiOn && sidebarMini && enterpriseNavTitlesOnly && enterpriseNavSimpleList
+  const enterpriseNavWidthVariant = enterpriseNavUltra ? 'ultra' : enterpriseNavCompact ? 'compact' : 'default'
+  // Match Document & Knowledge Management Enterprise Navigation: 260px panel width.
+  const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
+  const { widthForBreakpoint: mainWidthForBreakpoint, isBelowBreakpoint: narrowMainBody } = useAppMainBodyWidth(
+    WORKSPACE_KPI_CAROUSEL_BODY_MAX_PX
+  )
+  const showKpiCarousel =
+    mainWidthForBreakpoint > 0 && mainWidthForBreakpoint < WORKSPACE_KPI_GRID_BODY_MIN_PX
+  /** Rentang 700px–999px (lebar konten): layout carousel KPI, float nav, filter ringkas. */
+  const workspaceMediumBodyLayout = showKpiCarousel && !narrowMainBody
+  const kpiCarouselCardsPerSlide: 1 | 2 = narrowMainBody ? 1 : 2
+  /** Lebar konten &lt; 1000px → floating icon rail (hindari grid 1 kolom penuh di Firefox / &lt; xl). */
+  const enterpriseNavFloatRail = showKpiCarousel
+  const navPanelRef = useRef<HTMLDivElement | null>(null)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [navPanelHeightPx, setNavPanelHeightPx] = useState<number | null>(null)
+  const kpiSectionRef = useRef<HTMLElement | null>(null)
+  const overviewMainPanelRef = useRef<HTMLElement | null>(null)
+  const overviewDashboardRef = useRef<HTMLDivElement | null>(null)
+  const workspaceMainFiltersRef = useRef<HTMLDivElement | null>(null)
+  const directoryPanelRef = useRef<HTMLDivElement | null>(null)
+  const governancePanelRef = useRef<HTMLDivElement | null>(null)
+  const membersPanelRef = useRef<HTMLDivElement | null>(null)
+  const assetsPanelRef = useRef<HTMLDivElement | null>(null)
+  const activityPanelRef = useRef<HTMLDivElement | null>(null)
+  const editWorkspaceDrawerRef = useRef<HTMLDivElement | null>(null)
+  const [workspaceMainPanelViewportHeightPx, setWorkspaceMainPanelViewportHeightPx] = useState<number | null>(null)
+
+  const [activePanel, setActivePanel] = useState<WorkspacePanel>('overview')
+  // Assistant deep-link params (?view=/?ws=) consumed once to open a panel/detail drawer.
+  const [uiSearchParams, setUiSearchParams] = useSearchParams()
+  const [pendingDetailOpen, setPendingDetailOpen] = useState<{
+    id: string
+    mode: 'detail' | 'governance'
+  } | null>(null)
+  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useState(true)
+  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [showKpiCards, setShowKpiCards] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilterTags, setStatusFilterTags] = useState<Set<WorkspaceStatus>>(() => new Set(ALL_WORKSPACE_STATUSES))
+  const [governanceConfigurationFilterTags, setGovernanceConfigurationFilterTags] = useState<
+    Set<GovernanceConfigurationStatus>
+  >(() => new Set(ALL_GOVERNANCE_CONFIGURATION_STATUSES))
+  const [typeFilterTags, setTypeFilterTags] = useState<Set<WorkspaceClassification>>(() => new Set(ALL_WORKSPACE_CLASSIFICATIONS))
+  const [overviewPalette] = useState<WorkspaceOverviewPalette>('pastel')
+  /** Workspace `code` highlighted on load distribution chart. */
+  const [focusedLoadWorkspaceCode, setFocusedLoadWorkspaceCode] = useState<string | null>(null)
+  const [overviewMotionReady, setOverviewMotionReady] = useState(false)
+  const [directoryChartFocus, setDirectoryChartFocus] = useState<DirectoryChartFocus | null>(null)
+  const [overviewChartSelection, setOverviewChartSelection] = useState<{ chartId: string; key: string } | null>(null)
+  const [directoryPage, setDirectoryPage] = useState(1)
+  const [directoryPageSize, setDirectoryPageSize] = useState(10)
+  const [directorySort, setDirectorySort] = useState<{ key: DirectoryTableSortKey; dir: 'asc' | 'desc' } | null>(null)
+  const defaultDirectoryColumnOrder = useMemo(
+    () => ['name', 'type', 'owner', 'lifecycle', 'governanceStatus'] as const,
+    []
+  )
+  const [directoryColumnOrder, setDirectoryColumnOrder] = useState<DirectoryTableSortKey[]>(() => [...defaultDirectoryColumnOrder])
+  const [directoryColumnWidthsPx, setDirectoryColumnWidthsPx] = useState<Partial<Record<DirectoryTableSortKey, number>>>({})
+  const [freezeDirectoryFirstColumn, setFreezeDirectoryFirstColumn] = useState(false)
+  const [directoryHeaderContextMenu, setDirectoryHeaderContextMenu] = useState<{
+    x: number
+    y: number
+    columnKey: DirectoryTableSortKey
+  } | null>(null)
+  const [directoryColumnWidthDialog, setDirectoryColumnWidthDialog] = useState<{
+    open: boolean
+    columnKey: DirectoryTableSortKey
+    valuePx: string
+  } | null>(null)
+  const [directoryColumnResizingKey, setDirectoryColumnResizingKey] = useState<DirectoryTableSortKey | null>(null)
+  const directoryColumnResizeRef = useRef<{
+    columnKey: DirectoryTableSortKey
+    startX: number
+    startWidth: number
+  } | null>(null)
+  const directoryTableRef = useRef<HTMLTableElement | null>(null)
+  const [directoryGroupBy, setDirectoryGroupBy] = useState<DirectoryGroupByKey>(null)
+  const [showDirectorySelection, setShowDirectorySelection] = useState(false)
+  const [directorySelectedIds, setDirectorySelectedIds] = useState<string[]>([])
+  const [directoryGroupByMenuOpen, setDirectoryGroupByMenuOpen] = useState(false)
+  const [directoryGroupByMenuSearch, setDirectoryGroupByMenuSearch] = useState('')
+  const [directoryGroupByMenuAnchor, setDirectoryGroupByMenuAnchor] = useState<{
+    left: number
+    top: number
+    width: number
+  } | null>(null)
+  const directoryGroupByTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const directoryGroupByMenuPanelRef = useRef<HTMLDivElement | null>(null)
+  const [directoryHiddenColumns, setDirectoryHiddenColumns] = useState<Set<DirectoryTableSortKey>>(() => new Set())
+  const [directoryColumnsMenuOpen, setDirectoryColumnsMenuOpen] = useState(false)
+  const [directoryColumnsMenuSearch, setDirectoryColumnsMenuSearch] = useState('')
+  const [directoryColumnsMenuAnchor, setDirectoryColumnsMenuAnchor] = useState<{
+    left: number
+    top: number
+    width: number
+  } | null>(null)
+  const directoryColumnsTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const directoryColumnsMenuPanelRef = useRef<HTMLDivElement | null>(null)
+  const [assetsPage, setAssetsPage] = useState(1)
+  const [assetsPageSize, setAssetsPageSize] = useState(10)
+  const [assetsSort, setAssetsSort] = useState<{ key: AssetSortKey; dir: 'asc' | 'desc' } | null>(null)
+  const [activityPage, setActivityPage] = useState(1)
+  const [activityPageSize, setActivityPageSize] = useState(10)
+  const [governancePage, setGovernancePage] = useState(1)
+  const [governancePageSize, setGovernancePageSize] = useState(10)
+  const [governanceSort, setGovernanceSort] = useState<{ key: GovernanceSortKey; dir: 'asc' | 'desc' } | null>(null)
+  const [governancePolicyFilterTags, setGovernancePolicyFilterTags] = useState<Set<GovernancePolicyStatus>>(
+    () => new Set(ALL_GOVERNANCE_POLICY_STATUSES)
+  )
+  const [governanceHealthFilterTags, setGovernanceHealthFilterTags] = useState<Set<GovernanceHealthPosture>>(
+    () => new Set(ALL_GOVERNANCE_HEALTH_POSTURES)
+  )
+  const [governanceRiskFilterTags, setGovernanceRiskFilterTags] = useState<Set<GovernanceRiskLevel>>(
+    () => new Set(ALL_GOVERNANCE_RISK_LEVELS)
+  )
+  const [governanceOperatingModelColumnFilters, setGovernanceOperatingModelColumnFilters] = useState<Set<string>>(
+    () => new Set()
+  )
+  const [governanceComplianceColumnFilters, setGovernanceComplianceColumnFilters] = useState<
+    Set<MatrixComplianceBadge>
+  >(() => new Set())
+  const [governanceAuditReadinessColumnFilters, setGovernanceAuditReadinessColumnFilters] = useState<Set<string>>(
+    () => new Set()
+  )
+  const [governanceOwnerColumnFilters, setGovernanceOwnerColumnFilters] = useState<Set<string>>(() => new Set())
+  const [membersPage, setMembersPage] = useState(1)
+  const [membersPageSize, setMembersPageSize] = useState(10)
+  const [membersSort, setMembersSort] = useState<{ key: MemberSortKey; dir: 'asc' | 'desc' } | null>(null)
+  const [membersRoleFilter, setMembersRoleFilter] = useState<Set<MemberRole>>(() => new Set())
+  const [directoryOwnerFilterTags, setDirectoryOwnerFilterTags] = useState<Set<string>>(() => new Set())
+  const [directoryTypeFilterTags, setDirectoryTypeFilterTags] = useState<Set<string>>(() => new Set())
+  const [directoryOrgFilterTags, setDirectoryOrgFilterTags] = useState<Set<string>>(() => new Set())
+  const [assetsTypeFilterTags, setAssetsTypeFilterTags] = useState<Set<AssetRecord['type']>>(() => new Set())
+  const [assetsOwnerFilterTags, setAssetsOwnerFilterTags] = useState<Set<string>>(() => new Set())
+  const [directoryWorkspaces, setDirectoryWorkspaces] = useState<WorkspaceRecord[]>(() => [])
+  const [governanceCatalog, setGovernanceCatalog] = useState<GovernanceCatalogSnapshot | null>(null)
+  const [governanceAssignments, setGovernanceAssignments] = useState<WorkspaceGovernanceAssignmentDto[]>([])
+  const [workspaceOrgBackendConnected, setWorkspaceOrgBackendConnected] = useState(false)
+  const [workspaceOrgInitialFetchDone, setWorkspaceOrgInitialFetchDone] = useState(false)
+  const [wacBackendConnected, setWacBackendConnected] = useState(false)
+  const [workspaceMembers, setWorkspaceMembers] = useState<MemberRecord[]>([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [identityUsers, setIdentityUsers] = useState<IdentityUserDto[]>([])
+  const [workspaceMemberCounts, setWorkspaceMemberCounts] = useState<Record<string, number>>({})
+  const allWorkspacesForList = useMemo(() => directoryWorkspaces, [directoryWorkspaces])
+  const assetsCatalogRecords = useMemo(
+    () => buildAssetsFromGovernanceCatalog(governanceCatalog),
+    [governanceCatalog]
+  )
+  const [assetActionSubmitting, setAssetActionSubmitting] = useState<string | null>(null)
+  const [assetAssignDialogOpen, setAssetAssignDialogOpen] = useState(false)
+  const [assetAssignTemplate, setAssetAssignTemplate] = useState<AssetRecord | null>(null)
+  const [assetAssignWorkspaceId, setAssetAssignWorkspaceId] = useState('')
+  const [assetAssignSubmitting, setAssetAssignSubmitting] = useState(false)
+  const [workspaceActivityFeed, setWorkspaceActivityFeed] = useState<ActivityRecord[]>([])
+
+  const assetsTypeOptionsList = useMemo(
+    () => [...new Set(assetsCatalogRecords.map((asset) => asset.type))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
+    [assetsCatalogRecords]
+  )
+
+  const assetsOwnerOptionsList = useMemo(
+    () => [...new Set(assetsCatalogRecords.map((asset) => asset.owner))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
+    [assetsCatalogRecords]
+  )
+
+  const inviteEmployeeDirectory = useMemo((): EmployeeDirectoryEntry[] => {
+    return identityUsers
+      .filter((u) => u.status_code === 'active')
+      .map((u) => ({
+        id: u.id,
+        name: u.display_name,
+        email: u.email,
+        directoryId: u.id.slice(0, 8).toUpperCase(),
+        initials: initialsFromDisplayName(u.display_name || u.email),
+        organizationalUnit: u.organizational_unit?.trim() || '',
+        manager: u.manager_display_name?.trim() || '',
+      }))
+  }, [identityUsers])
+
+  const inviteWorkspaceOptions = useMemo(
+    () =>
+      allWorkspacesForList.map((w) => ({
+        id: w.id,
+        name: w.name,
+        governance: {
+          configurationStatus: w.governance.configurationStatus,
+          complianceStatus: w.governance.complianceStatus,
+          policyStatus: w.governance.policyStatus,
+          template: w.governance.template,
+          lastReview: w.governance.lastReview,
+        },
+      })),
+    [allWorkspacesForList]
+  )
+
+  const [organizationNodes, setOrganizationNodes] = useState<OrganizationDirectoryNode[]>(() => [])
+
+  const visiblePanelGroups = useMemo(() => {
+    if (wmAuth.loading) return workspacePanelGroups
+    return workspacePanelGroups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((panel) => wmAuth.canAccessPanel(panel.id)),
+      }))
+      .filter((group) => group.items.length > 0)
+  }, [
+    wmAuth.loading,
+    wmAuth.isPlatformAdmin,
+    wmAuth.canViewOverview,
+    wmAuth.canViewDirectory,
+    wmAuth.canViewGovernance,
+    wmAuth.canManageWorkspace,
+  ])
+
+  const floatNavPanels = useMemo(
+    () => visiblePanelGroups.flatMap((group) => group.items),
+    [visiblePanelGroups]
+  )
+
+  useEffect(() => {
+    if (wmAuth.loading) return
+    if (wmAuth.canAccessPanel(activePanel)) return
+    const fallback = workspacePanels.find((panel) => wmAuth.canAccessPanel(panel.id))
+    if (fallback) setActivePanel(fallback.id)
+  }, [wmAuth.loading, activePanel, wmAuth.isPlatformAdmin, wmAuth.canViewOverview, wmAuth.canViewDirectory, wmAuth.canViewGovernance, wmAuth.canManageWorkspace])
+
+  const knownPeopleNames = useMemo(
+    () => new Set(workspaceMembers.map((m) => m.name.trim().toLowerCase())),
+    [workspaceMembers]
+  )
+
+  const currentSessionUser = getSession()?.user ?? null
+  const currentSessionUserRole = (currentSessionUser?.role ?? '').trim().toLowerCase()
+  const currentSessionUserRoles = (currentSessionUser?.roles ?? []).map((role) => role.trim().toLowerCase())
+  const canViewAllActivityAudit =
+    currentSessionUserRole === 'root'
+    || currentSessionUserRole === 'admin'
+    || currentSessionUserRole === 'administrator'
+    || currentSessionUserRoles.some((role) => role === 'tectona_root' || role === 'tectona_admin' || role === 'root' || role === 'admin' || role === 'administrator')
+
+  const currentUserActivityKeys = useMemo(() => {
+    const keys = new Set<string>()
+    if (!currentSessionUser) return keys
+
+    const pushKey = (value: string | undefined | null) => {
+      if (!value) return
+      const normalized = normalizeActivityActorKey(value)
+      if (normalized) keys.add(normalized)
+    }
+
+    pushKey(currentSessionUser.name)
+    pushKey(currentSessionUser.email)
+    pushKey(currentSessionUser.id)
+    const emailPrefix = currentSessionUser.email.split('@')[0]?.trim()
+    pushKey(emailPrefix)
+
+    const memberRow = workspaceMembers.find((member) => member.subjectId === currentSessionUser.id)
+    if (memberRow) pushKey(memberRow.name)
+
+    return keys
+  }, [currentSessionUser, workspaceMembers])
+
+  const myActivityStream = useMemo(
+    () => workspaceActivityFeed.filter((item) => currentUserActivityKeys.has(normalizeActivityActorKey(item.actor))),
+    [workspaceActivityFeed, currentUserActivityKeys]
+  )
+
+  const hasWorkspaceOrgOrganizations = useMemo(
+    () => workspaceOrgBackendConnected && organizationNodes.some((n) => n.code != null || UUID_ORG_ID_RE.test(n.id)),
+    [workspaceOrgBackendConnected, organizationNodes]
+  )
+
+  const wizardValidationOptions = useMemo(() => ({ requireOrganizationUuid: true }), [])
+  const directoryOwnerOptionsList = useMemo(
+    () =>
+      [...new Set(allWorkspacesForList.map((w) => w.owner))].sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base' })
+      ),
+    [allWorkspacesForList]
+  )
+  const ownerSelectOptions = useMemo(() => {
+    const s = new Set<string>(directoryOwnerOptionsList)
+    for (const u of identityUsers) {
+      if (u.display_name?.trim()) s.add(u.display_name.trim())
+    }
+    for (const m of workspaceMembers) s.add(m.name)
+    return [...s].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [directoryOwnerOptionsList, identityUsers, workspaceMembers])
+
+  const governanceAssignmentByWorkspaceId = useMemo(
+    () => new Map(governanceAssignments.map((a) => [a.workspace_id, a])),
+    [governanceAssignments]
+  )
+
+  const hasWorkspaceActivityData = useMemo(
+    () => workspaceActivityFeed.length > 0,
+    [workspaceActivityFeed]
+  )
+
+  const isActivityFallbackMode = !canViewAllActivityAudit && myActivityStream.length === 0 && hasWorkspaceActivityData
+
+  const activitySourceRows = useMemo(
+    () => (canViewAllActivityAudit
+      ? workspaceActivityFeed
+      : (myActivityStream.length > 0 ? myActivityStream : workspaceActivityFeed)),
+    [canViewAllActivityAudit, myActivityStream, workspaceActivityFeed]
+  )
+
+  const filteredActivityRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return activitySourceRows
+    return activitySourceRows.filter((item) => {
+      return (
+        item.actor.toLowerCase().includes(q)
+        || item.event.toLowerCase().includes(q)
+        || item.target.toLowerCase().includes(q)
+        || item.timestamp.toLowerCase().includes(q)
+      )
+    })
+  }, [activitySourceRows, searchQuery])
+
+  const activityTotalPages = Math.max(1, Math.ceil(filteredActivityRows.length / activityPageSize))
+
+  const activityTableRows = useMemo(() => {
+    const start = (activityPage - 1) * activityPageSize
+    return filteredActivityRows.slice(start, start + activityPageSize)
+  }, [filteredActivityRows, activityPage, activityPageSize])
+
+  const refreshWorkspaceOrgLists = useCallback(async () => {
+    try {
+      const [workspaceRows, orgList, typeListResult] = await Promise.all([
+        fetchAllWorkspaceOrgWorkspaces(),
+        fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200 }),
+        fetchWorkspaceOrgWorkspaceTypes().catch(() => null),
+      ])
+      const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
+      let merged: WorkspaceRecord[] = mapped
+      try {
+        const [cats, assigns] = await Promise.all([
+          fetchGovernanceCatalogSnapshot(),
+          fetchWorkspaceGovernanceAssignments(),
+        ])
+        setGovernanceCatalog(cats)
+        setGovernanceAssignments(assigns.items ?? [])
+        try {
+          const sessionUser = getSession()?.user ?? null
+          const sessionUserRole = (sessionUser?.role ?? '').trim().toLowerCase()
+          const sessionUserRoles = (sessionUser?.roles ?? []).map((role) => role.trim().toLowerCase())
+          const elevatedActivityAccess =
+            sessionUserRole === 'root'
+            || sessionUserRole === 'admin'
+            || sessionUserRole === 'administrator'
+            || sessionUserRoles.some((role) => role === 'tectona_root' || role === 'tectona_admin' || role === 'root' || role === 'admin' || role === 'administrator')
+
+          if (elevatedActivityAccess) {
+            const activities = await fetchWorkspaceActivity(200)
+            setWorkspaceActivityFeed((activities.items ?? []).map(mapBackendActivityToRecord))
+          } else {
+          const actorCandidates = (() => {
+            if (!currentSessionUser) return [] as string[]
+            const emailPrefix = currentSessionUser.email.split('@')[0]?.trim() || ''
+            return [...new Set([
+              currentSessionUser.name,
+              currentSessionUser.email,
+              currentSessionUser.id,
+              emailPrefix,
+            ].map((v) => v?.trim()).filter((v): v is string => Boolean(v)))]
+          })()
+
+          if (actorCandidates.length > 0) {
+            const actorFeeds = await Promise.all(
+              actorCandidates.map((actor) => fetchWorkspaceActivity(80, actor).catch(() => ({ items: [] as WorkspaceActivityEventDto[] })))
+            )
+            const merged = new Map<string, WorkspaceActivityEventDto>()
+            for (const feed of actorFeeds) {
+              for (const item of feed.items ?? []) {
+                if (!merged.has(item.id)) merged.set(item.id, item)
+              }
+            }
+            const ordered = [...merged.values()].sort((a, b) => {
+              const at = new Date(a.timestamp).getTime()
+              const bt = new Date(b.timestamp).getTime()
+              return bt - at
+            })
+            if (ordered.length > 0) {
+              setWorkspaceActivityFeed(ordered.map(mapBackendActivityToRecord))
+            } else {
+              const activities = await fetchWorkspaceActivity(80)
+              setWorkspaceActivityFeed((activities.items ?? []).map(mapBackendActivityToRecord))
+            }
+          } else {
+            const activities = await fetchWorkspaceActivity(80)
+            setWorkspaceActivityFeed((activities.items ?? []).map(mapBackendActivityToRecord))
+          }
+          }
+        } catch {
+          setWorkspaceActivityFeed([])
+        }
+        const byId = new Map((assigns.items ?? []).map((a) => [a.workspace_id, a]))
+        merged = mapped.map((rec) => applyManagedGovernanceToRecord(rec, byId.get(rec.id), cats))
+      } catch {
+        setGovernanceCatalog(null)
+        setGovernanceAssignments([])
+        setWorkspaceActivityFeed([])
+      }
+      setWorkspaceOrgBackendConnected(true)
+      setDirectoryWorkspaces(merged)
+      const orgNodes = [...orgList.items]
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+        .map((o) => ({
+          id: o.id,
+          code: o.organization_code,
+          label: o.name,
+          parentId: (typeof o.metadata?.parent_org_id === 'string' ? o.metadata.parent_org_id : null),
+          version: o.version,
+          metadata: o.metadata,
+        }))
+      setOrganizationNodes(orgNodes)
+      if (typeListResult) {
+        setWorkspaceTypeOptions(
+          typeListResult.items
+            .filter((t) => t.is_active)
+            .sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label))
+            .map((t) => ({ id: t.id, typeCode: t.type_code, label: t.label, sortOrder: t.sort_order, isActive: t.is_active, version: t.version }))
+        )
+      }
+    } catch {
+      setWorkspaceOrgBackendConnected(false)
+      setDirectoryWorkspaces([])
+      setOrganizationNodes([])
+      setGovernanceCatalog(null)
+      setGovernanceAssignments([])
+      setWorkspaceActivityFeed([])
+      setDirectoryOwnerFilterTags(() => new Set())
+      setDirectoryOrgFilterTags(() => new Set())
+    } finally {
+      setWorkspaceOrgInitialFetchDone(true)
+    }
+  }, [])
+
+  const refreshWorkspaceMemberCounts = useCallback(async (workspaceIds: string[]) => {
+    if (workspaceIds.length === 0) {
+      setWorkspaceMemberCounts({})
+      return
+    }
+    try {
+      const pairs = await Promise.all(
+        workspaceIds.map(async (workspaceId) => {
+          try {
+            const res = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspaceId)
+            return [workspaceId, res.total] as const
+          } catch {
+            return [workspaceId, 0] as const
+          }
+        })
+      )
+      setWorkspaceMemberCounts(Object.fromEntries(pairs))
+      setWacBackendConnected(true)
+    } catch {
+      setWacBackendConnected(false)
+    }
+  }, [])
+
+  const refreshAllWorkspaceMembers = useCallback(async () => {
+    const workspaces = allWorkspacesForList
+    if (workspaces.length === 0) {
+      setWorkspaceMembers([])
+      setWorkspaceMemberCounts({})
+      return
+    }
+    setMembersLoading(true)
+    try {
+      const userBySubject = new Map(identityUsers.map((u) => [u.id, u]))
+      const results = await Promise.all(
+        workspaces.map(async (w) => {
+          try {
+            const res = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, w.id)
+            return { workspace: w, items: res.items, total: res.total }
+          } catch {
+            return { workspace: w, items: [] as WacMembershipDto[], total: 0 }
+          }
+        })
+      )
+      const counts: Record<string, number> = {}
+      const merged: MemberRecord[] = []
+      for (const { workspace, items, total } of results) {
+        counts[workspace.id] = total
+        for (const row of items) {
+          merged.push(mapWacMembershipToMemberRecord(row, userBySubject, { id: workspace.id, name: workspace.name }))
+        }
+      }
+      setWorkspaceMembers(merged)
+      setWorkspaceMemberCounts(counts)
+      setWacBackendConnected(true)
+    } catch (e) {
+      setWacBackendConnected(false)
+      setWorkspaceMembers([])
+      const msg = e instanceof Error ? e.message : 'Could not load workspace members.'
+      addToast({ variant: 'error', title: 'Workspace members unavailable', description: msg })
+    } finally {
+      setMembersLoading(false)
+    }
+  }, [allWorkspacesForList, identityUsers, addToast])
+
+  useEffect(() => {
+    void refreshWorkspaceOrgLists()
+  }, [refreshWorkspaceOrgLists])
+
+  // The assistant chat mutates workspaces via executeTectonaAgentAction, which dispatches
+  // `tectona:workspace-created` / `tectona:workspace-updated` / `tectona:workspace-deleted` /
+  // `tectona:governance-updated`. Refetch so the directory and governance status update here immediately.
+  useEffect(() => {
+    const onMutated = () => {
+      void refreshWorkspaceOrgLists()
+    }
+    window.addEventListener('tectona:workspace-created', onMutated)
+    window.addEventListener('tectona:workspace-updated', onMutated)
+    window.addEventListener('tectona:workspace-deleted', onMutated)
+    window.addEventListener('tectona:governance-updated', onMutated)
+    return () => {
+      window.removeEventListener('tectona:workspace-created', onMutated)
+      window.removeEventListener('tectona:workspace-updated', onMutated)
+      window.removeEventListener('tectona:workspace-deleted', onMutated)
+      window.removeEventListener('tectona:governance-updated', onMutated)
+    }
+  }, [refreshWorkspaceOrgLists])
+
+  useEffect(() => {
+    if (activePanel !== 'activity') return
+    const timer = window.setInterval(() => {
+      void refreshWorkspaceOrgLists()
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [activePanel, refreshWorkspaceOrgLists])
+
+  const refreshIdentityUserDirectory = useCallback(async () => {
+    try {
+      const res = await fetchIdentityUsers({ limit: 300 })
+      setIdentityUsers(res.items ?? [])
+    } catch {
+      setIdentityUsers([])
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshIdentityUserDirectory()
+  }, [refreshIdentityUserDirectory])
+
+  useEffect(() => {
+    if (!workspaceOrgBackendConnected || allWorkspacesForList.length === 0) return
+    void refreshWorkspaceMemberCounts(allWorkspacesForList.map((w) => w.id))
+  }, [workspaceOrgBackendConnected, allWorkspacesForList, refreshWorkspaceMemberCounts])
+
+  useEffect(() => {
+    if (activePanel !== 'members') return
+    void refreshAllWorkspaceMembers()
+  }, [activePanel, refreshAllWorkspaceMembers])
+
+  useEffect(() => {
+    if (activePanel !== 'members' || identityUsers.length === 0) return
+    void refreshAllWorkspaceMembers()
+  }, [identityUsers, activePanel, refreshAllWorkspaceMembers])
+
+  const [newWorkspaceDrawerOpen, setNewWorkspaceDrawerOpen] = useState(false)
+  const [newWorkspaceForm, setNewWorkspaceForm] = useState(() => ({ ...INITIAL_NEW_WORKSPACE_FORM }))
+  const [newWorkspaceFormError, setNewWorkspaceFormError] = useState<string | null>(null)
+  const [isSubmittingNewWorkspace, setIsSubmittingNewWorkspace] = useState(false)
+  const [newWorkspaceWizardStep, setNewWorkspaceWizardStep] = useState(1)
+  const [wizardFieldHighlights, setWizardFieldHighlights] = useState<
+    Partial<Record<NewWorkspaceWizardField, boolean>>
+  >({})
+  const [wizardReviewAcknowledged, setWizardReviewAcknowledged] = useState(false)
+  const [ownershipOverlay, setOwnershipOverlay] = useState<NewWorkspaceOwnershipOverlay | null>(null)
+  const [ownershipOverlayQuery, setOwnershipOverlayQuery] = useState('')
+  const [inviteContactEmail, setInviteContactEmail] = useState('')
+  const [inviteContactTargetRole, setInviteContactTargetRole] = useState<'business' | 'technical'>('technical')
+  const [inviteContactError, setInviteContactError] = useState<string | null>(null)
+  const [primaryOrgManageOpen, setPrimaryOrgManageOpen] = useState(false)
+  const [newOrgLabel, setNewOrgLabel] = useState('')
+  const [newOrgError, setNewOrgError] = useState<string | null>(null)
+  const [newOrgParentId, setNewOrgParentId] = useState<string>(ORG_PARENT_ROOT_SENTINEL)
+  const [editingOrgId, setEditingOrgId] = useState<string | null>(null)
+  const [editingOrgLabel, setEditingOrgLabel] = useState('')
+  const [editingOrgParentId, setEditingOrgParentId] = useState<string>(ORG_PARENT_ROOT_SENTINEL)
+  const [editingOrgError, setEditingOrgError] = useState<string | null>(null)
+  const [confirmDeletePrimaryOrgOpen, setConfirmDeletePrimaryOrgOpen] = useState(false)
+  const [confirmDeletePrimaryOrgTargetId, setConfirmDeletePrimaryOrgTargetId] = useState<string | null>(null)
+
+  const [workspaceTypeOptions, setWorkspaceTypeOptions] = useState<WorkspaceTypeRecord[]>(() => [])
+  const [workspaceTypeManageOpen, setWorkspaceTypeManageOpen] = useState(false)
+  const [newWorkspaceTypeLabel, setNewWorkspaceTypeLabel] = useState('')
+  const [newWorkspaceTypeError, setNewWorkspaceTypeError] = useState<string | null>(null)
+  const [editingWorkspaceTypeValue, setEditingWorkspaceTypeValue] = useState<string | null>(null)
+  const [editingWorkspaceTypeLabel, setEditingWorkspaceTypeLabel] = useState('')
+  const [editingWorkspaceTypeError, setEditingWorkspaceTypeError] = useState<string | null>(null)
+
+  // â”€â”€ Row context-menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null)
+  const [confirmDeleteGovernanceOpen, setConfirmDeleteGovernanceOpen] = useState(false)
+  const [confirmDeleteGovernanceTarget, setConfirmDeleteGovernanceTarget] = useState<WorkspaceRecord | null>(null)
+  const [isDeletingGovernance, setIsDeletingGovernance] = useState(false)
+  const [confirmDeleteWorkspaceOpen, setConfirmDeleteWorkspaceOpen] = useState(false)
+  const [confirmDeleteWorkspaceTarget, setConfirmDeleteWorkspaceTarget] = useState<WorkspaceRecord | null>(null)
+  const [confirmDeleteWorkspaceHighImpactAck, setConfirmDeleteWorkspaceHighImpactAck] = useState(false)
+  const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false)
+  const [confirmDeleteAssetOpen, setConfirmDeleteAssetOpen] = useState(false)
+  const [confirmDeleteAssetTarget, setConfirmDeleteAssetTarget] = useState<AssetRecord | null>(null)
+  const [isDeletingAsset, setIsDeletingAsset] = useState(false)
+
+  // â”€â”€ Inline rename â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [inlineRenameId, setInlineRenameId] = useState<string | null>(null)
+  const [inlineRenameValue, setInlineRenameValue] = useState('')
+  const [inlineRenameSubmitting, setInlineRenameSubmitting] = useState(false)
+
+  // â”€â”€ Governance assignment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [inviteWorkspaceMemberOpen, setInviteWorkspaceMemberOpen] = useState(false)
+  const [inviteWorkspaceMemberSubmitting, setInviteWorkspaceMemberSubmitting] = useState(false)
+  const [editMembershipOpen, setEditMembershipOpen] = useState(false)
+  const [editMembershipTarget, setEditMembershipTarget] = useState<AggregatedMemberRecord | null>(null)
+  const [editMembershipSubmitting, setEditMembershipSubmitting] = useState(false)
+  /** Pre-select workspaces when opening invite drawer (e.g. from directory context menu). */
+  const [invitePresetWorkspaceIds, setInvitePresetWorkspaceIds] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!inviteWorkspaceMemberOpen) return
+    void refreshIdentityUserDirectory()
+  }, [inviteWorkspaceMemberOpen, refreshIdentityUserDirectory])
+
+  const [assignGovernanceOpen, setAssignGovernanceOpen] = useState(false)
+  /** dropdown = toolbar Search & Filters; locked = row/context (workspace sudah dipilih). */
+  const [assignGovernanceWorkspacePickerMode, setAssignGovernanceWorkspacePickerMode] = useState<'dropdown' | 'locked'>(
+    'dropdown'
+  )
+  const [assignGovernanceWorkspace, setAssignGovernanceWorkspace] = useState<WorkspaceRecord | null>(null)
+  const [assignGovernanceForm, setAssignGovernanceForm] = useState<GovernanceAssignmentFormState | null>(null)
+  const [assignGovernanceError, setAssignGovernanceError] = useState<string | null>(null)
+  const [assignGovernanceSubmitting, setAssignGovernanceSubmitting] = useState(false)
+  const [assignGovernanceOperatingModel, setAssignGovernanceOperatingModel] =
+    useState<GovernanceOperatingModelId>('enterprise_controlled')
+  const [assignGovernanceOverrideOpen, setAssignGovernanceOverrideOpen] = useState(false)
+  const [assignGovernanceOverrideReason, setAssignGovernanceOverrideReason] = useState('')
+
+  const [applyTemplateOpen, setApplyTemplateOpen] = useState(false)
+  const [applyTemplateWorkspace, setApplyTemplateWorkspace] = useState<WorkspaceRecord | null>(null)
+  const [applyTemplateChoice, setApplyTemplateChoice] = useState('')
+  const [applyTemplateSubmitting, setApplyTemplateSubmitting] = useState(false)
+
+  const [complianceDialogOpen, setComplianceDialogOpen] = useState(false)
+  const [complianceDialogWorkspace, setComplianceDialogWorkspace] = useState<WorkspaceRecord | null>(null)
+  const [complianceDialogLoading, setComplianceDialogLoading] = useState(false)
+  const [complianceDialogData, setComplianceDialogData] = useState<WorkspaceComplianceDto | null>(null)
+
+  const [governanceMatrixDetailOpen, setGovernanceMatrixDetailOpen] = useState(false)
+  const [governanceMatrixDetailWorkspace, setGovernanceMatrixDetailWorkspace] = useState<WorkspaceRecord | null>(null)
+  const [memberDetailOpen, setMemberDetailOpen] = useState(false)
+  const [memberDetailTarget, setMemberDetailTarget] = useState<AggregatedMemberRecord | null>(null)
+  const [confirmRemoveMemberOpen, setConfirmRemoveMemberOpen] = useState(false)
+  const [confirmRemoveMemberTarget, setConfirmRemoveMemberTarget] = useState<AggregatedMemberRecord | null>(null)
+  const [isRemovingMember, setIsRemovingMember] = useState(false)
+
+  const startInlineRename = (workspace: WorkspaceRecord) => {
+    setInlineRenameId(workspace.id)
+    setInlineRenameValue(workspace.name)
+  }
+
+  const cancelInlineRename = () => {
+    setInlineRenameId(null)
+    setInlineRenameValue('')
+  }
+
+  type WorkspaceOverlayPreserve = {
+    newWorkspaceDrawer?: boolean
+    assignGovernance?: boolean
+    governanceMatrixDetail?: boolean
+    memberDetail?: boolean
+    editWorkspace?: boolean
+    primaryOrgManage?: boolean
+    workspaceTypeManage?: boolean
+    ownershipOverlay?: boolean
+  }
+
+  const closeWorkspaceManagementOverlays = useCallback(
+    (preserve: WorkspaceOverlayPreserve = {}) => {
+      if (!preserve.ownershipOverlay) {
+        setOwnershipOverlay(null)
+        setOwnershipOverlayQuery('')
+        setInviteContactEmail('')
+        setInviteContactTargetRole('technical')
+        setInviteContactError(null)
+      }
+      if (!preserve.primaryOrgManage) setPrimaryOrgManageOpen(false)
+      if (!preserve.workspaceTypeManage) setWorkspaceTypeManageOpen(false)
+      if (!preserve.newWorkspaceDrawer) setNewWorkspaceDrawerOpen(false)
+
+      if (!preserve.assignGovernance) {
+        setAssignGovernanceOpen(false)
+        setAssignGovernanceWorkspacePickerMode('dropdown')
+        setAssignGovernanceWorkspace(null)
+        setAssignGovernanceForm(null)
+        setAssignGovernanceError(null)
+        setAssignGovernanceOverrideOpen(false)
+        setAssignGovernanceOverrideReason('')
+        setAssignGovernanceOperatingModel('enterprise_controlled')
+      }
+
+      if (!preserve.governanceMatrixDetail) {
+        setGovernanceMatrixDetailOpen(false)
+        setGovernanceMatrixDetailWorkspace(null)
+      }
+
+      if (!preserve.memberDetail) {
+        setMemberDetailOpen(false)
+        setMemberDetailTarget(null)
+      }
+
+      setComplianceDialogOpen(false)
+      setComplianceDialogWorkspace(null)
+      setComplianceDialogData(null)
+
+      setApplyTemplateOpen(false)
+      setApplyTemplateWorkspace(null)
+      setApplyTemplateChoice('')
+
+      setAssetAssignDialogOpen(false)
+      setAssetAssignTemplate(null)
+      setAssetAssignWorkspaceId('')
+
+      setConfirmDeleteGovernanceOpen(false)
+      setConfirmDeleteGovernanceTarget(null)
+
+      setConfirmDeleteWorkspaceOpen(false)
+      setConfirmDeleteWorkspaceTarget(null)
+      setConfirmDeleteWorkspaceHighImpactAck(false)
+
+      setConfirmDeletePrimaryOrgOpen(false)
+      setConfirmDeletePrimaryOrgTargetId(null)
+
+      if (!preserve.editWorkspace) {
+        setEditWorkspaceDrawerOpen(false)
+        setEditWorkspaceReadOnly(false)
+        setEditWorkspaceTarget(null)
+        setEditWorkspaceForm(null)
+        setEditWorkspaceError(null)
+      }
+
+      setEditMembershipOpen(false)
+      setEditMembershipTarget(null)
+
+      setRowContextMenu(null)
+      cancelInlineRename()
+    },
+    [cancelInlineRename]
+  )
+
+  const closeAllWorkspaceManagementOverlays = useCallback(() => {
+    closeWorkspaceManagementOverlays({})
+  }, [closeWorkspaceManagementOverlays])
+
+  const selectWorkspacePanel = useCallback(
+    (panel: WorkspacePanel) => {
+      if (panel === activePanel) return
+      closeAllWorkspaceManagementOverlays()
+      setActivePanel(panel)
+    },
+    [activePanel, closeAllWorkspaceManagementOverlays]
+  )
+
+  useEffect(() => {
+    closeAllWorkspaceManagementOverlays()
+    // Hanya saat pindah section; jangan ikut perubahan callback/drawer state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePanel])
+
+  const openAssignGovernanceDialog = (
+    workspace: WorkspaceRecord,
+    options?: { workspacePicker?: 'dropdown' | 'locked' }
+  ) => {
+    closeAllWorkspaceManagementOverlays()
+    const baseForm = buildGovernanceAssignmentForm(workspace, governanceAssignmentByWorkspaceId.get(workspace.id))
+    const model = inferGovernanceOperatingModel(baseForm, governanceCatalog)
+    const merged: GovernanceAssignmentFormState =
+      governanceCatalog != null
+        ? { ...baseForm, ...resolveGovernancePoliciesFromModel(governanceCatalog, model) }
+        : baseForm
+    setAssignGovernanceWorkspace(workspace)
+    setAssignGovernanceForm(merged)
+    setAssignGovernanceOperatingModel(model)
+    setAssignGovernanceOverrideOpen(false)
+    setAssignGovernanceOverrideReason('')
+    setAssignGovernanceError(null)
+    setAssignGovernanceWorkspacePickerMode(options?.workspacePicker ?? 'locked')
+    setAssignGovernanceOpen(true)
+  }
+
+  const closeAssignGovernanceDialog = () => {
+    if (assignGovernanceSubmitting) return
+    setAssignGovernanceOpen(false)
+    setAssignGovernanceWorkspacePickerMode('dropdown')
+    setAssignGovernanceWorkspace(null)
+    setAssignGovernanceForm(null)
+    setAssignGovernanceError(null)
+    setAssignGovernanceOverrideOpen(false)
+    setAssignGovernanceOverrideReason('')
+    setAssignGovernanceOperatingModel('enterprise_controlled')
+  }
+
+  useEffect(() => {
+    if (!assignGovernanceOpen) return
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (assignGovernanceSubmitting) return
+      e.preventDefault()
+      closeAssignGovernanceDialog()
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [assignGovernanceOpen, assignGovernanceSubmitting])
+
+  const applyGovernanceOperatingModel = useCallback(
+    (model: GovernanceOperatingModelId) => {
+      setAssignGovernanceOperatingModel(model)
+      if (!governanceCatalog) return
+      const resolved = resolveGovernancePoliciesFromModel(governanceCatalog, model)
+      setAssignGovernanceForm((f) => (f ? { ...f, ...resolved } : f))
+      setAssignGovernanceError(null)
+      setAssignGovernanceOverrideReason('')
+    },
+    [governanceCatalog]
+  )
+
+  const submitAssignGovernance = async () => {
+    if (!assignGovernanceWorkspace || !assignGovernanceForm || assignGovernanceSubmitting) return
+    const f = assignGovernanceForm
+    if (!f.governanceTemplateId.trim()) {
+      setAssignGovernanceError('Pilih model tata kelola (governance template) terlebih dahulu.')
+      return
+    }
+    if (!f.workflowPolicyId.trim()) {
+      setAssignGovernanceError('Kebijakan workflow belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      return
+    }
+    if (!f.slaPolicyId.trim()) {
+      setAssignGovernanceError('Kebijakan SLA belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      return
+    }
+    if (!f.namingConventionId.trim()) {
+      setAssignGovernanceError('Konvensi penamaan belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      return
+    }
+    if (!f.approvalPolicyId.trim()) {
+      setAssignGovernanceError('Kebijakan persetujuan belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      return
+    }
+    if (
+      governanceCatalog &&
+      !governanceAssignmentPoliciesMatchModel(f, governanceCatalog, assignGovernanceOperatingModel)
+    ) {
+      if (!assignGovernanceOverrideReason.trim()) {
+        setAssignGovernanceOverrideOpen(true)
+        setAssignGovernanceError(
+          'Governance override: pilihan policy berbeda dari model operasi terpilih. Buka bagian “Governance Override”, isi alasan audit, lalu Apply.'
+        )
+        return
+      }
+    }
+    setAssignGovernanceError(null)
+    setAssignGovernanceSubmitting(true)
+    try {
+      await putWorkspaceGovernanceAssignment(assignGovernanceWorkspace.id, {
+        governance_template_id: f.governanceTemplateId.trim(),
+        workflow_policy_id: f.workflowPolicyId.trim(),
+        sla_policy_id: f.slaPolicyId.trim(),
+        naming_convention_id: f.namingConventionId.trim(),
+        approval_policy_id: f.approvalPolicyId.trim(),
+        governance_owner: f.governanceOwner.trim() || null,
+        last_review: f.lastReview.trim() || null,
+      })
+      await refreshWorkspaceOrgLists()
+      const diverged =
+        governanceCatalog != null &&
+        !governanceAssignmentPoliciesMatchModel(f, governanceCatalog, assignGovernanceOperatingModel)
+      const reason = assignGovernanceOverrideReason.trim()
+      addToast({
+        variant: 'success',
+        title: 'Governance assigned',
+        description: diverged
+          ? `${assignGovernanceWorkspace.name} — governance override applied. Audit reason: ${reason.slice(0, 160)}${reason.length > 160 ? '…' : ''}`
+          : `${assignGovernanceWorkspace.name} inherits catalog policies from the selected enterprise operating model (workspace-governance service).`,
+      })
+      setAssignGovernanceOpen(false)
+      setAssignGovernanceWorkspace(null)
+      setAssignGovernanceForm(null)
+      setAssignGovernanceOverrideOpen(false)
+      setAssignGovernanceOverrideReason('')
+      setAssignGovernanceOperatingModel('enterprise_controlled')
+    } catch (err) {
+      setAssignGovernanceError(err instanceof Error ? err.message : 'Could not assign governance policy.')
+    } finally {
+      setAssignGovernanceSubmitting(false)
+    }
+  }
+
+  const openComplianceDialog = async (workspace: WorkspaceRecord) => {
+    closeAllWorkspaceManagementOverlays()
+    setComplianceDialogOpen(true)
+    setComplianceDialogWorkspace(workspace)
+    setComplianceDialogLoading(true)
+    setComplianceDialogData(null)
+    try {
+      const data = await fetchWorkspaceCompliance(workspace.id)
+      setComplianceDialogData(data)
+    } catch {
+      addToast({
+        variant: 'default',
+        title: 'Compliance unavailable',
+        description: 'Pastikan python-workspace-governance-service-fastapi berjalan (port 8428) dan proxy Vite aktif.',
+      })
+      setComplianceDialogOpen(false)
+      setComplianceDialogWorkspace(null)
+    } finally {
+      setComplianceDialogLoading(false)
+    }
+  }
+
+  const closeComplianceDialog = () => {
+    setComplianceDialogOpen(false)
+    setComplianceDialogWorkspace(null)
+    setComplianceDialogData(null)
+  }
+
+  const submitApplyGovernanceTemplate = async () => {
+    if (!applyTemplateWorkspace || !applyTemplateChoice.trim() || applyTemplateSubmitting) return
+    setApplyTemplateSubmitting(true)
+    try {
+      await postApplyGovernanceTemplate(applyTemplateWorkspace.id, applyTemplateChoice.trim())
+      await refreshWorkspaceOrgLists()
+      addToast({
+        variant: 'success',
+        title: 'Template applied',
+        description: `${applyTemplateWorkspace.name} updated from catalog template defaults.`,
+      })
+      setApplyTemplateOpen(false)
+      setApplyTemplateWorkspace(null)
+      setApplyTemplateChoice('')
+    } catch (err) {
+      addToast({
+        variant: 'default',
+        title: 'Could not apply template',
+        description: err instanceof Error ? err.message : 'Request failed',
+      })
+    } finally {
+      setApplyTemplateSubmitting(false)
+    }
+  }
+
+  const openAsset = (asset: AssetRecord) => {
+    if (asset.source === 'template') {
+      navigate('/enterprise-governance-model/templates')
+      return
+    }
+    if (asset.source === 'workflow_policy') {
+      navigate('/enterprise-governance-model/policies/workflow')
+      return
+    }
+    if (asset.source === 'sla_policy') {
+      navigate('/enterprise-governance-model/policies/sla')
+      return
+    }
+    if (asset.source === 'naming_convention') {
+      navigate('/enterprise-governance-model/policies/naming')
+      return
+    }
+    if (asset.source === 'approval_policy') {
+      navigate('/enterprise-governance-model/policies/approval')
+      return
+    }
+    addToast({
+      variant: 'default',
+      title: 'Open asset',
+      description: `${asset.name} is static sample data and has no linked registry entry.`,
+    })
+  }
+
+  const duplicateAsset = async (asset: AssetRecord) => {
+    if (!governanceCatalog || asset.source === 'static') {
+      addToast({
+        variant: 'default',
+        title: 'Duplicate unavailable',
+        description: 'Asset is not linked to governance catalog backend.',
+      })
+      return
+    }
+    if (!asset.sourceId) return
+
+    setAssetActionSubmitting(asset.id)
+    try {
+      if (asset.source === 'template') {
+        const source = governanceCatalog.templates.find((t) => t.id === asset.sourceId)
+        if (!source) throw new Error('Template source not found in catalog.')
+        await createGovernanceTemplate({
+          code: duplicateCode(source.code, 'TEMPLATE'),
+          name: `${source.name} Copy`,
+          description: source.description,
+          status: 'draft',
+          default_workflow_policy_id: source.default_workflow_policy_id,
+          default_sla_policy_id: source.default_sla_policy_id,
+          default_naming_convention_id: source.default_naming_convention_id,
+          default_approval_policy_id: source.default_approval_policy_id,
+        })
+      } else if (asset.source === 'workflow_policy') {
+        const source = governanceCatalog.workflowPolicies.find((p) => p.id === asset.sourceId)
+        if (!source) throw new Error('Workflow policy source not found.')
+        await createWorkflowPolicy({
+          code: duplicateCode(source.code, 'WF'),
+          name: `${source.name} Copy`,
+          description: source.description,
+        })
+      } else if (asset.source === 'sla_policy') {
+        const source = governanceCatalog.slaPolicies.find((p) => p.id === asset.sourceId)
+        if (!source) throw new Error('SLA policy source not found.')
+        await createSlaPolicy({
+          code: duplicateCode(source.code, 'SLA'),
+          name: `${source.name} Copy`,
+          description: source.description,
+        })
+      } else if (asset.source === 'naming_convention') {
+        const source = governanceCatalog.namingConventions.find((p) => p.id === asset.sourceId)
+        if (!source) throw new Error('Naming convention source not found.')
+        await createNamingConvention({
+          code: duplicateCode(source.code, 'NM'),
+          name: `${source.name} Copy`,
+          description: source.description,
+        })
+      } else if (asset.source === 'approval_policy') {
+        const source = governanceCatalog.approvalPolicies.find((p) => p.id === asset.sourceId)
+        if (!source) throw new Error('Approval policy source not found.')
+        await createApprovalPolicy({
+          code: duplicateCode(source.code, 'APR'),
+          name: `${source.name} Copy`,
+          description: source.description,
+        })
+      }
+
+      await refreshWorkspaceOrgLists()
+      addToast({
+        variant: 'success',
+        title: 'Asset duplicated',
+        description: `${asset.name} duplicated into governance catalog backend.`,
+      })
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Duplicate failed',
+        description: err instanceof Error ? err.message : 'Could not duplicate asset.',
+      })
+    } finally {
+      setAssetActionSubmitting(null)
+    }
+  }
+
+  const openDeleteAssetDialog = (asset: AssetRecord) => {
+    if (!governanceCatalog || asset.source === 'static') {
+      addToast({
+        variant: 'default',
+        title: 'Delete unavailable',
+        description: 'Asset is not linked to governance catalog backend.',
+      })
+      return
+    }
+    if (!asset.sourceId) return
+
+    setConfirmDeleteAssetTarget(asset)
+    setConfirmDeleteAssetOpen(true)
+  }
+
+  const closeDeleteAssetDialog = () => {
+    if (isDeletingAsset) return
+    setConfirmDeleteAssetOpen(false)
+    setConfirmDeleteAssetTarget(null)
+  }
+
+  const submitDeleteAsset = async () => {
+    const asset = confirmDeleteAssetTarget
+    if (!asset || !governanceCatalog || !asset.sourceId || isDeletingAsset) return
+
+    setIsDeletingAsset(true)
+    setAssetActionSubmitting(asset.id)
+    try {
+      if (asset.source === 'template') {
+        await deleteGovernanceTemplate(asset.sourceId)
+      } else if (asset.source === 'workflow_policy') {
+        await deleteWorkflowPolicy(asset.sourceId)
+      } else if (asset.source === 'sla_policy') {
+        await deleteSlaPolicy(asset.sourceId)
+      } else if (asset.source === 'naming_convention') {
+        await deleteNamingConvention(asset.sourceId)
+      } else if (asset.source === 'approval_policy') {
+        await deleteApprovalPolicy(asset.sourceId)
+      }
+
+      await refreshWorkspaceOrgLists()
+      addToast({
+        variant: 'success',
+        title: 'Asset deleted',
+        description: `${asset.name} removed from governance catalog backend.`,
+      })
+      setConfirmDeleteAssetOpen(false)
+      setConfirmDeleteAssetTarget(null)
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Delete failed',
+        description: err instanceof Error ? err.message : 'Could not delete asset.',
+      })
+    } finally {
+      setIsDeletingAsset(false)
+      setAssetActionSubmitting(null)
+    }
+  }
+
+  const openAssignAssetDialog = (asset: AssetRecord) => {
+    if (asset.source !== 'template' || !asset.sourceId) {
+      addToast({
+        variant: 'default',
+        title: 'Assign unavailable',
+        description: 'Only governance templates can be assigned to workspaces.',
+      })
+      return
+    }
+    if (allWorkspacesForList.length === 0) {
+      addToast({
+        variant: 'default',
+        title: 'No workspace available',
+        description: 'Create workspace first, then assign governance template.',
+      })
+      return
+    }
+    setAssetAssignTemplate(asset)
+    setAssetAssignWorkspaceId(allWorkspacesForList[0]?.id ?? '')
+    setAssetAssignDialogOpen(true)
+  }
+
+  const closeAssignAssetDialog = (force = false) => {
+    if (assetAssignSubmitting && !force) return
+    setAssetAssignDialogOpen(false)
+    setAssetAssignTemplate(null)
+    setAssetAssignWorkspaceId('')
+  }
+
+  const submitAssignAsset = async () => {
+    if (!assetAssignTemplate?.sourceId || !assetAssignWorkspaceId || assetAssignSubmitting) return
+    const workspace = allWorkspacesForList.find((w) => w.id === assetAssignWorkspaceId)
+    setAssetAssignSubmitting(true)
+    try {
+      await postApplyGovernanceTemplate(assetAssignWorkspaceId, assetAssignTemplate.sourceId)
+      await refreshWorkspaceOrgLists()
+      addToast({
+        variant: 'success',
+        title: 'Template assigned',
+        description: `${assetAssignTemplate.name} applied to ${workspace?.name ?? 'workspace'}.`,
+      })
+      closeAssignAssetDialog(true)
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Assign failed',
+        description: err instanceof Error ? err.message : 'Could not assign template.',
+      })
+    } finally {
+      setAssetAssignSubmitting(false)
+    }
+  }
+
+  const openWorkspaceDetail = (workspace: WorkspaceRecord) => {
+    openEditWorkspaceDrawer(workspace, { readOnly: true })
+  }
+
+  const openMemberDetailDrawer = (member: AggregatedMemberRecord) => {
+    closeAllWorkspaceManagementOverlays()
+    setMemberDetailTarget(member)
+    setMemberDetailOpen(true)
+  }
+
+  const closeMemberDetailDrawer = () => {
+    setMemberDetailOpen(false)
+    setMemberDetailTarget(null)
+  }
+
+  const openEditMembershipDrawer = useCallback((member: AggregatedMemberRecord) => {
+    if (member.memberships.length === 0) {
+      addToast({
+        variant: 'default',
+        title: 'No membership',
+        description: 'This person has no workspace memberships to edit.',
+      })
+      return
+    }
+    closeAllWorkspaceManagementOverlays()
+    setEditMembershipTarget(member)
+    setEditMembershipOpen(true)
+  }, [addToast, closeAllWorkspaceManagementOverlays])
+
+  const closeEditMembershipDrawer = useCallback(() => {
+    if (editMembershipSubmitting) return
+    setEditMembershipOpen(false)
+    setEditMembershipTarget(null)
+  }, [editMembershipSubmitting])
+
+  const actOnMemberSingleWorkspace = useCallback(
+    (member: AggregatedMemberRecord, action: (workspace: WorkspaceRecord) => void) => {
+      const workspace = resolveSingleWorkspaceForMember(member, allWorkspacesForList)
+      if (!workspace) {
+        if (member.memberships.length > 1) {
+          addToast({
+            variant: 'default',
+            title: 'Multiple workspaces',
+            description:
+              'This member belongs to more than one workspace. Use Workspace Directory for workspace-specific actions.',
+          })
+        }
+        setRowContextMenu(null)
+        return
+      }
+      action(workspace)
+      setRowContextMenu(null)
+    },
+    [addToast, allWorkspacesForList]
+  )
+
+  const openRemoveMemberDialog = (member: AggregatedMemberRecord) => {
+    closeAllWorkspaceManagementOverlays()
+    setConfirmRemoveMemberTarget(member)
+    setConfirmRemoveMemberOpen(true)
+  }
+
+  const closeRemoveMemberDialog = () => {
+    if (isRemovingMember) return
+    setConfirmRemoveMemberOpen(false)
+    setConfirmRemoveMemberTarget(null)
+  }
+
+  const submitRemoveMember = async () => {
+    if (!confirmRemoveMemberTarget || isRemovingMember) return
+    setIsRemovingMember(true)
+    const session = getSession()
+    try {
+      for (const ref of confirmRemoveMemberTarget.memberships) {
+        await deleteWorkspaceMembership(TECTONA_WAC_APP_ID, ref.membershipId, {
+          actorId: session?.user?.id,
+        })
+      }
+      await refreshAllWorkspaceMembers()
+      addToast({
+        variant: 'success',
+        title: 'Member removed',
+        description: `${confirmRemoveMemberTarget.name} was removed from ${confirmRemoveMemberTarget.memberships.length} workspace membership(s).`,
+      })
+      setConfirmRemoveMemberOpen(false)
+      setConfirmRemoveMemberTarget(null)
+      if (memberDetailTarget?.subjectId === confirmRemoveMemberTarget.subjectId) {
+        closeMemberDetailDrawer()
+      }
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Remove member failed',
+        description: err instanceof Error ? err.message : 'Could not revoke memberships.',
+      })
+    } finally {
+      setIsRemovingMember(false)
+    }
+  }
+
+  const openGovernanceMatrixDetailDrawer = (workspace: WorkspaceRecord) => {
+    closeAllWorkspaceManagementOverlays()
+    setGovernanceMatrixDetailWorkspace(workspace)
+    setGovernanceMatrixDetailOpen(true)
+  }
+
+  const openApplyGovernanceTemplateDialog = (workspace: WorkspaceRecord) => {
+    closeAllWorkspaceManagementOverlays()
+    if (!governanceCatalog?.templates?.length) {
+      addToast({
+        variant: 'default',
+        title: 'Templates unavailable',
+        description: 'Start workspace-governance service or open Configuration Center.',
+      })
+      return
+    }
+    setApplyTemplateWorkspace(workspace)
+    setApplyTemplateChoice(governanceCatalog.templates.find((t) => t.status === 'published')?.id ?? '')
+    setApplyTemplateOpen(true)
+  }
+
+  const closeGovernanceMatrixDetailDrawer = () => {
+    setGovernanceMatrixDetailOpen(false)
+    setGovernanceMatrixDetailWorkspace(null)
+  }
+
+  useEffect(() => {
+    if (!governanceMatrixDetailOpen) return
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      closeGovernanceMatrixDetailDrawer()
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [governanceMatrixDetailOpen])
+
+  useEffect(() => {
+    if (!memberDetailOpen) return
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      closeMemberDetailDrawer()
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [memberDetailOpen])
+
+  // The assistant offers "Buka detail Workspace …" via an app.navigate action carrying
+  // `?ws=<id|name|free-text>` (+ optional `?view=`). We switch panel + remember which
+  // workspace to open, then strip the params. One-shot. Fuzzy name match tolerates a
+  // loosely-phrased label. The actual drawer open happens in a SEPARATE effect below so it
+  // survives the `[activePanel]` overlay-close effect (which fires when the panel changes).
+  useEffect(() => {
+    const view = (uiSearchParams.get('view') || '').trim().toLowerCase()
+    const ws = (uiSearchParams.get('ws') || '').trim()
+    if (!view && !ws) return
+    if (ws && allWorkspacesForList.length === 0) return // wait for directory data
+
+    let consumed = false
+    const VIEWS: WorkspacePanel[] = ['overview', 'directory', 'governance', 'members', 'assets', 'activity']
+    if (view && (VIEWS as string[]).includes(view)) {
+      setActivePanel(view as WorkspacePanel)
+      consumed = true
+    }
+    if (ws) {
+      const q = ws.toLowerCase()
+      const match =
+        allWorkspacesForList.find(
+          (w) => w.id.toLowerCase() === q || w.code.toLowerCase() === q || w.name.toLowerCase() === q,
+        ) ??
+        allWorkspacesForList.find(
+          (w) => q.includes(w.name.toLowerCase()) || w.name.toLowerCase().includes(q),
+        )
+      if (match) {
+        const mode = view === 'governance' ? 'governance' : 'detail'
+        setActivePanel(mode === 'governance' ? 'governance' : 'directory')
+        setPendingDetailOpen({ id: match.id, mode })
+        consumed = true
+      }
+    }
+    if (consumed) {
+      const next = new URLSearchParams(uiSearchParams)
+      next.delete('view')
+      next.delete('ws')
+      setUiSearchParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiSearchParams, allWorkspacesForList])
+
+  // Open the requested detail drawer AFTER the `[activePanel]` close-overlays effect runs
+  // (this effect is declared later, and depends on activePanel, so it wins the same commit).
+  useEffect(() => {
+    if (!pendingDetailOpen) return
+    const match = allWorkspacesForList.find((w) => w.id === pendingDetailOpen.id)
+    if (!match) return
+    if (pendingDetailOpen.mode === 'governance') openGovernanceMatrixDetailDrawer(match)
+    else openWorkspaceDetail(match)
+    setPendingDetailOpen(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDetailOpen, activePanel, allWorkspacesForList])
+
+  const openInviteMemberDrawer = useCallback((workspace?: WorkspaceRecord) => {
+    setRowContextMenu(null)
+    setInvitePresetWorkspaceIds(workspace ? [workspace.id] : [])
+    setInviteWorkspaceMemberOpen(true)
+  }, [])
+
+  const closeInviteMemberDrawer = useCallback(() => {
+    setInviteWorkspaceMemberOpen(false)
+    setInvitePresetWorkspaceIds([])
+  }, [])
+
+  const openProjectsForWorkspace = (workspace: WorkspaceRecord) => {
+    selectWorkspacePanel('activity')
+    setShowFiltersPanel(true)
+    setSearchQuery(workspace.name)
+    addToast({ variant: 'default', title: 'Link projects', description: `Use activity/project flow to link projects for ${workspace.name}.` })
+  }
+
+  const openDeleteGovernanceDialog = (workspace: WorkspaceRecord) => {
+    closeAllWorkspaceManagementOverlays()
+    setConfirmDeleteGovernanceTarget(workspace)
+    setConfirmDeleteGovernanceOpen(true)
+  }
+
+  const closeDeleteGovernanceDialog = () => {
+    if (isDeletingGovernance) return
+    setConfirmDeleteGovernanceOpen(false)
+    setConfirmDeleteGovernanceTarget(null)
+  }
+
+  const submitDeleteGovernance = async () => {
+    if (!confirmDeleteGovernanceTarget || isDeletingGovernance) return
+    setIsDeletingGovernance(true)
+    try {
+      await putWorkspaceGovernanceAssignment(confirmDeleteGovernanceTarget.id, {
+        governance_template_id: null,
+        workflow_policy_id: null,
+        sla_policy_id: null,
+        naming_convention_id: null,
+        approval_policy_id: null,
+        governance_owner: null,
+        last_review: null,
+      })
+      await refreshWorkspaceOrgLists()
+      addToast({
+        variant: 'success',
+        title: 'Governance removed',
+        description: `Governance assignment cleared for ${confirmDeleteGovernanceTarget.name}.`,
+      })
+      setConfirmDeleteGovernanceOpen(false)
+      setConfirmDeleteGovernanceTarget(null)
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Delete governance failed',
+        description: err instanceof Error ? err.message : 'Could not remove governance assignment.',
+      })
+    } finally {
+      setIsDeletingGovernance(false)
+    }
+  }
+
+  const openDeleteWorkspaceDialog = (workspace: WorkspaceRecord) => {
+    closeAllWorkspaceManagementOverlays()
+    setConfirmDeleteWorkspaceTarget(workspace)
+    setConfirmDeleteWorkspaceHighImpactAck(false)
+    setConfirmDeleteWorkspaceOpen(true)
+  }
+
+  const closeDeleteWorkspaceDialog = () => {
+    setConfirmDeleteWorkspaceOpen(false)
+    setConfirmDeleteWorkspaceTarget(null)
+    setConfirmDeleteWorkspaceHighImpactAck(false)
+  }
+
+  const submitDeleteWorkspace = async () => {
+    if (!confirmDeleteWorkspaceTarget || isDeletingWorkspace) return
+    const highImpact = confirmDeleteWorkspaceTarget.projects >= WORKSPACE_DELETE_HIGH_PROJECTS_THRESHOLD
+    if (highImpact && !confirmDeleteWorkspaceHighImpactAck) return
+
+    setIsDeletingWorkspace(true)
+    try {
+      await deleteWorkspaceOrgWorkspace(confirmDeleteWorkspaceTarget.id)
+      const deletedId = confirmDeleteWorkspaceTarget.id
+      const deletedName = confirmDeleteWorkspaceTarget.name
+      void deleteWorkspaceOrgKbMirror(deletedId)
+      setDirectoryWorkspaces((prev) => prev.filter((w) => w.id !== deletedId))
+      if (inlineRenameId === deletedId) cancelInlineRename()
+      addToast({ variant: 'success', title: 'Workspace deleted', description: `${deletedName} has been deleted.` })
+      setConfirmDeleteWorkspaceOpen(false)
+      setConfirmDeleteWorkspaceTarget(null)
+      setConfirmDeleteWorkspaceHighImpactAck(false)
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Delete failed',
+        description: err instanceof Error ? err.message : 'Could not delete workspace.',
+      })
+    } finally {
+      setIsDeletingWorkspace(false)
+    }
+  }
+
+  const submitInlineRename = async (workspaceId: string) => {
+    const trimmed = normalizeTitleCaseInput(inlineRenameValue).trim()
+    if (!trimmed) { cancelInlineRename(); return }
+    const current = directoryWorkspaces.find((w) => w.id === workspaceId)
+    if (!current || trimmed === current.name) { cancelInlineRename(); return }
+    setInlineRenameSubmitting(true)
+    try {
+      const allRows = await fetchAllWorkspaceOrgWorkspaces()
+      const rawDto = allRows.find((r) => r.id === workspaceId)
+      if (!rawDto) throw new Error('Workspace not found on server.')
+      const patched = await patchWorkspaceOrgWorkspace(workspaceId, {
+        name: trimmed,
+        metadata: rawDto.metadata ?? {},
+        version: rawDto.version,
+      })
+      const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(patched)
+      try {
+        await postWorkspaceActivityEvent({
+          event: 'Workspace renamed',
+          target: `${mapped.id} | ${current.name} -> ${mapped.name}`,
+          scope: 'workspace_directory',
+        })
+      } catch {
+        // Do not fail rename flow if activity ingestion is unavailable.
+      }
+      setDirectoryWorkspaces((prev) => prev.map((w) => (w.id === mapped.id ? mapped : w)))
+      await refreshWorkspaceOrgLists()
+      void syncWorkspaceOrgEntryToKb(patched)
+      addToast({ variant: 'success', title: 'Workspace renamed', description: `Renamed to \u201c${mapped.name}\u201d.` })
+    } catch (err) {
+      addToast({ variant: 'error', title: 'Rename failed', description: err instanceof Error ? err.message : 'Unknown error.' })
+    } finally {
+      setInlineRenameSubmitting(false)
+      cancelInlineRename()
+    }
+  }
+
+  // â”€â”€ Edit workspace drawer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [editWorkspaceDrawerOpen, setEditWorkspaceDrawerOpen] = useState(false)
+  const [editWorkspaceReadOnly, setEditWorkspaceReadOnly] = useState(false)
+  const [editWorkspaceTarget, setEditWorkspaceTarget] = useState<WorkspaceRecord | null>(null)
+
+  const workspacePageContextBase = useMemo(() => {
+    const panelLabels: Record<WorkspacePanel, string> = {
+      overview: 'Overview',
+      directory: 'Directory',
+      governance: 'Governance Matrix',
+      members: 'Members',
+      assets: 'Assets',
+      activity: 'Activity',
+    }
+    const filters: string[] = []
+    if (searchQuery.trim()) filters.push(`pencarian: "${searchQuery.trim()}"`)
+    if (focusedLoadWorkspaceCode) filters.push(`fokus load chart: ${focusedLoadWorkspaceCode}`)
+    return {
+      view_label: panelLabels[activePanel] ?? activePanel,
+      entity_type: editWorkspaceTarget ? 'workspace' : null,
+      entity_id: editWorkspaceTarget?.id ?? null,
+      entity_title: editWorkspaceTarget?.name ?? null,
+      workspace_code: editWorkspaceTarget?.code ?? null,
+      workspace_name: editWorkspaceTarget?.name ?? null,
+      filters_summary: filters.length > 0 ? filters.join('; ') : null,
+      notes: editWorkspaceDrawerOpen ? ['drawer edit workspace terbuka'] : undefined,
+    }
+  }, [
+    activePanel,
+    searchQuery,
+    focusedLoadWorkspaceCode,
+    editWorkspaceTarget,
+    editWorkspaceDrawerOpen,
+  ])
+  const [editWorkspaceForm, setEditWorkspaceForm] = useState<{
+    name: string
+    description: string
+    workspaceType: string
+    owner: string
+    ownerQuery: string
+    businessOwner: string
+    businessOwnerQuery: string
+    technicalOwner: string
+    technicalOwnerQuery: string
+    ownershipIdentityMode: WorkspaceOwnershipIdentityMode
+    primaryOrganizationId: string
+    lifecycleStage: WorkspaceLifecycleStage
+  } | null>(null)
+  const [editWorkspaceError, setEditWorkspaceError] = useState<string | null>(null)
+  const [isSubmittingEditWorkspace, setIsSubmittingEditWorkspace] = useState(false)
+  /** Nilai owner sebelum mode pencarian; dipulihkan saat Esc membatalkan perubahan. */
+  const editOwnershipRevertRef = useRef<{ business: string | null; technical: string | null }>({
+    business: null,
+    technical: null,
+  })
+  const suppressEditOwnershipBlurCommitRef = useRef(false)
+  /** Tab/ArrowDown ke listbox: jangan jalankan onBlur revert/commit pada field pencarian. */
+  const ownershipPickerSkipBlurCommitRef = useRef(false)
+
+  const cancelEditWorkspaceOwnershipSearch = useCallback((target: 'business' | 'technical') => {
+    const revert = editOwnershipRevertRef.current[target]
+    suppressEditOwnershipBlurCommitRef.current = true
+    setEditWorkspaceForm((f) => {
+      if (!f) return f
+      if (revert === null) {
+        return target === 'business'
+          ? { ...f, businessOwnerQuery: '' }
+          : { ...f, technicalOwnerQuery: '' }
+      }
+      if (target === 'business') {
+        return { ...f, businessOwner: revert, businessOwnerQuery: revert }
+      }
+      return { ...f, technicalOwner: revert, technicalOwnerQuery: revert }
+    })
+    editOwnershipRevertRef.current[target] = null
+  }, [])
+
+  const beginEditWorkspaceOwnershipSearch = useCallback((target: 'business' | 'technical') => {
+    setEditWorkspaceForm((f) => {
+      if (!f) return f
+      if (target === 'business') {
+        editOwnershipRevertRef.current.business = f.businessOwner
+        return { ...f, businessOwner: '', businessOwnerQuery: '' }
+      }
+      editOwnershipRevertRef.current.technical = f.technicalOwner
+      return { ...f, technicalOwner: '', technicalOwnerQuery: '' }
+    })
+  }, [])
+
+  const clearEditWorkspaceOwnershipRevert = useCallback((target: 'business' | 'technical') => {
+    editOwnershipRevertRef.current[target] = null
+  }, [])
+
+  const openEditWorkspaceOwnershipSearchFocus = useCallback(
+    (target: 'business' | 'technical', currentOwner: string) => {
+      if (editOwnershipRevertRef.current[target] === null) {
+        editOwnershipRevertRef.current[target] = currentOwner
+      }
+    },
+    []
+  )
+
+  const openEditWorkspaceDrawer = (workspace: WorkspaceRecord, options?: { readOnly?: boolean }) => {
+    closeAllWorkspaceManagementOverlays()
+    setEditWorkspaceTarget(workspace)
+    setEditWorkspaceReadOnly(options?.readOnly ?? false)
+    const ownerInit = workspace.owner.includes('\uFFFD') ? '' : workspace.owner
+    const bizInit = workspace.businessOwner ?? ''
+    const techInit = workspace.technicalOwner ?? ''
+    setEditWorkspaceForm({
+      name: workspace.name,
+      description: '',
+      workspaceType: workspace.type,
+      owner: ownerInit,
+      ownerQuery: ownerInit,
+      businessOwner: bizInit,
+      businessOwnerQuery: bizInit,
+      technicalOwner: techInit,
+      technicalOwnerQuery: techInit,
+      ownershipIdentityMode: 'local',
+      primaryOrganizationId: workspace.primaryOrganizationId,
+      lifecycleStage: workspace.lifecycle,
+    })
+    setEditWorkspaceError(null)
+    editOwnershipRevertRef.current = { business: null, technical: null }
+    suppressEditOwnershipBlurCommitRef.current = false
+    setEditWorkspaceDrawerOpen(true)
+  }
+
+  const closeEditWorkspaceDrawer = () => {
+    setEditWorkspaceDrawerOpen(false)
+    setEditWorkspaceReadOnly(false)
+    setEditWorkspaceTarget(null)
+    setEditWorkspaceForm(null)
+    setEditWorkspaceError(null)
+    editOwnershipRevertRef.current = { business: null, technical: null }
+    suppressEditOwnershipBlurCommitRef.current = false
+    ownershipPickerSkipBlurCommitRef.current = false
+  }
+
+  // A right-side drawer covers a docked chat, so tell the layout to FLOAT the chat while one
+  // is open and revert to docked when all close (and on unmount, so it never sticks floating).
+  const setRightDrawerOpen = useRightDrawerStore((s) => s.setOpen)
+  const anyRightDrawerOpen =
+    editWorkspaceDrawerOpen ||
+    governanceMatrixDetailOpen ||
+    memberDetailOpen ||
+    newWorkspaceDrawerOpen
+  useEffect(() => {
+    setRightDrawerOpen(anyRightDrawerOpen)
+  }, [anyRightDrawerOpen, setRightDrawerOpen])
+  useEffect(() => () => setRightDrawerOpen(false), [setRightDrawerOpen])
+
+  useEffect(() => {
+    if (!editWorkspaceDrawerOpen) return
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (isSubmittingEditWorkspace) return
+      const drawer = editWorkspaceDrawerRef.current
+      const active = document.activeElement
+      if (drawer && active instanceof HTMLElement && drawer.contains(active)) {
+        if (active.closest(`[${OWNERSHIP_PICKER_LIST_ATTR}]`)) {
+          e.preventDefault()
+          e.stopPropagation()
+          const inputId = ownershipPickerInputIdForListbox(active.closest('[role="listbox"]')?.id)
+          if (inputId === 'edit-ws-biz-owner') cancelEditWorkspaceOwnershipSearch('business')
+          else if (inputId === 'edit-ws-tech-owner') cancelEditWorkspaceOwnershipSearch('technical')
+          if (inputId) focusOwnershipPickerOption(inputId)
+          return
+        }
+      }
+      const focusedField = focusedFormFieldInDrawer(drawer)
+      if (focusedField) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (focusedField.id === 'edit-ws-biz-owner') {
+          cancelEditWorkspaceOwnershipSearch('business')
+        } else if (focusedField.id === 'edit-ws-tech-owner') {
+          cancelEditWorkspaceOwnershipSearch('technical')
+        }
+        focusedField.blur()
+        return
+      }
+      e.preventDefault()
+      closeEditWorkspaceDrawer()
+    }
+
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [editWorkspaceDrawerOpen, isSubmittingEditWorkspace, cancelEditWorkspaceOwnershipSearch])
+
+  const submitEditWorkspace = async () => {
+    if (!editWorkspaceTarget || !editWorkspaceForm || isSubmittingEditWorkspace) return
+    const { name, workspaceType, owner, businessOwner, technicalOwner, ownershipIdentityMode, primaryOrganizationId, lifecycleStage } = editWorkspaceForm
+    if (!name.trim()) { setEditWorkspaceError('Workspace name is required.'); return }
+    if (!workspaceType) { setEditWorkspaceError('Workspace type is required.'); return }
+    if (!owner.trim()) { setEditWorkspaceError('Owner is required.'); return }
+    if (!primaryOrganizationId) { setEditWorkspaceError('Primary organization is required.'); return }
+
+    setEditWorkspaceError(null)
+    setIsSubmittingEditWorkspace(true)
+    try {
+      // Build updated metadata from existing workspace DTO — we patch tectona_* keys
+      const existingMeta = {} as Record<string, unknown>
+      // Fetch current version from directoryWorkspaces
+      const current = directoryWorkspaces.find((w) => w.id === editWorkspaceTarget.id)
+      if (!current) throw new Error('Workspace not found locally — please refresh.')
+
+      // We need the raw DTO version; store version in a ref or re-fetch
+      // Since we don't cache the raw DTO version, re-fetch to get current version
+      const allRows = await fetchAllWorkspaceOrgWorkspaces()
+      const rawDto = allRows.find((r) => r.id === editWorkspaceTarget.id)
+      if (!rawDto) throw new Error('Workspace not found on server.')
+
+      const updatedMeta: Record<string, unknown> = {
+        ...(rawDto.metadata ?? {}),
+        tectona_workspace_classification: workspaceType,
+        tectona_owner: owner.trim(),
+        tectona_lifecycle_stage: lifecycleStage,
+        tectona_ownership_identity_mode: ownershipIdentityMode,
+      }
+      if (businessOwner.trim()) updatedMeta.tectona_business_owner = businessOwner.trim()
+      if (technicalOwner.trim()) updatedMeta.tectona_technical_owner = technicalOwner.trim()
+
+      const patched = await patchWorkspaceOrgWorkspace(editWorkspaceTarget.id, {
+        name: name.trim(),
+        metadata: updatedMeta,
+        version: rawDto.version,
+      })
+
+      // Update org if changed
+      if (primaryOrganizationId !== editWorkspaceTarget.primaryOrganizationId) {
+        // organization_id change is not directly supported by patch — handled via metadata note
+        // (backend WorkspacePatch does not expose organization_id; keep as-is)
+      }
+
+      const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(patched)
+      if (editWorkspaceTarget.name.trim() !== mapped.name.trim()) {
+        try {
+          await postWorkspaceActivityEvent({
+            event: 'Workspace renamed',
+            target: `${mapped.id} | ${editWorkspaceTarget.name} -> ${mapped.name}`,
+            scope: 'workspace_directory',
+          })
+        } catch {
+          // Do not fail workspace update if activity ingestion is unavailable.
+        }
+      }
+      setDirectoryWorkspaces((prev) => prev.map((w) => (w.id === mapped.id ? mapped : w)))
+      await refreshWorkspaceOrgLists()
+      void syncWorkspaceOrgEntryToKb(patched)
+      closeEditWorkspaceDrawer()
+      addToast({ variant: 'success', title: 'Workspace updated', description: `${mapped.name} has been updated.` })
+    } catch (err) {
+      setEditWorkspaceError(err instanceof Error ? err.message : 'Failed to update workspace.')
+    } finally {
+      setIsSubmittingEditWorkspace(false)
+    }
+  }
+
+  const orgSelectRows = useMemo(() => orgNodesDepthFirst(organizationNodes), [organizationNodes])
+
+  /** Self + descendants — cannot reparent under these (cycle). */
+  const primaryOrgEditBlockedParentIds = useMemo(() => {
+    if (!editingOrgId) return new Set<string>()
+    return collectOrganizationSubtreeIds(editingOrgId, organizationNodes)
+  }, [editingOrgId, organizationNodes])
+
+  const supportsSearchAndFilter =
+    activePanel === 'directory'
+    || activePanel === 'governance'
+    || activePanel === 'members'
+    || activePanel === 'assets'
+    || activePanel === 'activity'
+
+  useEffect(() => {
+    if (activePanel !== 'overview') {
+      setOverviewMotionReady(false)
+      return
+    }
+
+    setOverviewMotionReady(false)
+    const timer = window.setTimeout(() => setOverviewMotionReady(true), 60)
+    return () => window.clearTimeout(timer)
+  }, [activePanel])
+
+  useEffect(() => {
+    if (activePanel === 'overview') {
+      setDirectoryChartFocus(null)
+      setOverviewChartSelection(null)
+      setFocusedLoadWorkspaceCode(null)
+    }
+  }, [activePanel])
+
+  useLayoutEffect(() => {
+    // Fixed Sidebar ON: tinggi nav = batas bawah panel utama (Overview Control Tower, Directory, …).
+    if (navDocked || enterpriseNavFloatRail || !showEnterpriseNavPanel) {
+      setNavPanelHeightPx(null)
+      return
+    }
+
+    const compute = () => {
+      const navEl = navPanelRef.current
+      if (!navEl) return
+
+      const mainPanelEl =
+        activePanel === 'overview'
+          ? overviewMainPanelRef.current
+          : activePanel === 'directory'
+            ? directoryPanelRef.current
+            : activePanel === 'governance'
+              ? governancePanelRef.current
+              : null
+
+      if (mainPanelEl) {
+        setNavPanelHeightPx(measureEnterpriseNavHeightFromMainPanel(navEl, mainPanelEl))
+      return
+    }
+
+      setNavPanelHeightPx(computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top))
+    }
+
+    compute()
+    const raf1 = window.requestAnimationFrame(() => {
+      compute()
+      window.requestAnimationFrame(compute)
+    })
+    const t1 = window.setTimeout(compute, 80)
+    const t2 = window.setTimeout(compute, 360)
+    const t3 = showKpiCarousel ? window.setTimeout(compute, 520) : undefined
+    const onLoad = () => compute()
+    window.addEventListener('resize', compute, { passive: true })
+    window.addEventListener('load', onLoad, { once: true })
+    const ro = new ResizeObserver(() => compute())
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (overviewMainPanelRef.current) ro.observe(overviewMainPanelRef.current)
+    if (directoryPanelRef.current) ro.observe(directoryPanelRef.current)
+    if (governancePanelRef.current) ro.observe(governancePanelRef.current)
+    if (kpiSectionRef.current) ro.observe(kpiSectionRef.current)
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+
+    return () => {
+      window.cancelAnimationFrame(raf1)
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      if (t3 != null) window.clearTimeout(t3)
+      window.removeEventListener('resize', compute)
+      window.removeEventListener('load', onLoad)
+      ro.disconnect()
+    }
+  }, [
+    navDocked,
+    enterpriseNavFloatRail,
+    showEnterpriseNavPanel,
+    isWorkspaceCollapsed,
+    showFiltersPanel,
+    showKpiCards,
+    activePanel,
+    showKpiCarousel,
+    workspaceMainPanelViewportHeightPx,
+  ])
+
+  const [directoryPanelMaxHeightPx, setDirectoryPanelMaxHeightPx] = useState<number | null>(null)
+  const [directoryPanelAlignedHeightPx, setDirectoryPanelAlignedHeightPx] = useState<number | null>(null)
+  const [governancePanelMaxHeightPx, setGovernancePanelMaxHeightPx] = useState<number | null>(null)
+  const [governancePanelAlignedHeightPx, setGovernancePanelAlignedHeightPx] = useState<number | null>(null)
+  const [membersPanelMaxHeightPx, setMembersPanelMaxHeightPx] = useState<number | null>(null)
+  const [membersPanelAlignedHeightPx, setMembersPanelAlignedHeightPx] = useState<number | null>(null)
+  const [assetsPanelMaxHeightPx, setAssetsPanelMaxHeightPx] = useState<number | null>(null)
+  const [assetsPanelAlignedHeightPx, setAssetsPanelAlignedHeightPx] = useState<number | null>(null)
+  const [activityPanelMaxHeightPx, setActivityPanelMaxHeightPx] = useState<number | null>(null)
+  const [activityPanelAlignedHeightPx, setActivityPanelAlignedHeightPx] = useState<number | null>(null)
+
+  const workspaceCatalogPanelHeightStyle = (
+    viewportPx: number | null,
+    alignedPx: number | null,
+    maxPx: number | null
+  ): CSSProperties | undefined => {
+    const resolved =
+      viewportPx ?? (alignedPx != null ? alignedPx : !navDocked && maxPx != null ? maxPx : null)
+    if (resolved == null) return undefined
+    return { height: resolved, maxHeight: resolved, minHeight: resolved }
+  }
+
+  const workspaceMainPanelViewportHeightStyle: CSSProperties | undefined =
+    workspaceMainPanelViewportHeightPx != null
+      ? {
+          height: workspaceMainPanelViewportHeightPx,
+          maxHeight: workspaceMainPanelViewportHeightPx,
+          minHeight: 0,
+        }
+      : undefined
+
+  useLayoutEffect(() => {
+    if (navDocked || activePanel !== 'directory' || !navPanelHeightPx) {
+      setDirectoryPanelMaxHeightPx(null)
+      return
+    }
+
+    const gapBelowFiltersPx = showFiltersPanel && supportsSearchAndFilter ? 16 : 0
+
+    const measure = () => {
+      const filterEl = workspaceMainFiltersRef.current
+      const filterH =
+        showFiltersPanel && supportsSearchAndFilter && filterEl ? filterEl.getBoundingClientRect().height : 0
+      setDirectoryPanelMaxHeightPx(Math.max(220, navPanelHeightPx - filterH - gapBelowFiltersPx))
+    }
+
+    measure()
+    const ro = new ResizeObserver(() => measure())
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [
+    navDocked,
+    activePanel,
+    navPanelHeightPx,
+    showFiltersPanel,
+    supportsSearchAndFilter,
+  ])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'directory') {
+      setDirectoryPanelAlignedHeightPx(null)
+      return
+    }
+
+    const measure = () => {
+      const navEl = navPanelRef.current
+      const panelEl = directoryPanelRef.current
+      if (!navEl || !panelEl) return
+      const navBottom = navEl.getBoundingClientRect().bottom
+      const panelTop = panelEl.getBoundingClientRect().top
+      setDirectoryPanelAlignedHeightPx(Math.max(220, Math.floor(navBottom - panelTop)))
+    }
+
+    measure()
+    const rafA = window.requestAnimationFrame(measure)
+    const rafB = window.requestAnimationFrame(measure)
+    const ro = new ResizeObserver(() => measure())
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (directoryPanelRef.current) ro.observe(directoryPanelRef.current)
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(rafA)
+      window.cancelAnimationFrame(rafB)
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [activePanel, navDocked, showFiltersPanel, showKpiCards, enterpriseNavLayoutVariant, isWorkspaceCollapsed])
+
+  useLayoutEffect(() => {
+    if (navDocked || activePanel !== 'governance' || !navPanelHeightPx) {
+      setGovernancePanelMaxHeightPx(null)
+      return
+    }
+
+    const gapBelowFiltersPx = showFiltersPanel && supportsSearchAndFilter ? 16 : 0
+
+    const measure = () => {
+      const filterEl = workspaceMainFiltersRef.current
+      const filterH =
+        showFiltersPanel && supportsSearchAndFilter && filterEl ? filterEl.getBoundingClientRect().height : 0
+      setGovernancePanelMaxHeightPx(Math.max(220, navPanelHeightPx - filterH - gapBelowFiltersPx))
+    }
+
+    measure()
+    const ro = new ResizeObserver(() => measure())
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [
+    navDocked,
+    activePanel,
+    navPanelHeightPx,
+    showFiltersPanel,
+    supportsSearchAndFilter,
+  ])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'governance') {
+      setGovernancePanelAlignedHeightPx(null)
+      return
+    }
+
+    const measure = () => {
+      const navEl = navPanelRef.current
+      const panelEl = governancePanelRef.current
+      if (!navEl || !panelEl) return
+      const navBottom = navEl.getBoundingClientRect().bottom
+      const panelTop = panelEl.getBoundingClientRect().top
+      setGovernancePanelAlignedHeightPx(Math.max(220, Math.floor(navBottom - panelTop)))
+    }
+
+    measure()
+    const rafA = window.requestAnimationFrame(measure)
+    const rafB = window.requestAnimationFrame(measure)
+    const ro = new ResizeObserver(() => measure())
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (governancePanelRef.current) ro.observe(governancePanelRef.current)
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(rafA)
+      window.cancelAnimationFrame(rafB)
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [activePanel, navDocked, showFiltersPanel, showKpiCards, enterpriseNavLayoutVariant, isWorkspaceCollapsed])
+
+  useLayoutEffect(() => {
+    if (navDocked || activePanel !== 'members' || !navPanelHeightPx) {
+      setMembersPanelMaxHeightPx(null)
+      return
+    }
+
+    const gapBelowFiltersPx = showFiltersPanel && supportsSearchAndFilter ? 16 : 0
+
+    const measure = () => {
+      const filterEl = workspaceMainFiltersRef.current
+      const filterH =
+        showFiltersPanel && supportsSearchAndFilter && filterEl ? filterEl.getBoundingClientRect().height : 0
+      setMembersPanelMaxHeightPx(Math.max(220, navPanelHeightPx - filterH - gapBelowFiltersPx))
+    }
+
+    measure()
+    const ro = new ResizeObserver(() => measure())
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [
+    navDocked,
+    activePanel,
+    navPanelHeightPx,
+    showFiltersPanel,
+    supportsSearchAndFilter,
+  ])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'members') {
+      setMembersPanelAlignedHeightPx(null)
+      return
+    }
+
+    const measure = () => {
+      const navEl = navPanelRef.current
+      const panelEl = membersPanelRef.current
+      if (!navEl || !panelEl) return
+      const navBottom = navEl.getBoundingClientRect().bottom
+      const panelTop = panelEl.getBoundingClientRect().top
+      setMembersPanelAlignedHeightPx(Math.max(220, Math.floor(navBottom - panelTop)))
+    }
+
+    measure()
+    const rafA = window.requestAnimationFrame(measure)
+    const rafB = window.requestAnimationFrame(measure)
+    const ro = new ResizeObserver(() => measure())
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (membersPanelRef.current) ro.observe(membersPanelRef.current)
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(rafA)
+      window.cancelAnimationFrame(rafB)
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [activePanel, navDocked, showFiltersPanel, showKpiCards, enterpriseNavLayoutVariant, isWorkspaceCollapsed])
+
+  useLayoutEffect(() => {
+    if (navDocked || activePanel !== 'assets' || !navPanelHeightPx) {
+      setAssetsPanelMaxHeightPx(null)
+      return
+    }
+
+    const gapBelowFiltersPx = showFiltersPanel && supportsSearchAndFilter ? 16 : 0
+
+    const measure = () => {
+      const filterEl = workspaceMainFiltersRef.current
+      const filterH =
+        showFiltersPanel && supportsSearchAndFilter && filterEl ? filterEl.getBoundingClientRect().height : 0
+      setAssetsPanelMaxHeightPx(Math.max(220, navPanelHeightPx - filterH - gapBelowFiltersPx))
+    }
+
+    measure()
+    const ro = new ResizeObserver(() => measure())
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [
+    navDocked,
+    activePanel,
+    navPanelHeightPx,
+    showFiltersPanel,
+    supportsSearchAndFilter,
+  ])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'assets') {
+      setAssetsPanelAlignedHeightPx(null)
+      return
+    }
+
+    const measure = () => {
+      const navEl = navPanelRef.current
+      const panelEl = assetsPanelRef.current
+      if (!navEl || !panelEl) return
+      const navBottom = navEl.getBoundingClientRect().bottom
+      const panelTop = panelEl.getBoundingClientRect().top
+      setAssetsPanelAlignedHeightPx(Math.max(220, Math.floor(navBottom - panelTop)))
+    }
+
+    measure()
+    const rafA = window.requestAnimationFrame(measure)
+    const rafB = window.requestAnimationFrame(measure)
+    const ro = new ResizeObserver(() => measure())
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (assetsPanelRef.current) ro.observe(assetsPanelRef.current)
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(rafA)
+      window.cancelAnimationFrame(rafB)
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [activePanel, navDocked, showFiltersPanel, showKpiCards, enterpriseNavLayoutVariant, isWorkspaceCollapsed])
+
+  useLayoutEffect(() => {
+    if (navDocked || activePanel !== 'activity' || !navPanelHeightPx) {
+      setActivityPanelMaxHeightPx(null)
+      return
+    }
+
+    const gapBelowFiltersPx = showFiltersPanel && supportsSearchAndFilter ? 16 : 0
+
+    const measure = () => {
+      const filterEl = workspaceMainFiltersRef.current
+      const filterH =
+        showFiltersPanel && supportsSearchAndFilter && filterEl ? filterEl.getBoundingClientRect().height : 0
+      setActivityPanelMaxHeightPx(Math.max(220, navPanelHeightPx - filterH - gapBelowFiltersPx))
+    }
+
+    measure()
+    const ro = new ResizeObserver(() => measure())
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [
+    navDocked,
+    activePanel,
+    navPanelHeightPx,
+    showFiltersPanel,
+    supportsSearchAndFilter,
+  ])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'activity') {
+      setActivityPanelAlignedHeightPx(null)
+      return
+    }
+
+    const measure = () => {
+      const navEl = navPanelRef.current
+      const panelEl = activityPanelRef.current
+      if (!navEl || !panelEl) return
+      const navBottom = navEl.getBoundingClientRect().bottom
+      const panelTop = panelEl.getBoundingClientRect().top
+      setActivityPanelAlignedHeightPx(Math.max(220, Math.floor(navBottom - panelTop)))
+    }
+
+    measure()
+    const rafA = window.requestAnimationFrame(measure)
+    const rafB = window.requestAnimationFrame(measure)
+    const ro = new ResizeObserver(() => measure())
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (activityPanelRef.current) ro.observe(activityPanelRef.current)
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(rafA)
+      window.cancelAnimationFrame(rafB)
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [activePanel, navDocked, showFiltersPanel, showKpiCards, enterpriseNavLayoutVariant, isWorkspaceCollapsed])
+
+  useLayoutEffect(() => {
+    // Overview, Directory & Governance Matrix: tinggi panel sama — batas viewport dari atas panel.
+    if (activePanel !== 'overview' && activePanel !== 'directory' && activePanel !== 'governance' && activePanel !== 'activity') {
+      setWorkspaceMainPanelViewportHeightPx(null)
+      return
+    }
+
+    const compute = () => {
+      const el =
+        activePanel === 'overview'
+          ? overviewMainPanelRef.current
+          : activePanel === 'directory'
+            ? directoryPanelRef.current
+            : activePanel === 'governance'
+              ? governancePanelRef.current
+              : activityPanelRef.current
+      if (!el) return
+      setWorkspaceMainPanelViewportHeightPx(computeWorkspaceMainPanelViewportHeightPx(el.getBoundingClientRect().top))
+    }
+
+    compute()
+    const raf1 = window.requestAnimationFrame(() => {
+      compute()
+      window.requestAnimationFrame(compute)
+    })
+    const t1 = window.setTimeout(compute, 80)
+    const t2 = window.setTimeout(compute, 360)
+    const t3 = showKpiCarousel ? window.setTimeout(compute, 520) : undefined
+    const onLoad = () => compute()
+    window.addEventListener('load', onLoad, { once: true })
+    const ro = new ResizeObserver(() => compute())
+    if (overviewMainPanelRef.current) ro.observe(overviewMainPanelRef.current)
+    if (directoryPanelRef.current) ro.observe(directoryPanelRef.current)
+    if (governancePanelRef.current) ro.observe(governancePanelRef.current)
+    if (activityPanelRef.current) ro.observe(activityPanelRef.current)
+    if (kpiSectionRef.current) ro.observe(kpiSectionRef.current)
+    if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
+    const mainBody = document.querySelector(APP_MAIN_BODY_SELECTOR)
+    if (mainBody instanceof HTMLElement) ro.observe(mainBody)
+    window.addEventListener('resize', compute, { passive: true })
+    return () => {
+      window.removeEventListener('resize', compute)
+      window.removeEventListener('load', onLoad)
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      if (t3 != null) window.clearTimeout(t3)
+      window.cancelAnimationFrame(raf1)
+      ro.disconnect()
+    }
+  }, [
+    activePanel,
+    showFiltersPanel,
+    showKpiCards,
+    sidebarFixed,
+    navDocked,
+    enterpriseNavLayoutVariant,
+    isWorkspaceCollapsed,
+    showKpiCarousel,
+    kpiCarouselCardsPerSlide,
+    narrowMainBody,
+    enterpriseNavFloatRail,
+    showEnterpriseNavPanel,
+  ])
+
+  const normalizedStatusFilterTags = useMemo(() => {
+    const next = new Set<WorkspaceStatus>()
+    for (const v of statusFilterTags) {
+      if (ALL_WORKSPACE_STATUSES.includes(v)) next.add(v)
+    }
+    return next.size > 0 ? next : new Set(ALL_WORKSPACE_STATUSES)
+  }, [statusFilterTags])
+
+  /** Type codes available for filtering — uses backend list when loaded, falls back to hardcoded defaults. */
+  const activeTypeClassifications = useMemo(
+    () => workspaceTypeOptions.length > 0 ? workspaceTypeOptions.map((t) => t.typeCode) : ALL_WORKSPACE_CLASSIFICATIONS,
+    [workspaceTypeOptions]
+  )
+
+  const normalizedTypeFilterTags = useMemo(() => {
+    const allowed = new Set(activeTypeClassifications)
+    const next = new Set<WorkspaceClassification>()
+    for (const v of typeFilterTags) {
+      if (allowed.has(v)) next.add(v)
+    }
+    return next.size > 0 ? next : new Set(activeTypeClassifications)
+  }, [typeFilterTags, activeTypeClassifications])
+
+  const isAllStatusesSelected = normalizedStatusFilterTags.size === ALL_WORKSPACE_STATUSES.length
+  const isAllTypesSelected = normalizedTypeFilterTags.size === activeTypeClassifications.length
+
+  const normalizedGovernanceConfigurationFilterTags = useMemo(() => {
+    const next = new Set<GovernanceConfigurationStatus>()
+    for (const v of governanceConfigurationFilterTags) {
+      if (ALL_GOVERNANCE_CONFIGURATION_STATUSES.includes(v)) next.add(v)
+    }
+    return next.size > 0 ? next : new Set(ALL_GOVERNANCE_CONFIGURATION_STATUSES)
+  }, [governanceConfigurationFilterTags])
+
+  const isAllGovernanceConfigurationStatusesSelected =
+    normalizedGovernanceConfigurationFilterTags.size === ALL_GOVERNANCE_CONFIGURATION_STATUSES.length
+
+  const normalizedGovernancePolicyFilterTags = useMemo(() => {
+    const next = new Set<GovernancePolicyStatus>()
+    for (const v of governancePolicyFilterTags) {
+      if (ALL_GOVERNANCE_POLICY_STATUSES.includes(v)) next.add(v)
+    }
+    return next.size > 0 ? next : new Set(ALL_GOVERNANCE_POLICY_STATUSES)
+  }, [governancePolicyFilterTags])
+
+  const isAllGovernancePolicyStatusesSelected =
+    normalizedGovernancePolicyFilterTags.size === ALL_GOVERNANCE_POLICY_STATUSES.length
+
+  const normalizedGovernanceHealthFilterTags = useMemo(() => {
+    const next = new Set<GovernanceHealthPosture>()
+    for (const v of governanceHealthFilterTags) {
+      if (ALL_GOVERNANCE_HEALTH_POSTURES.includes(v)) next.add(v)
+    }
+    return next.size > 0 ? next : new Set(ALL_GOVERNANCE_HEALTH_POSTURES)
+  }, [governanceHealthFilterTags])
+
+  const isAllGovernanceHealthPosturesSelected =
+    normalizedGovernanceHealthFilterTags.size === ALL_GOVERNANCE_HEALTH_POSTURES.length
+
+  const normalizedGovernanceRiskFilterTags = useMemo(() => {
+    const next = new Set<GovernanceRiskLevel>()
+    for (const v of governanceRiskFilterTags) {
+      if (ALL_GOVERNANCE_RISK_LEVELS.includes(v)) next.add(v)
+    }
+    return next.size > 0 ? next : new Set(ALL_GOVERNANCE_RISK_LEVELS)
+  }, [governanceRiskFilterTags])
+
+  const isAllGovernanceRiskLevelsSelected =
+    normalizedGovernanceRiskFilterTags.size === ALL_GOVERNANCE_RISK_LEVELS.length
+
+  const statusCounts = useMemo(() => {
+    const m = new Map<WorkspaceStatus, number>()
+    for (const s of ALL_WORKSPACE_STATUSES) m.set(s, 0)
+    for (const w of allWorkspacesForList) m.set(w.status, (m.get(w.status) ?? 0) + 1)
+    return m
+  }, [allWorkspacesForList])
+
+  const statusTotalForLabel = useMemo(() => {
+    let sum = 0
+    for (const v of ALL_WORKSPACE_STATUSES) sum += statusCounts.get(v) ?? 0
+    return sum
+  }, [statusCounts])
+
+  const governanceConfigurationCounts = useMemo(() => {
+    const m = new Map<GovernanceConfigurationStatus, number>()
+    for (const s of ALL_GOVERNANCE_CONFIGURATION_STATUSES) m.set(s, 0)
+    for (const w of allWorkspacesForList) {
+      const cfg = w.governance.configurationStatus
+      m.set(cfg, (m.get(cfg) ?? 0) + 1)
+    }
+    return m
+  }, [allWorkspacesForList])
+
+  const governanceConfigurationTotalForLabel = useMemo(() => {
+    let sum = 0
+    for (const v of ALL_GOVERNANCE_CONFIGURATION_STATUSES) sum += governanceConfigurationCounts.get(v) ?? 0
+    return sum
+  }, [governanceConfigurationCounts])
+
+  const governancePolicyStatusForWorkspace = useCallback((workspace: WorkspaceRecord): GovernancePolicyStatus | null => {
+    if (workspace.governance.policyStatus) return workspace.governance.policyStatus
+    if (workspace.governance.configurationStatus === 'Unconfigured') return null
+    if (workspace.governance.complianceStatus === 'Non-Compliant') return 'Non-Compliant'
+    if (workspace.governance.configurationStatus === 'Governed') return 'Governed'
+    if (workspace.governance.configurationStatus === 'Partial') return 'Draft Policy'
+    return null
+  }, [])
+
+  const governancePolicyCounts = useMemo(() => {
+    const m = new Map<GovernancePolicyStatus, number>()
+    for (const s of ALL_GOVERNANCE_POLICY_STATUSES) m.set(s, 0)
+    for (const w of allWorkspacesForList) {
+      const policyStatus = governancePolicyStatusForWorkspace(w)
+      if (policyStatus == null) continue
+      m.set(policyStatus, (m.get(policyStatus) ?? 0) + 1)
+    }
+    return m
+  }, [allWorkspacesForList, governancePolicyStatusForWorkspace])
+
+  const governancePolicyTotalForLabel = useMemo(() => {
+    let sum = 0
+    for (const v of ALL_GOVERNANCE_POLICY_STATUSES) sum += governancePolicyCounts.get(v) ?? 0
+    return sum
+  }, [governancePolicyCounts])
+
+  const governanceMatrixMetricsByWorkspaceId = useMemo(() => {
+    const map = new Map<string, GovernanceMatrixRowMetrics>()
+    for (const w of allWorkspacesForList) {
+      map.set(w.id, buildGovernanceMatrixMetrics(w, governanceAssignmentByWorkspaceId.get(w.id), governanceCatalog))
+    }
+    return map
+  }, [allWorkspacesForList, governanceAssignmentByWorkspaceId, governanceCatalog])
+
+  const governanceHealthPostureCounts = useMemo(() => {
+    const m = new Map<GovernanceHealthPosture, number>()
+    for (const p of ALL_GOVERNANCE_HEALTH_POSTURES) m.set(p, 0)
+    for (const w of allWorkspacesForList) {
+      const posture = governanceMatrixMetricsByWorkspaceId.get(w.id)?.health?.posture
+      if (posture == null) continue
+      m.set(posture, (m.get(posture) ?? 0) + 1)
+    }
+    return m
+  }, [allWorkspacesForList, governanceMatrixMetricsByWorkspaceId])
+
+  const governanceHealthTotalForLabel = useMemo(() => {
+    let sum = 0
+    for (const v of ALL_GOVERNANCE_HEALTH_POSTURES) sum += governanceHealthPostureCounts.get(v) ?? 0
+    return sum
+  }, [governanceHealthPostureCounts])
+
+  const governanceRiskLevelCounts = useMemo(() => {
+    const m = new Map<GovernanceRiskLevel, number>()
+    for (const r of ALL_GOVERNANCE_RISK_LEVELS) m.set(r, 0)
+    for (const w of allWorkspacesForList) {
+      const risk = governanceMatrixMetricsByWorkspaceId.get(w.id)?.riskLevel
+      if (risk == null) continue
+      m.set(risk, (m.get(risk) ?? 0) + 1)
+    }
+    return m
+  }, [allWorkspacesForList, governanceMatrixMetricsByWorkspaceId])
+
+  const governanceRiskTotalForLabel = useMemo(() => {
+    let sum = 0
+    for (const v of ALL_GOVERNANCE_RISK_LEVELS) sum += governanceRiskLevelCounts.get(v) ?? 0
+    return sum
+  }, [governanceRiskLevelCounts])
+
+  const governanceHealthDistribution = useMemo(() => {
+    let healthy = 0
+    let atRisk = 0
+    let critical = 0
+    for (const w of allWorkspacesForList) {
+      const b = workspaceHealthBand(w)
+      if (b === 'Healthy') healthy += 1
+      else if (b === 'At Risk') atRisk += 1
+      else critical += 1
+    }
+    const total = healthy + atRisk + critical
+    const pct = (n: number) => (total > 0 ? `${Math.round((n / total) * 100)}%` : '0%')
+    return [
+      { name: 'Healthy', value: healthy, color: '#10b981', pct: pct(healthy) },
+      { name: 'At Risk', value: atRisk, color: '#f59e0b', pct: pct(atRisk) },
+      { name: 'Critical', value: critical, color: '#f43f5e', pct: pct(critical) },
+    ]
+  }, [allWorkspacesForList])
+
+  const lifecycleDistributionData = useMemo(() => {
+    const counts = new Map<WorkspaceLifecycleStage, number>()
+    for (const s of ALL_WORKSPACE_LIFECYCLE_STAGES) counts.set(s, 0)
+    for (const w of allWorkspacesForList) {
+      counts.set(w.lifecycle, (counts.get(w.lifecycle) ?? 0) + 1)
+    }
+    const total = allWorkspacesForList.length
+    return ALL_WORKSPACE_LIFECYCLE_STAGES.map((stage) => {
+      const v = counts.get(stage) ?? 0
+      return {
+        name: stage,
+        value: v,
+        color: '#94a3b8',
+        pct: total > 0 ? `${Math.round((v / total) * 100)}%` : '0%',
+      }
+    })
+  }, [allWorkspacesForList])
+
+  const workspacePurposeCompositionData = useMemo(() => {
+    const buckets: WorkspacePurposeBucket[] = ['Strategic', 'Operational', 'Innovation', 'Governance']
+    const counts = new Map<WorkspacePurposeBucket, number>()
+    for (const b of buckets) counts.set(b, 0)
+    for (const w of allWorkspacesForList) {
+      const b = workspacePurposeBucket(w.type)
+      counts.set(b, (counts.get(b) ?? 0) + 1)
+    }
+    const total = allWorkspacesForList.length
+    return buckets.map((name) => {
+      const v = counts.get(name) ?? 0
+      return {
+        name,
+        value: v,
+        color: '#6366f1',
+        pct: total > 0 ? `${Math.round((v / total) * 100)}%` : '0%',
+      }
+    })
+  }, [allWorkspacesForList])
+
+  const workspaceChatDataSummary = useMemo(() => {
+    if (!workspaceOrgBackendConnected) {
+      return 'Backend workspace-org belum terhubung — angka portfolio workspace belum tersedia di layar ini.'
+    }
+    const total = allWorkspacesForList.length
+    const parts: string[] = [`total workspace=${total}`]
+    const active = statusCounts.get('Active') ?? 0
+    const archived = statusCounts.get('Archived') ?? 0
+    const atRiskStatus = statusCounts.get('At Risk') ?? 0
+    parts.push(`status Active=${active}`, `Archived=${archived}`, `At Risk (status)=${atRiskStatus}`)
+    for (const band of governanceHealthDistribution) {
+      parts.push(`health ${band.name}=${band.value}`)
+    }
+    return `Portfolio workspace (snapshot layar saat ini): ${parts.join('; ')}.`
+  }, [
+    workspaceOrgBackendConnected,
+    allWorkspacesForList,
+    statusCounts,
+    governanceHealthDistribution,
+  ])
+
+  const workspaceChatDataSummaryForAssistant = useMemo(() => {
+    return buildWorkspaceChatDataSummary({
+      workspaceOrgBackendConnected,
+      workspaces: allWorkspacesForList.map((workspace) => ({
+        name: workspace.name,
+        status: workspace.status,
+        healthBand: workspaceHealthBand(workspace),
+        owner: workspace.owner,
+        compliance: workspace.governance?.complianceStatus,
+        governance: workspace.governance?.configurationStatus,
+      })),
+      statusCounts,
+      governanceHealthDistribution,
+    })
+  }, [
+    workspaceOrgBackendConnected,
+    allWorkspacesForList,
+    statusCounts,
+    governanceHealthDistribution,
+  ])
+
+  const workspacePageContext = useMemo(
+    () => ({
+      ...workspacePageContextBase,
+      data_summary: workspaceChatDataSummaryForAssistant,
+    }),
+    [workspacePageContextBase, workspaceChatDataSummaryForAssistant],
+  )
+  useTectonaPageContextReporter('/workspace-management', workspacePageContext)
+
+  const workspaceLoadDistributionData = useMemo(() => {
+    return [...allWorkspacesForList]
+      .sort((a, b) => b.projects - a.projects)
+      .map((w) => {
+        const short = w.code.includes('-') ? (w.code.split('-')[0] ?? w.code.slice(0, 8)) : w.code.slice(0, 8)
+        return {
+          workspace: w.name,
+          short,
+          code: w.code,
+          tasks: w.projects,
+        }
+      })
+  }, [allWorkspacesForList])
+
+  const ownershipDistributionData = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const w of allWorkspacesForList) m.set(w.owner, (m.get(w.owner) ?? 0) + 1)
+    return [...m.entries()].map(([owner, count]) => ({ owner, count })).sort((a, b) => b.count - a.count)
+  }, [allWorkspacesForList])
+
+  const riskExposureStackRow = useMemo(() => {
+    let noOwner = 0
+    let lowActivity = 0
+    let overloaded = 0
+    let governance = 0
+    for (const w of allWorkspacesForList) {
+      const f = workspaceRiskFlags(w)
+      if (f.noOwner) noOwner += 1
+      if (f.lowActivity) lowActivity += 1
+      if (f.overloaded) overloaded += 1
+      if (f.governance) governance += 1
+    }
+    return [{ label: 'Portfolio risk signals', noOwner, lowActivity, overloaded, governance }]
+  }, [allWorkspacesForList])
+
+  const controlTowerInsightStats = useMemo(() => {
+    const governanceAttention = allWorkspacesForList.filter(
+      (w) => workspaceHealthBand(w) !== 'Healthy' || w.governance.complianceStatus !== 'Compliant'
+    ).length
+    const overloadedWs = allWorkspacesForList.filter((w) => w.projects > WORKSPACE_LOAD_OVERLOAD_PROJECTS).length
+    const ownerCounts = new Map<string, number>()
+    for (const w of allWorkspacesForList) ownerCounts.set(w.owner, (ownerCounts.get(w.owner) ?? 0) + 1)
+    const maxOwned = Math.max(0, ...ownerCounts.values())
+    const ownersAtMax = [...ownerCounts.entries()].filter(([, n]) => n === maxOwned && n >= 2)
+    const concentration = ownersAtMax.length
+    const imbalancedOwnerCount = [...ownerCounts.entries()].filter(([, n]) => n >= 2).length
+    return { governanceAttention, overloadedWs, concentration, imbalancedOwnerCount }
+  }, [allWorkspacesForList])
+
+  const navigateDirectoryWithChartFocus = useCallback((focus: DirectoryChartFocus) => {
+    setDirectoryChartFocus(focus)
+    selectWorkspacePanel('directory')
+    setDirectoryPage(1)
+    setShowFiltersPanel(true)
+    setOverviewChartSelection({
+      chartId: 'directory-drill',
+      key: `${focus.kind}:${JSON.stringify(focus)}`,
+    })
+  }, [selectWorkspacePanel])
+
+  const filteredWorkspaces = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    let list = allWorkspacesForList.filter((workspace) => {
+      const matchesSearch =
+        q.length === 0
+        || (
+          activePanel === 'governance'
+            ? governanceMatrixSearchBlob(
+                workspace,
+                governanceAssignmentByWorkspaceId.get(workspace.id),
+                governanceCatalog
+              ).includes(q)
+            : (
+              workspace.name.toLowerCase().includes(q)
+              || workspace.code.toLowerCase().includes(q)
+              || workspace.owner.toLowerCase().includes(q)
+            )
+        )
+
+      return matchesSearch
+    })
+    if (activePanel === 'directory' && directoryChartFocus) {
+      list = list.filter((w) => workspaceMatchesDirectoryChartFocus(w, directoryChartFocus))
+    }
+    return list
+  }, [
+    allWorkspacesForList,
+    searchQuery,
+    activePanel,
+    directoryChartFocus,
+    governanceAssignmentByWorkspaceId,
+    governanceCatalog,
+  ])
+
+  const directoryOrgOptionsList = useMemo(
+    () =>
+      [...new Set(allWorkspacesForList.map((w) => w.primaryOrganizationLabel).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base' })
+      ),
+    [allWorkspacesForList]
+  )
+
+  const normalizedDirectoryOrgFilterTags = useMemo(() => {
+    const next = new Set<string>()
+    for (const o of directoryOrgFilterTags) {
+      if (directoryOrgOptionsList.includes(o)) next.add(o)
+    }
+    return next.size > 0 ? next : new Set(directoryOrgOptionsList)
+  }, [directoryOrgFilterTags, directoryOrgOptionsList])
+
+  const isAllDirectoryOrgsSelected = normalizedDirectoryOrgFilterTags.size === directoryOrgOptionsList.length
+
+  const directoryTypeOptionsList = useMemo(() => {
+    // Seed from backend catalog first, then add any ad-hoc types present in workspace data.
+    const fromCatalog = workspaceTypeOptions.map((t) => t.label)
+    const fromData = filteredWorkspaces.map((w) => w.type).filter(Boolean)
+    const merged = [...new Set([...fromCatalog, ...fromData])]
+    return merged.sort((a, b) => a.localeCompare(b))
+  }, [workspaceTypeOptions, filteredWorkspaces])
+
+  const directoryFilteredWorkspaces = useMemo(() => {
+    let list = isAllStatusesSelected
+      ? filteredWorkspaces
+      : filteredWorkspaces.filter((w) => normalizedStatusFilterTags.has(w.status))
+    if (directoryOwnerFilterTags.size > 0) {
+      list = list.filter((w) => directoryOwnerFilterTags.has(w.owner))
+    }
+    if (directoryTypeFilterTags.size > 0) {
+      list = list.filter((w) => directoryTypeFilterTags.has(w.type))
+    }
+    if (normalizedDirectoryOrgFilterTags.size < directoryOrgOptionsList.length) {
+      list = list.filter((w) => normalizedDirectoryOrgFilterTags.has(w.primaryOrganizationLabel))
+    }
+    if (!isAllGovernanceConfigurationStatusesSelected) {
+      list = list.filter((w) =>
+        normalizedGovernanceConfigurationFilterTags.has(w.governance.configurationStatus)
+      )
+    }
+    return list
+  }, [
+    filteredWorkspaces,
+    isAllStatusesSelected,
+    normalizedStatusFilterTags,
+    directoryOwnerFilterTags,
+    directoryTypeFilterTags,
+    normalizedDirectoryOrgFilterTags,
+    directoryOrgOptionsList,
+    isAllGovernanceConfigurationStatusesSelected,
+    normalizedGovernanceConfigurationFilterTags,
+  ])
+
+  const toggleDirectoryOrgTag = (org: string) => {
+    setDirectoryOrgFilterTags((prev) => {
+      const next = new Set(prev)
+      if (next.has(org)) {
+        if (next.size <= 1) return prev
+        next.delete(org)
+      } else {
+        next.add(org)
+      }
+      return next
+    })
+  }
+
+  const sortedFilteredWorkspaces = useMemo(() => {
+    const rows = [...directoryFilteredWorkspaces]
+    if (!directorySort) return rows
+    const { key, dir } = directorySort
+    const mul = dir === 'asc' ? 1 : -1
+    rows.sort((a, b) => {
+      let cmp = 0
+      switch (key) {
+        case 'name':
+          cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          break
+        case 'type':
+          cmp = a.type.localeCompare(b.type, undefined, { sensitivity: 'base' })
+          break
+        case 'owner':
+          cmp = a.owner.localeCompare(b.owner, undefined, { sensitivity: 'base' })
+          break
+        case 'lifecycle':
+          cmp = a.lifecycle.localeCompare(b.lifecycle, undefined, { sensitivity: 'base' })
+          break
+        case 'governanceStatus':
+          cmp =
+            governanceConfigurationStatusSortRank(a.governance.configurationStatus)
+            - governanceConfigurationStatusSortRank(b.governance.configurationStatus)
+          if (cmp === 0) {
+            cmp = a.governance.configurationStatus.localeCompare(b.governance.configurationStatus)
+          }
+          break
+      }
+      return cmp * mul
+    })
+    return rows
+  }, [directoryFilteredWorkspaces, directorySort])
+
+  const directoryTotalPages = Math.max(1, Math.ceil(sortedFilteredWorkspaces.length / directoryPageSize))
+
+  const directoryFlatRows = useMemo(() => {
+    const rows = [...sortedFilteredWorkspaces]
+    if (!directoryGroupBy) {
+      return rows.map((workspace) => ({ workspace, groupLabel: null as string | null }))
+    }
+    const grouped = [...rows].sort((a, b) => {
+      const ga = workspaceDirectoryGroupLabel(a, directoryGroupBy)
+      const gb = workspaceDirectoryGroupLabel(b, directoryGroupBy)
+      return ga.localeCompare(gb, undefined, { sensitivity: 'base' })
+    })
+    return grouped.map((workspace) => ({
+      workspace,
+      groupLabel: workspaceDirectoryGroupLabel(workspace, directoryGroupBy),
+    }))
+  }, [sortedFilteredWorkspaces, directoryGroupBy])
+
+  const directoryTableRows = useMemo(() => {
+    const start = (directoryPage - 1) * directoryPageSize
+    return directoryFlatRows.slice(start, start + directoryPageSize)
+  }, [directoryFlatRows, directoryPage, directoryPageSize])
+
+  const toggleDirectorySort = (key: DirectoryTableSortKey) => {
+    setDirectorySort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }
+
+  useEffect(() => {
+    if (!showDirectorySelection && directorySelectedIds.length > 0) setDirectorySelectedIds([])
+  }, [directorySelectedIds.length, showDirectorySelection])
+
+  useEffect(() => {
+    setDirectoryPage(1)
+  }, [directoryGroupBy])
+
+  const updateDirectoryGroupByMenuAnchor = useCallback(() => {
+    const trigger = directoryGroupByTriggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    setDirectoryGroupByMenuAnchor({
+      left: rect.left,
+      top: rect.bottom + 8,
+      width: rect.width,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!directoryGroupByMenuOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (directoryGroupByTriggerRef.current?.contains(target)) return
+      if (directoryGroupByMenuPanelRef.current?.contains(target)) return
+      setDirectoryGroupByMenuOpen(false)
+      setDirectoryGroupByMenuSearch('')
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setDirectoryGroupByMenuOpen(false)
+      setDirectoryGroupByMenuSearch('')
+    }
+    window.addEventListener('mousedown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [directoryGroupByMenuOpen])
+
+  useLayoutEffect(() => {
+    if (!directoryGroupByMenuOpen) return
+    updateDirectoryGroupByMenuAnchor()
+    const onReposition = () => updateDirectoryGroupByMenuAnchor()
+    window.addEventListener('resize', onReposition)
+    window.addEventListener('scroll', onReposition, true)
+    return () => {
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('scroll', onReposition, true)
+    }
+  }, [directoryGroupByMenuOpen, updateDirectoryGroupByMenuAnchor])
+
+  const directoryVisibleColumnOrder = useMemo(
+    () => directoryColumnOrder.filter((key) => !directoryHiddenColumns.has(key)),
+    [directoryColumnOrder, directoryHiddenColumns]
+  )
+
+  const updateDirectoryColumnsMenuAnchor = useCallback(() => {
+    const trigger = directoryColumnsTriggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    setDirectoryColumnsMenuAnchor({
+      left: rect.right - 260,
+      top: rect.bottom + 12,
+      width: 260,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!directoryColumnsMenuOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (directoryColumnsTriggerRef.current?.contains(target)) return
+      if (directoryColumnsMenuPanelRef.current?.contains(target)) return
+      setDirectoryColumnsMenuOpen(false)
+      setDirectoryColumnsMenuSearch('')
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setDirectoryColumnsMenuOpen(false)
+      setDirectoryColumnsMenuSearch('')
+    }
+    window.addEventListener('mousedown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [directoryColumnsMenuOpen])
+
+  useLayoutEffect(() => {
+    if (!directoryColumnsMenuOpen) return
+    updateDirectoryColumnsMenuAnchor()
+    const onReposition = () => updateDirectoryColumnsMenuAnchor()
+    window.addEventListener('resize', onReposition)
+    window.addEventListener('scroll', onReposition, true)
+    return () => {
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('scroll', onReposition, true)
+    }
+  }, [directoryColumnsMenuOpen, updateDirectoryColumnsMenuAnchor])
+
+  const toggleDirectoryColumnVisibility = useCallback(
+    (key: DirectoryTableSortKey) => {
+      const isHidden = directoryHiddenColumns.has(key)
+      if (!isHidden) {
+        const visibleCount = directoryColumnOrder.filter((col) => !directoryHiddenColumns.has(col)).length
+        if (visibleCount <= 1) return
+        if (directoryGroupBy === key) setDirectoryGroupBy(null)
+      }
+      setDirectoryHiddenColumns((prev) => {
+        const next = new Set(prev)
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+        return next
+      })
+    },
+    [directoryColumnOrder, directoryGroupBy, directoryHiddenColumns]
+  )
+
+  const toggleDirectoryRowSelection = useCallback((workspaceId: string) => {
+    setDirectorySelectedIds((prev) =>
+      prev.includes(workspaceId) ? prev.filter((id) => id !== workspaceId) : [...prev, workspaceId]
+    )
+  }, [])
+
+  const directoryGroupByDisplayLabel = useMemo(() => {
+    if (!directoryGroupBy) return 'None'
+    return DIRECTORY_GROUP_BY_OPTIONS.find((opt) => opt.key === directoryGroupBy)?.label ?? 'None'
+  }, [directoryGroupBy])
+
+  const filteredAssets = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    let rows = [...assetsCatalogRecords]
+    if (assetsTypeFilterTags.size > 0) {
+      rows = rows.filter((asset) => assetsTypeFilterTags.has(asset.type))
+    }
+    if (assetsOwnerFilterTags.size > 0) {
+      rows = rows.filter((asset) => assetsOwnerFilterTags.has(asset.owner))
+    }
+    if (!q) return rows
+    return rows.filter((asset) => {
+      return (
+        asset.name.toLowerCase().includes(q)
+        || asset.type.toLowerCase().includes(q)
+        || asset.owner.toLowerCase().includes(q)
+        || asset.version.toLowerCase().includes(q)
+      )
+    })
+  }, [assetsCatalogRecords, assetsOwnerFilterTags, assetsTypeFilterTags, searchQuery])
+
+  const sortedAssets = useMemo(() => {
+    const rows = [...filteredAssets]
+    if (!assetsSort) return rows
+    const { key, dir } = assetsSort
+    const mul = dir === 'asc' ? 1 : -1
+    rows.sort((a, b) => {
+      let cmp = 0
+      switch (key) {
+        case 'name':
+          cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          break
+        case 'type':
+          cmp = a.type.localeCompare(b.type, undefined, { sensitivity: 'base' })
+          break
+        case 'owner':
+          cmp = a.owner.localeCompare(b.owner, undefined, { sensitivity: 'base' })
+          break
+        case 'version':
+          cmp = a.version.localeCompare(b.version, undefined, { sensitivity: 'base' })
+          break
+        case 'updated':
+          cmp = a.lastModified.localeCompare(b.lastModified, undefined, { sensitivity: 'base' })
+          break
+      }
+      return cmp * mul
+    })
+    return rows
+  }, [filteredAssets, assetsSort])
+
+  const assetsTotalPages = Math.max(1, Math.ceil(sortedAssets.length / assetsPageSize))
+
+  const assetsTableRows = useMemo(() => {
+    const start = (assetsPage - 1) * assetsPageSize
+    return sortedAssets.slice(start, start + assetsPageSize)
+  }, [sortedAssets, assetsPage, assetsPageSize])
+
+  const toggleAssetsSort = (key: AssetSortKey) => {
+    setAssetsSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }
+
+  const governanceFilteredWorkspaces = useMemo(() => {
+    let rows = [...filteredWorkspaces]
+    if (!isAllGovernancePolicyStatusesSelected) {
+      rows = rows.filter((workspace) => {
+        const status = governancePolicyStatusForWorkspace(workspace)
+        return status != null && normalizedGovernancePolicyFilterTags.has(status)
+      })
+    }
+    if (!isAllGovernanceHealthPosturesSelected) {
+      rows = rows.filter((workspace) => {
+        const posture = governanceMatrixMetricsByWorkspaceId.get(workspace.id)?.health?.posture
+        return posture != null && normalizedGovernanceHealthFilterTags.has(posture)
+      })
+    }
+    if (!isAllGovernanceRiskLevelsSelected) {
+      rows = rows.filter((workspace) => {
+        const risk = governanceMatrixMetricsByWorkspaceId.get(workspace.id)?.riskLevel
+        return risk != null && normalizedGovernanceRiskFilterTags.has(risk)
+      })
+    }
+    return rows
+  }, [
+    filteredWorkspaces,
+    isAllGovernancePolicyStatusesSelected,
+    normalizedGovernancePolicyFilterTags,
+    governancePolicyStatusForWorkspace,
+    isAllGovernanceHealthPosturesSelected,
+    normalizedGovernanceHealthFilterTags,
+    governanceMatrixMetricsByWorkspaceId,
+    isAllGovernanceRiskLevelsSelected,
+    normalizedGovernanceRiskFilterTags,
+  ])
+
+  const governanceOperatingModelColumnOptions = useMemo(() => {
+    const labels = new Set<string>()
+    for (const w of governanceFilteredWorkspaces) {
+      const metrics = governanceMatrixMetricsByWorkspaceId.get(w.id)
+      if (!metrics) continue
+      labels.add(governanceMatrixOperatingModelLabel(metrics))
+    }
+    return [...labels].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [governanceFilteredWorkspaces, governanceMatrixMetricsByWorkspaceId])
+
+  const governanceComplianceColumnOptions = useMemo(() => {
+    const badges = new Set<MatrixComplianceBadge>()
+    for (const w of governanceFilteredWorkspaces) {
+      const metrics = governanceMatrixMetricsByWorkspaceId.get(w.id)
+      if (!metrics) continue
+      badges.add(metrics.complianceBadge)
+    }
+    return ALL_MATRIX_COMPLIANCE_BADGES.filter((b) => badges.has(b))
+  }, [governanceFilteredWorkspaces, governanceMatrixMetricsByWorkspaceId])
+
+  const governanceAuditReadinessColumnOptions = useMemo(() => {
+    const labels = new Set<string>()
+    for (const w of governanceFilteredWorkspaces) {
+      const metrics = governanceMatrixMetricsByWorkspaceId.get(w.id)
+      if (!metrics) continue
+      labels.add(governanceMatrixAuditFilterLabel(metrics))
+    }
+    return ALL_GOVERNANCE_AUDIT_READINESS_FILTER_LABELS.filter((l) => labels.has(l))
+  }, [governanceFilteredWorkspaces, governanceMatrixMetricsByWorkspaceId])
+
+  const governanceOwnerColumnOptions = useMemo(() => {
+    const owners = new Set<string>()
+    for (const w of governanceFilteredWorkspaces) {
+      owners.add(governanceMatrixOwnerLabel(w))
+    }
+    return [...owners].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [governanceFilteredWorkspaces])
+
+  const governanceMatrixColumnFilteredWorkspaces = useMemo(() => {
+    let rows = [...governanceFilteredWorkspaces]
+    if (governanceOperatingModelColumnFilters.size > 0) {
+      rows = rows.filter((w) => {
+        const metrics = governanceMatrixMetricsByWorkspaceId.get(w.id)
+        if (!metrics) return false
+        return governanceOperatingModelColumnFilters.has(governanceMatrixOperatingModelLabel(metrics))
+      })
+    }
+    if (governanceComplianceColumnFilters.size > 0) {
+      rows = rows.filter((w) => {
+        const metrics = governanceMatrixMetricsByWorkspaceId.get(w.id)
+        if (!metrics) return false
+        return governanceComplianceColumnFilters.has(metrics.complianceBadge)
+      })
+    }
+    if (governanceAuditReadinessColumnFilters.size > 0) {
+      rows = rows.filter((w) => {
+        const metrics = governanceMatrixMetricsByWorkspaceId.get(w.id)
+        if (!metrics) return false
+        return governanceAuditReadinessColumnFilters.has(governanceMatrixAuditFilterLabel(metrics))
+      })
+    }
+    if (governanceOwnerColumnFilters.size > 0) {
+      rows = rows.filter((w) => governanceOwnerColumnFilters.has(governanceMatrixOwnerLabel(w)))
+    }
+    return rows
+  }, [
+    governanceFilteredWorkspaces,
+    governanceMatrixMetricsByWorkspaceId,
+    governanceOperatingModelColumnFilters,
+    governanceComplianceColumnFilters,
+    governanceAuditReadinessColumnFilters,
+    governanceOwnerColumnFilters,
+  ])
+
+  const sortedGovernanceWorkspaces = useMemo(() => {
+    const rows = [...governanceMatrixColumnFilteredWorkspaces]
+    if (!governanceSort) return rows
+    const { key, dir } = governanceSort
+    const mul = dir === 'asc' ? 1 : -1
+    rows.sort((a, b) => {
+      const ma = governanceMatrixMetricsByWorkspaceId.get(a.id)!
+      const mb = governanceMatrixMetricsByWorkspaceId.get(b.id)!
+      let cmp = 0
+      switch (key) {
+        case 'workspace':
+          cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          break
+        case 'operatingModel': {
+          const an = ma.operatingModel
+            ? GOVERNANCE_OPERATING_MODEL_DEFS.find((d) => d.id === ma.operatingModel)?.name ?? ''
+            : 'Unassigned'
+          const bn = mb.operatingModel
+            ? GOVERNANCE_OPERATING_MODEL_DEFS.find((d) => d.id === mb.operatingModel)?.name ?? ''
+            : 'Unassigned'
+          cmp = an.localeCompare(bn, undefined, { sensitivity: 'base' })
+          break
+        }
+        case 'governanceHealth':
+          cmp = (ma.health?.score ?? -1) - (mb.health?.score ?? -1)
+          break
+        case 'complianceStatus':
+          cmp = ma.complianceBadge.localeCompare(mb.complianceBadge, undefined, { sensitivity: 'base' })
+          break
+        case 'riskLevel':
+          cmp =
+            (ma.riskLevel ? governanceRiskSortRank(ma.riskLevel) : 0)
+            - (mb.riskLevel ? governanceRiskSortRank(mb.riskLevel) : 0)
+          break
+        case 'auditReadiness':
+          cmp = (ma.audit?.pct ?? -1) - (mb.audit?.pct ?? -1)
+          break
+        case 'lastReview': {
+          const ad = parseGovernanceReviewDate(a.governance.lastReview)?.getTime() ?? 0
+          const bd = parseGovernanceReviewDate(b.governance.lastReview)?.getTime() ?? 0
+          cmp = ad - bd
+          break
+        }
+        case 'governanceOwner':
+          cmp = a.governance.governanceOwner.localeCompare(b.governance.governanceOwner, undefined, { sensitivity: 'base' })
+          break
+      }
+      return cmp * mul
+    })
+    return rows
+  }, [governanceMatrixColumnFilteredWorkspaces, governanceSort, governanceMatrixMetricsByWorkspaceId])
+
+  const governanceTotalPages = Math.max(1, Math.ceil(sortedGovernanceWorkspaces.length / governancePageSize))
+
+  const governanceTableRows = useMemo(() => {
+    const start = (governancePage - 1) * governancePageSize
+    return sortedGovernanceWorkspaces.slice(start, start + governancePageSize)
+  }, [sortedGovernanceWorkspaces, governancePage, governancePageSize])
+
+  const toggleGovernanceSort = (key: GovernanceSortKey) => {
+    setGovernanceSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }
+
+  const normalizedMembersRoleFilter = useMemo(() => {
+    const next = new Set<MemberRole>()
+    for (const v of membersRoleFilter) {
+      if ((ALL_MEMBER_ROLES as string[]).includes(v)) next.add(v)
+    }
+    return next.size > 0 ? next : new Set(ALL_MEMBER_ROLES)
+  }, [membersRoleFilter])
+
+  const isAllMemberRolesSelected = normalizedMembersRoleFilter.size === ALL_MEMBER_ROLES.length
+
+  const aggregatedWorkspaceMembers = useMemo(
+    () => aggregateWorkspaceMembers(workspaceMembers),
+    [workspaceMembers]
+  )
+
+  const memberRoleCounts = useMemo(() => {
+    const m = new Map<MemberRole, number>()
+    for (const r of ALL_MEMBER_ROLES) m.set(r, 0)
+    for (const person of aggregatedWorkspaceMembers) {
+      for (const role of aggregatedMemberRoles(person)) {
+        m.set(role, (m.get(role) ?? 0) + 1)
+      }
+    }
+    return m
+  }, [aggregatedWorkspaceMembers])
+
+  const memberRoleTotalForLabel = useMemo(() => {
+    let sum = 0
+    for (const r of ALL_MEMBER_ROLES) sum += memberRoleCounts.get(r) ?? 0
+    return sum
+  }, [memberRoleCounts])
+
+  const filteredSortedMembers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    let list = aggregatedWorkspaceMembers.filter((m) => {
+      const workspaceLabel = aggregatedMemberWorkspaceLabel(m).toLowerCase()
+      const roleLabels = aggregatedMemberRoles(m).map((r) => r.toLowerCase()).join(' ')
+      const matchesSearch =
+        q.length === 0
+        || m.name.toLowerCase().includes(q)
+        || workspaceLabel.includes(q)
+        || m.team.toLowerCase().includes(q)
+        || roleLabels.includes(q)
+      const matchesRole =
+        isAllMemberRolesSelected
+        || m.memberships.some((ref) => normalizedMembersRoleFilter.has(ref.role))
+      return matchesSearch && matchesRole
+    })
+    if (!membersSort) return list
+    const { key, dir } = membersSort
+    const mul = dir === 'asc' ? 1 : -1
+    list = [...list].sort((a, b) => {
+      let cmp = 0
+      switch (key) {
+        case 'name':
+          cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          break
+        case 'workspace':
+          cmp = aggregatedMemberWorkspaceLabel(a).localeCompare(
+            aggregatedMemberWorkspaceLabel(b),
+            undefined,
+            { sensitivity: 'base' }
+          )
+          break
+        case 'role':
+          cmp = aggregatedMemberPrimaryRole(a).localeCompare(
+            aggregatedMemberPrimaryRole(b),
+            undefined,
+            { sensitivity: 'base' }
+          )
+          break
+        case 'team':
+          cmp = a.team.localeCompare(b.team, undefined, { sensitivity: 'base' })
+          break
+        case 'scope':
+          cmp = aggregatedMemberScopeLabel(a).localeCompare(
+            aggregatedMemberScopeLabel(b),
+            undefined,
+            { sensitivity: 'base' }
+          )
+          break
+        case 'lastActivity':
+          cmp = (a.memberships[0]?.lastActivity ?? '').localeCompare(
+            b.memberships[0]?.lastActivity ?? '',
+            undefined,
+            { sensitivity: 'base' }
+          )
+          break
+      }
+      return cmp * mul
+    })
+    return list
+  }, [
+    aggregatedWorkspaceMembers,
+    searchQuery,
+    normalizedMembersRoleFilter,
+    isAllMemberRolesSelected,
+    membersSort,
+  ])
+
+  const membersTotalPages = Math.max(1, Math.ceil(filteredSortedMembers.length / membersPageSize))
+
+  const membersTableRows = useMemo(() => {
+    const start = (membersPage - 1) * membersPageSize
+    return filteredSortedMembers.slice(start, start + membersPageSize)
+  }, [filteredSortedMembers, membersPage, membersPageSize])
+
+  const toggleMembersSort = (key: MemberSortKey) => {
+    setMembersSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }
+
+  const resetNewWorkspaceForm = () => {
+    setNewWorkspaceForm({ ...INITIAL_NEW_WORKSPACE_FORM })
+    setNewWorkspaceFormError(null)
+    setWizardFieldHighlights({})
+    setWizardReviewAcknowledged(false)
+  }
+
+  const openNewWorkspaceDrawer = () => {
+    closeAllWorkspaceManagementOverlays()
+    resetNewWorkspaceForm()
+    setNewWorkspaceWizardStep(1)
+    void refreshWorkspaceOrgLists()
+    try {
+      localStorage.removeItem(NEW_WORKSPACE_WIZARD_DRAFT_KEY)
+    } catch {
+      /* ignore */
+    }
+    setNewWorkspaceDrawerOpen(true)
+  }
+
+  const closeNewWorkspaceDrawer = () => {
+    resetNewWorkspaceForm()
+    setNewWorkspaceWizardStep(1)
+    if (!workspaceOrgBackendConnected) {
+      setOrganizationNodes([])
+    }
+    setPrimaryOrgManageOpen(false)
+    setWorkspaceTypeManageOpen(false)
+    try {
+      localStorage.removeItem(NEW_WORKSPACE_WIZARD_DRAFT_KEY)
+    } catch {
+      /* ignore */
+    }
+    setOwnershipOverlay(null)
+    setOwnershipOverlayQuery('')
+    setInviteContactEmail('')
+    setInviteContactTargetRole('technical')
+    setInviteContactError(null)
+    setNewWorkspaceDrawerOpen(false)
+  }
+
+  useEffect(() => {
+    if (!newWorkspaceDrawerOpen) return
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (isSubmittingNewWorkspace) return
+      e.preventDefault()
+      closeNewWorkspaceDrawer()
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [newWorkspaceDrawerOpen, isSubmittingNewWorkspace])
+
+  useEffect(() => {
+    if (!newWorkspaceDrawerOpen) return
+    const t = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          NEW_WORKSPACE_WIZARD_DRAFT_KEY,
+          JSON.stringify({ form: newWorkspaceForm, step: newWorkspaceWizardStep, savedAt: Date.now() })
+        )
+      } catch {
+        /* ignore quota */
+      }
+    }, 700)
+    return () => window.clearTimeout(t)
+  }, [newWorkspaceForm, newWorkspaceWizardStep, newWorkspaceDrawerOpen])
+
+  useEffect(() => {
+    if (!newWorkspaceDrawerOpen) return
+    if (newWorkspaceWizardStep !== 1) return
+    const rawName = newWorkspaceForm.name
+    if (!rawName.trim()) {
+      setNewWorkspaceForm((prev) => (prev.code === '' ? prev : { ...prev, code: '' }))
+      return
+    }
+    const handle = window.setTimeout(() => {
+      const taken = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
+      const nextCode = generateWorkspaceCode(rawName.trim(), taken)
+      setNewWorkspaceForm((prev) => (prev.code === nextCode ? prev : { ...prev, code: nextCode }))
+    }, 320)
+    return () => window.clearTimeout(handle)
+  }, [
+    newWorkspaceForm.name,
+    newWorkspaceWizardStep,
+    allWorkspacesForList,
+    newWorkspaceDrawerOpen,
+  ])
+
+  const tryGoToWizardStep = (targetStep: number) => {
+    if (targetStep < 1 || targetStep > NEW_WORKSPACE_WIZARD_STEP_TOTAL) return
+    if (targetStep <= newWorkspaceWizardStep) {
+      if (newWorkspaceWizardStep === 6 && targetStep < 6) setWizardReviewAcknowledged(false)
+      setNewWorkspaceWizardStep(targetStep)
+      setNewWorkspaceFormError(null)
+      setWizardFieldHighlights({})
+      return
+    }
+    for (let s = 1; s < targetStep; s += 1) {
+      const r = validateNewWorkspaceWizardStep(s, newWorkspaceForm, allWorkspacesForList, wizardValidationOptions)
+      if ('error' in r) {
+        setNewWorkspaceWizardStep(s)
+        setNewWorkspaceFormError(r.error)
+        setWizardFieldHighlights(r.highlights ?? {})
+        return
+      }
+    }
+    setNewWorkspaceWizardStep(targetStep)
+    setNewWorkspaceFormError(null)
+    setWizardFieldHighlights({})
+  }
+
+  const goWizardNext = () => {
+    const formForStep = mergePendingOwnershipSearchIntoForm(newWorkspaceForm, workspaceOwnershipAllPeople)
+    if (formForStep !== newWorkspaceForm) setNewWorkspaceForm(formForStep)
+    const r = validateNewWorkspaceWizardStep(
+      newWorkspaceWizardStep,
+      formForStep,
+      allWorkspacesForList,
+      wizardValidationOptions
+    )
+    if ('error' in r) {
+      setNewWorkspaceFormError(r.error)
+      setWizardFieldHighlights(r.highlights ?? {})
+      return
+    }
+    setNewWorkspaceFormError(null)
+    setWizardFieldHighlights({})
+    if (newWorkspaceWizardStep < NEW_WORKSPACE_WIZARD_STEP_TOTAL) {
+      if (newWorkspaceWizardStep === 1) {
+        const name = newWorkspaceForm.name.trim()
+        const taken = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
+        const code = generateWorkspaceCode(name, taken)
+        setNewWorkspaceForm((prev) => ({ ...prev, code }))
+      }
+      setNewWorkspaceWizardStep((prev) => prev + 1)
+    }
+  }
+
+  const goWizardBack = () => {
+    if (newWorkspaceWizardStep <= 1) return
+    if (newWorkspaceWizardStep === 6) setWizardReviewAcknowledged(false)
+    setNewWorkspaceFormError(null)
+    setWizardFieldHighlights({})
+    setNewWorkspaceWizardStep((prev) => Math.max(1, prev - 1))
+  }
+
+  const activeNewWorkspaceWizardStepMeta =
+    NEW_WORKSPACE_WIZARD_STEPS[newWorkspaceWizardStep - 1] ?? NEW_WORKSPACE_WIZARD_STEPS[0]
+
+  const newWorkspacePrimaryOrgLabel = useMemo(
+    () => organizationNodes.find((n) => n.id === newWorkspaceForm.primaryOrganizationId)?.label,
+    [newWorkspaceForm.primaryOrganizationId, organizationNodes]
+  )
+  const newWorkspaceRelatedOrgSummary = useMemo(() => {
+    const labels = newWorkspaceForm.relatedOrganizationIds.map(
+      (id) => organizationNodes.find((n) => n.id === id)?.label ?? id
+    )
+    return labels.length > 0 ? labels.join(', ') : '…'
+  }, [newWorkspaceForm.relatedOrganizationIds, organizationNodes])
+
+  const newWorkspaceWizardStepSummaries = useMemo(
+    () => buildNewWorkspaceWizardStepSummaries(newWorkspaceForm, organizationNodes, workspaceTypeOptions),
+    [newWorkspaceForm, organizationNodes, workspaceTypeOptions]
+  )
+
+  const workspaceOwnershipAllPeople = useMemo(() => {
+    const people: MemberRecord[] = identityUsers.map((u) => {
+      const jobTitle = u.job_title?.trim() ?? ''
+      const orgUnit = u.organizational_unit?.trim() ?? ''
+      return {
+      id: u.id,
+      subjectId: u.id,
+      workspaceId: '',
+      workspaceName: '',
+      name: u.display_name?.trim() || u.email,
+      role: 'Member' as MemberRole,
+        team: orgUnit || 'Identity-Lite directory',
+        scope: [jobTitle, u.email].filter(Boolean).join(' · ') || u.email,
+        scopeCode: '',
+        operationalTeamCode: '',
+        participationDuration: '',
+        participationStartDate: '',
+        participationEndDate: '',
+      lastActivity: '—',
+      version: 1,
+      }
+    })
+    const names = new Set(people.map((p) => p.name.toLowerCase()))
+    for (const m of workspaceMembers) {
+      if (!names.has(m.name.toLowerCase())) {
+        people.push(m)
+        names.add(m.name.toLowerCase())
+      }
+    }
+    for (const name of ownerSelectOptions) {
+      if (!names.has(name.toLowerCase())) {
+        people.push({
+          id: `dir-${name}`,
+          subjectId: `dir-${name}`,
+          workspaceId: '',
+          workspaceName: '',
+          name,
+          role: 'Member',
+          team: 'Workspace directory',
+          scope: 'Listed owner',
+          scopeCode: '',
+          operationalTeamCode: '',
+          participationDuration: '',
+          participationStartDate: '',
+          participationEndDate: '',
+          lastActivity: '…',
+          version: 1,
+        })
+      }
+    }
+    return people
+  }, [identityUsers, workspaceMembers, ownerSelectOptions])
+
+  const filteredWorkspaceOwnerPeople = useMemo(
+    () => filterWorkspaceOwnershipPeople(workspaceOwnershipAllPeople, newWorkspaceForm.ownershipOwnerSearchQuery),
+    [workspaceOwnershipAllPeople, newWorkspaceForm.ownershipOwnerSearchQuery]
+  )
+
+  const filteredWorkspaceBusinessOwnerPeople = useMemo(
+    () =>
+      filterWorkspaceOwnershipPeople(workspaceOwnershipAllPeople, newWorkspaceForm.ownershipBusinessOwnerSearchQuery),
+    [workspaceOwnershipAllPeople, newWorkspaceForm.ownershipBusinessOwnerSearchQuery]
+  )
+
+  const filteredWorkspaceTechnicalOwnerPeople = useMemo(
+    () =>
+      filterWorkspaceOwnershipPeople(workspaceOwnershipAllPeople, newWorkspaceForm.ownershipTechnicalOwnerSearchQuery),
+    [workspaceOwnershipAllPeople, newWorkspaceForm.ownershipTechnicalOwnerSearchQuery]
+  )
+
+  const filteredEditOwnerPeople = useMemo(
+    () => filterWorkspaceOwnershipPeople(workspaceOwnershipAllPeople, editWorkspaceForm?.ownerQuery ?? ''),
+    [workspaceOwnershipAllPeople, editWorkspaceForm?.ownerQuery]
+  )
+
+  const filteredEditBusinessOwnerPeople = useMemo(
+    () => filterWorkspaceOwnershipPeople(workspaceOwnershipAllPeople, editWorkspaceForm?.businessOwnerQuery ?? ''),
+    [workspaceOwnershipAllPeople, editWorkspaceForm?.businessOwnerQuery]
+  )
+
+  const filteredEditTechnicalOwnerPeople = useMemo(
+    () => filterWorkspaceOwnershipPeople(workspaceOwnershipAllPeople, editWorkspaceForm?.technicalOwnerQuery ?? ''),
+    [workspaceOwnershipAllPeople, editWorkspaceForm?.technicalOwnerQuery]
+  )
+
+  const shouldSkipOwnershipPickerInputBlur = useCallback(
+    (relatedTarget: EventTarget | null) => {
+      if (ownershipPickerSkipBlurCommitRef.current) {
+        ownershipPickerSkipBlurCommitRef.current = false
+        return true
+      }
+      if (suppressEditOwnershipBlurCommitRef.current) {
+        suppressEditOwnershipBlurCommitRef.current = false
+        return true
+      }
+      return isFocusMovingToOwnershipPickerList(relatedTarget)
+    },
+    []
+  )
+
+  const markOwnershipPickerFocusMovingToList = useCallback(() => {
+    ownershipPickerSkipBlurCommitRef.current = true
+  }, [])
+
+  const finishEditWorkspaceOwnershipBlur = useCallback(
+    (target: 'business' | 'technical') => {
+      if (suppressEditOwnershipBlurCommitRef.current) {
+        suppressEditOwnershipBlurCommitRef.current = false
+        return
+      }
+      setEditWorkspaceForm((f) => {
+        if (!f) return f
+        const query = target === 'business' ? f.businessOwnerQuery : f.technicalOwnerQuery
+        const ownerSet = target === 'business' ? f.businessOwner.trim() : f.technicalOwner.trim()
+        if (ownerSet) return f
+
+        const matched = ownershipNameFromDirectoryExactMatch(query, workspaceOwnershipAllPeople)
+        if (matched) {
+          editOwnershipRevertRef.current[target] = null
+          return target === 'business'
+            ? { ...f, businessOwner: matched, businessOwnerQuery: matched }
+            : { ...f, technicalOwner: matched, technicalOwnerQuery: matched }
+        }
+
+        const revert = editOwnershipRevertRef.current[target]
+        editOwnershipRevertRef.current[target] = null
+        if (revert === null) {
+          return target === 'business'
+            ? { ...f, businessOwnerQuery: '' }
+            : { ...f, technicalOwnerQuery: '' }
+        }
+        return target === 'business'
+          ? { ...f, businessOwner: revert, businessOwnerQuery: revert }
+          : { ...f, technicalOwner: revert, technicalOwnerQuery: revert }
+      })
+    },
+    [workspaceOwnershipAllPeople]
+  )
+
+  const workspaceOwnershipSearchPlaceholder =
+    newWorkspaceForm.ownershipIdentityMode === 'local'
+      ? 'Search Identity-Lite directory by name, team, or role…'
+      : newWorkspaceForm.ownershipIdentityMode === 'external'
+        ? 'Search enterprise IAM users…'
+        : 'Search Identity-Lite directory or IAM…'
+
+  const handleWorkspaceOwnershipPersonSelect = (target: 'owner' | 'business' | 'technical', row: MemberRecord) => {
+    const name = row.name
+    if (target === 'owner') {
+      setNewWorkspaceForm((p) => ({
+        ...p,
+        owner: name,
+        ownershipOwnerSearchQuery: name,
+      }))
+      setWizardFieldHighlights((h) => ({ ...h, owner: false }))
+      return
+    }
+    if (target === 'business') {
+      setNewWorkspaceForm((p) => ({
+        ...p,
+        businessOwner: name,
+        ownershipBusinessOwnerSearchQuery: name,
+      }))
+      setWizardFieldHighlights((h) => ({ ...h, businessOwner: false }))
+      return
+    }
+    setNewWorkspaceForm((p) => ({
+      ...p,
+      technicalOwner: name,
+      ownershipTechnicalOwnerSearchQuery: name,
+    }))
+    setWizardFieldHighlights((h) => ({ ...h, technicalOwner: false }))
+  }
+
+  const closeOwnershipOverlay = useCallback(() => {
+    setOwnershipOverlay(null)
+    setOwnershipOverlayQuery('')
+    setInviteContactError(null)
+  }, [])
+
+  const openOwnershipDirectoryBrowse = (target: WorkspaceOwnershipPersonTarget) => {
+    setOwnershipOverlay({ type: 'directory', target })
+    setOwnershipOverlayQuery('')
+  }
+
+  const openOwnershipInviteContact = (target: 'business' | 'technical') => {
+    setInviteContactTargetRole(target)
+    setInviteContactEmail('')
+    setInviteContactError(null)
+    setOwnershipOverlay({ type: 'invite', target })
+  }
+
+  const selectOwnershipOverlayPerson = (target: WorkspaceOwnershipPersonTarget, row: MemberRecord) => {
+    handleWorkspaceOwnershipPersonSelect(target, row)
+    closeOwnershipOverlay()
+  }
+
+  const ownershipOverlayDirectoryPeople = useMemo(() => {
+    if (!ownershipOverlay || ownershipOverlay.type !== 'directory') return []
+    return filterWorkspaceOwnershipPeople(workspaceOwnershipAllPeople, ownershipOverlayQuery)
+  }, [ownershipOverlay, ownershipOverlayQuery, workspaceOwnershipAllPeople])
+
+  useEffect(() => {
+    if (!newWorkspaceDrawerOpen || !ownershipOverlay) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeOwnershipOverlay()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [newWorkspaceDrawerOpen, ownershipOverlay, closeOwnershipOverlay])
+
+  const resetPrimaryOrgManageFields = () => {
+    setNewOrgLabel('')
+    setNewOrgError(null)
+    setNewOrgParentId(ORG_PARENT_ROOT_SENTINEL)
+    setEditingOrgId(null)
+    setEditingOrgLabel('')
+    setEditingOrgParentId(ORG_PARENT_ROOT_SENTINEL)
+    setEditingOrgError(null)
+    setConfirmDeletePrimaryOrgOpen(false)
+    setConfirmDeletePrimaryOrgTargetId(null)
+  }
+
+  const resetWorkspaceTypeManageFields = () => {
+    setNewWorkspaceTypeLabel('')
+    setNewWorkspaceTypeError(null)
+    setEditingWorkspaceTypeValue(null)
+    setEditingWorkspaceTypeLabel('')
+    setEditingWorkspaceTypeError(null)
+  }
+
+  const openWorkspaceTypeManage = () => {
+    closeWorkspaceManagementOverlays({ newWorkspaceDrawer: true })
+    resetWorkspaceTypeManageFields()
+    setWorkspaceTypeManageOpen(true)
+  }
+
+  const closeWorkspaceTypeManage = () => {
+    setWorkspaceTypeManageOpen(false)
+    resetWorkspaceTypeManageFields()
+  }
+
+  const addWorkspaceTypeOption = () => {
+    const trimmed = normalizeTitleCaseInput(newWorkspaceTypeLabel).trim()
+    if (!trimmed) {
+      setNewWorkspaceTypeError('Workspace type name is required.')
+      return
+    }
+    const lower = trimmed.toLowerCase()
+    if (workspaceTypeOptions.some((t) => t.label.toLowerCase() === lower)) {
+      setNewWorkspaceTypeError('This workspace type already exists.')
+      return
+    }
+    setNewWorkspaceTypeLabel('')
+    setNewWorkspaceTypeError(null)
+    ;(async () => {
+      try {
+        await createWorkspaceOrgWorkspaceType({ type_code: trimmed, label: trimmed, sort_order: workspaceTypeOptions.length * 10 })
+        await refreshWorkspaceOrgLists()
+        addToast({ variant: 'success', title: 'Type added', description: `${trimmed} is now available.` })
+      } catch (e) {
+        setNewWorkspaceTypeError(e instanceof Error ? e.message : 'Could not create workspace type.')
+      }
+    })()
+  }
+
+  const startEditWorkspaceType = (t: WorkspaceTypeRecord) => {
+    setEditingWorkspaceTypeValue(t.id)
+    setEditingWorkspaceTypeLabel(t.label)
+    setEditingWorkspaceTypeError(null)
+  }
+
+  const cancelEditWorkspaceType = () => {
+    setEditingWorkspaceTypeValue(null)
+    setEditingWorkspaceTypeLabel('')
+    setEditingWorkspaceTypeError(null)
+  }
+
+  const commitEditWorkspaceType = () => {
+    if (!editingWorkspaceTypeValue) return
+    const trimmed = normalizeTitleCaseInput(editingWorkspaceTypeLabel).trim()
+    if (!trimmed) {
+      setEditingWorkspaceTypeError('Workspace type name is required.')
+      return
+    }
+    const lower = trimmed.toLowerCase()
+    if (workspaceTypeOptions.some((t) => t.id !== editingWorkspaceTypeValue && t.label.toLowerCase() === lower)) {
+      setEditingWorkspaceTypeError('This workspace type already exists.')
+      return
+    }
+    const target = workspaceTypeOptions.find((t) => t.id === editingWorkspaceTypeValue)
+    if (!target) { cancelEditWorkspaceType(); return }
+    const targetId = editingWorkspaceTypeValue
+    cancelEditWorkspaceType()
+    ;(async () => {
+      try {
+        await patchWorkspaceOrgWorkspaceType(targetId, { label: trimmed, version: target.version })
+        await refreshWorkspaceOrgLists()
+      } catch (e) {
+        addToast({ variant: 'error', title: 'Update failed', description: e instanceof Error ? e.message : 'Could not update workspace type.' })
+      }
+    })()
+  }
+
+  const deleteWorkspaceType = (id: string) => {
+    const target = workspaceTypeOptions.find((t) => t.id === id)
+    setNewWorkspaceForm((prev) => ({
+      ...prev,
+      workspaceType: prev.workspaceType === target?.typeCode ? '' : prev.workspaceType,
+    }))
+    if (editingWorkspaceTypeValue === id) cancelEditWorkspaceType()
+    ;(async () => {
+      try {
+        await deleteWorkspaceOrgWorkspaceType(id)
+        await refreshWorkspaceOrgLists()
+      } catch (e) {
+        addToast({ variant: 'error', title: 'Delete failed', description: e instanceof Error ? e.message : 'Could not delete workspace type.' })
+      }
+    })()
+  }
+
+  const openPrimaryOrgManage = () => {
+    closeWorkspaceManagementOverlays({ newWorkspaceDrawer: true })
+    resetPrimaryOrgManageFields()
+    setPrimaryOrgManageOpen(true)
+  }
+
+  const closePrimaryOrgManage = () => {
+    setPrimaryOrgManageOpen(false)
+    resetPrimaryOrgManageFields()
+  }
+
+  const primaryOrgDeleteImpact = useMemo(() => {
+    if (!confirmDeletePrimaryOrgTargetId) {
+      return { rootLabel: null as string | null, removeCount: 0, clearsPrimary: false, clearsRelatedCount: 0 }
+    }
+    const target = organizationNodes.find((n) => n.id === confirmDeletePrimaryOrgTargetId)
+    const rm = collectOrganizationSubtreeIds(confirmDeletePrimaryOrgTargetId, organizationNodes)
+    const clearsPrimary = rm.has(newWorkspaceForm.primaryOrganizationId)
+    const clearsRelatedCount = newWorkspaceForm.relatedOrganizationIds.filter((x) => rm.has(x)).length
+    return {
+      rootLabel: target?.label ?? confirmDeletePrimaryOrgTargetId,
+      removeCount: rm.size,
+      clearsPrimary,
+      clearsRelatedCount,
+    }
+  }, [confirmDeletePrimaryOrgTargetId, organizationNodes, newWorkspaceForm.primaryOrganizationId, newWorkspaceForm.relatedOrganizationIds])
+
+  const addPrimaryOrgDirectoryNode = () => {
+    const trimmed = normalizeTitleCaseInput(newOrgLabel).trim()
+    if (!trimmed) {
+      setNewOrgError('Organization name is required.')
+      return
+    }
+    const lower = trimmed.toLowerCase()
+    if (organizationNodes.some((n) => n.label.trim().toLowerCase() === lower)) {
+      setNewOrgError('An organization with this name already exists.')
+      return
+    }
+    const parentId = newOrgParentId === ORG_PARENT_ROOT_SENTINEL ? null : newOrgParentId
+    if (!workspaceOrgBackendConnected) {
+      setNewOrgError('Workspace Org backend belum terhubung. Jalankan service lalu coba lagi.')
+      return
+    }
+    if (parentId !== null) {
+      setNewOrgError('Workspace Org organizations are flat (no hierarchy). Use Root level.')
+      return
+    }
+
+    const orgCodeFromName = (name: string) => {
+      const words = name.trim().split(/\s+/).filter(Boolean)
+      const initials = words.map((w) => w[0] ?? '').join('')
+      const base = (initials || name.replace(/[^a-zA-Z0-9]+/g, '')).toUpperCase()
+      const short = (base || 'ORG').slice(0, 10)
+      // Add a deterministic-ish suffix to avoid unique collisions on organization_code.
+      const suffix = Date.now().toString(36).slice(-4).toUpperCase()
+      const code = `${short.length >= 2 ? short : `${short}X`}-${suffix}`
+      return code.slice(0, 64)
+    }
+
+    const session = getSession()
+    const idempotencyKey =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `idem-${Date.now().toString(36)}`
+
+    ;(async () => {
+      try {
+        await createWorkspaceOrgOrganization(
+          {
+            organization_code: orgCodeFromName(trimmed),
+            name: trimmed,
+            description: null,
+            status_code: 'active',
+            metadata: { tectona_source: 'wizard' },
+          },
+          { actorId: session?.user?.id, idempotencyKey }
+        )
+        await refreshWorkspaceOrgLists()
+        setNewOrgLabel('')
+        setNewOrgError(null)
+        addToast({ variant: 'success', title: 'Organization added', description: `${trimmed} is now available.` })
+      } catch (e) {
+        const raw = e instanceof Error ? e.message : 'Could not create organization.'
+        const isDuplicate =
+          /already exists/i.test(raw)
+          || /duplicate/i.test(raw)
+          || /conflict/i.test(raw)
+          || /409\b/.test(raw)
+
+        const msg = isDuplicate
+          ? 'Duplikasi: organisasi ini (atau kode organisasi) sudah ada. Coba nama lain atau ulangi.'
+          : raw
+
+        setNewOrgError(msg)
+        addToast({
+          variant: isDuplicate ? 'default' : 'error',
+          title: isDuplicate ? 'Organization duplikat' : 'Create organization failed',
+          description: msg,
+        })
+      }
+    })()
+  }
+
+  const startEditOrganization = (node: OrganizationDirectoryNode) => {
+    setEditingOrgId(node.id)
+    setEditingOrgLabel(node.label)
+    setEditingOrgParentId(node.parentId == null ? ORG_PARENT_ROOT_SENTINEL : node.parentId)
+    setEditingOrgError(null)
+  }
+
+  const cancelEditOrganization = () => {
+    setEditingOrgId(null)
+    setEditingOrgLabel('')
+    setEditingOrgParentId(ORG_PARENT_ROOT_SENTINEL)
+    setEditingOrgError(null)
+  }
+
+  const commitEditOrganization = () => {
+    if (!editingOrgId) return
+    const trimmed = normalizeTitleCaseInput(editingOrgLabel).trim()
+    if (!trimmed) {
+      setEditingOrgError('Organization name is required.')
+      return
+    }
+    const lower = trimmed.toLowerCase()
+    if (
+      organizationNodes.some(
+        (n) => n.id !== editingOrgId && n.label.trim().toLowerCase() === lower
+      )
+    ) {
+      setEditingOrgError('An organization with this name already exists.')
+      return
+    }
+    const parentId =
+      editingOrgParentId === ORG_PARENT_ROOT_SENTINEL ? null : editingOrgParentId
+    if (parentId !== null) {
+      if (!organizationNodes.some((n) => n.id === parentId)) {
+        setEditingOrgError('Selected parent is no longer available.')
+        return
+      }
+      const blocked = collectOrganizationSubtreeIds(editingOrgId, organizationNodes)
+      if (blocked.has(parentId)) {
+        setEditingOrgError('Cannot move under itself or its own descendant.')
+        return
+      }
+    }
+    setOrganizationNodes((prev) =>
+      prev.map((n) => (n.id === editingOrgId ? { ...n, label: trimmed, parentId } : n))
+    )
+    cancelEditOrganization()
+    // Persist parent_org_id to backend metadata so hierarchy survives page refresh
+    const targetNode = organizationNodes.find((n) => n.id === editingOrgId)
+    if (targetNode) {
+      void patchWorkspaceOrgOrganization(
+        editingOrgId,
+        {
+          metadata: { ...targetNode.metadata, parent_org_id: parentId ?? null },
+          version: targetNode.version ?? 1,
+        },
+      ).catch(() => { /* non-blocking: hierarchy will re-read on next fetch */ })
+    }
+  }
+
+  const deleteOrganization = (id: string) => {
+    const rm = collectOrganizationSubtreeIds(id, organizationNodes)
+    setOrganizationNodes((prev) => prev.filter((n) => !rm.has(n.id)))
+    setNewWorkspaceForm((f) => ({
+      ...f,
+      primaryOrganizationId: rm.has(f.primaryOrganizationId) ? '' : f.primaryOrganizationId,
+      relatedOrganizationIds: f.relatedOrganizationIds.filter((x) => !rm.has(x)),
+    }))
+    if (editingOrgId && rm.has(editingOrgId)) cancelEditOrganization()
+  }
+
+  const submitNewWorkspace = () => {
+    if (isSubmittingNewWorkspace) return
+    if (newWorkspaceWizardStep !== 6) {
+      setNewWorkspaceFormError('Go to the Review & create step before saving.')
+      return
+    }
+    if (!wizardReviewAcknowledged) {
+      setNewWorkspaceFormError('Confirm the summary to create the workspace.')
+      return
+    }
+    const review = validateNewWorkspaceWizardStep(6, newWorkspaceForm, allWorkspacesForList, wizardValidationOptions)
+    if ('error' in review) {
+      setNewWorkspaceFormError(review.error)
+      setWizardFieldHighlights(review.highlights ?? {})
+      const f = newWorkspaceForm
+      let jump = 6
+      if (!f.name.trim()) jump = 1
+      else if (!f.primaryOrganizationId) jump = 2
+      else if (!f.workspaceType) jump = 3
+      else if (!f.owner.trim()) jump = 4
+      setNewWorkspaceWizardStep(jump)
+      return
+    }
+    setWizardFieldHighlights({})
+
+    const name = newWorkspaceForm.name.trim()
+    const takenCodes = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
+    const codeKey = (
+      newWorkspaceForm.code.trim() || generateWorkspaceCode(name, takenCodes)
+    ).toLowerCase()
+
+    const primaryNode = organizationNodes.find((n) => n.id === newWorkspaceForm.primaryOrganizationId)
+    const primaryOrganizationLabel = primaryNode?.label ?? newWorkspaceForm.primaryOrganizationId
+
+    setNewWorkspaceFormError(null)
+    setIsSubmittingNewWorkspace(true)
+
+    const finalizeSuccess = (workspaceId: string, workspaceCodeDisplay: string, ownerName: string) => {
+      resetNewWorkspaceForm()
+      setNewWorkspaceWizardStep(1)
+      try {
+        localStorage.removeItem(NEW_WORKSPACE_WIZARD_DRAFT_KEY)
+      } catch {
+        /* ignore */
+      }
+      setIsSubmittingNewWorkspace(false)
+      setNewWorkspaceDrawerOpen(false)
+      addToast({
+        variant: 'success',
+        title: 'Workspace created',
+        description: `${name} (${workspaceCodeDisplay}) is registered in Workspace Directory with governance status Unconfigured.`,
+      })
+      addToast({
+        variant: 'default',
+        title: 'Recommended next actions',
+        description: 'Assign Governance Policy — Add Members — Link Projects — Configure Workflow — Open Workspace',
+      })
+      notifyEvent({
+        type_code: 'project',
+        title: 'Workspace created',
+        body: `${name} (${workspaceCodeDisplay}) is registered in the workspace directory.`,
+        metadata: {
+          workspace_id: workspaceId,
+          workspace_code: workspaceCodeDisplay,
+          event: 'workspace_created',
+        },
+      })
+    }
+
+    if (!workspaceOrgBackendConnected) {
+      const msg =
+        'Layanan workspace directory tidak tersedia. Jalankan backend workspace-org (mis. port 8424) dan coba lagi.'
+      setNewWorkspaceFormError(msg)
+      addToast({ variant: 'error', title: 'Tidak dapat membuat workspace', description: msg })
+      setIsSubmittingNewWorkspace(false)
+      return
+    }
+
+    if (!hasWorkspaceOrgOrganizations) {
+      const msg =
+        'Daftar organization dari Workspace Org belum termuat. Tunggu beberapa detik lalu klik "Coba lagi", atau reload halaman.'
+      setNewWorkspaceFormError(msg)
+      addToast({ variant: 'error', title: 'Organization directory belum siap', description: msg })
+      setIsSubmittingNewWorkspace(false)
+      return
+    }
+
+    ;(async () => {
+      try {
+        const session = getSession()
+        const ownerName = newWorkspaceForm.owner.trim()
+        const businessOwnerName = newWorkspaceForm.businessOwner.trim()
+        const technicalOwnerName = newWorkspaceForm.technicalOwner.trim()
+
+        const ownerVerified =
+          ownerName !== '' && knownPeopleNames.has(ownerName.toLowerCase())
+        const businessOwnerVerified =
+          businessOwnerName !== '' && knownPeopleNames.has(businessOwnerName.toLowerCase())
+        const technicalOwnerVerified =
+          technicalOwnerName !== '' && knownPeopleNames.has(technicalOwnerName.toLowerCase())
+
+        const metadata: Record<string, unknown> = {
+          tectona_workspace_classification: newWorkspaceForm.workspaceType,
+          tectona_owner: ownerName,
+          tectona_lifecycle_stage: newWorkspaceForm.lifecycleStage,
+          tectona_primary_organization_label: primaryOrganizationLabel,
+          tectona_related_organization_ids: [...newWorkspaceForm.relatedOrganizationIds],
+          tectona_ownership_identity_mode: newWorkspaceForm.ownershipIdentityMode,
+          tectona_owner_verification_status: ownerVerified ? 'verified' : 'unverified',
+          tectona_business_owner_verification_status:
+            businessOwnerName !== '' ? (businessOwnerVerified ? 'verified' : 'unverified') : 'not_set',
+          tectona_technical_owner_verification_status:
+            technicalOwnerName !== '' ? (technicalOwnerVerified ? 'verified' : 'unverified') : 'not_set',
+          tectona_members_count: 0,
+          tectona_projects_count: 0,
+          tectona_integrations: [],
+          tectona_assets_count: 0,
+          tectona_last_updated: new Date().toISOString(),
+        }
+        if (newWorkspaceForm.businessOwner.trim()) {
+          metadata.tectona_business_owner = businessOwnerName
+        }
+        if (newWorkspaceForm.technicalOwner.trim()) {
+          metadata.tectona_technical_owner = technicalOwnerName
+        }
+
+        const idempotencyKey =
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `idem-${Date.now().toString(36)}`
+
+        const created = await createWorkspaceOrgWorkspace(
+          {
+            organization_id: newWorkspaceForm.primaryOrganizationId.trim(),
+            workspace_key: codeKey,
+            name,
+            description: newWorkspaceForm.description.trim() || null,
+            status_code: lifecycleStageToWorkspaceOrgStatusCode(newWorkspaceForm.lifecycleStage),
+            metadata,
+          },
+          { actorId: session?.user?.id, idempotencyKey }
+        )
+
+        await refreshWorkspaceOrgLists()
+        const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(created)
+        void syncWorkspaceOrgEntryToKb(created)
+        finalizeSuccess(mapped.id, mapped.code, mapped.owner)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Could not create workspace.'
+        setNewWorkspaceFormError(msg)
+        addToast({ variant: 'error', title: 'Create workspace failed', description: msg })
+        setIsSubmittingNewWorkspace(false)
+      }
+    })()
+  }
+
+  useEffect(() => {
+    setDirectoryPage(1)
+  }, [
+    searchQuery,
+    directoryPageSize,
+    statusFilterTags,
+    governanceConfigurationFilterTags,
+    typeFilterTags,
+    directorySort,
+    directoryOwnerFilterTags,
+    directoryTypeFilterTags,
+  ])
+
+  useEffect(() => {
+    if (directoryPage > directoryTotalPages) setDirectoryPage(directoryTotalPages)
+  }, [directoryPage, directoryTotalPages])
+
+  useEffect(() => {
+    setAssetsPage(1)
+  }, [searchQuery, assetsPageSize, assetsSort, assetsCatalogRecords, assetsTypeFilterTags, assetsOwnerFilterTags])
+
+  useEffect(() => {
+    if (assetsPage > assetsTotalPages) setAssetsPage(assetsTotalPages)
+  }, [assetsPage, assetsTotalPages])
+
+  useEffect(() => {
+    setActivityPage(1)
+  }, [searchQuery, activityPageSize])
+
+  useEffect(() => {
+    if (activityPage > activityTotalPages) setActivityPage(activityTotalPages)
+  }, [activityPage, activityTotalPages])
+
+  useEffect(() => {
+    setGovernancePage(1)
+  }, [
+    searchQuery,
+    governancePageSize,
+    governancePolicyFilterTags,
+    governanceHealthFilterTags,
+    governanceRiskFilterTags,
+    governanceSort,
+    governanceOperatingModelColumnFilters,
+    governanceComplianceColumnFilters,
+    governanceAuditReadinessColumnFilters,
+    governanceOwnerColumnFilters,
+  ])
+
+  useEffect(() => {
+    setMembersPage(1)
+  }, [searchQuery, membersPageSize, membersRoleFilter, membersSort])
+
+  useEffect(() => {
+    if (membersPage > membersTotalPages) setMembersPage(membersTotalPages)
+  }, [membersPage, membersTotalPages])
+
+  // Reset search query whenever the user switches panels so each section
+  // always starts with a clean search scope.
+  useEffect(() => {
+    setSearchQuery('')
+  }, [activePanel])
+
+  const metrics = useMemo(() => {
+    const list = allWorkspacesForList
+    const countedFromWac = Object.values(workspaceMemberCounts).reduce((sum, n) => sum + n, 0)
+    const totalMembers =
+      countedFromWac > 0
+        ? countedFromWac
+        : list.reduce((sum, workspace) => sum + (workspaceMemberCounts[workspace.id] ?? workspace.members), 0)
+    const totalProjects = list.reduce((sum, workspace) => sum + workspace.projects, 0)
+    const activeCount = list.filter((workspace) => workspace.status === 'Active').length
+    const atRiskCount = list.filter((workspace) => workspace.status === 'At Risk').length
+
+    return {
+      totalWorkspaces: list.length,
+      activeCount,
+      atRiskCount,
+      totalMembers,
+      totalProjects,
+    }
+  }, [allWorkspacesForList, workspaceMemberCounts])
+
+  const kpiTrendSeries = useMemo(() => {
+    const DAY_MS = 24 * 60 * 60 * 1000
+    const toUtcDayEpoch = (value: string): number | null => {
+      const d = new Date(value)
+      if (Number.isNaN(d.getTime())) return null
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+    }
+
+    const now = new Date()
+    const endDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+    const startDay = endDay - DAY_MS * 29
+
+    const total = Array.from({ length: 30 }, () => 0)
+    const active = Array.from({ length: 30 }, () => 0)
+    const risk = Array.from({ length: 30 }, () => 0)
+    const members = Array.from({ length: 30 }, () => 0)
+    const projects = Array.from({ length: 30 }, () => 0)
+
+    for (const workspace of allWorkspacesForList) {
+      const createdDay = toUtcDayEpoch(workspace.createdDate)
+      if (createdDay == null || createdDay > endDay) continue
+
+      const startIndex = createdDay <= startDay ? 0 : Math.floor((createdDay - startDay) / DAY_MS)
+      for (let idx = startIndex; idx < 30; idx += 1) {
+        total[idx] += 1
+        members[idx] += workspace.members
+        projects[idx] += workspace.projects
+        if (workspace.status === 'Active') active[idx] += 1
+        if (workspace.status === 'At Risk') risk[idx] += 1
+      }
+    }
+
+    return { total, active, risk, members, projects }
+  }, [allWorkspacesForList])
+
+  const kpiCardMap = useMemo(() => {
+    const totalWorkspacesCard = {
+      label: 'Total Workspaces',
+      value: String(metrics.totalWorkspaces),
+      subtitle: 'Registered workspace boundaries',
+      trend: '+6.2%',
+      trendSeries: kpiTrendSeries.total,
+      trendColor: '#0ea5e9',
+      icon: Building2,
+    }
+    const activeWorkspacesCard = {
+      label: 'Active Workspaces',
+      value: String(metrics.activeCount),
+      subtitle: 'Operating lifecycle state',
+      trend: '+2.1%',
+      trendSeries: kpiTrendSeries.active,
+      trendColor: '#10b981',
+      icon: CheckCircle2,
+    }
+    const atRiskCard = {
+      label: 'At Risk',
+      value: String(metrics.atRiskCount),
+      subtitle: 'Portfolio health flag',
+      trend: '-0.8%',
+      trendSeries: kpiTrendSeries.risk,
+      trendColor: '#f43f5e',
+      icon: AlertTriangle,
+    }
+    const membersCard = {
+      label: 'Total Members',
+      value: String(metrics.totalMembers),
+      subtitle: 'Across workspace participation scopes',
+      trend: '+4.5%',
+      trendSeries: kpiTrendSeries.members,
+      trendColor: '#6366f1',
+      icon: Users,
+    }
+    const projectsCard = {
+      label: 'Total Projects',
+      value: String(metrics.totalProjects),
+      subtitle: 'Linked under workspace boundaries',
+      trend: '+3.3%',
+      trendSeries: kpiTrendSeries.projects,
+      trendColor: '#f59e0b',
+      icon: FolderKanban,
+    }
+
+    return {
+      total: totalWorkspacesCard,
+      active: activeWorkspacesCard,
+      risk: atRiskCard,
+      members: membersCard,
+      projects: projectsCard,
+    } satisfies Record<WorkspaceKpiCardKey, Parameters<typeof WorkspaceKpiCard>[0]>
+  }, [metrics, kpiTrendSeries])
+
+  const defaultKpiOrder = useMemo<WorkspaceKpiCardKey[]>(
+    () => ['total', 'active', 'risk', 'members', 'projects'],
+    []
+  )
+  const [kpiCardOrder, setKpiCardOrder] = useState<WorkspaceKpiCardKey[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(WORKSPACE_KPI_CARD_ORDER_STORAGE_KEY)
+      if (!raw) return defaultKpiOrder
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) return defaultKpiOrder
+      const set = new Set<WorkspaceKpiCardKey>(defaultKpiOrder)
+      const base = (parsed as unknown[]).filter((x): x is WorkspaceKpiCardKey => typeof x === 'string' && set.has(x as any))
+      const missing = defaultKpiOrder.filter((x) => !base.includes(x))
+      return [...base, ...missing]
+    } catch {
+      return defaultKpiOrder
+    }
+  })
+  const [activeKpiCardId, setActiveKpiCardId] = useState<WorkspaceKpiCardKey | null>(null)
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WORKSPACE_KPI_CARD_ORDER_STORAGE_KEY, JSON.stringify(kpiCardOrder))
+    } catch {
+      /* ignore */
+    }
+  }, [kpiCardOrder])
+
+  const kpiDndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const directoryColumnDndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+
+  const handleKpiDragStart = useCallback((event: DragStartEvent) => {
+    const id = event.active?.id
+    if (typeof id === 'string') setActiveKpiCardId(id as WorkspaceKpiCardKey)
+  }, [])
+
+  const handleKpiDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event
+    setActiveKpiCardId(null)
+    if (!over) return
+    if (active.id === over.id) return
+    setKpiCardOrder((prev) => {
+      const oldIndex = prev.indexOf(active.id as WorkspaceKpiCardKey)
+      const newIndex = prev.indexOf(over.id as WorkspaceKpiCardKey)
+      if (oldIndex < 0 || newIndex < 0) return prev
+      return arrayMove(prev, oldIndex, newIndex)
+    })
+  }, [])
+
+  const handleDirectoryColumnDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over) return
+    if (active.id === over.id) return
+    if (active.id === DIRECTORY_PINNED_FIRST_COLUMN) return
+    setDirectoryColumnOrder((prev) => {
+      const oldIndex = prev.indexOf(active.id as DirectoryTableSortKey)
+      let newIndex = prev.indexOf(over.id as DirectoryTableSortKey)
+      if (oldIndex < 0 || newIndex < 0) return prev
+      if (newIndex === 0) newIndex = 1
+      const next = arrayMove(prev, oldIndex, newIndex)
+      if (next[0] === DIRECTORY_PINNED_FIRST_COLUMN) return next
+      const rest = next.filter((key) => key !== DIRECTORY_PINNED_FIRST_COLUMN)
+      return [DIRECTORY_PINNED_FIRST_COLUMN, ...rest]
+    })
+  }, [])
+
+  const directoryColumnLabel = useCallback((key: DirectoryTableSortKey) => {
+    if (key === 'name') return 'Workspace Name'
+    if (key === 'type') return 'Type'
+    if (key === 'owner') return 'Owner'
+    if (key === 'lifecycle') return 'Lifecycle'
+    return 'Governance Status'
+  }, [])
+
+  const directoryColumnWidthStyle = useCallback((key: DirectoryTableSortKey) => {
+    const px = directoryColumnWidthsPx[key]
+    if (!px || px <= 0) return undefined
+    const hasCustomWidths = Object.values(directoryColumnWidthsPx).some(
+      (value) => typeof value === 'number' && value > 0
+    )
+    const isLastVisibleColumn =
+      directoryVisibleColumnOrder[directoryVisibleColumnOrder.length - 1] === key
+    if (hasCustomWidths && isLastVisibleColumn) {
+      return { minWidth: px, width: 'auto' } satisfies React.CSSProperties
+    }
+    return { width: px, minWidth: px, maxWidth: px } satisfies React.CSSProperties
+  }, [directoryColumnWidthsPx, directoryVisibleColumnOrder])
+
+  const isDirectoryFirstColumn = useCallback((key: DirectoryTableSortKey) => {
+    return directoryVisibleColumnOrder[0] === key
+  }, [directoryVisibleColumnOrder])
+
+  const isDirectoryPinnedColumn = useCallback((key: DirectoryTableSortKey) => {
+    return key === DIRECTORY_PINNED_FIRST_COLUMN
+  }, [])
+
+  const isDirectorySecondColumn = useCallback((key: DirectoryTableSortKey) => {
+    return directoryVisibleColumnOrder[1] === key
+  }, [directoryVisibleColumnOrder])
+
+  const isDirectoryThirdColumnOrLater = useCallback((key: DirectoryTableSortKey) => {
+    return directoryVisibleColumnOrder.indexOf(key) >= 2
+  }, [directoryVisibleColumnOrder])
+
+  const getDirectoryColumnIndex = useCallback((key: DirectoryTableSortKey) => {
+    return directoryColumnOrder.indexOf(key)
+  }, [directoryColumnOrder])
+
+  const isDirectoryLastColumn = useCallback((key: DirectoryTableSortKey) => {
+    return directoryVisibleColumnOrder[directoryVisibleColumnOrder.length - 1] === key
+  }, [directoryVisibleColumnOrder])
+
+  const moveDirectoryColumnToFirst = useCallback((key: DirectoryTableSortKey) => {
+    setDirectoryColumnOrder((prev) => {
+      const index = prev.indexOf(key)
+      if (index <= 1) return prev
+      const next = [...prev]
+      const [item] = next.splice(index, 1)
+      next.splice(1, 0, item)
+      if (next[0] === DIRECTORY_PINNED_FIRST_COLUMN) return next
+      const rest = next.filter((col) => col !== DIRECTORY_PINNED_FIRST_COLUMN)
+      return [DIRECTORY_PINNED_FIRST_COLUMN, ...rest]
+    })
+  }, [])
+
+  const moveDirectoryColumnLeft = useCallback((key: DirectoryTableSortKey) => {
+    setDirectoryColumnOrder((prev) => {
+      const index = prev.indexOf(key)
+      if (index <= 1) return prev
+      return arrayMove(prev, index, index - 1)
+    })
+  }, [])
+
+  const moveDirectoryColumnRight = useCallback((key: DirectoryTableSortKey) => {
+    setDirectoryColumnOrder((prev) => {
+      const index = prev.indexOf(key)
+      if (index < 0 || index >= prev.length - 1) return prev
+      return arrayMove(prev, index, index + 1)
+    })
+  }, [])
+
+  const moveDirectoryColumnToLast = useCallback((key: DirectoryTableSortKey) => {
+    setDirectoryColumnOrder((prev) => {
+      const index = prev.indexOf(key)
+      if (index < 0 || index >= prev.length - 1) return prev
+      const next = [...prev]
+      const [item] = next.splice(index, 1)
+      next.push(item)
+      return next
+    })
+  }, [])
+
+  const hasAnyDirectoryCustomColumnWidth = useMemo(
+    () => Object.values(directoryColumnWidthsPx).some((px) => typeof px === 'number' && px > 0),
+    [directoryColumnWidthsPx]
+  )
+
+  const snapshotDirectoryColumnWidthsFromTable = useCallback(
+    (tableEl?: HTMLTableElement | null): Partial<Record<DirectoryTableSortKey, number>> => {
+      const table = tableEl ?? directoryTableRef.current
+      if (!table) return {}
+      const headerRow = table.querySelector('thead tr')
+      if (!headerRow) return {}
+      const ths = Array.from(headerRow.querySelectorAll('th'))
+      const dataThs = showDirectorySelection ? ths.slice(1) : ths
+      const snapshot: Partial<Record<DirectoryTableSortKey, number>> = {}
+      directoryVisibleColumnOrder.forEach((key, index) => {
+        const th = dataThs[index]
+        if (th) {
+          snapshot[key] = clampDirectoryColumnWidthPx(Math.round(th.getBoundingClientRect().width))
+        }
+      })
+      return snapshot
+    },
+    [directoryVisibleColumnOrder, showDirectorySelection]
+  )
+
+  const setDirectoryColumnWidthsWithSnapshot = useCallback(
+    (
+      updater: (prev: Partial<Record<DirectoryTableSortKey, number>>) => Partial<Record<DirectoryTableSortKey, number>>,
+      tableEl?: HTMLTableElement | null
+    ) => {
+      setDirectoryColumnWidthsPx((prev) => {
+        const base = Object.keys(prev).length > 0 ? prev : snapshotDirectoryColumnWidthsFromTable(tableEl)
+        return updater(base)
+      })
+    },
+    [snapshotDirectoryColumnWidthsFromTable]
+  )
+
+  const measureDirectoryColumnContentWidthPx = useCallback(
+    (key: DirectoryTableSortKey, tableEl: HTMLTableElement): number => {
+      const headerRow = tableEl.querySelector('thead tr')
+      if (!headerRow) return DIRECTORY_COLUMN_WIDTH_MIN_PX
+      const ths = Array.from(headerRow.querySelectorAll('th'))
+      const dataThs = showDirectorySelection ? ths.slice(1) : ths
+      const colIndex = directoryVisibleColumnOrder.indexOf(key)
+      if (colIndex < 0) return DIRECTORY_COLUMN_WIDTH_MIN_PX
+
+      let maxWidth = 0
+      const th = dataThs[colIndex] as HTMLElement | undefined
+      if (th) maxWidth = Math.max(maxWidth, th.scrollWidth)
+
+      tableEl.querySelectorAll('tbody tr').forEach((row) => {
+        const cells = Array.from(row.querySelectorAll('td'))
+        const dataCells = showDirectorySelection ? cells.slice(1) : cells
+        if (dataCells.length === 1 && (dataCells[0]?.colSpan ?? 1) > 1) return
+        const td = dataCells[colIndex] as HTMLElement | undefined
+        if (td) maxWidth = Math.max(maxWidth, td.scrollWidth)
+      })
+
+      return clampDirectoryColumnWidthPx(maxWidth + 16)
+    },
+    [directoryVisibleColumnOrder, showDirectorySelection]
+  )
+
+  const autoResizeDirectoryColumn = useCallback(
+    (key: DirectoryTableSortKey) => {
+      const table = directoryTableRef.current
+      if (!table) return
+      const width = measureDirectoryColumnContentWidthPx(key, table)
+      setDirectoryColumnWidthsWithSnapshot((prev) => ({ ...prev, [key]: width }), table)
+    },
+    [measureDirectoryColumnContentWidthPx, setDirectoryColumnWidthsWithSnapshot]
+  )
+
+  const beginDirectoryColumnResize = useCallback(
+    (columnKey: DirectoryTableSortKey, startX: number, thElement: HTMLTableCellElement) => {
+      const table = thElement.closest('table')
+      const measuredWidth = Math.round(thElement.getBoundingClientRect().width)
+      let startWidth = directoryColumnWidthsPx[columnKey] ?? measuredWidth
+
+      if (Object.keys(directoryColumnWidthsPx).length === 0) {
+        const snapshot = snapshotDirectoryColumnWidthsFromTable(table)
+        setDirectoryColumnWidthsPx(snapshot)
+        startWidth = snapshot[columnKey] ?? measuredWidth
+      }
+
+      directoryColumnResizeRef.current = { columnKey, startX, startWidth }
+      setDirectoryColumnResizingKey(columnKey)
+    },
+    [directoryColumnWidthsPx, snapshotDirectoryColumnWidthsFromTable]
+  )
+
+  useEffect(() => {
+    if (!directoryColumnResizingKey) return
+    const onMove = (event: MouseEvent) => {
+      const active = directoryColumnResizeRef.current
+      if (!active) return
+      const next = clampDirectoryColumnWidthPx(active.startWidth + (event.clientX - active.startX))
+      setDirectoryColumnWidthsPx((prev) => ({ ...prev, [active.columnKey]: next }))
+    }
+    const onUp = () => {
+      directoryColumnResizeRef.current = null
+      setDirectoryColumnResizingKey(null)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+  }, [directoryColumnResizingKey])
+
+  const directoryFrozenColumnClass = freezeDirectoryFirstColumn
+    ? 'sticky left-0 z-20 bg-slate-50/95 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.12)] dark:bg-slate-800/55 dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.45)]'
+    : ''
+
+  const directoryFirstColumnTintHeaderClass =
+    'bg-slate-50/95 dark:bg-slate-800/55'
+
+  const directoryFirstColumnTintBodyClass =
+    'bg-slate-50/70 dark:bg-slate-800/35'
+
+  const directoryFrozenBodyCellClass = freezeDirectoryFirstColumn
+    ? 'sticky left-0 z-10 bg-slate-50/70 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:bg-slate-800/35 dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+    : ''
+
+  const resetAllDirectoryColumnWidths = useCallback(() => {
+    setDirectoryColumnWidthsPx({})
+  }, [])
+
+  const SortableDirectoryHeaderCell = ({ columnKey }: { columnKey: DirectoryTableSortKey }) => {
+    const label = directoryColumnLabel(columnKey)
+    const HeaderIcon = directoryColumnHeaderIcon(columnKey)
+    const isLastDirectoryColumn = isDirectoryLastColumn(columnKey)
+    const isPinnedColumn = isDirectoryPinnedColumn(columnKey)
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+      id: columnKey,
+      disabled: isPinnedColumn,
+    })
+    const style: React.CSSProperties = {
+      transform: transform ? CSS.Transform.toString(transform) : undefined,
+      transition,
+      ...(directoryColumnWidthStyle(columnKey) ?? {}),
+    }
+
+    const isSorted = directorySort?.key === columnKey
+    const columnFilterActive =
+      columnKey === 'type'
+        ? directoryTypeFilterTags.size > 0
+        : columnKey === 'owner'
+          ? directoryOwnerFilterTags.size > 0
+          : columnKey === 'governanceStatus' && showKpiCarousel
+            ? !isAllGovernanceConfigurationStatusesSelected
+            : false
+    const columnFilterButtonClass = cn(
+      'inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors',
+      'outline-none focus:outline-none focus-visible:outline-none',
+      'focus-visible:ring-2 focus-visible:ring-sky-400/50 focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+      columnFilterActive
+        ? 'bg-blue-600 text-white dark:bg-blue-500 dark:text-slate-900'
+        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+    )
+
+    return (
+      <th
+        ref={setNodeRef}
+        style={style}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setDirectoryHeaderContextMenu({ x: e.clientX, y: e.clientY, columnKey })
+        }}
+        className={cn(
+          'relative select-none border-b-[3px] border-double border-slate-300/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80',
+          isDirectoryFirstColumn(columnKey)
+            ? directoryFirstColumnTintHeaderClass
+            : 'bg-white/90 dark:bg-slate-900/90',
+          freezeDirectoryFirstColumn && isDirectoryFirstColumn(columnKey) && directoryFrozenColumnClass,
+          isDragging && 'opacity-70'
+        )}
+      >
+        <div className="flex items-center gap-1.5">
+          {isPinnedColumn ? (
+            <span className="inline-flex h-6 w-6 shrink-0" aria-hidden />
+          ) : (
+            <button
+              type="button"
+              className={cn(
+                'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/70',
+                'hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100',
+                'cursor-grab active:cursor-grabbing'
+              )}
+              aria-label={`Arrange column: ${label}`}
+              title="Drag to rearrange columns"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVertical className="h-4 w-4" aria-hidden />
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => toggleDirectorySort(columnKey)}
+            className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+            title="Sort: ascending → descending → default"
+          >
+            <HeaderIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" aria-hidden />
+            <span>{label}</span>
+            {isSorted ? (
+              directorySort?.dir === 'asc' ? (
+                <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              )
+            ) : (
+              <ArrowUpDown className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
+            )}
+          </button>
+
+          {columnKey === 'type' ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={columnFilterButtonClass}
+                  aria-label="Filter workspace types in table"
+                  title="Filter types"
+                >
+                  <Filter className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+              >
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  <span>Type filter</span>
+                  <span className="text-[10px] font-medium text-muted-foreground">
+                    {directoryTypeFilterTags.size === 0 ? 'All' : `${directoryTypeFilterTags.size} selected`}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => {
+                    setDirectoryTypeFilterTags(new Set())
+                    setDirectoryPage(1)
+                  }}
+                  className="flex items-center justify-between"
+                >
+                  Show all
+                  {directoryTypeFilterTags.size === 0 ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                  ) : null}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {directoryTypeOptionsList.length === 0 ? (
+                  <DropdownMenuItem className="pointer-events-none opacity-60">No types</DropdownMenuItem>
+                ) : (
+                  directoryTypeOptionsList.map((typeLabel) => {
+                    const active = directoryTypeFilterTags.size > 0 && directoryTypeFilterTags.has(typeLabel)
+                    return (
+                      <DropdownMenuItem
+                        key={typeLabel}
+                        onClick={() => {
+                          setDirectoryTypeFilterTags((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(typeLabel)) next.delete(typeLabel)
+                            else next.add(typeLabel)
+                            return next
+                          })
+                          setDirectoryPage(1)
+                        }}
+                        className="flex items-center justify-between"
+                      >
+                        <span className="truncate">{typeLabel}</span>
+                        {active ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                        ) : null}
+                      </DropdownMenuItem>
+                    )
+                  })
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+
+          {columnKey === 'owner' ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={columnFilterButtonClass}
+                  aria-label="Filter workspace owners in table"
+                  title="Filter owners"
+                >
+                  <Filter className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+              >
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  <span>Owner filter</span>
+                  <span className="text-[10px] font-medium text-muted-foreground">
+                    {directoryOwnerFilterTags.size === 0 ? 'All' : `${directoryOwnerFilterTags.size} selected`}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => {
+                    setDirectoryOwnerFilterTags(new Set())
+                    setDirectoryPage(1)
+                  }}
+                  className="flex items-center justify-between"
+                >
+                  Show all
+                  {directoryOwnerFilterTags.size === 0 ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                  ) : null}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {directoryOwnerOptionsList.length === 0 ? (
+                  <DropdownMenuItem className="pointer-events-none opacity-60">No owners</DropdownMenuItem>
+                ) : (
+                  directoryOwnerOptionsList.map((ownerLabel) => {
+                    const active = directoryOwnerFilterTags.size > 0 && directoryOwnerFilterTags.has(ownerLabel)
+                    return (
+                      <DropdownMenuItem
+                        key={ownerLabel}
+                        onClick={() => {
+                          setDirectoryOwnerFilterTags((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(ownerLabel)) next.delete(ownerLabel)
+                            else next.add(ownerLabel)
+                            return next
+                          })
+                          setDirectoryPage(1)
+                        }}
+                        className="flex items-center justify-between"
+                      >
+                        <span className="truncate">{ownerLabel}</span>
+                        {active ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                        ) : null}
+                      </DropdownMenuItem>
+                    )
+                  })
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+
+          {columnKey === 'governanceStatus' && showKpiCarousel ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={columnFilterButtonClass}
+                  aria-label="Filter governance status in table"
+                  title="Filter governance status"
+                >
+                  <Filter className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+              >
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  <span>Governance status filter</span>
+                  <span className="text-[10px] font-medium text-muted-foreground">
+                    {isAllGovernanceConfigurationStatusesSelected ? 'All' : `${normalizedGovernanceConfigurationFilterTags.size} selected`}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => {
+                    setGovernanceConfigurationFilterTags(new Set(ALL_GOVERNANCE_CONFIGURATION_STATUSES))
+                    setDirectoryPage(1)
+                  }}
+                  className="flex items-center justify-between"
+                >
+                  Show all
+                  {isAllGovernanceConfigurationStatusesSelected ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                  ) : null}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {ALL_GOVERNANCE_CONFIGURATION_STATUSES.map((status) => {
+                  const active = normalizedGovernanceConfigurationFilterTags.has(status)
+                  const count = governanceConfigurationCounts.get(status) ?? 0
+                  return (
+                    <DropdownMenuItem
+                      key={status}
+                      onClick={() => {
+                        setGovernanceConfigurationFilterTags((prev) => {
+                          const allowed = new Set(ALL_GOVERNANCE_CONFIGURATION_STATUSES)
+                          const next = new Set<GovernanceConfigurationStatus>()
+                          for (const v of prev) if (allowed.has(v)) next.add(v)
+                          if (next.has(status)) next.delete(status)
+                          else next.add(status)
+                          if (next.size === 0) return new Set(ALL_GOVERNANCE_CONFIGURATION_STATUSES)
+                          return next
+                        })
+                        setDirectoryPage(1)
+                      }}
+                      className="flex items-center justify-between"
+                    >
+                      <span className="truncate">
+                        {status}
+                        <span className="ml-1 tabular-nums text-[10px] text-muted-foreground">({count})</span>
+                      </span>
+                      {active ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                      ) : null}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+        {!isLastDirectoryColumn ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={`Resize ${label} column`}
+            title="Drag to resize column"
+            className={cn(
+              'absolute top-0 right-0 z-30 h-full w-3 translate-x-1/2 cursor-col-resize touch-none',
+              'hover:bg-sky-400/15 active:bg-sky-400/25',
+              directoryColumnResizingKey === columnKey && 'bg-sky-400/30'
+            )}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              const th = event.currentTarget.closest('th')
+              if (!th) return
+              beginDirectoryColumnResize(columnKey, event.clientX, th)
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.stopPropagation()}
+          />
+        ) : null}
+      </th>
+    )
+  }
+
+  const workspaceHealthScore = useMemo(() => {
+    const list = allWorkspacesForList
+    if (list.length === 0) return 0
+    const weightedStatusScore = list.reduce((sum, workspace) => {
+      if (workspace.status === 'Active') return sum + 1
+      if (workspace.status === 'At Risk') return sum + 0.6
+      return sum + 0.2
+    }, 0)
+
+    const statusScore = (weightedStatusScore / list.length) * 100
+    const memberCapacityScore = Math.min(100, (metrics.totalMembers / (list.length * 25)) * 100)
+    const projectCoverageScore = Math.min(100, (metrics.totalProjects / (list.length * 10)) * 100)
+
+    return Math.round((statusScore * 0.5) + (memberCapacityScore * 0.25) + (projectCoverageScore * 0.25))
+  }, [allWorkspacesForList, metrics.totalMembers, metrics.totalProjects])
+
+  const roleSummary = useMemo(() => {
+    const summary = { Admin: 0, Manager: 0, Member: 0, Viewer: 0 }
+    for (const person of aggregatedWorkspaceMembers) {
+      for (const role of aggregatedMemberRoles(person)) {
+        summary[role] += 1
+      }
+    }
+    return summary
+  }, [aggregatedWorkspaceMembers])
+
+  useEffect(() => {
+    if (!primaryOrgManageOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setPrimaryOrgManageOpen(false)
+      setNewOrgLabel('')
+      setNewOrgError(null)
+      setNewOrgParentId(ORG_PARENT_ROOT_SENTINEL)
+      setEditingOrgId(null)
+      setEditingOrgLabel('')
+      setEditingOrgParentId(ORG_PARENT_ROOT_SENTINEL)
+      setEditingOrgError(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [primaryOrgManageOpen])
+
+  return (
+    <div className="min-h-0 space-y-6 pb-0">
+      <div
+        data-chat-evidence-root
+        className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked && showEnterpriseNavPanel, showEnterpriseNavPanel && isWorkspaceCollapsed, enterpriseNavLayoutVariant))}>
+      <Breadcrumb items={[{ label: 'Workspace Management' }]} />
+
+      <PageHeader
+        title="Workspace Management"
+        description="Workspace lifecycle, governance posture, membership and participation, and portfolio visibility—operational control for delivery boundaries, not platform authorization."
+        right={(
+          <div className="flex flex-wrap items-center gap-3">
+            {/* KPI toggle + Export + Filter pill — enterprise chrome */}
+            <div className="flex items-center gap-px rounded-2xl border border-slate-200/80 bg-white/80 p-1 shadow-[0_2px_12px_rgba(15,23,42,0.07)] ring-1 ring-white/60 backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/70 dark:ring-slate-700/30">
+              <button
+                type="button"
+                className={cn(
+                  'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
+                  showKpiCards && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+                )}
+                onClick={() => setShowKpiCards((v) => !v)}
+                aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+              >
+                <LayoutGrid className="h-[18px] w-[18px]" strokeWidth={1.8} />
+              </button>
+              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
+              <button
+                type="button"
+                className="group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200"
+                aria-label="Export workspace list"
+                title="Export workspace list"
+              >
+                <Download className="h-[18px] w-[18px]" strokeWidth={1.8} />
+              </button>
+              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
+              <button
+                type="button"
+                onClick={() => setShowEnterpriseNavPanel((visible) => !visible)}
+                className={cn(
+                  'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
+                  showEnterpriseNavPanel && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+                )}
+                aria-label={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+                title={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+              >
+                <PanelLeft className="h-[18px] w-[18px]" strokeWidth={1.8} />
+              </button>
+              {supportsSearchAndFilter ? (
+                <>
+                  <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
+                  <button
+                    type="button"
+                    className={cn(
+                      'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
+                      showFiltersPanel && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+                    )}
+                    onClick={() => setShowFiltersPanel((value) => !value)}
+                    aria-label={showFiltersPanel ? 'Hide workspace filters' : 'Show workspace filters'}
+                    title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
+                  >
+                    <Filter className="h-[18px] w-[18px]" strokeWidth={1.8} />
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </div>
+        )}
+      />
+
+      {showKpiCards ? (
+        <section
+          ref={kpiSectionRef}
+          data-chat-evidence-region="workspace-kpi-strip"
+          className={cn('space-y-2', showKpiCarousel && 'w-full min-w-0')}>
+          {showKpiCarousel ? (
+            <WorkspaceKpiCardsCarousel
+              cardOrder={kpiCardOrder}
+              kpiCardMap={kpiCardMap}
+              cardsPerSlide={kpiCarouselCardsPerSlide}
+            />
+          ) : (
+          <DndContext
+            sensors={kpiDndSensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleKpiDragStart}
+            onDragEnd={handleKpiDragEnd}
+          >
+            <SortableContext items={kpiCardOrder} strategy={rectSortingStrategy}>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                {kpiCardOrder.map((key) => {
+                  const card = kpiCardMap[key]
+                  return (
+                    <WorkspaceKpiSortableCard key={key} id={key}>
+                      <WorkspaceKpiCard {...card} />
+                    </WorkspaceKpiSortableCard>
+                  )
+                })}
+              </div>
+            </SortableContext>
+            <DragOverlay>
+              {activeKpiCardId ? (
+                <div className="relative w-[280px]">
+                  <div style={{ transform: 'rotate(2deg)' }}>
+                    <div className="scale-105 shadow-2xl">
+                      <WorkspaceKpiCard {...kpiCardMap[activeKpiCardId]} />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+          )}
+        </section>
+      ) : null}
+
+      <section
+        className={cn(
+          showEnterpriseNavPanel
+            ? enterpriseNavFloatRail
+              ? 'relative w-full min-w-0'
+              : workspaceOuterGridClass(sidebarFixed, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
+            : 'relative w-full min-w-0',
+          // Match grid row height: main column stretches to nav bottom (aside stays self-start from layout helper).
+          showEnterpriseNavPanel && !enterpriseNavFloatRail && sidebarFixed && 'items-stretch',
+          showEnterpriseNavPanel && (navDocked || enterpriseNavFloatRail) ? 'relative' : undefined
+        )}
+      >
+        {showEnterpriseNavPanel ? (
+          enterpriseNavFloatRail ? (
+          <WorkspaceEnterpriseNavFloatRail
+            items={floatNavPanels}
+            activePanel={activePanel}
+            onSelect={selectWorkspacePanel}
+          />
+        ) : (
+        <aside
+          className={cn(
+            workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant),
+            sidebarFixed && !enterpriseNavFloatRail && 'self-stretch'
+          )}
+          aria-label="Workspace enterprise navigation"
+        >
+          <div
+            ref={navPanelRef}
+            className={cn(
+              workspaceNavInnerClass(navDocked, sidebarFixed, isWorkspaceCollapsed),
+              // Match Document & Knowledge Management panel corner radius (rounded-2xl, not rounded-[28px]).
+              'rounded-2xl xl:rounded-r-2xl',
+              !navDocked && 'h-full min-h-0 overflow-hidden'
+            )}
+            style={
+              !navDocked && navPanelHeightPx
+                ? { height: navPanelHeightPx, maxHeight: navPanelHeightPx, minHeight: navPanelHeightPx }
+                : undefined
+            }
+          >
+            <div className="shrink-0">
+              <div className={cn('flex items-center', isWorkspaceCollapsed ? 'mb-2 justify-center' : 'mb-3 justify-between')}>
+                {!isWorkspaceCollapsed ? (
+                  <span className="px-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Enterprise Navigation</span>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    'shrink-0 rounded-xl border border-slate-200/70 bg-white/75 text-slate-600 shadow-sm hover:bg-white hover:text-slate-900',
+                    isWorkspaceCollapsed ? 'h-8 w-8 rounded-full' : 'h-9 w-9'
+                  )}
+                  aria-label={isWorkspaceCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  title={isWorkspaceCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  onClick={() => setIsWorkspaceCollapsed((c) => !c)}
+                >
+                  {isWorkspaceCollapsed ? (
+                    <ChevronRight className="h-4 w-4" strokeWidth={2.5} />
+                  ) : (
+                    <ChevronLeft className="h-5 w-5" strokeWidth={2.5} />
+                  )}
+                </Button>
+            </div>
+
+              {!isWorkspaceCollapsed && !enterpriseNavSimpleList ? (
+                <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200/80 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_38%),linear-gradient(160deg,rgba(15,23,42,0.96),rgba(30,41,59,0.94))] p-4 text-white shadow-[0_18px_44px_rgba(15,23,42,0.24)]">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-100/80">Workspace Control Tower</div>
+                  <div className="mt-1.5 text-sm font-semibold leading-snug">Design governance, workspace membership, and operational visibility</div>
+              </div>
+            ) : null}
+            </div>
+
+            {isWorkspaceCollapsed ? (
+              <div className={cn(workspaceNavMenuScrollClass(), 'pt-0')}>
+                <EnterpriseNavIconRail
+                  items={floatNavPanels}
+                  activeId={activePanel}
+                  onSelect={selectWorkspacePanel}
+                />
+              </div>
+            ) : (
+              <>
+            <div className={workspaceNavMenuScrollClass()}>
+              <div className={cn(enterpriseNavUltra ? 'space-y-1.5' : enterpriseNavCompact ? 'space-y-2' : 'space-y-4')}>
+              {visiblePanelGroups.map(({ group, items }) => (
+                  <div key={group} className="space-y-1.5">
+                  {!enterpriseNavCompact ? (
+                    <div className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{group}</div>
+                  ) : null}
+                  {items.map((panel) => {
+                    const Icon = panel.icon
+                    const active = panel.id === activePanel
+                    return (
+                      <button
+                        key={panel.id}
+                        type="button"
+                        onClick={() => selectWorkspacePanel(panel.id)}
+                        className={cn(
+                          'group relative flex w-full overflow-hidden border text-left transition-all duration-200',
+                            enterpriseNavCompact
+                              ? cn(
+                                  'items-center gap-3 px-3',
+                                  enterpriseNavUltra ? 'rounded-[14px] py-1.5' : 'rounded-[18px] py-2.5'
+                                )
+                              : 'items-start gap-3 rounded-[20px] px-3.5 py-3',
+                          active
+                            ? cn(
+                                  'border-slate-300/90 bg-[linear-gradient(145deg,rgba(255,255,255,0.98),rgba(241,245,249,0.92))] text-slate-950',
+                                enterpriseNavUltra
+                                    ? 'shadow-[0_1px_0_0_rgba(15,23,42,0.06),0_10px_22px_-18px_rgba(15,23,42,0.22)] ring-1 ring-slate-200/70'
+                                  : 'shadow-[0_12px_30px_rgba(15,23,42,0.10)]'
+                              )
+                            : 'border-transparent bg-white/55 text-slate-600 hover:border-slate-200/80 hover:bg-white/88 hover:text-slate-950'
+                        )}
+                        aria-label={panel.label}
+                        title={panel.label}
+                      >
+                        {active ? (
+                            <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-gradient-to-b from-sky-500 via-blue-600 to-indigo-600" />
+                        ) : null}
+                        <span
+                          className={cn(
+                              'relative flex shrink-0 items-center justify-center rounded-2xl border transition-colors',
+                              enterpriseNavCompact ? 'h-9 w-9' : 'h-11 w-11',
+                            active
+                              ? 'border-sky-200 bg-sky-50 text-sky-700'
+                              : 'border-slate-200/80 bg-slate-50/90 text-slate-600 group-hover:border-slate-300 group-hover:bg-slate-100'
+                          )}
+                        >
+                            <Icon className={cn(enterpriseNavCompact ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                            <span className={cn('flex justify-between gap-2', enterpriseNavCompact ? 'items-center' : 'items-start')}>
+                              <span className="block truncate text-sm font-semibold text-slate-900">{panel.label}</span>
+                            {!enterpriseNavCompact ? (
+                              <span
+                                className={cn(
+                                  'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]',
+                                  active ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
+                                )}
+                              >
+                                {panel.badge}
+                              </span>
+                            ) : null}
+                          </span>
+                          {!enterpriseNavCompact ? (
+                              <span className="mt-1 block text-[11px] leading-4 text-slate-500">{panel.description}</span>
+                          ) : null}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
+              </div>
+            </div>
+
+            {!enterpriseNavSimpleList ? (
+              <div className="shrink-0 space-y-4 pt-4">
+                <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-blue-800">
+                    <BarChart3 className="h-4 w-4" />
+                    Workspace health
+                  </div>
+                  <div className="mt-3 flex items-start gap-3">
+                    <div className="shrink-0 text-3xl font-bold leading-none tabular-nums text-slate-900">{workspaceHealthScore}%</div>
+                    <p className="min-w-0 flex-1 text-[10px] leading-snug text-slate-600">
+                      Composite of directory status, engagement, and structural load — a workspace governance signal, not project schedule performance.
+                    </p>
+                  </div>
+                  <div className="mt-3 h-2 rounded-full bg-blue-100">
+                    <div className="h-2 rounded-full bg-blue-600" style={{ width: `${workspaceHealthScore}%` }} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+              </>
+            )}
+          </div>
+        </aside>
+        )
+        ) : null}
+
+        <main
+          className={cn(
+            'flex min-h-0 min-w-0 w-full flex-col self-stretch',
+            showEnterpriseNavPanel
+              ? workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
+              : 'space-y-4'
+          )}
+        >
+          {supportsSearchAndFilter && showFiltersPanel ? (
+            <div
+              ref={workspaceMainFiltersRef}
+              className={cn(
+                'glass-card mb-0 shrink-0 space-y-3 rounded-2xl p-4',
+                'border border-white/40 dark:border-white/10',
+                'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
+                'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
+                'bg-gradient-to-br from-white/70 via-background/75 to-slate-50/70 dark:from-slate-900/45 dark:via-background/40 dark:to-slate-950/20'
+              )}
+            >
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  className="h-10 w-full pl-9"
+                  placeholder={
+                    activePanel === 'members'
+                      ? 'Search member, workspace, team, or role'
+                      : activePanel === 'governance'
+                        ? 'Search workspace, operating model, health, compliance, risk, audit, or governance owner'
+                        : 'Search workspace name, code, or owner'
+                  }
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+              </div>
+
+              <div className="relative pt-3">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_0%,hsl(var(--border)/0.2)_18%,hsl(var(--border)/0.75)_50%,hsl(var(--border)/0.2)_82%,transparent_100%)]"
+                />
+                <div
+                  className={cn(
+                    'flex items-center gap-2 sm:gap-3',
+                    activePanel === 'directory' && showKpiCarousel
+                      ? 'w-full flex-nowrap justify-between'
+                      : activePanel === 'governance' && narrowMainBody
+                        ? 'w-full flex-nowrap justify-between'
+                        : 'flex-wrap'
+                  )}
+                >
+                {wmAuth.canMutate && activePanel === 'members' ? (
+                  <button
+                    type="button"
+                      onClick={() => openInviteMemberDrawer()}
+                      className={enterpriseIndigoGradientActionButtonClass()}
+                  >
+                    <UserPlus className="h-4 w-4" strokeWidth={2.5} />
+                    Invite Member
+                  </button>
+                ) : wmAuth.canMutate && activePanel === 'governance' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target =
+                        allWorkspacesForList.find((w) => w.governance.configurationStatus === 'Unconfigured')
+                        ?? allWorkspacesForList.find((w) => w.governance.configurationStatus === 'Partial')
+                        ?? allWorkspacesForList[0]
+                      if (!target) {
+                        addToast({ variant: 'default', title: 'No workspace found', description: 'Create a workspace first before assigning governance.' })
+                        return
+                      }
+                      openAssignGovernanceDialog(target, { workspacePicker: 'dropdown' })
+                    }}
+                      className={cn(
+                        enterpriseCyanGradientActionButtonClass(),
+                        narrowMainBody && 'shrink-0'
+                      )}
+                  >
+                    <Settings2 className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                    Assign Governance
+                  </button>
+                ) : wmAuth.canMutate && activePanel === 'directory' ? (
+                  <button
+                    type="button"
+                    onClick={openNewWorkspaceDrawer}
+                      className={cn(
+                        enterpriseCyanGradientActionButtonClass(),
+                        showKpiCarousel && 'shrink-0'
+                      )}
+                  >
+                    <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                    New Workspace
+                  </button>
+                ) : null}
+                  {!(activePanel === 'directory' && showKpiCarousel) ? (
+                <div className="hidden min-w-[1rem] flex-1 lg:block" aria-hidden />
+                  ) : null}
+                {activePanel === 'members' ? (
+                  <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2 lg:ml-auto lg:w-auto lg:justify-end">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        Role <span className="tabular-nums">({memberRoleTotalForLabel})</span>
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {ALL_MEMBER_ROLES.map((role) => {
+                          const on = normalizedMembersRoleFilter.has(role)
+                          const count = memberRoleCounts.get(role) ?? 0
+                          return (
+                            <button
+                              key={role}
+                              type="button"
+                              onClick={() => {
+                                setMembersRoleFilter((prev) => {
+                                  const allowed = new Set(ALL_MEMBER_ROLES)
+                                  const next = new Set<MemberRole>()
+                                  for (const v of prev) if (allowed.has(v)) next.add(v)
+                                  if (next.has(role)) next.delete(role)
+                                  else next.add(role)
+                                  if (next.size === 0) return new Set(ALL_MEMBER_ROLES)
+                                  return next
+                                })
+                              }}
+                              className={memberRoleTagChrome(role, on)}
+                              aria-pressed={on}
+                              title={on ? `Hide ${role}` : `Show ${role}`}
+                            >
+                              <span>{role}</span>
+                              <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : activePanel === 'directory' ? (
+                <div
+                  className={cn(
+                    'flex min-w-0 items-center gap-x-2 sm:gap-x-3',
+                    showKpiCarousel
+                      ? 'ml-auto shrink justify-end overflow-x-auto scrollbar-hide'
+                      : 'w-full flex-wrap gap-y-2 lg:ml-auto lg:w-auto lg:justify-end'
+                  )}
+                >
+                  <div
+                    data-chat-evidence-region="workspace-status-filters"
+                    className={cn(
+                      'flex min-w-0 items-center gap-2',
+                      showKpiCarousel ? 'shrink-0 flex-nowrap' : 'flex-wrap'
+                    )}
+                  >
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Status <span className="tabular-nums">({statusTotalForLabel})</span>
+                    </span>
+                    <div
+                      className={cn(
+                        'flex items-center gap-1.5',
+                        showKpiCarousel ? 'shrink-0 flex-nowrap' : 'flex-wrap'
+                      )}
+                    >
+                      {ALL_WORKSPACE_STATUSES.map((status) => {
+                        const on = normalizedStatusFilterTags.has(status)
+                        const count = statusCounts.get(status) ?? 0
+                        return (
+                          <button
+                            key={status}
+                            type="button"
+                            onClick={() => {
+                              setStatusFilterTags((prev) => {
+                                const allowed = new Set(ALL_WORKSPACE_STATUSES)
+                                const next = new Set<WorkspaceStatus>()
+                                for (const v of prev) if (allowed.has(v)) next.add(v)
+                                if (next.has(status)) next.delete(status)
+                                else next.add(status)
+                                if (next.size === 0) return new Set(ALL_WORKSPACE_STATUSES)
+                                return next
+                              })
+                            }}
+                            className={workspaceStatusTagChrome(status, on)}
+                            aria-pressed={on}
+                            title={on ? `Hide ${status}` : `Show ${status}`}
+                          >
+                            <span>{status}</span>
+                            <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  {!showKpiCarousel ? (
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        Governance Status{' '}
+                        <span className="tabular-nums">({governanceConfigurationTotalForLabel})</span>
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {ALL_GOVERNANCE_CONFIGURATION_STATUSES.map((status) => {
+                          const on = normalizedGovernanceConfigurationFilterTags.has(status)
+                          const count = governanceConfigurationCounts.get(status) ?? 0
+                          return (
+                            <button
+                              key={status}
+                              type="button"
+                              onClick={() => {
+                                setGovernanceConfigurationFilterTags((prev) => {
+                                  const allowed = new Set(ALL_GOVERNANCE_CONFIGURATION_STATUSES)
+                                  const next = new Set<GovernanceConfigurationStatus>()
+                                  for (const v of prev) if (allowed.has(v)) next.add(v)
+                                  if (next.has(status)) next.delete(status)
+                                  else next.add(status)
+                                  if (next.size === 0) return new Set(ALL_GOVERNANCE_CONFIGURATION_STATUSES)
+                                  return next
+                                })
+                              }}
+                              className={governanceConfigurationTagChrome(status, on)}
+                              aria-pressed={on}
+                              title={on ? `Hide ${status}` : `Show ${status}`}
+                            >
+                              <span>{status}</span>
+                              <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                ) : activePanel === 'governance' ? (
+                <div
+                  className={cn(
+                    'flex min-w-0 items-center gap-x-3 gap-y-2',
+                    narrowMainBody
+                      ? 'ml-auto shrink justify-end'
+                      : 'w-full flex-wrap lg:ml-auto lg:w-auto lg:justify-end'
+                  )}
+                >
+                  {!narrowMainBody ? (
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Governance <span className="tabular-nums">({governancePolicyTotalForLabel})</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {ALL_GOVERNANCE_POLICY_STATUSES.map((status) => {
+                        const on = normalizedGovernancePolicyFilterTags.has(status)
+                        const count = governancePolicyCounts.get(status) ?? 0
+                        return (
+                          <button
+                            key={status}
+                            type="button"
+                            onClick={() => {
+                              setGovernancePolicyFilterTags((prev) => {
+                                const allowed = new Set(ALL_GOVERNANCE_POLICY_STATUSES)
+                                const next = new Set<GovernancePolicyStatus>()
+                                for (const v of prev) if (allowed.has(v)) next.add(v)
+                                if (next.has(status)) next.delete(status)
+                                else next.add(status)
+                                if (next.size === 0) return new Set(ALL_GOVERNANCE_POLICY_STATUSES)
+                                return next
+                              })
+                            }}
+                            className={governancePolicyTagChrome(status, on)}
+                            aria-pressed={on}
+                            title={on ? `Hide ${status}` : `Show ${status}`}
+                          >
+                            <span>{status}</span>
+                            <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  ) : null}
+                  <div
+                    className={cn(
+                      'flex min-w-0 items-center gap-2',
+                      narrowMainBody ? 'shrink-0 flex-nowrap' : 'flex-wrap'
+                    )}
+                  >
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Governance Health{' '}
+                      <span className="tabular-nums">({governanceHealthTotalForLabel})</span>
+                    </span>
+                    <div
+                      className={cn(
+                        'flex items-center gap-1.5',
+                        narrowMainBody ? 'shrink-0 flex-nowrap' : 'flex-wrap'
+                      )}
+                    >
+                      {ALL_GOVERNANCE_HEALTH_POSTURES.map((posture) => {
+                        const on = normalizedGovernanceHealthFilterTags.has(posture)
+                        const count = governanceHealthPostureCounts.get(posture) ?? 0
+                        return (
+                          <button
+                            key={posture}
+                            type="button"
+                            onClick={() => {
+                              setGovernanceHealthFilterTags((prev) => {
+                                const allowed = new Set(ALL_GOVERNANCE_HEALTH_POSTURES)
+                                const next = new Set<GovernanceHealthPosture>()
+                                for (const v of prev) if (allowed.has(v)) next.add(v)
+                                if (next.has(posture)) next.delete(posture)
+                                else next.add(posture)
+                                if (next.size === 0) return new Set(ALL_GOVERNANCE_HEALTH_POSTURES)
+                                return next
+                              })
+                            }}
+                            className={governanceHealthPostureTagChrome(posture, on)}
+                            aria-pressed={on}
+                            title={on ? `Hide ${posture}` : `Show ${posture}`}
+                          >
+                            <span>{posture}</span>
+                            <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  {!narrowMainBody ? (
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Risk Level <span className="tabular-nums">({governanceRiskTotalForLabel})</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {ALL_GOVERNANCE_RISK_LEVELS.map((level) => {
+                        const on = normalizedGovernanceRiskFilterTags.has(level)
+                        const count = governanceRiskLevelCounts.get(level) ?? 0
+                        return (
+                          <button
+                            key={level}
+                            type="button"
+                            onClick={() => {
+                              setGovernanceRiskFilterTags((prev) => {
+                                const allowed = new Set(ALL_GOVERNANCE_RISK_LEVELS)
+                                const next = new Set<GovernanceRiskLevel>()
+                                for (const v of prev) if (allowed.has(v)) next.add(v)
+                                if (next.has(level)) next.delete(level)
+                                else next.add(level)
+                                if (next.size === 0) return new Set(ALL_GOVERNANCE_RISK_LEVELS)
+                                return next
+                              })
+                            }}
+                            className={governanceRiskLevelTagChrome(level, on)}
+                            aria-pressed={on}
+                            title={on ? `Hide ${level}` : `Show ${level}`}
+                          >
+                            <span>{level}</span>
+                            <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                          </button>
+                        )
+                      })}
+                  </div>
+                </div>
+                ) : null}
+                </div>
+                ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {activePanel === 'overview' ? (
+            (() => {
+              const pal = WORKSPACE_OVERVIEW_PALETTES[overviewPalette]
+              const healthyPct = governanceHealthDistribution.find((d) => d.name === 'Healthy')?.pct ?? '-'
+              const overloadLoadCount = workspaceLoadDistributionData.filter(
+                (w) => w.tasks > WORKSPACE_LOAD_OVERLOAD_PROJECTS
+              ).length
+              const maxLoadProjects = workspaceLoadDistributionData.length
+                ? Math.max(...workspaceLoadDistributionData.map((w) => w.tasks), 1)
+                : 1
+              const mostLoadedRow = workspaceLoadDistributionData[0] ?? {
+                short: '…',
+                tasks: 0,
+                workspace: '…',
+                code: '',
+              }
+              const chartEnterStyle = (index: number): CSSProperties => ({
+                opacity: overviewMotionReady ? 1 : 0,
+                transform: overviewMotionReady ? 'translateY(0px) scale(1)' : 'translateY(12px) scale(0.985)',
+                transitionProperty: 'opacity, transform',
+                transitionDuration: '480ms, 560ms',
+                transitionTimingFunction: 'cubic-bezier(0.2,0.8,0.2,1), cubic-bezier(0.2,0.8,0.2,1)',
+                transitionDelay: `${index * 110}ms, ${index * 110}ms`,
+                willChange: 'opacity, transform',
+              })
+
+              return (
+                <WorkspaceMainPanel
+                  id="overview"
+                  panelRef={overviewMainPanelRef}
+                  style={workspaceMainPanelViewportHeightStyle}
+                  title="Workspace Intelligence Control Tower"
+                  description="Governance posture, lifecycle maturity, ownership concentration, and structural load across the workspace portfolio — leadership control surface."
+                  highlight
+                  headerIcon={<BarChart3 className="h-5 w-5" />}
+                        className={cn(
+                    'flex min-h-0 w-full flex-col',
+                    showKpiCarousel && 'max-w-none',
+                    workspaceMainPanelViewportHeightPx != null && 'overflow-hidden'
+                  )}
+                  right={undefined}
+                >
+                  <div
+                    ref={overviewDashboardRef}
+                    className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                  >
+                    {/* ROW 1: Health + Lifecycle */}
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      <IntelligenceChartPanel
+                        title="Workspace Health Distribution"
+                        description="Healthy vs at-risk vs critical posture from status and compliance signals."
+                        icon={ShieldCheck}
+                        accent={pal.healthAccent}
+                        palette={pal}
+                        iconBgClass={pal.healthIconBg}
+                        iconColorClass={pal.healthIconColor}
+                        style={chartEnterStyle(0)}
+                      >
+                        <WorkspaceHealthExecutiveDonut
+                          data={governanceHealthDistribution}
+                          palette={pal}
+                          selectedBand={overviewChartSelection?.chartId === 'health' ? overviewChartSelection.key : null}
+                          onBandClick={(band) => {
+                            setOverviewChartSelection({ chartId: 'health', key: band })
+                            navigateDirectoryWithChartFocus({ kind: 'health', band: band as WorkspaceHealthBand })
+                          }}
+                        />
+                      </IntelligenceChartPanel>
+
+                      <IntelligenceChartPanel
+                        title="Workspace Lifecycle Distribution"
+                        description="Maturity of the workspace ecosystem across Draft → Archived lifecycle lanes."
+                        icon={Workflow}
+                        accent={pal.trendAccent}
+                        palette={pal}
+                        iconBgClass={pal.trendIconBg}
+                        iconColorClass={pal.trendIconColor}
+                        style={chartEnterStyle(1)}
+                      >
+                        <IntelligenceDonut
+                          data={lifecycleDistributionData}
+                          centerLabel="Lifecycle"
+                          pieColors={pal.lifecyclePieColors}
+                          isVivid={overviewPalette === 'vivid'}
+                          selectedSlice={overviewChartSelection?.chartId === 'lifecycle' ? overviewChartSelection.key : null}
+                          onSliceClick={(name) => {
+                            setOverviewChartSelection({ chartId: 'lifecycle', key: name })
+                            navigateDirectoryWithChartFocus({ kind: 'lifecycle', stage: name as WorkspaceLifecycleStage })
+                          }}
+                        />
+                      </IntelligenceChartPanel>
+                    </div>
+
+                    {/* ROW 2: Composition + Load */}
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      <IntelligenceChartPanel
+                        title="Workspace Composition"
+                        description="Purpose mix (Strategic / Operational / Innovation / Governance) derived from workspace classification."
+                        icon={Layers}
+                        accent={pal.compositionAccent}
+                        palette={pal}
+                        iconBgClass={pal.compositionIconBg}
+                        iconColorClass={pal.compositionIconColor}
+                        style={chartEnterStyle(2)}
+                      >
+                        <IntelligenceDonut
+                          data={workspacePurposeCompositionData}
+                          centerLabel="Workspaces"
+                          pieColors={pal.compositionPieColors}
+                          isVivid={overviewPalette === 'vivid'}
+                          selectedSlice={overviewChartSelection?.chartId === 'purpose' ? overviewChartSelection.key : null}
+                          onSliceClick={(name) => {
+                            setOverviewChartSelection({ chartId: 'purpose', key: name })
+                            navigateDirectoryWithChartFocus({ kind: 'purpose', bucket: name as WorkspacePurposeBucket })
+                          }}
+                        />
+                      </IntelligenceChartPanel>
+
+                      <IntelligenceChartPanel
+                        title="Workspace Load Distribution"
+                        description="Linked portfolio projects per workspace — highlights structural overload, not sprint throughput."
+                        icon={FolderKanban}
+                        accent={pal.workloadAccent}
+                        palette={pal}
+                        iconBgClass={pal.workloadIconBg}
+                        iconColorClass={pal.workloadIconColor}
+                        style={chartEnterStyle(3)}
+                        right={
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200/80 bg-gradient-to-r from-rose-50 to-pink-50 px-3 py-1 text-[11px] font-semibold text-rose-600 shadow-sm">
+                            <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shadow-[0_0_4px_rgba(244,63,94,0.7)]" />
+                            Overload &gt; {WORKSPACE_LOAD_OVERLOAD_PROJECTS} projects
+                          </span>
+                        }
+                      >
+                        {(() => {
+                          const isVividMode = overviewPalette === 'vivid'
+                          const LoadTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) => {
+                            if (!active || !payload?.length) return null
+                            const entry = workspaceLoadDistributionData.find((d) => d.short === label)
+                            const val = payload[0].value
+                            const overloaded = val > WORKSPACE_LOAD_OVERLOAD_PROJECTS
+                            const barColor = overloaded ? pal.overloadBar : pal.normalBar
+                            return (
+                              <div className="overflow-hidden rounded-2xl border border-white/60 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+                                style={{ background: 'linear-gradient(145deg, rgba(255,255,255,0.97) 0%, rgba(248,250,252,0.95) 100%)', minWidth: 186 }}>
+                                <div className="px-4 py-2.5" style={{ borderBottom: `2px solid ${barColor}28` }}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-2 w-2 rounded-full" style={{ background: barColor, boxShadow: `0 0 6px ${barColor}` }} />
+                                    <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Workspace</span>
+                                  </div>
+                                  <div className="mt-0.5 text-[13px] font-bold text-slate-800">{entry?.workspace ?? label}</div>
+                                  <div className="mt-0.5 font-mono text-[10px] text-slate-500">{entry?.code}</div>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 px-4 py-2.5">
+                                  <div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Linked projects</div>
+                                    <div className="mt-0.5 flex items-baseline gap-1">
+                                      <span className="text-2xl font-black leading-none" style={{ color: barColor }}>{val}</span>
+                                      <span className="text-xs font-medium text-slate-400">in boundary</span>
+                                    </div>
+                                  </div>
+                                  {overloaded && (
+                                    <span className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600">OVERLOAD</span>
+                                  )}
+                                </div>
+                                <div className="mx-4 mb-3 overflow-hidden rounded-full bg-slate-100" style={{ height: 4 }}>
+                                  <div className="h-full rounded-full"
+                                    style={{ width: `${Math.min(100, Math.round((val / (maxLoadProjects + 8)) * 100))}%`, background: `linear-gradient(90deg, ${barColor}, ${barColor}bb)`, boxShadow: `0 0 6px ${barColor}55` }} />
+                                </div>
+                              </div>
+                            )
+                          }
+                          return (
+                            <div className="relative h-64 overflow-hidden rounded-xl">
+                              <div className="absolute inset-0 rounded-xl border border-slate-100"
+                                style={{ background: isVividMode
+                                  ? 'linear-gradient(160deg, #f5f7ff 0%, #eef2ff 45%, #f8f9ff 100%)'
+                                  : 'linear-gradient(160deg, #fafafa 0%, #f8f9fc 100%)' }} />
+                              <div className="pointer-events-none absolute inset-0">
+                                {[25, 50, 75].map((pct) => (
+                                  <div key={pct} className="absolute inset-x-8 border-t"
+                                    style={{ top: `${pct}%`, borderColor: isVividMode ? 'rgba(99,102,241,0.08)' : 'rgba(148,163,184,0.12)' }} />
+                                ))}
+                              </div>
+                              <div className="pointer-events-none absolute inset-x-0 rounded-t-xl"
+                                style={{
+                                  top: 0,
+                                  height: `${Math.round(((maxLoadProjects + 8 - WORKSPACE_LOAD_OVERLOAD_PROJECTS) / (maxLoadProjects + 14)) * 92)}%`,
+                                  background: isVividMode
+                                    ? 'linear-gradient(180deg, rgba(244,63,94,0.08) 0%, rgba(244,63,94,0.03) 100%)'
+                                    : 'rgba(244,63,94,0.05)',
+                                  borderBottom: `1.5px dashed ${pal.overloadBar}44`,
+                                }} />
+                              <div className="absolute inset-0 z-10 min-h-0 min-w-0">
+                              <MeasuredResponsiveContainer className="h-full w-full min-h-0 min-w-0">
+                                <BarChart
+                                  data={workspaceLoadDistributionData}
+                                  barSize={22}
+                                  margin={{ top: 22, right: 26, left: -6, bottom: 2 }}
+                                >
+                                  <defs>
+                                    <linearGradient id={`wl-normal-${overviewPalette}`} x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="0%"   stopColor={pal.normalBar}       stopOpacity={1} />
+                                      <stop offset="55%"  stopColor={pal.normalBar}       stopOpacity={0.80} />
+                                      <stop offset="100%" stopColor={pal.normalBarBottom} stopOpacity={0.58} />
+                                    </linearGradient>
+                                    <linearGradient id={`wl-overload-${overviewPalette}`} x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="0%"   stopColor={pal.overloadBar}       stopOpacity={1} />
+                                      <stop offset="45%"  stopColor={pal.overloadBar}       stopOpacity={0.85} />
+                                      <stop offset="100%" stopColor={pal.overloadBarBottom} stopOpacity={0.60} />
+                                    </linearGradient>
+                                  </defs>
+                                  <CartesianGrid
+                                    strokeDasharray="3 5"
+                                    vertical={false}
+                                    stroke={isVividMode ? '#c7d2fe' : '#e2e8f0'}
+                                    strokeOpacity={0.55}
+                                  />
+                                  <XAxis
+                                    dataKey="short"
+                                    tick={{ fontSize: 11, fill: '#64748b', fontWeight: 700 }}
+                                    axisLine={{ stroke: '#e2e8f0' }}
+                                    tickLine={false}
+                                  />
+                                  <YAxis
+                                    allowDecimals={false}
+                                    tick={{ fontSize: 10, fill: '#94a3b8' }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                    width={26}
+                                  />
+                                  <RechartsTooltip
+                                    content={<LoadTooltip />}
+                                    cursor={{ fill: 'rgba(99,102,241,0.04)', radius: 6 }}
+                                  />
+                                  <ReferenceLine
+                                    y={WORKSPACE_LOAD_OVERLOAD_PROJECTS}
+                                    stroke={pal.overloadBar}
+                                    strokeDasharray="6 3"
+                                    strokeWidth={1.8}
+                                    strokeOpacity={0.65}
+                                    label={{ value: `Threshold > ${WORKSPACE_LOAD_OVERLOAD_PROJECTS}`, position: 'insideTopRight', fontSize: 10, fill: pal.overloadBar, fontWeight: 700, dy: -5 }}
+                                  />
+                                  <Bar
+                                    dataKey="tasks"
+                                    name="Linked projects"
+                                    shape={<ThreeDBar />}
+                                    isAnimationActive
+                                    animationDuration={750}
+                                    animationEasing="ease-out"
+                                    onClick={(_, index) => {
+                                      const row = workspaceLoadDistributionData[index as number]
+                                      if (!row) return
+                                      setFocusedLoadWorkspaceCode((cur) => (cur === row.code ? null : row.code))
+                                      setOverviewChartSelection({ chartId: 'load', key: row.code })
+                                      navigateDirectoryWithChartFocus({ kind: 'load', code: row.code })
+                                    }}
+                                  >
+                                    {workspaceLoadDistributionData.map((entry) => {
+                                      const overloaded = entry.tasks > WORKSPACE_LOAD_OVERLOAD_PROJECTS
+                                      const focused = focusedLoadWorkspaceCode ? entry.code === focusedLoadWorkspaceCode : true
+                                      return (
+                                        <Cell
+                                          key={entry.code}
+                                          fill={overloaded ? `url(#wl-overload-${overviewPalette})` : `url(#wl-normal-${overviewPalette})`}
+                                          fillOpacity={focused ? 1 : 0.22}
+                                          style={{ cursor: 'pointer' }}
+                                        />
+                                      )
+                                    })}
+                                  </Bar>
+                                  <ReferenceDot
+                                    x={mostLoadedRow.short}
+                                    y={mostLoadedRow.tasks}
+                                    r={5}
+                                    fill={pal.overloadBar}
+                                    stroke="#ffffff"
+                                    strokeWidth={2.5}
+                                    label={{ value: 'â–² Peak load', position: 'top', fill: pal.overloadBar, fontSize: 10, fontWeight: 800, dy: -8 }}
+                                  />
+                                </BarChart>
+                              </MeasuredResponsiveContainer>
+                              </div>
+                              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between rounded-b-xl border-t px-4 py-1.5 backdrop-blur-sm"
+                                style={{ borderColor: isVividMode ? 'rgba(99,102,241,0.12)' : 'rgba(226,232,240,0.8)', background: isVividMode ? 'rgba(248,250,255,0.92)' : 'rgba(250,250,252,0.88)' }}>
+                                <span className="text-[10px] font-semibold text-slate-400">
+                                  {overloadLoadCount} workspace{overloadLoadCount !== 1 ? 's' : ''} above threshold
+                                </span>
+                                <span className="text-[10px] font-bold" style={{ color: pal.overloadBar }}>
+                                  Peak: {mostLoadedRow.tasks} projects — {mostLoadedRow.workspace.split(' ').slice(0, 2).join(' ')}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </IntelligenceChartPanel>
+                    </div>
+
+                    {/* ROW 3: Ownership + Risk */}
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      <IntelligenceChartPanel
+                        title="Workspace Ownership Distribution"
+                        description="Count of workspaces per accountable owner — surfaces concentration risk."
+                        icon={UserRound}
+                        accent={pal.compositionAccent}
+                        palette={pal}
+                        iconBgClass={pal.compositionIconBg}
+                        iconColorClass={pal.compositionIconColor}
+                        style={chartEnterStyle(4)}
+                      >
+                        <div className="h-64 min-h-[220px] w-full">
+                          <MeasuredResponsiveContainer>
+                            <BarChart
+                              data={ownershipDistributionData}
+                              layout="vertical"
+                              margin={{ top: 4, right: 12, left: 4, bottom: 4 }}
+                              barSize={14}
+                            >
+                              <CartesianGrid strokeDasharray="3 5" horizontal stroke="#e2e8f0" strokeOpacity={0.6} />
+                              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10, fill: '#64748b' }} />
+                              <YAxis
+                                type="category"
+                                dataKey="owner"
+                                width={118}
+                                tick={{ fontSize: 10, fill: '#475569' }}
+                                axisLine={false}
+                                tickLine={false}
+                              />
+                              <RechartsTooltip
+                                formatter={(value: number) => [`${value} workspace${value !== 1 ? 's' : ''}`, 'Owned']}
+                                labelFormatter={(owner) => String(owner)}
+                              />
+                                  <Bar
+                                    dataKey="count"
+                                    name="Workspaces"
+                                    radius={[0, 6, 6, 0]}
+                                    fill={pal.normalBar}
+                                    onClick={(_, index) => {
+                                      const row = ownershipDistributionData[index as number]
+                                      if (!row) return
+                                      setOverviewChartSelection({ chartId: 'owner', key: row.owner })
+                                      navigateDirectoryWithChartFocus({ kind: 'owner', owner: row.owner })
+                                    }}
+                                  >
+                                {ownershipDistributionData.map((entry) => (
+                                  <Cell
+                                    key={entry.owner}
+                                    fillOpacity={overviewChartSelection?.chartId === 'owner' && overviewChartSelection.key === entry.owner ? 1 : 0.85}
+                                    style={{ cursor: 'pointer' }}
+                                  />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </MeasuredResponsiveContainer>
+                        </div>
+                      </IntelligenceChartPanel>
+
+                      <IntelligenceChartPanel
+                        title="Workspace Risk Exposure"
+                        description="Stacked count of risk signals: missing owner, low engagement, structural overload, governance gaps (a workspace may appear in multiple bands)."
+                        icon={ShieldAlert}
+                        accent={pal.workloadAccent}
+                        palette={pal}
+                        iconBgClass={pal.workloadIconBg}
+                        iconColorClass={pal.workloadIconColor}
+                        style={chartEnterStyle(5)}
+                      >
+                        <div className="h-64 min-h-[220px] w-full">
+                          <MeasuredResponsiveContainer>
+                            <BarChart data={riskExposureStackRow} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }} barSize={36}>
+                              <XAxis type="number" hide />
+                              <YAxis type="category" dataKey="label" width={140} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                              <RechartsTooltip
+                                formatter={(value: number, name: string) => [`${value} workspace${value !== 1 ? 's' : ''}`, name]}
+                              />
+                              <Bar
+                                dataKey="noOwner"
+                                name="No owner"
+                                stackId="risk"
+                                fill="#64748b"
+                                onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'noOwner' })}
+                              />
+                              <Bar
+                                dataKey="lowActivity"
+                                name="Low engagement"
+                                stackId="risk"
+                                fill="#38bdf8"
+                                onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'lowActivity' })}
+                              />
+                              <Bar
+                                dataKey="overloaded"
+                                name="Overloaded"
+                                stackId="risk"
+                                fill="#f59e0b"
+                                onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'overloaded' })}
+                              />
+                              <Bar
+                                dataKey="governance"
+                                name="Governance gap"
+                                stackId="risk"
+                                fill="#e11d48"
+                                onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'governance' })}
+                              />
+                            </BarChart>
+                          </MeasuredResponsiveContainer>
+                        </div>
+                          <p className="mt-2 text-[10px] text-slate-500">
+                            Click a segment to open the directory with that risk lens. Thresholds: low engagement = &lt;15 members; overload = &gt;{WORKSPACE_LOAD_OVERLOAD_PROJECTS} linked projects.
+                          </p>
+                      </IntelligenceChartPanel>
+                    </div>
+                  </div>
+                </WorkspaceMainPanel>
+              )
+            })()
+          ) : null}
+
+          {activePanel === 'directory' ? (
+            <div
+              ref={directoryPanelRef}
+              className={cn(
+                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+              )}
+              style={workspaceCatalogPanelHeightStyle(
+                workspaceMainPanelViewportHeightPx,
+                directoryPanelAlignedHeightPx,
+                directoryPanelMaxHeightPx
+              )}
+            >
+              <div className="flex h-full min-h-0 w-full flex-col">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                  <div className="shrink-0">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Building2 className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                          <h2 className="text-lg font-semibold text-foreground">Workspace Directory</h2>
+                        </div>
+                        <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
+                          Master table for lifecycle-managed workspaces across enterprise delivery.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                        <div className="relative">
+                          <div className="inline-flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">Group by</span>
+                            <button
+                              type="button"
+                              ref={directoryGroupByTriggerRef}
+                              className={cn(
+                                'inline-flex h-10 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm transition',
+                                'hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30'
+                              )}
+                              onClick={() => {
+                                if (directoryGroupByMenuOpen) {
+                                  setDirectoryGroupByMenuOpen(false)
+                                  setDirectoryGroupByMenuSearch('')
+                                  return
+                                }
+                                const trigger = directoryGroupByTriggerRef.current
+                                if (trigger) {
+                                  const rect = trigger.getBoundingClientRect()
+                                  setDirectoryGroupByMenuAnchor({
+                                    left: rect.left,
+                                    top: rect.bottom + 8,
+                                    width: rect.width,
+                                  })
+                                }
+                                setDirectoryGroupByMenuOpen(true)
+                              }}
+                              aria-expanded={directoryGroupByMenuOpen}
+                              aria-haspopup="listbox"
+                            >
+                              <span className="min-w-[84px] text-left">{directoryGroupByDisplayLabel}</span>
+                              <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden />
+                            </button>
+                          </div>
+
+                          {directoryGroupByMenuOpen && directoryGroupByMenuAnchor
+                            ? createPortal(
+                                <div
+                                  ref={directoryGroupByMenuPanelRef}
+                                  className="fixed z-[80] w-[260px] overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+                                  style={{
+                                    left: directoryGroupByMenuAnchor.left,
+                                    top: directoryGroupByMenuAnchor.top,
+                                  }}
+                                  role="listbox"
+                                  aria-label="Group by options"
+                                >
+                                  <div className="p-2">
+                                    <Input
+                                      value={directoryGroupByMenuSearch}
+                                      onChange={(e) => setDirectoryGroupByMenuSearch(e.target.value)}
+                                      placeholder="Search grouping options"
+                                      className="h-9 text-sm"
+                                      autoFocus
+                                    />
+                                  </div>
+                                  <div className="max-h-64 overflow-auto py-1 text-sm">
+                                    <div className="px-3 py-1.5 text-[11px] font-semibold text-muted-foreground">
+                                      Recently used
+                                    </div>
+                                    {DIRECTORY_GROUP_BY_OPTIONS.filter((opt) =>
+                                      opt.label.toLowerCase().includes(directoryGroupByMenuSearch.trim().toLowerCase())
+                                    ).map((opt) => (
+                                      <button
+                                        key={opt.key}
+                                        type="button"
+                                        role="option"
+                                        aria-selected={directoryGroupBy === opt.key}
+                                        className={cn(
+                                          'flex w-full items-center justify-between px-3 py-2 text-left text-sm transition hover:bg-muted/50',
+                                          directoryGroupBy === opt.key && 'bg-muted/40 font-semibold text-foreground'
+                                        )}
+                                        onClick={() => {
+                                          setDirectoryGroupBy(opt.key)
+                                          setDirectoryGroupByMenuOpen(false)
+                                          setDirectoryGroupByMenuSearch('')
+                                        }}
+                                      >
+                                        <span>{opt.label}</span>
+                                        {directoryGroupBy === opt.key ? (
+                                          <CheckCircle2 className="h-4 w-4 text-primary" aria-hidden />
+                                        ) : null}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="border-t border-border">
+                                    <button
+                                      type="button"
+                                      disabled={!directoryGroupBy}
+                                      className={cn(
+                                        'flex w-full items-center justify-between px-3 py-2 text-left text-sm transition',
+                                        directoryGroupBy
+                                          ? 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                                          : 'cursor-not-allowed text-muted-foreground/50'
+                                      )}
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                      onClick={() => {
+                                        setDirectoryGroupBy(null)
+                                        setDirectoryGroupByMenuOpen(false)
+                                        setDirectoryGroupByMenuSearch('')
+                                      }}
+                                    >
+                                      <span>Clear selection</span>
+                                    </button>
+                                  </div>
+                                </div>,
+                                document.body
+                              )
+                            : null}
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={showDirectorySelection}
+                          onClick={() => setShowDirectorySelection((prev) => !prev)}
+                          className="group inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-2 py-1 shadow-sm transition hover:bg-muted/40"
+                          title="Show/Hide selection checkboxes"
+                        >
+                          <span className="text-[11px] font-medium text-muted-foreground">Select</span>
+                          <span
+                            className={cn(
+                              'relative h-5 w-9 rounded-full transition-colors',
+                              showDirectorySelection ? 'bg-primary' : 'bg-muted'
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'absolute top-0.5 h-4 w-4 rounded-full bg-background shadow-sm transition-transform',
+                                showDirectorySelection ? 'left-0.5 translate-x-4' : 'left-0.5 translate-x-0'
+                              )}
+                            />
+                          </span>
+                        </button>
+                        <p className="text-xs text-muted-foreground">
+                          Showing{' '}
+                          <span className="font-semibold text-foreground">
+                            {sortedFilteredWorkspaces.length === 0
+                              ? 0
+                              : Math.min(sortedFilteredWorkspaces.length, (directoryPage - 1) * directoryPageSize + 1)}
+                          </span>
+                          -
+                          <span className="font-semibold text-foreground">
+                            {Math.min(sortedFilteredWorkspaces.length, directoryPage * directoryPageSize)}
+                          </span>{' '}
+                          of <span className="font-semibold text-foreground">{sortedFilteredWorkspaces.length}</span>
+                        </p>
+                        <span className="text-xs text-muted-foreground">Rows:</span>
+                        <Select
+                          value={String(directoryPageSize)}
+                          onChange={(e) => setDirectoryPageSize(parseInt(e.target.value, 10))}
+                          className="h-10 w-[84px] text-sm"
+                        >
+                          <option value="5">5</option>
+                          <option value="10">10</option>
+                          <option value="15">15</option>
+                          <option value="25">25</option>
+                        </Select>
+                        <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setDirectoryPage((prev) => Math.max(1, prev - 1))}
+                            disabled={directoryPage <= 1}
+                          >
+                            Previous
+                          </button>
+                          <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">
+                            {directoryPage} / {directoryTotalPages}
+                          </div>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setDirectoryPage((prev) => Math.min(directoryTotalPages, prev + 1))}
+                            disabled={directoryPage >= directoryTotalPages}
+                          >
+                            Next
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            ref={directoryColumnsTriggerRef}
+                            className={cn(
+                              'inline-flex items-center justify-center text-muted-foreground transition',
+                              'hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30',
+                              directoryColumnsMenuOpen && 'text-foreground'
+                            )}
+                            onClick={() => {
+                              if (directoryColumnsMenuOpen) {
+                                setDirectoryColumnsMenuOpen(false)
+                                setDirectoryColumnsMenuSearch('')
+                                return
+                              }
+                              const trigger = directoryColumnsTriggerRef.current
+                              if (trigger) {
+                                const rect = trigger.getBoundingClientRect()
+                                setDirectoryColumnsMenuAnchor({
+                                  left: rect.right - 260,
+                                  top: rect.bottom + 12,
+                                  width: 260,
+                                })
+                              }
+                              setDirectoryColumnsMenuOpen(true)
+                            }}
+                            aria-expanded={directoryColumnsMenuOpen}
+                            aria-haspopup="listbox"
+                            aria-label="Show or hide columns"
+                            title="Show or hide columns"
+                          >
+                            <Columns2 className="h-6 w-6 text-muted-foreground" aria-hidden />
+                          </button>
+
+                          {directoryColumnsMenuOpen && directoryColumnsMenuAnchor
+                            ? createPortal(
+                                <div
+                                  ref={directoryColumnsMenuPanelRef}
+                                  className="fixed z-[80] w-[260px] overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+                                  style={{
+                                    left: directoryColumnsMenuAnchor.left,
+                                    top: directoryColumnsMenuAnchor.top,
+                                  }}
+                                  role="listbox"
+                                  aria-label="Column visibility options"
+                                >
+                                  <div className="border-b border-border px-3 pb-2.5 pt-3.5">
+                                    <p className="text-xs font-semibold text-foreground">Columns</p>
+                                    <p className="mt-1 text-[11px] text-muted-foreground">Show or hide table columns</p>
+                                  </div>
+                                  <div className="px-3 pb-2.5 pt-2.5">
+                                    <Input
+                                      value={directoryColumnsMenuSearch}
+                                      onChange={(e) => setDirectoryColumnsMenuSearch(e.target.value)}
+                                      placeholder="Search columns"
+                                      className="h-9 text-sm"
+                                      autoFocus
+                                    />
+                                  </div>
+                                  <div className="max-h-64 overflow-auto py-1 text-sm">
+                                    {directoryColumnOrder
+                                      .filter((key) =>
+                                        directoryColumnLabel(key)
+                                          .toLowerCase()
+                                          .includes(directoryColumnsMenuSearch.trim().toLowerCase())
+                                      )
+                                      .map((key) => {
+                                        const isVisible = !directoryHiddenColumns.has(key)
+                                        const isOnlyVisibleColumn =
+                                          isVisible && directoryVisibleColumnOrder.length <= 1
+                                        return (
+                                          <button
+                                            key={key}
+                                            type="button"
+                                            role="option"
+                                            aria-selected={isVisible}
+                                            disabled={isOnlyVisibleColumn}
+                                            className={cn(
+                                              'flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition hover:bg-muted/50',
+                                              isVisible && 'font-medium text-foreground',
+                                              isOnlyVisibleColumn && 'cursor-not-allowed opacity-60'
+                                            )}
+                                            onClick={() => toggleDirectoryColumnVisibility(key)}
+                                          >
+                                            <span>{directoryColumnLabel(key)}</span>
+                                            {isVisible ? (
+                                              <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                                            ) : (
+                                              <span className="h-4 w-4 shrink-0 rounded-full border border-border" aria-hidden />
+                                            )}
+                                          </button>
+                                        )
+                                      })}
+                                  </div>
+                                  {directoryHiddenColumns.size > 0 ? (
+                                    <div className="border-t border-border">
+                                      <button
+                                        type="button"
+                                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-muted/50 hover:text-foreground"
+                                        onMouseDown={(event) => event.stopPropagation()}
+                                        onClick={() => {
+                                          setDirectoryHiddenColumns(new Set())
+                                          setDirectoryColumnsMenuOpen(false)
+                                          setDirectoryColumnsMenuSearch('')
+                                        }}
+                                      >
+                                        <span>Show all columns</span>
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>,
+                                document.body
+                              )
+                            : null}
+                        </div>
+                      </div>
+                    </div>
+                    {directoryChartFocus ? (
+                      <div className="mt-2 flex flex-col gap-2 rounded-xl border border-sky-200/80 bg-sky-50/80 px-3 py-2.5 text-[11px] text-slate-800 sm:flex-row sm:items-center sm:justify-between dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-100">
+                        <span>
+                          <span className="font-semibold">Control tower filter active</span>
+                          <span className="mx-1 text-muted-foreground">—</span>
+                          <span className="text-muted-foreground">
+                            {directoryChartFocus.kind === 'health' && `Health: ${directoryChartFocus.band}`}
+                            {directoryChartFocus.kind === 'lifecycle' && `Lifecycle: ${directoryChartFocus.stage}`}
+                            {directoryChartFocus.kind === 'purpose' && `Purpose: ${directoryChartFocus.bucket}`}
+                            {directoryChartFocus.kind === 'load' && `Workspace code: ${directoryChartFocus.code}`}
+                            {directoryChartFocus.kind === 'overload' && 'Structural overload (projects)'}
+                            {directoryChartFocus.kind === 'owner' && `Owner: ${directoryChartFocus.owner}`}
+                            {directoryChartFocus.kind === 'risk' && `Risk: ${directoryChartFocus.flag}`}
+                          </span>
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 shrink-0 self-start sm:self-auto"
+                          onClick={() => setDirectoryChartFocus(null)}
+                        >
+                          Clear control tower filter
+                        </Button>
+                      </div>
+                    ) : null}
+                    {directorySelectedIds.length > 0 ? (
+                      <div className="mt-2 flex flex-col gap-2 rounded-xl border border-sky-200/80 bg-sky-50/80 px-3 py-2.5 text-[11px] text-slate-800 sm:flex-row sm:items-center sm:justify-between dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-100">
+                        <span>
+                          <span className="font-semibold">
+                            {directorySelectedIds.length} workspace{directorySelectedIds.length !== 1 ? 's' : ''} selected
+                          </span>
+                          <span className="mx-1 text-muted-foreground">—</span>
+                          <span className="text-muted-foreground">Bulk actions from the action bar will apply to selected rows.</span>
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 shrink-0 self-start sm:self-auto"
+                          onClick={() => setDirectorySelectedIds([])}
+                        >
+                          Clear
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div
+                    className={cn(
+                      'scrollbar-hide min-h-0 w-full min-w-0 flex-1 rounded-xl',
+                      sortedFilteredWorkspaces.length === 0
+                        ? 'flex flex-col items-center justify-center overflow-hidden overflow-y-auto bg-gradient-to-b from-muted/50 via-background to-background py-8 dark:from-muted/25'
+                        : 'overflow-auto'
+                    )}
+                  >
+                    {sortedFilteredWorkspaces.length === 0 ? (
+                      <div className="flex w-full flex-col items-center justify-center px-6">
+                        {!workspaceOrgInitialFetchDone ? (
+                          <PlatformServiceLoadingPanel
+                            title="Memuat workspace directory"
+                            description="Menghubungkan ke layanan workspace-org dan menyinkronkan daftar workspace Anda."
+                          />
+                        ) : allWorkspacesForList.length === 0 && !workspaceOrgBackendConnected ? (
+                          <div
+                            className={cn(
+                              'relative w-full max-w-2xl rounded-lg border border-amber-200/50 bg-amber-50/60 px-5 py-6 shadow-sm dark:border-amber-900/30 dark:bg-amber-950/20'
+                            )}
+                            role="alert"
+                          >
+                            <div className="flex gap-4">
+                              <div className="flex-shrink-0 pt-0.5">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100/60 dark:bg-amber-900/40">
+                                  <ShieldAlert className="h-6 w-6 text-amber-700 dark:text-amber-400" aria-hidden />
+                                </div>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-foreground">
+                                  Directory tidak dapat dimuat
+                                </p>
+                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                  Koneksi ke workspace directory service terputus atau backend belum berjalan. Pastikan
+                                  layanan workspace-org aktif agar data enterprise Anda tampil di sini.
+                                </p>
+                                <div className="mt-3 rounded-md border border-amber-200/30 bg-white/40 px-3 py-2 dark:bg-white/[0.02]">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+                                    Dev proxy
+                                  </p>
+                                  <code className="mt-1 block break-all font-mono text-[10px] text-foreground/80">
+                                    /api/workspace-org → workspace-org backend (port 8424)
+                                  </code>
+                                </div>
+                                <Button
+                                  type="button"
+                                  className={cn(
+                                    'mt-3 h-8 px-4 text-xs font-semibold',
+                                    'bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white'
+                                  )}
+                                  onClick={() => void refreshWorkspaceOrgLists()}
+                                >
+                                  Coba lagi
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : allWorkspacesForList.length === 0 ? (
+                          <div
+                            className={cn(
+                              'relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-12 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75 dark:shadow-[0_28px_64px_-24px_rgba(0,0,0,0.5)]'
+                            )}
+                          >
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/35 to-transparent" />
+                            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500/12 to-teal-600/10 ring-1 ring-emerald-500/20 dark:from-emerald-400/18 dark:ring-emerald-400/25">
+                              <Building2 className="h-9 w-9 text-emerald-700 dark:text-emerald-400" aria-hidden />
+                            </div>
+                            <p className="mt-6 text-lg font-semibold tracking-tight text-foreground">
+                              Directory siap, belum ada workspace
+                            </p>
+                            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                              Buat workspace pertama untuk mengisi master catalog lifecycle-managed enterprise Anda.
+                            </p>
+                          </div>
+                        ) : (
+                          <div
+                            className={cn(
+                              'relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-11 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75'
+                            )}
+                          >
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-400/35 to-transparent" />
+                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-muted/80 ring-1 ring-border/70 dark:bg-white/[0.06]">
+                              <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
+                            </div>
+                            <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
+                              Tidak ada baris yang cocok
+                            </p>
+                            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                              Sesuaikan filter pencarian, status, tipe, owner
+                              {showKpiCarousel ? ', atau governance status (filter kolom)' : ''} untuk melihat
+                              kembali daftar workspace.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <table
+                        ref={directoryTableRef}
+                        className={cn(
+                          'border-separate border-spacing-x-2 border-spacing-y-0 text-xs select-none',
+                          hasAnyDirectoryCustomColumnWidth || directoryColumnResizingKey
+                            ? 'table-fixed w-full'
+                            : 'w-full'
+                        )}
+                      >
+                        <colgroup>
+                          {showDirectorySelection ? <col className="w-10" /> : null}
+                          {directoryVisibleColumnOrder.map((key) => (
+                            <col key={key} style={directoryColumnWidthStyle(key)} />
+                          ))}
+                        </colgroup>
+                        <thead className="sticky top-0 z-10">
+                          <tr className="text-left text-muted-foreground">
+                            {showDirectorySelection ? (
+                              <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    directorySelectedIds.length > 0
+                                    && directorySelectedIds.length === directoryTableRows.length
+                                  }
+                                  onChange={() =>
+                                    setDirectorySelectedIds(
+                                      directorySelectedIds.length === directoryTableRows.length
+                                        ? []
+                                        : directoryTableRows.map((tableRow) => tableRow.workspace.id)
+                                    )
+                                  }
+                                  aria-label="Select all rows on this page"
+                                />
+                              </th>
+                            ) : null}
+                            <DndContext sensors={directoryColumnDndSensors} onDragEnd={handleDirectoryColumnDragEnd}>
+                              <SortableContext items={directoryVisibleColumnOrder} strategy={rectSortingStrategy}>
+                                {directoryVisibleColumnOrder.map((key) => {
+                                  return <SortableDirectoryHeaderCell key={key} columnKey={key} />
+                                })}
+                              </SortableContext>
+                            </DndContext>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {directoryTableRows.map((row, rowIndex) => {
+                            const workspace = row.workspace
+                            const rowGroupLabel = row.groupLabel
+                            const previousGroupLabel = directoryTableRows[rowIndex - 1]?.groupLabel ?? null
+                            const showGroupHeader =
+                              directoryGroupBy && rowGroupLabel && rowGroupLabel !== previousGroupLabel
+                            const groupTint =
+                              directoryGroupBy && rowGroupLabel
+                                ? getDirectoryGroupTint(directoryGroupBy, rowGroupLabel)
+                                : null
+                            const isDirectoryRowSelected =
+                              (showDirectorySelection && directorySelectedIds.includes(workspace.id))
+                              || (rowContextMenu?.variant !== 'members'
+                                && rowContextMenu?.workspace.id === workspace.id)
+                            const resolveDirectoryBodyCellBackground = (isFirstColumn: boolean) => {
+                              if (isDirectoryRowSelected) return ''
+                              const stickyFirstClass =
+                                freezeDirectoryFirstColumn && isFirstColumn
+                                  ? 'sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+                                  : ''
+                              if (groupTint) {
+                                return cn(
+                                  isFirstColumn ? groupTint.first : groupTint.row,
+                                  stickyFirstClass
+                                )
+                              }
+                              if (freezeDirectoryFirstColumn && isFirstColumn) {
+                                return directoryFrozenBodyCellClass
+                              }
+                              if (isFirstColumn) return directoryFirstColumnTintBodyClass
+                              return ''
+                            }
+                            const directoryTableCellClass = cn(
+                              'border-b border-slate-200/20 px-3 py-2 align-top transition-colors dark:border-slate-700/20',
+                              isDirectoryRowSelected
+                                ? 'bg-primary/10'
+                                : groupTint
+                                  ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
+                                  : 'group-hover:bg-accent/20'
+                            )
+
+                            return (
+                            <Fragment key={workspace.id}>
+                              {showGroupHeader ? (
+                                <tr>
+                                  <td
+                                    colSpan={directoryVisibleColumnOrder.length + (showDirectorySelection ? 1 : 0)}
+                                    className={cn(
+                                      'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                      groupTint?.first
+                                    )}
+                                  >
+                                    {directoryGroupByDisplayLabel}: {rowGroupLabel}
+                                  </td>
+                                </tr>
+                              ) : null}
+                            <tr
+                              className="group cursor-pointer transition-colors"
+                              onClick={(e) => {
+                                const target = e.target as HTMLElement
+                                if (
+                                  target.closest('button') ||
+                                  target.closest('input') ||
+                                  target.closest('select') ||
+                                  target.closest('textarea') ||
+                                  target.closest('a')
+                                ) {
+                                  return
+                                }
+                                if (inlineRenameId === workspace.id) return
+                                openWorkspaceDetail(workspace)
+                              }}
+                              onContextMenu={(e) => {
+                                e.preventDefault()
+                                setRowContextMenu({ x: e.clientX, y: e.clientY, workspace, variant: 'directory' })
+                              }}
+                            >
+                              {showDirectorySelection ? (
+                                <td
+                                  className={cn(
+                                    directoryTableCellClass,
+                                    'w-10',
+                                    resolveDirectoryBodyCellBackground(false)
+                                  )}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={directorySelectedIds.includes(workspace.id)}
+                                    onChange={() => toggleDirectoryRowSelection(workspace.id)}
+                                    aria-label={`Select ${workspace.name}`}
+                                  />
+                                </td>
+                              ) : null}
+                              {directoryVisibleColumnOrder.map((key) => {
+                                const cellStyle = directoryColumnWidthStyle(key)
+                                const isFirstDirectoryColumn = directoryVisibleColumnOrder[0] === key
+                                const cellBackgroundClass = resolveDirectoryBodyCellBackground(isFirstDirectoryColumn)
+                                if (key === 'name') {
+                                  return (
+                                    <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
+                                {inlineRenameId === workspace.id ? (
+                                  <div className="min-w-0 flex flex-col gap-0.5">
+                                    <input
+                                      autoFocus
+                                      value={inlineRenameValue}
+                                      disabled={inlineRenameSubmitting}
+                                      onChange={(e) => setInlineRenameValue(normalizeTitleCaseInput(e.target.value))}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') { e.preventDefault(); void submitInlineRename(workspace.id) }
+                                        if (e.key === 'Escape') cancelInlineRename()
+                                      }}
+                                      onBlur={() => void submitInlineRename(workspace.id)}
+                                      className="h-7 w-full rounded-md border border-primary/60 bg-background px-2 text-sm font-semibold text-foreground outline-none ring-2 ring-primary/25 focus:ring-primary/50 disabled:opacity-50"
+                                    />
+                                    <div className="font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
+                                    <div className="text-[10px] text-muted-foreground/60">Enter to save | Esc to cancel</div>
+                                  </div>
+                                ) : (
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-foreground">{workspace.name}</div>
+                                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
+                                  </div>
+                                )}
+                              </td>
+                                  )
+                                }
+
+                                if (key === 'type') {
+                                  return (
+                                    <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
+                                <Badge variant="outline" className="px-2 py-0.5 text-[10px] font-medium">
+                                  {workspace.type}
+                                </Badge>
+                              </td>
+                                  )
+                                }
+
+                                if (key === 'owner') {
+                                  return (
+                                    <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
+                                <WorkspaceDirectoryOwnerCell owner={workspace.owner} />
+                              </td>
+                                  )
+                                }
+
+                                if (key === 'lifecycle') {
+                                  return (
+                                    <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
+                                <Badge
+                                  className={cn(
+                                    'border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                                    WORKSPACE_LIFECYCLE_STYLES[workspace.lifecycle]
+                                  )}
+                                >
+                                  {workspace.lifecycle}
+                                </Badge>
+                              </td>
+                                  )
+                                }
+
+                                return (
+                                  <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
+                                <Badge
+                                  className={cn(
+                                    'border px-2 py-0.5 text-[10px] font-semibold',
+                                    GOVERNANCE_CONFIGURATION_STYLES[workspace.governance.configurationStatus]
+                                  )}
+                                >
+                                  {workspace.governance.configurationStatus}
+                                </Badge>
+                              </td>
+                                )
+                              })}
+                            </tr>
+                            </Fragment>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Row context menu — portal-based, always rendered */}
+          <ContextMenu
+            open={rowContextMenu !== null}
+            x={rowContextMenu?.x ?? 0}
+            y={rowContextMenu?.y ?? 0}
+            onClose={() => setRowContextMenu(null)}
+          >
+            {rowContextMenu?.variant === 'members' ? (
+              <>
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'members') openMemberDetailDrawer(rowContextMenu.member)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  View Member Details
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    openInviteMemberDrawer()
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <UserPlus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Invite Member
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'members') {
+                      actOnMemberSingleWorkspace(rowContextMenu.member, openWorkspaceDetail)
+                    }
+                  }}
+                >
+                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  View Workspace Details
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'members') {
+                      actOnMemberSingleWorkspace(rowContextMenu.member, openAssignGovernanceDialog)
+                    }
+                  }}
+                >
+                  <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Assign Governance
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'members') {
+                      actOnMemberSingleWorkspace(rowContextMenu.member, openInviteMemberDrawer)
+                    }
+                  }}
+                >
+                  <Users className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Add Member
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'members') {
+                      actOnMemberSingleWorkspace(rowContextMenu.member, openProjectsForWorkspace)
+                    }
+                  }}
+                >
+                  <FolderKanban className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Link Projects
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'members') openEditMembershipDrawer(rowContextMenu.member)
+                  }}
+                >
+                  <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Edit Membership
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="text-rose-600 focus:text-rose-600"
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'members') openRemoveMemberDialog(rowContextMenu.member)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                  Remove Member
+                </ContextMenuItem>
+              </>
+            ) : rowContextMenu?.variant === 'governance' ? (
+              <>
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'governance') {
+                      openGovernanceMatrixDetailDrawer(rowContextMenu.workspace)
+                    }
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  View Governance Details
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    openNewWorkspaceDrawer()
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Plus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Add Workspace
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openAssignGovernanceDialog(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Assign Governance
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openInviteMemberDrawer(rowContextMenu.workspace)
+                  }}
+                >
+                  <Users className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Add Member
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openProjectsForWorkspace(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <FolderKanban className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Link Projects
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openAssignGovernanceDialog(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Edit Governance
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="text-rose-600 focus:text-rose-600"
+                  onSelect={() => {
+                    if (rowContextMenu) openDeleteGovernanceDialog(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                  Delete Governance
+                </ContextMenuItem>
+              </>
+            ) : rowContextMenu?.variant === 'assets' ? (
+              <>
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'assets') openAsset(rowContextMenu.asset)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Open Asset
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'assets') {
+                      void duplicateAsset(rowContextMenu.asset)
+                    }
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <FileStack className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Duplicate Asset
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'assets') openAssignAssetDialog(rowContextMenu.asset)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Assign Template
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    navigate('/enterprise-governance-model/templates')
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Layers className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Open Governance Catalog
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="text-rose-600 focus:text-rose-600"
+                  onSelect={() => {
+                    if (rowContextMenu?.variant === 'assets') {
+                      openDeleteAssetDialog(rowContextMenu.asset)
+                    }
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                  Delete Asset
+                </ContextMenuItem>
+              </>
+            ) : (
+              <>
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openWorkspaceDetail(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  View Workspace Details
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    openNewWorkspaceDrawer()
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Plus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Add Workspace
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openAssignGovernanceDialog(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Assign Governance
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openInviteMemberDrawer(rowContextMenu.workspace)
+                  }}
+                >
+                  <Users className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Add Members
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openProjectsForWorkspace(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <FolderKanban className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Link Projects
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) startInlineRename(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <TextCursorInput className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Rename Workspace
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (rowContextMenu) openEditWorkspaceDrawer(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Edit Workspace
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="text-rose-600 focus:text-rose-600"
+                  onSelect={() => {
+                    if (rowContextMenu) openDeleteWorkspaceDialog(rowContextMenu.workspace)
+                    setRowContextMenu(null)
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                  Delete Workspace
+                </ContextMenuItem>
+              </>
+            )}
+          </ContextMenu>
+
+          {/* Directory header context menu */}
+          <ContextMenu
+            open={directoryHeaderContextMenu !== null}
+            x={directoryHeaderContextMenu?.x ?? 0}
+            y={directoryHeaderContextMenu?.y ?? 0}
+            onClose={() => setDirectoryHeaderContextMenu(null)}
+          >
+            <ContextMenuItem
+              onSelect={() => {
+                const key = directoryHeaderContextMenu?.columnKey
+                if (!key) return
+                autoResizeDirectoryColumn(key)
+                setDirectoryHeaderContextMenu(null)
+              }}
+            >
+              <UnfoldHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              Auto Resize Column
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onSelect={() => {
+                const key = directoryHeaderContextMenu?.columnKey
+                if (!key) return
+                setDirectoryColumnWidthDialog({
+                  open: true,
+                  columnKey: key,
+                  valuePx: String(directoryColumnWidthsPx[key] ?? ''),
+                })
+                setDirectoryHeaderContextMenu(null)
+              }}
+            >
+              <Ruler className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              Column Width...
+            </ContextMenuItem>
+            {hasAnyDirectoryCustomColumnWidth ? (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    resetAllDirectoryColumnWidths()
+                    setDirectoryHeaderContextMenu(null)
+                  }}
+                >
+                  <RotateCcw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Reset Column Width
+                </ContextMenuItem>
+              </>
+            ) : null}
+            {directoryHeaderContextMenu?.columnKey &&
+            isDirectorySecondColumn(directoryHeaderContextMenu.columnKey) &&
+            !isDirectoryLastColumn(directoryHeaderContextMenu.columnKey) ? (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    const key = directoryHeaderContextMenu?.columnKey
+                    if (!key) return
+                    moveDirectoryColumnRight(key)
+                    setDirectoryHeaderContextMenu(null)
+                  }}
+                >
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Move Column to Right
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onSelect={() => {
+                    const key = directoryHeaderContextMenu?.columnKey
+                    if (!key) return
+                    moveDirectoryColumnToLast(key)
+                    setDirectoryHeaderContextMenu(null)
+                  }}
+                >
+                  <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Move Column to Last Position
+                </ContextMenuItem>
+              </>
+            ) : null}
+            {directoryHeaderContextMenu?.columnKey &&
+            isDirectoryThirdColumnOrLater(directoryHeaderContextMenu.columnKey) ? (
+              <>
+                <ContextMenuSeparator />
+                {(() => {
+                  const key = directoryHeaderContextMenu.columnKey
+                  const columnIndex = getDirectoryColumnIndex(key)
+                  const canMoveEarlier = columnIndex > 1
+                  const canMoveLater = columnIndex >= 0 && columnIndex < directoryColumnOrder.length - 1
+                  return (
+                    <>
+                      {canMoveEarlier ? (
+                        <ContextMenuItem
+                          onSelect={() => {
+                            moveDirectoryColumnToFirst(key)
+                            setDirectoryHeaderContextMenu(null)
+                          }}
+                        >
+                          <ArrowLeftToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Move Column to First Position
+                        </ContextMenuItem>
+                      ) : null}
+                      {canMoveEarlier ? (
+                        <ContextMenuItem
+                          onSelect={() => {
+                            moveDirectoryColumnLeft(key)
+                            setDirectoryHeaderContextMenu(null)
+                          }}
+                        >
+                          <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Move Column to Left
+                        </ContextMenuItem>
+                      ) : null}
+                      {canMoveLater ? (
+                        <ContextMenuItem
+                          onSelect={() => {
+                            moveDirectoryColumnRight(key)
+                            setDirectoryHeaderContextMenu(null)
+                          }}
+                        >
+                          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Move Column to Right
+                        </ContextMenuItem>
+                      ) : null}
+                      {canMoveLater ? (
+                        <ContextMenuItem
+                          onSelect={() => {
+                            moveDirectoryColumnToLast(key)
+                            setDirectoryHeaderContextMenu(null)
+                          }}
+                        >
+                          <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Move Column to Last Position
+                        </ContextMenuItem>
+                      ) : null}
+                    </>
+                  )
+                })()}
+              </>
+            ) : null}
+            {directoryHeaderContextMenu?.columnKey &&
+            !isDirectoryFirstColumn(directoryHeaderContextMenu.columnKey) ? (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    const key = directoryHeaderContextMenu?.columnKey
+                    if (!key) return
+                    toggleDirectoryColumnVisibility(key)
+                    setDirectoryHeaderContextMenu(null)
+                  }}
+                >
+                  <EyeOff className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Hide Column
+                </ContextMenuItem>
+              </>
+            ) : null}
+            {directoryHeaderContextMenu?.columnKey &&
+            isDirectoryFirstColumn(directoryHeaderContextMenu.columnKey) ? (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    setFreezeDirectoryFirstColumn((v) => !v)
+                    setDirectoryHeaderContextMenu(null)
+                  }}
+                >
+                  <Pin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  Freeze Column
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {freezeDirectoryFirstColumn ? 'On' : 'Off'}
+                  </span>
+                </ContextMenuItem>
+              </>
+            ) : null}
+          </ContextMenu>
+
+          <EnterpriseColumnWidthModal
+            open={directoryColumnWidthDialog?.open ?? false}
+            onClose={() => setDirectoryColumnWidthDialog(null)}
+            columnLabel={
+              directoryColumnWidthDialog
+                ? directoryColumnLabel(directoryColumnWidthDialog.columnKey)
+                : '—'
+            }
+            valuePx={directoryColumnWidthDialog?.valuePx ?? ''}
+            onValuePxChange={(value) => {
+              setDirectoryColumnWidthDialog((prev) => (prev ? { ...prev, valuePx: value } : prev))
+            }}
+            onApply={(widthPx) => {
+              if (!directoryColumnWidthDialog) return
+              const key = directoryColumnWidthDialog.columnKey
+              setDirectoryColumnWidthsWithSnapshot((prev) => {
+                if (widthPx == null) {
+                  const next = { ...prev }
+                  delete next[key]
+                  return next
+                }
+                return { ...prev, [key]: widthPx }
+              }, directoryTableRef.current)
+              setDirectoryColumnWidthDialog(null)
+            }}
+            dialogTitleId="directory-column-width-dialog-title"
+          />
+
+          {activePanel === 'governance' ? (
+            <div
+              ref={governancePanelRef}
+              className={cn(
+                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+              )}
+              style={workspaceCatalogPanelHeightStyle(
+                workspaceMainPanelViewportHeightPx,
+                governancePanelAlignedHeightPx,
+                governancePanelMaxHeightPx
+              )}
+            >
+              <div className="flex h-full min-h-0 w-full flex-col">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                  <div className="shrink-0">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                          <h2 className="text-lg font-semibold text-foreground">Governance Matrix</h2>
+                        </div>
+                        <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
+                          Executive delivery governance posture per workspace — operating model, health, compliance, risk, and audit readiness without policy implementation detail.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                        <p className="text-xs text-muted-foreground">
+                          Showing{' '}
+                          <span className="font-semibold text-foreground">
+                            {sortedGovernanceWorkspaces.length === 0
+                              ? 0
+                              : Math.min(sortedGovernanceWorkspaces.length, (governancePage - 1) * governancePageSize + 1)}
+                          </span>
+                          -
+                          <span className="font-semibold text-foreground">
+                            {Math.min(sortedGovernanceWorkspaces.length, governancePage * governancePageSize)}
+                          </span>{' '}
+                          of <span className="font-semibold text-foreground">{sortedGovernanceWorkspaces.length}</span>
+                        </p>
+                        <span className="text-xs text-muted-foreground">Rows:</span>
+                        <Select
+                          value={String(governancePageSize)}
+                          onChange={(e) => setGovernancePageSize(parseInt(e.target.value, 10))}
+                          className="h-10 w-[84px] text-sm"
+                        >
+                          <option value="5">5</option>
+                          <option value="10">10</option>
+                          <option value="15">15</option>
+                          <option value="25">25</option>
+                        </Select>
+                        <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setGovernancePage((prev) => Math.max(1, prev - 1))}
+                            disabled={governancePage <= 1}
+                          >
+                            Previous
+                          </button>
+                          <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">
+                            {governancePage} / {governanceTotalPages}
+                          </div>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setGovernancePage((prev) => Math.min(governanceTotalPages, prev + 1))}
+                            disabled={governancePage >= governanceTotalPages}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className={cn(
+                      'scrollbar-hide min-h-0 w-full min-w-0 flex-1 rounded-xl border border-border/30',
+                      sortedGovernanceWorkspaces.length === 0
+                        ? 'flex flex-col items-center justify-center overflow-hidden overflow-y-auto bg-gradient-to-b from-muted/50 via-background to-background py-8 dark:from-muted/25'
+                        : 'overflow-auto'
+                    )}
+                  >
+                    {sortedGovernanceWorkspaces.length === 0 ? (
+                      <div className="flex w-full flex-col items-center justify-center px-6">
+                        {!workspaceOrgInitialFetchDone ? (
+                          <PlatformServiceLoadingPanel
+                            title="Memuat governance matrix"
+                            description="Menghubungkan ke layanan workspace-org dan workspace-governance."
+                          />
+                        ) : allWorkspacesForList.length === 0 && !workspaceOrgBackendConnected ? (
+                          <div
+                            className={cn(
+                              'relative w-full max-w-2xl rounded-lg border border-amber-200/50 bg-amber-50/60 px-5 py-6 shadow-sm dark:border-amber-900/30 dark:bg-amber-950/20'
+                            )}
+                            role="alert"
+                          >
+                            <div className="flex gap-4">
+                              <div className="flex-shrink-0 pt-0.5">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100/60 dark:bg-amber-900/40">
+                                  <ShieldAlert className="h-6 w-6 text-amber-700 dark:text-amber-400" aria-hidden />
+                                </div>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-foreground">
+                                  Governance matrix tidak dapat dimuat
+                                </p>
+                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                  workspace-org service diperlukan. Pastikan layanan aktif.
+                                </p>
+                                <div className="mt-3 rounded-md border border-amber-200/30 bg-white/40 px-3 py-2 dark:bg-white/[0.02]">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+                                    Dev proxy
+                                  </p>
+                                  <code className="mt-1 block break-all font-mono text-[10px] text-foreground/80">
+                                    /api/workspace-org → workspace-org backend (port 8424)
+                                  </code>
+                                </div>
+                                <Button
+                                  type="button"
+                                  className={cn(
+                                    'mt-3 h-8 px-4 text-xs font-semibold',
+                                    'bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white'
+                                  )}
+                                  onClick={() => void refreshWorkspaceOrgLists()}
+                                >
+                                  Coba lagi
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : allWorkspacesForList.length === 0 ? (
+                          <div
+                            className={cn(
+                              'relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-12 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75 dark:shadow-[0_28px_64px_-24px_rgba(0,0,0,0.5)]'
+                            )}
+                          >
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/35 to-transparent" />
+                            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500/12 to-indigo-600/10 ring-1 ring-violet-500/20 dark:from-violet-400/18 dark:ring-violet-400/25">
+                              <ShieldCheck className="h-9 w-9 text-violet-700 dark:text-violet-400" aria-hidden />
+                            </div>
+                            <p className="mt-6 text-lg font-semibold tracking-tight text-foreground">
+                              Governance matrix siap, belum ada workspace
+                            </p>
+                            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                              Buat workspace pertama untuk mengisi governance matrix lifecycle-managed enterprise Anda.
+                            </p>
+                          </div>
+                        ) : (
+                          <div
+                            className={cn(
+                              'relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-11 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75'
+                            )}
+                          >
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-400/35 to-transparent" />
+                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-muted/80 ring-1 ring-border/70 dark:bg-white/[0.06]">
+                              <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
+                            </div>
+                            <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
+                              Tidak ada baris yang cocok
+                            </p>
+                            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                              Sesuaikan filter panel, filter kolom tabel (operating model, compliance, audit, owner), atau kata kunci pencarian.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <table className="w-full min-w-[1180px] select-none text-xs">
+                        <thead className="sticky top-0 z-10 border-b border-border/40 bg-background/90 backdrop-blur dark:bg-slate-900/90">
+                          <tr className="text-left text-muted-foreground">
+                            {(
+                              [
+                                { key: 'workspace' as const, label: 'Workspace', sortable: true },
+                                { key: 'operatingModel' as const, label: 'Operating Model', sortable: true },
+                                { key: 'governanceHealth' as const, label: 'Governance Health', sortable: true },
+                                { key: 'complianceStatus' as const, label: 'Compliance Status', sortable: true },
+                                { key: 'riskLevel' as const, label: 'Risk Level', sortable: true },
+                                { key: 'auditReadiness' as const, label: 'Audit Readiness', sortable: true },
+                                { key: 'lastReview' as const, label: 'Last Review', sortable: true },
+                                { key: 'governanceOwner' as const, label: 'Governance Owner', sortable: true },
+                              ] as const
+                            ).map(({ key, label, sortable }) => {
+                              const isSorted = sortable && key != null && governanceSort?.key === key
+                              const columnFilterActive =
+                                key === 'operatingModel'
+                                  ? governanceOperatingModelColumnFilters.size > 0
+                                  : key === 'complianceStatus'
+                                    ? governanceComplianceColumnFilters.size > 0
+                                    : key === 'auditReadiness'
+                                      ? governanceAuditReadinessColumnFilters.size > 0
+                                      : key === 'governanceOwner'
+                                        ? governanceOwnerColumnFilters.size > 0
+                                        : false
+                              const columnFilterButtonClass = cn(
+                                'inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors',
+                                'outline-none focus:outline-none focus-visible:outline-none',
+                                'focus-visible:ring-2 focus-visible:ring-sky-400/50 focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+                                columnFilterActive
+                                  ? 'bg-blue-600 text-white dark:bg-blue-500 dark:text-slate-900'
+                                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+                              )
+                              const resetGovernanceColumnFilterPage = () => setGovernancePage(1)
+
+                              return (
+                                <th
+                                  key={label}
+                                  className="select-none px-3 py-2 text-left font-semibold"
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                  {sortable && key != null ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleGovernanceSort(key)}
+                                      className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                                      title="Sort: ascending → descending → default"
+                                    >
+                                      <span>{label}</span>
+                                      {isSorted ? (
+                                        governanceSort?.dir === 'asc' ? (
+                                          <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        ) : (
+                                          <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        )
+                                      ) : (
+                                        <ArrowUpDown className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
+                                      )}
+                                    </button>
+                                  ) : (
+                                    <span>{label}</span>
+                                  )}
+                                    {key === 'operatingModel' ? (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={columnFilterButtonClass}
+                                            aria-label="Filter operating model in table"
+                                            title="Filter operating model"
+                                          >
+                                            <Filter className="h-3.5 w-3.5" aria-hidden />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent
+                                          align="start"
+                                          className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+                                        >
+                                          <DropdownMenuLabel className="flex items-center justify-between">
+                                            <span>Operating model filter</span>
+                                            <span className="text-[10px] font-medium text-muted-foreground">
+                                              {governanceOperatingModelColumnFilters.size === 0
+                                                ? 'All'
+                                                : `${governanceOperatingModelColumnFilters.size} selected`}
+                                            </span>
+                                          </DropdownMenuLabel>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              setGovernanceOperatingModelColumnFilters(new Set())
+                                              resetGovernanceColumnFilterPage()
+                                            }}
+                                            className="flex items-center justify-between"
+                                          >
+                                            Show all
+                                            {governanceOperatingModelColumnFilters.size === 0 ? (
+                                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                                            ) : null}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                          {governanceOperatingModelColumnOptions.length === 0 ? (
+                                            <DropdownMenuItem className="pointer-events-none opacity-60">
+                                              No operating models
+                                            </DropdownMenuItem>
+                                          ) : (
+                                            governanceOperatingModelColumnOptions.map((modelLabel) => {
+                                              const active =
+                                                governanceOperatingModelColumnFilters.size > 0
+                                                && governanceOperatingModelColumnFilters.has(modelLabel)
+                                              return (
+                                                <DropdownMenuItem
+                                                  key={modelLabel}
+                                                  onClick={() => {
+                                                    setGovernanceOperatingModelColumnFilters((prev) => {
+                                                      const next = new Set(prev)
+                                                      if (next.has(modelLabel)) next.delete(modelLabel)
+                                                      else next.add(modelLabel)
+                                                      return next
+                                                    })
+                                                    resetGovernanceColumnFilterPage()
+                                                  }}
+                                                  className="flex items-center justify-between"
+                                                >
+                                                  <span className="truncate">{modelLabel}</span>
+                                                  {active ? (
+                                                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                                  ) : null}
+                                                </DropdownMenuItem>
+                                              )
+                                            })
+                                          )}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    ) : null}
+                                    {key === 'complianceStatus' ? (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={columnFilterButtonClass}
+                                            aria-label="Filter compliance status in table"
+                                            title="Filter compliance status"
+                                          >
+                                            <Filter className="h-3.5 w-3.5" aria-hidden />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent
+                                          align="start"
+                                          className="w-52 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+                                        >
+                                          <DropdownMenuLabel className="flex items-center justify-between">
+                                            <span>Compliance filter</span>
+                                            <span className="text-[10px] font-medium text-muted-foreground">
+                                              {governanceComplianceColumnFilters.size === 0
+                                                ? 'All'
+                                                : `${governanceComplianceColumnFilters.size} selected`}
+                                            </span>
+                                          </DropdownMenuLabel>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              setGovernanceComplianceColumnFilters(new Set())
+                                              resetGovernanceColumnFilterPage()
+                                            }}
+                                            className="flex items-center justify-between"
+                                          >
+                                            Show all
+                                            {governanceComplianceColumnFilters.size === 0 ? (
+                                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                                            ) : null}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                          {governanceComplianceColumnOptions.map((badge) => {
+                                            const active =
+                                              governanceComplianceColumnFilters.size > 0
+                                              && governanceComplianceColumnFilters.has(badge)
+                                            return (
+                                              <DropdownMenuItem
+                                                key={badge}
+                                                onClick={() => {
+                                                  setGovernanceComplianceColumnFilters((prev) => {
+                                                    const next = new Set(prev)
+                                                    if (next.has(badge)) next.delete(badge)
+                                                    else next.add(badge)
+                                                    return next
+                                                  })
+                                                  resetGovernanceColumnFilterPage()
+                                                }}
+                                                className="flex items-center justify-between"
+                                              >
+                                                <span>{badge}</span>
+                                                {active ? (
+                                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                                ) : null}
+                                              </DropdownMenuItem>
+                                            )
+                                          })}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    ) : null}
+                                    {key === 'auditReadiness' ? (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={columnFilterButtonClass}
+                                            aria-label="Filter audit readiness in table"
+                                            title="Filter audit readiness"
+                                          >
+                                            <Filter className="h-3.5 w-3.5" aria-hidden />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent
+                                          align="start"
+                                          className="w-52 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+                                        >
+                                          <DropdownMenuLabel className="flex items-center justify-between">
+                                            <span>Audit readiness filter</span>
+                                            <span className="text-[10px] font-medium text-muted-foreground">
+                                              {governanceAuditReadinessColumnFilters.size === 0
+                                                ? 'All'
+                                                : `${governanceAuditReadinessColumnFilters.size} selected`}
+                                            </span>
+                                          </DropdownMenuLabel>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              setGovernanceAuditReadinessColumnFilters(new Set())
+                                              resetGovernanceColumnFilterPage()
+                                            }}
+                                            className="flex items-center justify-between"
+                                          >
+                                            Show all
+                                            {governanceAuditReadinessColumnFilters.size === 0 ? (
+                                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                                            ) : null}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                          {governanceAuditReadinessColumnOptions.map((auditLabel) => {
+                                            const active =
+                                              governanceAuditReadinessColumnFilters.size > 0
+                                              && governanceAuditReadinessColumnFilters.has(auditLabel)
+                                            const displayLabel =
+                                              auditLabel === GOVERNANCE_MATRIX_EMPTY ? 'No data' : auditLabel
+                                            return (
+                                              <DropdownMenuItem
+                                                key={auditLabel}
+                                                onClick={() => {
+                                                  setGovernanceAuditReadinessColumnFilters((prev) => {
+                                                    const next = new Set(prev)
+                                                    if (next.has(auditLabel)) next.delete(auditLabel)
+                                                    else next.add(auditLabel)
+                                                    return next
+                                                  })
+                                                  resetGovernanceColumnFilterPage()
+                                                }}
+                                                className="flex items-center justify-between"
+                                              >
+                                                <span>{displayLabel}</span>
+                                                {active ? (
+                                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                                ) : null}
+                                              </DropdownMenuItem>
+                                            )
+                                          })}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    ) : null}
+                                    {key === 'governanceOwner' ? (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={columnFilterButtonClass}
+                                            aria-label="Filter governance owner in table"
+                                            title="Filter governance owner"
+                                          >
+                                            <Filter className="h-3.5 w-3.5" aria-hidden />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent
+                                          align="start"
+                                          className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+                                        >
+                                          <DropdownMenuLabel className="flex items-center justify-between">
+                                            <span>Governance owner filter</span>
+                                            <span className="text-[10px] font-medium text-muted-foreground">
+                                              {governanceOwnerColumnFilters.size === 0
+                                                ? 'All'
+                                                : `${governanceOwnerColumnFilters.size} selected`}
+                                            </span>
+                                          </DropdownMenuLabel>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              setGovernanceOwnerColumnFilters(new Set())
+                                              resetGovernanceColumnFilterPage()
+                                            }}
+                                            className="flex items-center justify-between"
+                                          >
+                                            Show all
+                                            {governanceOwnerColumnFilters.size === 0 ? (
+                                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                                            ) : null}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                          {governanceOwnerColumnOptions.length === 0 ? (
+                                            <DropdownMenuItem className="pointer-events-none opacity-60">
+                                              No owners
+                                            </DropdownMenuItem>
+                                          ) : (
+                                            governanceOwnerColumnOptions.map((ownerLabel) => {
+                                              const active =
+                                                governanceOwnerColumnFilters.size > 0
+                                                && governanceOwnerColumnFilters.has(ownerLabel)
+                                              return (
+                                                <DropdownMenuItem
+                                                  key={ownerLabel}
+                                                  onClick={() => {
+                                                    setGovernanceOwnerColumnFilters((prev) => {
+                                                      const next = new Set(prev)
+                                                      if (next.has(ownerLabel)) next.delete(ownerLabel)
+                                                      else next.add(ownerLabel)
+                                                      return next
+                                                    })
+                                                    resetGovernanceColumnFilterPage()
+                                                  }}
+                                                  className="flex items-center justify-between"
+                                                >
+                                                  <span className="truncate">{ownerLabel}</span>
+                                                  {active ? (
+                                                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                                  ) : null}
+                                                </DropdownMenuItem>
+                                              )
+                                            })
+                                          )}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    ) : null}
+                                  </div>
+                                </th>
+                              )
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {governanceTableRows.map((workspace) => {
+                            const metrics = governanceMatrixMetricsByWorkspaceId.get(workspace.id)!
+                            const modelDef = metrics.operatingModel
+                              ? GOVERNANCE_OPERATING_MODEL_DEFS.find((d) => d.id === metrics.operatingModel)
+                              : null
+                            const healthStyle = metrics.health
+                              ? GOVERNANCE_HEALTH_STYLES[metrics.health.posture]
+                              : null
+                            const ownerName = formatGovernanceDisplayValue(workspace.governance.governanceOwner)
+                            const ownerDisplay = ownerName === GOVERNANCE_EMPTY_VALUE ? workspace.owner : ownerName
+
+                            return (
+                            <tr
+                              key={workspace.id}
+                              className={cn(
+                                'cursor-pointer border-t border-border/25 transition-colors',
+                                governanceMatrixDetailWorkspace?.id === workspace.id ||
+                                  (rowContextMenu?.variant !== 'members' &&
+                                    rowContextMenu?.workspace.id === workspace.id)
+                                  ? 'bg-primary/10 hover:bg-primary/12 ring-1 ring-inset ring-primary/20'
+                                  : 'hover:bg-accent/20'
+                              )}
+                              onClick={(e) => {
+                                const target = e.target as HTMLElement
+                                if (
+                                  target.closest('button') ||
+                                  target.closest('input') ||
+                                  target.closest('select') ||
+                                  target.closest('textarea') ||
+                                  target.closest('a')
+                                ) {
+                                  return
+                                }
+                                openGovernanceMatrixDetailDrawer(workspace)
+                              }}
+                              onContextMenu={(e) => {
+                                e.preventDefault()
+                                setRowContextMenu({ x: e.clientX, y: e.clientY, workspace, variant: 'governance' })
+                              }}
+                            >
+                              <td className="px-3 py-2 align-top">
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-foreground">{workspace.name}</div>
+                                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
+                                    <div className="mt-1.5 flex flex-wrap gap-1">
+                                      <Badge variant="outline" className="rounded-md border-border px-1.5 py-0 text-[10px] font-medium">
+                                        {workspace.type}
+                                      </Badge>
+                                      <Badge
+                                        className={cn(
+                                          'rounded-md border px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide',
+                                          WORKSPACE_LIFECYCLE_STYLES[workspace.lifecycle]
+                                        )}
+                                      >
+                                        {workspace.lifecycle}
+                                      </Badge>
+                                      {workspace.primaryOrganizationLabel ? (
+                                        <Badge variant="outline" className="max-w-[140px] truncate rounded-md border-border px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
+                                          {workspace.primaryOrganizationLabel}
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                {modelDef ? (
+                                  <span
+                                    className={cn(
+                                      'inline-flex max-w-[168px] flex-col rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold leading-tight shadow-sm',
+                                      modelDef.indicatorClass
+                                    )}
+                                  >
+                                    {modelDef.name}
+                                    <span className="mt-0.5 text-[10px] font-medium opacity-80">{modelDef.indicator}</span>
+                                  </span>
+                                ) : (
+                                  <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', MATRIX_COMPLIANCE_STYLES.Unconfigured)}>
+                                    Unassigned
+                                  </Badge>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                {metrics.health && healthStyle ? (
+                                  <div className="min-w-[108px]">
+                                    <div className="flex items-baseline justify-between gap-2">
+                                      <span className={cn('text-sm font-bold tabular-nums', healthStyle.text)}>
+                                        {metrics.health.score}%
+                                      </span>
+                                      <span className={cn('text-[10px] font-semibold uppercase tracking-wide', healthStyle.text)}>
+                                        {metrics.health.posture}
+                                      </span>
+                                    </div>
+                                    <div className={cn('mt-1.5 h-1.5 w-full overflow-hidden rounded-full', healthStyle.track)}>
+                                      <div
+                                        className={cn('h-full rounded-full transition-all', healthStyle.bar)}
+                                        style={{ width: `${metrics.health.score}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                <Badge
+                                  className={cn(
+                                    'border px-2 py-0.5 text-[10px] font-semibold',
+                                    MATRIX_COMPLIANCE_STYLES[metrics.complianceBadge]
+                                  )}
+                                >
+                                  {metrics.complianceBadge}
+                                </Badge>
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                {metrics.riskLevel ? (
+                                  <Badge
+                                    className={cn(
+                                      'border px-2 py-0.5 text-[10px] font-semibold',
+                                      RISK_LEVEL_STYLES[metrics.riskLevel]
+                                    )}
+                                  >
+                                    {metrics.riskLevel}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                {metrics.audit ? (
+                                  <div className="min-w-[88px]">
+                                    <div className="text-sm font-bold tabular-nums text-foreground">{metrics.audit.pct}%</div>
+                                    <div className="mt-0.5 text-[10px] font-medium text-muted-foreground">{metrics.audit.label}</div>
+                                  </div>
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                {metrics.lastReview ? (
+                                  <div>
+                                    <div
+                                      className={cn(
+                                        'font-medium tabular-nums',
+                                        metrics.lastReview.overdue ? 'text-amber-700 dark:text-amber-300' : 'text-foreground/80'
+                                      )}
+                                    >
+                                      {metrics.lastReview.text}
+                                    </div>
+                                    {metrics.lastReview.overdue ? (
+                                      <div className="mt-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">Review overdue</div>
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-foreground">{ownerDisplay}</div>
+                                  {metrics.ownerTeam ? (
+                                    <div className="mt-0.5 text-[10px] text-muted-foreground">{metrics.ownerTeam}</div>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {activePanel === 'members' ? (
+            <>
+              <div
+                ref={membersPanelRef}
+                className={cn(
+                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                  'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+                )}
+                style={
+                  workspaceCatalogPanelHeightStyle(null, membersPanelAlignedHeightPx, membersPanelMaxHeightPx)
+                }
+              >
+                <div className="flex h-full min-h-0 w-full flex-col">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                    <div className="shrink-0">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Users className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                            <h2 className="text-lg font-semibold text-foreground">Workspace Members</h2>
+                          </div>
+                          <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
+                            One row per person across workspaces — each line under Workspace lists a membership for that member.
+                          </p>
+                          {membersLoading ? (
+                            <p className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                              Loading members…
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                          <p className="text-xs text-muted-foreground">
+                            Showing{' '}
+                            <span className="font-semibold text-foreground">
+                              {filteredSortedMembers.length === 0
+                                ? 0
+                                : Math.min(filteredSortedMembers.length, (membersPage - 1) * membersPageSize + 1)}
+                            </span>
+                            -
+                            <span className="font-semibold text-foreground">
+                              {Math.min(filteredSortedMembers.length, membersPage * membersPageSize)}
+                            </span>{' '}
+                            of <span className="font-semibold text-foreground">{filteredSortedMembers.length}</span>
+                          </p>
+                          <span className="text-xs text-muted-foreground">Rows:</span>
+                          <Select
+                            value={String(membersPageSize)}
+                            onChange={(e) => setMembersPageSize(parseInt(e.target.value, 10))}
+                            className="h-10 w-[84px] text-sm"
+                          >
+                            <option value="5">5</option>
+                            <option value="10">10</option>
+                            <option value="15">15</option>
+                            <option value="25">25</option>
+                          </Select>
+                          <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                            <button
+                              type="button"
+                              className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                              onClick={() => setMembersPage((prev) => Math.max(1, prev - 1))}
+                              disabled={membersPage <= 1}
+                            >
+                              Previous
+                            </button>
+                            <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">
+                              {membersPage} / {membersTotalPages}
+                            </div>
+                            <button
+                              type="button"
+                              className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                              onClick={() => setMembersPage((prev) => Math.min(membersTotalPages, prev + 1))}
+                              disabled={membersPage >= membersTotalPages}
+                            >
+                              Next
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <EnterpriseInfoCallout className="shrink-0" title="Separation of concerns">
+                      This panel tracks workspace membership and participation. Platform authorization (roles, permissions,
+                      policy) is managed in{' '}
+                      <a href="/security-access-control" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
+                        Security &amp; Access Control
+                      </a>
+                      ; identity and authorization model configuration live in{' '}
+                      <a href="/platform-settings-administration" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
+                        Platform Settings &amp; Administration
+                      </a>
+                      .
+                    </EnterpriseInfoCallout>
+
+                    <div
+                      className={cn(
+                        'scrollbar-hide min-h-0 w-full min-w-0 flex-1 rounded-xl border border-border/30',
+                        filteredSortedMembers.length === 0
+                          ? 'flex flex-col items-center justify-center overflow-hidden overflow-y-auto bg-gradient-to-b from-muted/50 via-background to-background py-8 dark:from-muted/25'
+                          : 'overflow-auto'
+                      )}
+                    >
+                      {filteredSortedMembers.length === 0 ? (
+                        <div className="flex w-full flex-col items-center justify-center px-6">
+                          <div
+                            className={cn(
+                              'relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-11 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75'
+                            )}
+                          >
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-400/35 to-transparent" />
+                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-muted/80 ring-1 ring-border/70 dark:bg-white/[0.06]">
+                              <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
+                            </div>
+                            <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
+                              No members match
+                            </p>
+                            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                              Adjust search or role filters to see members.
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <table className="w-full min-w-[840px] select-none text-xs">
+                          <thead className="sticky top-0 z-10 border-b border-border/40 bg-background/90 backdrop-blur dark:bg-slate-900/90">
+                            <tr className="text-left text-muted-foreground">
+                              {(
+                                [
+                                  { key: 'name' as const, label: 'Member' },
+                                  { key: 'workspace' as const, label: 'Workspace' },
+                                  { key: 'role' as const, label: 'Workspace Role' },
+                                  { key: 'team' as const, label: 'Operational Team' },
+                                  { key: 'scope' as const, label: 'Participation Scope' },
+                                  { key: 'lastActivity' as const, label: 'Recent Activity' },
+                                ] as const
+                              ).map(({ key, label }) => {
+                                const isSorted = membersSort?.key === key
+                                return (
+                                  <th key={key} className="select-none px-3 py-2 text-left font-semibold">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleMembersSort(key)}
+                                      className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                                      title="Sort: ascending → descending → default"
+                                    >
+                                      <span>{label}</span>
+                                      {isSorted ? (
+                                        membersSort?.dir === 'asc' ? (
+                                          <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        ) : (
+                                          <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        )
+                                      ) : (
+                                        <ArrowUpDown className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
+                                      )}
+                                    </button>
+                                  </th>
+                                )
+                              })}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {membersTableRows.map((member) => {
+                              const roles = aggregatedMemberRoles(member)
+                              const roleLabel =
+                                roles.length === 1 ? roles[0]! : aggregatedMemberPrimaryRole(member)
+                              const roleBadgeTitle =
+                                roles.length > 1 ? `Roles: ${roles.join(', ')}` : undefined
+                              return (
+                              <tr
+                                key={member.subjectId}
+                                className={cn(
+                                  'cursor-pointer border-b border-border/20 transition-colors',
+                                  memberDetailTarget?.subjectId === member.subjectId ||
+                                    (rowContextMenu?.variant === 'members' &&
+                                      rowContextMenu.member.subjectId === member.subjectId)
+                                    ? 'bg-primary/10 hover:bg-primary/12 ring-1 ring-inset ring-primary/20'
+                                    : 'hover:bg-muted/30 dark:hover:bg-white/[0.03]'
+                                )}
+                                onClick={(e) => {
+                                  const target = e.target as HTMLElement
+                                  if (
+                                    target.closest('button') ||
+                                    target.closest('input') ||
+                                    target.closest('select') ||
+                                    target.closest('textarea') ||
+                                    target.closest('a')
+                                  ) {
+                                    return
+                                  }
+                                  openMemberDetailDrawer(member)
+                                }}
+                                onContextMenu={(e) => {
+                                  e.preventDefault()
+                                  setRowContextMenu({
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                    member,
+                                    variant: 'members',
+                                  })
+                                }}
+                              >
+                                <td className="px-3 py-3">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/10 text-xs font-bold text-indigo-700 ring-1 ring-indigo-500/20 dark:text-indigo-300">
+                                      {member.name.split(' ').map((n) => n[0] ?? '').slice(0, 2).join('')}
+                                    </div>
+                                    <span className="font-semibold text-foreground">{member.name}</span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {member.memberships.length === 1 ? (
+                                    <span className="font-medium text-foreground">
+                                      {member.memberships[0]!.workspaceName}
+                                    </span>
+                                  ) : (
+                                    <ul className="space-y-1">
+                                      {member.memberships.map((ref) => (
+                                        <li
+                                          key={ref.workspaceId}
+                                          className="flex items-start gap-2 font-medium text-foreground"
+                                        >
+                                          <span
+                                            className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400 dark:bg-slate-500"
+                                            aria-hidden
+                                          />
+                                          <span>{ref.workspaceName}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </td>
+                                <td className="px-3 py-3">
+                                  <Badge
+                                    className={cn('rounded-full border px-2.5 py-1 text-xs', roleStyles[roleLabel])}
+                                    title={roleBadgeTitle}
+                                  >
+                                    {roles.length > 1 ? `${roleLabel} · ${roles.length} roles` : roleLabel}
+                                  </Badge>
+                                </td>
+                                <td className="px-3 py-3 text-muted-foreground">{member.team}</td>
+                                <td className="px-3 py-3 text-muted-foreground">
+                                  {aggregatedMemberScopeLabel(member)}
+                                </td>
+                                <td className="px-3 py-3 text-muted-foreground tabular-nums">
+                                  {member.memberships[0]?.lastActivity ?? '—'}
+                                </td>
+                              </tr>
+                            )})}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {activePanel === 'assets' ? (
+            <div
+              ref={assetsPanelRef}
+              className={cn(
+                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+              )}
+              style={workspaceCatalogPanelHeightStyle(null, assetsPanelAlignedHeightPx, assetsPanelMaxHeightPx)}
+            >
+              <div className="flex h-full min-h-0 w-full flex-col">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                  <div className="shrink-0">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Layers className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                          <h2 className="text-lg font-semibold text-foreground">Templates & Shared Assets</h2>
+                        </div>
+                        <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
+                          Live governance templates and shared policy assets sourced from workspace-governance service catalog.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                        <p className="text-xs text-muted-foreground">
+                          Showing{' '}
+                          <span className="font-semibold text-foreground">
+                            {sortedAssets.length === 0 ? 0 : Math.min(sortedAssets.length, (assetsPage - 1) * assetsPageSize + 1)}
+                          </span>
+                          -
+                          <span className="font-semibold text-foreground">
+                            {Math.min(sortedAssets.length, assetsPage * assetsPageSize)}
+                          </span>{' '}
+                          of <span className="font-semibold text-foreground">{sortedAssets.length}</span>
+                        </p>
+                        <span className="text-xs text-muted-foreground">Rows:</span>
+                        <Select
+                          value={String(assetsPageSize)}
+                          onChange={(e) => setAssetsPageSize(parseInt(e.target.value, 10))}
+                          className="h-10 w-[84px] text-sm"
+                        >
+                          <option value="5">5</option>
+                          <option value="10">10</option>
+                          <option value="15">15</option>
+                          <option value="25">25</option>
+                        </Select>
+                        <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setAssetsPage((prev) => Math.max(1, prev - 1))}
+                            disabled={assetsPage <= 1}
+                          >
+                            Previous
+                          </button>
+                          <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">
+                            {assetsPage} / {assetsTotalPages}
+                          </div>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setAssetsPage((prev) => Math.min(assetsTotalPages, prev + 1))}
+                            disabled={assetsPage >= assetsTotalPages}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="scrollbar-hide min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-xl border border-border/30">
+                    {assetsTableRows.length === 0 ? (
+                      <div className="flex min-h-[240px] items-center justify-center p-6">
+                        <div
+                          className={cn(
+                            'relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-11 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75'
+                          )}
+                        >
+                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-400/35 to-transparent" />
+                          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-muted/80 ring-1 ring-border/70 dark:bg-white/[0.06]">
+                            <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
+                          </div>
+                          <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
+                            Tidak ada baris yang cocok
+                          </p>
+                          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                            Sesuaikan pencarian, filter tipe, atau owner untuk menampilkan kembali daftar asset.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <table className="w-full text-xs select-none">
+                        <thead className="sticky top-0 z-10 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-border/40">
+                          <tr className="text-left text-muted-foreground">
+                            {(
+                              [
+                                { key: 'name' as const, label: 'Asset Name' },
+                                { key: 'type' as const, label: 'Type' },
+                                { key: 'owner' as const, label: 'Owner' },
+                                { key: 'version' as const, label: 'Version' },
+                                { key: 'updated' as const, label: 'Updated' },
+                              ] as const
+                            ).map(({ key, label }) => {
+                              const isSorted = assetsSort?.key === key
+                              const columnFilterActive =
+                                key === 'type'
+                                  ? assetsTypeFilterTags.size > 0
+                                  : key === 'owner'
+                                    ? assetsOwnerFilterTags.size > 0
+                                    : false
+                              const columnFilterButtonClass = cn(
+                                'inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors',
+                                'outline-none focus:outline-none focus-visible:outline-none',
+                                'focus-visible:ring-2 focus-visible:ring-sky-400/50 focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+                                columnFilterActive
+                                  ? 'bg-blue-600 text-white dark:bg-blue-500 dark:text-slate-900'
+                                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+                              )
+
+                              return (
+                                <th key={key} className="select-none px-3 py-2 text-left font-semibold">
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleAssetsSort(key)}
+                                      className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                                      title="Sort: ascending → descending → default"
+                                    >
+                                      <span>{label}</span>
+                                      {isSorted ? (
+                                        assetsSort?.dir === 'asc' ? (
+                                          <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        ) : (
+                                          <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        )
+                                      ) : (
+                                        <ArrowUpDown className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
+                                      )}
+                                    </button>
+
+                                    {key === 'type' ? (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                    <button
+                                      type="button"
+                                            className={columnFilterButtonClass}
+                                            aria-label="Filter asset types in table"
+                                            title="Filter types"
+                                          >
+                                            <Filter className="h-3.5 w-3.5" aria-hidden />
+                                    </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent
+                                          align="start"
+                                          className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+                                        >
+                                          <DropdownMenuLabel className="flex items-center justify-between">
+                                            <span>Type filter</span>
+                                            <span className="text-[10px] font-medium text-muted-foreground">
+                                              {assetsTypeFilterTags.size === 0 ? 'All' : `${assetsTypeFilterTags.size} selected`}
+                                            </span>
+                                          </DropdownMenuLabel>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              setAssetsTypeFilterTags(new Set())
+                                              setAssetsPage(1)
+                                            }}
+                                            className="flex items-center justify-between"
+                                          >
+                                            Show all
+                                            {assetsTypeFilterTags.size === 0 ? (
+                                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                                            ) : null}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                          {assetsTypeOptionsList.map((typeLabel) => {
+                                            const active = assetsTypeFilterTags.has(typeLabel)
+                                            return (
+                                              <DropdownMenuItem
+                                                key={typeLabel}
+                                                onClick={() => {
+                                                  setAssetsTypeFilterTags((prev) => {
+                                                    const next = new Set(prev)
+                                                    if (next.has(typeLabel)) next.delete(typeLabel)
+                                                    else next.add(typeLabel)
+                                                    return next
+                                                  })
+                                                  setAssetsPage(1)
+                                                }}
+                                                className="flex items-center justify-between"
+                                              >
+                                                <span className="truncate">{typeLabel}</span>
+                                                {active ? (
+                                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                                ) : null}
+                                              </DropdownMenuItem>
+                                            )
+                                          })}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    ) : null}
+
+                                    {key === 'owner' ? (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={columnFilterButtonClass}
+                                            aria-label="Filter asset owners in table"
+                                            title="Filter owners"
+                                          >
+                                            <Filter className="h-3.5 w-3.5" aria-hidden />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent
+                                          align="start"
+                                          className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
+                                        >
+                                          <DropdownMenuLabel className="flex items-center justify-between">
+                                            <span>Owner filter</span>
+                                            <span className="text-[10px] font-medium text-muted-foreground">
+                                              {assetsOwnerFilterTags.size === 0 ? 'All' : `${assetsOwnerFilterTags.size} selected`}
+                                            </span>
+                                          </DropdownMenuLabel>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => {
+                                              setAssetsOwnerFilterTags(new Set())
+                                              setAssetsPage(1)
+                                            }}
+                                            className="flex items-center justify-between"
+                                          >
+                                            Show all
+                                            {assetsOwnerFilterTags.size === 0 ? (
+                                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                                            ) : null}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                          {assetsOwnerOptionsList.map((ownerLabel) => {
+                                            const active = assetsOwnerFilterTags.has(ownerLabel)
+                                            return (
+                                              <DropdownMenuItem
+                                                key={ownerLabel}
+                                                onClick={() => {
+                                                  setAssetsOwnerFilterTags((prev) => {
+                                                    const next = new Set(prev)
+                                                    if (next.has(ownerLabel)) next.delete(ownerLabel)
+                                                    else next.add(ownerLabel)
+                                                    return next
+                                                  })
+                                                  setAssetsPage(1)
+                                                }}
+                                                className="flex items-center justify-between"
+                                              >
+                                                <span className="truncate">{ownerLabel}</span>
+                                                {active ? (
+                                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                                ) : null}
+                                              </DropdownMenuItem>
+                                            )
+                                          })}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    ) : null}
+                                  </div>
+                                </th>
+                              )
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {assetsTableRows.map((asset) => (
+                            <tr
+                              key={asset.id}
+                              className={cn(
+                                'border-t border-border/25 transition-colors hover:bg-accent/20',
+                                rowContextMenu?.variant === 'assets' && rowContextMenu.asset.id === asset.id
+                                  ? 'bg-primary/10 hover:bg-primary/12 ring-1 ring-inset ring-primary/20'
+                                  : ''
+                              )}
+                              onContextMenu={(e) => {
+                                e.preventDefault()
+                                setRowContextMenu({ x: e.clientX, y: e.clientY, asset, variant: 'assets' })
+                              }}
+                            >
+                              <td className="px-3 py-2 align-top">
+                                <div className="font-semibold text-foreground">{asset.name}</div>
+                                </td>
+                              <td className="px-3 py-2 align-top">
+                                <Badge variant="outline" className="px-2 py-0.5 text-[10px] font-medium">
+                                  {asset.type}
+                                </Badge>
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                <div className="font-semibold text-foreground">{asset.owner}</div>
+                              </td>
+                              <td className="px-3 py-2 align-top text-foreground">{asset.version}</td>
+                              <td className="px-3 py-2 align-top text-foreground">{asset.lastModified}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+          ) : null}
+
+          {activePanel === 'activity' ? (
+            <div
+              ref={activityPanelRef}
+              className={cn(
+                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+              )}
+              style={workspaceCatalogPanelHeightStyle(
+                workspaceMainPanelViewportHeightPx,
+                activityPanelAlignedHeightPx,
+                activityPanelMaxHeightPx
+              )}
+            >
+              <div className="flex h-full min-h-0 w-full flex-col">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                  <div className="shrink-0">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <ClipboardList className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                          <h2 className="text-lg font-semibold text-foreground">
+                            {canViewAllActivityAudit ? 'Activity & Audit' : 'My Activity & Audit'}
+                          </h2>
+                          {canViewAllActivityAudit ? (
+                            <Badge variant="outline" className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                              Full Audit Access
+                            </Badge>
+                          ) : null}
+                      </div>
+                        <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
+                          {canViewAllActivityAudit
+                            ? 'Security matrix privilege active: showing complete enterprise activity & audit stream.'
+                            : 'Personal workspace activity feed for the signed-in user.'}
+                        </p>
+                    </div>
+                      <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                        <p className="text-xs text-muted-foreground">
+                          Showing{' '}
+                          <span className="font-semibold text-foreground">
+                            {filteredActivityRows.length === 0 ? 0 : Math.min(filteredActivityRows.length, (activityPage - 1) * activityPageSize + 1)}
+                          </span>
+                          -
+                          <span className="font-semibold text-foreground">
+                            {Math.min(filteredActivityRows.length, activityPage * activityPageSize)}
+                          </span>{' '}
+                          of <span className="font-semibold text-foreground">{filteredActivityRows.length}</span>
+                        </p>
+                        <span className="text-xs text-muted-foreground">Rows:</span>
+                        <Select
+                          value={String(activityPageSize)}
+                          onChange={(e) => setActivityPageSize(parseInt(e.target.value, 10))}
+                          className="h-10 w-[84px] text-sm"
+                        >
+                          <option value="5">5</option>
+                          <option value="10">10</option>
+                          <option value="15">15</option>
+                          <option value="25">25</option>
+                        </Select>
+                        <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setActivityPage((prev) => Math.max(1, prev - 1))}
+                            disabled={activityPage <= 1}
+                          >
+                            Previous
+                          </button>
+                          <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">
+                            {activityPage} / {activityTotalPages}
+                    </div>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setActivityPage((prev) => Math.min(activityTotalPages, prev + 1))}
+                            disabled={activityPage >= activityTotalPages}
+                          >
+                            Next
+                          </button>
+                    </div>
+                  </div>
+              </div>
+                    {isActivityFallbackMode ? (
+                      <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-700">
+                        No personal activity found yet. Showing latest workspace activity from backend.
+                      </div>
+          ) : null}
+                  </div>
+
+                  <div className="scrollbar-hide min-h-0 w-full min-w-0 flex-1 overflow-hidden rounded-xl">
+                    {activityTableRows.length === 0 ? (
+                      <div className="flex min-h-[220px] items-center justify-center p-6">
+                        <div
+                          className={cn(
+                            'relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-11 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75'
+                          )}
+                        >
+                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-400/35 to-transparent" />
+                          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-muted/80 ring-1 ring-border/70 dark:bg-white/[0.06]">
+                            <ClipboardList className="h-7 w-7 text-muted-foreground" aria-hidden />
+                      </div>
+                          <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
+                            Tidak ada aktivitas yang cocok
+                          </p>
+                          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                            Coba ubah kata kunci pencarian atau lakukan aksi workspace baru untuk mengisi activity feed.
+                          </p>
+                      </div>
+                    </div>
+                    ) : (
+                      <div className="scrollbar-hide relative h-full min-h-0 overflow-auto px-4 py-4 md:px-6">
+                        <div className="pointer-events-none absolute bottom-4 left-[30px] top-4 w-px bg-gradient-to-b from-slate-200 via-slate-300 to-slate-200 dark:from-slate-800 dark:via-slate-700 dark:to-slate-800" />
+                        <div className="space-y-3 pb-1">
+                          {activityTableRows.map((item) => {
+                            const eventLower = item.event.toLowerCase()
+                            const isRename = eventLower.includes('rename')
+                            const isGovernance = eventLower.includes('governance')
+                            const toneClass = isRename
+                              ? 'border-cyan-200/70 bg-[linear-gradient(155deg,rgba(236,254,255,0.96),rgba(239,246,255,0.88))] dark:border-cyan-900/40 dark:bg-[linear-gradient(155deg,rgba(8,47,73,0.32),rgba(15,23,42,0.55))]'
+                              : isGovernance
+                                ? 'border-indigo-200/70 bg-[linear-gradient(155deg,rgba(238,242,255,0.96),rgba(248,250,252,0.9))] dark:border-indigo-900/40 dark:bg-[linear-gradient(155deg,rgba(30,27,75,0.35),rgba(15,23,42,0.55))]'
+                                : 'border-slate-200/80 bg-[linear-gradient(155deg,rgba(248,250,252,0.96),rgba(255,255,255,0.9))] dark:border-slate-700 dark:bg-[linear-gradient(155deg,rgba(30,41,59,0.4),rgba(15,23,42,0.6))]'
+                            const dotClass = isRename
+                              ? 'border-cyan-300 bg-cyan-100 text-cyan-700 dark:border-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-300'
+                              : isGovernance
+                                ? 'border-indigo-300 bg-indigo-100 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
+                                : 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
+                            const actorBadgeClass = isRename
+                              ? 'border-cyan-200/90 bg-[linear-gradient(135deg,rgba(236,254,255,0.98),rgba(219,234,254,0.92))] text-cyan-800 shadow-[0_8px_18px_-14px_rgba(6,182,212,0.6)] dark:border-cyan-800/60 dark:bg-[linear-gradient(135deg,rgba(8,47,73,0.7),rgba(15,23,42,0.7))] dark:text-cyan-200'
+                              : isGovernance
+                                ? 'border-indigo-200/90 bg-[linear-gradient(135deg,rgba(238,242,255,0.98),rgba(224,231,255,0.92))] text-indigo-800 shadow-[0_8px_18px_-14px_rgba(99,102,241,0.55)] dark:border-indigo-800/60 dark:bg-[linear-gradient(135deg,rgba(30,27,75,0.72),rgba(15,23,42,0.72))] dark:text-indigo-200'
+                                : 'border-slate-200/90 bg-[linear-gradient(135deg,rgba(248,250,252,0.98),rgba(241,245,249,0.92))] text-slate-700 shadow-[0_8px_18px_-14px_rgba(15,23,42,0.45)] dark:border-slate-700/70 dark:bg-[linear-gradient(135deg,rgba(51,65,85,0.75),rgba(15,23,42,0.7))] dark:text-slate-200'
+                            const timestampChipClass = isRename
+                              ? 'border-cyan-200/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.86),rgba(236,254,255,0.86))] text-cyan-800 shadow-[0_10px_20px_-16px_rgba(14,116,144,0.6)] dark:border-cyan-900/60 dark:bg-[linear-gradient(145deg,rgba(8,47,73,0.55),rgba(15,23,42,0.62))] dark:text-cyan-200'
+                              : isGovernance
+                                ? 'border-indigo-200/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.86),rgba(238,242,255,0.86))] text-indigo-800 shadow-[0_10px_20px_-16px_rgba(67,56,202,0.55)] dark:border-indigo-900/60 dark:bg-[linear-gradient(145deg,rgba(30,27,75,0.58),rgba(15,23,42,0.62))] dark:text-indigo-200'
+                                : 'border-slate-200/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.86),rgba(248,250,252,0.86))] text-slate-700 shadow-[0_10px_20px_-16px_rgba(15,23,42,0.45)] dark:border-slate-700/70 dark:bg-[linear-gradient(145deg,rgba(30,41,59,0.65),rgba(15,23,42,0.62))] dark:text-slate-200'
+
+                            return (
+                              <article
+                                key={item.id}
+                                className={cn(
+                                  'relative ml-10 rounded-2xl border p-4 shadow-[0_10px_30px_-20px_rgba(15,23,42,0.35)] transition-transform hover:-translate-y-[1px] hover:shadow-[0_18px_34px_-22px_rgba(15,23,42,0.45)]',
+                                  toneClass
+                                )}
+                              >
+                                <div className={cn('absolute -left-[34px] top-5 flex h-8 w-8 items-center justify-center rounded-full border shadow-sm', dotClass)}>
+                                  {isRename ? (
+                                    <TextCursorInput className="h-4 w-4" aria-hidden />
+                                  ) : isGovernance ? (
+                                    <ShieldCheck className="h-4 w-4" aria-hidden />
+                                  ) : (
+                                    <ClipboardList className="h-4 w-4" aria-hidden />
+                                  )}
+                                </div>
+
+                                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className={cn(
+                                        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] backdrop-blur-sm ring-1 ring-white/40 dark:ring-white/5',
+                                        actorBadgeClass
+                                      )}>
+                                        {item.actor}
+                                      </span>
+                                      <p className="text-sm font-semibold text-foreground">{item.event}</p>
+                                    </div>
+                                    <p className="mt-1.5 break-all text-xs text-muted-foreground">
+                                      Affected object: <span className="font-mono text-[11px] text-foreground/80">{item.target}</span>
+                                    </p>
+                                  </div>
+                                  <div className={cn(
+                                    'inline-flex items-center gap-1.5 self-start rounded-lg border px-2.5 py-1.5 text-[11px] font-medium tabular-nums backdrop-blur-sm ring-1 ring-white/45 dark:ring-white/5',
+                                    timestampChipClass
+                                  )}>
+                                    <Clock3 className="h-3.5 w-3.5" aria-hidden />
+                      {item.timestamp}
+                    </div>
+                  </div>
+                              </article>
+                            )
+                          })}
+              </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </main>
+      </section>
+      </div>
+
+      <InviteWorkspaceMemberDrawer
+        open={inviteWorkspaceMemberOpen}
+        onClose={closeInviteMemberDrawer}
+        initialWorkspaceIds={invitePresetWorkspaceIds}
+        workspaceName={
+          invitePresetWorkspaceIds.length === 1
+            ? inviteWorkspaceOptions.find((w) => w.id === invitePresetWorkspaceIds[0])?.name
+            : undefined
+        }
+        workspaces={inviteWorkspaceOptions}
+        employees={inviteEmployeeDirectory.length > 0 ? inviteEmployeeDirectory : undefined}
+        submitting={inviteWorkspaceMemberSubmitting}
+        onInvite={(payload) => {
+          const hasEmployee = Boolean(payload.employee)
+          const hasEmailInvite = Boolean(payload.inviteByEmail?.email)
+          if (
+            (!hasEmployee && !hasEmailInvite)
+            || payload.workspaceIds.length === 0
+            || !payload.employmentType
+            || !payload.workspaceRole
+            || !payload.participationScope
+            || !payload.participationDuration
+            || payload.operationalTeams.length === 0
+          ) {
+            return
+          }
+          const deliveryCheck = validateMembershipDeliveryContext(
+            payload.participationScope,
+            payload.linkedProjects,
+            payload.linkedPrograms
+          )
+          if (!deliveryCheck.ok) {
+            addToast({ variant: 'error', title: 'Invalid delivery context', description: deliveryCheck.message })
+            return
+          }
+          setInviteWorkspaceMemberSubmitting(true)
+          const session = getSession()
+          void (async () => {
+            try {
+              let subjectId = payload.employee?.id ?? ''
+              let memberLabel = payload.employee?.name ?? ''
+              let activatedNewUser = false
+
+              if (!subjectId && payload.inviteByEmail) {
+                const provisioned = await provisionIdentityUser({
+                  email: payload.inviteByEmail.email,
+                  display_name: payload.inviteByEmail.displayName,
+                  status_code: 'invited',
+                })
+                subjectId = provisioned.id
+                memberLabel = provisioned.display_name
+                activatedNewUser = true
+                if (provisioned.temporary_password) {
+                  addToast({
+                    variant: 'success',
+                    title: 'Akun identity dibuat',
+                    description: `Password sementara untuk ${provisioned.email}: ${provisioned.temporary_password}`,
+                  })
+                }
+              }
+
+              for (const workspaceId of payload.workspaceIds) {
+              await createWorkspaceMembership(
+                TECTONA_WAC_APP_ID,
+                  workspaceId,
+                {
+                    subject_id: subjectId,
+                  role_code: uiRoleToWacRoleCode(payload.workspaceRole as MemberRole),
+                  status_code: 'active',
+                  participation_scope_code: payload.participationScope,
+                    operational_team_codes: payload.operationalTeams,
+                    participation_duration_code: participationDurationUiToCode(
+                      payload.participationDuration as ParticipationDurationUi
+                    ),
+                    participation_start_date:
+                      payload.participationDuration === 'Temporary' ? payload.startDate : undefined,
+                    participation_end_date:
+                      payload.participationDuration === 'Temporary' ? payload.endDate : undefined,
+                    project_scope_refs: payload.linkedProjects,
+                    program_scope_refs: payload.linkedPrograms,
+                },
+                {
+                  actorId: session?.user?.id,
+                  idempotencyKey:
+                    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                      ? crypto.randomUUID()
+                        : `idem-${Date.now().toString(36)}-${workspaceId}`,
+                  }
+                )
+              }
+
+              if (activatedNewUser && payload.inviteByEmail?.email) {
+                await activateIdentityUser(payload.inviteByEmail.email)
+              }
+
+              await refreshAllWorkspaceMembers()
+              const identityRes = await fetchIdentityUsers({ limit: 300 })
+              setIdentityUsers(identityRes.items)
+              closeInviteMemberDrawer()
+              const workspaceLabel =
+                payload.workspaceNames.length > 0
+                  ? payload.workspaceNames.join(', ')
+                  : `${payload.workspaceIds.length} workspace(s)`
+              addToast({
+                variant: 'success',
+                title: 'Workspace member invited',
+                description: `${memberLabel} joined ${workspaceLabel} as ${payload.workspaceRole}.`,
+              })
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'Could not add membership.'
+              addToast({ variant: 'error', title: 'Invite failed', description: msg })
+            } finally {
+              setInviteWorkspaceMemberSubmitting(false)
+            }
+          })()
+        }}
+      />
+
+      <EditWorkspaceMembershipDrawer
+        open={editMembershipOpen}
+        onClose={closeEditMembershipDrawer}
+        member={
+          editMembershipTarget
+            ? {
+                subjectId: editMembershipTarget.subjectId,
+                name: editMembershipTarget.name,
+                team: editMembershipTarget.team,
+                memberships: editMembershipTarget.memberships.map((ref) => ({
+                  membershipId: ref.membershipId,
+                  workspaceId: ref.workspaceId,
+                  workspaceName: ref.workspaceName,
+                  role: ref.role,
+                  scopeCode: ref.scopeCode,
+                  operationalTeamCode: ref.operationalTeamCode,
+                  participationDuration: ref.participationDuration,
+                  participationStartDate: ref.participationStartDate,
+                  participationEndDate: ref.participationEndDate,
+                  version: ref.version,
+                })),
+              }
+            : null
+        }
+        submitting={editMembershipSubmitting}
+        onSave={(payload) => {
+          setEditMembershipSubmitting(true)
+          const session = getSession()
+          void (async () => {
+            try {
+              await patchWorkspaceMembership(
+                TECTONA_WAC_APP_ID,
+                payload.membershipId,
+                {
+                  role_code: uiRoleToWacRoleCode(payload.workspaceRole as MemberRole),
+                  participation_scope_code: payload.participationScope,
+                  operational_team_code: payload.operationalTeamCode,
+                  participation_duration_code: participationDurationUiToCode(payload.participationDuration),
+                  participation_start_date:
+                    payload.participationDuration === 'Temporary' ? payload.participationStartDate : null,
+                  participation_end_date:
+                    payload.participationDuration === 'Temporary' ? payload.participationEndDate : null,
+                  version: payload.version,
+                },
+                { actorId: session?.user?.id }
+              )
+              await refreshAllWorkspaceMembers()
+              closeEditMembershipDrawer()
+              addToast({
+                variant: 'success',
+                title: 'Membership updated',
+                description: `${editMembershipTarget?.name ?? 'Member'} — ${payload.workspaceName}: participation profile updated.`,
+              })
+            } catch (e) {
+              addToast({
+                variant: 'error',
+                title: 'Update failed',
+                description: e instanceof Error ? e.message : 'Could not update membership.',
+              })
+            } finally {
+              setEditMembershipSubmitting(false)
+            }
+          })()
+        }}
+      />
+
+      {/* Assign Workspace Governance — portal to document.body so fixed layers align to viewport (matches KB drawer; avoids scroll ancestor offset). */}
+      {typeof document !== 'undefined'
+        ? createPortal(
+            <>
+              <div
+                className={cn(
+                  'fixed inset-0 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity',
+                  assignGovernanceOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+                )}
+                onClick={closeAssignGovernanceDialog}
+                aria-hidden={!assignGovernanceOpen}
+              />
+              <div
+                className={cn(
+                  'fixed inset-y-0 right-0 z-[1100] flex w-[460px] max-w-[92vw] flex-col transform transition-all duration-300',
+                  'border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl',
+                  assignGovernanceOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
+                )}
+        style={{
+          boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
+          margin: 0,
+          padding: 0,
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="assign-governance-title"
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
+          <div className="pr-3">
+            <h2 id="assign-governance-title" className="flex items-center gap-2 text-xl font-semibold text-foreground">
+              <ShieldCheck className="h-5 w-5 text-primary" aria-hidden />
+              Assign Workspace Governance
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Choose how this workspace should operate and which governance model should be applied.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={closeAssignGovernanceDialog}
+            disabled={assignGovernanceSubmitting}
+            aria-label="Close assign workspace governance"
+          >
+            <X className="h-5 w-5" aria-hidden />
+          </Button>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto scrollbar-hide px-5 py-5">
+            {assignGovernanceWorkspace && assignGovernanceForm ? (
+              <>
+                <div className="space-y-6">
+                  {/* Section 1 — Workspace context (stacked field pattern like KB drawer) */}
+                <section className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label
+                      htmlFor={assignGovernanceWorkspacePickerMode === 'dropdown' ? 'gov-workspace-switch' : undefined}
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      Workspace
+                    </Label>
+                    {assignGovernanceWorkspacePickerMode === 'dropdown' ? (
+                    <Select
+                      id="gov-workspace-switch"
+                      value={assignGovernanceWorkspace.id}
+                      onChange={(e) => {
+                        const next = allWorkspacesForList.find((w) => w.id === e.target.value)
+                        if (!next) return
+                        const nf = buildGovernanceAssignmentForm(next, governanceAssignmentByWorkspaceId.get(next.id))
+                        setAssignGovernanceWorkspace(next)
+                        setAssignGovernanceForm(nf)
+                        setAssignGovernanceOperatingModel(inferGovernanceOperatingModel(nf, governanceCatalog))
+                        setAssignGovernanceError(null)
+                      }}
+                      disabled={assignGovernanceSubmitting}
+                      className="h-10 w-full rounded-md border-border text-sm"
+                    >
+                      {allWorkspacesForList.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name} ({w.code})
+                        </option>
+                      ))}
+                    </Select>
+                    ) : (
+                      <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2.5">
+                        <p className="text-sm font-semibold leading-snug text-foreground">{assignGovernanceWorkspace.name}</p>
+                        <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{assignGovernanceWorkspace.code}</p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      <Badge variant="outline" className="rounded-md border-border px-2 py-0.5 font-mono text-[10px] font-normal text-muted-foreground">
+                        {assignGovernanceWorkspace.code}
+                      </Badge>
+                      <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-foreground/80">
+                        {assignGovernanceWorkspace.primaryOrganizationLabel || '—'}
+                      </span>
+                      <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-foreground/80">
+                        {assignGovernanceWorkspace.type}
+                      </span>
+                      <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-foreground/80">
+                        Owner: {assignGovernanceWorkspace.owner}
+                      </span>
+                      <span className="inline-flex items-center rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
+                        {assignGovernanceWorkspace.lifecycle}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+
+                {!governanceCatalog ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-sm text-amber-950 dark:border-amber-500/25 dark:bg-amber-950/20 dark:text-amber-100">
+                    Governance catalog unavailable. Start{' '}
+                    <span className="font-mono text-xs">workspace-governance</span> (port 8428) and ensure the Vite proxy is active.{' '}
+                    <Link to="/enterprise-governance-model/templates" className="font-medium text-amber-900 underline-offset-2 hover:underline dark:text-amber-200">
+                      Open Enterprise Governance Model
+                    </Link>
+                  </div>
+                ) : null}
+
+                {/* Section 2 — Operating model cards */}
+                <section className="space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Governance operating model</p>
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        Select how delivery and compliance should feel for this workspace.
+                      </p>
+                    </div>
+                    <Link
+                      to="/enterprise-governance-model/templates"
+                      className="max-w-[48%] shrink-0 pt-0.5 text-end text-xs font-medium leading-snug text-primary underline-offset-4 hover:underline"
+                    >
+                      Manage catalog in Enterprise Governance Model
+                    </Link>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    {GOVERNANCE_OPERATING_MODEL_DEFS.map((def) => {
+                      const Icon = def.icon
+                      const selected = assignGovernanceOperatingModel === def.id
+                      return (
+                        <button
+                          key={def.id}
+                          type="button"
+                          disabled={assignGovernanceSubmitting || !governanceCatalog}
+                          onClick={() => applyGovernanceOperatingModel(def.id)}
+                          className={cn(
+                            'group relative flex w-full flex-col rounded-xl border bg-card p-3.5 text-left shadow-sm transition-colors duration-200',
+                            'hover:border-primary/25 hover:bg-muted/20',
+                            selected
+                              ? 'border-primary/40 ring-2 ring-primary/20'
+                              : 'border-border'
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <div
+                                className={cn(
+                                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-muted/50',
+                                  selected ? 'border-primary/35 bg-primary/5' : 'border-border'
+                                )}
+                              >
+                                <Icon className="h-5 w-5 text-foreground/80" aria-hidden />
+                              </div>
+                              <div className="min-w-0 space-y-1">
+                                <p className="text-[15px] font-semibold leading-tight text-foreground">{def.name}</p>
+                                <p className="text-xs leading-relaxed text-muted-foreground">{def.description}</p>
+                              </div>
+                            </div>
+                            {selected ? (
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
+                                <Check className="h-3.5 w-3.5" aria-hidden />
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Best for</p>
+                          <p className="mt-0.5 text-xs text-foreground/90">{def.bestFor}</p>
+                          <ul className="mt-2 space-y-0.5">
+                            {def.characteristics.map((c) => (
+                              <li key={c} className="flex items-start gap-2 text-[11px] leading-snug text-muted-foreground">
+                                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary/70" />
+                                <span>{c}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                            <span className="text-[11px] text-muted-foreground">{def.policyPreview}</span>
+                            <span
+                              className={cn(
+                                'inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold',
+                                def.indicatorClass
+                              )}
+                            >
+                              {def.indicator}
+                            </span>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+
+                {/* Section 3 — Governance inheritance (read-only; FICUS defines, Tectona consumes) */}
+                {governanceCatalog ? (
+                  <section className="space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Governance inheritance</p>
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        This workspace inherits governance standards from the selected enterprise operating model. Policy consistency is centrally managed; portfolio governance monitors compliance posture.
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Inherited from</p>
+                      <p className="mt-1 text-sm font-medium text-foreground">Enterprise Governance Model Catalog</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        Managed by FICUS Governance Office. Tectona operationalizes published standards; changes to catalog entries are made outside this workspace flow.
+                      </p>
+                    </div>
+                    {(() => {
+                      const inh = resolveGovernancePoliciesFromModel(governanceCatalog, assignGovernanceOperatingModel)
+                      const inheritedCard = (label: string, value: string) => (
+                        <div
+                          key={label}
+                          className="relative flex flex-col rounded-lg border border-border/70 bg-muted/15 px-3 py-2.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 rounded-sm border-border/60 bg-background/70 px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+                            >
+                              Inherited
+                            </Badge>
+                          </div>
+                          <span className="mt-1 text-sm font-medium leading-snug text-foreground">{value}</span>
+                        </div>
+                      )
+                      return (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {inheritedCard(
+                            'Governance template',
+                            catalogEntryLabel(governanceCatalog.templates as { id: string; name: string; code: string }[], inh.governanceTemplateId)
+                          )}
+                          {inheritedCard('Workflow policy', catalogEntryLabel(governanceCatalog.workflowPolicies, inh.workflowPolicyId))}
+                          {inheritedCard('Approval policy', catalogEntryLabel(governanceCatalog.approvalPolicies, inh.approvalPolicyId))}
+                          {inheritedCard('SLA policy', catalogEntryLabel(governanceCatalog.slaPolicies, inh.slaPolicyId))}
+                          {inheritedCard('Naming convention', catalogEntryLabel(governanceCatalog.namingConventions, inh.namingConventionId))}
+                          <div className="flex flex-col rounded-lg border border-border/70 bg-muted/15 px-3 py-2.5 sm:col-span-2">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Compliance monitoring</span>
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 rounded-sm border-border/60 bg-background/70 px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+                                >
+                                  Inherited
+                                </Badge>
+                              </div>
+                              <Badge variant="outline" className="rounded-md border-emerald-500/30 bg-emerald-500/10 text-[10px] font-semibold text-emerald-800 dark:text-emerald-200">
+                                Policy coverage {governanceImpactForModel(assignGovernanceOperatingModel).coveragePct}%
+                              </Badge>
+                            </div>
+                            <p className="mt-1 text-sm font-medium text-foreground">
+                              {complianceMonitoringLabel(assignGovernanceOperatingModel)}
+                            </p>
+                            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                              <div className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2">
+                                <span className="text-[10px] text-muted-foreground">Audit trail</span>
+                                <p className="text-xs font-semibold text-foreground">{auditTrailSummaryLabel(assignGovernanceOperatingModel)}</p>
+                              </div>
+                              <div className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2">
+                                <span className="text-[10px] text-muted-foreground">Last review</span>
+                                <p className="text-xs font-semibold text-foreground">{assignGovernanceForm.lastReview || '—'}</p>
+                              </div>
+                              <div className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2">
+                                <span className="text-[10px] text-muted-foreground">Compliance score</span>
+                                <p className="text-xs font-semibold tabular-nums text-foreground">
+                                  {assignGovernanceWorkspace.governance.complianceScore != null
+                                    ? assignGovernanceWorkspace.governance.complianceScore
+                                    : '—'}
+                                  <span className="ml-1 text-[10px] font-normal text-muted-foreground">(system)</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </section>
+                ) : null}
+
+                {/* Section 4 — Governance steward (organizational; persists governance_owner) */}
+                <section className="space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Governance steward</p>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      Responsible governance contact for this workspace — organizational accountability, not technical policy assembly.
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border bg-muted/15 p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className="rounded-sm border-primary/25 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary"
+                      >
+                        Inherited
+                      </Badge>
+                      <p className="text-sm font-medium text-foreground">Enterprise governance steward · PMO Governance Office</p>
+                    </div>
+                    <div className="mt-3 border-t border-border pt-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Workspace governance lead</p>
+                      <p className="mt-1 text-sm font-semibold text-foreground">{assignGovernanceWorkspace.owner}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Recorded steward for audit trail:{' '}
+                        <span className="font-medium text-foreground">{assignGovernanceForm.governanceOwner.trim() || assignGovernanceWorkspace.owner}</span>
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Section 5 — Governance impact */}
+                <section className="space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Governance impact</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Impact calculated automatically from inherited governance controls and policy posture.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {(() => {
+                      const im = governanceImpactForModel(assignGovernanceOperatingModel)
+                      const rows: { label: string; value: string; pct: number }[] = [
+                        { label: 'Approval strictness', value: im.approvalStrictness, pct: im.approvalPct },
+                        { label: 'Operational flexibility', value: im.operationalFlexibility, pct: im.flexibilityPct },
+                        { label: 'Compliance coverage', value: im.complianceCoverage, pct: im.coveragePct },
+                        { label: 'Audit readiness', value: im.auditReadiness, pct: im.auditPct },
+                        { label: 'Delivery speed', value: im.deliverySpeed, pct: im.speedPct },
+                      ]
+                      return rows.map((row) => (
+                        <div
+                          key={row.label}
+                          className="rounded-lg border border-border bg-card px-3 py-2.5 shadow-sm"
+                        >
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{row.label}</p>
+                          <p className="mt-1 text-sm font-semibold text-foreground">{row.value}</p>
+                          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-primary via-indigo-500 to-violet-500 transition-[width] duration-500"
+                              style={{ width: `${row.pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    })()}
+                  </div>
+                </section>
+
+                {/* Section 6 — Governance override (admin-only, collapsed by default) */}
+                {governanceCatalog ? (
+                  <section className="space-y-2">
+                    <div className="overflow-hidden rounded-xl border-2 border-amber-500/45 bg-amber-500/[0.07] dark:border-amber-500/35 dark:bg-amber-950/25">
+                      <button
+                        type="button"
+                        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-amber-500/10 dark:hover:bg-amber-950/40"
+                        onClick={() => setAssignGovernanceOverrideOpen((v) => !v)}
+                        aria-expanded={assignGovernanceOverrideOpen}
+                      >
+                        <div className="flex min-w-0 flex-1 items-start gap-2.5">
+                          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-foreground">Governance Override</p>
+                            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                              Override inherited governance standards for exceptional operational requirements. Admin-only; audit-sensitive; enterprise approval may be required.
+                            </p>
+                          </div>
+                        </div>
+                        <ChevronDown
+                          className={cn(
+                            'mt-0.5 h-5 w-5 shrink-0 text-amber-700 transition-transform dark:text-amber-300',
+                            assignGovernanceOverrideOpen && 'rotate-180'
+                          )}
+                          aria-hidden
+                        />
+                      </button>
+                      {assignGovernanceOverrideOpen ? (
+                        <div className="space-y-4 border-t border-amber-500/35 bg-background/90 px-4 py-4 dark:bg-background/80">
+                          <p className="text-xs leading-relaxed text-amber-950 dark:text-amber-100">
+                            Changes in this section may impact compliance scoring, audit readiness, governance posture, and enterprise policy alignment. If selections differ from the
+                            operating model, an override reason is required before Apply. Attach this reason to your change ticket for audit trail.
+                          </p>
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <Label htmlFor="gov-template-ovr" className="text-xs font-medium text-amber-950/90 dark:text-amber-100">
+                                Override governance template
+                              </Label>
+                              <Select
+                                id="gov-template-ovr"
+                                value={assignGovernanceForm.governanceTemplateId}
+                                disabled={assignGovernanceSubmitting}
+                                onChange={(e) =>
+                                  setAssignGovernanceForm((f) => (f ? { ...f, governanceTemplateId: e.target.value } : f))
+                                }
+                                className="h-10 w-full rounded-md border-amber-500/30 bg-background"
+                              >
+                                <option value="">Select template</option>
+                                {governanceCatalog.templates.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name} ({t.code})
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="gov-workflow-ovr" className="text-xs font-medium text-amber-950/90 dark:text-amber-100">
+                                Override workflow policy
+                              </Label>
+                              <Select
+                                id="gov-workflow-ovr"
+                                value={assignGovernanceForm.workflowPolicyId}
+                                disabled={assignGovernanceSubmitting}
+                                onChange={(e) =>
+                                  setAssignGovernanceForm((f) => (f ? { ...f, workflowPolicyId: e.target.value } : f))
+                                }
+                                className="h-10 w-full rounded-md border-amber-500/30 bg-background"
+                              >
+                                <option value="">Select workflow policy</option>
+                                {governanceCatalog.workflowPolicies.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name} ({t.code})
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="gov-sla-ovr" className="text-xs font-medium text-amber-950/90 dark:text-amber-100">
+                                Override SLA policy
+                              </Label>
+                              <Select
+                                id="gov-sla-ovr"
+                                value={assignGovernanceForm.slaPolicyId}
+                                disabled={assignGovernanceSubmitting}
+                                onChange={(e) => setAssignGovernanceForm((f) => (f ? { ...f, slaPolicyId: e.target.value } : f))}
+                                className="h-10 w-full rounded-md border-amber-500/30 bg-background"
+                              >
+                                <option value="">Select SLA policy</option>
+                                {governanceCatalog.slaPolicies.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name} ({t.code})
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="gov-naming-ovr" className="text-xs font-medium text-amber-950/90 dark:text-amber-100">
+                                Override naming convention
+                              </Label>
+                              <Select
+                                id="gov-naming-ovr"
+                                value={assignGovernanceForm.namingConventionId}
+                                disabled={assignGovernanceSubmitting}
+                                onChange={(e) =>
+                                  setAssignGovernanceForm((f) => (f ? { ...f, namingConventionId: e.target.value } : f))
+                                }
+                                className="h-10 w-full rounded-md border-amber-500/30 bg-background"
+                              >
+                                <option value="">Select naming convention</option>
+                                {governanceCatalog.namingConventions.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name} ({t.code})
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
+                            <div className="space-y-1.5 md:col-span-2">
+                              <Label htmlFor="gov-approval-ovr" className="text-xs font-medium text-amber-950/90 dark:text-amber-100">
+                                Override approval matrix
+                              </Label>
+                              <Select
+                                id="gov-approval-ovr"
+                                value={assignGovernanceForm.approvalPolicyId}
+                                disabled={assignGovernanceSubmitting}
+                                onChange={(e) =>
+                                  setAssignGovernanceForm((f) => (f ? { ...f, approvalPolicyId: e.target.value } : f))
+                                }
+                                className="h-10 w-full rounded-md border-amber-500/30 bg-background"
+                              >
+                                <option value="">Select approval policy</option>
+                                {governanceCatalog.approvalPolicies.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name} ({t.code})
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="gov-override-reason" className="text-xs font-medium text-amber-950/90 dark:text-amber-100">
+                              Override reason (required if policies differ from operating model)
+                            </Label>
+                            <Textarea
+                              id="gov-override-reason"
+                              value={assignGovernanceOverrideReason}
+                              disabled={assignGovernanceSubmitting}
+                              onChange={(e) => setAssignGovernanceOverrideReason(e.target.value)}
+                              placeholder="Document business justification, risk acceptance, and approver reference for audit."
+                              rows={3}
+                              className="resize-none rounded-md border-amber-500/35 bg-background text-sm"
+                            />
+                            <p className="text-[10px] text-muted-foreground">Approval required indicator: follow enterprise change policy; this field is retained in the client session for operator traceability.</p>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
+                </div>
+
+                {assignGovernanceError ? (
+                  <div className="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                    {assignGovernanceError}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+
+          {/* Footer — KB reference drawer pattern */}
+          <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+            <div className="flex w-full items-stretch gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                onClick={closeAssignGovernanceDialog}
+                disabled={assignGovernanceSubmitting}
+              >
+                <X className="h-4 w-4 shrink-0" aria-hidden />
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                onClick={() => void submitAssignGovernance()}
+                disabled={assignGovernanceSubmitting || !assignGovernanceWorkspace || !assignGovernanceForm}
+              >
+                <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
+                {assignGovernanceSubmitting ? 'Applying…' : 'Apply Governance'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+            </>
+            ,
+            document.body
+          )
+        : null}
+
+      {/* Workspace Members — view details drawer (selaras Governance Matrix / Workspace Details) */}
+      <div
+        className={cn(
+          'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
+          memberDetailOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
+        )}
+        style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)', margin: 0, padding: 0 }}
+        role="dialog"
+        aria-labelledby="workspace-member-detail-title"
+      >
+        {(() => {
+          const member = memberDetailTarget
+          if (!member) {
+            return (
+              <div className="flex flex-1 items-center justify-center px-5 text-sm text-muted-foreground">
+                Select a member from the Workspace Members table.
+              </div>
+            )
+          }
+          const roles = aggregatedMemberRoles(member)
+          const roleLabel = roles.length === 1 ? roles[0]! : aggregatedMemberPrimaryRole(member)
+          const detailField = (label: string, value: ReactNode) => (
+            <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+              <div className="mt-1.5 text-sm font-medium text-foreground">{value}</div>
+            </div>
+          )
+
+          return (
+            <>
+              <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
+                <div className="pr-3">
+                  <h2
+                    id="workspace-member-detail-title"
+                    className="flex items-center gap-2 text-xl font-semibold text-foreground"
+                  >
+                    <Eye className="h-5 w-5 text-primary" aria-hidden />
+                    Workspace Member Details
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Membership and participation for{' '}
+                    <span className="font-medium text-foreground">{member.name}</span>
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={closeMemberDetailDrawer}
+                  aria-label="Close workspace member details"
+                >
+                  <X className="h-5 w-5" aria-hidden />
+                </Button>
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto scrollbar-hide px-5 py-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/10 text-sm font-bold text-indigo-700 ring-1 ring-indigo-500/20 dark:text-indigo-300">
+                    {member.name.split(' ').map((n) => n[0] ?? '').slice(0, 2).join('')}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground">{member.name}</p>
+                    <p className="text-xs text-muted-foreground">Subject ID: {member.subjectId}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {detailField(
+                    'Workspace role',
+                    <Badge className={cn('rounded-full border px-2.5 py-1 text-xs', roleStyles[roleLabel])}>
+                      {roles.length > 1 ? `${roleLabel} · ${roles.length} roles` : roleLabel}
+                    </Badge>
+                  )}
+                  {detailField('Operational team', member.team || '—')}
+                  {detailField('Participation scope', aggregatedMemberScopeLabel(member))}
+                  {detailField(
+                    'Workspace count',
+                    <span className="tabular-nums">{member.memberships.length}</span>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Workspace memberships</p>
+                  <ul className="space-y-2">
+                    {member.memberships.map((ref) => (
+                      <li
+                        key={ref.membershipId}
+                        className="rounded-lg border border-border/70 bg-background/60 px-3 py-2.5 text-sm"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold text-foreground">{ref.workspaceName}</span>
+                          <Badge className={cn('rounded-full border px-2 py-0.5 text-[10px]', roleStyles[ref.role])}>
+                            {ref.role}
+                          </Badge>
+                        </div>
+                        <div className="mt-1.5 grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                          <span>Scope: {ref.scope || '—'}</span>
+                          <span className="tabular-nums">Activity: {ref.lastActivity || '—'}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+                <div className="flex w-full items-stretch gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    onClick={closeMemberDetailDrawer}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Close
+                  </Button>
+                  {wmAuth.canMutate ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                        onClick={() => {
+                          closeMemberDetailDrawer()
+                          openEditMembershipDrawer(member)
+                        }}
+                      >
+                        <Pencil className="h-4 w-4 shrink-0" aria-hidden />
+                        Edit Membership
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="default"
+                        className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2 text-rose-700 hover:text-rose-800')}
+                        onClick={() => openRemoveMemberDialog(member)}
+                      >
+                        <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                        Remove
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </>
+          )
+        })()}
+      </div>
+
+      {/* Governance Matrix — view details drawer (tanpa overlay; selaras Workspace Details) */}
+      <div
+        className={cn(
+          'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
+          governanceMatrixDetailOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
+        )}
+        style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)', margin: 0, padding: 0 }}
+        role="dialog"
+        aria-labelledby="governance-matrix-detail-title"
+      >
+                {(() => {
+                  const ws = governanceMatrixDetailWorkspace
+                  if (!ws) {
+                    return (
+                      <div className="flex flex-1 items-center justify-center px-5 text-sm text-muted-foreground">
+                        Select a workspace from the Governance Matrix.
+                      </div>
+                    )
+                  }
+                  const metrics =
+                    governanceMatrixMetricsByWorkspaceId.get(ws.id)
+                    ?? buildGovernanceMatrixMetrics(
+                      ws,
+                      governanceAssignmentByWorkspaceId.get(ws.id),
+                      governanceCatalog
+                    )
+                  const modelDef = metrics.operatingModel
+                    ? GOVERNANCE_OPERATING_MODEL_DEFS.find((d) => d.id === metrics.operatingModel)
+                    : null
+                  const healthStyle = metrics.health ? GOVERNANCE_HEALTH_STYLES[metrics.health.posture] : null
+                  const ownerName = formatGovernanceDisplayValue(ws.governance.governanceOwner)
+                  const ownerDisplay = ownerName === GOVERNANCE_EMPTY_VALUE ? ws.owner : ownerName
+                  const assignment = governanceAssignmentByWorkspaceId.get(ws.id)
+
+                  const detailField = (label: string, value: ReactNode) => (
+                    <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                      <div className="mt-1.5 text-sm font-medium text-foreground">{value}</div>
+                    </div>
+                  )
+
+                  return (
+                    <>
+                      <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
+                        <div className="pr-3">
+                          <h2
+                            id="governance-matrix-detail-title"
+                            className="flex items-center gap-2 text-xl font-semibold text-foreground"
+                          >
+                            <Eye className="h-5 w-5 text-primary" aria-hidden />
+                            Governance Matrix Details
+                          </h2>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Delivery governance posture for{' '}
+                            <span className="font-medium text-foreground">{ws.name}</span>
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={closeGovernanceMatrixDetailDrawer}
+                          aria-label="Close governance matrix details"
+                        >
+                          <X className="h-5 w-5" aria-hidden />
+                        </Button>
+                      </div>
+
+                      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto scrollbar-hide px-5 py-5">
+                        <div className="flex flex-wrap gap-1.5">
+                          <Badge variant="outline" className="rounded-md border-border px-2 py-0.5 font-mono text-[10px] font-normal text-muted-foreground">
+                            {ws.code}
+                          </Badge>
+                          <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-foreground/80">
+                            {ws.primaryOrganizationLabel || GOVERNANCE_MATRIX_EMPTY}
+                          </span>
+                          <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-foreground/80">
+                            {ws.type}
+                          </span>
+                          <Badge variant="outline" className="rounded-md border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                            {ws.lifecycle}
+                          </Badge>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {detailField(
+                            'Operating model',
+                            modelDef ? (
+                              <span
+                                className={cn(
+                                  'inline-flex max-w-full flex-col rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold leading-tight',
+                                  modelDef.indicatorClass
+                                )}
+                              >
+                                {modelDef.name}
+                                <span className="mt-0.5 text-[10px] font-medium opacity-80">{modelDef.indicator}</span>
+                              </span>
+                            ) : (
+                              <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', MATRIX_COMPLIANCE_STYLES.Unconfigured)}>
+                                Unassigned
+                              </Badge>
+                            )
+                          )}
+                          {detailField(
+                            'Governance health',
+                            metrics.health && healthStyle ? (
+                              <div className="space-y-1.5">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span className={cn('text-base font-bold tabular-nums', healthStyle.text)}>
+                                    {metrics.health.score}%
+                                  </span>
+                                  <span className={cn('text-[10px] font-semibold uppercase tracking-wide', healthStyle.text)}>
+                                    {metrics.health.posture}
+                                  </span>
+                                </div>
+                                <div className={cn('h-1.5 w-full overflow-hidden rounded-full', healthStyle.track)}>
+                                  <div
+                                    className={cn('h-full rounded-full', healthStyle.bar)}
+                                    style={{ width: `${metrics.health.score}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                            )
+                          )}
+                          {detailField(
+                            'Compliance status',
+                            <Badge
+                              className={cn(
+                                'border px-2 py-0.5 text-[10px] font-semibold',
+                                MATRIX_COMPLIANCE_STYLES[metrics.complianceBadge]
+                              )}
+                            >
+                              {metrics.complianceBadge}
+                            </Badge>
+                          )}
+                          {detailField(
+                            'Risk level',
+                            metrics.riskLevel ? (
+                              <Badge
+                                className={cn(
+                                  'border px-2 py-0.5 text-[10px] font-semibold',
+                                  RISK_LEVEL_STYLES[metrics.riskLevel]
+                                )}
+                              >
+                                {metrics.riskLevel}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                            )
+                          )}
+                          {detailField(
+                            'Audit readiness',
+                            metrics.audit ? (
+                              <div>
+                                <span className="text-base font-bold tabular-nums">{metrics.audit.pct}%</span>
+                                <span className="ml-2 text-[11px] text-muted-foreground">{metrics.audit.label}</span>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                            )
+                          )}
+                          {detailField(
+                            'Last review',
+                            metrics.lastReview ? (
+                              <div>
+                                <span
+                                  className={cn(
+                                    metrics.lastReview.overdue ? 'text-amber-700 dark:text-amber-300' : ''
+                                  )}
+                                >
+                                  {metrics.lastReview.text}
+                                </span>
+                                {metrics.lastReview.overdue ? (
+                                  <p className="mt-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                                    Review overdue
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">{GOVERNANCE_MATRIX_EMPTY}</span>
+                            )
+                          )}
+                          {detailField(
+                            'Governance owner',
+                            <div>
+                              <p>{ownerDisplay}</p>
+                              {metrics.ownerTeam ? (
+                                <p className="mt-0.5 text-[11px] font-normal text-muted-foreground">{metrics.ownerTeam}</p>
+                              ) : null}
+                            </div>
+                          )}
+                          {detailField(
+                            'Configuration',
+                            <Badge
+                              className={cn(
+                                'border px-2 py-0.5 text-[10px] font-semibold',
+                                GOVERNANCE_CONFIGURATION_STYLES[ws.governance.configurationStatus]
+                              )}
+                            >
+                              {ws.governance.configurationStatus}
+                            </Badge>
+                          )}
+                        </div>
+
+                        {!metrics.hasManagedGovernance ? (
+                          <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                            Health, risk, and audit metrics appear after a governance template is assigned via workspace-governance service.
+                          </div>
+                        ) : null}
+
+                        {assignment?.governance_template_id && governanceCatalog ? (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground">Assigned policies</p>
+                            <div className="grid grid-cols-1 gap-2 text-sm">
+                              <div className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2">
+                                <span className="text-[10px] text-muted-foreground">Template</span>
+                                <p className="font-medium text-foreground">{ws.governance.template}</p>
+                              </div>
+                              <div className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2">
+                                <span className="text-[10px] text-muted-foreground">Workflow</span>
+                                <p className="font-medium text-foreground">{formatGovernanceDisplayValue(ws.governance.workflowPolicy)}</p>
+                              </div>
+                              <div className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2">
+                                <span className="text-[10px] text-muted-foreground">SLA</span>
+                                <p className="font-medium text-foreground">{formatGovernanceDisplayValue(ws.governance.slaPolicy)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+                        <div className="flex w-full items-stretch gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                            onClick={closeGovernanceMatrixDetailDrawer}
+                          >
+                            <X className="h-4 w-4 shrink-0" aria-hidden />
+                            Close
+                          </Button>
+                          {metrics.hasManagedGovernance ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                              onClick={() => {
+                                closeGovernanceMatrixDetailDrawer()
+                                void openComplianceDialog(ws)
+                              }}
+                            >
+                              <ClipboardCheck className="h-4 w-4 shrink-0" aria-hidden />
+                              Compliance
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="default"
+                            className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                            onClick={() => {
+                              closeGovernanceMatrixDetailDrawer()
+                              openAssignGovernanceDialog(ws)
+                            }}
+                          >
+                            <Settings2 className="h-4 w-4 shrink-0" aria-hidden />
+                            {metrics.hasManagedGovernance ? 'Edit governance' : 'Assign governance'}
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  )
+                })()}
+      </div>
+
+      <Dialog open={complianceDialogOpen} onOpenChange={(open) => { if (!open) closeComplianceDialog() }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Compliance posture</DialogTitle>
+            <DialogDescription>
+              {complianceDialogWorkspace ? `${complianceDialogWorkspace.name} (${complianceDialogWorkspace.code})` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {complianceDialogLoading ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+              Memuat skor dari workspace-governance service…
+            </div>
+          ) : complianceDialogData ? (
+            <div className="space-y-3 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-muted-foreground">Score</span>
+                <span className="text-2xl font-semibold tabular-nums text-foreground">{complianceDialogData.compliance_score}</span>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-muted-foreground">Posture</span>
+                <span className="font-medium text-foreground">{complianceDialogData.compliance_posture}</span>
+              </div>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-border/60 p-2 text-xs">
+                {complianceDialogData.checks.map((c) => (
+                  <div key={c.rule_code} className="flex justify-between gap-2 border-b border-border/30 py-1 last:border-0">
+                    <span>{c.rule_code}</span>
+                    <span className={c.satisfied ? 'text-emerald-600' : 'text-rose-600'}>{c.satisfied ? 'OK' : 'Gap'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => closeComplianceDialog()}>
+              Tutup
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={applyTemplateOpen} onOpenChange={(open) => !open && !applyTemplateSubmitting && setApplyTemplateOpen(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Apply governance template</DialogTitle>
+            <DialogDescription>
+              Menerapkan default policy IDs dari template yang dipilih (hanya referensi catalog).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="apply-tpl" className="text-xs text-muted-foreground">
+              Template
+            </Label>
+            <Select
+              id="apply-tpl"
+              value={applyTemplateChoice}
+              onChange={(e) => setApplyTemplateChoice(e.target.value)}
+              disabled={applyTemplateSubmitting}
+              className="h-10 w-full"
+            >
+              <option value="">Pilih template</option>
+              {(governanceCatalog?.templates ?? []).map((t) => (
+                <option key={t.id} value={t.id} disabled={t.status !== 'published'}>
+                  {t.name} ({t.code}){t.status !== 'published' ? ' — non-published' : ''}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={applyTemplateSubmitting}
+              onClick={() => !applyTemplateSubmitting && setApplyTemplateOpen(false)}
+            >
+              Batal
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void submitApplyGovernanceTemplate()}
+              disabled={applyTemplateSubmitting || !applyTemplateChoice.trim()}
+            >
+              {applyTemplateSubmitting ? 'Menerapkan…' : 'Apply'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={assetAssignDialogOpen} onOpenChange={(open) => !open && closeAssignAssetDialog()}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign template to workspace</DialogTitle>
+            <DialogDescription>
+              Apply selected template defaults from governance catalog to target workspace.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs">
+              <p className="text-muted-foreground">Template</p>
+              <p className="mt-0.5 font-medium text-foreground">{assetAssignTemplate?.name ?? '—'}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="asset-assign-workspace" className="text-xs text-muted-foreground">
+                Workspace
+              </Label>
+              <Select
+                id="asset-assign-workspace"
+                value={assetAssignWorkspaceId}
+                onChange={(e) => setAssetAssignWorkspaceId(e.target.value)}
+                className="h-10 w-full"
+                disabled={assetAssignSubmitting}
+              >
+                <option value="">Select workspace</option>
+                {allWorkspacesForList.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name} ({w.code})
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={closeAssignAssetDialog} disabled={assetAssignSubmitting}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void submitAssignAsset()}
+              disabled={assetAssignSubmitting || !assetAssignTemplate?.sourceId || !assetAssignWorkspaceId}
+            >
+              {assetAssignSubmitting ? 'Applying…' : 'Apply'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* \u2500\u2500 Edit Workspace Drawer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      <div
+        ref={editWorkspaceDrawerRef}
+        className={cn(
+          'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
+          editWorkspaceDrawerOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
+        )}
+        style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)', margin: 0, padding: 0 }}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4">
+          <div className="pr-3">
+            <h2 className="flex items-center gap-2 text-xl font-semibold text-foreground">
+              {editWorkspaceReadOnly ? <Eye className="h-5 w-5 text-primary" aria-hidden /> : <Pencil className="h-5 w-5 text-primary" aria-hidden />}
+              {editWorkspaceReadOnly ? 'Workspace Details' : 'Edit Workspace'}
+            </h2>
+            {editWorkspaceTarget && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {editWorkspaceTarget.name}
+                <span className="ml-2 font-mono text-[11px]">{editWorkspaceTarget.code}</span>
+              </p>
+            )}
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={closeEditWorkspaceDrawer} aria-label="Close edit workspace drawer">
+            <X className="h-5 w-5" aria-hidden />
+          </Button>
+        </div>
+
+        {editWorkspaceReadOnly && editWorkspaceTarget ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto scrollbar-hide px-5 py-5 text-sm">
+              <div className="grid grid-cols-1 gap-4 rounded-xl border border-border/60 bg-card/50 p-4 md:grid-cols-2">
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Workspace Name</p>
+                  <p className="mt-1 font-semibold text-foreground">{editWorkspaceTarget.name}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Workspace Code</p>
+                  <p className="mt-1 font-mono text-foreground">{editWorkspaceTarget.code}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Primary Organization</p>
+                  <p className="mt-1 font-semibold text-foreground">{editWorkspaceTarget.primaryOrganizationLabel}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Type</p>
+                  <Badge variant="outline" className="mt-1 px-2 py-0.5 text-[10px] font-medium">
+                    {editWorkspaceTarget.type}
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Lifecycle</p>
+                  <Badge
+                    className={cn(
+                      'mt-1 border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                      WORKSPACE_LIFECYCLE_STYLES[editWorkspaceTarget.lifecycle]
+                    )}
+                  >
+                    {editWorkspaceTarget.lifecycle}
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Governance Status</p>
+                  <Badge
+                    className={cn(
+                      'mt-1 border px-2 py-0.5 text-[10px] font-semibold',
+                      GOVERNANCE_CONFIGURATION_STYLES[editWorkspaceTarget.governance.configurationStatus]
+                    )}
+                  >
+                    {editWorkspaceTarget.governance.configurationStatus}
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Business Owner</p>
+                  <div className="mt-1">
+                    <WorkspaceDirectoryOwnerCell owner={editWorkspaceTarget.businessOwner ?? ''} />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Technical Owner</p>
+                  <div className="mt-1">
+                    <WorkspaceDirectoryOwnerCell owner={editWorkspaceTarget.technicalOwner ?? ''} />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Members</p>
+                  <p className="mt-1 text-foreground">{editWorkspaceTarget.members}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">Projects</p>
+                  <p className="mt-1 text-foreground">{editWorkspaceTarget.projects}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+              <div className="flex w-full items-stretch gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(enterpriseSecondaryButtonClass(), 'flex-1 min-w-0 justify-center gap-2')}
+                  onClick={closeEditWorkspaceDrawer}
+                >
+                  <X className="h-4 w-4 shrink-0" aria-hidden />
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  variant="default"
+                  className={cn(registerServicePrimaryButtonClass(), 'flex-1 min-w-0 justify-center gap-2')}
+                  onClick={() => setEditWorkspaceReadOnly(false)}
+                >
+                  <Pencil className="h-4 w-4 shrink-0" aria-hidden />
+                  Edit Workspace
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : editWorkspaceForm && (
+          <form
+            className="flex min-h-0 flex-1 flex-col"
+            onSubmit={(e) => { e.preventDefault(); void submitEditWorkspace() }}
+          >
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto scrollbar-hide px-5 py-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                {/* Workspace Name */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label htmlFor="edit-ws-name" className="text-xs text-muted-foreground">
+                    Workspace Name <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="edit-ws-name"
+                    value={editWorkspaceForm.name}
+                    onChange={(e) => setEditWorkspaceForm((f) => f ? { ...f, name: e.target.value } : f)}
+                    placeholder="e.g. Adira Finance WS"
+                    className="h-10 w-full"
+                  />
+                </div>
+
+                {/* Primary Organization */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label htmlFor="edit-ws-org" className="text-xs text-muted-foreground">
+                    Primary Organization <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    id="edit-ws-org"
+                    value={editWorkspaceForm.primaryOrganizationId}
+                    onChange={(e) => setEditWorkspaceForm((f) => f ? { ...f, primaryOrganizationId: e.target.value } : f)}
+                    className="h-10 w-full"
+                  >
+                    <option value="">Select organization (tree)</option>
+                    {orgSelectRows.map(({ id, label, depth }) => (
+                      <option key={id} value={id}>
+                        {`${'\u2003'.repeat(depth)}${label}`}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                {/* Business owner */}
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="edit-ws-biz-owner" className="text-xs">
+                    Business owner <span className="text-muted-foreground/50 font-normal">(optional)</span>
+                  </Label>
+                  {editWorkspaceForm.businessOwner.trim() ? (
+                    <WorkspaceOwnershipPersonChip
+                      displayName={editWorkspaceForm.businessOwner}
+                      verified={knownPeopleNames.has(editWorkspaceForm.businessOwner.trim().toLowerCase())}
+                      unverifiedShortLabel="Unverified · verify later"
+                      onChange={() => beginEditWorkspaceOwnershipSearch('business')}
+                    />
+                  ) : (
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                    <Input
+                      id="edit-ws-biz-owner"
+                      value={editWorkspaceForm.businessOwnerQuery}
+                      onChange={(e) => {
+                          setEditWorkspaceForm((f) => (f ? { ...f, businessOwnerQuery: e.target.value } : f))
+                        }}
+                        onFocus={() => openEditWorkspaceOwnershipSearchFocus('business', editWorkspaceForm.businessOwner)}
+                        onBlur={(e) => {
+                          if (shouldSkipOwnershipPickerInputBlur(e.relatedTarget)) return
+                          window.setTimeout(() => finishEditWorkspaceOwnershipBlur('business'), 0)
+                        }}
+                        onKeyDown={(e) => {
+                          handleOwnershipPickerInputKeyDown(e, {
+                            listOpen: ownershipPickerDropdownOpen(
+                              !!editWorkspaceForm.businessOwner.trim(),
+                              editWorkspaceForm.businessOwnerQuery,
+                              filteredEditBusinessOwnerPeople.length
+                            ),
+                            firstOptionId: `edit-ws-biz-owner-opt-${filteredEditBusinessOwnerPeople[0]?.id ?? ''}`,
+                            onBeforeFocusList: markOwnershipPickerFocusMovingToList,
+                            onEnter: () => {
+                              const manual = ownershipNameFromManualSearch(editWorkspaceForm.businessOwnerQuery)
+                              if (!manual) return
+                              clearEditWorkspaceOwnershipRevert('business')
+                              setEditWorkspaceForm((f) =>
+                                f ? { ...f, businessOwner: manual, businessOwnerQuery: manual } : f
+                              )
+                            },
+                          })
+                        }}
+                        aria-autocomplete="list"
+                        aria-controls={
+                          ownershipPickerDropdownOpen(
+                            !!editWorkspaceForm.businessOwner.trim(),
+                            editWorkspaceForm.businessOwnerQuery,
+                            filteredEditBusinessOwnerPeople.length
+                          )
+                            ? 'edit-ws-biz-owner-listbox'
+                            : undefined
+                        }
+                        aria-expanded={ownershipPickerDropdownOpen(
+                          !!editWorkspaceForm.businessOwner.trim(),
+                          editWorkspaceForm.businessOwnerQuery,
+                          filteredEditBusinessOwnerPeople.length
+                        )}
+                        placeholder={
+                          editWorkspaceForm.ownershipIdentityMode === 'external'
+                            ? 'Search enterprise IAM users…'
+                            : 'Search Identity-Lite directory by name, team, or role…'
+                        }
+                      className="h-10 text-sm pl-9"
+                    />
+                  </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">Business / outcome sponsor (portfolio, funding, or customer accountability).</p>
+                  {!editWorkspaceForm.businessOwner.trim() && editWorkspaceForm.businessOwnerQuery.trim().length > 0 ? (
+                    <div
+                      id="edit-ws-biz-owner-listbox"
+                      role="listbox"
+                      {...{ [OWNERSHIP_PICKER_LIST_ATTR]: '' }}
+                      className="max-h-32 overflow-y-auto rounded-lg border border-border/70 bg-background/90"
+                    >
+                      {filteredEditBusinessOwnerPeople.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">No people match your search.</div>
+                      ) : (
+                        filteredEditBusinessOwnerPeople.map((member, memberIndex) => {
+                          const optionId = `edit-ws-biz-owner-opt-${member.id}`
+                          const optionIds = filteredEditBusinessOwnerPeople.map((m) => `edit-ws-biz-owner-opt-${m.id}`)
+                          const selectMember = () => {
+                            clearEditWorkspaceOwnershipRevert('business')
+                            setEditWorkspaceForm((f) =>
+                              f ? { ...f, businessOwner: member.name, businessOwnerQuery: member.name } : f
+                            )
+                          }
+                          return (
+                          <button
+                            key={`edit-biz-${member.id}`}
+                            id={optionId}
+                            type="button"
+                            role="option"
+                            tabIndex={0}
+                            className={cn('flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-muted/40 focus:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50', editWorkspaceForm.businessOwner === member.name && 'bg-muted/50 text-foreground')}
+                            onMouseDown={retainFocusForOwnershipPicker}
+                            onKeyDown={(e) =>
+                              handleOwnershipPickerOptionKeyDown(e, {
+                                inputId: 'edit-ws-biz-owner',
+                                optionIds,
+                                index: memberIndex,
+                                onSelect: selectMember,
+                              })
+                            }
+                            onClick={selectMember}
+                          >
+                            <span className="truncate">{member.name}<span className="text-muted-foreground"> — {member.role} — {member.team}</span></span>
+                            {editWorkspaceForm.businessOwner === member.name ? <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden /> : null}
+                          </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Technical owner (optional) */}
+                <div className="w-full min-w-0 space-y-2 md:col-span-2">
+                  <Label htmlFor="edit-ws-tech-owner" className="text-xs">
+                    Technical owner <span className="text-muted-foreground/50 font-normal">(optional)</span>
+                  </Label>
+                  {editWorkspaceForm.technicalOwner.trim() ? (
+                    <WorkspaceOwnershipPersonChip
+                      displayName={editWorkspaceForm.technicalOwner}
+                      verified={knownPeopleNames.has(editWorkspaceForm.technicalOwner.trim().toLowerCase())}
+                      unverifiedShortLabel="Unverified · IAM later"
+                      onChange={() => beginEditWorkspaceOwnershipSearch('technical')}
+                    />
+                  ) : (
+                    <div className="relative w-full min-w-0">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                    <Input
+                      id="edit-ws-tech-owner"
+                      value={editWorkspaceForm.technicalOwnerQuery}
+                      onChange={(e) => {
+                          setEditWorkspaceForm((f) => (f ? { ...f, technicalOwnerQuery: e.target.value } : f))
+                        }}
+                        onFocus={() => openEditWorkspaceOwnershipSearchFocus('technical', editWorkspaceForm.technicalOwner)}
+                        onBlur={(e) => {
+                          if (shouldSkipOwnershipPickerInputBlur(e.relatedTarget)) return
+                          window.setTimeout(() => finishEditWorkspaceOwnershipBlur('technical'), 0)
+                        }}
+                        onKeyDown={(e) => {
+                          handleOwnershipPickerInputKeyDown(e, {
+                            listOpen: ownershipPickerDropdownOpen(
+                              !!editWorkspaceForm.technicalOwner.trim(),
+                              editWorkspaceForm.technicalOwnerQuery,
+                              filteredEditTechnicalOwnerPeople.length
+                            ),
+                            firstOptionId: `edit-ws-tech-owner-opt-${filteredEditTechnicalOwnerPeople[0]?.id ?? ''}`,
+                            onBeforeFocusList: markOwnershipPickerFocusMovingToList,
+                            onEnter: () => {
+                              const manual = ownershipNameFromManualSearch(editWorkspaceForm.technicalOwnerQuery)
+                              if (!manual) return
+                              clearEditWorkspaceOwnershipRevert('technical')
+                              setEditWorkspaceForm((f) =>
+                                f ? { ...f, technicalOwner: manual, technicalOwnerQuery: manual } : f
+                              )
+                            },
+                          })
+                        }}
+                        aria-autocomplete="list"
+                        aria-controls={
+                          ownershipPickerDropdownOpen(
+                            !!editWorkspaceForm.technicalOwner.trim(),
+                            editWorkspaceForm.technicalOwnerQuery,
+                            filteredEditTechnicalOwnerPeople.length
+                          )
+                            ? 'edit-ws-tech-owner-listbox'
+                            : undefined
+                        }
+                        aria-expanded={ownershipPickerDropdownOpen(
+                          !!editWorkspaceForm.technicalOwner.trim(),
+                          editWorkspaceForm.technicalOwnerQuery,
+                          filteredEditTechnicalOwnerPeople.length
+                        )}
+                        placeholder={
+                          editWorkspaceForm.ownershipIdentityMode === 'external'
+                            ? 'Search enterprise IAM users…'
+                            : 'Search Identity-Lite directory by name, team, or role…'
+                        }
+                        className="h-10 w-full text-sm pl-9"
+                    />
+                  </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">Engineering / platform lead for integrations, environments, and technical standards.</p>
+                  {!editWorkspaceForm.technicalOwner.trim() && editWorkspaceForm.technicalOwnerQuery.trim().length > 0 ? (
+                    <div
+                      id="edit-ws-tech-owner-listbox"
+                      role="listbox"
+                      {...{ [OWNERSHIP_PICKER_LIST_ATTR]: '' }}
+                      className="max-h-32 w-full min-w-0 overflow-y-auto rounded-lg border border-border/70 bg-background/90"
+                    >
+                      {filteredEditTechnicalOwnerPeople.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">No people match your search.</div>
+                      ) : (
+                        filteredEditTechnicalOwnerPeople.map((member, memberIndex) => {
+                          const optionId = `edit-ws-tech-owner-opt-${member.id}`
+                          const optionIds = filteredEditTechnicalOwnerPeople.map((m) => `edit-ws-tech-owner-opt-${m.id}`)
+                          const selectMember = () => {
+                            clearEditWorkspaceOwnershipRevert('technical')
+                            setEditWorkspaceForm((f) =>
+                              f ? { ...f, technicalOwner: member.name, technicalOwnerQuery: member.name } : f
+                            )
+                          }
+                          return (
+                          <button
+                            key={`edit-tech-${member.id}`}
+                            id={optionId}
+                            type="button"
+                            role="option"
+                            tabIndex={0}
+                            className={cn('flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-muted/40 focus:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50', editWorkspaceForm.technicalOwner === member.name && 'bg-muted/50 text-foreground')}
+                            onMouseDown={retainFocusForOwnershipPicker}
+                            onKeyDown={(e) =>
+                              handleOwnershipPickerOptionKeyDown(e, {
+                                inputId: 'edit-ws-tech-owner',
+                                optionIds,
+                                index: memberIndex,
+                                onSelect: selectMember,
+                              })
+                            }
+                            onClick={selectMember}
+                          >
+                            <span className="truncate">{member.name}<span className="text-muted-foreground"> — {member.role} — {member.team}</span></span>
+                            {editWorkspaceForm.technicalOwner === member.name ? <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden /> : null}
+                          </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+
+              </div>
+
+              {editWorkspaceError && (
+                <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700">
+                  {editWorkspaceError}
+                </div>
+              )}
+            </div>
+
+            {/* Footer — pinned to bottom */}
+            <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+              <div className="flex w-full items-stretch gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(enterpriseSecondaryButtonClass(), 'flex-1 min-w-0 justify-center gap-2')}
+                  onClick={closeEditWorkspaceDrawer}
+                  disabled={isSubmittingEditWorkspace}
+                >
+                  <X className="h-4 w-4 shrink-0" aria-hidden />
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="default"
+                  className={cn(registerServicePrimaryButtonClass(), 'flex-1 min-w-0 justify-center gap-2')}
+                  disabled={isSubmittingEditWorkspace}
+                >
+                  {isSubmittingEditWorkspace ? (
+                    <><Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />Saving…</>
+                  ) : (
+                    <><Save className="h-4 w-4 shrink-0" aria-hidden />Save Changes</>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {/* â”€â”€ New Workspace Drawer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      <div
+        className={cn(
+          'fixed bottom-0 left-0 right-0 top-0 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity',
+          newWorkspaceDrawerOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+        )}
+        style={{ margin: 0, padding: 0, width: '100vw', height: '100vh', top: 0, left: 0 }}
+        onClick={closeNewWorkspaceDrawer}
+        aria-hidden={!newWorkspaceDrawerOpen}
+        role="button"
+        tabIndex={-1}
+      />
+
+      <div
+        className={cn(
+          'fixed right-0 top-0 z-[1100] flex h-screen w-[min(900px,98vw)] max-w-[98vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
+          newWorkspaceDrawerOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
+        )}
+        style={{
+          boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
+          margin: 0,
+          padding: 0,
+        }}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
+          <div className="pr-3">
+            <h2 className="flex items-center gap-2 text-xl font-semibold text-foreground">
+              <Plus className="h-5 w-5 text-primary" aria-hidden />
+              New Workspace
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Guided wizard: one step at a time — define the organizational boundary, not member or project assignment
+              here.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={closeNewWorkspaceDrawer}
+            aria-label="Close new workspace drawer"
+          >
+            <X className="h-5 w-5" aria-hidden />
+          </Button>
+        </div>
+
+          <form
+            className="flex min-h-0 flex-1 flex-col"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (newWorkspaceWizardStep === NEW_WORKSPACE_WIZARD_STEP_TOTAL) submitNewWorkspace()
+              else goWizardNext()
+            }}
+          >
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <nav
+                className="shrink-0 border-b border-border bg-gradient-to-b from-muted/35 via-background to-background px-2 py-3 sm:px-4 md:px-5 md:py-4"
+                aria-label="Workspace creation progress"
+              >
+                <div className="scrollbar-hide flex w-full min-w-0 items-start justify-center gap-0 overflow-x-auto pb-1 pt-0.5">
+                  {NEW_WORKSPACE_WIZARD_STEPS.map((st, idx) => {
+                    const n = idx + 1
+                    const done = n < newWorkspaceWizardStep
+                    const active = n === newWorkspaceWizardStep
+                    const pending = !done && !active
+                    const connectorComplete = idx > 0 && newWorkspaceWizardStep > idx
+                    return (
+                      <Fragment key={st.id}>
+                        {idx > 0 ? (
+                          <div
+                            className={cn(
+                              'mt-[15px] h-[3px] min-w-[6px] flex-1 max-w-[120px] shrink rounded-full transition-colors duration-500 ease-out sm:mt-[17px] sm:max-w-[160px]',
+                              connectorComplete ? 'bg-emerald-500' : 'bg-border'
+                            )}
+                            aria-hidden
+                          />
+                        ) : null}
+                        <div className="flex shrink-0 flex-col items-center">
+                          <button
+                            type="button"
+                            onClick={() => tryGoToWizardStep(n)}
+                            className={cn(
+                              'group flex w-[3.75rem] flex-col items-center gap-0.5 rounded-lg px-0.5 py-1 outline-none transition-transform focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:w-[5.25rem] md:w-[6.75rem] lg:w-[7.25rem]',
+                              active && 'scale-[1.03]',
+                              (done || active || pending) && 'cursor-pointer'
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold shadow-sm transition-all duration-300 sm:h-9 sm:w-9 sm:text-xs',
+                                active &&
+                                  'bg-primary text-primary-foreground ring-[3px] ring-primary/25 sm:ring-[5px]',
+                                done && !active && 'bg-emerald-600 text-white dark:bg-emerald-500',
+                                pending && 'border border-border/90 bg-muted/45 text-muted-foreground group-hover:border-border group-hover:bg-muted/70'
+                              )}
+                              aria-current={active ? 'step' : undefined}
+                            >
+                              {done ? (
+                                <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={2.5} aria-hidden />
+                              ) : (
+                                n
+                              )}
+                            </span>
+                            <span
+                              className={cn(
+                                'max-w-full px-0.5 text-center text-[9px] leading-[1.15] transition-colors duration-200 sm:text-[10px] md:text-[11px]',
+                                active && 'font-bold text-foreground',
+                                done && !active && 'font-semibold text-emerald-800 dark:text-emerald-200/95',
+                                pending && 'font-medium text-muted-foreground group-hover:text-foreground/80'
+                              )}
+                            >
+                              {st.shortTitle}
+                            </span>
+                            {done && newWorkspaceWizardStepSummaries[n] ? (
+                              <span
+                                className="max-w-full px-0.5 text-center text-[8px] leading-[1.2] text-emerald-700/90 line-clamp-2 dark:text-emerald-300/90 sm:text-[9px]"
+                                title={newWorkspaceWizardStepSummaries[n]}
+                              >
+                                {newWorkspaceWizardStepSummaries[n]}
+                              </span>
+                            ) : null}
+                          </button>
+                        </div>
+                      </Fragment>
+                    )
+                  })}
+                </div>
+                <div className="mx-auto mt-3 h-1 w-full max-w-md overflow-hidden rounded-full bg-muted/80">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-primary to-primary/80 transition-[width] duration-500 ease-out"
+                    style={{
+                      width: `${((newWorkspaceWizardStep - 1) / Math.max(1, NEW_WORKSPACE_WIZARD_STEP_TOTAL - 1)) * 100}%`,
+                    }}
+                  />
+                </div>
+              </nav>
+
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5 md:py-5">
+                <div
+                  key={newWorkspaceWizardStep}
+                  className="scrollbar-hide min-h-0 flex-1 overflow-y-auto pb-2 transition-opacity duration-300 ease-out md:pl-5"
+                >
+                  {newWorkspaceWizardStep === 1 ? (
+                    <NewWorkspaceActiveStepShell
+                      title={activeNewWorkspaceWizardStepMeta.title}
+                      description={activeNewWorkspaceWizardStepMeta.description}
+                    >
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="ws-name" className="text-xs text-muted-foreground">
+                            Workspace name <span className="text-red-500">*</span>
+                          </Label>
+                          <Input
+                            id="ws-name"
+                            value={newWorkspaceForm.name}
+                            onChange={(e) => {
+                              setNewWorkspaceForm((prev) => ({ ...prev, name: normalizeTitleCaseInput(e.target.value) }))
+                              setWizardFieldHighlights((h) => ({ ...h, name: false }))
+                            }}
+                            placeholder="Enterprise Delivery Office"
+                            className={cn(
+                              'h-10 w-full transition-shadow',
+                              wizardFieldHighlights.name && 'border-destructive/70 ring-2 ring-destructive/35'
+                            )}
+                            autoComplete="off"
+                            aria-invalid={wizardFieldHighlights.name === true}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs text-muted-foreground">Workspace code</Label>
+                          <div
+                            className="flex min-h-[2.5rem] items-center rounded-md border border-border/80 bg-muted/25 px-3 py-2 font-mono text-sm font-semibold tracking-tight text-foreground"
+                            aria-live="polite"
+                          >
+                            {newWorkspaceForm.name.trim()
+                              ? newWorkspaceForm.code || '…'
+                              : 'Enter a workspace name to generate a code'}
+                          </div>
+                          <p className="text-[11px] leading-snug text-muted-foreground">
+                            Codes are generated automatically from the name and checked for uniqueness in the directory.
+                          </p>
+                        </div>
+                        <div className="space-y-1.5 md:col-span-2">
+                          <Label htmlFor="ws-desc" className="text-xs text-muted-foreground">
+                            Description <span className="font-normal text-muted-foreground/50">(optional)</span>
+                          </Label>
+                          <Textarea
+                            id="ws-desc"
+                            value={newWorkspaceForm.description}
+                            onChange={(e) => setNewWorkspaceForm((prev) => ({ ...prev, description: e.target.value }))}
+                            placeholder="Summarize purpose and scope for this workspace…"
+                            className="min-h-[96px] text-sm leading-6"
+                          />
+                        </div>
+                      </div>
+                    </NewWorkspaceActiveStepShell>
+                  ) : null}
+
+                  {newWorkspaceWizardStep === 2 ? (
+                    <NewWorkspaceActiveStepShell
+                      title={activeNewWorkspaceWizardStepMeta.title}
+                      description={activeNewWorkspaceWizardStepMeta.description}
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label htmlFor="ws-primary-org" className="text-xs text-muted-foreground">
+                            Primary organization <span className="text-red-500">*</span>
+                          </Label>
+                          <button
+                            type="button"
+                            className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                            onClick={openPrimaryOrgManage}
+                          >
+                            Manage
+                          </button>
+                        </div>
+                        <Select
+                          id="ws-primary-org"
+                          value={newWorkspaceForm.primaryOrganizationId}
+                          onChange={(e) => {
+                            const id = e.target.value
+                            setNewWorkspaceForm((prev) => ({
+                              ...prev,
+                              primaryOrganizationId: id,
+                              relatedOrganizationIds: prev.relatedOrganizationIds.filter((x) => x !== id),
+                            }))
+                            setWizardFieldHighlights((h) => ({ ...h, primaryOrganization: false }))
+                          }}
+                          className={cn(
+                            'h-10 w-full text-sm transition-shadow',
+                            wizardFieldHighlights.primaryOrganization &&
+                              'border-destructive/70 ring-2 ring-destructive/35'
+                          )}
+                          aria-invalid={wizardFieldHighlights.primaryOrganization === true}
+                        >
+                          <option value="">Select organization (tree)</option>
+                          {orgSelectRows.map(({ id, label, depth }) => (
+                            <option key={id} value={id}>
+                              {`${'\u2003'.repeat(depth)}${label}`}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">
+                          Related organizations <span className="font-normal text-muted-foreground/50">(optional)</span>
+                        </Label>
+                        <div className="max-h-44 space-y-2 overflow-y-auto rounded-md border border-border/80 bg-background/80 p-3">
+                          {orgSelectRows
+                            .filter((row) => row.id !== newWorkspaceForm.primaryOrganizationId)
+                            .map((row) => {
+                              const checked = newWorkspaceForm.relatedOrganizationIds.includes(row.id)
+                              return (
+                                <label
+                                  key={row.id}
+                                  className="flex cursor-pointer items-center gap-2 text-sm text-foreground"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="h-3.5 w-3.5 rounded border-border"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setNewWorkspaceForm((prev) => {
+                                        const set = new Set(prev.relatedOrganizationIds)
+                                        if (set.has(row.id)) set.delete(row.id)
+                                        else set.add(row.id)
+                                        return { ...prev, relatedOrganizationIds: [...set] }
+                                      })
+                                    }}
+                                  />
+                                  <span className="tabular-nums text-muted-foreground">{`${'\u2003'.repeat(row.depth)}`}</span>
+                                  <span>{row.label}</span>
+                                </label>
+                              )
+                            })}
+                        </div>
+                      </div>
+                    </NewWorkspaceActiveStepShell>
+                  ) : null}
+
+                  {newWorkspaceWizardStep === 3 ? (
+                    <NewWorkspaceActiveStepShell
+                      title={activeNewWorkspaceWizardStepMeta.title}
+                      description={activeNewWorkspaceWizardStepMeta.description}
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label htmlFor="ws-classification" className="text-xs text-muted-foreground">
+                            Workspace type <span className="text-red-500">*</span>
+                          </Label>
+                          <button
+                            type="button"
+                            className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                            onClick={openWorkspaceTypeManage}
+                          >
+                            Manage
+                          </button>
+                        </div>
+                        <Select
+                          id="ws-classification"
+                          value={newWorkspaceForm.workspaceType}
+                          onChange={(e) => {
+                            setNewWorkspaceForm((prev) => ({
+                              ...prev,
+                              workspaceType: e.target.value as WorkspaceClassification | '',
+                            }))
+                            setWizardFieldHighlights((h) => ({ ...h, workspaceType: false }))
+                          }}
+                          className={cn(
+                            'h-10 w-full text-sm transition-shadow',
+                            wizardFieldHighlights.workspaceType && 'border-destructive/70 ring-2 ring-destructive/35'
+                          )}
+                          aria-invalid={wizardFieldHighlights.workspaceType === true}
+                        >
+                          <option value="">Select workspace type</option>
+                          {workspaceTypeOptions.map((t) => (
+                            <option key={t.typeCode} value={t.typeCode}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                    </NewWorkspaceActiveStepShell>
+                  ) : null}
+
+                  {newWorkspaceWizardStep === 4 ? (
+                    <NewWorkspaceActiveStepShell
+                      title={activeNewWorkspaceWizardStepMeta.title}
+                      description={activeNewWorkspaceWizardStepMeta.description}
+                    >
+                      <div className="space-y-5">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs text-muted-foreground">
+                            Identity mode <span className="text-red-500">*</span>
+                          </Label>
+                          <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Identity mode">
+                            {WORKSPACE_OWNERSHIP_IDENTITY_MODE_OPTIONS.map((mode) => (
+                              <button
+                                key={mode}
+                                type="button"
+                                role="radio"
+                                aria-checked={newWorkspaceForm.ownershipIdentityMode === mode}
+                                className={workspaceOwnershipIdentityModePillClass(
+                                  mode,
+                                  newWorkspaceForm.ownershipIdentityMode === mode
+                                )}
+                                title={workspaceOwnershipIdentityModeTitle(mode)}
+                                onClick={() => {
+                                  setNewWorkspaceForm((prev) => ({ ...prev, ownershipIdentityMode: mode }))
+                                  setWizardFieldHighlights((h) => ({ ...h, identityMode: false }))
+                                }}
+                              >
+                                {workspaceOwnershipIdentityModeLabel(mode)}
+                              </button>
+                            ))}
+                          </div>
+                          {newWorkspaceForm.ownershipIdentityMode === 'external' ? (
+                            <div className="rounded-lg border border-blue-300/60 bg-blue-50/70 px-3 py-2 text-[11px] text-blue-700 dark:bg-blue-950/40 dark:text-blue-200">
+                              Owner picks are aligned with your enterprise IAM (Ilex / corporate IdP) when that integration is enabled.
+                            </div>
+                          ) : (
+                            <p className="text-[11px] leading-snug text-muted-foreground">
+                              Use when the organization has no enterprise IAM yet — Identity-Lite is production-ready, not dev-only.
+                            </p>
+                          )}
+                          <p className="text-[11px] leading-snug text-muted-foreground">
+                            Split Authentication vs Authorization (e.g. IdP only, or external PDP only) is configured in{' '}
+                            <span className="font-medium text-foreground">Platform Settings → Identity &amp; Authorization</span>,
+                            not here.
+                          </p>
+                        </div>
+
+                        <div className="space-y-5 border-t border-border/50 pt-5">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <Label htmlFor="ws-owner-person" className="text-xs text-muted-foreground">
+                              Owner <span className="text-red-500">*</span>
+                            </Label>
+                            <button
+                              type="button"
+                              className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                              onClick={() => openOwnershipDirectoryBrowse('owner')}
+                            >
+                              Browse directory
+                            </button>
+                          </div>
+                          {newWorkspaceForm.owner.trim() ? (
+                            <WorkspaceOwnershipPersonChip
+                              displayName={newWorkspaceForm.owner}
+                              verified={knownPeopleNames.has(newWorkspaceForm.owner.trim().toLowerCase())}
+                              unverifiedShortLabel="Unverified · IAM later"
+                              onChange={() =>
+                                setNewWorkspaceForm((prev) => ({
+                                  ...prev,
+                                  owner: '',
+                                  ownershipOwnerSearchQuery: '',
+                                }))
+                              }
+                            />
+                          ) : (
+                          <div className="relative">
+                            <Search
+                              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <Input
+                              id="ws-owner-person"
+                              value={newWorkspaceForm.ownershipOwnerSearchQuery}
+                              onChange={(e) => {
+                                setNewWorkspaceForm((prev) => ({
+                                  ...prev,
+                                    ownershipOwnerSearchQuery: e.target.value,
+                                }))
+                                setWizardFieldHighlights((h) => ({ ...h, owner: false }))
+                              }}
+                                onBlur={(e) => {
+                                  if (shouldSkipOwnershipPickerInputBlur(e.relatedTarget)) return
+                                  window.setTimeout(() => {
+                                    setNewWorkspaceForm((prev) => {
+                                      if (prev.owner.trim()) return prev
+                                      const matched = ownershipNameFromDirectoryExactMatch(
+                                        prev.ownershipOwnerSearchQuery,
+                                        workspaceOwnershipAllPeople
+                                      )
+                                      if (matched) {
+                                        return { ...prev, owner: matched, ownershipOwnerSearchQuery: matched }
+                                      }
+                                      if (prev.ownershipOwnerSearchQuery.trim()) {
+                                        return { ...prev, ownershipOwnerSearchQuery: '' }
+                                      }
+                                      return prev
+                                    })
+                                  }, 0)
+                                }}
+                                onKeyDown={(e) => {
+                                  handleOwnershipPickerInputKeyDown(e, {
+                                    listOpen: ownershipPickerDropdownOpen(
+                                      !!newWorkspaceForm.owner.trim(),
+                                      newWorkspaceForm.ownershipOwnerSearchQuery,
+                                      filteredWorkspaceOwnerPeople.length
+                                    ),
+                                    firstOptionId: `ws-owner-person-opt-${filteredWorkspaceOwnerPeople[0]?.id ?? ''}`,
+                                    onBeforeFocusList: markOwnershipPickerFocusMovingToList,
+                                    onEnter: () => {
+                                      const manual = ownershipNameFromManualSearch(
+                                        newWorkspaceForm.ownershipOwnerSearchQuery
+                                      )
+                                      if (manual) {
+                                        setNewWorkspaceForm((prev) => ({
+                                          ...prev,
+                                          owner: manual,
+                                          ownershipOwnerSearchQuery: manual,
+                                        }))
+                                      }
+                                    },
+                                  })
+                                }}
+                                aria-autocomplete="list"
+                                aria-controls={
+                                  ownershipPickerDropdownOpen(
+                                    !!newWorkspaceForm.owner.trim(),
+                                    newWorkspaceForm.ownershipOwnerSearchQuery,
+                                    filteredWorkspaceOwnerPeople.length
+                                  )
+                                    ? 'ws-owner-person-listbox'
+                                    : undefined
+                                }
+                                aria-expanded={ownershipPickerDropdownOpen(
+                                  !!newWorkspaceForm.owner.trim(),
+                                  newWorkspaceForm.ownershipOwnerSearchQuery,
+                                  filteredWorkspaceOwnerPeople.length
+                                )}
+                              placeholder={workspaceOwnershipSearchPlaceholder}
+                              className={cn(
+                                'h-10 text-sm pl-9',
+                                wizardFieldHighlights.owner
+                                  ? 'border-destructive/70 ring-2 ring-destructive/35'
+                                  : undefined
+                              )}
+                              aria-invalid={wizardFieldHighlights.owner === true}
+                            />
+                          </div>
+                          )}
+                          {!newWorkspaceForm.owner.trim() ? (
+                            <p className="text-[11px] leading-snug text-muted-foreground">
+                            Primary accountable executive for this workspace boundary.
+                          </p>
+                          ) : null}
+                          {!newWorkspaceForm.owner.trim() && newWorkspaceForm.ownershipOwnerSearchQuery.trim().length > 0 ? (
+                            <div
+                              id="ws-owner-person-listbox"
+                              role="listbox"
+                              {...{ [OWNERSHIP_PICKER_LIST_ATTR]: '' }}
+                              className="max-h-32 overflow-y-auto rounded-lg border border-border/70 bg-background/90"
+                            >
+                              {filteredWorkspaceOwnerPeople.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-muted-foreground">No people match your search.</div>
+                              ) : (
+                                filteredWorkspaceOwnerPeople.map((member, memberIndex) => {
+                                  const optionId = `ws-owner-person-opt-${member.id}`
+                                  const optionIds = filteredWorkspaceOwnerPeople.map((m) => `ws-owner-person-opt-${m.id}`)
+                                  const selectMember = () => handleWorkspaceOwnershipPersonSelect('owner', member)
+                                  return (
+                                  <button
+                                    key={`owner-${member.id}`}
+                                    id={optionId}
+                                    type="button"
+                                    role="option"
+                                    tabIndex={0}
+                                    className={cn(
+                                      'flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-muted/40 focus:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50',
+                                      newWorkspaceForm.owner === member.name && 'bg-muted/50 text-foreground'
+                                    )}
+                                    onMouseDown={retainFocusForOwnershipPicker}
+                                    onKeyDown={(e) =>
+                                      handleOwnershipPickerOptionKeyDown(e, {
+                                        inputId: 'ws-owner-person',
+                                        optionIds,
+                                        index: memberIndex,
+                                        onSelect: selectMember,
+                                      })
+                                    }
+                                    onClick={selectMember}
+                                  >
+                                    <span className="truncate">
+                                      {member.name}
+                                      <span className="text-muted-foreground">
+                                        {' '}
+                                        — {member.role} — {member.team}
+                                      </span>
+                                    </span>
+                                    {newWorkspaceForm.owner === member.name ? (
+                                      <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                    ) : null}
+                                  </button>
+                                  )
+                                })
+                              )}
+                            </div>
+                          ) : null}
+                          {wizardFieldHighlights.owner ? (
+                            <p className="text-[11px] text-destructive">Owner is required.</p>
+                          ) : null}
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <Label htmlFor="ws-business-owner" className="text-xs text-muted-foreground">
+                              Business owner <span className="font-normal text-muted-foreground/70">(optional)</span>
+                            </Label>
+                            <button
+                              type="button"
+                              className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                              onClick={() => openOwnershipDirectoryBrowse('business')}
+                            >
+                              Browse directory
+                            </button>
+                          </div>
+                          {newWorkspaceForm.businessOwner.trim() ? (
+                            <WorkspaceOwnershipPersonChip
+                              displayName={newWorkspaceForm.businessOwner}
+                              verified={knownPeopleNames.has(newWorkspaceForm.businessOwner.trim().toLowerCase())}
+                              unverifiedShortLabel="Unverified · verify later"
+                              onChange={() =>
+                                setNewWorkspaceForm((prev) => ({
+                                  ...prev,
+                                  businessOwner: '',
+                                  ownershipBusinessOwnerSearchQuery: '',
+                                }))
+                              }
+                            />
+                          ) : (
+                          <div className="relative">
+                            <Search
+                              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <Input
+                              id="ws-business-owner"
+                              value={newWorkspaceForm.ownershipBusinessOwnerSearchQuery}
+                              onChange={(e) => {
+                                setNewWorkspaceForm((prev) => ({
+                                  ...prev,
+                                    ownershipBusinessOwnerSearchQuery: e.target.value,
+                                }))
+                                setWizardFieldHighlights((h) => ({ ...h, businessOwner: false }))
+                              }}
+                                onBlur={(e) => {
+                                  if (shouldSkipOwnershipPickerInputBlur(e.relatedTarget)) return
+                                  window.setTimeout(() => {
+                                    setNewWorkspaceForm((prev) => {
+                                      if (prev.businessOwner.trim()) return prev
+                                      const matched = ownershipNameFromDirectoryExactMatch(
+                                        prev.ownershipBusinessOwnerSearchQuery,
+                                        workspaceOwnershipAllPeople
+                                      )
+                                      if (matched) {
+                                        return {
+                                          ...prev,
+                                          businessOwner: matched,
+                                          ownershipBusinessOwnerSearchQuery: matched,
+                                        }
+                                      }
+                                      if (prev.ownershipBusinessOwnerSearchQuery.trim()) {
+                                        return { ...prev, ownershipBusinessOwnerSearchQuery: '' }
+                                      }
+                                      return prev
+                                    })
+                                  }, 0)
+                                }}
+                                onKeyDown={(e) => {
+                                  handleOwnershipPickerInputKeyDown(e, {
+                                    listOpen: ownershipPickerDropdownOpen(
+                                      !!newWorkspaceForm.businessOwner.trim(),
+                                      newWorkspaceForm.ownershipBusinessOwnerSearchQuery,
+                                      filteredWorkspaceBusinessOwnerPeople.length
+                                    ),
+                                    firstOptionId: `ws-business-owner-opt-${filteredWorkspaceBusinessOwnerPeople[0]?.id ?? ''}`,
+                                    onBeforeFocusList: markOwnershipPickerFocusMovingToList,
+                                    onEnter: () => {
+                                      const manual = ownershipNameFromManualSearch(
+                                        newWorkspaceForm.ownershipBusinessOwnerSearchQuery
+                                      )
+                                      if (manual) {
+                                        setNewWorkspaceForm((prev) => ({
+                                          ...prev,
+                                          businessOwner: manual,
+                                          ownershipBusinessOwnerSearchQuery: manual,
+                                        }))
+                                      }
+                                    },
+                                  })
+                                }}
+                                aria-autocomplete="list"
+                                aria-controls={
+                                  ownershipPickerDropdownOpen(
+                                    !!newWorkspaceForm.businessOwner.trim(),
+                                    newWorkspaceForm.ownershipBusinessOwnerSearchQuery,
+                                    filteredWorkspaceBusinessOwnerPeople.length
+                                  )
+                                    ? 'ws-business-owner-listbox'
+                                    : undefined
+                                }
+                                aria-expanded={ownershipPickerDropdownOpen(
+                                  !!newWorkspaceForm.businessOwner.trim(),
+                                  newWorkspaceForm.ownershipBusinessOwnerSearchQuery,
+                                  filteredWorkspaceBusinessOwnerPeople.length
+                                )}
+                              placeholder={workspaceOwnershipSearchPlaceholder}
+                              className={cn(
+                                'h-10 text-sm pl-9',
+                                wizardFieldHighlights.businessOwner
+                                  ? 'border-destructive/70 ring-2 ring-destructive/35'
+                                  : undefined
+                              )}
+                              aria-invalid={wizardFieldHighlights.businessOwner === true}
+                            />
+                          </div>
+                          )}
+                          {!newWorkspaceForm.businessOwner.trim() ? (
+                            <p className="text-[11px] leading-snug text-muted-foreground">
+                            Business / outcome sponsor (portfolio, funding, or customer accountability).
+                          </p>
+                          ) : null}
+                          {!newWorkspaceForm.businessOwner.trim() && newWorkspaceForm.ownershipBusinessOwnerSearchQuery.trim().length > 0 ? (
+                            <div
+                              id="ws-business-owner-listbox"
+                              role="listbox"
+                              {...{ [OWNERSHIP_PICKER_LIST_ATTR]: '' }}
+                              className="max-h-32 overflow-y-auto rounded-lg border border-border/70 bg-background/90"
+                            >
+                              {filteredWorkspaceBusinessOwnerPeople.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-muted-foreground">No people match your search.</div>
+                              ) : (
+                                filteredWorkspaceBusinessOwnerPeople.map((member, memberIndex) => {
+                                  const optionId = `ws-business-owner-opt-${member.id}`
+                                  const optionIds = filteredWorkspaceBusinessOwnerPeople.map(
+                                    (m) => `ws-business-owner-opt-${m.id}`
+                                  )
+                                  const selectMember = () => handleWorkspaceOwnershipPersonSelect('business', member)
+                                  return (
+                                  <button
+                                    key={`biz-${member.id}`}
+                                    id={optionId}
+                                    type="button"
+                                    role="option"
+                                    tabIndex={0}
+                                    className={cn(
+                                      'flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-muted/40 focus:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50',
+                                      newWorkspaceForm.businessOwner === member.name && 'bg-muted/50 text-foreground'
+                                    )}
+                                    onMouseDown={retainFocusForOwnershipPicker}
+                                    onKeyDown={(e) =>
+                                      handleOwnershipPickerOptionKeyDown(e, {
+                                        inputId: 'ws-business-owner',
+                                        optionIds,
+                                        index: memberIndex,
+                                        onSelect: selectMember,
+                                      })
+                                    }
+                                    onClick={selectMember}
+                                  >
+                                    <span className="truncate">
+                                      {member.name}
+                                      <span className="text-muted-foreground">
+                                        {' '}
+                                        — {member.role} — {member.team}
+                                      </span>
+                                    </span>
+                                    {newWorkspaceForm.businessOwner === member.name ? (
+                                      <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                    ) : null}
+                                  </button>
+                                  )
+                                })
+                              )}
+                            </div>
+                          ) : null}
+                          {!newWorkspaceForm.businessOwner.trim() ? (
+                            <p className="text-[11px] text-amber-600 dark:text-amber-500">
+                              No business owner assigned yet (optional).
+                            </p>
+                          ) : null}
+                        </div>
+
+                        <div className="w-full min-w-0 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <Label htmlFor="ws-technical-owner" className="text-xs text-muted-foreground">
+                              Technical owner <span className="font-normal text-muted-foreground/70">(optional)</span>
+                            </Label>
+                            <button
+                              type="button"
+                              className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                              onClick={() => openOwnershipDirectoryBrowse('technical')}
+                            >
+                              Browse directory
+                            </button>
+                          </div>
+                          {newWorkspaceForm.technicalOwner.trim() ? (
+                            <WorkspaceOwnershipPersonChip
+                              displayName={newWorkspaceForm.technicalOwner}
+                              verified={knownPeopleNames.has(newWorkspaceForm.technicalOwner.trim().toLowerCase())}
+                              unverifiedShortLabel="Unverified · IAM later"
+                              onChange={() =>
+                                setNewWorkspaceForm((prev) => ({
+                                  ...prev,
+                                  technicalOwner: '',
+                                  ownershipTechnicalOwnerSearchQuery: '',
+                                }))
+                              }
+                            />
+                          ) : (
+                          <div className="relative">
+                            <Search
+                              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <Input
+                              id="ws-technical-owner"
+                              value={newWorkspaceForm.ownershipTechnicalOwnerSearchQuery}
+                              onChange={(e) => {
+                                setNewWorkspaceForm((prev) => ({
+                                  ...prev,
+                                    ownershipTechnicalOwnerSearchQuery: e.target.value,
+                                }))
+                                setWizardFieldHighlights((h) => ({ ...h, technicalOwner: false }))
+                              }}
+                                onBlur={(e) => {
+                                  if (shouldSkipOwnershipPickerInputBlur(e.relatedTarget)) return
+                                  window.setTimeout(() => {
+                                    setNewWorkspaceForm((prev) => {
+                                      if (prev.technicalOwner.trim()) return prev
+                                      const matched = ownershipNameFromDirectoryExactMatch(
+                                        prev.ownershipTechnicalOwnerSearchQuery,
+                                        workspaceOwnershipAllPeople
+                                      )
+                                      if (matched) {
+                                        return {
+                                          ...prev,
+                                          technicalOwner: matched,
+                                          ownershipTechnicalOwnerSearchQuery: matched,
+                                        }
+                                      }
+                                      if (prev.ownershipTechnicalOwnerSearchQuery.trim()) {
+                                        return { ...prev, ownershipTechnicalOwnerSearchQuery: '' }
+                                      }
+                                      return prev
+                                    })
+                                  }, 0)
+                                }}
+                                onKeyDown={(e) => {
+                                  handleOwnershipPickerInputKeyDown(e, {
+                                    listOpen: ownershipPickerDropdownOpen(
+                                      !!newWorkspaceForm.technicalOwner.trim(),
+                                      newWorkspaceForm.ownershipTechnicalOwnerSearchQuery,
+                                      filteredWorkspaceTechnicalOwnerPeople.length
+                                    ),
+                                    firstOptionId: `ws-technical-owner-opt-${filteredWorkspaceTechnicalOwnerPeople[0]?.id ?? ''}`,
+                                    onBeforeFocusList: markOwnershipPickerFocusMovingToList,
+                                    onEnter: () => {
+                                      const manual = ownershipNameFromManualSearch(
+                                        newWorkspaceForm.ownershipTechnicalOwnerSearchQuery
+                                      )
+                                      if (manual) {
+                                        setNewWorkspaceForm((prev) => ({
+                                          ...prev,
+                                          technicalOwner: manual,
+                                          ownershipTechnicalOwnerSearchQuery: manual,
+                                        }))
+                                      }
+                                    },
+                                  })
+                                }}
+                                aria-autocomplete="list"
+                                aria-controls={
+                                  ownershipPickerDropdownOpen(
+                                    !!newWorkspaceForm.technicalOwner.trim(),
+                                    newWorkspaceForm.ownershipTechnicalOwnerSearchQuery,
+                                    filteredWorkspaceTechnicalOwnerPeople.length
+                                  )
+                                    ? 'ws-technical-owner-listbox'
+                                    : undefined
+                                }
+                                aria-expanded={ownershipPickerDropdownOpen(
+                                  !!newWorkspaceForm.technicalOwner.trim(),
+                                  newWorkspaceForm.ownershipTechnicalOwnerSearchQuery,
+                                  filteredWorkspaceTechnicalOwnerPeople.length
+                                )}
+                              placeholder={workspaceOwnershipSearchPlaceholder}
+                              className={cn(
+                                'h-10 text-sm pl-9',
+                                wizardFieldHighlights.technicalOwner
+                                  ? 'border-destructive/70 ring-2 ring-destructive/35'
+                                  : undefined
+                              )}
+                              aria-invalid={wizardFieldHighlights.technicalOwner === true}
+                            />
+                          </div>
+                          )}
+                          {!newWorkspaceForm.technicalOwner.trim() ? (
+                            <p className="text-[11px] leading-snug text-muted-foreground">
+                            Engineering / platform lead for integrations, environments, and technical standards.
+                          </p>
+                          ) : null}
+                          {!newWorkspaceForm.technicalOwner.trim() && newWorkspaceForm.ownershipTechnicalOwnerSearchQuery.trim().length > 0 ? (
+                            <div
+                              id="ws-technical-owner-listbox"
+                              role="listbox"
+                              {...{ [OWNERSHIP_PICKER_LIST_ATTR]: '' }}
+                              className="max-h-32 overflow-y-auto rounded-lg border border-border/70 bg-background/90"
+                            >
+                              {filteredWorkspaceTechnicalOwnerPeople.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-muted-foreground">No people match your search.</div>
+                              ) : (
+                                filteredWorkspaceTechnicalOwnerPeople.map((member, memberIndex) => {
+                                  const optionId = `ws-technical-owner-opt-${member.id}`
+                                  const optionIds = filteredWorkspaceTechnicalOwnerPeople.map(
+                                    (m) => `ws-technical-owner-opt-${m.id}`
+                                  )
+                                  const selectMember = () => handleWorkspaceOwnershipPersonSelect('technical', member)
+                                  return (
+                                  <button
+                                    key={`tech-${member.id}`}
+                                    id={optionId}
+                                    type="button"
+                                    role="option"
+                                    tabIndex={0}
+                                    className={cn(
+                                      'flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-muted/40 focus:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50',
+                                      newWorkspaceForm.technicalOwner === member.name && 'bg-muted/50 text-foreground'
+                                    )}
+                                    onMouseDown={retainFocusForOwnershipPicker}
+                                    onKeyDown={(e) =>
+                                      handleOwnershipPickerOptionKeyDown(e, {
+                                        inputId: 'ws-technical-owner',
+                                        optionIds,
+                                        index: memberIndex,
+                                        onSelect: selectMember,
+                                      })
+                                    }
+                                    onClick={selectMember}
+                                  >
+                                    <span className="truncate">
+                                      {member.name}
+                                      <span className="text-muted-foreground">
+                                        {' '}
+                                        — {member.role} — {member.team}
+                                      </span>
+                                    </span>
+                                    {newWorkspaceForm.technicalOwner === member.name ? (
+                                      <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                    ) : null}
+                                  </button>
+                                  )
+                                })
+                              )}
+                            </div>
+                          ) : null}
+                            </div>
+                        </div>
+
+                        <div className="border-t border-border/50 pt-3">
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                            onClick={() =>
+                              setNewWorkspaceForm((prev) => ({
+                                ...prev,
+                                ownershipShowAdvanced: !prev.ownershipShowAdvanced,
+                              }))
+                            }
+                          >
+                            <span>Advanced ownership settings</span>
+                            {newWorkspaceForm.ownershipShowAdvanced ? (
+                              <ChevronUp className="h-4 w-4 shrink-0" aria-hidden />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+                            )}
+                          </button>
+                          {newWorkspaceForm.ownershipShowAdvanced ? (
+                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Ownership Source</Label>
+                                <Input
+                                  value={workspaceOwnershipSourceReadonlyLabel(newWorkspaceForm.ownershipIdentityMode)}
+                                  readOnly
+                                  className="h-10 text-sm"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Identity Provider</Label>
+                                <Input
+                                  value={
+                                    newWorkspaceForm.ownershipIdentityMode === 'local'
+                                      ? 'identity-lite-service'
+                                      : newWorkspaceForm.ownershipIdentityProvider
+                                  }
+                                  readOnly={newWorkspaceForm.ownershipIdentityMode === 'local'}
+                                  onChange={(e) =>
+                                    setNewWorkspaceForm((prev) => ({
+                                      ...prev,
+                                      ownershipIdentityProvider: e.target.value,
+                                    }))
+                                  }
+                                  className="h-10 text-sm"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">External workspace ref</Label>
+                                <Input
+                                  value={
+                                    newWorkspaceForm.primaryOrganizationId
+                                      ? `org:${newWorkspaceForm.primaryOrganizationId}`
+                                      : ''
+                                  }
+                                  readOnly
+                                  className="h-10 font-mono text-xs"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">External primary owner ref</Label>
+                                <Input
+                                  value={
+                                    newWorkspaceForm.ownershipIdentityMode !== 'local' && newWorkspaceForm.owner.trim()
+                                      ? `urn:ws-owner:${encodeURIComponent(newWorkspaceForm.owner.trim())}`
+                                      : ''
+                                  }
+                                  readOnly
+                                  className="h-10 font-mono text-xs"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Ownership Status</Label>
+                                <Select
+                                  value={newWorkspaceForm.ownershipSyncStatus}
+                                  onChange={(e) =>
+                                    setNewWorkspaceForm((prev) => ({
+                                      ...prev,
+                                      ownershipSyncStatus: e.target.value as WorkspaceOwnershipSyncStatus,
+                                    }))
+                                  }
+                                  className="h-10 w-full text-sm"
+                                >
+                                  <option value="verified">{workspaceOwnershipSyncStatusLabel('verified')}</option>
+                                  <option value="pending_sync">
+                                    {workspaceOwnershipSyncStatusLabel('pending_sync')}
+                                  </option>
+                                  <option value="stale">{workspaceOwnershipSyncStatusLabel('stale')}</option>
+                                </Select>
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Last synced (ISO)</Label>
+                                <Input
+                                  value={newWorkspaceForm.ownershipLastSyncedAt}
+                                  onChange={(e) =>
+                                    setNewWorkspaceForm((prev) => ({
+                                      ...prev,
+                                      ownershipLastSyncedAt: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="e.g. 2026-05-06T12:00:00Z"
+                                  className="h-10 text-sm"
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </NewWorkspaceActiveStepShell>
+                  ) : null}
+
+                  {newWorkspaceWizardStep === 5 ? (
+                    <NewWorkspaceActiveStepShell
+                      title={activeNewWorkspaceWizardStepMeta.title}
+                      description={activeNewWorkspaceWizardStepMeta.description}
+                    >
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ws-lifecycle" className="text-xs text-muted-foreground">
+                          Lifecycle stage
+                        </Label>
+                        <Select
+                          id="ws-lifecycle"
+                          value={newWorkspaceForm.lifecycleStage}
+                          onChange={(e) =>
+                            setNewWorkspaceForm((prev) => ({
+                              ...prev,
+                              lifecycleStage: e.target.value as WorkspaceLifecycleStage,
+                            }))
+                          }
+                          className="h-10 w-full text-sm"
+                        >
+                          {ALL_WORKSPACE_LIFECYCLE_STAGES.map((lc) => (
+                            <option key={lc} value={lc}>
+                              {lc}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                    </NewWorkspaceActiveStepShell>
+                  ) : null}
+
+                  {newWorkspaceWizardStep === 6 ? (
+                    <NewWorkspaceActiveStepShell
+                      title={activeNewWorkspaceWizardStepMeta.title}
+                      description={activeNewWorkspaceWizardStepMeta.description}
+                    >
+                      <div className="space-y-4">
+                        <dl className="divide-y divide-border/70 rounded-lg border border-border/80 bg-muted/15 text-sm">
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Name</dt>
+                            <dd className="font-medium text-foreground">{newWorkspaceForm.name.trim() || '…'}</dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Code</dt>
+                            <dd className="font-mono text-sm text-foreground">
+                              {newWorkspaceForm.code.trim().toUpperCase() || '…'}
+                            </dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Organization
+                            </dt>
+                            <dd className="text-foreground">
+                              <span className="font-medium">{newWorkspacePrimaryOrgLabel ?? '…'}</span>
+                              {newWorkspaceRelatedOrgSummary !== '…' ? (
+                                <span className="mt-1 block text-xs text-muted-foreground">
+                                  Related: {newWorkspaceRelatedOrgSummary}
+                                </span>
+                              ) : null}
+                            </dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Type</dt>
+                            <dd className="text-foreground">{newWorkspaceForm.workspaceType || '…'}</dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Identity mode
+                            </dt>
+                            <dd className="text-foreground">
+                              {workspaceOwnershipIdentityModeLabel(newWorkspaceForm.ownershipIdentityMode)}
+                            </dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Owner</dt>
+                            <dd className="text-foreground">{newWorkspaceForm.owner.trim() || '…'}</dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Business owner
+                            </dt>
+                            <dd className="text-foreground">{newWorkspaceForm.businessOwner.trim() || '…'}</dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Technical owner
+                            </dt>
+                            <dd className="text-foreground">{newWorkspaceForm.technicalOwner.trim() || '…'}</dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Lifecycle
+                            </dt>
+                            <dd className="text-foreground">{newWorkspaceForm.lifecycleStage}</dd>
+                          </div>
+                        </dl>
+
+                        <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-4 dark:bg-amber-500/10">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-100">
+                            Confirmation
+                          </p>
+                          <label className="mt-3 flex cursor-pointer items-start gap-3 text-sm leading-snug text-foreground">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 shrink-0 rounded border-border"
+                              checked={wizardReviewAcknowledged}
+                              onChange={(e) => {
+                                setWizardReviewAcknowledged(e.target.checked)
+                                if (e.target.checked) setNewWorkspaceFormError(null)
+                              }}
+                            />
+                            <span>
+                              I confirm the summary above is accurate. The workspace boundary will be registered in
+                              the enterprise directory; members and projects are configured afterward.
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    </NewWorkspaceActiveStepShell>
+                  ) : null}
+                </div>
+
+                {newWorkspaceFormError ? (
+                  <div className="mt-2 shrink-0 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+                    {newWorkspaceFormError}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="shrink-0 border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:px-5 md:py-4">
+              <div
+                className={cn(
+                  'flex items-center gap-3',
+                  newWorkspaceWizardStep > 1 ? 'justify-between' : 'justify-end'
+                )}
+              >
+                {newWorkspaceWizardStep > 1 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={cn(enterpriseSecondaryButtonClass(), 'shrink-0 gap-1.5')}
+                    onClick={goWizardBack}
+                  >
+                    <ChevronLeft className="h-4 w-4 shrink-0" aria-hidden />
+                    Back
+                  </Button>
+                ) : null}
+                <div className="flex shrink-0">
+                  {newWorkspaceWizardStep < NEW_WORKSPACE_WIZARD_STEP_TOTAL ? (
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      className={cn(registerServicePrimaryButtonClass(), 'gap-1.5 px-4')}
+                      onClick={goWizardNext}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
+                    </Button>
+                  ) : (
+                    <Button
+                      type="submit"
+                      variant="default"
+                      size="sm"
+                      className={cn(registerServicePrimaryButtonClass(), 'gap-1.5 px-4')}
+                      disabled={isSubmittingNewWorkspace || !wizardReviewAcknowledged}
+                    >
+                      <ClipboardCheck className="h-4 w-4 shrink-0" aria-hidden />
+                      {isSubmittingNewWorkspace ? 'Creating…' : 'Create workspace'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </form>
+      </div>
+
+      {/* New Workspace — ownership overlays (above drawer z-[1100], same pattern as Manage Primary Organization). */}
+      {newWorkspaceDrawerOpen && ownershipOverlay ? (
+        <>
+          <div
+            className="fixed inset-0 z-[1200] bg-black/25 backdrop-blur-sm"
+            style={{ margin: 0, padding: 0, width: '100vw', height: '100vh' }}
+            onClick={closeOwnershipOverlay}
+            aria-hidden={false}
+            role="presentation"
+          />
+          <div
+            className="fixed left-1/2 top-1/2 z-[1250] w-[min(520px,92vw)] max-h-[min(80vh,640px)] -translate-x-1/2 -translate-y-1/2 flex flex-col rounded-2xl border border-border bg-background/95 shadow-2xl backdrop-blur-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-ws-ownership-overlay-title"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4">
+              <div className="pr-3">
+                <h3 id="new-ws-ownership-overlay-title" className="text-sm font-semibold text-foreground">
+                  {ownershipOverlay.type === 'directory' ? 'Browse directory' : 'Invite by email'}
+                </h3>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  {ownershipOverlay.type === 'directory'
+                    ? `Select a person for ${ownershipTargetLabel(ownershipOverlay.target)}.`
+                    : `Invite by email for ${ownershipOverlay.target === 'business' ? 'Business owner' : 'Technical owner'} (marked unverified until IAM sync).`}
+                </p>
+              </div>
+              <Button type="button" variant="ghost" size="icon" onClick={closeOwnershipOverlay} aria-label="Close">
+                <X className="h-5 w-5" aria-hidden />
+              </Button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              {ownershipOverlay.type === 'invite' ? (
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Role</Label>
+                    <Select
+                      value={inviteContactTargetRole}
+                      onChange={(e) => setInviteContactTargetRole(e.target.value as 'business' | 'technical')}
+                      className="h-10 w-full text-sm"
+                    >
+                      <option value="technical">Technical owner</option>
+                      <option value="business">Business owner</option>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="ws-invite-email-overlay" className="text-xs text-muted-foreground">
+                      Email
+                    </Label>
+                    <Input
+                      id="ws-invite-email-overlay"
+                      type="email"
+                      value={inviteContactEmail}
+                      onChange={(e) => {
+                        setInviteContactEmail(e.target.value)
+                        setInviteContactError(null)
+                      }}
+                      placeholder="name@company.com"
+                      className={cn(
+                        'h-10 text-sm',
+                        inviteContactError ? 'border-rose-500 focus-visible:ring-rose-500' : undefined
+                      )}
+                    />
+                    {inviteContactError ? (
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400">{inviteContactError}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="relative mb-3">
+                    <Search
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <Input
+                      value={ownershipOverlayQuery}
+                      onChange={(e) => setOwnershipOverlayQuery(e.target.value)}
+                      placeholder="Search by name, job title, team, or email…"
+                      className="h-10 pl-9 text-sm"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="max-h-[min(50vh,360px)] overflow-y-auto rounded-xl border border-border/70 bg-muted/10">
+                    {ownershipOverlayDirectoryPeople.length === 0 ? (
+                      <p className="px-3 py-3 text-xs text-muted-foreground">No people match your search.</p>
+                    ) : (
+                      ownershipOverlayDirectoryPeople.map((member) => (
+                        <button
+                          key={`dir-${member.id}`}
+                          type="button"
+                          className="flex w-full flex-col items-start border-t border-border/50 px-3 py-2.5 text-left text-xs first:border-t-0 hover:bg-muted/40"
+                          onMouseDown={retainFocusForOwnershipPicker}
+                          onClick={() => selectOwnershipOverlayPerson(ownershipOverlay.target, member)}
+                        >
+                          <span className="font-medium text-foreground">{member.name}</span>
+                          <span className="text-muted-foreground">{member.scope || `${member.role} — ${member.team}`}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-4">
+              {ownershipOverlay.type === 'directory' && ownershipOverlay.target !== 'owner' ? (
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={() => openOwnershipInviteContact(ownershipOverlay.target)}
+                >
+                  Invite by email instead
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className={enterpriseSecondaryButtonClass()}
+                onClick={closeOwnershipOverlay}
+              >
+                Cancel
+              </Button>
+              {ownershipOverlay.type === 'invite' ? (
+                <Button
+                  type="button"
+                  className={cn(registerServicePrimaryButtonClass(), 'bg-slate-900 text-white hover:bg-slate-800')}
+                  onClick={() => {
+                    const email = inviteContactEmail.trim()
+                    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                      setInviteContactError('Enter a valid email address.')
+                      return
+                    }
+                    const role = inviteContactTargetRole
+                    const display = email.split('@')[0]?.replace(/[._-]/g, ' ') ?? email
+                    const name =
+                      display
+                        .split(/\s+/)
+                        .filter(Boolean)
+                        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                        .join(' ') || email
+                    if (role === 'business') {
+                      setNewWorkspaceForm((p) => ({
+                        ...p,
+                        businessOwner: name,
+                        ownershipBusinessOwnerSearchQuery: `${name} (${email})`,
+                      }))
+                      setWizardFieldHighlights((h) => ({ ...h, businessOwner: false }))
+                    } else {
+                      setNewWorkspaceForm((p) => ({
+                        ...p,
+                        technicalOwner: name,
+                        ownershipTechnicalOwnerSearchQuery: `${name} (${email})`,
+                      }))
+                      setWizardFieldHighlights((h) => ({ ...h, technicalOwner: false }))
+                    }
+                    notifyEvent({
+                      type_code: 'todo',
+                      title: 'Invite contact',
+                      body: `Invitation requested: ${email} as ${role === 'technical' ? 'Technical owner' : 'Business owner'}.`,
+                      metadata: {
+                        event: 'workspace_owner_invite_requested',
+                        role,
+                        email,
+                        workspace_name: newWorkspaceForm.name.trim() || null,
+                        organization_id: newWorkspaceForm.primaryOrganizationId || null,
+                      },
+                    })
+                    addToast({
+                      variant: 'success',
+                      title: 'Invite queued',
+                      description: `${email} will be invited and can be linked to IAM later.`,
+                    })
+                    closeOwnershipOverlay()
+                    setInviteContactEmail('')
+                  }}
+                >
+                  Send invite
+                </Button>
+              ) : null}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {/* Manage Primary Organization — pattern aligned with Tilia Service Onboarding "Manage Business Domainsâ€. */}
+      <div
+        className={cn(
+          'fixed inset-0 z-[1200] bg-black/20 backdrop-blur-sm transition-opacity',
+          primaryOrgManageOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+        )}
+        style={{ margin: 0, padding: 0, width: '100vw', height: '100vh', top: 0, left: 0 }}
+        onClick={closePrimaryOrgManage}
+        aria-hidden={!primaryOrgManageOpen}
+        role="presentation"
+      />
+      <div
+        className={cn(
+          'fixed left-1/2 top-1/2 z-[1250] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all',
+          primaryOrgManageOpen
+            ? 'pointer-events-auto scale-100 opacity-100'
+            : 'pointer-events-none scale-95 opacity-0'
+        )}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tectona-manage-primary-org-title"
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <div id="tectona-manage-primary-org-title" className="text-sm font-semibold text-foreground">
+              Manage Primary Organization
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              Add, rename, or delete organization options for this wizard.
+            </div>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={closePrimaryOrgManage} aria-label="Close">
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div className="space-y-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                value={newOrgLabel}
+                onChange={(e) => {
+                  setNewOrgLabel(normalizeTitleCaseInput(e.target.value))
+                  if (newOrgError) setNewOrgError(null)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  addPrimaryOrgDirectoryNode()
+                }}
+                placeholder="New organization (e.g., Wealth Management BU)…"
+                className={cn('h-10 sm:min-w-0 sm:flex-1', newOrgError ? 'border-rose-500 focus-visible:ring-rose-500' : undefined)}
+                aria-invalid={newOrgError != null}
+              />
+              <div className="flex shrink-0 items-center gap-2 sm:w-auto">
+                <Select
+                  value={newOrgParentId}
+                  onChange={(e) => setNewOrgParentId(e.target.value)}
+                  className="h-10 min-w-[10rem] flex-1 sm:flex-initial sm:min-w-[11rem]"
+                  aria-label="Parent organization"
+                >
+                  <option value={ORG_PARENT_ROOT_SENTINEL}>Root level</option>
+                  {orgSelectRows.map(({ id, label, depth }) => (
+                    <option key={id} value={id}>
+                      {`${'\u2003'.repeat(depth)}${label}`}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  className="h-10 w-10 shrink-0 p-0"
+                  onClick={addPrimaryOrgDirectoryNode}
+                  aria-label="Add organization"
+                  title="Add organization"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            {newOrgError ? <p className="text-xs text-rose-600">{newOrgError}</p> : null}
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-border/60">
+            <div className="scrollbar-hide max-h-[320px] overflow-auto">
+              {orgSelectRows.map((row) => {
+                const node = organizationNodes.find((n) => n.id === row.id)
+                if (!node) return null
+                const editing = editingOrgId === node.id
+                const normalizedEditing = editingOrgLabel.trim().toLowerCase()
+                const editingEmpty = editingOrgLabel.trim().length === 0
+                const editingDup =
+                  normalizedEditing.length > 0 &&
+                  organizationNodes.some(
+                    (n) => n.id !== node.id && n.label.trim().toLowerCase() === normalizedEditing
+                  )
+                const parentInvalid =
+                  editing
+                  && (editingOrgParentId !== ORG_PARENT_ROOT_SENTINEL
+                    && (primaryOrgEditBlockedParentIds.has(editingOrgParentId)
+                      || !organizationNodes.some((n) => n.id === editingOrgParentId)))
+                const disableSaveEdit = editingEmpty || editingDup || parentInvalid
+                return (
+                  <div
+                    key={node.id}
+                    className={cn(
+                      'flex gap-2 border-t border-border/40 px-4 py-3 first:border-t-0',
+                      editing ? 'flex-col sm:flex-row sm:items-start sm:justify-between' : 'items-center'
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono text-[10px] text-muted-foreground">{node.code ?? node.id}</div>
+                      {editing ? (
+                        <>
+                          <div className="mt-1 flex items-center gap-2">
+                            <Input
+                              autoFocus
+                              value={editingOrgLabel}
+                              onClick={(ev) => ev.stopPropagation()}
+                              onMouseDown={(ev) => ev.stopPropagation()}
+                              onChange={(e) => {
+                                setEditingOrgLabel(normalizeTitleCaseInput(e.target.value))
+                                if (editingOrgError) setEditingOrgError(null)
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitEditOrganization()
+                                if (e.key === 'Escape') cancelEditOrganization()
+                              }}
+                              className={cn(
+                                'h-9 flex-1',
+                                editingOrgError ? 'border-rose-500 focus-visible:ring-rose-500' : undefined
+                              )}
+                            />
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-9 w-9 p-0"
+                                disabled={disableSaveEdit}
+                                onClick={commitEditOrganization}
+                                aria-label={`Save ${row.label}`}
+                                title="Save"
+                              >
+                                <Save className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-9 w-9 p-0"
+                                onClick={cancelEditOrganization}
+                                aria-label="Cancel edit"
+                                title="Cancel"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            <Label htmlFor={`edit-org-parent-${node.id}`} className="text-[10px] text-muted-foreground">
+                              Under parent
+                            </Label>
+                            <Select
+                              id={`edit-org-parent-${node.id}`}
+                              value={editingOrgParentId}
+                              onChange={(e) => {
+                                setEditingOrgParentId(e.target.value)
+                                if (editingOrgError) setEditingOrgError(null)
+                              }}
+                              className="h-9 w-full max-w-md text-sm"
+                              aria-label="Parent organization when editing"
+                            >
+                              <option value={ORG_PARENT_ROOT_SENTINEL}>Root level</option>
+                              {orgSelectRows
+                                .filter(({ id }) => !primaryOrgEditBlockedParentIds.has(id))
+                                .map(({ id, label, depth }) => (
+                                  <option key={id} value={id}>
+                                    {`${'\u2003'.repeat(depth)}${label}`}
+                                  </option>
+                                ))}
+                            </Select>
+                          </div>
+                          {editingOrgError ? (
+                            <p className="mt-1 text-xs text-rose-600">{editingOrgError}</p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="mt-0.5 text-sm font-medium text-foreground">
+                          <span className="tabular-nums text-muted-foreground">{`${'\u2003'.repeat(row.depth)}`}</span>
+                          {row.label}
+                        </div>
+                      )}
+                    </div>
+
+                    {!editing ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEditOrganization(node)}
+                          className="rounded-lg p-2 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                          aria-label={`Edit ${row.label}`}
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (node.parentId === null) {
+                              closeWorkspaceManagementOverlays({
+                                newWorkspaceDrawer: true,
+                                primaryOrgManage: true,
+                              })
+                              setConfirmDeletePrimaryOrgTargetId(node.id)
+                              setConfirmDeletePrimaryOrgOpen(true)
+                              return
+                            }
+                            deleteOrganization(node.id)
+                          }}
+                          className="rounded-lg p-2 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600"
+                          aria-label={`Delete ${row.label}`}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="text-[11px] text-muted-foreground">
+            Note: organizations are sourced from Workspace Org service. Use Under parent only for UI ordering; the backend
+            currently stores organizations as a flat directory (no hierarchy).
+          </div>
+        </div>
+      </div>
+
+      {/* Manage Workspace Type — aligned with Manage Primary Organization style. */}
+      <div
+        className={cn(
+          'fixed inset-0 z-[1200] bg-black/20 backdrop-blur-sm transition-opacity',
+          workspaceTypeManageOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+        )}
+        style={{ margin: 0, padding: 0, width: '100vw', height: '100vh', top: 0, left: 0 }}
+        onClick={closeWorkspaceTypeManage}
+        aria-hidden={!workspaceTypeManageOpen}
+        role="presentation"
+      />
+      <div
+        className={cn(
+          'fixed left-1/2 top-1/2 z-[1250] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all',
+          workspaceTypeManageOpen ? 'pointer-events-auto scale-100 opacity-100' : 'pointer-events-none scale-95 opacity-0'
+        )}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tectona-manage-workspace-type-title"
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <div id="tectona-manage-workspace-type-title" className="text-sm font-semibold text-foreground">
+              Manage Workspace Type
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              Add, rename, or delete type options for this wizard.
+            </div>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={closeWorkspaceTypeManage} aria-label="Close">
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div className="flex items-center gap-2">
+            <Input
+              value={newWorkspaceTypeLabel}
+              onChange={(e) => {
+                setNewWorkspaceTypeLabel(normalizeTitleCaseInput(e.target.value))
+                if (newWorkspaceTypeError) setNewWorkspaceTypeError(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                addWorkspaceTypeOption()
+              }}
+              placeholder="New type (e.g., Platform, Tribe, Governance)…"
+              className={cn('h-10', newWorkspaceTypeError ? 'border-rose-500 focus-visible:ring-rose-500' : undefined)}
+              aria-invalid={newWorkspaceTypeError != null}
+            />
+            <Button type="button" className="h-10 w-10 p-0" onClick={addWorkspaceTypeOption} aria-label="Add type" title="Add type">
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+          {newWorkspaceTypeError ? <p className="text-xs text-rose-600">{newWorkspaceTypeError}</p> : null}
+
+          <div className="overflow-hidden rounded-xl border border-border/60">
+            <div className="scrollbar-hide max-h-[320px] overflow-auto">
+              {workspaceTypeOptions.map((t) => {
+                const editing = editingWorkspaceTypeValue === t.id
+                const normalizedEditing = editingWorkspaceTypeLabel.trim().toLowerCase()
+                const editingEmpty = editingWorkspaceTypeLabel.trim().length === 0
+                const editingDup =
+                  normalizedEditing.length > 0 &&
+                  workspaceTypeOptions.some((x) => x.id !== t.id && x.label.toLowerCase() === normalizedEditing)
+                const disableSaveEdit = editingEmpty || editingDup
+                return (
+                  <div key={t.id} className="flex items-center gap-2 border-t border-border/40 px-4 py-3 first:border-t-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono text-[10px] text-muted-foreground">{t.typeCode}</div>
+                      {editing ? (
+                        <>
+                          <div className="mt-1 flex items-center gap-2">
+                            <Input
+                              autoFocus
+                              value={editingWorkspaceTypeLabel}
+                              onClick={(ev) => ev.stopPropagation()}
+                              onMouseDown={(ev) => ev.stopPropagation()}
+                              onChange={(e) => {
+                                setEditingWorkspaceTypeLabel(normalizeTitleCaseInput(e.target.value))
+                                if (editingWorkspaceTypeError) setEditingWorkspaceTypeError(null)
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitEditWorkspaceType()
+                                if (e.key === 'Escape') cancelEditWorkspaceType()
+                              }}
+                              className={cn('h-9 flex-1', editingWorkspaceTypeError ? 'border-rose-500 focus-visible:ring-rose-500' : undefined)}
+                            />
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <Button type="button" variant="outline" className="h-9 w-9 p-0" disabled={disableSaveEdit} onClick={commitEditWorkspaceType} aria-label={`Save ${t.label}`} title="Save">
+                                <Save className="h-4 w-4" />
+                              </Button>
+                              <Button type="button" variant="ghost" className="h-9 w-9 p-0" onClick={cancelEditWorkspaceType} aria-label="Cancel edit" title="Cancel">
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                          {editingWorkspaceTypeError ? <p className="mt-1 text-xs text-rose-600">{editingWorkspaceTypeError}</p> : null}
+                        </>
+                      ) : (
+                        <div className="mt-0.5 text-sm font-medium text-foreground">{t.label}</div>
+                      )}
+                    </div>
+
+                    {!editing ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEditWorkspaceType(t)}
+                          className="rounded-lg p-2 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                          aria-label={`Edit ${t.label}`}
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteWorkspaceType(t.id)}
+                          className="rounded-lg p-2 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600"
+                          aria-label={`Delete ${t.label}`}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="text-[11px] text-muted-foreground">
+            Changes are persisted to the backend and apply across all sessions. Deleting a type that is currently selected in the wizard will clear the selection automatically.
+          </div>
+        </div>
+      </div>
+
+      {/* Confirm delete root organization */}
+      <div
+        className={cn(
+          'fixed inset-0 z-[1300] bg-black/25 backdrop-blur-sm transition-opacity',
+          confirmDeletePrimaryOrgOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+        )}
+        style={{ margin: 0, padding: 0, width: '100vw', height: '100vh', top: 0, left: 0 }}
+        onClick={() => {
+          setConfirmDeletePrimaryOrgOpen(false)
+          setConfirmDeletePrimaryOrgTargetId(null)
+        }}
+        aria-hidden={!confirmDeletePrimaryOrgOpen}
+        role="presentation"
+      />
+      <div
+        className={cn(
+          'fixed left-1/2 top-1/2 z-[1350] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all',
+          confirmDeletePrimaryOrgOpen ? 'pointer-events-auto scale-100 opacity-100' : 'pointer-events-none scale-95 opacity-0'
+        )}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tectona-confirm-delete-root-org-title"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+          <div className="min-w-0">
+            <div id="tectona-confirm-delete-root-org-title" className="text-sm font-semibold text-foreground">
+              Delete root organization?
+            </div>
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              This action removes the root node and its entire subtree from the wizard options.
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setConfirmDeletePrimaryOrgOpen(false)
+              setConfirmDeletePrimaryOrgTargetId(null)
+            }}
+            aria-label="Close confirmation dialog"
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div className="rounded-xl border border-amber-200/70 bg-amber-50/70 p-4 text-sm text-slate-800">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden />
+              <div className="min-w-0 space-y-2">
+                <div className="font-semibold">
+                  What will change for <span className="font-mono text-[13px]">{primaryOrgDeleteImpact.rootLabel ?? '…'}</span>
+                </div>
+                <ul className="space-y-1.5 text-[11px] text-slate-700">
+                  <li>
+                    <span className="font-semibold">{primaryOrgDeleteImpact.removeCount}</span> org
+                    {primaryOrgDeleteImpact.removeCount !== 1 ? 's' : ''} will be removed from the picker (root + descendants).
+                  </li>
+                  <li>
+                    Selected values will be cleared if they fall under the removed subtree.
+                    {primaryOrgDeleteImpact.clearsPrimary ? (
+                      <span className="ml-1 font-semibold text-rose-700">Primary organization will be cleared.</span>
+                    ) : (
+                      <span className="ml-1 text-slate-600">Primary organization stays as-is.</span>
+                    )}
+                  </li>
+                  <li>
+                    Related organizations removed: <span className="font-semibold">{primaryOrgDeleteImpact.clearsRelatedCount}</span>
+                  </li>
+                </ul>
+                <div className="text-[11px] text-slate-600">
+                  If you only meant to restructure, use <span className="font-semibold">Under parent</span> instead.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex w-full items-stretch gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              className={cn(enterpriseSecondaryButtonClass(), 'flex-1 min-w-0 justify-center gap-2')}
+              onClick={() => {
+                setConfirmDeletePrimaryOrgOpen(false)
+                setConfirmDeletePrimaryOrgTargetId(null)
+              }}
+            >
+              <X className="h-4 w-4 shrink-0" aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              className={cn(
+                registerServicePrimaryButtonClass(),
+                'flex-1 min-w-0 justify-center gap-2 bg-rose-600 text-white hover:bg-rose-700'
+              )}
+              onClick={() => {
+                if (!confirmDeletePrimaryOrgTargetId) return
+                deleteOrganization(confirmDeletePrimaryOrgTargetId)
+                setConfirmDeletePrimaryOrgOpen(false)
+                setConfirmDeletePrimaryOrgTargetId(null)
+              }}
+            >
+              <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+              Delete root & subtree
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <EnterpriseDeleteConfirmModal
+        open={confirmRemoveMemberOpen}
+        onClose={closeRemoveMemberDialog}
+        onConfirm={() => void submitRemoveMember()}
+        busy={isRemovingMember}
+        title="Remove Member"
+        description="This revokes all workspace memberships for this person in Tectona. The identity record is not deleted."
+        entityLabel="Member"
+        entityValue={confirmRemoveMemberTarget?.name ?? '—'}
+        impactSummary={
+          <>
+              <div className="font-medium text-foreground">Impact summary</div>
+            <div className="mt-1">
+              Memberships to revoke: {confirmRemoveMemberTarget?.memberships.length ?? 0}
+            </div>
+            {confirmRemoveMemberTarget?.memberships.map((ref) => (
+              <div key={ref.membershipId}>
+                {ref.workspaceName} — {ref.role}
+          </div>
+            ))}
+          </>
+        }
+        enterpriseNote="Enterprise note: platform roles in Security & Access Control are managed separately from workspace membership."
+        confirmLabel="Remove member"
+        confirmBusyLabel="Removing..."
+        dialogTitleId="remove-member-dialog-title"
+      />
+
+      <EnterpriseDeleteConfirmModal
+        open={confirmDeleteGovernanceOpen}
+        onClose={closeDeleteGovernanceDialog}
+        onConfirm={() => void submitDeleteGovernance()}
+        busy={isDeletingGovernance}
+        title="Delete Governance"
+        description="This clears the governance assignment for this workspace. The workspace record remains; only catalog policy links and compliance posture are reset."
+        entityLabel="Workspace"
+        entityValue={confirmDeleteGovernanceTarget?.name ?? '—'}
+        impactSummary={
+          <>
+            <div className="font-medium text-foreground">Impact summary</div>
+            <div className="mt-1">Code: {confirmDeleteGovernanceTarget?.code ?? '—'}</div>
+            <div>Template, workflow, SLA, approval, and naming assignments will be removed.</div>
+          </>
+        }
+        enterpriseNote="Enterprise note: governance removal does not delete the workspace directory entry or member memberships."
+        confirmLabel="Delete governance"
+        confirmBusyLabel="Deleting..."
+        dialogTitleId="delete-governance-dialog-title"
+      />
+
+      <EnterpriseDeleteConfirmModal
+        open={confirmDeleteWorkspaceOpen}
+        onClose={closeDeleteWorkspaceDialog}
+        onConfirm={() => void submitDeleteWorkspace()}
+        busy={isDeletingWorkspace}
+        title="Delete Workspace"
+        description="This action permanently removes the workspace and cannot be undone."
+        entityLabel="Workspace"
+        entityValue={confirmDeleteWorkspaceTarget?.name ?? '—'}
+        impactSummary={
+          <>
+                <div className="font-medium text-foreground">Impact summary</div>
+            <div className="mt-1">Code: {confirmDeleteWorkspaceTarget?.code ?? '—'}</div>
+                <div>Linked projects: {confirmDeleteWorkspaceTarget?.projects ?? 0}</div>
+                <div>Members: {confirmDeleteWorkspaceTarget?.members ?? 0}</div>
+          </>
+        }
+        footerExtra={
+          (confirmDeleteWorkspaceTarget?.projects ?? 0) >= WORKSPACE_DELETE_HIGH_PROJECTS_THRESHOLD ? (
+                <div className="rounded-xl border border-amber-300/70 bg-amber-50/80 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+                  <div className="font-semibold">Extra confirmation required</div>
+                  <p className="mt-1 leading-relaxed">
+                    Workspace ini terhubung dengan banyak project ({confirmDeleteWorkspaceTarget?.projects ?? 0}).
+                    Pastikan tidak ada dependensi aktif sebelum melanjutkan.
+                  </p>
+                  <label className="mt-2 inline-flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={confirmDeleteWorkspaceHighImpactAck}
+                      onChange={(e) => setConfirmDeleteWorkspaceHighImpactAck(e.target.checked)}
+                      disabled={isDeletingWorkspace}
+                    />
+                <span className="text-[11px] font-medium">
+                  Saya sudah cek dependensi project dan tetap ingin menghapus workspace ini.
+                </span>
+                  </label>
+                </div>
+          ) : null
+        }
+        enterpriseNote="Enterprise note: linked projects and memberships may require separate cleanup in downstream services."
+        confirmLabel="Delete workspace"
+        confirmBusyLabel="Deleting..."
+        disableConfirm={
+          (confirmDeleteWorkspaceTarget?.projects ?? 0) >= WORKSPACE_DELETE_HIGH_PROJECTS_THRESHOLD
+          && !confirmDeleteWorkspaceHighImpactAck
+        }
+        dialogTitleId="delete-workspace-dialog-title"
+      />
+
+      <EnterpriseDeleteConfirmModal
+        open={confirmDeleteAssetOpen}
+        onClose={closeDeleteAssetDialog}
+        onConfirm={() => void submitDeleteAsset()}
+        busy={isDeletingAsset}
+        title="Delete Asset"
+        description="This action removes the selected shared asset from the governance catalog backend and cannot be undone."
+        entityLabel="Asset"
+        entityValue={confirmDeleteAssetTarget?.name ?? 'â€”'}
+        impactSummary={
+          <>
+            <div className="font-medium text-foreground">Impact summary</div>
+            <div className="mt-1">Type: {confirmDeleteAssetTarget?.type ?? 'â€”'}</div>
+            <div>Owner: {confirmDeleteAssetTarget?.owner ?? 'â€”'}</div>
+            <div>Version: {confirmDeleteAssetTarget?.version ?? 'â€”'}</div>
+          </>
+        }
+        enterpriseNote="Enterprise note: deleting this catalog asset does not remove workspace records or existing member memberships."
+        confirmLabel="Delete asset"
+        confirmBusyLabel="Deleting..."
+        dialogTitleId="delete-asset-dialog-title"
+      />
+
+    </div>
+  )
+}

@@ -1,0 +1,60 @@
+.compactCard {
+  width: 112px !important;
+  max-width: 112px !important;
+  height: 64px !important;
+  margin-top: 2px !important;
+  overflow: visible !important;
+}
+
+.compactTab {
+  top: -4px !important;
+  left: 6px !important;
+  width: 38px !important;
+  height: 14px !important;
+  border-top-left-radius: 6px !important;
+  border-top-right-radius: 6px !important;
+  z-index: 6 !important;
+}
+
+.compactBody {
+  border-radius: 8px !important;
+  padding: 9px 7px 5px 7px !important;
+  overflow: visible !important;
+}
+
+.compactBody::before {
+  height: 9px !important;
+  border-top-left-radius: 8px !important;
+  border-top-right-radius: 8px !important;
+}
+
+.compactTitleRow {
+  margin-top: 7px !important;
+  gap: 4px !important;
+}
+
+.compactTitle {
+  font-size: 10px !important;
+}
+
+.compactMeta {
+  margin-top: 1px !important;
+  font-size: 8px !important;
+  line-height: 1.25 !important;
+}
+
+.compactPapers {
+  bottom: 4px !important;
+  right: 4px !important;
+  transform: scale(0.72);
+  transform-origin: bottom right;
+}
+
+.compactDragText {
+  font-size: 9px !important;
+  padding: 4px 7px !important;
+}
+
+.compactDragOverlay {
+  border-radius: 8px !important;
+}

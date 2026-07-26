@@ -1,0 +1,261 @@
+.folderCard {
+  position: relative;
+  width: 100% !important;
+  max-width: 168px !important;
+  height: 96px !important;
+  border-radius: 10px !important;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+/* Folder body */
+.folderBody {
+  position: relative;
+  height: 100%;
+  border-radius: 10px !important; /* rounded all corners */
+  padding: 14px 10px 8px 10px !important;
+  border: 1px solid rgba(37, 99, 235, 0.28) !important;
+  background: linear-gradient(180deg, #eaf3ff 0%, #d9ebff 45%, #cfe6ff 100%) !important;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10), 0 1px 0 rgba(255, 255, 255, 0.78) inset !important;
+  transition: box-shadow 160ms ease, transform 160ms ease, border-color 160ms ease, background 160ms ease !important;
+  overflow: hidden;
+}
+
+/* Mac-like top "lip" - simplified */
+.folderBody::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 14px;
+  border-top-left-radius: 10px !important;
+  border-top-right-radius: 10px !important;
+  background: linear-gradient(180deg, #f3f9ff 0%, #dfefff 100%);
+  border-bottom: 1px solid rgba(37, 99, 235, 0.18);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Folder tab (top-left) - Mac style with proper overlap */
+.folderTab {
+  position: absolute;
+  top: -4px !important; /* slight protrusion */
+  left: 8px !important;
+  width: 56px !important;
+  height: 20px !important;
+  border: 1px solid rgba(37, 99, 235, 0.28) !important;
+  border-bottom: none !important;
+  border-top-left-radius: 8px !important; /* match body radius */
+  border-top-right-radius: 8px !important;
+  background: linear-gradient(180deg, #f7fbff 0%, #e6f2ff 55%, #d6ebff 100%) !important;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08), 0 1px 0 rgba(255, 255, 255, 0.82) inset !important;
+  z-index: 5 !important;
+}
+
+/* Title & meta */
+.folderTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px; /* jarak dari tab agar nama folder tidak terlalu rapat ke atas */
+}
+
+.folderTitle {
+  font-weight: 600;
+  font-size: 12px !important;
+  line-height: 1.2;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folderMeta {
+  margin-top: 4px;
+  font-size: 10px !important;
+  color: #6b7280;
+}
+
+.folderMetaMuted {
+  color: #9ca3af;
+}
+
+/* Actions (kebab) */
+.folderActions {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 3; /* above overlay */
+}
+
+.kebabButton {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.6);
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.kebabButton:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(229, 231, 235, 0.9);
+  color: #374151;
+}
+
+/* Shared badge */
+.sharedBadge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(229, 231, 235, 0.95);
+  background: rgba(255, 255, 255, 0.8);
+  color: #374151;
+}
+
+/* Hover + focus */
+.folderCard:hover:not(.selected) .folderBody {
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14), 0 1px 0 rgba(255, 255, 255, 0.85) inset !important;
+  transform: translateY(-1px) !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
+}
+
+.folderCard:focus-visible .folderBody {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18), 0 14px 34px rgba(15, 23, 42, 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.85) inset !important;
+  border-color: rgba(59, 130, 246, 0.55) !important;
+}
+
+/* Selected state - clear and visible selection indicator */
+.selected .folderBody {
+  border-color: rgba(59, 130, 246, 0.9) !important;
+  border-width: 2px !important;
+  background: linear-gradient(180deg, #edf6ff 0%, #d8ebff 55%, #cfe6ff 100%) !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3), 0 20px 40px rgba(0, 0, 0, 0.15), 0 1px 0 rgba(255, 255, 255, 0.85) inset !important;
+  transform: translateY(-1px) !important;
+}
+
+.selected .folderTab {
+  border-color: rgba(59, 130, 246, 0.9) !important;
+  border-width: 2px !important;
+}
+
+.selected .folderTab {
+  border-color: rgba(59, 130, 246, 0.75) !important;
+  border-width: 2px !important;
+}
+
+
+/* Drag-over state */
+.dragOver .folderBody {
+  border-style: dashed !important;
+  border-color: rgba(59, 130, 246, 0.75) !important;
+  background: linear-gradient(180deg, #f0f8ff 0%, #ddecff 55%, #d2e8ff 100%) !important;
+}
+
+.dragOver .folderTab {
+  border-color: rgba(59, 130, 246, 0.55) !important;
+}
+
+.dragOverOverlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px !important;
+  background: rgba(59, 130, 246, 0.06) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.dragOverText {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(37, 99, 235, 0.95);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+/* Folder dengan project di dalam — kertas/dokumen terlihat masuk ke dalam folder */
+.hasProjects .folderBody {
+  background: linear-gradient(180deg, #d6e9ff 0%, #c5e0ff 40%, #b8d9ff 100%) !important;
+  border-color: rgba(37, 99, 235, 0.4) !important;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12), 0 1px 0 rgba(255, 255, 255, 0.75) inset !important;
+}
+
+.hasProjects .folderTab {
+  background: linear-gradient(180deg, #e8f2ff 0%, #d0e5ff 55%, #b8d9ff 100%) !important;
+  border-color: rgba(37, 99, 235, 0.4) !important;
+}
+
+/* Tumpukan kertas/dokumen yang terlihat masuk ke dalam folder (dari sisi kanan) */
+.folderPapers {
+  position: absolute;
+  bottom: 10px;
+  right: 8px;
+  width: 24px;
+  height: 38px;
+  pointer-events: none;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 0;
+}
+
+.folderPapers .paper {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  height: 100%;
+  background: linear-gradient(180deg, #fefefe 0%, #f5f5f0 30%, #ebe8e0 100%);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-right: none;
+  border-radius: 1px 0 0 1px;
+  box-shadow: -1px 0 2px rgba(0, 0, 0, 0.04);
+}
+
+.folderPapers .paper:nth-child(1) {
+  height: 32px;
+  right: 0;
+  z-index: 4;
+}
+
+.folderPapers .paper:nth-child(2) {
+  height: 35px;
+  right: 4px;
+  z-index: 3;
+  opacity: 0.95;
+}
+
+.folderPapers .paper:nth-child(3) {
+  height: 38px;
+  right: 8px;
+  z-index: 2;
+  opacity: 0.9;
+}
+
+.folderPapers .paper:nth-child(4) {
+  height: 34px;
+  right: 12px;
+  z-index: 1;
+  opacity: 0.85;
+}

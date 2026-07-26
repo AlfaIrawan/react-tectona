@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" class="light">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="apple-touch-icon" href="/images/logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tectona project management platform" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Tectona" />
+    <title>Tectona - Project Management Platform</title>
+    <!--
+      Stale Workbox from a prior production/preview build on :9411 can keep serving
+      old hashed /assets/*.js (mojibake Â·) even while Vite dev is running.
+      Incognito works because it has no SW. Kill SW early on local hosts.
+    -->
+    <script>
+      (function () {
+        var host = location.hostname
+        if (host !== 'localhost' && host !== '127.0.0.1') return
+        if (!('serviceWorker' in navigator)) return
+        var FLAG = 'tectona:sw-dev-reset-v1'
+        var hadController = Boolean(navigator.serviceWorker.controller)
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(
+            regs.map(function (reg) {
+              return reg.unregister()
+            }),
+          )
+        }).then(function () {
+          if (!('caches' in window)) return
+          return caches.keys().then(function (keys) {
+            return Promise.all(
+              keys.map(function (key) {
+                return caches.delete(key)
+              }),
+            )
+          })
+        }).then(function () {
+          if (!hadController || sessionStorage.getItem(FLAG) === '1') return
+          sessionStorage.setItem(FLAG, '1')
+          location.reload()
+        }).catch(function () {})
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
