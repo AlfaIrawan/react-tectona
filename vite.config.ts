@@ -2,17 +2,51 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
+import { execSync } from 'child_process'
+import { readFileSync } from 'fs'
 
 const stripGatewayRuntime = (p: string) => p.replace(/^\/api\/gateway-runtime/, '')
 
+const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
+
+function gitShortHash(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { cwd: __dirname }).toString().trim()
+  } catch {
+    return 'dev'
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version as string),
+    __APP_BUILD_HASH__: JSON.stringify(gitShortHash()),
+  },
   plugins: [
     react(),
+    {
+      name: 'tectona-cache-background-media-dev',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url?.match(/^\/images\/background-.*\.(mp4|png|webp)$/i)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+          }
+          next()
+        })
+      },
+    },
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: null,
-      includeAssets: ['vite.svg', 'images/logo.png', 'images/logo-white.png', 'ui-manifest.json'],
+      includeAssets: [
+        'vite.svg',
+        'images/logo.png',
+        'images/logo-white.png',
+        'images/background-1.png',
+        'images/background-1.mp4',
+        'ui-manifest.json',
+      ],
       manifest: {
         id: '/',
         name: 'Tectona — Project Management',
@@ -47,23 +81,59 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2,json,webmanifest}'],
-        globIgnores: ['**/images/background-*.png'],
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2,json,webmanifest,png,webp}'],
+        // Large illustration packs stay network-first via runtime rule scope (/images/ only).
+        globIgnores: [
+          '**/images/project-templates/**',
+          '**/images/project-templates-section/**',
+        ],
+        additionalManifestEntries: [
+          { url: '/images/background-1.png', revision: null },
+          { url: '/images/background-1.mp4', revision: null },
+        ],
+        // Main app chunk can exceed 3 MiB after feature growth; Workbox default is 2 MiB.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         navigateFallback: '/index.html',
         // Keep Vite/dev module graph and API off the SPA fallback.
         navigateFallbackDenylist: [/^\/api\//, /^\/src\//, /^\/@/, /^\/node_modules\//],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
-            urlPattern: ({ request, url }) =>
-              request.destination === 'image' || url.pathname.startsWith('/images/'),
+            // Background/login hero video.
+            // Do not import workbox-* plugin classes in this config — on Node 20.17
+            // Vite fails to load the config (CJS/ESM mismatch → exit 1). Use
+            // declarative cacheableResponse instead; Range seeks hit network.
+            urlPattern: ({ sameOrigin, url }) =>
+              sameOrigin &&
+              url.pathname.startsWith('/images/') &&
+              /\.(mp4|webm|mov|m4v)$/i.test(url.pathname),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'tectona-background-media',
+              expiration: {
+                maxEntries: 8,
+                maxAgeSeconds: 60 * 60 * 24 * 90,
+              },
+              cacheableResponse: {
+                statuses: [200],
+              },
+            },
+          },
+          {
+            // Same-origin static UI only — do not cache MinIO/chat/API image URLs.
+            urlPattern: ({ sameOrigin, url }) =>
+              sameOrigin &&
+              url.pathname.startsWith('/images/') &&
+              !/\.(mp4|webm|mov|m4v)$/i.test(url.pathname),
             handler: 'CacheFirst',
             options: {
               cacheName: 'tectona-static-images',
               expiration: {
                 maxEntries: 160,
                 maxAgeSeconds: 60 * 60 * 24 * 30,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
               },
             },
           },
@@ -106,15 +176,22 @@ export default defineConfig({
       '/api/identity-lite': {
         target: 'http://localhost:8430',
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api\/identity-lite/, ''),
+        ws: true,
+        // OIDC lives at /oauth2/*; REST admin/register at /api/identity-lite/v1/*
+        rewrite: (p) =>
+          p.startsWith('/api/identity-lite/v1')
+            ? p
+            : p.replace(/^\/api\/identity-lite/, ''),
       },
       '/api/workspace-access-control': {
         target: 'http://localhost:8421',
         changeOrigin: true,
+        ws: true,
       },
       '/api/workspace-org': {
         target: 'http://localhost:8424',
         changeOrigin: true,
+        ws: true,
       },
       '/api/workspace-governance': {
         target: 'http://localhost:8428',
@@ -174,9 +251,28 @@ export default defineConfig({
         target: 'http://localhost:8406',
         changeOrigin: true,
       },
+      '/api/registry': {
+        target: 'http://localhost:8405',
+        changeOrigin: true,
+      },
       '/api/notification-service': {
         target: 'http://localhost:8700',
         changeOrigin: true,
+        ws: true,
+        rewrite: (p) => p.replace(/^\/api\/notification-service/, ''),
+      },
+      '/api/tectona-mail': {
+        target: 'http://localhost:8434',
+        changeOrigin: true,
+      },
+      '/api/tectona-activity': {
+        target: 'http://localhost:8435',
+        changeOrigin: true,
+      },
+      '/api/plantuml': {
+        target: 'http://127.0.0.1:8090',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/plantuml/, ''),
       },
     },
   },

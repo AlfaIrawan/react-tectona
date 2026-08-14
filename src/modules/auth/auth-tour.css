@@ -1,0 +1,96 @@
+/* Theme overrides so the driver.js onboarding tour matches Tectona's card/popover tokens (see src/index.css). */
+
+.tectona-tour-popover.driver-popover {
+  background-color: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  padding: 18px;
+  max-width: 320px;
+}
+
+.tectona-tour-popover .driver-popover-title {
+  color: hsl(var(--popover-foreground));
+  font-size: 15px;
+}
+
+.tectona-tour-popover .driver-popover-description {
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+}
+
+.tectona-tour-popover .driver-popover-close-btn {
+  color: hsl(var(--muted-foreground));
+}
+
+.tectona-tour-popover .driver-popover-close-btn:hover,
+.tectona-tour-popover .driver-popover-close-btn:focus {
+  color: hsl(var(--popover-foreground));
+}
+
+.tectona-tour-popover .driver-popover-progress-text {
+  color: hsl(var(--muted-foreground));
+}
+
+.tectona-tour-popover .driver-popover-footer-btn {
+  background-color: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 4px);
+  font-weight: 500;
+}
+
+.tectona-tour-popover .driver-popover-footer-btn:hover,
+.tectona-tour-popover .driver-popover-footer-btn:focus {
+  background-color: hsl(var(--secondary) / 0.8);
+}
+
+.tectona-tour-popover .driver-popover-next-btn,
+.tectona-tour-popover .driver-popover-footer-btn.driver-popover-next-btn {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
+}
+
+.tectona-tour-popover .driver-popover-next-btn:hover,
+.tectona-tour-popover .driver-popover-next-btn:focus {
+  background-color: hsl(var(--primary) / 0.9);
+}
+
+.tectona-tour-popover .driver-popover-arrow-side-left {
+  border-left-color: hsl(var(--popover));
+}
+.tectona-tour-popover .driver-popover-arrow-side-right {
+  border-right-color: hsl(var(--popover));
+}
+.tectona-tour-popover .driver-popover-arrow-side-top {
+  border-top-color: hsl(var(--popover));
+}
+.tectona-tour-popover .driver-popover-arrow-side-bottom {
+  border-bottom-color: hsl(var(--popover));
+}
+
+.tectona-auth-tour-fab {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 60;
+}
+
+.tectona-auth-copyright {
+  position: fixed;
+  left: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 60;
+}
+
+/* Workspace Management guide: keep New Workspace drawer above driver.js overlay during wizard steps. */
+body.wm-guide-wizard-tour-active [data-tour-target='wm-new-workspace-drawer-backdrop'] {
+  z-index: 1000000001 !important;
+  pointer-events: none !important;
+}
+
+body.wm-guide-wizard-tour-active [data-tour-target='wm-new-workspace-drawer'] {
+  z-index: 1000000002 !important;
+}

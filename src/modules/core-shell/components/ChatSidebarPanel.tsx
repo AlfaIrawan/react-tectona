@@ -3,6 +3,7 @@ import type { CSSProperties, RefObject } from 'react'
 import { useLocation } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { getSession } from '@/auth/authService'
+import { randomUuid } from '@/lib/randomId'
 import {
   DndContext,
   DragOverlay,
@@ -217,6 +218,7 @@ import {
   toCollaborationMessageApi,
   type ChatMessageRealtimePayload,
 } from '@/lib/chat/chatRealtimeEvents'
+import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import {
   isChatMessageSoundEnabled,
   setChatMessageSoundEnabled,
@@ -620,9 +622,9 @@ function collaborationChannelToConversation(
   const updatedAt = parseCollaborationTimestamp(ch.last_message_at)
   const lastSequenceNo = ch.last_sequence_no ?? 0
   const previewSource =
-    ch.last_message_preview?.trim() || (ch.last_message_at ? 'Pesan baru' : 'Belum ada pesan')
+    ch.last_message_preview?.trim() || (ch.last_message_at ? 'New message' : 'No messages yet')
   const preview = isChannelPreviewCleared(ch.id, lastSequenceNo)
-    ? 'Belum ada pesan'
+    ? 'No messages yet'
     : truncatePreview(previewSource)
   const unreadCount = ch.unread_count ?? 0
 
@@ -655,7 +657,7 @@ function collaborationChannelToConversation(
     return {
       id: `conv-channel-${ch.id}`,
       mode: 'group',
-      title: ch.title?.trim() || 'Grup chat',
+      title: ch.title?.trim() || 'Group chat',
       channelId: ch.id,
       lastSequenceNo,
       disappearingMessagesTtl: parseDisappearingMessagesDuration(ch.disappearing_messages_ttl),
@@ -799,7 +801,7 @@ function mergePeerReceiptState(local: Conversation, api: Conversation): Conversa
   return {
     ...api,
     id: local.id,
-    preview: clearedPreview ? 'Belum ada pesan' : api.preview,
+    preview: clearedPreview ? 'No messages yet' : api.preview,
     lastSequenceNo: lastSeq,
     disappearingMessagesTtl: api.disappearingMessagesTtl ?? local.disappearingMessagesTtl,
     isFavorite: local.isFavorite ?? api.isFavorite,
@@ -863,11 +865,11 @@ function genAiSessionToConversation(
   const rawTitle = (session.title ?? '').trim()
   const rawPreview = (session.preview ?? '').trim()
   const safeTitle = isInternalOpeningGreetingMarker(rawTitle)
-    ? 'Percakapan baru'
-    : rawTitle || 'Percakapan baru'
+    ? 'New conversation'
+    : rawTitle || 'New conversation'
   const safePreview = isInternalOpeningGreetingMarker(rawPreview)
-    ? 'Belum ada pesan'
-    : rawPreview || 'Belum ada pesan'
+    ? 'No messages yet'
+    : rawPreview || 'No messages yet'
 
   return {
     id: session.session_id,
@@ -996,6 +998,8 @@ type GenAiOpeningGreetingContext = {
   chatScreen?: string
   activeConversationTitle?: string | null
   activeConversationMode?: string | null
+  documentId?: string | null
+  documentTitle?: string | null
 }
 
 const BACKEND_OPENING_GREETING_TOKEN = '__TECTONA_OPENING_GREETING__'
@@ -1019,10 +1023,12 @@ async function resolveGenAiOpeningGreeting(
       workspace_id: TECTONA_CHAT_WORKSPACE_ID,
       session_id: convId,
       ui: uiContext,
+      document_id: context.documentId ?? null,
+      document_title: context.documentTitle ?? null,
     },
   })
 
-  const text = runtime.answer.trim() || 'Halo, saya siap membantu sesuai konteks halaman yang sedang Anda buka.'
+  const text = runtime.answer.trim() || "Hi, I'm ready to help based on the context of the page you have open."
   return {
     id: `greet-${convId}`,
     role: 'assistant',
@@ -1039,9 +1045,9 @@ function buildGenAiGreetingErrorMessage(): ChatMessage {
   return {
     id: `greet-error-${Date.now()}`,
     role: 'assistant',
-    text: 'Gagal memuat sapaan Tectona Assistant. Silakan coba lagi.',
+    text: 'Failed to load the Tectona Assistant greeting. Please try again.',
     at: Date.now(),
-    action: { kind: 'retry_greet', label: 'Coba lagi' },
+    action: { kind: 'retry_greet', label: 'Try again' },
   }
 }
 
@@ -1282,7 +1288,16 @@ function EventFormEmojiTrigger({
   )
 }
 
-export function ChatSidebarPanel() {
+type ChatSidebarPanelDocumentContext = {
+  documentId: string
+  documentTitle?: string | null
+}
+
+type ChatSidebarPanelProps = {
+  documentContext?: ChatSidebarPanelDocumentContext | null
+}
+
+export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelProps = {}) {
   const location = useLocation()
   const close = () => useChatPanelStore.getState().setOpen(false)
   const setActiveChannelId = useChatNotificationTargetStore((s) => s.setActiveChannelId)
@@ -1409,10 +1424,21 @@ export function ChatSidebarPanel() {
           chatScreen: screen,
           activeConversationTitle: conv?.title ?? null,
           activeConversationMode: conv?.mode ?? null,
+          documentId: documentContext?.documentId ?? null,
+          documentTitle: documentContext?.documentTitle ?? null,
         },
       })
     },
-    [conversations, location.pathname, location.search, screen, setMessagesById, setConversations],
+    [
+      conversations,
+      location.pathname,
+      location.search,
+      screen,
+      setMessagesById,
+      setConversations,
+      documentContext?.documentId,
+      documentContext?.documentTitle,
+    ],
   )
 
   const handleAgentActionConfirm = useCallback(
@@ -1481,7 +1507,7 @@ export function ChatSidebarPanel() {
           }
         })
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : 'Eksekusi gagal'
+        const errMsg = error instanceof Error ? error.message : 'Execution failed'
         setMessagesById((prev) => {
           const msgs = prev[conversationId] ?? []
           return {
@@ -1831,7 +1857,7 @@ export function ChatSidebarPanel() {
       if (remaining.length === 0) {
         setConversations((prev) =>
           prev.map((c) =>
-            c.id === conversationId ? { ...c, preview: 'Belum ada pesan', updatedAt: Date.now() } : c,
+            c.id === conversationId ? { ...c, preview: 'No messages yet', updatedAt: Date.now() } : c,
           ),
         )
       }
@@ -1974,6 +2000,21 @@ export function ChatSidebarPanel() {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  useEffect(() => {
+    const onTenantChanged = () => {
+      void (async () => {
+        try {
+          const loaded = await loadChatContactDirectory()
+          setChatContacts(loaded)
+        } catch {
+          setChatContacts([TECTONA_ASSISTANT_CONTACT])
+        }
+      })()
+    }
+    window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+    return () => window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
   }, [])
 
   useEffect(() => {
@@ -2145,6 +2186,8 @@ export function ChatSidebarPanel() {
           chatScreen: screen,
           activeConversationTitle: conv.title,
           activeConversationMode: conv.mode,
+          documentId: documentContext?.documentId ?? null,
+          documentTitle: documentContext?.documentTitle ?? null,
         })
         if (cancelled) return
         const synced = await syncThreadFromBackend()
@@ -2225,7 +2268,15 @@ export function ChatSidebarPanel() {
     return () => {
       cancelled = true
     }
-  }, [activeConversationId, conversations, location.pathname, location.search, screen])
+  }, [
+    activeConversationId,
+    conversations,
+    location.pathname,
+    location.search,
+    screen,
+    documentContext?.documentId,
+    documentContext?.documentTitle,
+  ])
 
   useEffect(() => {
     const conv =
@@ -2885,7 +2936,7 @@ export function ChatSidebarPanel() {
     (id: string) => {
       const current = conversations.find((x) => x.id === id)
       if (!current || current.isBlocked) return
-      // Chat lock diperiksa di openConversation; setelah kode benar boleh buka meski isLocked true.
+      // Chat lock is checked in openConversation; once the code is correct it may open even if isLocked is true.
       if (current.channelId) {
         const altKey = channelConversationId(current.channelId)
         setMessagesById((prev) => {
@@ -2945,7 +2996,7 @@ export function ChatSidebarPanel() {
             pushGlobalToast({
               variant: 'destructive',
               title: 'Lock chat',
-              description: err instanceof Error ? err.message : 'Gagal mengaktifkan lock.',
+              description: err instanceof Error ? err.message : 'Failed to enable the lock.',
             })
           }
         })()
@@ -2991,7 +3042,7 @@ export function ChatSidebarPanel() {
       const conv = conversations.find((x) => x.id === conversationId)
       const channelId = conv?.channelId
       if (!channelId) {
-        setChatLockError('Channel tidak tersedia. Muat ulang daftar chat.')
+        setChatLockError('Channel unavailable. Reload the chat list.')
         return
       }
       setChatLockLoading(true)
@@ -3035,13 +3086,13 @@ export function ChatSidebarPanel() {
         }
         const ok = await verifyChatLockPassword(channelId, password)
         if (!ok) {
-          setChatLockError('Password salah. Coba lagi.')
+          setChatLockError('Incorrect password. Try again.')
           return
         }
         closeChatLockPanel()
         if (pendingOpenAfterUnlock) proceedOpenConversation(conversationId)
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Gagal memproses kode rahasia.'
+        const message = err instanceof Error ? err.message : 'Failed to process the secret code.'
         setChatLockError(message)
       } finally {
         setChatLockLoading(false)
@@ -3095,7 +3146,7 @@ export function ChatSidebarPanel() {
     setConversations((prev) =>
       prev.map((c) =>
         c.id === id
-          ? { ...c, preview: 'Belum ada pesan', unreadCount: 0, updatedAt: Date.now() }
+          ? { ...c, preview: 'No messages yet', unreadCount: 0, updatedAt: Date.now() }
           : c,
       ),
     )
@@ -3223,7 +3274,7 @@ export function ChatSidebarPanel() {
           pushGlobalToast({
             variant: 'default',
             title: 'Unlock chat',
-            description: 'Nonaktifkan lock satu per satu dengan kode rahasia.',
+            description: 'Turn off the lock one at a time using the secret code.',
           })
           clearSelection()
           return
@@ -3294,7 +3345,7 @@ export function ChatSidebarPanel() {
       setConversations((prev) =>
         prev.map((c) =>
           ids.includes(c.id)
-            ? { ...c, preview: 'Belum ada pesan', unreadCount: 0, updatedAt: Date.now() }
+            ? { ...c, preview: 'No messages yet', unreadCount: 0, updatedAt: Date.now() }
             : c
         )
       )
@@ -3396,7 +3447,7 @@ export function ChatSidebarPanel() {
           teamChannelHydratedRef.current.add(ch.id)
           await refreshCollaborationInbox()
         } catch {
-          // UI tetap terbuka; kirim pesan akan meminta bind channel
+          // UI stays open; sending a message will request a channel bind
         }
       })()
     },
@@ -3522,17 +3573,17 @@ export function ChatSidebarPanel() {
 
     const now = Date.now()
     const isAi = contact.mode === 'genai'
-    const id = isAi ? `genai-${crypto.randomUUID()}` : `conv-${contact.id}-${now}`
+    const id = isAi ? `genai-${randomUuid()}` : `conv-${contact.id}-${now}`
     const newConv: Conversation = {
       id,
       mode: contact.mode,
       // Keep title aligned with backend default from first render to avoid
       // same-session title drift after close/reopen hydration.
-      title: isAi ? 'Percakapan baru' : contact.name,
+      title: isAi ? 'New conversation' : contact.name,
       contactId: contact.mode === 'team' ? contact.id : undefined,
       contactName: contact.mode === 'team' ? contact.name : undefined,
       contactAvatarSrc: contact.mode === 'team' ? contact.avatarSrc : undefined,
-      preview: 'Belum ada pesan',
+      preview: 'No messages yet',
       updatedAt: now,
       unreadCount: 0,
       archived: false,
@@ -3643,7 +3694,7 @@ export function ChatSidebarPanel() {
             contactAvatarSrc: peerContact.avatarSrc,
             channelId: channel.id,
             ...safePeerReceiptFromChannel(channel),
-            preview: truncatePreview(channel.last_message_preview?.trim() || 'Belum ada pesan'),
+            preview: truncatePreview(channel.last_message_preview?.trim() || 'No messages yet'),
             updatedAt: parseCollaborationTimestamp(channel.last_message_at),
             unreadCount: channel.unread_count ?? 0,
           }
@@ -4180,7 +4231,7 @@ export function ChatSidebarPanel() {
           const message = error instanceof Error ? error.message : 'Attachment upload failed.'
           pushGlobalToast({
             variant: 'error',
-            title: 'Upload attachment gagal',
+            title: 'Attachment upload failed',
             description: message,
           })
           return
@@ -4196,7 +4247,7 @@ export function ChatSidebarPanel() {
           const message = error instanceof Error ? error.message : 'Auto evidence upload failed.'
           pushGlobalToast({
             variant: 'error',
-            title: 'Auto evidence dilewati',
+            title: 'Auto evidence skipped',
             description: message,
           })
         }
@@ -4223,7 +4274,7 @@ export function ChatSidebarPanel() {
       t.length > 0
         ? t.slice(0, 72) + (t.length > 72 ? '…' : '')
         : attachSnapshot.length > 0
-          ? `📎 ${attachSnapshot.length} lampiran${attachSnapshot.length === 1 ? '' : ''}`
+          ? `📎 ${attachSnapshot.length} attachment${attachSnapshot.length === 1 ? '' : 's'}`
           : ''
 
     setConversations((prev) =>
@@ -4238,7 +4289,7 @@ export function ChatSidebarPanel() {
                     ? t.length > 0
                       ? t.slice(0, 48) + (t.length > 48 ? '…' : '')
                       : attachSnapshot.length > 0
-                        ? 'Lampiran'
+                        ? 'Attachment'
                         : c.title
                     : c.title,
               preview: previewLine,
@@ -4320,6 +4371,8 @@ export function ChatSidebarPanel() {
             ui: runtimeUiContext,
             user_attachments: runtimeUserAttachments,
             assistant_attachments: runtimeAssistantAttachments,
+            document_id: documentContext?.documentId ?? null,
+            document_title: documentContext?.documentTitle ?? null,
           },
         })
 
@@ -4360,10 +4413,10 @@ export function ChatSidebarPanel() {
                 )
               })
               .catch((err: unknown) => {
-                const msg = err instanceof Error ? err.message : 'Aksi gagal dijalankan.'
+                const msg = err instanceof Error ? err.message : 'Action failed to run.'
                 window.dispatchEvent(
                   new CustomEvent('tectona:chat-inject-assistant', {
-                    detail: { text: `⚠️ Gagal: ${msg}` },
+                    detail: { text: `⚠️ Failed: ${msg}` },
                   }),
                 )
               })
@@ -4414,10 +4467,10 @@ export function ChatSidebarPanel() {
         }
       } catch (error) {
         const runtimeErrorMessage =
-          error instanceof Error ? error.message : 'Tidak dapat menghubungi Tectona Assistant.'
+          error instanceof Error ? error.message : 'Unable to reach Tectona Assistant.'
         pushGlobalToast({
           variant: 'error',
-          title: 'Gagal menghubungi Tectona Assistant',
+          title: 'Failed to reach Tectona Assistant',
           description: runtimeErrorMessage,
         })
         setMessagesById((prev) => ({
@@ -4426,7 +4479,7 @@ export function ChatSidebarPanel() {
             m.id === loadingMsgId
               ? {
                   ...m,
-                  text: `Gagal memproses pesan: ${runtimeErrorMessage}`,
+                  text: `Failed to process message: ${runtimeErrorMessage}`,
                   at: Date.now(),
                   isLoading: false,
                 }
@@ -4488,7 +4541,7 @@ export function ChatSidebarPanel() {
         const message = error instanceof Error ? error.message : 'Failed to send message.'
         pushGlobalToast({
           variant: 'error',
-          title: 'Gagal mengirim pesan',
+          title: 'Failed to send message',
           description: message,
         })
         setMessagesById((prev) => ({
@@ -4526,14 +4579,14 @@ export function ChatSidebarPanel() {
   }, [])
 
   // Action cards can inject a ready-made assistant message (e.g. a frontend-built workspace
-  // detail for "Jelaskan di chat") without a backend round-trip.
+  // detail for "Explain in chat") without a backend round-trip.
   useEffect(() => {
     const handler = (event: Event) => {
       const text = (event as CustomEvent<{ text?: string }>).detail?.text
       const convId = activeConversationIdRef.current
       if (!text || !text.trim() || !convId) return
       const message: ChatMessage = {
-        id: `assist-inject-${crypto.randomUUID()}`,
+        id: `assist-inject-${randomUuid()}`,
         role: 'assistant',
         text: text.trim(),
         at: Date.now(),
@@ -4562,13 +4615,13 @@ export function ChatSidebarPanel() {
       setScreen('thread')
       return latestGenai.id
     }
-    const id = `genai-${crypto.randomUUID()}`
+    const id = `genai-${randomUuid()}`
     const ts = Date.now()
     const newConv: Conversation = {
       id,
       mode: 'genai',
-      title: 'Percakapan baru',
-      preview: 'Belum ada pesan',
+      title: 'New conversation',
+      preview: 'No messages yet',
       updatedAt: ts,
       unreadCount: 0,
       archived: false,
@@ -4598,8 +4651,8 @@ export function ChatSidebarPanel() {
     onWakeOnly: () => {
       pushGlobalToast({
         variant: 'info',
-        title: 'Tectona mendengarkan…',
-        description: 'Silakan ucapkan perintah Anda.',
+        title: 'Tectona is listening…',
+        description: 'Go ahead and speak your command.',
       })
     },
   })
@@ -4799,14 +4852,14 @@ export function ChatSidebarPanel() {
         setDisappearingNoticesRevision((v) => v + 1)
         pushGlobalToast({
           variant: synced ? 'success' : 'warning',
-          title: 'Pesan menghilang',
+          title: 'Disappearing messages',
           description: synced
             ? ttl === 'off'
-              ? 'Timer dimatikan untuk chat ini.'
-              : `Pesan baru akan hilang setelah ${formatDisappearingDurationLabel(ttl)}.`
+              ? 'Timer turned off for this chat.'
+              : `New messages will disappear after ${formatDisappearingDurationLabel(ttl)}.`
             : ttl === 'off'
-              ? 'Timer dimatikan di perangkat ini. Jalankan service collaboration-context untuk sinkronisasi.'
-              : `Timer tersimpan di perangkat ini (${formatDisappearingDurationLabel(ttl)}). Service belum tersedia — akan sinkron saat backend aktif.`,
+              ? 'Timer turned off on this device. Run the collaboration-context service to sync.'
+              : `Timer saved on this device (${formatDisappearingDurationLabel(ttl)}). Service unavailable — it will sync once the backend is active.`,
         })
       }
 
@@ -4827,7 +4880,7 @@ export function ChatSidebarPanel() {
             variant: 'error',
             title: 'Disappearing messages',
             description: message.includes('disappearing_messages_ttl')
-              ? 'Database belum dimigrasi. Jalankan migrasi 004_add_disappearing_messages.sql lalu restart service.'
+              ? 'Database has not been migrated. Run migration 004_add_disappearing_messages.sql then restart the service.'
               : message,
           })
         }
@@ -4893,10 +4946,10 @@ export function ChatSidebarPanel() {
   }, [contactInfoConversationId, messagesById])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background pl-3">
+    <div className="flex h-full min-h-0 flex-col bg-transparent pl-3">
       <div
         className={cn(
-          'flex shrink-0 justify-between gap-3 border-b border-border',
+          'flex shrink-0 justify-between gap-3 border-b border-white/40 dark:border-white/10',
           screen === 'home' ? 'items-start px-3 py-3 sm:px-4' : 'items-center px-3 py-2.5'
         )}
       >
@@ -5123,7 +5176,7 @@ export function ChatSidebarPanel() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search messages or conversations…"
-                      className="h-9 pl-9 text-sm"
+                      className="liquid-glass-chat-input h-9 pl-9 text-sm"
                       aria-label="Search messages"
                     />
                   </div>
@@ -5306,8 +5359,8 @@ export function ChatSidebarPanel() {
           {screen === 'newChatContacts' && (
             <div className="flex min-h-0 flex-1 flex-col gap-2">
               <p className="text-xs text-muted-foreground">
-                Pilih kontak untuk memulai.{' '}
-                <span className="font-medium text-foreground">Tectona Assistant</span> tersedia untuk bantuan Gen AI.
+                Select a contact to get started.{' '}
+                <span className="font-medium text-foreground">Tectona Assistant</span> is available for Gen AI assistance.
               </p>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button
@@ -5321,12 +5374,12 @@ export function ChatSidebarPanel() {
                   }}
                 >
                   <UsersRound className="h-4 w-4 shrink-0" aria-hidden />
-                  {newChatGroupPickMode ? 'Keluar mode grup' : 'Buat grup'}
+                  {newChatGroupPickMode ? 'Exit group mode' : 'Create group'}
                 </Button>
                 {newChatGroupPickMode ? (
                   <span className="text-[11px] text-muted-foreground">
-                    Pilih minimal dua orang.{' '}
-                    <span className="font-medium text-foreground">{newChatGroupSelectedIds.length} dipilih</span>
+                    Select at least two people.{' '}
+                    <span className="font-medium text-foreground">{newChatGroupSelectedIds.length} selected</span>
                   </span>
                 ) : null}
               </div>
@@ -5345,7 +5398,7 @@ export function ChatSidebarPanel() {
                   />
                 </div>
               </div>
-              <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-lg border border-border/60 bg-muted/15 py-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-lg border liquid-glass-chat-thread py-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                 {chatContactsLoading ? (
                   <div className="px-3 py-10 text-center text-xs text-muted-foreground">
                     Loading directory…
@@ -5590,7 +5643,7 @@ export function ChatSidebarPanel() {
             'bg-gradient-to-t from-violet-50/25 to-transparent dark:from-violet-950/15',
           )}
         >
-          <div className="flex flex-col gap-2 rounded-2xl border border-border/25 bg-card/80 p-2 shadow-sm backdrop-blur-sm dark:border-slate-700/40 dark:bg-slate-900/35">
+          <div className="flex flex-col gap-2 rounded-2xl border liquid-glass-chat-composer p-2 shadow-sm dark:border-slate-700/40">
             {threadMode === 'genai' && (
               <>
                 <input
@@ -5878,15 +5931,15 @@ export function ChatSidebarPanel() {
                       (voice.state === 'capturing' || voice.state === 'transcribing') && 'animate-pulse',
                     )}
                     onClick={() => voice.toggle()}
-                    aria-label={voice.enabled ? 'Matikan wake word (Hai Tec)' : 'Aktifkan wake word (Hai Tec)'}
+                    aria-label={voice.enabled ? 'Turn off wake word (Hai Tec)' : 'Turn on wake word (Hai Tec)'}
                     title={
                       voice.lastError
                         ? voice.lastError
                         : voice.enabled
                           ? voice.state === 'awaiting-command'
-                            ? 'Mendengarkan perintah… ucapkan sekarang'
-                            : 'Voice aktif — ucapkan "Hai Tec ..."'
-                          : 'Aktifkan voice "Hai Tec"'
+                            ? 'Listening for command… speak now'
+                            : 'Voice active — say "Hai Tec ..."'
+                          : 'Turn on voice "Hai Tec"'
                     }
                   >
                     <Radio className="h-4 w-4" aria-hidden />
@@ -7579,15 +7632,128 @@ function shouldShowChatDateSeparator(messages: ChatMessage[], index: number): bo
   return startOfLocalDayMs(current.at) !== startOfLocalDayMs(previous.at)
 }
 
-function ChatThreadDateSeparator({ label }: { label: string }) {
+function ChatThreadDateAnchor({ label }: { label: string }) {
   if (!label) return null
   return (
-    <div className="flex justify-center py-2" role="separator" aria-label={label}>
-      <span className="rounded-lg border border-black/[0.06] bg-white px-3 py-1 text-[12px] font-medium leading-none text-[#54656f] shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] dark:border-white/10 dark:bg-[#182229] dark:text-[#8696a0]">
+    <div
+      data-chat-date-anchor=""
+      data-date-label={label}
+      className="pointer-events-none h-0 w-full shrink-0"
+      aria-hidden
+    />
+  )
+}
+
+const CHAT_FLOATING_DATE_HIDE_MS = 2600
+
+function resolveChatThreadFloatingDateLabel(
+  scrollEl: HTMLElement,
+  messages: ChatMessage[],
+): string | null {
+  const anchors = Array.from(scrollEl.querySelectorAll<HTMLElement>('[data-chat-date-anchor]'))
+  if (anchors.length === 0) {
+    const last = messages[messages.length - 1]
+    return last ? formatChatThreadDateSeparator(last.at) : null
+  }
+
+  const threshold = scrollEl.getBoundingClientRect().top + 48
+  let activeLabel = anchors[0]?.dataset.dateLabel ?? null
+  for (const anchor of anchors) {
+    if (anchor.getBoundingClientRect().top <= threshold) {
+      activeLabel = anchor.dataset.dateLabel ?? activeLabel
+    } else {
+      break
+    }
+  }
+  return activeLabel
+}
+
+function ChatThreadFloatingDatePill({
+  label,
+  visible,
+}: {
+  label: string | null
+  visible: boolean
+}) {
+  if (!label) return null
+  return (
+    <div
+      className={cn(
+        'pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center transition-opacity duration-300 ease-out',
+        visible ? 'opacity-100' : 'opacity-0',
+      )}
+      aria-hidden={!visible}
+    >
+      <span className="rounded-lg border border-black/[0.06] bg-white/95 px-3 py-1 text-[12px] font-medium leading-none text-[#54656f] shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] backdrop-blur-sm dark:border-white/10 dark:bg-[#182229]/95 dark:text-[#8696a0]">
         {label}
       </span>
     </div>
   )
+}
+
+function useChatThreadFloatingDate({
+  scrollRef,
+  messages,
+  conversationKey,
+  onThreadScroll,
+}: {
+  scrollRef: RefObject<HTMLDivElement | null>
+  messages: ChatMessage[]
+  conversationKey: string | null
+  onThreadScroll?: () => void
+}) {
+  const [label, setLabel] = useState<string | null>(null)
+  const [visible, setVisible] = useState(false)
+  const hideTimerRef = useRef<number | null>(null)
+
+  const resolveLabelFromScroll = useCallback(() => {
+    const root = scrollRef.current
+    if (!root) return null
+    return resolveChatThreadFloatingDateLabel(root, messages)
+  }, [scrollRef, messages])
+
+  const revealFloatingDate = useCallback((nextLabel: string | null) => {
+    if (!nextLabel) return
+    setLabel(nextLabel)
+    setVisible(true)
+    if (hideTimerRef.current != null) window.clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = window.setTimeout(() => {
+      setVisible(false)
+    }, CHAT_FLOATING_DATE_HIDE_MS)
+  }, [])
+
+  const handleScroll = useCallback(() => {
+    onThreadScroll?.()
+    revealFloatingDate(resolveLabelFromScroll())
+  }, [onThreadScroll, revealFloatingDate, resolveLabelFromScroll])
+
+  useEffect(() => {
+    if (!conversationKey || messages.length === 0) {
+      setVisible(false)
+      return
+    }
+
+    let timeoutId = 0
+    const frameId = window.requestAnimationFrame(() => {
+      timeoutId = window.setTimeout(() => {
+        revealFloatingDate(resolveLabelFromScroll())
+      }, 120)
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      if (timeoutId) window.clearTimeout(timeoutId)
+    }
+  }, [conversationKey, messages.length, revealFloatingDate, resolveLabelFromScroll])
+
+  useEffect(
+    () => () => {
+      if (hideTimerRef.current != null) window.clearTimeout(hideTimerRef.current)
+    },
+    [],
+  )
+
+  return { label, visible, handleScroll }
 }
 
 function getChatContactById(id: string | undefined, contacts: ChatContact[]): ChatContact | undefined {
@@ -7857,7 +8023,7 @@ function WhatsAppChatBubble({
   conversation?: Conversation | null
   chatContacts: ChatContact[]
   currentUserId: string
-  /** People (DM/group): semua pesan bubble, tanpa animasi ketik. Gen AI: bubble hanya user, asisten plain + typewriter. */
+  /** People (DM/group): all messages are bubbles, no typing animation. Gen AI: bubble for user only, assistant plain + typewriter. */
   variant: 'people' | 'genai'
   assistantTypingSpeed: AssistantTypingSpeed
   assistantSpeedProfile: AssistantSpeedProfile
@@ -8083,14 +8249,14 @@ function PeopleChatThread({
     >
       {messages.length === 0 ? (
         <p className="py-8 text-center text-[13px] leading-relaxed text-muted-foreground">
-          Belum ada pesan — tulis sapaan di bawah.
+          No messages yet — write a greeting below.
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
           {messages.map((m, index) => (
             <Fragment key={m.id}>
               {shouldShowChatDateSeparator(messages, index) ? (
-                <ChatThreadDateSeparator label={formatChatThreadDateSeparator(m.at)} />
+                <ChatThreadDateAnchor label={formatChatThreadDateSeparator(m.at)} />
               ) : null}
               {m.disappearingNotice ? (
                 <DisappearingMessagesThreadNotice
@@ -8199,11 +8365,11 @@ function GenAiChatThread({
     <div
       ref={threadScrollRef}
       onScroll={onThreadScroll}
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl bg-white px-2 py-3 [scrollbar-width:none] dark:bg-background [&::-webkit-scrollbar]:hidden"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl liquid-glass-chat-thread px-2 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {messages.length === 0 ? (
         <p className="py-8 text-center text-[13px] leading-relaxed text-muted-foreground">
-          Belum ada pesan — tanyakan sesuatu di bawah.
+          No messages yet — ask something below.
         </p>
       ) : (
         <div className="flex flex-col gap-2.5">
@@ -8224,7 +8390,7 @@ function GenAiChatThread({
             return (
               <Fragment key={m.id}>
                 {shouldShowChatDateSeparator(messages, index) ? (
-                  <ChatThreadDateSeparator label={formatChatThreadDateSeparator(m.at)} />
+                  <ChatThreadDateAnchor label={formatChatThreadDateSeparator(m.at)} />
                 ) : null}
                 {m.role === 'system' ? (
                   <div className="mx-auto max-w-[92%] rounded-full bg-black/[0.06] px-3 py-1.5 text-center text-[11px] text-muted-foreground dark:bg-white/10">
@@ -8308,8 +8474,16 @@ function MessageThread({
   onAgentActionConfirm?: (messageId: string, actionId: string, patch?: Record<string, unknown>) => void
   onAgentActionCancel?: (messageId: string, actionId: string) => void
 }) {
-  if ((threadMode === 'team' || threadMode === 'group') && conversation) {
-    return (
+  const conversationKey = conversation?.id ?? null
+  const { label: floatingDateLabel, visible: floatingDateVisible, handleScroll } = useChatThreadFloatingDate({
+    scrollRef: threadScrollRef,
+    messages,
+    conversationKey,
+    onThreadScroll,
+  })
+
+  const thread =
+    (threadMode === 'team' || threadMode === 'group') && conversation ? (
       <PeopleChatThread
         messages={messages}
         conversation={conversation}
@@ -8319,7 +8493,7 @@ function MessageThread({
         assistantSpeedProfile={assistantSpeedProfile}
         threadScrollRef={threadScrollRef}
         messagesEndRef={messagesEndRef}
-        onThreadScroll={onThreadScroll}
+        onThreadScroll={handleScroll}
         onThreadContextMenu={onThreadContextMenu}
         messageSelectionActive={messageSelectionActive}
         selectedMessageIds={selectedMessageIds}
@@ -8328,26 +8502,31 @@ function MessageThread({
         onAssistantTypingComplete={onAssistantTypingComplete}
         onOpenDisappearingMessages={onOpenDisappearingMessages}
       />
+    ) : (
+      <GenAiChatThread
+        messages={messages}
+        conversation={conversation}
+        chatContacts={chatContacts}
+        currentUserId={currentUserId}
+        assistantTypingSpeed={assistantTypingSpeed}
+        assistantSpeedProfile={assistantSpeedProfile}
+        threadScrollRef={threadScrollRef}
+        messagesEndRef={messagesEndRef}
+        onThreadScroll={handleScroll}
+        onAssistantTypingProgress={onAssistantTypingProgress}
+        onAssistantTypingComplete={onAssistantTypingComplete}
+        onRetryGreet={onRetryGreet}
+        onAssistantChoiceSubmit={onAssistantChoiceSubmit}
+        onAgentActionConfirm={onAgentActionConfirm}
+        onAgentActionCancel={onAgentActionCancel}
+      />
     )
-  }
+
   return (
-    <GenAiChatThread
-      messages={messages}
-      conversation={conversation}
-      chatContacts={chatContacts}
-      currentUserId={currentUserId}
-      assistantTypingSpeed={assistantTypingSpeed}
-      assistantSpeedProfile={assistantSpeedProfile}
-      threadScrollRef={threadScrollRef}
-      messagesEndRef={messagesEndRef}
-      onThreadScroll={onThreadScroll}
-      onAssistantTypingProgress={onAssistantTypingProgress}
-      onAssistantTypingComplete={onAssistantTypingComplete}
-      onRetryGreet={onRetryGreet}
-      onAssistantChoiceSubmit={onAssistantChoiceSubmit}
-      onAgentActionConfirm={onAgentActionConfirm}
-      onAgentActionCancel={onAgentActionCancel}
-    />
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <ChatThreadFloatingDatePill label={floatingDateLabel} visible={floatingDateVisible} />
+      {thread}
+    </div>
   )
 }
 
@@ -8467,9 +8646,9 @@ function DraggableChatConversationRow({
       }}
       onContextMenu={(e) => onContextMenu(e, c.id)}
       className={cn(
-        'group flex w-full items-start gap-2.5 rounded-xl border border-border/60 bg-card p-2.5 text-left shadow-sm',
+        'group flex w-full items-start gap-2.5 rounded-xl border liquid-glass-chat-row p-2.5 text-left shadow-sm',
         'ring-1 ring-black/[0.03] transition-all duration-200 dark:ring-white/[0.06]',
-        'hover:-translate-y-0.5 hover:border-border hover:shadow-md hover:ring-black/[0.05] dark:hover:ring-white/[0.08]',
+        'hover:-translate-y-0.5 hover:border-white/70 hover:shadow-md hover:ring-black/[0.05] dark:hover:ring-white/[0.08]',
         'active:translate-y-0 active:shadow-sm',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         dragToArchiveEnabled && 'cursor-grab active:cursor-grabbing',
@@ -8717,13 +8896,6 @@ function ConversationSection({
     )
   }
 
-  const sectionTint =
-    kind === 'ai'
-      ? 'bg-violet-500/[0.03] dark:bg-violet-500/[0.06]'
-      : kind === 'favorite'
-        ? 'bg-amber-500/[0.04] dark:bg-amber-500/[0.07]'
-        : 'bg-sky-500/[0.03] dark:bg-sky-500/[0.06]'
-
   const sectionBorder =
     kind === 'ai'
       ? 'border-violet-200/70 dark:border-violet-900/45'
@@ -8732,7 +8904,7 @@ function ConversationSection({
         : 'border-sky-200/70 dark:border-sky-900/45'
 
   return (
-    <div className={cn('space-y-2 rounded-2xl border p-2', sectionTint, sectionBorder)}>
+    <div className={cn('liquid-glass-chat-section space-y-2 rounded-2xl border p-2', sectionBorder)}>
       <button
         type="button"
         onClick={onToggle}

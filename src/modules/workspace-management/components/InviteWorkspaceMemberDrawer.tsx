@@ -103,7 +103,7 @@ const EMPLOYEE_DIRECTORY: EmployeeDirectoryEntry[] = [
     directoryId: 'DIR-10482',
     initials: 'CJ',
     organizationalUnit: 'PMO Office — Enterprise Delivery',
-    manager: 'Alfa Irawan',
+    manager: 'Portfolio Executive Council',
   },
   {
     id: 'emp-2',
@@ -140,15 +140,6 @@ const EMPLOYEE_DIRECTORY: EmployeeDirectoryEntry[] = [
     initials: 'IN',
     organizationalUnit: 'Governance — Enterprise Controls',
     manager: 'Clara Jennings',
-  },
-  {
-    id: 'emp-6',
-    name: 'Alfa Irawan',
-    email: 'alfa.irawan@adira.co.id',
-    directoryId: 'DIR-10001',
-    initials: 'AI',
-    organizationalUnit: 'Enterprise Delivery Office',
-    manager: 'Portfolio Executive Council',
   },
 ]
 
@@ -217,10 +208,19 @@ function FieldLabel({
   children: ReactNode
   className?: string
 }) {
-  return (
-    <Label htmlFor={htmlFor} className={cn('text-xs font-medium text-muted-foreground', className)}>
+  const labelClassName = cn('text-xs font-medium text-muted-foreground', className)
+  const content = (
+    <>
       {children}
       {required ? <RequiredMark /> : null}
+    </>
+  )
+  if (!htmlFor) {
+    return <span className={labelClassName}>{content}</span>
+  }
+  return (
+    <Label htmlFor={htmlFor} className={labelClassName}>
+      {content}
     </Label>
   )
 }
@@ -228,7 +228,7 @@ function FieldLabel({
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs font-medium text-muted-foreground">{label}</Label>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-sm text-foreground/90">{value || '—'}</div>
     </div>
   )
@@ -266,6 +266,8 @@ export type SearchableMultiSelectOption = { value: string; label: string }
 export type InviteWorkspaceOption = {
   id: string
   name: string
+  /** Directory classification — Organization workspaces auto-nest invitees' personal WS. */
+  type?: string
   governance: InviteWorkspaceGovernanceSnapshot
 }
 
@@ -911,9 +913,16 @@ export function InviteWorkspaceMemberDrawer({
 
             <DrawerSectionCard title="Member Identity">
               <div className="space-y-1.5">
+                {selectedEmployee ? (
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Search employee
+                    <RequiredMark />
+                  </span>
+                ) : (
                 <FieldLabel htmlFor="invite-member-search" required>
                   Search employee
                 </FieldLabel>
+                )}
                 {selectedEmployee ? (
                   <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
                     <div
@@ -999,10 +1008,10 @@ export function InviteWorkspaceMemberDrawer({
                         {filteredEmployees.length === 0 ? (
                           emailInviteCandidate ? (
                             <div className="px-3 py-2.5 text-xs text-muted-foreground">
-                              <p className="font-medium text-foreground">Undang pengguna baru</p>
+                              <p className="font-medium text-foreground">Invite new user</p>
                               <p className="mt-1">
-                                {emailInviteCandidate.displayName} ({emailInviteCandidate.email}) akan dibuat di identity-lite
-                                dan diaktifkan setelah membership tersimpan.
+                                {emailInviteCandidate.displayName} ({emailInviteCandidate.email}) will be created in identity-lite
+                                and activated once the membership is saved.
                               </p>
                             </div>
                           ) : (
@@ -1206,7 +1215,11 @@ export function InviteWorkspaceMemberDrawer({
 
               <div className="space-y-2">
                 <FieldLabel required>Participation duration</FieldLabel>
-                <div className="flex flex-wrap gap-2">
+                <div
+                  className="flex flex-wrap gap-2"
+                  role="group"
+                  aria-label="Participation duration"
+                >
                   {(['Permanent', 'Temporary'] as const).map((duration) => {
                     const active = form.participationDuration === duration
                     return (
@@ -1344,6 +1357,8 @@ export function InviteWorkspaceMemberDrawer({
                     'space-y-2 rounded-xl border border-border/60 bg-muted/15 px-3 py-2.5',
                     !INVITE_NOTIFICATION_PREFERENCES_ENABLED && 'opacity-60'
                   )}
+                  role="group"
+                  aria-label="Notification preference"
                   aria-disabled={!INVITE_NOTIFICATION_PREFERENCES_ENABLED}
                 >
                   {(
@@ -1363,6 +1378,8 @@ export function InviteWorkspaceMemberDrawer({
                     >
                       <input
                         type="checkbox"
+                        id={`invite-notify-${key}`}
+                        name={`invite-notify-${key}`}
                         className="h-3.5 w-3.5 rounded border-border text-primary focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed"
                         checked={form[key]}
                         disabled={submitting || !INVITE_NOTIFICATION_PREFERENCES_ENABLED}

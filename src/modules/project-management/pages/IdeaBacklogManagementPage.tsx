@@ -1,7 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { getSession } from '@/auth/authService'
+import { useTenantContextOptional } from '@/auth/TenantContext'
+import {
+  belongsToActiveWorkspaceScope,
+  readActiveWorkspaceScope,
+  resolveWorkspaceApiId,
+} from '@/lib/tenantWorkspaceScope'
+import { workspaceScopedPath } from '@/lib/workspaceRouting'
 import {
   GripVertical,
   Eye,
@@ -35,7 +42,13 @@ import {
   ArrowLeft,
   ArrowUp,
   Mic,
-
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  CircleCheck,
+  Target,
+  FolderKanban,
+  Palette,
 } from 'lucide-react'
 import {
   Bar,
@@ -59,6 +72,7 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { PlatformDataLoadingState } from '@/components/loading'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -74,8 +88,30 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip } from '@/components/ui/tooltip'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
-import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
+import {
+  enterpriseCyanGradientActionButtonClass,
+  enterpriseRoseGradientActionButtonClass,
+  enterpriseSecondaryButtonClass,
+  registerServicePrimaryButtonClass,
+} from '@/lib/enterpriseButtonClasses'
+import {
+  enterpriseFilterTagClass,
+  ideaBacklogLiquidGlassFilterInputClass,
+  ideaBacklogLiquidGlassFilterPanelClass,
+  ideaBacklogLiquidGlassFilterPanelDividerClass,
+  ideaBacklogLiquidGlassCardClass,
+  ideaBacklogLiquidGlassCardMetaClass,
+  ideaBacklogLiquidGlassCardTagClass,
+  ideaBacklogLiquidGlassPanelClass,
+  ideaBacklogLiquidGlassPanelIconClass,
+  ideaBacklogLiquidGlassPanelInsetClass,
+  ideaBacklogLiquidGlassPanelStatClass,
+  ideaBacklogLiquidGlassQueueItemClass,
+  ideaBacklogLiquidGlassQueueItemSelectedClass,
+  ideaBacklogLiquidGlassMetricCardClass,
+} from '@/components/enterprise/enterpriseFilterPanelClasses'
 import {
   deleteIdea,
   listIdeas,
@@ -100,8 +136,105 @@ import {
   startIdeaDraftJob,
   startIdeaSummaryJob,
   type IdeaDraftBrainstormMessage,
+  type IdeaDraftChecklistItem,
+  type IdeaDraftEvidenceProgress,
   type IdeaDraftJobStatusResponse,
 } from '@/lib/api/tectonaAgentRuntimeApi'
+
+type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
+  sentAt?: string
+  respondedAt?: string
+}
+
+const BRAINSTORM_GAP_LABELS: Record<string, string> = {
+  as_is_actors: 'Pihak yang terlibat dalam proses saat ini',
+  as_is_steps: 'Langkah proses saat ini (AS-IS) dari awal sampai akhir',
+  as_is_systems: 'Sistem atau aplikasi yang dipakai hari ini',
+  pain_points: 'Pain points atau hambatan utama',
+  to_be_process: 'Gambaran proses yang diharapkan (TO-BE)',
+  diagram_validation: 'Validasi diagram proses bisnis',
+  'diagram validation': 'Validasi diagram proses bisnis',
+  to_be: 'Proses yang diharapkan (TO-BE)',
+  as_is: 'Proses bisnis saat ini (AS-IS)',
+}
+
+function normalizeBrainstormGapKey(gap: string): string {
+  return gap.trim().toLowerCase().replace(/\s+/g, '_')
+}
+
+function formatBrainstormGapLabel(gap: string): string {
+  const trimmed = gap.trim()
+  if (!trimmed) return trimmed
+  const normalized = normalizeBrainstormGapKey(trimmed)
+  if (BRAINSTORM_GAP_LABELS[normalized]) return BRAINSTORM_GAP_LABELS[normalized]
+  if (BRAINSTORM_GAP_LABELS[trimmed.toLowerCase()]) return BRAINSTORM_GAP_LABELS[trimmed.toLowerCase()]
+  if (!trimmed.includes('_') && /\s/.test(trimmed) && trimmed.length > 24) return trimmed
+  return trimmed
+    .replace(/_/g, ' ')
+    .replace(/\bas is\b/gi, 'AS-IS')
+    .replace(/\bto be\b/gi, 'TO-BE')
+    .replace(/\broa\b/gi, 'ROA')
+    .replace(/^\w/, (char) => char.toUpperCase())
+}
+
+function formatBrainstormExploringNext(gaps: string[]): string {
+  return gaps.slice(0, 3).map(formatBrainstormGapLabel).join(' · ')
+}
+
+function formatBrainstormTimestamp(iso?: string): string {
+  if (!iso) return ''
+  try {
+    return new Intl.DateTimeFormat('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(new Date(iso))
+  } catch {
+    return ''
+  }
+}
+
+function formatBrainstormLatencyMs(sentAt?: string, respondedAt?: string): string {
+  if (!sentAt || !respondedAt) return ''
+  const ms = new Date(respondedAt).getTime() - new Date(sentAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return ''
+  if (ms < 1000) return `${ms} ms`
+  return `${(ms / 1000).toFixed(1)} dtk`
+}
+
+function mergeBrainstormUiMessages(
+  previous: BrainstormUiMessage[],
+  incoming: IdeaDraftBrainstormMessage[],
+  responseReceivedAt: string,
+): BrainstormUiMessage[] {
+  const userSentAtByText = new Map<string, string>()
+  const assistantRespondedAtByText = new Map<string, string>()
+  for (const message of previous) {
+    if (message.role === 'user' && message.sentAt) userSentAtByText.set(message.text, message.sentAt)
+    if (message.role === 'assistant' && message.respondedAt) {
+      assistantRespondedAtByText.set(message.text, message.respondedAt)
+    }
+  }
+  let lastAssistantIndex = -1
+  for (let index = incoming.length - 1; index >= 0; index -= 1) {
+    if (incoming[index]?.role === 'assistant') {
+      lastAssistantIndex = index
+      break
+    }
+  }
+  return incoming.map((message, index) => ({
+    ...message,
+    ...(message.role === 'user' && userSentAtByText.has(message.text)
+      ? { sentAt: userSentAtByText.get(message.text) }
+      : {}),
+    ...(message.role === 'assistant' && assistantRespondedAtByText.has(message.text)
+      ? { respondedAt: assistantRespondedAtByText.get(message.text) }
+      : message.role === 'assistant' && index === lastAssistantIndex
+        ? { respondedAt: responseReceivedAt }
+        : {}),
+  }))
+}
+import { fetchAllProjects, fetchProject, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
 import {
@@ -141,10 +274,10 @@ function friendlyBrainstormError(rawMessage: string): string {
     return 'Tectona Assistant returned an unusable reply. Please send your message again.'
   }
   if (isIdeaDraftJobLostError(rawMessage)) {
-    return 'Sesi brainstorm terputus. Kirim ulang pesan kamu — sesi akan dipulihkan otomatis.'
+    return 'The brainstorm session was interrupted. Resend your message — the session will recover automatically.'
   }
   if (/^HTTP 500\b/i.test(rawMessage) || rawMessage.includes('Internal Server Error')) {
-    return 'Tectona Assistant sedang bermasalah sebentar. Silakan kirim ulang pesan kamu.'
+    return 'Tectona Assistant is having a brief issue. Please resend your message.'
   }
   return rawMessage
 }
@@ -167,10 +300,13 @@ type Idea = {
   type: IdeaType
   submittedBy: string
   workspace?: string
+  projectId?: string | null
+  projectName?: string | null
   tags: string[]
   createdAt: string
   reviewer: string
   status: IdeaStatus
+  cardAccentColor?: string | null
   scoring: {
     businessValue: number
     effort: number
@@ -178,6 +314,72 @@ type Idea = {
     roi: number
   }
   version: number
+}
+
+const IDEA_STATUS_CARD_LABEL: Record<IdeaStatus, string> = {
+  'New Submission': 'New',
+  'Under Review': 'Review',
+  Approved: 'Approved',
+  Rejected: 'Rejected',
+  'Converted to Project': 'Project',
+}
+
+type IdeaScoringDimensionKey = 'businessValue' | 'effort' | 'risk' | 'roi'
+
+const IDEA_SCORING_DIMENSIONS: {
+  key: IdeaScoringDimensionKey
+  label: string
+  weightLabel: string
+  weightPercent: number
+  color: string
+  trackClass: string
+  surfaceClass: string
+  roleLabel: 'Primary driver' | 'Execution adjuster'
+}[] = [
+  {
+    key: 'businessValue',
+    label: 'Value',
+    weightLabel: 'Value weight',
+    weightPercent: 30,
+    color: '#059669',
+    trackClass: 'bg-emerald-100',
+    surfaceClass: 'border-emerald-200/55 bg-emerald-50/40',
+    roleLabel: 'Primary driver',
+  },
+  {
+    key: 'effort',
+    label: 'Effort',
+    weightLabel: 'Effort adjuster',
+    weightPercent: 20,
+    color: '#d97706',
+    trackClass: 'bg-amber-100',
+    surfaceClass: 'border-amber-200/55 bg-amber-50/40',
+    roleLabel: 'Execution adjuster',
+  },
+  {
+    key: 'risk',
+    label: 'Risk',
+    weightLabel: 'Risk adjuster',
+    weightPercent: 20,
+    color: '#e11d48',
+    trackClass: 'bg-rose-100',
+    surfaceClass: 'border-rose-200/55 bg-rose-50/40',
+    roleLabel: 'Execution adjuster',
+  },
+  {
+    key: 'roi',
+    label: 'ROI',
+    weightLabel: 'ROI weight',
+    weightPercent: 30,
+    color: '#0284c7',
+    trackClass: 'bg-sky-100',
+    surfaceClass: 'border-sky-200/55 bg-sky-50/40',
+    roleLabel: 'Primary driver',
+  },
+]
+
+function readIdeaScoringValue(idea: Idea, key: IdeaScoringDimensionKey): number {
+  return idea.scoring[key]
 }
 
 type IdeaAnalysisProgress = {
@@ -251,10 +453,11 @@ function mapIdentityUserDisplayNames(users: IdentityUserDto[] | null | undefined
   return byId
 }
 
-function fromApiIdea(api: IdeaApi): Idea {
+function fromApiIdea(api: IdeaApi, projectNameById?: Record<string, string>): Idea {
   const type: IdeaType = IDEA_TYPES.includes(api.category as IdeaType)
     ? (api.category as IdeaType)
     : 'Innovation'
+  const projectId = api.project_id?.trim() || null
 
   return {
     id: api.id,
@@ -263,10 +466,13 @@ function fromApiIdea(api: IdeaApi): Idea {
     type,
     submittedBy: api.owner_id?.trim() ?? '',
     workspace: api.workspace_id ?? undefined,
+    projectId,
+    projectName: projectId && projectNameById?.[projectId] ? projectNameById[projectId] : null,
     tags: api.tags,
     createdAt: api.created_date.slice(0, 10),
     reviewer: api.assignee_id ?? '—',
     status: toDisplayStatus(api.status_code),
+    cardAccentColor: api.card_accent_color?.trim() || null,
     scoring: extractScoringDimensions(api.latest_scoring),
     version: api.version,
   }
@@ -392,6 +598,442 @@ function formatBrainstormProse(chunk: string): string {
     .join('\n\n')
 }
 
+const BRAINSTORM_DIAGRAM_APPROVAL_RE =
+  /(?:sudah sesuai|sudah (?:ok|oke|benar|betul)|setuju|sepakat|approve(?:d)?|looks good|that(?:'s| is) (?:correct|right|fine)|ya[,!]?\s*(?:sudah|benar|ok|oke)|ok(?:e)?(?:\s*,)?\s*(?:lanjut|generate|sip)|ok(?:e)?(?:\s+\w+){0,8}\s*(?:aja|saja|lanjut|ikut|setuju|sip|gas)|ikut\s+(?:kamu|saja|aja)|baik(?:lah)?|silakan|boleh\s+(?:lanjut|terus|ya)|gas(?:\s+aja)?|iya[,!]?\s*(?:lanjut|setuju|ok|oke)?|sip[,!]?\s*(?:lanjut|sudah)|validated|validation ok|go\s*ahead|lgtm|sounds good|yes(?:[,!]?\s*(?:please|go\s*ahead|continue|ok|okay))?|yep|yeah|yup|sure|alright|all right|fine by me|agreed|ok je|okay je|teruskan|de acuerdo|está bien|vale|correcto|perfecto|sí|está correto|pode seguir|concordo|d'accord|oui|parfait|c'est bon|stimmt|in ordnung|genau|va bene|perfetto|sì|akkoord|sige|tama|okay lang|đúng|được|ok luôn|vâng|はい|大丈夫|好的|可以|没问题|沒問題|네|좋아요|حسنا|موافق|تمام|نعم|(?:^|\s)(?:ok|okay|oke|y|yy|👍|👌|✅)(?:$|[\s,.!]))/i
+
+const BRAINSTORM_DIAGRAM_REJECTION_RE =
+  /(?:(?:tidak|nggak|enggak|belum)\s+(?:sesuai|benar|betul|ok|oke|setuju)|masih\s+(?:salah|kurang|belum)|(?:salah|kurang|revisi|perbaiki|ubah|ganti)|not\s+(?:yet|correct|right|ok|okay)|still\s+(?:wrong|incorrect)|(?:please\s+)?(?:revise|fix|change)|(?:don't|do\s+not|jangan)|(?:wrong|incorrect)|いいえ|違う|不行|不对)/i
+
+function userTextApprovesDiagram(text: string): boolean {
+  const raw = (text || '').trim().replace(/\s+/g, ' ')
+  if (!raw) return false
+  const shortOk =
+    /^(ok|okay|oke|yes|yep|yeah|yup|sure|ya|iya|sip|baik|boleh|setuju|sí|si|sim|oui|ja|네|好的|可以|はい|大丈夫|موافق|تمام)$/i.test(
+      raw.replace(/[^\p{L}\p{N}\s👍👌✅]/gu, '').trim(),
+    )
+  const approved = BRAINSTORM_DIAGRAM_APPROVAL_RE.test(raw) || shortOk
+  if (!approved) return false
+  if (/\b(?:tapi|but|however|masih|still|kecuali|except)\b/i.test(raw) && BRAINSTORM_DIAGRAM_REJECTION_RE.test(raw)) {
+    return false
+  }
+  if (
+    /\b(?:revisi|perbaiki|ubah|ganti|revise|fix|change)\b/i.test(raw) &&
+    !/\b(?:no\s+(?:need|changes?)|tidak\s+perlu\s+(?:ubah|revisi))\b/i.test(raw)
+  ) {
+    return false
+  }
+  if (
+    /(?:tidak|nggak|enggak|belum)\s+(?:sesuai|benar|betul|ok|oke|setuju)|(?:not\s+(?:yet|correct|right)|still\s+(?:wrong|incorrect)|wrong|incorrect)/i.test(
+      raw,
+    )
+  ) {
+    return false
+  }
+  return true
+}
+
+function brainstormMessageHasDiagram(text: string): boolean {
+  const lowered = (text || '').toLowerCase()
+  return lowered.includes('```mermaid') || /\bflowchart\s+(td|lr|tb|rl)\b/i.test(lowered)
+}
+
+/** Client-side unlock when backend forgot ready_to_continue but chat evidence is complete. */
+function inferBrainstormReadyFromMessages(messages: IdeaDraftBrainstormMessage[]): boolean {
+  if (!messages.length) return false
+  const hasDiagram = messages.some((m) => m.role === 'assistant' && brainstormMessageHasDiagram(m.text))
+  if (!hasDiagram) return false
+  let lastUser = ''
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') {
+      lastUser = messages[i].text || ''
+      break
+    }
+  }
+  if (!userTextApprovesDiagram(lastUser)) return false
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
+  // If the latest assistant turn still presents a new diagram, wait for the next approval.
+  if (lastAssistant && brainstormMessageHasDiagram(lastAssistant.text)) return false
+  return true
+}
+
+type InitiativeLensId =
+  | 'efficiency'
+  | 'productivity'
+  | 'revenue'
+  | 'cost_of_credit'
+  | 'roa'
+
+type InitiativeLensMatch = {
+  id: InitiativeLensId
+  label: string
+  score: number
+}
+
+const INITIATIVE_LENS_DEFINITIONS: Array<{
+  id: InitiativeLensId
+  label: string
+  patterns: RegExp[]
+}> = [
+  {
+    id: 'efficiency',
+    label: 'Efisiensi',
+    patterns: [
+      /\befisiensi\b/i,
+      /\befficien/i,
+      /\boptim/i,
+      /\bstreamlin/i,
+      /\breduce\s+(time|cycle|handling|manual|effort)\b/i,
+      /\bpercepat/i,
+      /\bhemat\s+waktu/i,
+    ],
+  },
+  {
+    id: 'productivity',
+    label: 'Produktivitas',
+    patterns: [
+      /\bproduktiv/i,
+      /\bproductiv/i,
+      /\bthroughput\b/i,
+      /\bcapacity\b/i,
+      /\boutput\b/i,
+      /\bworkload\b/i,
+      /\bbacklog\b/i,
+      /\bSLA\b/,
+      /\bhelpdesk\b/i,
+      /\bticket\b/i,
+    ],
+  },
+  {
+    id: 'revenue',
+    label: 'Revenue',
+    patterns: [
+      /\brevenue\b/i,
+      /\bpendapatan\b/i,
+      /\bsales\b/i,
+      /\bpenjualan\b/i,
+      /\bcross[- ]sell\b/i,
+      /\bupsell\b/i,
+      /\bconversion\b/i,
+      /\bmarket share\b/i,
+    ],
+  },
+  {
+    id: 'cost_of_credit',
+    label: 'Cost of Credit',
+    patterns: [
+      /\bcost of credit\b/i,
+      /\bbiaya kredit\b/i,
+      /\bNPL\b/,
+      /\bKPR\b/,
+      /\bkredit\b/i,
+      /\bcredit cost\b/i,
+      /\bprovision\b/i,
+      /\bwrite[- ]off\b/i,
+      /\bcollection\b/i,
+    ],
+  },
+  {
+    id: 'roa',
+    label: 'ROA',
+    patterns: [
+      /\bROA\b/,
+      /\breturn on assets\b/i,
+      /\bprofitabilit/i,
+      /\bmargin\b/i,
+      /\byield\b/i,
+      /\bNIM\b/,
+      /\baset\b/i,
+      /\bassets\b/i,
+    ],
+  },
+]
+
+function inferInitiativeLens(
+  title: string,
+  tags: string[],
+  messages: IdeaDraftBrainstormMessage[],
+): InitiativeLensMatch[] {
+  const corpus = [
+    title,
+    ...tags,
+    ...messages.map((message) => message.text),
+  ]
+    .join('\n')
+    .toLowerCase()
+
+  const scored = INITIATIVE_LENS_DEFINITIONS.map((definition) => {
+    let score = 0
+    for (const pattern of definition.patterns) {
+      if (pattern.test(corpus)) score += 1
+    }
+    return { id: definition.id, label: definition.label, score }
+  })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  return scored.slice(0, 2)
+}
+
+function resolveBrainstormConfidencePercent(
+  backendPercent: number | undefined,
+  progress: IdeaDraftEvidenceProgress | null,
+  ready: boolean,
+): number {
+  if (typeof backendPercent === 'number' && backendPercent > 0) {
+    return Math.max(0, Math.min(100, Math.round(backendPercent)))
+  }
+  if (!progress) return ready ? 85 : 0
+  const requiredRatio = progress.required_total > 0
+    ? progress.required_answered / progress.required_total
+    : progress.total > 0
+      ? progress.answered / progress.total
+      : 0
+  const overallRatio = progress.total > 0 ? progress.answered / progress.total : 0
+  const derived = Math.round(requiredRatio * 70 + overallRatio * 30)
+  if (ready) return Math.max(derived, 85)
+  return derived
+}
+
+function confidenceReadinessLabel(percent: number, ready: boolean): string {
+  if (ready || percent >= 80) return 'Siap generate draft'
+  if (percent >= 55) return 'Konteks mulai matang'
+  if (percent >= 25) return 'Masih perlu eksplorasi'
+  return 'Baru mulai — lanjutkan diskusi'
+}
+
+function BrainstormConfidenceRing({ percent }: { percent: number }) {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)))
+  const radius = 36
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (clamped / 100) * circumference
+  const tone = clamped >= 80
+    ? 'text-emerald-600'
+    : clamped >= 55
+      ? 'text-amber-600'
+      : 'text-slate-500'
+
+  return (
+    <div className="relative inline-flex h-[5.5rem] w-[5.5rem] items-center justify-center">
+      <svg className="h-full w-full -rotate-90" viewBox="0 0 88 88" aria-hidden>
+        <circle cx="44" cy="44" r={radius} fill="none" stroke="currentColor" strokeWidth="6" className="text-muted/30" />
+        <circle
+          cx="44"
+          cy="44"
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className={cn('transition-[stroke-dashoffset] duration-500', tone)}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={cn('text-xl font-semibold tabular-nums', tone)}>{clamped}%</span>
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Confidence</span>
+      </div>
+    </div>
+  )
+}
+
+function BrainstormEvidenceRail({
+  confidencePercent,
+  progress,
+  checklist,
+  gaps,
+  initiativeMatches,
+  ready,
+  collapsed,
+  onToggleCollapsed,
+}: {
+  confidencePercent: number
+  progress: IdeaDraftEvidenceProgress | null
+  checklist: IdeaDraftChecklistItem[]
+  gaps: string[]
+  initiativeMatches: InitiativeLensMatch[]
+  ready: boolean
+  collapsed: boolean
+  onToggleCollapsed: () => void
+}) {
+  const resolvedConfidence = resolveBrainstormConfidencePercent(confidencePercent, progress, ready)
+  const readinessLabel = confidenceReadinessLabel(resolvedConfidence, ready)
+  const items = checklist.length > 0 ? checklist : progress?.items ?? []
+  const requiredTotal = progress?.required_total ?? items.filter((item) => item.required !== false).length
+  const requiredAnswered = progress?.required_answered
+    ?? items.filter((item) => item.required !== false && item.status === 'answered').length
+  const progressPercent = requiredTotal > 0
+    ? Math.round((requiredAnswered / requiredTotal) * 100)
+    : items.length > 0
+      ? Math.round((items.filter((item) => item.status === 'answered').length / items.length) * 100)
+      : 0
+
+  return (
+    <aside
+      className={cn(
+        'flex shrink-0 flex-col',
+        collapsed
+          ? 'w-12 border-r border-border/70 bg-background'
+          : 'w-full border-b border-border/70 bg-muted/20 p-3 md:w-[min(42%,28rem)] md:border-b-0 md:border-r md:p-4',
+      )}
+    >
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-2 py-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={onToggleCollapsed}
+            aria-label="Expand readiness panel"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Target className="h-4 w-4 text-muted-foreground" aria-hidden />
+          <span className="text-[10px] font-medium tabular-nums text-muted-foreground [writing-mode:vertical-rl]">
+            {resolvedConfidence}%
+          </span>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            'glass-card flex min-h-0 flex-1 flex-col overflow-hidden border border-border/40',
+            'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+            'rounded-2xl',
+          )}
+        >
+          <div className="flex h-full min-h-0 w-full flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-5">
+              <div className="flex shrink-0 items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Target className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                    <h2 className="text-lg font-semibold text-foreground">Draft Readiness</h2>
+                  </div>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    Confidence AI dan progres evidence AS-IS sebelum generate draft.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={onToggleCollapsed}
+                  aria-label="Collapse readiness panel"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-4 rounded-xl border border-border/40 bg-muted/10 px-4 py-3">
+                <BrainstormConfidenceRing percent={resolvedConfidence} />
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-semibold text-foreground">{readinessLabel}</p>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {ready
+                      ? 'Evidence cukup — draft bisa di-generate dengan konteks yang lebih kuat.'
+                      : 'Anda tetap bisa generate draft kapan saja; draft awal mungkin masih berisi asumsi.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-background/70 p-3">
+                <div className="flex shrink-0 items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Evidence progress
+                  </p>
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {requiredAnswered}/{requiredTotal || items.length || 0} wajib
+                  </span>
+                </div>
+                <div className="h-1.5 shrink-0 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all duration-500',
+                      progressPercent >= 80 ? 'bg-emerald-500' : progressPercent >= 40 ? 'bg-amber-500' : 'bg-primary/70',
+                    )}
+                    style={{ width: `${Math.max(progressPercent, items.length > 0 ? 4 : 0)}%` }}
+                  />
+                </div>
+                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                  {items.length > 0 ? (
+                    items.map((item) => {
+                      const status = item.status ?? 'pending'
+                      const Icon = status === 'answered'
+                        ? CircleCheck
+                        : status === 'asked'
+                          ? Circle
+                          : Circle
+                      return (
+                        <div
+                          key={item.id}
+                          className={cn(
+                            'flex items-start gap-2 rounded-lg px-2 py-1.5 text-xs leading-5',
+                            status === 'answered' && 'bg-emerald-50 text-emerald-950',
+                            status === 'asked' && 'bg-amber-50/80 text-amber-950',
+                            status === 'pending' && 'text-muted-foreground',
+                          )}
+                        >
+                          <Icon
+                            className={cn(
+                              'mt-0.5 h-3.5 w-3.5 shrink-0',
+                              status === 'answered' && 'text-emerald-600',
+                              status === 'asked' && 'text-amber-600',
+                            )}
+                            aria-hidden
+                          />
+                          <span className="min-w-0">{item.prompt}</span>
+                        </div>
+                      )
+                    })
+                  ) : gaps.length > 0 ? (
+                    gaps.map((gap) => (
+                      <div key={gap} className="rounded-lg px-2 py-1.5 text-xs leading-5 text-muted-foreground">
+                        {formatBrainstormGapLabel(gap)}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="px-2 py-1 text-xs text-muted-foreground">
+                      Checklist evidence akan muncul setelah pertanyaan pertama dari assistant.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="shrink-0 space-y-2 rounded-xl border border-border/40 bg-muted/10 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Arah inisiatif
+                </p>
+                {initiativeMatches.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {initiativeMatches.map((match) => (
+                      <Badge
+                        key={match.id}
+                        variant="secondary"
+                        className="rounded-full border border-primary/15 bg-primary/8 px-2.5 py-0.5 text-[11px] font-medium text-foreground"
+                      >
+                        {match.label}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Belum teridentifikasi — arah value (efisiensi, produktivitas, revenue, cost of credit, ROA) akan muncul seiring diskusi.
+                  </p>
+                )}
+                <p className="text-[10px] leading-4 text-muted-foreground">
+                  Indikasi awal dari judul, tag, dan isi brainstorming — bukan keputusan scoring final.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </aside>
+  )
+}
+
 function BrainstormAssistantMessageBody({ text }: { text: string }) {
   const segments = splitMermaidContent(text)
   if (segments.length === 0) return null
@@ -426,6 +1068,66 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
       content={formatBrainstormProse(normalizeMermaidFences(text))}
       className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
     />
+  )
+}
+
+function BrainstormAssistantTypingMessage({
+  text,
+  animate,
+  onComplete,
+  onProgress,
+}: {
+  text: string
+  animate: boolean
+  onComplete?: () => void
+  onProgress?: () => void
+}) {
+  const mermaidStart = text.indexOf('```mermaid')
+  const typingTarget = mermaidStart >= 0 ? text.slice(0, mermaidStart) : text
+  const [displayText, setDisplayText] = useState(animate ? '' : text)
+  const [isTyping, setIsTyping] = useState(animate)
+
+  useEffect(() => {
+    if (!animate) {
+      setDisplayText(text)
+      setIsTyping(false)
+      return
+    }
+    setDisplayText('')
+    setIsTyping(true)
+    const tokens = typingTarget.match(/\S+\s*|\s+/g) ?? [typingTarget]
+    if (tokens.length === 0) {
+      setDisplayText(text)
+      setIsTyping(false)
+      onComplete?.()
+      return
+    }
+    let index = 0
+    const timerId = window.setInterval(() => {
+      index += 1
+      if (index >= tokens.length) {
+        window.clearInterval(timerId)
+        setDisplayText(text)
+        setIsTyping(false)
+        onComplete?.()
+        return
+      }
+      setDisplayText(tokens.slice(0, index).join(''))
+      onProgress?.()
+    }, 36)
+    return () => window.clearInterval(timerId)
+  }, [animate, onComplete, onProgress, text, typingTarget])
+
+  return (
+    <div className="relative">
+      <BrainstormAssistantMessageBody text={displayText || (isTyping ? ' ' : text)} />
+      {isTyping ? (
+        <span
+          className="ml-0.5 inline-block h-[1.05em] w-0.5 animate-pulse bg-primary align-[-0.15em]"
+          aria-hidden
+        />
+      ) : null}
+    </div>
   )
 }
 
@@ -618,10 +1320,59 @@ const typeClass: Record<IdeaType, string> = {
   Request: 'bg-violet-100 text-violet-700 border-violet-200',
 }
 
-const typeAccent: Record<IdeaType, string> = {
-  Innovation: '#0ea5e9',
-  Improvement: '#10b981',
-  Request: '#8b5cf6',
+const DEFAULT_IDEA_CARD_ACCENT_COLOR = '#94a3b8'
+
+const IDEA_CARD_ACCENT_COLORS = [
+  '#3b82f6',
+  '#a855f7',
+  '#10b981',
+  '#f97316',
+  '#ec4899',
+  '#06b6d4',
+  '#6366f1',
+  '#14b8a6',
+  '#f43f5e',
+  '#f59e0b',
+  '#84cc16',
+  '#8b5cf6',
+] as const
+
+const IDEA_CARD_CONTEXT_MENU_ESTIMATED_HEIGHT = 520
+const BACKGROUND_CONTEXT_MENU_ESTIMATED_HEIGHT = 240
+
+type FixedContextMenuPosition = { x: number; y: number; clientX: number; clientY: number }
+
+function resolveFixedContextMenuPosition(
+  clientX: number,
+  clientY: number,
+  menuWidth: number,
+  menuHeight: number,
+  padding = 12,
+): FixedContextMenuPosition {
+  let x = clientX
+  if (x + menuWidth > window.innerWidth - padding) {
+    x = clientX - menuWidth
+  }
+  x = Math.max(padding, Math.min(x, window.innerWidth - menuWidth - padding))
+
+  const spaceBelow = window.innerHeight - clientY - padding
+  const spaceAbove = clientY - padding
+
+  let y = clientY
+  if (menuHeight > spaceBelow && spaceAbove >= spaceBelow) {
+    y = clientY - menuHeight
+  } else if (menuHeight > spaceBelow) {
+    y = window.innerHeight - menuHeight - padding
+  }
+
+  y = Math.max(padding, Math.min(y, window.innerHeight - menuHeight - padding))
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    clientX,
+    clientY,
+  }
 }
 
 const statusClass: Record<IdeaStatus, string> = {
@@ -632,64 +1383,35 @@ const statusClass: Record<IdeaStatus, string> = {
   'Converted to Project': 'bg-violet-50 text-violet-700 border-violet-200',
 }
 
-function ideaTypeTagChrome(type: IdeaType, active: boolean): string {
-  const base =
-    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold shadow-sm transition-all select-none'
-
-  const off =
-    'bg-background/65 text-muted-foreground border-border/60 hover:bg-background/80 hover:text-foreground'
-
-  const on = 'ring-2 ring-offset-1 ring-offset-background hover:brightness-95'
-
-  if (!active) return cn(base, off)
-
-  if (type === 'Innovation') {
-    return cn(base, on, 'bg-gradient-to-r from-sky-500/15 to-indigo-500/15 text-sky-900 border-sky-400/25 ring-sky-500/20')
-  }
-  if (type === 'Improvement') {
-    return cn(base, on, 'bg-gradient-to-r from-emerald-500/15 to-teal-500/15 text-emerald-900 border-emerald-400/25 ring-emerald-500/20')
-  }
-  if (type === 'Request') {
-    return cn(base, on, 'bg-gradient-to-r from-violet-500/15 to-fuchsia-500/15 text-violet-900 border-violet-400/25 ring-violet-500/20')
-  }
-
-  return cn(base, on, 'bg-gradient-to-r from-slate-500/12 to-slate-600/12 text-slate-900 border-slate-400/25 ring-slate-500/20')
+function ideaTypeFilterVariant(type: IdeaType): 'sky' | 'emerald' | 'violet' {
+  if (type === 'Innovation') return 'sky'
+  if (type === 'Improvement') return 'emerald'
+  return 'violet'
 }
 
-function ideaStatusTagChrome(status: IdeaStatus, active: boolean): string {
-  const base =
-    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold shadow-sm transition-all select-none'
-
-  const off =
-    'bg-background/65 text-muted-foreground border-border/60 hover:bg-background/80 hover:text-foreground'
-
-  const on = 'ring-2 ring-offset-1 ring-offset-background hover:brightness-95'
-
-  if (!active) return cn(base, off)
-
-  if (status === 'New Submission') {
-    return cn(base, on, 'bg-gradient-to-r from-amber-500/15 to-orange-500/15 text-amber-950 border-amber-400/25 ring-amber-500/20')
-  }
-  if (status === 'Under Review') {
-    return cn(base, on, 'bg-gradient-to-r from-blue-500/15 to-cyan-500/15 text-blue-900 border-blue-400/25 ring-blue-500/20')
-  }
-  if (status === 'Approved') {
-    return cn(base, on, 'bg-gradient-to-r from-emerald-500/15 to-green-500/15 text-emerald-900 border-emerald-400/25 ring-emerald-500/20')
-  }
-  if (status === 'Rejected') {
-    return cn(base, on, 'bg-gradient-to-r from-rose-500/15 to-red-500/15 text-rose-900 border-rose-400/25 ring-rose-500/20')
-  }
-  if (status === 'Converted to Project') {
-    return cn(base, on, 'bg-gradient-to-r from-violet-500/15 to-purple-500/15 text-violet-900 border-violet-400/25 ring-violet-500/20')
-  }
-
-  return cn(base, on, 'bg-gradient-to-r from-slate-500/12 to-slate-600/12 text-slate-900 border-slate-400/25 ring-slate-500/20')
+function ideaStatusFilterVariant(status: IdeaStatus): 'amber' | 'cyan' | 'emerald' | 'slate' | 'violet' {
+  if (status === 'New Submission') return 'amber'
+  if (status === 'Under Review') return 'cyan'
+  if (status === 'Approved') return 'emerald'
+  if (status === 'Rejected') return 'slate'
+  return 'violet'
 }
+
+const LEGACY_DUMMY_OWNER_ID = '00000000-0000-0000-0000-000000000001'
 
 export function IdeaBacklogManagementPage() {
   type SubmissionSortOrder = 'name-asc' | 'name-desc'
 
+  const tenant = useTenantContextOptional()
+  const workspaceManagementPath = useMemo(
+    () => workspaceScopedPath(tenant?.slug ?? null, '/workspace-management', tenant?.workspaceId),
+    [tenant?.slug, tenant?.workspaceId],
+  )
   const [ideas, setIdeas] = useState<Idea[]>([])
+  const [projectNameById, setProjectNameById] = useState<Record<string, string>>({})
+  const projectNameByIdRef = useRef(projectNameById)
+  projectNameByIdRef.current = projectNameById
+  const toIdea = useCallback((api: IdeaApi): Idea => fromApiIdea(api, projectNameByIdRef.current), [])
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedIdeaId, setSelectedIdeaId] = useState('')
@@ -699,24 +1421,15 @@ export function IdeaBacklogManagementPage() {
   const [statusFilterTags, setStatusFilterTags] = useState<Set<IdeaStatus>>(() => new Set(IDEA_STATUSES))
   const [submissionSortOrder, setSubmissionSortOrder] = useState<SubmissionSortOrder>('name-asc')
   const [showFiltersPanel, setShowFiltersPanel] = useState(true)
-  const [showScoringPanels, setShowScoringPanels] = useState(true)
-  const [showIntakePanel, setShowIntakePanel] = useState(true)
+  const [showScoringPanels, setShowScoringPanels] = useState(false)
+  const [showIntakePanel, setShowIntakePanel] = useState(false)
   const [isListView, setIsListView] = useState(false)
   const [orderedIdeaIds, setOrderedIdeaIds] = useState<string[]>([])
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<FixedContextMenuPosition | null>(null)
   const [isSearchFieldMenu, setIsSearchFieldMenu] = useState(false)
-  const [ideaCardContextMenu, setIdeaCardContextMenu] = useState<{ x: number; y: number; idea: Idea } | null>(null)
-  const [isTypeFilterSubmenuOpen, setIsTypeFilterSubmenuOpen] = useState(false)
-  const [isStatusFilterSubmenuOpen, setIsStatusFilterSubmenuOpen] = useState(false)
-  const [typeFilterSubmenuPos, setTypeFilterSubmenuPos] = useState({ x: 0, y: 0 })
-  const [statusFilterSubmenuPos, setStatusFilterSubmenuPos] = useState({ x: 0, y: 0 })
-  const backgroundMenuRef = useRef<HTMLDivElement | null>(null)
-  const ideaCardMenuRef = useRef<HTMLDivElement | null>(null)
-  const typeFilterSubmenuTriggerRef = useRef<HTMLButtonElement | null>(null)
-  const typeFilterSubmenuPanelRef = useRef<HTMLDivElement | null>(null)
-  const statusFilterSubmenuTriggerRef = useRef<HTMLButtonElement | null>(null)
-  const statusFilterSubmenuPanelRef = useRef<HTMLDivElement | null>(null)
+  const [ideaCardContextMenu, setIdeaCardContextMenu] = useState<(FixedContextMenuPosition & { idea: Idea }) | null>(null)
+  const [isSavingIdeaColor, setIsSavingIdeaColor] = useState(false)
   const [isCreateIdeaDrawerOpen, setIsCreateIdeaDrawerOpen] = useState(false)
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
   const [isDeletingIdea, setIsDeletingIdea] = useState(false)
@@ -731,15 +1444,27 @@ export function IdeaBacklogManagementPage() {
   const [ideaDraftJob, setIdeaDraftJob] = useState<IdeaDraftJobStatusResponse | null>(null)
   const [isEvidenceDialogOpen, setIsEvidenceDialogOpen] = useState(false)
   const [isBrainstormMode, setIsBrainstormMode] = useState(false)
-  const [brainstormMessages, setBrainstormMessages] = useState<IdeaDraftBrainstormMessage[]>([])
+  const [brainstormMessages, setBrainstormMessages] = useState<BrainstormUiMessage[]>([])
   const [brainstormInput, setBrainstormInput] = useState('')
   const [isBrainstormSending, setIsBrainstormSending] = useState(false)
+  const [brainstormAnimatingAssistantIndex, setBrainstormAnimatingAssistantIndex] = useState<number | null>(null)
   const [isDraftContinuing, setIsDraftContinuing] = useState(false)
   const [brainstormError, setBrainstormError] = useState('')
   const [brainstormReady, setBrainstormReady] = useState(false)
   const [brainstormRemainingGaps, setBrainstormRemainingGaps] = useState<string[]>([])
+  const [brainstormChecklist, setBrainstormChecklist] = useState<IdeaDraftChecklistItem[]>([])
+  const [brainstormEvidenceProgress, setBrainstormEvidenceProgress] = useState<IdeaDraftEvidenceProgress | null>(null)
+  const [brainstormConfidencePercent, setBrainstormConfidencePercent] = useState(0)
+  const [brainstormOfferGenerateAnyway, setBrainstormOfferGenerateAnyway] = useState(false)
+  const [brainstormEvidenceRailCollapsed, setBrainstormEvidenceRailCollapsed] = useState(false)
   const brainstormScrollRef = useRef<HTMLDivElement | null>(null)
   const brainstormComposerRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const scrollBrainstormToBottom = useCallback(() => {
+    const node = brainstormScrollRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [])
   const [createIdeaForm, setCreateIdeaForm] = useState({
     title: '',
     description: '',
@@ -780,6 +1505,21 @@ export function IdeaBacklogManagementPage() {
     () => extractProcessDiagramsFromText(createIdeaForm.description),
     [createIdeaForm.description],
   )
+
+  const syncBrainstormEvidenceState = (status: Pick<
+    IdeaDraftJobStatusResponse,
+    'intake_checklist' | 'evidence_progress' | 'confidence_percent' | 'brainstorm_ready'
+  >) => {
+    setBrainstormChecklist(status.intake_checklist ?? status.evidence_progress?.items ?? [])
+    setBrainstormEvidenceProgress(status.evidence_progress ?? null)
+    setBrainstormConfidencePercent(
+      resolveBrainstormConfidencePercent(
+        status.confidence_percent,
+        status.evidence_progress ?? null,
+        Boolean(status.brainstorm_ready),
+      ),
+    )
+  }
 
   const syncCreateIdeaDescriptionFromHtml = (nextHtml: string) => {
     const sanitized = sanitizeIdeaDescriptionRichHtml(nextHtml)
@@ -898,6 +1638,11 @@ export function IdeaBacklogManagementPage() {
 
   const effectiveCreateIdeaTags = useMemo(() => mergeCreateIdeaTags(createIdeaTags, createIdeaTagDraft).tags, [createIdeaTagDraft, createIdeaTags])
 
+  const brainstormInitiativeMatches = useMemo(
+    () => inferInitiativeLens(createIdeaForm.title, effectiveCreateIdeaTags, brainstormMessages),
+    [createIdeaForm.title, effectiveCreateIdeaTags, brainstormMessages],
+  )
+
   const quickCreateIdeaTagSuggestions = useMemo(() => {
     const used = new Set(createIdeaTags.map((tag) => tag.toLocaleLowerCase()))
     return IDEA_TAG_QUICK_SUGGESTIONS.filter((tag) => !used.has(tag.toLocaleLowerCase()))
@@ -950,18 +1695,18 @@ export function IdeaBacklogManagementPage() {
 
   const backlogPageContext = useMemo(() => {
     const filters: string[] = []
-    if (query.trim()) filters.push(`pencarian: "${query.trim()}"`)
+    if (query.trim()) filters.push(`search: "${query.trim()}"`)
     if (typeFilterTags.size > 0 && typeFilterTags.size < IDEA_TYPES.length) {
-      filters.push(`tipe: ${[...typeFilterTags].join(', ')}`)
+      filters.push(`type: ${[...typeFilterTags].join(', ')}`)
     }
     if (statusFilterTags.size > 0 && statusFilterTags.size < IDEA_STATUSES.length) {
       filters.push(`status: ${[...statusFilterTags].join(', ')}`)
     }
     const selection =
       selectedIdeaIds.size > 1
-        ? `${selectedIdeaIds.size} ide dipilih`
+        ? `${selectedIdeaIds.size} ideas selected`
         : selectedIdea
-          ? `ide terpilih: ${selectedIdea.title}`
+          ? `selected idea: ${selectedIdea.title}`
           : null
     return {
       view_label: isListView ? 'List view' : 'Board view',
@@ -1022,25 +1767,25 @@ export function IdeaBacklogManagementPage() {
     {
       stage: 'Submitted',
       value: metrics.totalIdeas,
-      fill: '#93c5fd',
+      fill: '#cbd5e1',
       description: 'All ideas entering strategic intake.',
     },
     {
       stage: 'Evaluated',
       value: metrics.underReview + metrics.approved + metrics.rejected + metrics.converted,
-      fill: '#60a5fa',
+      fill: '#94a3b8',
       description: 'Ideas screened by governance and scoring.',
     },
     {
       stage: 'Approved',
       value: metrics.approved + metrics.converted,
-      fill: '#3b82f6',
+      fill: '#64748b',
       description: 'Ideas cleared for execution planning.',
     },
     {
       stage: 'Executed',
       value: metrics.converted,
-      fill: '#1d4ed8',
+      fill: '#475569',
       description: 'Ideas converted into active delivery work.',
     },
   ]
@@ -1145,7 +1890,7 @@ export function IdeaBacklogManagementPage() {
     const targetStatus = toBackendStatus(status)
     try {
       const updated = await patchIdea(selectedIdea.id, { status_code: targetStatus, version: selectedIdea.version })
-      setIdeas((prev) => prev.map((idea) => (idea.id === selectedIdea.id ? fromApiIdea(updated) : idea)))
+      setIdeas((prev) => prev.map((idea) => (idea.id === selectedIdea.id ? toIdea(updated) : idea)))
     } catch {
       // optimistic fallback
       setIdeas((prev) => prev.map((idea) => (idea.id === selectedIdea.id ? { ...idea, status } : idea)))
@@ -1158,9 +1903,49 @@ export function IdeaBacklogManagementPage() {
     const targetStatus = toBackendStatus(status)
     try {
       const updated = await patchIdea(ideaId, { status_code: targetStatus, version: idea.version })
-      setIdeas((prev) => prev.map((i) => (i.id === ideaId ? fromApiIdea(updated) : i)))
+      setIdeas((prev) => prev.map((i) => (i.id === ideaId ? toIdea(updated) : i)))
     } catch {
       setIdeas((prev) => prev.map((i) => (i.id === ideaId ? { ...i, status } : i)))
+    }
+  }
+
+  const applyIdeaCardAccentColor = async (color: string, ideaIds: string[]) => {
+    const uniqueIds = Array.from(new Set(ideaIds)).filter(Boolean)
+    if (!uniqueIds.length || isSavingIdeaColor) return
+
+    const snapshot = new Map<string, Idea>()
+    for (const ideaId of uniqueIds) {
+      const idea = ideas.find((item) => item.id === ideaId)
+      if (idea) snapshot.set(ideaId, idea)
+    }
+    if (!snapshot.size) return
+
+    setIsSavingIdeaColor(true)
+    setIdeas((prev) =>
+      prev.map((idea) => (snapshot.has(idea.id) ? { ...idea, cardAccentColor: color } : idea)),
+    )
+
+    try {
+      const results = await Promise.all(
+        Array.from(snapshot.entries()).map(async ([ideaId, idea]) => {
+          const updated = await patchIdea(ideaId, {
+            card_accent_color: color,
+            version: idea.version,
+          })
+          return toIdea(updated)
+        }),
+      )
+      const updatedById = new Map(results.map((idea) => [idea.id, idea]))
+      setIdeas((prev) => prev.map((idea) => updatedById.get(idea.id) ?? idea))
+    } catch {
+      setIdeas((prev) =>
+        prev.map((idea) => {
+          const previous = snapshot.get(idea.id)
+          return previous ?? idea
+        }),
+      )
+    } finally {
+      setIsSavingIdeaColor(false)
     }
   }
 
@@ -1198,15 +1983,62 @@ export function IdeaBacklogManagementPage() {
   }
 
   useEffect(() => {
+    if (tenant?.loading) return
+
     let cancelled = false
     setIsLoading(true)
     setLoadError(null)
+    setIdeas([])
+    setProjectNameById({})
+    projectNameByIdRef.current = {}
+    setSelectedIdeaId('')
+    setSelectedIdeaIds(new Set())
+
+    const workspaceApiId = resolveWorkspaceApiId(tenant?.workspaceId)
+    const listParams: Parameters<typeof listIdeas>[0] = { page_size: 200 }
+    if (workspaceApiId) {
+      listParams.workspace_id = workspaceApiId
+    }
+
     Promise.all([
-      listIdeas({ page_size: 200 }),
+      listIdeas(listParams),
       fetchIdentityUsers({ limit: 500, offset: 0 }).catch(() => null),
+      fetchAllProjects({
+        app_id: TECTONA_PROJECT_APP_ID,
+        workspace_id: workspaceApiId,
+      }).catch(() => []),
     ])
-      .then(([res, usersRes]) => {
+      .then(async ([res, usersRes, projects]) => {
         if (cancelled) return
+        const namesByProjectId = Object.fromEntries(projects.map((project) => [project.id, project.name]))
+        const linkedProjectIds = [
+          ...new Set(
+            res.items
+              .map((item) => item.project_id?.trim())
+              .filter((id): id is string => Boolean(id)),
+          ),
+        ]
+        const unresolvedProjectIds = linkedProjectIds.filter((id) => !namesByProjectId[id])
+        if (unresolvedProjectIds.length > 0) {
+          const globalProjects = await fetchAllProjects({ app_id: TECTONA_PROJECT_APP_ID }).catch(() => [])
+          if (!cancelled) {
+            for (const project of globalProjects) {
+              namesByProjectId[project.id] = project.name
+            }
+          }
+        }
+        const stillUnresolved = linkedProjectIds.filter((id) => !namesByProjectId[id])
+        if (stillUnresolved.length > 0 && !cancelled) {
+          const fetched = await Promise.all(stillUnresolved.map((id) => fetchProject(id)))
+          for (const project of fetched) {
+            if (project?.id && project.name) {
+              namesByProjectId[project.id] = project.name
+            }
+          }
+        }
+        if (cancelled) return
+        setProjectNameById(namesByProjectId)
+        projectNameByIdRef.current = namesByProjectId
         const identityNames = mapIdentityUserDisplayNames(usersRes?.items)
         if (currentUserId && currentUserDisplayName) {
           identityNames[currentUserId] = identityNames[currentUserId] ?? currentUserDisplayName
@@ -1214,7 +2046,12 @@ export function IdeaBacklogManagementPage() {
         if (Object.keys(identityNames).length > 0) {
           setIdentityUserNameById(identityNames)
         }
-        const mapped = res.items.map(fromApiIdea)
+        // Always enforce active workspace scope client-side (covers "All workspaces"
+        // + accessible-ID filtering, and legacy rows without workspace_id).
+        const scope = readActiveWorkspaceScope()
+        const mapped = res.items
+          .map((api) => fromApiIdea(api, namesByProjectId))
+          .filter((idea) => belongsToActiveWorkspaceScope(idea.workspace, scope))
         setIdeas(mapped)
         if (mapped.length > 0) {
           setSelectedIdeaId(mapped[0].id)
@@ -1229,7 +2066,7 @@ export function IdeaBacklogManagementPage() {
         if (!cancelled) setIsLoading(false)
       })
     return () => { cancelled = true }
-  }, [currentUserDisplayName, currentUserId])
+  }, [currentUserDisplayName, currentUserId, tenant?.loading, tenant?.workspaceId, tenant?.tenantMode])
 
   useEffect(() => {
     return () => {
@@ -1356,12 +2193,27 @@ export function IdeaBacklogManagementPage() {
     if (!isCreateIdeaDrawerOpen) return
     const onEsc = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (isEvidenceDialogOpen) return
         setIsCreateIdeaDrawerOpen(false)
       }
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [isCreateIdeaDrawerOpen])
+  }, [isCreateIdeaDrawerOpen, isEvidenceDialogOpen])
+
+  useEffect(() => {
+    if (!isEvidenceDialogOpen) return
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (isDraftContinuing || isBrainstormSending) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      setIsEvidenceDialogOpen(false)
+      setIsBrainstormMode(false)
+    }
+    window.addEventListener('keydown', onEsc, true)
+    return () => window.removeEventListener('keydown', onEsc, true)
+  }, [isEvidenceDialogOpen, isDraftContinuing, isBrainstormSending])
 
   useEffect(() => {
     const ideaIds = ideas.map((idea) => idea.id)
@@ -1373,43 +2225,45 @@ export function IdeaBacklogManagementPage() {
     })
   }, [ideas])
 
+  const closeContextMenu = () => {
+    setContextMenu(null)
+    setIdeaCardContextMenu(null)
+    setIsSearchFieldMenu(false)
+  }
+
   useEffect(() => {
     if (!contextMenu && !ideaCardContextMenu) return
+
+    const isInsideContextMenu = (target: EventTarget | null) => {
+      if (!(target instanceof Node)) return false
+      const el = target instanceof HTMLElement ? target : target.parentElement
+      if (!el) return false
+      return Boolean(
+        el.closest('[data-context-menu-root]') || el.closest('[data-context-menu-submenu]'),
+      )
+    }
+
     const onEsc = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setContextMenu(null)
-        setIdeaCardContextMenu(null)
-        setIsSearchFieldMenu(false)
-        setIsTypeFilterSubmenuOpen(false)
-        setIsStatusFilterSubmenuOpen(false)
-      }
-    }
-    const onResize = () => {
-      setContextMenu(null)
-      setIdeaCardContextMenu(null)
-      setIsSearchFieldMenu(false)
-      setIsTypeFilterSubmenuOpen(false)
-      setIsStatusFilterSubmenuOpen(false)
-    }
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node
-      const clickedBackgroundMenu = backgroundMenuRef.current?.contains(target)
-      const clickedIdeaCardMenu = ideaCardMenuRef.current?.contains(target)
-      const clickedTypeFilterSubmenu = typeFilterSubmenuPanelRef.current?.contains(target)
-      const clickedTypeFilterTrigger = typeFilterSubmenuTriggerRef.current?.contains(target)
-      const clickedStatusFilterSubmenu = statusFilterSubmenuPanelRef.current?.contains(target)
-      const clickedStatusFilterTrigger = statusFilterSubmenuTriggerRef.current?.contains(target)
-      if (!clickedBackgroundMenu && !clickedIdeaCardMenu && !clickedTypeFilterSubmenu && !clickedTypeFilterTrigger && !clickedStatusFilterSubmenu && !clickedStatusFilterTrigger) {
         closeContextMenu()
       }
     }
+    const onResize = () => {
+      closeContextMenu()
+    }
+    const onPointerDown = (event: MouseEvent | PointerEvent) => {
+      if (isInsideContextMenu(event.target)) return
+      closeContextMenu()
+    }
     window.addEventListener('keydown', onEsc)
-    window.addEventListener('mousedown', onPointerDown, true)
     window.addEventListener('resize', onResize, { once: true })
+    document.addEventListener('mousedown', onPointerDown, true)
+    document.addEventListener('pointerdown', onPointerDown, true)
     return () => {
       window.removeEventListener('keydown', onEsc)
-      window.removeEventListener('mousedown', onPointerDown, true)
       window.removeEventListener('resize', onResize)
+      document.removeEventListener('mousedown', onPointerDown, true)
+      document.removeEventListener('pointerdown', onPointerDown, true)
     }
   }, [contextMenu, ideaCardContextMenu])
 
@@ -1424,108 +2278,16 @@ export function IdeaBacklogManagementPage() {
     }
     setIsSearchFieldMenu(false)
 
-    const menuWidth = 228
-    const menuHeight = 164
-    const gap = 12
-
-    const x = Math.min(event.clientX, window.innerWidth - menuWidth - gap)
-    const y = Math.min(event.clientY, window.innerHeight - menuHeight - gap)
-
     setIdeaCardContextMenu(null)
-    setIsTypeFilterSubmenuOpen(false)
-    setIsStatusFilterSubmenuOpen(false)
-    setContextMenu({ x: Math.max(gap, x), y: Math.max(gap, y) })
+    setContextMenu(
+      resolveFixedContextMenuPosition(
+        event.clientX,
+        event.clientY,
+        228,
+        BACKGROUND_CONTEXT_MENU_ESTIMATED_HEIGHT,
+      ),
+    )
   }
-
-  const closeContextMenu = () => {
-    setContextMenu(null)
-    setIdeaCardContextMenu(null)
-    setIsSearchFieldMenu(false)
-    setIsTypeFilterSubmenuOpen(false)
-    setIsStatusFilterSubmenuOpen(false)
-  }
-
-  const updateTypeFilterSubmenuPosition = () => {
-    const triggerEl = typeFilterSubmenuTriggerRef.current
-    if (!triggerEl) return
-
-    const triggerRect = triggerEl.getBoundingClientRect()
-    const panelWidth = 228
-    const panelHeight = typeFilterSubmenuPanelRef.current?.offsetHeight ?? 220
-    const viewportPadding = 12
-    const sideGap = 8
-
-    let left = triggerRect.right + sideGap
-    if (left + panelWidth > window.innerWidth - viewportPadding) {
-      left = triggerRect.left - panelWidth - sideGap
-    }
-
-    let top = triggerRect.top
-    if (top + panelHeight > window.innerHeight - viewportPadding) {
-      top = window.innerHeight - panelHeight - viewportPadding
-    }
-
-    setTypeFilterSubmenuPos({
-      x: Math.max(viewportPadding, Math.round(left)),
-      y: Math.max(viewportPadding, Math.round(top)),
-    })
-  }
-
-  const updateStatusFilterSubmenuPosition = () => {
-    const triggerEl = statusFilterSubmenuTriggerRef.current
-    if (!triggerEl) return
-
-    const triggerRect = triggerEl.getBoundingClientRect()
-    const panelWidth = 228
-    const panelHeight = statusFilterSubmenuPanelRef.current?.offsetHeight ?? 260
-    const viewportPadding = 12
-    const sideGap = 8
-
-    let left = triggerRect.right + sideGap
-    if (left + panelWidth > window.innerWidth - viewportPadding) {
-      left = triggerRect.left - panelWidth - sideGap
-    }
-
-    let top = triggerRect.top
-    if (top + panelHeight > window.innerHeight - viewportPadding) {
-      top = window.innerHeight - panelHeight - viewportPadding
-    }
-
-    setStatusFilterSubmenuPos({
-      x: Math.max(viewportPadding, Math.round(left)),
-      y: Math.max(viewportPadding, Math.round(top)),
-    })
-  }
-
-  useEffect(() => {
-    if (!isTypeFilterSubmenuOpen) return
-
-    updateTypeFilterSubmenuPosition()
-
-    const handleViewportChange = () => updateTypeFilterSubmenuPosition()
-    window.addEventListener('resize', handleViewportChange)
-    window.addEventListener('scroll', handleViewportChange, true)
-
-    return () => {
-      window.removeEventListener('resize', handleViewportChange)
-      window.removeEventListener('scroll', handleViewportChange, true)
-    }
-  }, [isTypeFilterSubmenuOpen])
-
-  useEffect(() => {
-    if (!isStatusFilterSubmenuOpen) return
-
-    updateStatusFilterSubmenuPosition()
-
-    const handleViewportChange = () => updateStatusFilterSubmenuPosition()
-    window.addEventListener('resize', handleViewportChange)
-    window.addEventListener('scroll', handleViewportChange, true)
-
-    return () => {
-      window.removeEventListener('resize', handleViewportChange)
-      window.removeEventListener('scroll', handleViewportChange, true)
-    }
-  }, [isStatusFilterSubmenuOpen])
 
   const applyTypeFilterFromContextMenu = (type: IdeaType | 'All') => {
     setShowFiltersPanel(true)
@@ -1698,7 +2460,7 @@ export function IdeaBacklogManagementPage() {
 
       try {
         const latestIdea = await getIdeaById(idea.id)
-        setIdeas((prev) => prev.map((current) => (current.id === idea.id ? fromApiIdea(latestIdea) : current)))
+        setIdeas((prev) => prev.map((current) => (current.id === idea.id ? toIdea(latestIdea) : current)))
       } catch {
         // refresh is best-effort; summary may already be persisted by runtime
       }
@@ -1794,6 +2556,14 @@ export function IdeaBacklogManagementPage() {
     setBrainstormMessages([])
     setBrainstormInput('')
     setBrainstormError('')
+    setBrainstormReady(false)
+    setBrainstormRemainingGaps([])
+    setBrainstormChecklist([])
+    setBrainstormEvidenceProgress(null)
+    setBrainstormConfidencePercent(0)
+    setBrainstormOfferGenerateAnyway(false)
+    setBrainstormEvidenceRailCollapsed(false)
+    setBrainstormAnimatingAssistantIndex(null)
     setAiAssistanceError('')
     setAiAssistanceWarning('')
     setIsCreateIdeaDrawerOpen(true)
@@ -1888,7 +2658,7 @@ export function IdeaBacklogManagementPage() {
         assignee_id: createIdeaForm.reviewer || undefined,
       })
       const newIdea = {
-        ...fromApiIdea(created),
+        ...toIdea(created),
         submittedBy: created.owner_id?.trim() || currentUserId,
       }
       setIdeas((prev) => [newIdea, ...prev])
@@ -1945,6 +2715,8 @@ export function IdeaBacklogManagementPage() {
         setBrainstormMessages(status.brainstorm_messages ?? [])
         setBrainstormReady(Boolean(status.brainstorm_ready))
         setBrainstormRemainingGaps(status.brainstorm_remaining_gaps ?? status.evidence_summary.gaps ?? [])
+        setBrainstormOfferGenerateAnyway(Boolean(status.offer_generate_anyway))
+        syncBrainstormEvidenceState(status)
         setIsEvidenceDialogOpen(true)
         return status
       }
@@ -1979,6 +2751,12 @@ export function IdeaBacklogManagementPage() {
       setBrainstormError('')
       setBrainstormReady(false)
       setBrainstormRemainingGaps([])
+      setBrainstormChecklist([])
+      setBrainstormEvidenceProgress(null)
+      setBrainstormConfidencePercent(0)
+      setBrainstormOfferGenerateAnyway(false)
+      setBrainstormEvidenceRailCollapsed(false)
+      setBrainstormAnimatingAssistantIndex(null)
       setIsBrainstormMode(false)
       setIsEvidenceDialogOpen(false)
     }
@@ -2023,15 +2801,17 @@ export function IdeaBacklogManagementPage() {
     }
   }
 
-  const handleSendBrainstormMessage = async () => {
+  const handleSendBrainstormMessage = async (messageOverride?: string) => {
     if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input') return
-    const message = brainstormInput.trim()
+    const message = (messageOverride ?? brainstormInput).trim()
     if (!message || isBrainstormSending || brainstormReady) return
     const historyBeforeSend = brainstormMessages
     setIsBrainstormSending(true)
     setBrainstormError('')
-    setBrainstormInput('')
-    setBrainstormMessages((current) => [...current, { role: 'user', text: message }])
+    if (!messageOverride) setBrainstormInput('')
+    setBrainstormOfferGenerateAnyway(false)
+    const requestSentAt = new Date().toISOString()
+    setBrainstormMessages((current) => [...current, { role: 'user', text: message, sentAt: requestSentAt }])
     try {
       const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(jobId, message)
       let response
@@ -2059,21 +2839,45 @@ export function IdeaBacklogManagementPage() {
         setBrainstormRemainingGaps(
           restored.brainstorm_remaining_gaps ?? restored.evidence_summary.gaps ?? brainstormRemainingGaps,
         )
+        setBrainstormOfferGenerateAnyway(Boolean(restored.offer_generate_anyway))
+        syncBrainstormEvidenceState(restored)
         response = await sendWithJob(restored.job_id)
       }
-      setBrainstormMessages(response.messages)
+      const responseReceivedAt = new Date().toISOString()
+      const mergedMessages = mergeBrainstormUiMessages(
+        historyBeforeSend,
+        response.messages,
+        responseReceivedAt,
+      )
+      setBrainstormMessages(mergedMessages)
+      const lastAssistantIndex = mergedMessages.findLastIndex((item) => item.role === 'assistant')
+      setBrainstormAnimatingAssistantIndex(lastAssistantIndex >= 0 ? lastAssistantIndex : null)
       setBrainstormReady(response.ready_to_continue)
       setBrainstormRemainingGaps(response.remaining_gaps)
+      setBrainstormOfferGenerateAnyway(Boolean(response.offer_generate_anyway) && !response.ready_to_continue)
+      setBrainstormChecklist(response.intake_checklist ?? response.evidence_progress?.items ?? [])
+      setBrainstormEvidenceProgress(response.evidence_progress ?? null)
+      setBrainstormConfidencePercent(
+        resolveBrainstormConfidencePercent(
+          response.confidence_percent,
+          response.evidence_progress ?? null,
+          response.ready_to_continue,
+        ),
+      )
       setIdeaDraftJob((current) => current
         ? {
             ...current,
             brainstorm_messages: response.messages,
             brainstorm_ready: response.ready_to_continue,
             brainstorm_remaining_gaps: response.remaining_gaps,
+            intake_checklist: response.intake_checklist ?? current.intake_checklist,
+            evidence_progress: response.evidence_progress ?? current.evidence_progress,
+            confidence_percent: response.confidence_percent ?? current.confidence_percent,
+            offer_generate_anyway: Boolean(response.offer_generate_anyway) && !response.ready_to_continue,
           }
         : current)
     } catch (error) {
-      setBrainstormInput(message)
+      if (!messageOverride) setBrainstormInput(message)
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
       setBrainstormError(friendlyBrainstormError(rawMessage))
       setBrainstormMessages((current) => current.filter(
@@ -2146,10 +2950,36 @@ export function IdeaBacklogManagementPage() {
 
   useEffect(() => {
     if (!isBrainstormMode) return
-    const node = brainstormScrollRef.current
-    if (!node) return
-    node.scrollTop = node.scrollHeight
-  }, [isBrainstormMode, brainstormMessages, isBrainstormSending, brainstormReady])
+    scrollBrainstormToBottom()
+  }, [
+    isBrainstormMode,
+    brainstormMessages,
+    isBrainstormSending,
+    brainstormReady,
+    brainstormAnimatingAssistantIndex,
+    scrollBrainstormToBottom,
+  ])
+
+  // Unlock Generate draft when chat already has approved process diagram evidence,
+  // even if the last API payload left ready_to_continue=false.
+  useEffect(() => {
+    if (!isBrainstormMode || brainstormReady || isBrainstormSending) return
+    if (!inferBrainstormReadyFromMessages(brainstormMessages)) return
+    setBrainstormReady(true)
+    setBrainstormRemainingGaps([])
+    setBrainstormOfferGenerateAnyway(false)
+    setBrainstormConfidencePercent((current) => Math.max(current, 85))
+    setIdeaDraftJob((current) =>
+      current
+        ? {
+            ...current,
+            brainstorm_ready: true,
+            brainstorm_remaining_gaps: [],
+            offer_generate_anyway: false,
+          }
+        : current,
+    )
+  }, [isBrainstormMode, brainstormMessages, brainstormReady, isBrainstormSending])
 
   const syncBrainstormComposerHeight = () => {
     const el = brainstormComposerRef.current
@@ -2205,16 +3035,16 @@ export function IdeaBacklogManagementPage() {
       value: metrics.newSubmissions,
       note: 'Fresh intake this cycle',
       icon: Plus,
-      tone: 'from-sky-500/12 to-sky-400/0 border-sky-200/80',
-      accent: 'bg-sky-600',
+      tone: 'from-amber-500/12 to-amber-400/0 border-amber-200/80',
+      accent: 'bg-amber-600',
     },
     {
       label: 'Under Review',
       value: metrics.underReview,
       note: 'Governance decision queue',
       icon: ClipboardList,
-      tone: 'from-indigo-500/12 to-indigo-400/0 border-indigo-200/80',
-      accent: 'bg-indigo-600',
+      tone: 'from-slate-500/12 to-slate-400/0 border-slate-300/80',
+      accent: 'bg-slate-600',
     },
     {
       label: 'Approved',
@@ -2247,22 +3077,19 @@ export function IdeaBacklogManagementPage() {
     ((metrics.approved + metrics.converted) / Math.max(metrics.totalIdeas, 1)) * 100
   )
 
-  const scoringRows = selectedIdea
-    ? ([
-        { key: 'businessValue', label: 'Value', value: selectedIdea.scoring.businessValue, color: '#5f7de0' },
-        { key: 'effort', label: 'Effort', value: selectedIdea.scoring.effort, color: '#5f7de0' },
-        { key: 'risk', label: 'Risk', value: selectedIdea.scoring.risk, color: '#5f7de0' },
-        { key: 'roi', label: 'ROI', value: selectedIdea.scoring.roi, color: '#5f7de0' },
-      ] as const)
-    : ([] as { key: string; label: string; value: number; color: string }[])
+  const scoringDimensions = selectedIdea
+    ? IDEA_SCORING_DIMENSIONS.map((dimension) => ({
+        ...dimension,
+        value: readIdeaScoringValue(selectedIdea, dimension.key),
+      }))
+    : []
 
   const chartRows = selectedIdea
-    ? [
-        { label: 'Value', score: selectedIdea.scoring.businessValue, fill: '#5f7de0' },
-        { label: 'Effort', score: selectedIdea.scoring.effort, fill: '#e2a234' },
-        { label: 'Risk', score: selectedIdea.scoring.risk, fill: '#e2a234' },
-        { label: 'ROI', score: selectedIdea.scoring.roi, fill: '#5f7de0' },
-      ]
+    ? scoringDimensions.map((dimension) => ({
+        label: dimension.label,
+        score: dimension.value,
+        fill: dimension.color,
+      }))
     : []
 
   const isUnknownIdentityToken = (value: string | null | undefined): boolean => {
@@ -2279,9 +3106,9 @@ export function IdeaBacklogManagementPage() {
 
   const resolveSubmittedByDisplayName = (subjectOrName: string): string => {
     const raw = subjectOrName.trim()
-    if (isUnknownIdentityToken(raw)) return 'Root'
+    if (isUnknownIdentityToken(raw) || raw === LEGACY_DUMMY_OWNER_ID) return '—'
     const resolved = (identityUserNameById[raw] ?? raw).trim()
-    return isUnknownIdentityToken(resolved) ? 'Root' : resolved
+    return isUnknownIdentityToken(resolved) ? '—' : resolved
   }
 
   const isMultiSelectCardMenu =
@@ -2293,19 +3120,20 @@ export function IdeaBacklogManagementPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-        Loading ideas…
-      </div>
+      <PlatformDataLoadingState
+        title="Loading Idea & Backlog data"
+        description="Retrieving ideas from the idea-backlog service."
+      />
     )
   }
 
   if (loadError) {
     return (
       <div className="mx-auto flex max-w-lg flex-col items-center justify-center gap-3 px-6 py-16 text-center">
-        <p className="text-sm font-medium text-rose-700">Tidak dapat memuat Idea &amp; Backlog</p>
+        <p className="text-sm font-medium text-rose-700">Unable to load Idea &amp; Backlog</p>
         <p className="text-sm text-muted-foreground">{loadError}</p>
         <Button type="button" variant="outline" size="sm" onClick={() => window.location.reload()}>
-          Muat ulang
+          Reload
         </Button>
       </div>
     )
@@ -2318,12 +3146,18 @@ export function IdeaBacklogManagementPage() {
       onMouseDown={(event) => {
         if (event.button !== 0) return
         const target = event.target as HTMLElement
+        if (
+          !target.closest('[data-context-menu-root]')
+          && !target.closest('[data-context-menu-submenu]')
+        ) {
+          closeContextMenu()
+        }
         if (target.closest('[data-idea-card="true"]')) return
         setSelectedIdeaId('')
         setSelectedIdeaIds(new Set())
       }}
     >
-      <Breadcrumb items={[{ label: 'Workspace', href: '/' }, { label: 'Idea & Backlog' }]} />
+      <Breadcrumb items={[{ label: 'Workspace', href: workspaceManagementPath }, { label: 'Idea & Backlog' }]} />
 
       <style>{`
         @keyframes ideaBarReveal {
@@ -2405,10 +3239,10 @@ export function IdeaBacklogManagementPage() {
 
       {showScoringPanels && selectedIdea && (
         <section className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-          <Card className="xl:col-span-8 glass-card rounded-2xl border-border/30 shadow-sm">
+          <Card className={cn('xl:col-span-8', ideaBacklogLiquidGlassPanelClass)}>
           <CardHeader className="pb-3">
             <CardTitle className="text-base text-slate-900 flex items-center gap-2">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border/40 bg-white/90">
+              <span className={ideaBacklogLiquidGlassPanelIconClass}>
                 <ClipboardList className="h-3 w-3 text-slate-600" />
               </span>
               Idea Evaluation & Scoring
@@ -2418,11 +3252,11 @@ export function IdeaBacklogManagementPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="rounded-xl border border-border/40 bg-gradient-to-br from-white via-slate-50/70 to-blue-50/60 p-3.5">
+            <div className={ideaBacklogLiquidGlassPanelInsetClass}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge variant="outline" className="text-[10px] font-semibold text-slate-600 bg-white/90">
+                    <Badge variant="outline" className="text-[10px] font-semibold text-slate-600 bg-white/30 backdrop-blur-sm border-white/50">
                       {selectedIdea.id}
                     </Badge>
                     <Badge variant="outline" className={cn('text-[10px] font-semibold', statusClass[selectedIdea.status])}>
@@ -2441,61 +3275,82 @@ export function IdeaBacklogManagementPage() {
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-border/40 bg-white/90 px-4 py-2 min-w-[160px]">
+                <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'min-w-[160px] px-4 py-2')}>
                   <p className="text-[11px] font-medium text-slate-500">Weighted score</p>
                   <p className="text-2xl font-bold text-slate-900 leading-none mt-1">{totalScore}</p>
                   <p className="text-[11px] text-slate-500 mt-1">Rank #{ranking} of {ideas.length}</p>
                 </div>
               </div>
-
-              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
-                <div className="rounded-lg border border-border/40 bg-white/85 px-3 py-2">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Value weight</p>
-                  <p className="text-sm font-semibold text-slate-900">30%</p>
-                </div>
-                <div className="rounded-lg border border-border/40 bg-white/85 px-3 py-2">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">ROI weight</p>
-                  <p className="text-sm font-semibold text-slate-900">30%</p>
-                </div>
-                <div className="rounded-lg border border-border/40 bg-white/85 px-3 py-2">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Effort adjuster</p>
-                  <p className="text-sm font-semibold text-slate-900">20%</p>
-                </div>
-                <div className="rounded-lg border border-border/40 bg-white/85 px-3 py-2">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Risk adjuster</p>
-                  <p className="text-sm font-semibold text-slate-900">20%</p>
-                </div>
-              </div>
             </div>
 
-            <div className="overflow-x-auto pb-1">
-              <div className="min-w-[820px] grid grid-cols-4 gap-3">
-                {scoringRows.map((item, index) => (
-                  <div key={item.key} className="rounded-lg border border-border/40 bg-white/80 px-3 py-2.5">
-                  <div className="flex items-center justify-between text-xs mb-2">
-                    <span className="font-medium text-slate-700">{item.label}</span>
-                    <span className="font-semibold text-slate-500">{item.value}/10</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {scoringDimensions.map((dimension, index) => (
+                  <div key={dimension.key} className="flex min-w-0 flex-col gap-2">
                     <div
-                      className="idea-progress-bar h-full rounded-full"
-                      style={{
-                        width: `${(item.value / 10) * 100}%`,
-                        backgroundColor: item.color,
-                        transformOrigin: 'left',
-                        animation: `ideaBarReveal 780ms cubic-bezier(0.22,1,0.36,1) ${index * 70}ms both`,
-                      }}
-                    />
+                      className={cn(
+                        ideaBacklogLiquidGlassPanelStatClass,
+                        'border-l-[3px] px-3 py-2',
+                        dimension.surfaceClass,
+                      )}
+                      style={{ borderLeftColor: dimension.color }}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="inline-block h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: dimension.color }}
+                          aria-hidden
+                        />
+                        <p
+                          className="text-[10px] font-semibold uppercase tracking-wide"
+                          style={{ color: dimension.color }}
+                        >
+                          {dimension.weightLabel}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-sm font-semibold text-slate-900 tabular-nums">
+                        {dimension.weightPercent}%
+                      </p>
+                    </div>
+
+                    <div
+                      className={cn(
+                        ideaBacklogLiquidGlassPanelStatClass,
+                        'flex flex-1 flex-col px-3 py-2.5',
+                        dimension.surfaceClass,
+                      )}
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                        <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+                          <span
+                            className="inline-block h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: dimension.color }}
+                            aria-hidden
+                          />
+                          {dimension.label}
+                        </span>
+                        <span className="font-semibold tabular-nums" style={{ color: dimension.color }}>
+                          {dimension.value}/10
+                        </span>
+                      </div>
+                      <div className={cn('h-2 overflow-hidden rounded-full', dimension.trackClass)}>
+                        <div
+                          className="idea-progress-bar h-full rounded-full"
+                          style={{
+                            width: `${(dimension.value / 10) * 100}%`,
+                            backgroundColor: dimension.color,
+                            transformOrigin: 'left',
+                            animation: `ideaBarReveal 780ms cubic-bezier(0.22,1,0.36,1) ${index * 70}ms both`,
+                          }}
+                        />
+                      </div>
+                      <p className="mt-2 text-[10px] font-medium text-slate-500">{dimension.roleLabel}</p>
+                    </div>
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-2">
-                    {item.key === 'businessValue' || item.key === 'roi' ? 'Primary driver' : 'Execution adjuster'}
-                  </p>
-                </div>
                 ))}
-              </div>
+
             </div>
 
-            <div className="rounded-xl border border-border/40 bg-white/80 px-2 pt-3 pb-2 h-[150px]">
+            <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'px-2 pt-3 pb-2 h-[150px]')}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -2511,31 +3366,51 @@ export function IdeaBacklogManagementPage() {
               </ResponsiveContainer>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <div className="space-y-3 pt-1">
               <p className="text-[11px] text-slate-500">Decision SLA: target within 2 business days from intake review.</p>
-              <div className="flex flex-wrap gap-2">
-                <Button className="h-9 bg-[#5f7de0] hover:bg-[#4f6bd0]" onClick={() => decideIdea('Approved')}>
-                <Check className="h-4 w-4 mr-1.5" /> Approve
-              </Button>
-                <Button
-                  variant="outline"
-                  className="h-9 border-rose-200 text-rose-500 hover:bg-rose-50"
-                  onClick={() => decideIdea('Rejected')}
+              <div className="flex w-full flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => decideIdea('Approved')}
+                  className={cn(
+                    enterpriseCyanGradientActionButtonClass(),
+                    'flex min-w-0 w-full basis-0 flex-1 justify-center',
+                  )}
                 >
-                  <X className="h-4 w-4 mr-1.5" /> Reject
-                </Button>
-                <Button variant="outline" className="h-9" onClick={() => decideIdea('Under Review')}>
-                  Request revision
-                </Button>
+                  <Check className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => decideIdea('Rejected')}
+                  className={cn(
+                    enterpriseRoseGradientActionButtonClass(),
+                    'flex min-w-0 w-full basis-0 flex-1 justify-center',
+                  )}
+                >
+                  <X className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => decideIdea('Under Review')}
+                  className={cn(
+                    enterpriseSecondaryButtonClass(),
+                    'group flex min-w-0 w-full basis-0 flex-1 items-center justify-center gap-2 rounded-2xl whitespace-nowrap text-[13.5px]',
+                  )}
+                >
+                  <Undo2 className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:-rotate-12" strokeWidth={2.5} />
+                  Request Revision
+                </button>
               </div>
             </div>
           </CardContent>
           </Card>
 
-          <Card className="xl:col-span-4 glass-card rounded-2xl border-border/30 shadow-sm">
+          <Card className={cn('xl:col-span-4', ideaBacklogLiquidGlassPanelClass)}>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2 text-slate-900">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border/40 bg-white/90">
+              <span className={ideaBacklogLiquidGlassPanelIconClass}>
                 <ClipboardList className="h-3 w-3 text-slate-600" />
               </span>
               Scoring Queue
@@ -2546,47 +3421,55 @@ export function IdeaBacklogManagementPage() {
             className="space-y-3 max-h-[520px] overflow-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
             style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
           >
-            <div className="rounded-lg border border-border/40 bg-gradient-to-br from-white via-slate-50/70 to-blue-50/50 px-3 py-2">
+            <div className={cn(ideaBacklogLiquidGlassPanelInsetClass, 'px-3 py-2')}>
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-slate-500">Queue size</span>
                 <span className="font-semibold text-slate-900">{ideas.length} ideas</span>
               </div>
-              <div className="mt-1 flex items-center justify-between text-[11px]">
-                <span className="text-slate-500">Active selection</span>
-                <span className="font-semibold text-blue-700">{selectedIdea.id}</span>
-              </div>
             </div>
 
-            {ideas.map((idea) => (
+            {ideas.map((idea) => {
+              const queueAccent = idea.cardAccentColor ?? DEFAULT_IDEA_CARD_ACCENT_COLOR
+              const ownerDisplayName = resolveSubmittedByDisplayName(idea.submittedBy)
+
+              return (
               <button
                 key={idea.id}
                 onClick={() => selectSingleIdea(idea.id)}
                 className={cn(
-                  'w-full text-left rounded-xl border p-3 transition-all hover:border-slate-300',
-                  selectedIdeaId === idea.id
-                    ? 'border-blue-300 bg-gradient-to-r from-blue-50/70 to-indigo-50/40 shadow-[0_8px_22px_-16px_rgba(37,99,235,0.75)]'
-                    : 'border-border/40 bg-white/80'
+                  ideaBacklogLiquidGlassQueueItemClass,
+                  selectedIdeaId === idea.id && ideaBacklogLiquidGlassQueueItemSelectedClass,
                 )}
+                style={{
+                  ['--idea-card-accent' as string]: queueAccent,
+                  borderRight: `4px solid ${queueAccent}`,
+                }}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <Badge variant="outline" className="text-[10px] font-semibold text-slate-600 bg-white/90">
-                    {idea.id}
-                  </Badge>
-                  <Badge className={cn('border text-[10px] font-semibold', typeClass[idea.type])}>{idea.type}</Badge>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="min-w-0 flex-1 text-xs font-semibold text-slate-900 leading-5">{idea.title}</p>
+                  <Badge className={cn('shrink-0 border text-[10px] font-semibold', typeClass[idea.type])}>{idea.type}</Badge>
                 </div>
 
-                <p className="text-xs font-semibold text-slate-900 mt-2 leading-5">{idea.title}</p>
+                <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-slate-500">
+                  <UserRound className="h-3 w-3 shrink-0" aria-hidden />
+                  <span className="shrink-0">Owner</span>
+                  <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-blue-200/80 bg-blue-50/80 text-[8px] font-semibold text-blue-700">
+                    {toInitials(ownerDisplayName)}
+                  </span>
+                  <span className="min-w-0 truncate font-medium text-slate-700">{ownerDisplayName}</span>
+                </div>
 
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <Badge variant="outline" className={cn('text-[10px] font-semibold', statusClass[idea.status])}>
                     {idea.status}
                   </Badge>
                   {selectedIdeaId === idea.id && (
-                    <span className="text-[10px] font-semibold text-blue-700">Selected</span>
+                    <span className="text-[10px] font-semibold text-slate-700">Selected</span>
                   )}
                 </div>
               </button>
-            ))}
+              )
+            })}
           </CardContent>
           </Card>
         </section>
@@ -2594,10 +3477,10 @@ export function IdeaBacklogManagementPage() {
 
       {showIntakePanel && (
         <section>
-          <Card className="glass-card rounded-2xl border-border/30 shadow-sm">
+          <Card className={ideaBacklogLiquidGlassPanelClass}>
           <CardHeader className="pb-3">
             <CardTitle className="text-[15px] flex items-center gap-2 text-slate-900">
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/40 bg-white/90">
+              <span className={cn(ideaBacklogLiquidGlassPanelIconClass, 'h-6 w-6')}>
                 <ClipboardList className="h-3.5 w-3.5 text-slate-600" />
               </span>
               Idea Intake Overview
@@ -2607,14 +3490,14 @@ export function IdeaBacklogManagementPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="rounded-xl border border-border/40 bg-gradient-to-br from-white via-slate-50/70 to-blue-50/60 p-3.5">
+            <div className={ideaBacklogLiquidGlassPanelInsetClass}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="space-y-1.5">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge variant="outline" className="text-[10px] font-semibold text-slate-600 bg-white/90">
+                    <Badge variant="outline" className="text-[10px] font-semibold text-slate-600 bg-white/30 backdrop-blur-sm border-white/50">
                       Intake Governance
                     </Badge>
-                    <Badge variant="outline" className="text-[10px] font-semibold border-blue-200 bg-blue-50 text-blue-700">
+                    <Badge variant="outline" className="text-[10px] font-semibold border-slate-200/80 bg-white/30 text-slate-700 backdrop-blur-sm">
                       Weekly refresh
                     </Badge>
                     <Badge variant="outline" className="text-[10px] font-semibold border-emerald-200 bg-emerald-50 text-emerald-700">
@@ -2625,7 +3508,7 @@ export function IdeaBacklogManagementPage() {
                   <p className="text-xs text-slate-500">Monitor intake quality, review velocity, and execution readiness in one executive strip.</p>
                 </div>
 
-                <div className="rounded-lg border border-border/40 bg-white/90 px-4 py-2 min-w-[178px]">
+                <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'min-w-[178px] px-4 py-2')}>
                   <p className="text-[11px] font-medium text-slate-500">Approval readiness</p>
                   <p className="text-2xl font-bold text-slate-900 leading-none mt-1">{approvalRate}%</p>
                   <p className="text-[11px] text-slate-500 mt-1">Approved + Converted / Total</p>
@@ -2644,17 +3527,14 @@ export function IdeaBacklogManagementPage() {
                   return (
                 <div
                   key={card.label}
-                  className={cn(
-                    'group relative overflow-hidden rounded-2xl border bg-white/90 px-4 py-3.5 shadow-[0_10px_30px_-22px_rgba(15,23,42,0.55)] transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.52)]',
-                    card.tone
-                  )}
+                  className={cn(ideaBacklogLiquidGlassMetricCardClass, card.tone)}
                 >
                   <span className={cn('absolute left-0 top-0 h-1.5 w-full opacity-90', card.accent)} />
-                  <div className="absolute -right-8 -top-10 h-24 w-24 rounded-full bg-white/55 blur-xl" />
+                  <div className="absolute -right-8 -top-10 h-24 w-24 rounded-full bg-white/35 blur-xl" />
 
                   <div className="relative flex items-start justify-between gap-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{card.label}</p>
-                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/90 shadow-sm">
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/50 bg-white/30 backdrop-blur-sm shadow-sm">
                       <Icon className="h-4 w-4 text-slate-600" />
                     </span>
                   </div>
@@ -2691,18 +3571,18 @@ export function IdeaBacklogManagementPage() {
                   <p className="mt-1 text-[11px] text-slate-500">Conversion analytics view showing flow efficiency, not just stage counts.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <div className="rounded-xl border border-border/40 bg-white/85 px-3 py-2.5 shadow-sm">
+                  <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'px-3 py-2.5 shadow-sm')}>
                     <p className="text-[10px] uppercase tracking-wide text-slate-500">End-to-end throughput</p>
                     <p className="mt-1 text-sm font-semibold text-slate-900">{funnelThroughput}%</p>
                   </div>
-                  <div className="rounded-xl border border-border/40 bg-white/85 px-3 py-2.5 shadow-sm">
+                  <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'px-3 py-2.5 shadow-sm')}>
                     <p className="text-[10px] uppercase tracking-wide text-slate-500">Largest drop-off</p>
                     <p className="mt-1 text-sm font-semibold text-slate-900">{funnelLargestDrop?.stage ?? 'N/A'}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-border/40 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.92))] p-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_18px_40px_-28px_rgba(15,23,42,0.22)]">
+              <div className={cn(ideaBacklogLiquidGlassPanelInsetClass, 'p-3.5')}>
                 <div className="overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
                   <div className="min-w-[1040px]">
                     <div className="grid grid-cols-1 gap-3 xl:grid-cols-4 xl:gap-4">
@@ -2711,9 +3591,9 @@ export function IdeaBacklogManagementPage() {
 
                         return (
                           <div key={item.stage} className="relative">
-                            <div className="group relative overflow-hidden rounded-[24px] border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/65 px-4 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_16px_-14px_rgba(15,23,42,0.1)] transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(15,23,42,0.05),0_12px_22px_-14px_rgba(15,23,42,0.12)]">
-                              <div className="absolute inset-x-0 top-0 h-1.5" style={{ background: `linear-gradient(90deg, ${item.fill}, ${item.fill}99)` }} />
-                              <div className="absolute -right-8 -top-10 h-24 w-24 rounded-full bg-slate-100/80 blur-2xl" />
+                            <div className={cn(ideaBacklogLiquidGlassMetricCardClass, 'rounded-[24px] px-4 py-4')}>
+                              <div className="absolute inset-x-0 top-0 h-1.5" style={{ background: item.fill }} />
+                              <div className="absolute -right-8 -top-10 h-24 w-24 rounded-full bg-white/25 blur-2xl" />
                               <div className="pointer-events-none absolute inset-x-8 bottom-0 h-px bg-gradient-to-r from-transparent via-slate-300/90 to-transparent" />
 
                               <div className="relative flex items-start justify-between gap-3">
@@ -2728,7 +3608,7 @@ export function IdeaBacklogManagementPage() {
 
                               <p className="relative mt-2 min-h-[36px] text-[11px] leading-5 text-slate-500">{item.description}</p>
 
-                              <div className="relative mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+                              <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'mt-3 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]')}>
                                 <div className="flex items-center justify-between text-[10px] font-medium text-slate-500">
                                   <span>Stage weight</span>
                                   <span className="text-slate-700">{item.shareOfTotal}%</span>
@@ -2738,7 +3618,7 @@ export function IdeaBacklogManagementPage() {
                                     className="idea-progress-bar h-full rounded-full transition-all duration-500"
                                     style={{
                                       width: `${barWidth}%`,
-                                      background: `linear-gradient(90deg, ${item.fill}, ${item.fill}CC)`,
+                                      backgroundColor: item.fill,
                                       transformOrigin: 'left',
                                       animation: `ideaBarReveal 900ms cubic-bezier(0.22,1,0.36,1) ${220 + index * 100}ms both`,
                                     }}
@@ -2747,11 +3627,11 @@ export function IdeaBacklogManagementPage() {
                               </div>
 
                               <div className="relative mt-3 grid grid-cols-2 gap-2">
-                                <div className="rounded-xl border border-border/40 bg-slate-50/70 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
+                                <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]')}>
                                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Retention</p>
                                   <p className="mt-1 text-sm font-semibold text-slate-900">{item.conversion}%</p>
                                 </div>
-                                <div className="rounded-xl border border-border/40 bg-slate-50/70 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
+                                <div className={cn(ideaBacklogLiquidGlassPanelStatClass, 'px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]')}>
                                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Drop-off</p>
                                   <p className="mt-1 text-sm font-semibold text-slate-900">{item.dropOff} ideas</p>
                                 </div>
@@ -2781,17 +3661,9 @@ export function IdeaBacklogManagementPage() {
 
       <section className="space-y-4">
         {showFiltersPanel && (
-          <div
-            className={cn(
-              'glass-card rounded-2xl p-4 space-y-4',
-              'border border-white/40 dark:border-white/10',
-              'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
-              'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
-              'bg-gradient-to-br from-white/70 via-background/75 to-slate-50/70 dark:from-slate-900/45 dark:via-background/40 dark:to-slate-950/20'
-            )}
-          >
+          <div className={ideaBacklogLiquidGlassFilterPanelClass}>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
                 value={query}
@@ -2799,107 +3671,109 @@ export function IdeaBacklogManagementPage() {
                 onContextMenu={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  const menuWidth = 228
-                  const menuHeight = 210
-                  const gap = 12
-                  const x = Math.min(event.clientX, window.innerWidth - menuWidth - gap)
-                  const y = Math.min(event.clientY, window.innerHeight - menuHeight - gap)
                   setIsSearchFieldMenu(true)
                   setContextMenu(null)
                   setIdeaCardContextMenu(null)
-                  setContextMenu({ x: Math.max(gap, x), y: Math.max(gap, y) })
+                  setContextMenu(
+                    resolveFixedContextMenuPosition(
+                      event.clientX,
+                      event.clientY,
+                      228,
+                      BACKGROUND_CONTEXT_MENU_ESTIMATED_HEIGHT,
+                    ),
+                  )
                 }}
                 placeholder="Search ideas, tags, submitter, or intent..."
-                className="pl-9 h-10 w-full"
+                className={ideaBacklogLiquidGlassFilterInputClass}
               />
             </div>
-            <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/50">
-              <Button
-                variant="default"
-                className="gap-2 h-10 px-4 rounded-lg text-sm font-semibold tracking-tight shrink-0"
-                onClick={openCreateIdeaDrawer}
-              >
-                <Plus className="h-4 w-4 shrink-0 opacity-95" strokeWidth={2.25} />
-                Create Idea
-              </Button>
-              <div className="hidden min-w-[1rem] flex-1 lg:block" aria-hidden />
-              <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2 lg:ml-auto lg:w-auto lg:justify-end">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    Type <span className="tabular-nums">({typeTotalForLabel})</span>
-                  </span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {IDEA_TYPES.map((type) => {
-                      const on = typeFilterTags.has(type)
-                      const count = typeCounts[type]
-                      return (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() => {
-                            setTypeFilterTags((prev) => {
-                              const next = new Set(prev)
-                              if (next.has(type)) {
-                                next.delete(type)
-                                // Prevent empty: if deleting would make it empty, revert to all
-                                if (next.size === 0) return new Set(IDEA_TYPES)
-                              } else {
-                                next.add(type)
-                              }
-                              return next
-                            })
-                          }}
-                          className={ideaTypeTagChrome(type, on)}
-                          aria-pressed={on}
-                          title={on ? `Hide ${type}` : `Show ${type}`}
-                        >
-                          <span>{type}</span>
-                          <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
-                        </button>
-                      )
-                    })}
+
+            <div className="relative pt-3">
+              <div aria-hidden className={ideaBacklogLiquidGlassFilterPanelDividerClass} />
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <button type="button" onClick={openCreateIdeaDrawer} className={enterpriseCyanGradientActionButtonClass()}>
+                  <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                  Create Idea
+                </button>
+                <div className="hidden min-w-[1rem] flex-1 lg:block" aria-hidden />
+                <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2 lg:ml-auto lg:w-auto lg:justify-end">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Type <span className="tabular-nums">({typeTotalForLabel})</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {IDEA_TYPES.map((type) => {
+                        const on = typeFilterTags.has(type)
+                        const count = typeCounts[type]
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => {
+                              setTypeFilterTags((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(type)) {
+                                  next.delete(type)
+                                  if (next.size === 0) return new Set(IDEA_TYPES)
+                                } else {
+                                  next.add(type)
+                                }
+                                return next
+                              })
+                            }}
+                            className={enterpriseFilterTagClass(on, ideaTypeFilterVariant(type))}
+                            aria-pressed={on}
+                            title={on ? `Hide ${type}` : `Show ${type}`}
+                          >
+                            <span>{type}</span>
+                            <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>
-                <span
-                  className="hidden shrink-0 select-none text-sm font-light text-muted-foreground/50 sm:inline"
-                  aria-hidden
-                >
-                  |
-                </span>
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    Status <span className="tabular-nums">({statusTotalForLabel})</span>
-                  </span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {IDEA_STATUSES.map((status) => {
-                      const on = statusFilterTags.has(status)
-                      const count = statusCounts[status]
-                      return (
-                        <button
-                          key={status}
-                          type="button"
-                          onClick={() => {
-                            setStatusFilterTags((prev) => {
-                              const next = new Set(prev)
-                              if (next.has(status)) {
-                                next.delete(status)
-                                // Prevent empty: if deleting would make it empty, revert to all
-                                if (next.size === 0) return new Set(['New Submission', 'Under Review', 'Approved', 'Rejected', 'Converted to Project'])
-                              } else {
-                                next.add(status)
-                              }
-                              return next
-                            })
-                          }}
-                          className={ideaStatusTagChrome(status, on)}
-                          aria-pressed={on}
-                          title={on ? `Hide ${status}` : `Show ${status}`}
-                        >
-                          <span>{status}</span>
-                          <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
-                        </button>
-                      )
-                    })}
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Status <span className="tabular-nums">({statusTotalForLabel})</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {IDEA_STATUSES.map((status) => {
+                        const on = statusFilterTags.has(status)
+                        const count = statusCounts[status]
+                        return (
+                          <button
+                            key={status}
+                            type="button"
+                            onClick={() => {
+                              setStatusFilterTags((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(status)) {
+                                  next.delete(status)
+                                  if (next.size === 0) {
+                                    return new Set([
+                                      'New Submission',
+                                      'Under Review',
+                                      'Approved',
+                                      'Rejected',
+                                      'Converted to Project',
+                                    ])
+                                  }
+                                } else {
+                                  next.add(status)
+                                }
+                                return next
+                              })
+                            }}
+                            className={enterpriseFilterTagClass(on, ideaStatusFilterVariant(status))}
+                            aria-pressed={on}
+                            title={on ? `Hide ${status}` : `Show ${status}`}
+                          >
+                            <span>{status}</span>
+                            <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2962,17 +3836,14 @@ export function IdeaBacklogManagementPage() {
                       event.preventDefault()
                       event.stopPropagation()
                       setContextMenu(null)
-                      setIsTypeFilterSubmenuOpen(false)
-
-                      const menuWidth = 220
-                      const menuHeight = 238
-                      const gap = 12
-                      const x = Math.min(event.clientX, window.innerWidth - menuWidth - gap)
-                      const y = Math.min(event.clientY, window.innerHeight - menuHeight - gap)
 
                       setIdeaCardContextMenu({
-                        x: Math.max(gap, x),
-                        y: Math.max(gap, y),
+                        ...resolveFixedContextMenuPosition(
+                          event.clientX,
+                          event.clientY,
+                          220,
+                          IDEA_CARD_CONTEXT_MENU_ESTIMATED_HEIGHT,
+                        ),
                         idea: currentIdea,
                       })
                     }}
@@ -2985,9 +3856,15 @@ export function IdeaBacklogManagementPage() {
               {activeIdea ? (
                 <div style={{ transform: 'rotate(2deg)' }}>
                   <div
-                    className="glass-card rounded-xl p-4 opacity-95 scale-105 shadow-2xl border-2 border-primary/30"
+                    className={cn(
+                      ideaBacklogLiquidGlassCardClass,
+                      'opacity-95 scale-105 shadow-2xl border-2 border-primary/30',
+                    )}
                     style={{
                       width: '360px',
+                      ['--idea-card-accent' as string]:
+                        activeIdea.cardAccentColor ?? DEFAULT_IDEA_CARD_ACCENT_COLOR,
+                      borderRight: `4px solid ${activeIdea.cardAccentColor ?? DEFAULT_IDEA_CARD_ACCENT_COLOR}`,
                       boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(59, 130, 246, 0.3)',
                     }}
                   >
@@ -3012,424 +3889,336 @@ export function IdeaBacklogManagementPage() {
         </div>
       </section>
 
+      <ContextMenu
+        open={!!contextMenu}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
+        onClose={closeContextMenu}
+        zIndex={1190}
+      >
+        {isSearchFieldMenu && (
+          <>
+            <ContextMenuItem
+              onClick={() => {
+                setQuery('')
+                closeContextMenu()
+              }}
+            >
+              <X className="w-4 h-4 mr-2" />
+              Clear field
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+
+        <ContextMenuItem
+          onClick={() => {
+            setShowScoringPanels((v) => !v)
+            closeContextMenu()
+          }}
+        >
+          <BarChart3 className="w-4 h-4 mr-2" />
+          {showScoringPanels ? 'Hide scoring panel' : 'Show scoring panel'}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            setShowIntakePanel((v) => !v)
+            closeContextMenu()
+          }}
+        >
+          <ClipboardList className="w-4 h-4 mr-2" />
+          {showIntakePanel ? 'Hide intake panel' : 'Show intake panel'}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            setShowFiltersPanel((v) => !v)
+            closeContextMenu()
+          }}
+        >
+          <Filter className="w-4 h-4 mr-2" />
+          {showFiltersPanel ? 'Hide search & filters panel' : 'Show search & filters panel'}
+        </ContextMenuItem>
+
+        <ContextMenuSeparator />
+
+        <ContextMenuItem
+          onClick={() => {
+            closeContextMenu()
+            openCreateIdeaDrawer()
+          }}
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Create idea
+        </ContextMenuItem>
+      </ContextMenu>
+
+      <ContextMenu
+        open={!!ideaCardContextMenu}
+        x={ideaCardContextMenu?.x ?? 0}
+        y={ideaCardContextMenu?.y ?? 0}
+        onClose={closeContextMenu}
+        zIndex={1190}
+      >
+        {!isMultiSelectCardMenu && (
+          <>
+            <ContextMenuItem
+              onClick={() => {
+                closeContextMenu()
+                openCreateIdeaDrawer()
+              }}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create idea
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+
+        {!isMultiSelectCardMenu && (
+          <ContextMenuItem
+            className={cn(isContextIdeaAnalysisLocked && 'opacity-50 pointer-events-none')}
+            onClick={() => {
+              if (isContextIdeaAnalysisLocked || !ideaCardContextMenu) return
+              openIdeaDetail(ideaCardContextMenu.idea)
+              closeContextMenu()
+            }}
+          >
+            <Eye className="w-4 h-4 mr-2" />
+            {isContextIdeaAnalysisLocked ? 'Analysis in progress' : 'View detail'}
+          </ContextMenuItem>
+        )}
+
+        {!isMultiSelectCardMenu && isContextIdeaAnalysisFailed && ideaCardContextMenu && (
+          <ContextMenuItem
+            onClick={() => {
+              void runAgentAnalysisForIdea(ideaCardContextMenu.idea)
+              closeContextMenu()
+            }}
+          >
+            <Undo2 className="w-4 h-4 mr-2" />
+            Retry analysis
+          </ContextMenuItem>
+        )}
+
+        <ContextMenuItem
+          onClick={() => {
+            if (!ideaCardContextMenu) return
+            if (isMultiSelectCardMenu) {
+              setSelectedIdeaId(ideaCardContextMenu.idea.id)
+              setShowScoringPanels(true)
+            } else {
+              selectSingleIdea(ideaCardContextMenu.idea.id)
+            }
+            closeContextMenu()
+          }}
+        >
+          <BarChart3 className="w-4 h-4 mr-2" />
+          Evaluate
+        </ContextMenuItem>
+
+        <ContextMenuItem
+          onClick={() => {
+            if (!ideaCardContextMenu) return
+            if (isMultiSelectCardMenu) {
+              setIdeas((prev) =>
+                prev.map((idea) =>
+                  selectedIdeaIds.has(idea.id) ? { ...idea, status: 'Rejected' } : idea
+                )
+              )
+            } else {
+              updateIdeaStatus(ideaCardContextMenu.idea.id, 'Rejected')
+            }
+            closeContextMenu()
+          }}
+        >
+          <X className="w-4 h-4 mr-2" />
+          Reject
+        </ContextMenuItem>
+
+        <ContextMenuSeparator />
+
+        <ContextMenuSubmenu
+          trigger={
+            <>
+              <Filter className="w-4 h-4 mr-2" />
+              Filter by type
+              <ChevronRight className="w-4 h-4 ml-auto" />
+            </>
+          }
+        >
+          <ContextMenuItem
+            className="justify-between"
+            onClick={() => applyTypeFilterFromContextMenu('All')}
+          >
+            <span>All types</span>
+            {typeFilterTags.size === IDEA_TYPES.length && <Check className="h-4 w-4 text-emerald-600" />}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {IDEA_TYPES.map((type) => (
+            <ContextMenuItem
+              key={type}
+              className="justify-between"
+              onClick={() => applyTypeFilterFromContextMenu(type)}
+            >
+              <span className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    'inline-block h-2 w-2 rounded-full',
+                    type === 'Innovation' ? 'bg-sky-500' : type === 'Improvement' ? 'bg-emerald-500' : 'bg-violet-500',
+                  )}
+                />
+                {type}
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{typeCounts[type]}</span>
+                {typeFilterTags.has(type) && <Check className="h-4 w-4 text-emerald-600" />}
+              </span>
+            </ContextMenuItem>
+          ))}
+        </ContextMenuSubmenu>
+
+        <ContextMenuSubmenu
+          trigger={
+            <>
+              <Filter className="w-4 h-4 mr-2" />
+              Filter by status
+              <ChevronRight className="w-4 h-4 ml-auto" />
+            </>
+          }
+        >
+          <ContextMenuItem
+            className="justify-between"
+            onClick={() => applyStatusFilterFromContextMenu('All')}
+          >
+            <span>All status</span>
+            {statusFilterTags.size === IDEA_STATUSES.length && <Check className="h-4 w-4 text-emerald-600" />}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {IDEA_STATUSES.map((status) => (
+            <ContextMenuItem
+              key={status}
+              className="justify-between"
+              onClick={() => applyStatusFilterFromContextMenu(status)}
+            >
+              <span>{status}</span>
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{statusCounts[status]}</span>
+                {statusFilterTags.has(status) && <Check className="h-4 w-4 text-emerald-600" />}
+              </span>
+            </ContextMenuItem>
+          ))}
+        </ContextMenuSubmenu>
+
+        {!isMultiSelectCardMenu && <ContextMenuSeparator />}
+
+        {!isMultiSelectCardMenu && (
+          <ContextMenuItem
+            onClick={() => {
+              setShowScoringPanels((v) => !v)
+              closeContextMenu()
+            }}
+          >
+            <BarChart3 className="w-4 h-4 mr-2" />
+            {showScoringPanels ? 'Hide scoring panel' : 'Show scoring panel'}
+          </ContextMenuItem>
+        )}
+
+        {!isMultiSelectCardMenu && (
+          <ContextMenuItem
+            onClick={() => {
+              setShowIntakePanel((v) => !v)
+              closeContextMenu()
+            }}
+          >
+            <ClipboardList className="w-4 h-4 mr-2" />
+            {showIntakePanel ? 'Hide intake panel' : 'Show intake panel'}
+          </ContextMenuItem>
+        )}
+
+        {!isMultiSelectCardMenu && (
+          <ContextMenuItem
+            onClick={() => {
+              setShowFiltersPanel((v) => !v)
+              closeContextMenu()
+            }}
+          >
+            <Filter className="w-4 h-4 mr-2" />
+            {showFiltersPanel ? 'Hide search & filters panel' : 'Show search & filters panel'}
+          </ContextMenuItem>
+        )}
+
+        <ContextMenuSeparator />
+
+        <ContextMenuSubmenu
+          trigger={
+            <>
+              <Palette className="w-4 h-4 mr-2" />
+              {isSavingIdeaColor ? 'Saving color…' : 'Change color'}
+              <ChevronRight className="w-4 h-4 ml-auto" />
+            </>
+          }
+          className={cn(isSavingIdeaColor && 'opacity-60 pointer-events-none')}
+        >
+          <div className="w-[13rem] p-3">
+            <p className="mb-2 px-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {isMultiSelectCardMenu ? 'Apply to selected ideas' : 'Card accent'}
+            </p>
+            <div className="grid grid-cols-6 gap-3">
+              {IDEA_CARD_ACCENT_COLORS.map((color) => {
+                const targetIds = isMultiSelectCardMenu
+                  ? Array.from(selectedIdeaIds)
+                  : ideaCardContextMenu
+                    ? [ideaCardContextMenu.idea.id]
+                    : []
+                const targetIdeas = ideas.filter((idea) => targetIds.includes(idea.id))
+                const isActive = targetIdeas.length > 0
+                  && targetIdeas.every(
+                    (idea) => (idea.cardAccentColor ?? DEFAULT_IDEA_CARD_ACCENT_COLOR) === color,
+                  )
+
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    disabled={isSavingIdeaColor}
+                    aria-label={`Set card color ${color}`}
+                    className={cn(
+                      'h-7 w-7 rounded-full border-2 transition shrink-0',
+                      isActive
+                        ? 'ring-2 ring-primary ring-offset-2 ring-offset-background border-white'
+                        : 'border-border hover:scale-110',
+                      isSavingIdeaColor && 'cursor-not-allowed opacity-60 hover:scale-100',
+                    )}
+                    style={{ backgroundColor: color }}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void applyIdeaCardAccentColor(color, targetIds)
+                      closeContextMenu()
+                    }}
+                  />
+                )
+              })}
+            </div>
+          </div>
+        </ContextMenuSubmenu>
+
+        {!isMultiSelectCardMenu && <ContextMenuSeparator />}
+
+        <ContextMenuItem
+          className="text-destructive"
+          onClick={() => {
+            if (!ideaCardContextMenu) return
+            openDeleteIdeaDialog(ideaCardContextMenu.idea)
+          }}
+        >
+          <Trash2 className="w-4 h-4 mr-2" />
+          Delete idea
+        </ContextMenuItem>
+      </ContextMenu>
+
       {typeof document !== 'undefined' &&
         createPortal(
           <>
-            {contextMenu && (
-              <>
-                <div
-                  ref={backgroundMenuRef}
-                  className="fixed z-[1190] w-[228px] rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm"
-                  style={{ left: contextMenu.x, top: contextMenu.y }}
-                  onClick={(event) => event.stopPropagation()}
-                  onContextMenu={(event) => event.preventDefault()}
-                >
-                  {isSearchFieldMenu && (
-                    <>
-                      <button
-                        type="button"
-                        className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                        onClick={() => {
-                          setQuery('')
-                          closeContextMenu()
-                        }}
-                      >
-                        <span className="flex items-center gap-2">
-                          <X className="h-4 w-4 text-slate-500" />
-                          <span>Clear field</span>
-                        </span>
-                      </button>
-                      <div className="my-1 border-t border-border/60" />
-                    </>
-                  )}
-
-                  <button
-                    type="button"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                    onClick={() => {
-                      setShowScoringPanels((v) => !v)
-                      closeContextMenu()
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <BarChart3 className="h-4 w-4 text-slate-500" />
-                      <span>{showScoringPanels ? 'Hide scoring panel' : 'Show scoring panel'}</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                    onClick={() => {
-                      setShowIntakePanel((v) => !v)
-                      closeContextMenu()
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <ClipboardList className="h-4 w-4 text-slate-500" />
-                      <span>{showIntakePanel ? 'Hide intake panel' : 'Show intake panel'}</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                    onClick={() => {
-                      setShowFiltersPanel((v) => !v)
-                      closeContextMenu()
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Filter className="h-4 w-4 text-slate-500" />
-                      <span>{showFiltersPanel ? 'Hide search & filters panel' : 'Show search & filters panel'}</span>
-                    </span>
-                  </button>
-
-                  <div className="my-1 border-t border-border/60" />
-
-                  <button
-                    type="button"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                    onClick={() => {
-                      closeContextMenu()
-                      openCreateIdeaDrawer()
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Plus className="h-4 w-4 text-slate-500" />
-                      <span>Create idea</span>
-                    </span>
-                  </button>
-                </div>
-              </>
-            )}
-
-            {ideaCardContextMenu && (
-              <>
-                <div
-                  ref={ideaCardMenuRef}
-                  className="fixed z-[1190] w-[220px] rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm"
-                  style={{ left: ideaCardContextMenu.x, top: ideaCardContextMenu.y }}
-                  onClick={(event) => event.stopPropagation()}
-                  onContextMenu={(event) => event.preventDefault()}
-                >
-                  {!isMultiSelectCardMenu && (
-                    <button
-                      type="button"
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                      onClick={() => {
-                        closeContextMenu()
-                        openCreateIdeaDrawer()
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <Plus className="h-4 w-4 text-slate-500" />
-                        <span>Create idea</span>
-                      </span>
-                    </button>
-                  )}
-
-                  {!isMultiSelectCardMenu && <div className="mx-1 my-1.5 border-t border-slate-200/90" />}
-
-                  {!isMultiSelectCardMenu && (
-                    <button
-                      type="button"
-                      disabled={isContextIdeaAnalysisLocked}
-                      className={cn(
-                        'w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100',
-                        isContextIdeaAnalysisLocked && 'cursor-not-allowed opacity-50 hover:bg-transparent'
-                      )}
-                      onClick={() => {
-                        if (isContextIdeaAnalysisLocked) return
-                        openIdeaDetail(ideaCardContextMenu.idea)
-                        closeContextMenu()
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <Eye className="h-4 w-4 text-slate-500" />
-                        <span>{isContextIdeaAnalysisLocked ? 'Analysis in progress' : 'View detail'}</span>
-                      </span>
-                    </button>
-                  )}
-
-                  {!isMultiSelectCardMenu && isContextIdeaAnalysisFailed && (
-                    <button
-                      type="button"
-                      className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                      onClick={() => {
-                        void runAgentAnalysisForIdea(ideaCardContextMenu.idea)
-                        closeContextMenu()
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <Undo2 className="h-4 w-4 text-slate-500" />
-                        <span>Retry analysis</span>
-                      </span>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                    onClick={() => {
-                      if (isMultiSelectCardMenu) {
-                        setSelectedIdeaId(ideaCardContextMenu.idea.id)
-                        setShowScoringPanels(true)
-                      } else {
-                        selectSingleIdea(ideaCardContextMenu.idea.id)
-                      }
-                      closeContextMenu()
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <BarChart3 className="h-4 w-4 text-slate-500" />
-                      <span>Evaluate</span>
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                    onClick={() => {
-                      if (isMultiSelectCardMenu) {
-                        setIdeas((prev) =>
-                          prev.map((idea) =>
-                            selectedIdeaIds.has(idea.id) ? { ...idea, status: 'Rejected' } : idea
-                          )
-                        )
-                      } else {
-                        updateIdeaStatus(ideaCardContextMenu.idea.id, 'Rejected')
-                      }
-                      closeContextMenu()
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <X className="h-4 w-4 text-slate-500" />
-                      <span>Reject</span>
-                    </span>
-                  </button>
-
-                  <div className="my-1 border-t border-border/60" />
-
-                  <div className="relative">
-                    <button
-                      ref={typeFilterSubmenuTriggerRef}
-                      type="button"
-                      className={cn(
-                        'mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100',
-                        isTypeFilterSubmenuOpen && 'bg-slate-100'
-                      )}
-                      onMouseEnter={() => {
-                        updateTypeFilterSubmenuPosition()
-                        setIsStatusFilterSubmenuOpen(false)
-                        setIsTypeFilterSubmenuOpen(true)
-                      }}
-                      onClick={() => {
-                        if (!isTypeFilterSubmenuOpen) {
-                          updateTypeFilterSubmenuPosition()
-                        }
-                        setIsStatusFilterSubmenuOpen(false)
-                        setIsTypeFilterSubmenuOpen((open) => !open)
-                      }}
-                    >
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-2">
-                          <Filter className="h-4 w-4 text-slate-500" />
-                          <span>Filter by type</span>
-                        </span>
-                        <MoveRight className="h-4 w-4 text-slate-400" />
-                      </span>
-                    </button>
-
-                    {isTypeFilterSubmenuOpen && createPortal(
-                      <div
-                        ref={typeFilterSubmenuPanelRef}
-                        className="fixed z-[1210] w-[228px] rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm"
-                        style={{
-                          left: `${typeFilterSubmenuPos.x}px`,
-                          top: `${typeFilterSubmenuPos.y}px`,
-                        }}
-                        onMouseLeave={() => setIsTypeFilterSubmenuOpen(false)}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                          onClick={() => applyTypeFilterFromContextMenu('All')}
-                        >
-                          <span className="flex items-center justify-between gap-2">
-                            <span>All types</span>
-                            {typeFilterTags.size === IDEA_TYPES.length && <Check className="h-4 w-4 text-emerald-600" />}
-                          </span>
-                        </button>
-
-                        <div className="my-1 border-t border-border/60" />
-
-                        {IDEA_TYPES.map((type) => (
-                          <button
-                            key={type}
-                            type="button"
-                            className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                            onClick={() => applyTypeFilterFromContextMenu(type)}
-                          >
-                            <span className="flex items-center justify-between gap-2">
-                              <span className="flex items-center gap-2">
-                                <span className={cn('inline-block h-2 w-2 rounded-full', type === 'Innovation' ? 'bg-sky-500' : type === 'Improvement' ? 'bg-emerald-500' : 'bg-violet-500')} />
-                                <span>{type}</span>
-                              </span>
-                              <span className="flex items-center gap-2">
-                                <span className="text-xs text-slate-500">{typeCounts[type]}</span>
-                                {typeFilterTags.has(type) && <Check className="h-4 w-4 text-emerald-600" />}
-                              </span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>,
-                      document.body
-                    )}
-                  </div>
-
-                  <div className="relative">
-                    <button
-                      ref={statusFilterSubmenuTriggerRef}
-                      type="button"
-                      className={cn(
-                        'mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100',
-                        isStatusFilterSubmenuOpen && 'bg-slate-100'
-                      )}
-                      onMouseEnter={() => {
-                        updateStatusFilterSubmenuPosition()
-                        setIsTypeFilterSubmenuOpen(false)
-                        setIsStatusFilterSubmenuOpen(true)
-                      }}
-                      onClick={() => {
-                        if (!isStatusFilterSubmenuOpen) {
-                          updateStatusFilterSubmenuPosition()
-                        }
-                        setIsTypeFilterSubmenuOpen(false)
-                        setIsStatusFilterSubmenuOpen((open) => !open)
-                      }}
-                    >
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-2">
-                          <Filter className="h-4 w-4 text-slate-500" />
-                          <span>Filter by status</span>
-                        </span>
-                        <MoveRight className="h-4 w-4 text-slate-400" />
-                      </span>
-                    </button>
-
-                    {isStatusFilterSubmenuOpen && createPortal(
-                      <div
-                        ref={statusFilterSubmenuPanelRef}
-                        className="fixed z-[1210] w-[228px] rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm"
-                        style={{
-                          left: `${statusFilterSubmenuPos.x}px`,
-                          top: `${statusFilterSubmenuPos.y}px`,
-                        }}
-                        onMouseLeave={() => setIsStatusFilterSubmenuOpen(false)}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                          onClick={() => applyStatusFilterFromContextMenu('All')}
-                        >
-                          <span className="flex items-center justify-between gap-2">
-                            <span>All status</span>
-                            {statusFilterTags.size === IDEA_STATUSES.length && <Check className="h-4 w-4 text-emerald-600" />}
-                          </span>
-                        </button>
-
-                        <div className="my-1 border-t border-border/60" />
-
-                        {IDEA_STATUSES.map((status) => (
-                          <button
-                            key={status}
-                            type="button"
-                            className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                            onClick={() => applyStatusFilterFromContextMenu(status)}
-                          >
-                            <span className="flex items-center justify-between gap-2">
-                              <span>{status}</span>
-                              <span className="flex items-center gap-2">
-                                <span className="text-xs text-slate-500">{statusCounts[status]}</span>
-                                {statusFilterTags.has(status) && <Check className="h-4 w-4 text-emerald-600" />}
-                              </span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>,
-                      document.body
-                    )}
-                  </div>
-
-                  {!isMultiSelectCardMenu && <div className="my-1 border-t border-border/60" />}
-
-                  {!isMultiSelectCardMenu && (
-                    <button
-                      type="button"
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                      onClick={() => {
-                        setShowScoringPanels((v) => !v)
-                        closeContextMenu()
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <BarChart3 className="h-4 w-4 text-slate-500" />
-                        <span>{showScoringPanels ? 'Hide scoring panel' : 'Show scoring panel'}</span>
-                      </span>
-                    </button>
-                  )}
-
-                  {!isMultiSelectCardMenu && (
-                    <button
-                      type="button"
-                      className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                      onClick={() => {
-                        setShowIntakePanel((v) => !v)
-                        closeContextMenu()
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <ClipboardList className="h-4 w-4 text-slate-500" />
-                        <span>{showIntakePanel ? 'Hide intake panel' : 'Show intake panel'}</span>
-                      </span>
-                    </button>
-                  )}
-
-                  {!isMultiSelectCardMenu && (
-                    <button
-                      type="button"
-                      className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                      onClick={() => {
-                        setShowFiltersPanel((v) => !v)
-                        closeContextMenu()
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        <Filter className="h-4 w-4 text-slate-500" />
-                        <span>{showFiltersPanel ? 'Hide search & filters panel' : 'Show search & filters panel'}</span>
-                      </span>
-                    </button>
-                  )}
-
-                  {!isMultiSelectCardMenu && <div className="my-1 border-t border-border/60" />}
-
-                  <button
-                    type="button"
-                    className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition-colors hover:bg-rose-50"
-                    onClick={() => {
-                      openDeleteIdeaDialog(ideaCardContextMenu.idea)
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Trash2 className="h-4 w-4 text-rose-500" />
-                      <span>Delete idea</span>
-                    </span>
-                  </button>
-                </div>
-              </>
-            )}
-
             <div
               className={cn(
                 'fixed inset-0 bg-black/20 backdrop-blur-sm z-[1050] transition-opacity',
@@ -3850,9 +4639,9 @@ export function IdeaBacklogManagementPage() {
                       {createIdeaProcessDiagrams.length > 0 ? (
                         <div className="space-y-3 rounded-xl border border-sky-200/70 bg-sky-50/40 p-3">
                           <div>
-                            <p className="text-sm font-semibold text-slate-800">Diagram proses dari brainstorming</p>
+                            <p className="text-sm font-semibold text-slate-800">Process diagram from brainstorming</p>
                             <p className="text-xs text-slate-500">
-                              AS-IS / TO-BE yang disepakati ikut tersimpan di draft agar bisa dianalisis di Section Proses.
+                              The agreed AS-IS / TO-BE diagram is also saved in the draft so it can be analyzed in the Process section.
                             </p>
                           </div>
                           {createIdeaProcessDiagrams.map((diagram) => (
@@ -4058,15 +4847,17 @@ export function IdeaBacklogManagementPage() {
 
                 <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
                   <div className="flex w-full items-stretch">
-                    <Button
+                    <button
                       type="submit"
-                      variant="default"
                       disabled={!isCreateIdeaFormValid}
-                      className={cn(registerServicePrimaryButtonClass(), 'w-full justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60')}
+                      className={cn(
+                        enterpriseCyanGradientActionButtonClass(),
+                        'w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
+                      )}
                     >
-                      <Plus className="h-4 w-4 shrink-0" aria-hidden />
+                      <Plus className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} aria-hidden />
                       Create Idea
-                    </Button>
+                    </button>
                   </div>
                 </div>
               </form>
@@ -4103,15 +4894,25 @@ export function IdeaBacklogManagementPage() {
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                          <Button
+                          <button
                             type="button"
-                            className={cn(registerServicePrimaryButtonClass(), 'hidden h-9 gap-2 px-3 sm:inline-flex')}
-                            disabled={!brainstormReady || isBrainstormSending || isDraftContinuing}
-                            onClick={() => void handleContinueIdeaDraft('use_brainstorm')}
+                            disabled={isBrainstormSending || isDraftContinuing}
+                            className={cn(
+                              enterpriseCyanGradientActionButtonClass(),
+                              'hidden h-9 px-3 sm:inline-flex',
+                              'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
+                            )}
+                            onClick={() => void handleContinueIdeaDraft(
+                              brainstormReady ? 'use_brainstorm' : 'generate_anyway',
+                            )}
                           >
                             <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                            {isDraftContinuing ? 'Generating…' : 'Generate draft'}
-                          </Button>
+                            {isDraftContinuing
+                              ? 'Generating…'
+                              : brainstormReady
+                                ? 'Generate draft'
+                                : 'Generate anyway'}
+                          </button>
                           <Button
                             type="button"
                             variant="ghost"
@@ -4125,11 +4926,37 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       </header>
 
-                      <div
-                        ref={brainstormScrollRef}
-                        className="min-h-0 flex-1 overflow-y-auto"
-                      >
-                        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6">
+                      <div className="flex min-h-0 flex-1 overflow-hidden bg-muted/15">
+                        <div className="hidden min-h-0 md:flex">
+                          <BrainstormEvidenceRail
+                            confidencePercent={brainstormConfidencePercent}
+                            progress={brainstormEvidenceProgress}
+                            checklist={brainstormChecklist}
+                            gaps={brainstormRemainingGaps}
+                            initiativeMatches={brainstormInitiativeMatches}
+                            ready={brainstormReady}
+                            collapsed={brainstormEvidenceRailCollapsed}
+                            onToggleCollapsed={() => setBrainstormEvidenceRailCollapsed((current) => !current)}
+                          />
+                        </div>
+                        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+                          <div className="max-h-[42vh] shrink-0 overflow-hidden border-b border-border/60 md:hidden">
+                            <BrainstormEvidenceRail
+                              confidencePercent={brainstormConfidencePercent}
+                              progress={brainstormEvidenceProgress}
+                              checklist={brainstormChecklist}
+                              gaps={brainstormRemainingGaps}
+                              initiativeMatches={brainstormInitiativeMatches}
+                              ready={brainstormReady}
+                              collapsed={brainstormEvidenceRailCollapsed}
+                              onToggleCollapsed={() => setBrainstormEvidenceRailCollapsed((current) => !current)}
+                            />
+                          </div>
+                          <div
+                            ref={brainstormScrollRef}
+                            className="min-h-0 flex-1 overflow-y-auto"
+                          >
+                            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6">
                           {brainstormMessages.length === 0 && !isBrainstormSending ? (
                             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
                               <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -4144,7 +4971,21 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           ) : null}
 
-                          {brainstormMessages.map((message, index) => (
+                          {brainstormMessages.map((message, index) => {
+                            const previousUser = [...brainstormMessages.slice(0, index)]
+                              .reverse()
+                              .find((item) => item.role === 'user')
+                            const requestTimeLabel = message.role === 'user'
+                              ? formatBrainstormTimestamp(message.sentAt)
+                              : formatBrainstormTimestamp(previousUser?.sentAt)
+                            const responseTimeLabel = message.role === 'assistant'
+                              ? formatBrainstormTimestamp(message.respondedAt)
+                              : ''
+                            const latencyLabel = message.role === 'assistant'
+                              ? formatBrainstormLatencyMs(previousUser?.sentAt, message.respondedAt)
+                              : ''
+
+                            return (
                             <div
                               key={`${message.role}-${index}-${message.text.slice(0, 24)}`}
                               className={cn(
@@ -4158,17 +4999,47 @@ export function IdeaBacklogManagementPage() {
                                     <Sparkles className="h-4 w-4" aria-hidden />
                                   </div>
                                   <div className="min-w-0 space-y-1">
-                                    <p className="text-xs font-medium text-muted-foreground">Tectona Assistant</p>
-                                    <BrainstormAssistantMessageBody text={message.text} />
+                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                      <p className="text-xs font-medium text-muted-foreground">Tectona Assistant</p>
+                                      {requestTimeLabel ? (
+                                        <p className="text-[10px] text-muted-foreground/80">
+                                          Permintaan {requestTimeLabel}
+                                        </p>
+                                      ) : null}
+                                      {responseTimeLabel ? (
+                                        <p className="text-[10px] text-muted-foreground/80">
+                                          · Respons {responseTimeLabel}
+                                          {latencyLabel ? ` (${latencyLabel})` : ''}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                    {index === brainstormAnimatingAssistantIndex ? (
+                                      <BrainstormAssistantTypingMessage
+                                        text={message.text}
+                                        animate
+                                        onComplete={() => setBrainstormAnimatingAssistantIndex(null)}
+                                        onProgress={scrollBrainstormToBottom}
+                                      />
+                                    ) : (
+                                      <BrainstormAssistantMessageBody text={message.text} />
+                                    )}
                                   </div>
                                 </div>
                               ) : (
-                                <div className="max-w-[85%] whitespace-pre-wrap rounded-[1.35rem] bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground sm:max-w-[75%]">
-                                  {message.text}
+                                <div className="max-w-[85%] space-y-1 sm:max-w-[75%]">
+                                  {requestTimeLabel ? (
+                                    <p className="pr-1 text-right text-[10px] text-muted-foreground/80">
+                                      Dikirim {requestTimeLabel}
+                                    </p>
+                                  ) : null}
+                                  <div className="whitespace-pre-wrap rounded-[1.35rem] bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
+                                    {message.text}
+                                  </div>
                                 </div>
                               )}
                             </div>
-                          ))}
+                            )
+                          })}
 
                           {isBrainstormSending && (
                             <div className="flex gap-3">
@@ -4176,8 +5047,12 @@ export function IdeaBacklogManagementPage() {
                                 <Sparkles className="h-4 w-4" aria-hidden />
                               </div>
                               <div className="inline-flex items-center gap-2 py-1 text-sm text-muted-foreground">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Thinking…
+                                <span className="inline-flex gap-1" aria-hidden>
+                                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:0ms]" />
+                                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:120ms]" />
+                                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:240ms]" />
+                                </span>
+                                Tectona Assistant sedang mengetik…
                               </div>
                             </div>
                           )}
@@ -4187,14 +5062,43 @@ export function IdeaBacklogManagementPage() {
                               Enough context gathered. You can generate the draft now.
                             </div>
                           )}
-                          {!brainstormReady && brainstormRemainingGaps.length > 0 && brainstormMessages.length > 0 && (
-                            <p className="text-xs text-muted-foreground">
-                              Exploring next: {brainstormRemainingGaps.slice(0, 3).join(', ')}
-                              {brainstormRemainingGaps.length > 3 ? '…' : ''}
+                          {!brainstormReady && brainstormOfferGenerateAnyway && (
+                            <div className="flex flex-wrap gap-2 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3">
+                              <button
+                                type="button"
+                                disabled={isBrainstormSending || isDraftContinuing}
+                                className={cn(
+                                  enterpriseSecondaryButtonClass(),
+                                  'inline-flex h-9 items-center gap-2',
+                                  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm',
+                                )}
+                                onClick={() => void handleSendBrainstormMessage('Continue questions')}
+                              >
+                                Continue questions
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isBrainstormSending || isDraftContinuing}
+                                className={cn(
+                                  enterpriseCyanGradientActionButtonClass(),
+                                  'h-9',
+                                  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
+                                )}
+                                onClick={() => void handleContinueIdeaDraft('generate_anyway')}
+                              >
+                                <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
+                                {isDraftContinuing ? 'Generating…' : 'Generate anyway'}
+                              </button>
+                            </div>
+                          )}
+                          {!brainstormReady && !brainstormOfferGenerateAnyway && brainstormRemainingGaps.length > 0 && brainstormMessages.length > 0 && (
+                            <p className="text-xs leading-5 text-muted-foreground">
+                              Selanjutnya: {formatBrainstormExploringNext(brainstormRemainingGaps)}
+                              {brainstormRemainingGaps.length > 3 ? ' · …' : ''}
                             </p>
                           )}
-                        </div>
-                      </div>
+                            </div>
+                          </div>
 
                       <div className="shrink-0 bg-gradient-to-t from-background via-background to-background/80 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
                         <div className="mx-auto w-full max-w-3xl space-y-2">
@@ -4261,19 +5165,25 @@ export function IdeaBacklogManagementPage() {
                               </div>
                             </div>
                           ) : (
-                            <Button
+                            <button
                               type="button"
-                              className={cn(registerServicePrimaryButtonClass(), 'h-11 w-full justify-center gap-2 sm:hidden')}
                               disabled={!brainstormReady || isBrainstormSending || isDraftContinuing}
+                              className={cn(
+                                enterpriseCyanGradientActionButtonClass(),
+                                'h-11 w-full justify-center sm:hidden',
+                                'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
+                              )}
                               onClick={() => void handleContinueIdeaDraft('use_brainstorm')}
                             >
                               <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
                               {isDraftContinuing ? 'Generating…' : 'Generate draft'}
-                            </Button>
+                            </button>
                           )}
                           <p className="px-1 text-center text-[11px] text-muted-foreground">
                             Enter to send · Shift+Enter for new line
                           </p>
+                        </div>
+                      </div>
                         </div>
                       </div>
                     </div>
@@ -4337,26 +5247,39 @@ export function IdeaBacklogManagementPage() {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-5 py-4">
+                        <div className="flex flex-col gap-2 border-t border-border/70 bg-muted/20 px-5 py-4 sm:flex-row sm:items-stretch sm:justify-end sm:gap-3">
                           {!ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE') && (
-                            <Button
+                            <button
                               type="button"
-                              variant="outline"
-                              className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
                               disabled={isDraftContinuing}
+                              className={cn(
+                                enterpriseSecondaryButtonClass(),
+                                'inline-flex w-full items-center justify-center gap-2 sm:min-w-0 sm:flex-1',
+                                'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm',
+                              )}
                               onClick={() => void handleContinueIdeaDraft('generate_anyway')}
                             >
                               <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
                               {isDraftContinuing ? 'Continuing…' : 'Generate anyway'}
-                            </Button>
+                            </button>
                           )}
-                          <Button
+                          <button
                             type="button"
                             className={cn(
-                              registerServicePrimaryButtonClass(),
-                              'min-w-0 justify-center gap-2',
-                              ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE') ? 'w-full' : 'basis-0 flex-1',
+                              enterpriseCyanGradientActionButtonClass(),
+                              'w-full justify-center sm:min-w-0',
+                              ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE') ? 'sm:w-full' : 'sm:flex-1',
                             )}
+                            title={
+                              ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE')
+                                ? 'Clarify the idea title and context with Tectona Assistant'
+                                : 'Explore options with Tectona Assistant, then generate using that context'
+                            }
+                            aria-label={
+                              ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE')
+                                ? 'Clarify with Tectona Assistant'
+                                : 'Brainstorm with Tectona Assistant'
+                            }
                             onClick={() => {
                               setBrainstormMessages(ideaDraftJob.brainstorm_messages ?? [])
                               setBrainstormReady(Boolean(ideaDraftJob.brainstorm_ready))
@@ -4365,14 +5288,17 @@ export function IdeaBacklogManagementPage() {
                                 ?? ideaDraftJob.evidence_summary.gaps
                                 ?? [],
                               )
+                              setBrainstormOfferGenerateAnyway(Boolean(ideaDraftJob.offer_generate_anyway))
+                              syncBrainstormEvidenceState(ideaDraftJob)
+                              setBrainstormEvidenceRailCollapsed(false)
                               setIsBrainstormMode(true)
                             }}
                           >
                             <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
                             {ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE')
-                              ? 'Clarify with Tectona Assistant'
-                              : 'Brainstorm with Tectona Assistant'}
-                          </Button>
+                              ? 'Clarify with Tectona'
+                              : 'Brainstorm with Tectona'}
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -4496,6 +5422,11 @@ function SortableIdeaCard({
   const submittedByInitials = toInitials(submittedByDisplayName)
   const reviewerInitials = toInitials(reviewerDisplayName)
 
+  const linkedProjectName = idea.projectName?.trim() || null
+  const showLinkedProject = idea.status === 'Converted to Project' && Boolean(linkedProjectName)
+  const isRejected = idea.status === 'Rejected'
+  const cardAccent = idea.cardAccentColor ?? DEFAULT_IDEA_CARD_ACCENT_COLOR
+
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `idea-${idea.id}`,
     data: { type: 'idea', idea },
@@ -4520,33 +5451,60 @@ function SortableIdeaCard({
         }}
         onContextMenu={(event) => onOpenContextMenu(event, idea)}
         className={cn(
-          'glass-card rounded-xl p-4 transition-all h-full flex flex-col border border-border/40 cursor-pointer select-none outline-none focus:outline-none',
+          ideaBacklogLiquidGlassCardClass,
           (isDragging || (isDragActive && isSelected && draggedIdeaIds.has(idea.id))) && 'opacity-0 pointer-events-none',
           isAnalysisRunning && 'cursor-progress',
-          !isSelected && !isDragActive && 'hover:shadow-lg',
           isSelected &&
             !isDragging &&
             !(isDragActive && draggedIdeaIds.has(idea.id)) &&
-            'bg-blue-50/45 border-blue-500 shadow-[0_12px_30px_-18px_rgba(37,99,235,0.85)]'
+            'liquid-glass-idea-card--selected',
         )}
         style={{
+          ['--idea-card-accent' as string]: cardAccent,
           outline: isSelected ? '2px solid rgba(59,130,246,0.95)' : undefined,
           outlineOffset: isSelected ? '1px' : undefined,
-          borderBottom: `4px solid ${typeAccent[idea.type]}`,
+          borderRight: `4px solid ${cardAccent}`,
         }}
       >
         <div className="flex items-start justify-between gap-2 flex-1 min-h-0">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded border border-border/50 bg-white/80">
+            <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded border border-white/50 bg-white/35 backdrop-blur-sm">
                 <GripVertical className="h-3 w-3 text-slate-400" />
               </span>
-              <Badge variant="outline" className="text-[10px] font-semibold text-slate-600 bg-white/90">
-                {idea.id}
-              </Badge>
-              <Badge variant="outline" className={cn('text-[10px] font-semibold', statusClass[idea.status])}>
-                {idea.status}
-              </Badge>
+              {isRejected ? (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'inline-flex items-center gap-1 text-[10px] font-semibold',
+                    statusClass.Rejected,
+                  )}
+                  title="Rejected"
+                >
+                  <X className="h-3 w-3 shrink-0" aria-hidden />
+                  Rejected
+                </Badge>
+              ) : showLinkedProject && linkedProjectName ? (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'inline-flex max-w-[11rem] items-center gap-1 text-[10px] font-semibold',
+                    statusClass['Converted to Project'],
+                  )}
+                  title={`Converted to project: ${linkedProjectName}`}
+                >
+                  <FolderKanban className="h-3 w-3 shrink-0" aria-hidden />
+                  <span className="truncate">{linkedProjectName}</span>
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className={cn('text-[10px] font-semibold', statusClass[idea.status])}
+                  title={idea.status}
+                >
+                  {IDEA_STATUS_CARD_LABEL[idea.status]}
+                </Badge>
+              )}
             </div>
             <p className="text-sm font-semibold text-slate-900 leading-5">{idea.title}</p>
             <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{idea.description}</p>
@@ -4605,7 +5563,7 @@ function SortableIdeaCard({
           </div>
         )}
 
-        <div className="mt-3 rounded-lg bg-white/60 px-2 py-1.5">
+        <div className={ideaBacklogLiquidGlassCardMetaClass}>
           <div className="space-y-1.5 text-xs text-slate-600">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
@@ -4644,8 +5602,19 @@ function SortableIdeaCard({
         </div>
 
         <div className="flex flex-wrap gap-1.5 mt-3">
+          {isRejected && (
+            <span
+              className={cn(
+                ideaBacklogLiquidGlassCardTagClass,
+                'inline-flex items-center gap-1 border-rose-300/70 bg-rose-50/80 font-semibold text-rose-700',
+              )}
+            >
+              <X className="h-3 w-3 shrink-0" aria-hidden />
+              Rejected
+            </span>
+          )}
           {idea.tags.map((tag) => (
-            <span key={tag} className="rounded-full border border-border/50 px-2 py-0.5 text-[11px] text-slate-600 bg-white/80">
+            <span key={tag} className={ideaBacklogLiquidGlassCardTagClass}>
               {tag}
             </span>
           ))}

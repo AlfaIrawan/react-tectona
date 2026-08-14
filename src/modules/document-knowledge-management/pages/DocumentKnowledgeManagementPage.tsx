@@ -1,4 +1,5 @@
 import {
+  Fragment,
   startTransition,
   useCallback,
   useDeferredValue,
@@ -22,6 +23,20 @@ import {
   parseKbWorkspaceOrgPlainContent,
 } from '../components/KbWorkspaceOrgContent'
 import { Link, useSearchParams } from 'react-router-dom'
+import { useTenantContextOptional } from '@/auth/TenantContext'
+import {
+  resolveWorkspaceSwitcherCheckedIds,
+  useUserWorkspaceOptions,
+} from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
+import {
+  belongsToDkmRepositoryScope,
+  buildWorkspaceScopeFromTenant,
+  filterDkmFoldersForRepositoryScope,
+  isAllWorkspacesSelection,
+  resolveWorkspaceApiId,
+} from '@/lib/tenantWorkspaceScope'
+import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
+import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
 import {
@@ -32,11 +47,15 @@ import {
   AlignLeft,
   AlignRight,
   ArrowDownToLine,
-  ArrowUpDown,
   ArrowRightLeft,
+  Archive,
+  Ban,
   Bold,
   BookOpenText,
   BrainCircuit,
+  Building2,
+  ArrowLeftToLine,
+  ArrowRightToLine,
   CaseSensitive,
   CheckCircle2,
   ChevronDown,
@@ -45,10 +64,9 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  ChevronUp,
+  ClipboardList,
   Clock3,
   Code2,
-  Copy,
   BarChart3,
   Download,
   Eye,
@@ -56,11 +74,14 @@ import {
   FileInput,
   FileStack,
   FileText,
+  FileType,
   Filter,
   FolderKanban,
   GitBranch,
   Highlighter,
   History,
+  RotateCcw,
+  TextCursorInput,
   IndentDecrease,
   IndentIncrease,
   Italic,
@@ -69,20 +90,24 @@ import {
   List,
   ListOrdered,
   Link2,
+  Lock,
   MoreHorizontal,
   Loader2,
   Maximize2,
   Minimize2,
   PanelLeft,
   PencilLine,
+  Pin,
   Plus,
   Redo2,
+  Ruler,
   Save,
   Search,
   Trash2,
   Type,
   Underline,
   Undo2,
+  UnfoldHorizontal,
   Settings2,
   ShieldCheck,
   Signal,
@@ -94,7 +119,9 @@ import {
   Mic,
   Square,
   Upload,
+  Users,
   X,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   Area,
@@ -116,7 +143,6 @@ import {
   PolarRadiusAxis,
   Radar,
   RadarChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -135,12 +161,21 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3'
+import { MeasuredResponsiveContainer } from '@/components/charts/MeasuredResponsiveContainer'
 import { PlatformServiceLoadingPanel } from '@/components/loading'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import { DocumentRepositoryFolderCard } from '@/modules/document-knowledge-management/components/DocumentRepositoryFolderCard'
 import { DocumentRepositoryPreviewDrawer } from '@/modules/document-knowledge-management/components/DocumentRepositoryPreviewDrawer'
-import { DocumentOnlyOfficeEditor } from '@/modules/document-knowledge-management/components/DocumentOnlyOfficeEditor'
+import {
+  DocumentOnlyOfficeEditor,
+  loadDocumentServerApi,
+  type DocEditorInstance,
+} from '@/modules/document-knowledge-management/components/DocumentOnlyOfficeEditor'
+import {
+  TemplateDuplicateCompareEditor,
+  type TemplateDuplicateCompareSession,
+} from '@/modules/document-knowledge-management/components/TemplateDuplicateCompareEditor'
 import { KbStyleRichTextEditor } from '@/modules/document-knowledge-management/components/KbStyleRichTextEditor'
 import {
   isRepositoryNativePdfPreview,
@@ -171,6 +206,16 @@ import { Select, SelectItem } from '@/components/ui/select'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Tooltip as UiTooltip } from '@/components/ui/tooltip'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { DndContext } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
+import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
+import { useEnterpriseSortableColumns } from '@/components/enterprise/useEnterpriseSortableColumns'
+import { EnterpriseSortableHeaderCell } from '@/components/enterprise/EnterpriseSortableHeaderCell'
+import { EnterpriseColumnFilterDropdown } from '@/components/enterprise/EnterpriseColumnFilterDropdown'
+import { EnterpriseGroupByControl } from '@/components/enterprise/EnterpriseGroupByControl'
+import { EnterpriseSelectionToggle } from '@/components/enterprise/EnterpriseSelectionToggle'
+import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/EnterpriseColumnVisibilityControl'
+import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
 import { cn } from '@/lib/utils'
 import {
   enterpriseCyanGradientActionButtonClass,
@@ -227,7 +272,7 @@ import {
   ensureMemoInternalToKbContentStandardEntry,
   parseMemoInternalToKbContentStandard,
 } from '@/lib/kb/memoInternalToKbContentStandard'
-import { ADIRA_FINANCE_WORKSPACE_KEY, ensureAdiraApplicationGlossaryEntries, isAdiraGlossaryManagedTitle, suppressAdiraGlossaryTitle } from '@/lib/kb/adiraApplicationGlossary'
+import { ADIRA_FINANCE_WORKSPACE_KEY, ensureAdiraApplicationGlossaryEntries, isAdiraFinanceWorkspaceRef, isAdiraGlossaryManagedTitle, suppressAdiraGlossaryTitle } from '@/lib/kb/adiraApplicationGlossary'
 import { repairFlattenedComparisonBlocks } from '@/lib/kb/repairComparisonTable'
 import { scrubKbExtractionArtifacts, stripRepeatedRunningLines } from '@/lib/kb/kbExtractionArtifacts'
 import { captureKbEditorHtml, prepareKbRichHtmlContent, sanitizeKbRichHtmlPreservingTables, applyKbTableLayoutStylesFromAttrs } from '@/lib/kb/kbRichTableHtml'
@@ -291,6 +336,7 @@ import {
   findRepositoryTraceEntryByDocumentId,
   normalizeBrdVersionLabel,
   parseBrdStructuredName,
+  parseStructuredDocumentName,
   repositoryTraceEntryTitle,
   resolveRepositoryDocumentFileForKb,
   resolveRepositoryDocumentVersionLabel,
@@ -340,7 +386,15 @@ import {
   type ExistingBrdDoc,
 } from '@/lib/kb/brdDuplicateDetection'
 import { notifyEvent } from '@/lib/api/notificationApi'
-import { generateRepositoryKbFromDocument, chatWithTectonaAgentRuntime, compareBrdPurpose } from '@/lib/api/tectonaAgentRuntimeApi'
+import {
+  generateRepositoryKbFromDocument,
+  chatWithTectonaAgentRuntime,
+  compareBrdPurpose,
+  fillDkmTemplate,
+  suggestKbRelations,
+  type KbRelationSuggestion as AiKbRelationSuggestion,
+  type KbRelationSuggestionEntryInput,
+} from '@/lib/api/tectonaAgentRuntimeApi'
 import { fetchAllWorkspaceOrgWorkspaces, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
 import { fetchGovernanceCatalogSnapshot } from '@/lib/api/governanceConfigurationApi'
 import {
@@ -353,8 +407,13 @@ import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextR
 import {
   createProjectDocument,
   createTemplate,
+  bootstrapTemplateAttachment,
+  instantiateTemplateFromProject,
+  uploadTemplateAttachment,
   deleteDocument,
+  deleteTemplate,
   downloadDocumentAttachmentBlob,
+  downloadTemplateAttachmentBlob,
   fetchDocumentPreviewPdfBlob,
   getDocument,
   getDocumentIndexSnapshot,
@@ -367,6 +426,10 @@ import {
   listProjectDocuments,
   listTemplates,
   patchDocument,
+  patchTemplate,
+  stageMasterTemplatePreview,
+  fetchTemplatePreviewOnlyOfficeConfig,
+  type OnlyOfficeEditorConfig,
   uploadDocumentAttachment,
   type DocumentAttachmentResponse,
   type DocumentAuditEntryResponse,
@@ -387,6 +450,16 @@ import { transcribeAudio } from '@/lib/api/tectonaVoiceApi'
 import { getFileTypeIcon } from '../fileTypeIcon'
 import { useToast } from '@/components/ui/toast'
 import { MeetingVoiceOnlinePeersPanel } from '@/modules/document-knowledge-management/components/MeetingVoiceOnlinePeersPanel'
+import { TemplateAgentSchemaPanel } from '@/modules/document-knowledge-management/components/TemplateAgentSchemaPanel'
+import { buildTemplateInstantiateNamingPlan, buildTemplateUploadNamingPlan } from '@/modules/document-knowledge-management/lib/templateInstantiateNaming'
+import { belongsToDkmTemplateScope } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
+import { gatherExistingTemplateDocs, pickTemplateRevisionTargetId, resolveNextTemplateVersionLabelForFamily, formatTemplateVersionForDisplay, resolveTemplateVersionLabelFromResponse, type TemplateUploadDuplicateVerdict } from '@/modules/document-knowledge-management/lib/templateDuplicateDetection'
+import { extractCompareDocumentText } from '@/modules/document-knowledge-management/lib/templateCompareText'
+import {
+  buildAutoRenamedBrdFileName,
+  deriveBrdModuleNameFromFileName,
+  testFileNameAgainstRegex,
+} from '@/lib/kb/repositoryBrdFileNaming'
 import { useVoiceRecordRequestStore } from '@/stores/voice-record-request-store'
 
 // File type icon — full glyph visible (object-contain), larger display without cropping.
@@ -446,14 +519,6 @@ type DetailEntry = {
     fileSize?: number
   }>
   recentActivity: Array<{ action: string; actor: string; date: string }>
-}
-
-type MetricCard = {
-  label: string
-  value: string
-  delta: string
-  icon: ComponentType<{ className?: string }>
-  tone: string
 }
 
 /** Trim a detected-memo field to the agent-runtime model's max_length (avoids a 422 "string_too_long"). */
@@ -679,16 +744,6 @@ function extractExampleFromKbNamingContent(content: string | null | undefined): 
   return lines.find((line) => /^BRD_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*_V\d+(?:\.\d+)?_\d{8}$/i.test(line)) ?? null
 }
 
-function testFileNameAgainstRegex(fileName: string, ruleRegex: string): { valid: boolean; error?: string } {
-  try {
-    const re = new RegExp(`^(?:${ruleRegex})$`)
-    const baseName = fileName.replace(/\.[^/.]+$/, '')
-    return { valid: re.test(fileName) || re.test(baseName) }
-  } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : 'invalid regex' }
-  }
-}
-
 function splitCamelCaseWords(value: string): string {
   return value
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
@@ -778,75 +833,6 @@ function deriveKbTitleFromBrdStandard(params: {
       return normalizeKbTitleForSubmit(`${trimDuplicateTokenPrefix(primary, secondary)} Capability`)
     }
   }
-}
-
-function formatBrdSegmentForFileName(value: string, fallback: string): string {
-  const humanized = humanizeSemanticName(value || fallback)
-  const tokenized = humanized
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => {
-      if (/^(AI|API|KB|BRD|IT|ERP|CRM|SCF|FMCG|HO)$/i.test(part)) return part.toUpperCase()
-      return part.charAt(0).toUpperCase() + part.slice(1).replace(/[^A-Za-z0-9]/g, '')
-    })
-    .join('')
-    .replace(/[^A-Za-z0-9]/g, '')
-  return tokenized || fallback
-}
-
-function formatDateAsYyyymmdd(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}${month}${day}`
-}
-
-function deriveBrdModuleNameFromFileName(fileName: string): string {
-  const baseName = fileName.replace(/\.[^/.]+$/, '')
-  const parsed = parseBrdStructuredName(baseName)
-  if (parsed) return parsed.moduleOrFeatureName
-  const stripped = baseName
-    .replace(/^brd[\s_.-]*/i, '')
-    .replace(/(?:^|[\s_.-])v(?:ersion)?[.\s-]*[0-9]+(?:\.[0-9]+)?/gi, ' ')
-    .replace(/\b\d{8}\b/g, ' ')
-    .replace(/[^A-Za-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return stripped || 'Requirement'
-}
-
-function buildAutoRenamedBrdFileName(
-  fileName: string,
-  projectName: string,
-  lastModified?: number,
-  overrides?: {
-    projectName?: string | null
-    moduleName?: string | null
-    version?: string | null
-  },
-): string {
-  const extMatch = fileName.match(/(\.[^/.]+)$/)
-  const ext = extMatch?.[1] ?? ''
-  const parsed = parseBrdStructuredName(fileName)
-  const projectSegment = formatBrdSegmentForFileName(
-    parsed?.projectOrInitiativeName
-    ?? overrides?.projectName
-    ?? projectName,
-    'Project',
-  )
-  const moduleSegment = formatBrdSegmentForFileName(
-    parsed?.moduleOrFeatureName
-    ?? overrides?.moduleName
-    ?? deriveBrdModuleNameFromFileName(fileName),
-    'Requirement',
-  )
-  const version = normalizeBrdVersionLabel(
-    parsed?.version
-    ?? overrides?.version
-    ?? detectBrdVersionFromName(fileName),
-  ) ?? 'V1'
-  const yyyymmdd = parsed?.yyyymmdd ?? formatDateAsYyyymmdd(lastModified ? new Date(lastModified) : new Date())
-  return `BRD_${projectSegment}_${moduleSegment}_${version}_${yyyymmdd}${ext}`
 }
 
 type KnowledgeEntry = {
@@ -943,11 +929,19 @@ type KbGraphNode = {
   workspace: string
 }
 
+type KbRelationScanSuggestion = AiKbRelationSuggestion & {
+  key: string
+  sourceTitle: string
+  targetTitle: string
+  accepted: boolean
+  status: 'pending' | 'created' | 'failed'
+}
+
 type KbGraphLink = {
   source: string
   target: string
   predicate: string
-  provenance: 'global' | 'workspace-local' | 'inferred'
+  provenance: 'global' | 'workspace-local' | 'inferred' | 'ai-suggested'
 }
 
 type KbGraphMode = 'federated' | 'focused'
@@ -966,204 +960,12 @@ type KbAiActionKey = 'generate' | 'improve' | 'structure' | 'suggest' | 'validat
 type KbGraphSimNode = KbGraphNode & SimulationNodeDatum
 type KbGraphSimLink = SimulationLinkDatum<KbGraphSimNode> & {
   predicate: string
-  provenance: 'global' | 'workspace-local' | 'inferred'
+  provenance: 'global' | 'workspace-local' | 'inferred' | 'ai-suggested'
 }
 
-const overviewMetrics: MetricCard[] = [
-  { label: 'Total Documents', value: '1,284', delta: '+38 this month', icon: FileText, tone: 'from-slate-900 via-slate-800 to-slate-700' },
-  { label: 'Active Templates', value: '86', delta: '14 marked standard', icon: FileStack, tone: 'from-sky-700 via-sky-600 to-cyan-500' },
-  { label: 'Knowledge Assets', value: '412', delta: '92 linked to delivery flows', icon: BrainCircuit, tone: 'from-teal-700 via-emerald-600 to-green-500' },
-  { label: 'Linked Artifacts', value: '693', delta: '96% active traceability', icon: Link2, tone: 'from-amber-700 via-orange-600 to-yellow-500' },
-  { label: 'Meeting Notes', value: '248', delta: '31 pending follow-up', icon: StickyNote, tone: 'from-violet-700 via-fuchsia-600 to-pink-500' },
-  { label: 'Recently Updated', value: '57', delta: '7 awaiting approval', icon: FileClock, tone: 'from-indigo-700 via-blue-600 to-sky-500' },
-]
+// Overview KPI / health / distribution are derived from live repository, templates, KB, and meeting notes (empty → zeros).
 
-const contentHealth = [
-  { label: 'Metadata completeness', value: '96%', width: 'w-[96%]', tone: 'bg-emerald-500' },
-  { label: 'Version policy compliance', value: '91%', width: 'w-[91%]', tone: 'bg-sky-500' },
-  { label: 'Linkage coverage', value: '88%', width: 'w-[88%]', tone: 'bg-amber-500' },
-  { label: 'Archive hygiene', value: '74%', width: 'w-[74%]', tone: 'bg-violet-500' },
-]
-
-const distributionByType = [
-  { label: 'Controlled documents', value: 34, color: 'bg-slate-900' },
-  { label: 'Templates', value: 18, color: 'bg-sky-600' },
-  { label: 'Knowledge articles', value: 16, color: 'bg-emerald-500' },
-  { label: 'Meeting notes', value: 12, color: 'bg-violet-500' },
-  { label: 'Reusable content', value: 20, color: 'bg-amber-500' },
-]
-
-const detailEntries: Record<string, DetailEntry> = {
-  brd: {
-    id: 'brd',
-    title: 'Q3 ERP Rollout BRD',
-    subtitle: 'Business requirements baseline for regional ERP expansion.',
-    type: 'BRD',
-    category: 'Controlled document',
-    linkedProject: 'ERP Transformation Wave 2',
-    linkedTask: 'Epic PM-418 / Business design sign-off',
-    owner: 'Rani Adiputra',
-    version: 'v4.2',
-    accessScope: 'PMO + Finance Transformation',
-    approval: 'Published',
-    summary: 'This document anchors the scope baseline, decision rationale, dependency map, and approval evidence linked to the rollout execution plan.',
-    preview: 'Scope finalized for finance, procurement, and reporting streams. Decision trace links point to steering committee notes, change requests, and milestone approvals.',
-    tags: ['BRD', 'ERP', 'Steering', 'Baseline'],
-    relatedKnowledge: ['Cutover checklist guidance', 'Finance policy reference', 'Regional rollout FAQ'],
-    versionHistory: [
-      { label: 'v4.2', note: 'Published after steering approval and dependency reconciliation.', date: '16 Apr 2026', owner: 'Rani Adiputra', status: 'Published' },
-      { label: 'v4.1', note: 'Added budget tolerance appendix and owner matrix.', date: '10 Apr 2026', owner: 'Alicia Hart', status: 'Approved' },
-      { label: 'v4.0', note: 'Re-baselined milestones for regional deployment.', date: '02 Apr 2026', owner: 'Rani Adiputra', status: 'Superseded' },
-    ],
-    recentActivity: [
-      { action: 'Metadata updated', actor: 'PMO Office', date: '2 hours ago' },
-      { action: 'Linked to milestone handoff', actor: 'Rani Adiputra', date: 'Today, 09:24' },
-      { action: 'Version approved', actor: 'Steering Committee', date: 'Yesterday, 18:20' },
-    ],
-  },
-  meeting: {
-    id: 'meeting',
-    title: 'Weekly Delivery Steering Notes',
-    subtitle: 'Meeting note set for cross-workstream steering cadence.',
-    type: 'Meeting notes',
-    category: 'Reference record',
-    linkedProject: 'Core Banking Modernization',
-    linkedTask: 'Milestone CAB-77 / Steering follow-up',
-    owner: 'Lina Kurnia',
-    version: 'v1.9',
-    accessScope: 'Program leadership',
-    approval: 'Internal reference',
-    summary: 'Structured notes capture decisions, risks, follow-up actions, and linked references from the weekly steering forum.',
-    preview: 'Open points remain on vendor readiness and test environment timing. Two decisions were linked to remediation tasks and one retrospective input was tagged reusable.',
-    tags: ['Meeting', 'Steering', 'Decision log'],
-    relatedKnowledge: ['Vendor onboarding checklist', 'Escalation policy', 'Risk review template'],
-    versionHistory: [
-      { label: 'v1.9', note: 'Added follow-up task links and action owners.', date: '15 Apr 2026', owner: 'Lina Kurnia', status: 'Current' },
-      { label: 'v1.8', note: 'Attached reference pack and revised attendee list.', date: '08 Apr 2026', owner: 'PMO Analyst', status: 'Superseded' },
-      { label: 'v1.7', note: 'Created initial structured note set.', date: '01 Apr 2026', owner: 'PMO Analyst', status: 'Archived' },
-    ],
-    recentActivity: [
-      { action: 'Follow-up task linked', actor: 'Lina Kurnia', date: 'Today, 08:10' },
-      { action: 'Reference file attached', actor: 'PMO Analyst', date: 'Yesterday, 15:12' },
-      { action: 'Tagged as important', actor: 'Program Office', date: 'Yesterday, 11:03' },
-    ],
-  },
-  knowledge: {
-    id: 'knowledge',
-    title: 'Cutover Readiness Playbook',
-    subtitle: 'Operational knowledge asset reused across enterprise cutover events.',
-    type: 'Knowledge article',
-    category: 'Guide',
-    linkedProject: 'Shared delivery methods',
-    linkedTask: 'Template reuse / execution readiness',
-    owner: 'Methodology Guild',
-    version: 'v6.0',
-    accessScope: 'Enterprise PMO',
-    approval: 'Approved reference',
-    summary: 'Provides approved cutover sequencing, handoff controls, evidence checklists, and escalation triggers that can be linked to project execution workflows.',
-    preview: 'Includes gating criteria, rollback notes, cutover communication snippets, and reusable evidence sections with versioned ownership.',
-    tags: ['Playbook', 'Cutover', 'Reuse'],
-    relatedKnowledge: ['Rollback checklist', 'War-room template', 'Executive update format'],
-    versionHistory: [
-      { label: 'v6.0', note: 'Aligned to resilience assurance and production rehearsal controls.', date: '12 Apr 2026', owner: 'Methodology Guild', status: 'Approved' },
-      { label: 'v5.4', note: 'Expanded evidence controls for regulatory audits.', date: '26 Mar 2026', owner: 'Knowledge Ops', status: 'Superseded' },
-      { label: 'v5.0', note: 'Added regional deployment scenario library.', date: '07 Mar 2026', owner: 'Knowledge Ops', status: 'Archived' },
-    ],
-    recentActivity: [
-      { action: 'Referenced in 12 projects', actor: 'System', date: 'Today, 07:52' },
-      { action: 'Category updated', actor: 'Knowledge Ops', date: '14 Apr 2026' },
-      { action: 'Template clone created', actor: 'PMO Excellence', date: '12 Apr 2026' },
-    ],
-  },
-  template: {
-    id: 'template',
-    title: 'Executive Status Report Template',
-    subtitle: 'Reusable reporting template standardized for monthly portfolio governance.',
-    type: 'Template',
-    category: 'Status report',
-    linkedProject: 'Portfolio governance shared library',
-    linkedTask: 'Monthly reporting cycle',
-    owner: 'PMO Excellence',
-    version: 'v3.1',
-    accessScope: 'Leadership reporting',
-    approval: 'Published template',
-    summary: 'Standardized report frame for executive reporting with reusable sections, KPI placeholders, commentary guidance, and traceable linked artifacts.',
-    preview: 'Comes with portfolio headline block, dependency watchlist section, benefit tracking narrative, and RAG status legend maintained centrally.',
-    tags: ['Template', 'Executive', 'Report'],
-    relatedKnowledge: ['Board commentary guidance', 'Risk escalation standard', 'Benefits statement library'],
-    versionHistory: [
-      { label: 'v3.1', note: 'Added dependency heatmap and milestone assurance section.', date: '11 Apr 2026', owner: 'PMO Excellence', status: 'Published' },
-      { label: 'v3.0', note: 'Redesigned narrative layout for board packs.', date: '01 Apr 2026', owner: 'PMO Excellence', status: 'Superseded' },
-      { label: 'v2.8', note: 'Updated data source mapping for KPI widgets.', date: '18 Mar 2026', owner: 'Reporting Office', status: 'Archived' },
-    ],
-    recentActivity: [
-      { action: 'Used by 24 workspaces', actor: 'System', date: 'Today, 06:44' },
-      { action: 'Version published', actor: 'PMO Excellence', date: '11 Apr 2026' },
-      { action: 'Metadata edited', actor: 'Reporting Office', date: '09 Apr 2026' },
-    ],
-  },
-  content: {
-    id: 'content',
-    title: 'Governance Assurance Statement',
-    subtitle: 'Reusable narrative block for gate and status reporting.',
-    type: 'Reusable content',
-    category: 'Governance statement',
-    linkedProject: 'Shared governance library',
-    linkedTask: 'Gate review preparation',
-    owner: 'Governance Office',
-    version: 'v2.3',
-    accessScope: 'Enterprise PMO',
-    approval: 'Approved reusable content',
-    summary: 'Controlled boilerplate narrative used in gate packs, status reports, and exception documents when describing governance assurance posture.',
-    preview: 'Statement emphasizes evidence completeness, risk ownership, milestone readiness, and unresolved dependency disclosure.',
-    tags: ['Reusable', 'Governance', 'Boilerplate'],
-    relatedKnowledge: ['Stage gate checklist', 'Audit language guide', 'Executive status template'],
-    versionHistory: [
-      { label: 'v2.3', note: 'Refined language for portfolio gate pack usage.', date: '08 Apr 2026', owner: 'Governance Office', status: 'Current' },
-      { label: 'v2.2', note: 'Added assurance statement variant for recovery plans.', date: '29 Mar 2026', owner: 'Quality Office', status: 'Superseded' },
-      { label: 'v2.0', note: 'Expanded standard language library.', date: '10 Mar 2026', owner: 'Quality Office', status: 'Archived' },
-    ],
-    recentActivity: [
-      { action: 'Inserted into gate pack', actor: 'PMO Analyst', date: 'Today, 12:08' },
-      { action: 'Usage count refreshed', actor: 'System', date: 'Today, 09:02' },
-      { action: 'Duplicated for policy pack', actor: 'Governance Office', date: '07 Apr 2026' },
-    ],
-  },
-  artifact: {
-    id: 'artifact',
-    title: 'Rollout Decision Register',
-    subtitle: 'Linked artifact tying decision evidence to milestone execution.',
-    type: 'Linked artifact',
-    category: 'Decision register',
-    linkedProject: 'ERP Transformation Wave 2',
-    linkedTask: 'Milestone M4 / Deployment readiness',
-    owner: 'Rani Adiputra',
-    version: 'v2.7',
-    accessScope: 'Program + Governance',
-    approval: 'Linked and approved',
-    summary: 'Maintains the relationship between key decision records, supporting evidence, and the tasks or milestones affected during execution.',
-    preview: 'Latest decision entry tied to dependency clearance and acceptance rehearsal. Linked from BRD, meeting notes, and cutover checklist.',
-    tags: ['Artifact', 'Decision', 'Traceability'],
-    relatedKnowledge: ['Decision taxonomy guide', 'Milestone review checklist', 'Cutover readiness playbook'],
-    versionHistory: [
-      { label: 'v2.7', note: 'Added steering sign-off and dependency note.', date: '16 Apr 2026', owner: 'Rani Adiputra', status: 'Current' },
-      { label: 'v2.6', note: 'Linked CAB decision references.', date: '09 Apr 2026', owner: 'PMO Office', status: 'Superseded' },
-      { label: 'v2.4', note: 'Reorganized by milestone phase.', date: '25 Mar 2026', owner: 'PMO Office', status: 'Archived' },
-    ],
-    recentActivity: [
-      { action: 'Dependency viewed', actor: 'Delivery Lead', date: '1 hour ago' },
-      { action: 'Artifact linked to task', actor: 'PMO Office', date: 'Today, 10:35' },
-      { action: 'Version restored', actor: 'Governance Office', date: '13 Apr 2026' },
-    ],
-  },
-}
-
-const demoKnowledgeEntries: KnowledgeEntry[] = [
-  { id: 'kb-1', title: 'Cutover Readiness Playbook', category: 'Guide', linkedWorkspace: 'Shared Methods', sourceType: 'Internal notes', created: '10 Apr 2026, 09.30', referenced: '14 minutes ago', relevance: '98%', detailId: 'knowledge' },
-  { id: 'kb-2', title: 'Finance Policy Reference', category: 'Policy', linkedWorkspace: 'Finance Transformation', sourceType: 'Reference docs', created: '08 Apr 2026, 11.12', referenced: 'Today, 09:12', relevance: '92%', detailId: 'brd' },
-  { id: 'kb-3', title: 'Regional Rollout FAQ', category: 'FAQ', linkedWorkspace: 'Transformation Office', sourceType: 'FAQs', created: '06 Apr 2026, 16.40', referenced: 'Yesterday', relevance: '88%', detailId: 'knowledge' },
-  { id: 'kb-4', title: 'Steering Escalation Guide', category: 'Guide', linkedWorkspace: 'Banking PMO', sourceType: 'Guides', created: '05 Apr 2026, 13.05', referenced: 'Yesterday', relevance: '81%', detailId: 'meeting' },
-]
+const detailEntries: Record<string, DetailEntry> = {}
 
 function formatKbUpdated(iso: string): string {
   try {
@@ -1794,7 +1596,7 @@ function KbRelationTargetDropdown({
   value,
   onChange,
   options,
-  placeholder = 'Pilih target...',
+  placeholder = 'Select target...',
 }: {
   id?: string
   value: string
@@ -2399,6 +2201,10 @@ async function isWorkspaceIdRegistered(workspaceId: string): Promise<boolean> {
 
 const KB_WORKSPACE_ID_ALIASES: Record<string, string> = {
   adira: ADIRA_FINANCE_WORKSPACE_KEY,
+  'aw-g6uc': ADIRA_FINANCE_WORKSPACE_KEY,
+  'afw-11at': ADIRA_FINANCE_WORKSPACE_KEY,
+  'adira-finance-ws': ADIRA_FINANCE_WORKSPACE_KEY,
+  'adira finance ws': ADIRA_FINANCE_WORKSPACE_KEY,
 }
 
 const KB_WORKSPACE_ALIAS_LABELS: Record<string, string> = {
@@ -3428,67 +3234,13 @@ function kbApiToKnowledgeEntry(row: KbEntryResponse, workspaces: WorkspaceOrgWor
   }
 }
 
-const artifactLinks: ArtifactLink[] = [
-  {
-    id: 'art-1',
-    artifact: 'Rollout Decision Register',
-    artifactType: 'Decision register',
-    linkedProject: 'ERP Transformation Wave 2',
-    linkedWorkItem: 'Milestone M4',
-    linkType: 'Supports milestone gate',
-    linkKind: 'work_item',
-    owner: 'Rani Adiputra',
-    lastUsed: 'Today, 10:35',
-    detailId: 'artifact',
-  },
-  {
-    id: 'art-2',
-    artifact: 'Executive Status Report Template',
-    artifactType: 'Template',
-    linkedProject: 'Portfolio Governance Shared Library',
-    linkedWorkItem: 'Monthly review pack',
-    linkType: 'Feeds reporting workflow',
-    linkKind: 'work_item',
-    owner: 'PMO Excellence',
-    lastUsed: 'Today, 06:44',
-    detailId: 'template',
-  },
-  {
-    id: 'art-3',
-    artifact: 'Weekly Delivery Steering Notes',
-    artifactType: 'Meeting notes',
-    linkedProject: 'Core Banking Modernization',
-    linkedWorkItem: 'Follow-up CAB-77',
-    linkType: 'Creates action items',
-    linkKind: 'work_item',
-    owner: 'Lina Kurnia',
-    lastUsed: 'Today, 08:10',
-    detailId: 'meeting',
-  },
-]
+const artifactLinks: ArtifactLink[] = []
 
-const activityFeed: ActivityItem[] = [
-  { id: 'act-1', timestamp: 'Today, 12:08', actor: 'PMO Analyst', action: 'Inserted reusable governance statement into gate pack', relatedObject: 'Governance Assurance Statement', detailId: 'content' },
-  { id: 'act-2', timestamp: 'Today, 10:35', actor: 'Rani Adiputra', action: 'Linked artifact to milestone dependency review', relatedObject: 'Rollout Decision Register', detailId: 'artifact' },
-  { id: 'act-3', timestamp: 'Today, 09:24', actor: 'Rani Adiputra', action: 'Updated document metadata and tags', relatedObject: 'Q3 ERP Rollout BRD', detailId: 'brd' },
-  { id: 'act-4', timestamp: 'Today, 08:10', actor: 'Lina Kurnia', action: 'Created follow-up task from meeting note', relatedObject: 'Weekly Delivery Steering Notes', detailId: 'meeting' },
-  { id: 'act-5', timestamp: '11 Apr 2026', actor: 'PMO Excellence', action: 'Published template refresh for executive reporting', relatedObject: 'Executive Status Report Template', detailId: 'template' },
-  { id: 'act-6', timestamp: '08 Apr 2026', actor: 'Knowledge Ops', action: 'Restored previous content block revision', relatedObject: 'Cutover Readiness Playbook', detailId: 'knowledge' },
-]
+const activityFeed: ActivityItem[] = []
 
 // Canonical label for documents not linked to any project ("general" docs). Used wherever
 // a document has no project context-link, consistent with the backend chat attribution.
 const UNIDENTIFIED_PROJECT_LABEL = 'Unidentified Project'
-
-const filterOptions = {
-  type: ['All types', 'BRD', 'Meeting notes', 'Knowledge article', 'Reusable content', 'Template'],
-  capability: ['All capabilities', 'KTP', 'Kartu Keluarga', 'BRD', 'FSD', 'TSD'],
-  workspace: ['All workspaces', 'Transformation Office', 'Banking PMO', 'Shared Methods', 'PMO Excellence'],
-  project: ['All projects', 'ERP Transformation Wave 2', 'Core Banking Modernization', 'Shared delivery methods'],
-  linkedTask: ['All tasks', 'Epic PM-418', 'CAB-77', 'Milestone M4', 'Gate review preparation'],
-  owner: ['All owners', 'Rani Adiputra', 'Lina Kurnia', 'Methodology Guild', 'PMO Excellence'],
-  category: ['All tags', 'Baseline', 'Steering', 'Reuse', 'Gate pack', 'Decision trace'],
-}
 
 const defaultFilters = {
   type: 'All types',
@@ -3705,6 +3457,244 @@ function statusBadgeClass(status: string) {
   if (status.toLowerCase().includes('review') || status.toLowerCase().includes('inactive')) return 'bg-amber-50 text-amber-700 border-amber-200'
   if (status.toLowerCase().includes('link') || status.toLowerCase().includes('deprecat')) return 'bg-violet-50 text-violet-700 border-violet-200'
   return 'bg-slate-100 text-slate-700 border-slate-200'
+}
+
+/** Templates & reusable content table — same interactive design as the Workspace Directory table
+ * (drag-reorder columns, resize, 3-state sort, per-column filter, group-by, row selection). */
+type TemplateTableColumnKey =
+  | 'name'
+  | 'documentType'
+  | 'category'
+  | 'templateCode'
+  | 'versionOrStatus'
+  | 'statusCode'
+  | 'file'
+  | 'usage'
+
+const TEMPLATE_TABLE_PINNED_FIRST_COLUMN: TemplateTableColumnKey = 'name'
+const TEMPLATE_TABLE_DEFAULT_COLUMN_ORDER: TemplateTableColumnKey[] = [
+  'name',
+  'documentType',
+  'category',
+  'templateCode',
+  'versionOrStatus',
+  'statusCode',
+  'file',
+  'usage',
+]
+
+// A fixed cap (rather than measuring real layout, which is fragile — see history of this constant)
+// so the table reliably fits without horizontal scroll on typical panel widths. Matches the number
+// of columns visible by default below (8 total columns - 2 hidden = 6).
+const TEMPLATE_TABLE_MAX_VISIBLE_COLUMNS = 6
+
+// Hidden by default so the table fits without horizontal scroll on typical viewport widths — both
+// are already visible at a glance inside the "Template" cell (code badge, file type icon). The user
+// can re-show either one anytime via the Columns control (up to TEMPLATE_TABLE_MAX_VISIBLE_COLUMNS).
+const TEMPLATE_TABLE_DEFAULT_HIDDEN_COLUMNS: TemplateTableColumnKey[] = ['templateCode', 'file']
+
+const TEMPLATE_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: TemplateTableColumnKey; label: string }[] =
+  TEMPLATE_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: templateColumnLabel(key) }))
+
+type TemplateGroupByKey = 'documentType' | 'category' | 'statusCode'
+const TEMPLATE_GROUP_BY_OPTIONS: readonly { key: TemplateGroupByKey; label: string }[] = [
+  { key: 'documentType', label: 'Type' },
+  { key: 'category', label: 'Category' },
+  { key: 'statusCode', label: 'Status' },
+]
+
+function templateColumnLabel(key: TemplateTableColumnKey): string {
+  switch (key) {
+    case 'name': return 'Template'
+    case 'documentType': return 'Type'
+    case 'category': return 'Category'
+    case 'templateCode': return 'Code'
+    case 'versionOrStatus': return 'Version'
+    case 'statusCode': return 'Status'
+    case 'file': return 'File'
+    case 'usage': return 'Usage'
+  }
+}
+
+function templateColumnHeaderIcon(key: TemplateTableColumnKey): LucideIcon {
+  switch (key) {
+    case 'name': return FileStack
+    case 'documentType': return FileType
+    case 'category': return FolderKanban
+    case 'templateCode': return Code2
+    case 'versionOrStatus': return GitBranch
+    case 'statusCode': return ShieldCheck
+    case 'file': return FileText
+    case 'usage': return Link2
+  }
+}
+
+function templateGroupLabel(row: { documentType: string; category: string; statusCode: string }, groupBy: TemplateGroupByKey): string {
+  if (groupBy === 'documentType') return row.documentType
+  if (groupBy === 'category') return row.category
+  return humanizeCode(row.statusCode)
+}
+
+/** Knowledge Base integration table — same interactive design as the Templates & Workspace Directory
+ * tables (drag-reorder columns, resize, 3-state sort, per-column filter, group-by, row selection). */
+type KbTableColumnKey =
+  | 'reference'
+  | 'category'
+  | 'workspace'
+  | 'department'
+  | 'division'
+  | 'relevance'
+  | 'created'
+  | 'updated'
+
+const KB_TABLE_PINNED_FIRST_COLUMN: KbTableColumnKey = 'reference'
+const KB_TABLE_DEFAULT_COLUMN_ORDER: KbTableColumnKey[] = [
+  'reference',
+  'category',
+  'workspace',
+  'department',
+  'division',
+  'relevance',
+  'created',
+  'updated',
+]
+
+// Fixed cap so the table reliably fits without horizontal scroll (see TEMPLATE_TABLE_MAX_VISIBLE_COLUMNS
+// for why this is a fixed count rather than measuring real layout).
+const KB_TABLE_MAX_VISIBLE_COLUMNS = 6
+
+// Hidden by default — both already surface as badges inside the "Reference" cell (Dept: … / Div: …),
+// same rationale as Templates hiding Code/File. Re-showable anytime via the Columns control.
+const KB_TABLE_DEFAULT_HIDDEN_COLUMNS: KbTableColumnKey[] = ['department', 'division']
+
+const KB_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: KbTableColumnKey; label: string }[] =
+  KB_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: kbTableColumnLabel(key) }))
+
+type KbTableGroupByKey = 'category' | 'workspace' | 'relevance'
+const KB_TABLE_GROUP_BY_OPTIONS: readonly { key: KbTableGroupByKey; label: string }[] = [
+  { key: 'category', label: 'Category' },
+  { key: 'workspace', label: 'Workspace' },
+  { key: 'relevance', label: 'Relevance' },
+]
+
+function kbTableColumnLabel(key: KbTableColumnKey): string {
+  switch (key) {
+    case 'reference': return 'Reference'
+    case 'category': return 'Category'
+    case 'workspace': return 'Workspace'
+    case 'department': return 'Department'
+    case 'division': return 'Division'
+    case 'relevance': return 'Relevance'
+    case 'created': return 'Created'
+    case 'updated': return 'Updated'
+  }
+}
+
+function kbTableColumnHeaderIcon(key: KbTableColumnKey): LucideIcon {
+  switch (key) {
+    case 'reference': return BookOpenText
+    case 'category': return FolderKanban
+    case 'workspace': return Building2
+    case 'department': return Users
+    case 'division': return GitBranch
+    case 'relevance': return Signal
+    case 'created': return Clock3
+    case 'updated': return History
+  }
+}
+
+function kbTableGroupLabel(
+  entry: { category: string; linkedWorkspace: string; relevance: string },
+  groupBy: KbTableGroupByKey,
+): string {
+  if (groupBy === 'category') return entry.category
+  if (groupBy === 'workspace') return entry.linkedWorkspace
+  return entry.relevance
+}
+
+/** Document repository table — same interactive design as Templates / KB integration / Workspace
+ * Directory (drag-reorder columns, resize, 3-state sort, group-by, row selection). No per-column
+ * filter dropdowns here: Type/Capability/Project/Owner already have an existing toolbar filter bar
+ * above this table (Unidentified Project toggle, capability select, etc.) — adding a second,
+ * per-column filter surface for the same fields would just create two out-of-sync ways to filter. */
+type RepositoryTableColumnKey =
+  | 'document'
+  | 'type'
+  | 'capability'
+  | 'linkedContext'
+  | 'owner'
+  | 'version'
+  | 'status'
+  | 'kbProgress'
+  | 'accessScope'
+
+const REPOSITORY_TABLE_PINNED_FIRST_COLUMN: RepositoryTableColumnKey = 'document'
+const REPOSITORY_TABLE_DEFAULT_COLUMN_ORDER: RepositoryTableColumnKey[] = [
+  'document',
+  'type',
+  'capability',
+  'linkedContext',
+  'owner',
+  'version',
+  'status',
+  'kbProgress',
+  'accessScope',
+]
+
+// Lower cap than Templates/KB (6) because the KB progress column is intentionally wide (progress
+// bar + status + message) — 7 columns including it comfortably fits without horizontal scroll.
+const REPOSITORY_TABLE_MAX_VISIBLE_COLUMNS = 7
+
+// Hidden by default — most secondary at a glance (Access is almost always "Project Team"; Linked
+// project/task duplicates the folder/project context the user is already browsing in). Re-showable
+// anytime via the Columns control.
+const REPOSITORY_TABLE_DEFAULT_HIDDEN_COLUMNS: RepositoryTableColumnKey[] = ['linkedContext', 'accessScope']
+
+const REPOSITORY_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: RepositoryTableColumnKey; label: string }[] =
+  REPOSITORY_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: repositoryTableColumnLabel(key) }))
+
+type RepositoryTableGroupByKey = 'type' | 'capability' | 'status'
+const REPOSITORY_TABLE_GROUP_BY_OPTIONS: readonly { key: RepositoryTableGroupByKey; label: string }[] = [
+  { key: 'type', label: 'Type' },
+  { key: 'capability', label: 'Capability' },
+  { key: 'status', label: 'Status' },
+]
+
+function repositoryTableColumnLabel(key: RepositoryTableColumnKey): string {
+  switch (key) {
+    case 'document': return 'Document'
+    case 'type': return 'Type'
+    case 'capability': return 'Capability'
+    case 'linkedContext': return 'Linked project / task'
+    case 'owner': return 'Owner'
+    case 'version': return 'Version'
+    case 'status': return 'Status'
+    case 'kbProgress': return 'KB progress'
+    case 'accessScope': return 'Access'
+  }
+}
+
+function repositoryTableColumnHeaderIcon(key: RepositoryTableColumnKey): LucideIcon {
+  switch (key) {
+    case 'document': return FileStack
+    case 'type': return FileType
+    case 'capability': return BrainCircuit
+    case 'linkedContext': return Link2
+    case 'owner': return Users
+    case 'version': return GitBranch
+    case 'status': return ShieldCheck
+    case 'kbProgress': return BookOpenText
+    case 'accessScope': return Lock
+  }
+}
+
+function repositoryTableGroupLabel(
+  item: { type: string; capability: string; status: string },
+  groupBy: RepositoryTableGroupByKey,
+): string {
+  if (groupBy === 'type') return item.type
+  if (groupBy === 'capability') return item.capability
+  return item.status
 }
 
 function panelActionButton(
@@ -4159,7 +4149,7 @@ interface DocPanelNavItem {
 const DOC_PANEL_ITEMS: DocPanelNavItem[] = [
   {
     id: 'overview',
-    label: 'Library Overview',
+    label: 'Knowledge intelligence dashboard',
     description: 'Volume, health, and distribution signals for the governed corpus.',
     icon: Sparkles,
     badge: 'Command',
@@ -4175,7 +4165,7 @@ const DOC_PANEL_ITEMS: DocPanelNavItem[] = [
   },
   {
     id: 'knowledge',
-    label: 'Knowledge Base',
+    label: 'Knowledge Base integration',
     description: 'LLM context entries backed by tectona-knowledge-base service.',
     icon: BrainCircuit,
     badge: 'KB',
@@ -4217,7 +4207,7 @@ const DOC_PANEL_ITEMS: DocPanelNavItem[] = [
     id: 'activity',
     label: 'Activity & audit',
     description: 'Recent operations across upload, link, reuse, and restore.',
-    icon: History,
+    icon: ClipboardList,
     badge: 'Audit',
     group: 'Assurance & Traceability',
   },
@@ -4228,6 +4218,18 @@ const DOC_PANEL_GROUPS: Array<{ group: DocPanelNavItem['group']; items: DocPanel
   { group: 'Control Library', items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Control Library') },
   { group: 'Assurance & Traceability', items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Assurance & Traceability') },
 ]
+
+function buildDocPanelGroups() {
+  // Full DKM nav for all users — Command Center (overview) + Knowledge Base integration are never hidden.
+  return [
+    { group: 'Command Center' as const, items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Command Center') },
+    { group: 'Control Library' as const, items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Control Library') },
+    {
+      group: 'Assurance & Traceability' as const,
+      items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Assurance & Traceability'),
+    },
+  ].filter((group) => group.items.length > 0)
+}
 
 const DOC_LAST_PANEL_STORAGE_KEY = 'tectona:document-knowledge:last-panel'
 
@@ -4508,6 +4510,7 @@ function DocPanelSection({
   right,
   children,
   headerIcon,
+  headerBadge,
   variant = 'default',
   sectionRef,
   style,
@@ -4520,6 +4523,7 @@ function DocPanelSection({
   right?: ReactNode
   children: ReactNode
   headerIcon?: ReactNode
+  headerBadge?: ReactNode
   variant?: 'default' | 'ficus-governance' | 'glass'
   sectionRef?: React.Ref<HTMLElement>
   style?: React.CSSProperties
@@ -4531,7 +4535,7 @@ function DocPanelSection({
         id={id}
         ref={sectionRef}
         className={cn(
-          'glass-card flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/40',
+          'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
           'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
           highlight ? 'border-blue-300 ring-2 ring-blue-100' : ''
         )}
@@ -4547,17 +4551,18 @@ function DocPanelSection({
             <div className="shrink-0">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div>
-                  {headerIcon ? (
-                    <div className="flex items-center gap-2">
-                      <span className="shrink-0 text-foreground" aria-hidden>{headerIcon}</span>
-                      <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-                    </div>
-                  ) : (
+                  <div className="flex items-center gap-2">
+                    {headerIcon ? <span className="shrink-0 text-foreground" aria-hidden>{headerIcon}</span> : null}
                     <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-                  )}
+                    {headerBadge}
+                  </div>
                   <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">{description}</p>
                 </div>
-                {right ? <div className="flex flex-wrap items-center gap-2">{right}</div> : null}
+                {right ? (
+                  <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                    {right}
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className={cn('flex min-h-0 flex-1 flex-col', contentOverflow === 'visible' ? 'overflow-visible' : 'overflow-hidden')}>{children}</div>
@@ -4646,8 +4651,65 @@ function DocStatCard({
   )
 }
 
+function isTemplateDraftStatusError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return /invalid status_code:\s*draft/i.test(message) || /invalid template status_code/i.test(message)
+}
+
+async function createMasterTemplateWithStatusFallback(
+  body: Parameters<typeof createTemplate>[0],
+): Promise<Awaited<ReturnType<typeof createTemplate>>> {
+  const preferredStatus = body.status_code ?? 'draft'
+  try {
+    return await createTemplate({ ...body, status_code: preferredStatus })
+  } catch (error) {
+    if (preferredStatus === 'draft' && isTemplateDraftStatusError(error)) {
+      return await createTemplate({ ...body, status_code: 'active' })
+    }
+    throw error
+  }
+}
+
 export function DocumentKnowledgeManagementPage() {
   const { addToast } = useToast()
+  const tenant = useTenantContextOptional()
+  const { options: userWorkspaceOptions } = useUserWorkspaceOptions()
+  const activeWorkspaceApiId = resolveWorkspaceApiId(tenant?.workspaceId) ?? null
+  const dkmWorkspaceScope = useMemo(
+    () => buildWorkspaceScopeFromTenant(tenant ?? undefined),
+    [tenant?.selectedWorkspaceIds, tenant?.tenantMode, tenant?.workspaceId],
+  )
+  const adiraWorkspaceCatalog = useMemo(
+    () => userWorkspaceOptions.map((option) => ({
+      id: option.workspaceId,
+      slug: option.slug,
+      name: option.workspaceName,
+    })),
+    [userWorkspaceOptions],
+  )
+  const isAdiraFinanceInScope = useMemo(() => {
+    const matches = (id: string | null | undefined) =>
+      isAdiraFinanceWorkspaceRef(id, adiraWorkspaceCatalog)
+
+    if (matches(tenant?.workspaceId)) return true
+    if (dkmWorkspaceScope.mode === 'single') {
+      return matches(dkmWorkspaceScope.workspaceId)
+    }
+    const selected = tenant?.selectedWorkspaceIds ?? []
+    if (selected.some((id) => matches(id))) return true
+    return (readAccessibleWorkspaceIds() ?? []).some((id) => matches(id))
+  }, [adiraWorkspaceCatalog, dkmWorkspaceScope, tenant?.selectedWorkspaceIds, tenant?.workspaceId])
+  const workspaceScopeKey = useMemo(() => {
+    if (dkmWorkspaceScope.mode === 'all') {
+      const ids = dkmWorkspaceScope.workspaceIds?.join(',')
+        ?? readAccessibleWorkspaceIds()?.join(',')
+        ?? 'all-accessible'
+      return `all:${ids}`
+    }
+    return `single:${dkmWorkspaceScope.workspaceId}`
+  }, [dkmWorkspaceScope])
+  const docPanelGroups = useMemo(() => buildDocPanelGroups(), [])
+  const docPanelItems = useMemo(() => docPanelGroups.flatMap((group) => group.items), [docPanelGroups])
   const [searchParams, setSearchParams] = useSearchParams()
   const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)
   const sidebarMini = usePreferencesStore((s) => s.preferences.sidebarMini ?? true)
@@ -4672,20 +4734,46 @@ export function DocumentKnowledgeManagementPage() {
     setSearchQuery('')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
-  const [selectedDetailId, setSelectedDetailId] = useState('brd')
+  const [selectedDetailId, setSelectedDetailId] = useState('')
   const deferredQuery = useDeferredValue(searchQuery.trim().toLowerCase())
   const [repositoryItems, setRepositoryItems] = useState<RepositoryItem[]>([])
   const [repositoryLoading, setRepositoryLoading] = useState(false)
   const [repositoryError, setRepositoryError] = useState<string | null>(null)
   const [repositoryPage, setRepositoryPage] = useState(1)
   const [repositoryPageSize, setRepositoryPageSize] = useState(10)
-  const [templateCategoryFilter, setTemplateCategoryFilter] = useState<string | null>(null)
+  const [repositoryTableSort, setRepositoryTableSort] = useState<{ key: RepositoryTableColumnKey; dir: 'asc' | 'desc' } | null>(null)
+  const [repositoryTableGroupBy, setRepositoryTableGroupBy] = useState<RepositoryTableGroupByKey | null>(null)
+  const [showRepositoryTableSelection, setShowRepositoryTableSelection] = useState(false)
+  const [repositoryTableSelectedIds, setRepositoryTableSelectedIds] = useState<string[]>([])
+  const [activityPage, setActivityPage] = useState(1)
+  const [activityPageSize, setActivityPageSize] = useState(10)
+  const [templateStatusFilter, setTemplateStatusFilter] = useState<'all' | 'draft' | 'active'>('all')
+  const [templateSort, setTemplateSort] = useState<{ key: TemplateTableColumnKey; dir: 'asc' | 'desc' } | null>(null)
+  const [templateGroupBy, setTemplateGroupBy] = useState<TemplateGroupByKey | null>(null)
+  const [showTemplateSelection, setShowTemplateSelection] = useState(false)
+  const [templateSelectedIds, setTemplateSelectedIds] = useState<string[]>([])
+  const [templateTypeFilterTags, setTemplateTypeFilterTags] = useState<Set<string>>(() => new Set())
+  const [templateCategoryFilterTags, setTemplateCategoryFilterTags] = useState<Set<string>>(() => new Set())
+  const [templateColumnStatusFilterTags, setTemplateColumnStatusFilterTags] = useState<Set<string>>(() => new Set())
   const [templatePage, setTemplatePage] = useState(1)
   const [templatePageSize, setTemplatePageSize] = useState(10)
   const [templateApiItems, setTemplateApiItems] = useState<DocumentTemplateResponse[]>([])
   const [templateLoading, setTemplateLoading] = useState(false)
   const [templateError, setTemplateError] = useState<string | null>(null)
   const [templateBusy, setTemplateBusy] = useState(false)
+  const [templateEditItem, setTemplateEditItem] = useState<{ id: string; name: string } | null>(null)
+  const [templateGenerateOpen, setTemplateGenerateOpen] = useState(false)
+  const [templateGenerateId, setTemplateGenerateId] = useState<string | null>(null)
+  const [templateGenerateSource, setTemplateGenerateSource] = useState('')
+  const [templateGenerateInstructions, setTemplateGenerateInstructions] = useState('')
+  const [templateGenerateBusy, setTemplateGenerateBusy] = useState(false)
+  const [templatePreviewId, setTemplatePreviewId] = useState<string | null>(null)
+  const [templatePreviewBusy, setTemplatePreviewBusy] = useState(false)
+  const [templatePreviewError, setTemplatePreviewError] = useState<string | null>(null)
+  const [templatePreviewConfig, setTemplatePreviewConfig] = useState<OnlyOfficeEditorConfig | null>(null)
+  const templatePreviewHostRef = useRef<HTMLDivElement | null>(null)
+  const templatePreviewEditorRef = useRef<DocEditorInstance | null>(null)
+  const templateUploadInputRef = useRef<HTMLInputElement | null>(null)
   const [versionLineageSelectedId, setVersionLineageSelectedId] = useState<string | null>(null)
   const [versionLineageTimeline, setVersionLineageTimeline] = useState<DetailEntry['versionHistory']>([])
   const [versionLineageTimelineLoading, setVersionLineageTimelineLoading] = useState(false)
@@ -4793,6 +4881,7 @@ export function DocumentKnowledgeManagementPage() {
     }
   })
   const [isRepositoryDragActive, setIsRepositoryDragActive] = useState(false)
+  const [isTemplateDragActive, setIsTemplateDragActive] = useState(false)
   const repositoryUploadInputRef = useRef<HTMLInputElement | null>(null)
   const repositoryUploadTargetFolderIdRef = useRef<string | null>(null)
 
@@ -4919,6 +5008,10 @@ export function DocumentKnowledgeManagementPage() {
   const [kbTableSort, setKbTableSort] = useState<{ key: KbTableSortKey; dir: 'asc' | 'desc' } | null>(null)
   const [kbTablePage, setKbTablePage] = useState(1)
   const [kbTablePageSize, setKbTablePageSize] = useState(10)
+  const [kbTableGroupBy, setKbTableGroupBy] = useState<KbTableGroupByKey | null>(null)
+  const [showKbTableSelection, setShowKbTableSelection] = useState(false)
+  const [kbTableSelectedIds, setKbTableSelectedIds] = useState<string[]>([])
+  const [relevanceColumnFilters, setRelevanceColumnFilters] = useState<Set<string>>(() => new Set())
   const [kbGlossaryLetter, setKbGlossaryLetter] = useState<string>('ALL')
   const [kbViewMode, setKbViewMode] = useState<'table' | 'glossary'>(() => {
     try {
@@ -4960,6 +5053,11 @@ export function DocumentKnowledgeManagementPage() {
   } | null>(null)
   const [repositoryRowContextMenu, setRepositoryRowContextMenu] = useState<{ documentId: string; detailId: string; x: number; y: number } | null>(null)
   const [repositoryFolderContextMenu, setRepositoryFolderContextMenu] = useState<{ folderId: string; x: number; y: number } | null>(null)
+  const [templateRowContextMenu, setTemplateRowContextMenu] = useState<{ templateId: string; x: number; y: number } | null>(null)
+  const [templateDownloadBusyId, setTemplateDownloadBusyId] = useState<string | null>(null)
+  const [templateStatusBusyId, setTemplateStatusBusyId] = useState<string | null>(null)
+  const [templateDeleteBusyId, setTemplateDeleteBusyId] = useState<string | null>(null)
+  const [templateDeleteTarget, setTemplateDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const kbContextMenuPos = useFlippedMenuPosition(kbContextMenuRef, !!kbRowContextMenu, kbRowContextMenu?.x ?? 0, kbRowContextMenu?.y ?? 0)
   const kbEditorTableMenuPos = useFlippedMenuPosition(
     kbEditorTableMenuRef,
@@ -4982,8 +5080,9 @@ export function DocumentKnowledgeManagementPage() {
     } catch {
       // ignore
     }
-    return 'overview'
+    return 'repository'
   })
+
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
   const [showFiltersPanel, setShowFiltersPanel] = useState(true)
   const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useState(true)
@@ -5018,6 +5117,9 @@ export function DocumentKnowledgeManagementPage() {
   const versioningPanelRef = useRef<HTMLElement | null>(null)
   const artifactsPanelRef = useRef<HTMLElement | null>(null)
   const meetingsPanelRef = useRef<HTMLElement | null>(null)
+  const activityPanelRef = useRef<HTMLDivElement | null>(null)
+  const [activityPanelMaxHeightPx, setActivityPanelMaxHeightPx] = useState<number | null>(null)
+  const [activityPanelAlignedHeightPx, setActivityPanelAlignedHeightPx] = useState<number | null>(null)
   const overviewDashboardRef = useRef<HTMLDivElement | null>(null)
   const overviewMainPanelRef = useRef<HTMLElement | null>(null)
   const [docMainPanelViewportHeightPx, setDocMainPanelViewportHeightPx] = useState<number | null>(null)
@@ -5029,6 +5131,11 @@ export function DocumentKnowledgeManagementPage() {
   const [kbGraphSize, setKbGraphSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
   const [kbGraphFullscreen, setKbGraphFullscreen] = useState(false)
   const [kbGraphFullscreenMounted, setKbGraphFullscreenMounted] = useState(false)
+  const [kbRelationScanOpen, setKbRelationScanOpen] = useState(false)
+  const [kbRelationScanBusy, setKbRelationScanBusy] = useState(false)
+  const [kbRelationScanError, setKbRelationScanError] = useState<string | null>(null)
+  const [kbRelationScanSuggestions, setKbRelationScanSuggestions] = useState<KbRelationScanSuggestion[]>([])
+  const [kbRelationScanCreating, setKbRelationScanCreating] = useState(false)
   const [kbGraphFullscreenEntered, setKbGraphFullscreenEntered] = useState(false)
 
   function resolveKbDefaultCategory(): string {
@@ -5097,16 +5204,21 @@ export function DocumentKnowledgeManagementPage() {
                   ? artifactsPanelRef.current
                   : activePanel === 'meetings'
                     ? meetingsPanelRef.current
-                    : activePanel === 'knowledge'
-                      ? knowledgePanelRef.current
-                      : null
+                    : activePanel === 'activity'
+                      ? activityPanelRef.current
+                      : activePanel === 'knowledge'
+                        ? knowledgePanelRef.current
+                        : null
+
+      const viewportCap = computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top)
 
       if (mainPanelEl) {
-        setNavPanelHeightPx(measureEnterpriseNavHeightFromMainPanel(navEl, mainPanelEl))
+        const aligned = measureEnterpriseNavHeightFromMainPanel(navEl, mainPanelEl)
+        setNavPanelHeightPx(Math.max(220, Math.min(aligned, viewportCap)))
         return
       }
 
-      setNavPanelHeightPx(computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top))
+      setNavPanelHeightPx(viewportCap)
     }
 
     compute()
@@ -5127,6 +5239,7 @@ export function DocumentKnowledgeManagementPage() {
     if (versioningPanelRef.current) ro.observe(versioningPanelRef.current)
     if (artifactsPanelRef.current) ro.observe(artifactsPanelRef.current)
     if (meetingsPanelRef.current) ro.observe(meetingsPanelRef.current)
+    if (activityPanelRef.current) ro.observe(activityPanelRef.current)
     if (knowledgePanelRef.current) ro.observe(knowledgePanelRef.current)
     if (docMainFiltersRef.current) ro.observe(docMainFiltersRef.current)
     return () => {
@@ -5147,6 +5260,7 @@ export function DocumentKnowledgeManagementPage() {
       && activePanel !== 'versioning'
       && activePanel !== 'artifacts'
       && activePanel !== 'meetings'
+      && activePanel !== 'activity'
       && activePanel !== 'knowledge'
     ) {
       setDocMainPanelViewportHeightPx(null)
@@ -5167,7 +5281,9 @@ export function DocumentKnowledgeManagementPage() {
                   ? artifactsPanelRef.current
                   : activePanel === 'meetings'
                     ? meetingsPanelRef.current
-                    : knowledgePanelRef.current
+                    : activePanel === 'activity'
+                      ? activityPanelRef.current
+                      : knowledgePanelRef.current
       if (!el) return
       setDocMainPanelViewportHeightPx(computeWorkspaceMainPanelViewportHeightPx(el.getBoundingClientRect().top))
     }
@@ -5188,6 +5304,7 @@ export function DocumentKnowledgeManagementPage() {
     if (versioningPanelRef.current) ro.observe(versioningPanelRef.current)
     if (artifactsPanelRef.current) ro.observe(artifactsPanelRef.current)
     if (meetingsPanelRef.current) ro.observe(meetingsPanelRef.current)
+    if (activityPanelRef.current) ro.observe(activityPanelRef.current)
     if (knowledgePanelRef.current) ro.observe(knowledgePanelRef.current)
     if (docMainFiltersRef.current) ro.observe(docMainFiltersRef.current)
     const mainBody = document.querySelector(APP_MAIN_BODY_SELECTOR)
@@ -5260,6 +5377,68 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [activePanel, navDocked, showFiltersPanel])
 
+  // Match Knowledge Base integration panel height measurement for Activity & Audit.
+  useLayoutEffect(() => {
+    if (navDocked || activePanel !== 'activity' || !navPanelHeightPx) {
+      setActivityPanelMaxHeightPx(null)
+      return
+    }
+
+    const gapBelowFiltersPx = 16
+
+    const measure = () => {
+      const filterEl = docMainFiltersRef.current
+      const filterH = showFiltersPanel && filterEl ? filterEl.getBoundingClientRect().height : 0
+      setActivityPanelMaxHeightPx(Math.max(220, navPanelHeightPx - filterH - gapBelowFiltersPx))
+    }
+
+    measure()
+    const ro = new ResizeObserver(() => measure())
+    if (docMainFiltersRef.current) ro.observe(docMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [navDocked, activePanel, navPanelHeightPx, showFiltersPanel])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'activity') {
+      setActivityPanelAlignedHeightPx(null)
+      return
+    }
+
+    const measure = () => {
+      const navEl = navPanelRef.current
+      const panelEl = activityPanelRef.current
+      if (!navEl || !panelEl) return
+
+      const navBottom = navEl.getBoundingClientRect().bottom
+      const panelTop = panelEl.getBoundingClientRect().top
+      const next = Math.max(220, Math.floor(navBottom - panelTop))
+      setActivityPanelAlignedHeightPx(next)
+    }
+
+    measure()
+    const rafA = window.requestAnimationFrame(measure)
+    const rafB = window.requestAnimationFrame(measure)
+    const t1 = window.setTimeout(measure, 80)
+    const t2 = window.setTimeout(measure, 360)
+    const ro = new ResizeObserver(() => measure())
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (activityPanelRef.current) ro.observe(activityPanelRef.current)
+    if (docMainFiltersRef.current) ro.observe(docMainFiltersRef.current)
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(rafA)
+      window.cancelAnimationFrame(rafB)
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [activePanel, navDocked, showFiltersPanel])
+
   useLayoutEffect(() => {
     if (
       navDocked
@@ -5324,6 +5503,7 @@ export function DocumentKnowledgeManagementPage() {
       && activePanel !== 'versioning'
       && activePanel !== 'artifacts'
       && activePanel !== 'meetings'
+      && activePanel !== 'activity'
     ) {
       setRepositoryPanelAlignedHeightPx(null)
       return
@@ -5340,7 +5520,9 @@ export function DocumentKnowledgeManagementPage() {
               ? artifactsPanelRef.current
               : activePanel === 'meetings'
                 ? meetingsPanelRef.current
-                : repositoryPanelRef.current
+                : activePanel === 'activity'
+                  ? activityPanelRef.current
+                  : repositoryPanelRef.current
       if (!navEl || !panelEl) return
 
       const navBottom = navEl.getBoundingClientRect().bottom
@@ -5359,6 +5541,7 @@ export function DocumentKnowledgeManagementPage() {
     if (versioningPanelRef.current) ro.observe(versioningPanelRef.current)
     if (artifactsPanelRef.current) ro.observe(artifactsPanelRef.current)
     if (meetingsPanelRef.current) ro.observe(meetingsPanelRef.current)
+    if (activityPanelRef.current) ro.observe(activityPanelRef.current)
     if (docMainFiltersRef.current) ro.observe(docMainFiltersRef.current)
     window.addEventListener('resize', measure, { passive: true })
     return () => {
@@ -5413,6 +5596,9 @@ export function DocumentKnowledgeManagementPage() {
     try {
       const res = await listAllKbEntries()
       let items = res.items
+
+      // Adira glossary/standards seeding when active workspace scope includes Adira Finance WS.
+      if (isAdiraFinanceInScope) {
       const ensuredStandard = await ensureBrdToKbContentStandardEntry(items)
       if (ensuredStandard && !items.some((entry) => entry.id === ensuredStandard.id)) {
         items = [ensuredStandard, ...items]
@@ -5430,20 +5616,25 @@ export function DocumentKnowledgeManagementPage() {
           items = [entry, ...items]
         }
       }
+      }
+
+      const scope = dkmWorkspaceScope
+      items = items.filter((entry) => belongsToDkmRepositoryScope(entry.workspace_id, scope))
+
       setKbApiItems(items)
       setKbViewEntry((prev) => {
         if (!prev) return prev
-        return items.find((item) => item.id === prev.id) ?? prev
+        return items.find((item) => item.id === prev.id) ?? null
       })
       setKbLive(true)
     } catch (err) {
       setKbApiItems([])
       setKbLive(false)
-      setKbLoadError(err instanceof Error ? err.message : 'Knowledge Base API tidak tersedia')
+      setKbLoadError(err instanceof Error ? err.message : 'Knowledge Base API is unavailable')
     } finally {
       setKbLoading(false)
     }
-  }, [])
+  }, [dkmWorkspaceScope, isAdiraFinanceInScope])
 
   const loadKbOrgOptions = useCallback(async () => {
     try {
@@ -5470,6 +5661,14 @@ export function DocumentKnowledgeManagementPage() {
 
   useEffect(() => {
     void loadKnowledgeBaseEntries()
+  }, [loadKnowledgeBaseEntries, workspaceScopeKey])
+
+  useEffect(() => {
+    const onTenantChanged = () => {
+      void loadKnowledgeBaseEntries()
+    }
+    window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+    return () => window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
   }, [loadKnowledgeBaseEntries])
 
   // Workspace mutations (directory UI or assistant chat) mirror into KB — refetch entries live.
@@ -5495,7 +5694,9 @@ export function DocumentKnowledgeManagementPage() {
   useEffect(() => {
     const view = (searchParams.get('view') || '').trim().toLowerCase()
     if (!view) return
-    if (isDocPanelId(view)) setActivePanel(view)
+    if (isDocPanelId(view)) {
+      setActivePanel(view)
+    }
     const next = new URLSearchParams(searchParams)
     next.delete('view')
     setSearchParams(next, { replace: true })
@@ -5719,21 +5920,23 @@ export function DocumentKnowledgeManagementPage() {
       setRepositoryProjects(projectList.projects.map((project) => ({ id: project.id, name: project.name })))
       const nameByProjectId = new Map(projectList.projects.map((project) => [project.id, project.name]))
 
-      // Fetch ALL documents across projects — including project-less / orphaned ones —
-      // so they still appear in the repository and inside folders (attributed to
-      // "Unidentified Project"). Paginate defensively.
       const allDocs: DocumentResponse[] = []
       let page = 1
       const pageSize = 100
       const maxPages = 50
+      const listParamsBase = {
+        ...(activeWorkspaceApiId ? { workspace_id: activeWorkspaceApiId } : {}),
+      }
       while (page <= maxPages) {
-        const res = await listAllDocuments({ page, page_size: pageSize })
+        const res = await listAllDocuments({ ...listParamsBase, page, page_size: pageSize })
         allDocs.push(...res.items)
         if (res.items.length === 0 || page * pageSize >= res.total) break
         page += 1
       }
 
-      const merged = allDocs.map((doc) =>
+      const scope = dkmWorkspaceScope
+      const scopedDocs = allDocs.filter((doc) => belongsToDkmRepositoryScope(doc.workspace_id, scope))
+      const merged = scopedDocs.map((doc) =>
         mapDocumentToRepositoryItem(doc, nameByProjectId.get(doc.project_id) ?? UNIDENTIFIED_PROJECT_LABEL),
       )
 
@@ -5746,37 +5949,36 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setRepositoryLoading(false)
     }
-  }, [mapDocumentToRepositoryItem])
+  }, [activeWorkspaceApiId, dkmWorkspaceScope, mapDocumentToRepositoryItem])
 
   useEffect(() => {
     void loadRepositoryItems()
-  }, [loadRepositoryItems])
-
-  const loadMasterTemplates = useCallback(async () => {
-    setTemplateLoading(true)
-    setTemplateError(null)
-    try {
-      const items = await listTemplates()
-      setTemplateApiItems(Array.isArray(items) ? items : [])
-    } catch (error) {
-      setTemplateApiItems([])
-      setTemplateError(error instanceof Error ? error.message : 'Failed to load master templates from backend.')
-    } finally {
-      setTemplateLoading(false)
-    }
-  }, [])
+  }, [loadRepositoryItems, workspaceScopeKey])
 
   useEffect(() => {
-    void loadMasterTemplates()
-  }, [loadMasterTemplates])
+    const onTenantChanged = () => {
+      void loadRepositoryItems()
+    }
+    window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+    return () => window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+  }, [loadRepositoryItems])
 
   const loadRepositoryFolders = useCallback(async () => {
     try {
-      setRepositoryFolders(await fetchAllDocumentFolders())
+      const folders = await fetchAllDocumentFolders()
+      const session = getSession()
+      const currentOwnerId = session?.user.id || session?.user.email || null
+      setRepositoryFolders(
+        filterDkmFoldersForRepositoryScope(
+          folders,
+          repositoryItems.map((item) => item.folderId),
+          currentOwnerId,
+        ),
+      )
     } catch {
       setRepositoryFolders([])
     }
-  }, [])
+  }, [repositoryItems])
 
   useEffect(() => {
     void loadRepositoryFolders()
@@ -5787,10 +5989,12 @@ export function DocumentKnowledgeManagementPage() {
     const name = nextUntitledDocumentFolderName(repositoryFolders, repositoryCurrentFolderId)
     setRepositoryFolderBusy(true)
     try {
+      const session = getSession()
       const created = await createDocumentFolder({
         name,
         description: null,
         parent_id: repositoryCurrentFolderId,
+        owner_id: session?.user.id || session?.user.email || null,
       })
       await loadRepositoryFolders()
       setRepositoryFolderRenameId(created.id)
@@ -6148,10 +6352,10 @@ export function DocumentKnowledgeManagementPage() {
       const isPdf = /\.pdf$/i.test(fileName) || (fileType || '').toLowerCase() === 'application/pdf'
       throw new Error(
         isLegacyDoc
-          ? `Tidak bisa mengekstrak teks dari "${fileName}". Pastikan Gotenberg/LibreOffice berjalan, atau simpan ulang sebagai .docx kemudian Generate KB lagi.`
+          ? `Could not extract text from "${fileName}". Make sure Gotenberg/LibreOffice is running, or re-save as .docx and Generate KB again.`
           : isPdf
-            ? `Tidak bisa mengekstrak teks dari "${fileName}" (0 karakter). Pastikan Agent Runtime (8414) berjalan untuk ekstrak PDF, atau PDF bukan scan gambar tanpa OCR.`
-            : `Tidak bisa mengekstrak teks dari "${fileName}" (0 karakter). Generate KB dibatalkan supaya tidak menyimpan entry kosong.`,
+            ? `Could not extract text from "${fileName}" (0 characters). Make sure Agent Runtime (8414) is running to extract PDFs, or the PDF may be a scanned image without OCR.`
+            : `Could not extract text from "${fileName}" (0 characters). Generate KB was canceled to avoid saving an empty entry.`,
       )
     }
     // Lazy backfill: ensure the source document carries a content fingerprint so future uploads
@@ -6248,7 +6452,7 @@ export function DocumentKnowledgeManagementPage() {
 
     const generated = await generateRepositoryKbFromDocument({
       context: {
-        workspace_id: null,
+        workspace_id: activeWorkspaceApiId,
         session_id: `repository-upload-kb-${documentId}`,
       },
       document_kind: isMemoInternal ? 'memo_internal' : 'brd',
@@ -6396,7 +6600,7 @@ export function DocumentKnowledgeManagementPage() {
         content: traceContent,
         is_active: true,
         priority: 60,
-        workspace_id: null,
+        workspace_id: activeWorkspaceApiId,
       })
     } else {
       traceEntry = await patchKbEntry(traceEntry.id, { content: traceContent })
@@ -6436,7 +6640,7 @@ export function DocumentKnowledgeManagementPage() {
           content: kbContent,
           is_active: true,
           priority: kbPriority,
-          workspace_id: null,
+          workspace_id: activeWorkspaceApiId,
           visibility_scope: isMemoInternal ? 'internal' : undefined,
         })
 
@@ -6445,7 +6649,7 @@ export function DocumentKnowledgeManagementPage() {
         source_entry_id: createdKb.id,
         predicate: 'references',
         target_entry_id: traceEntry.id,
-        workspace_id: null,
+        workspace_id: activeWorkspaceApiId,
         properties: relationBase,
       })
     } catch {
@@ -6469,7 +6673,7 @@ export function DocumentKnowledgeManagementPage() {
           source_entry_id: createdKb.id,
           predicate: aiRelationPredicate,
           target_entry_id: aiTarget.id,
-          workspace_id: null,
+          workspace_id: activeWorkspaceApiId,
           properties: { ...relationBase, relation_kind: 'ai_suggested' },
         })
       } catch {
@@ -6484,11 +6688,11 @@ export function DocumentKnowledgeManagementPage() {
     addToast({
       title: 'KB generated',
       description: summaryEntryId
-        ? `${fileName} KB ringkasan diperbarui (${extract.fullCharCount} karakter diekstrak). Dokumen resmi tetap di repository.`
-        : `${fileName} diringkas ke KB dan ditaut ke dokumen (${extract.fullCharCount} karakter diekstrak${isMemoInternal ? ', Memo Internal' : ''}).`,
+        ? `${fileName} KB summary updated (${extract.fullCharCount} characters extracted). The official document stays in the repository.`
+        : `${fileName} summarized into KB and linked to the document (${extract.fullCharCount} characters extracted${isMemoInternal ? ', Internal Memo' : ''}).`,
       variant: 'success',
     })
-  }, [addToast, kbApiItems, kbCategoryOptions, repositoryFolders, resolveKbCategoryFromAi])
+  }, [activeWorkspaceApiId, addToast, kbApiItems, kbCategoryOptions, repositoryFolders, resolveKbCategoryFromAi])
 
   const runRepositoryKbGeneration = useCallback(async (params: {
     file?: File | null
@@ -6892,6 +7096,26 @@ export function DocumentKnowledgeManagementPage() {
     resolve: (proceed: boolean) => void
   }
   const [repositoryDuplicatePrompt, setRepositoryDuplicatePrompt] = useState<RepositoryDuplicatePrompt | null>(null)
+  type TemplateDuplicateMatch = { id: string; title: string; workspaceName: string; reason?: string }
+  type TemplateDuplicatePrompt = {
+    fileName: string
+    workspaceName: string
+    pendingFile: File
+    uploadExtractText: string
+    nameMatches: TemplateDuplicateMatch[]
+    samePurpose: TemplateDuplicateMatch[]
+    resolve: (proceed: boolean) => void
+  }
+  const [templateDuplicatePrompt, setTemplateDuplicatePrompt] = useState<TemplateDuplicatePrompt | null>(null)
+  const [templateCompareSession, setTemplateCompareSession] = useState<TemplateDuplicateCompareSession | null>(null)
+  type UploadWorkspacePickerState = {
+    purpose: 'repository-document' | 'template-upload' | 'template-create'
+    candidates: Array<{ id: string; name: string }>
+    pendingFile?: File
+    targetFolderId?: string | null
+    templateUploadOptions?: { category_code?: string; document_type_code?: string }
+  }
+  const [uploadWorkspacePicker, setUploadWorkspacePicker] = useState<UploadWorkspacePickerState | null>(null)
 
   const gatherExistingBrdDocs = useCallback(async (): Promise<{
     docs: ExistingBrdDoc[]
@@ -6999,7 +7223,8 @@ export function DocumentKnowledgeManagementPage() {
     })
   }, [addToast, gatherExistingBrdDocs])
 
-  const processRepositoryUploadFile = useCallback(async (file: File) => {
+  const processRepositoryUploadFile = useCallback(async (file: File, explicitWorkspaceId?: string | null) => {
+    const uploadWorkspaceId = explicitWorkspaceId !== undefined ? explicitWorkspaceId : (activeWorkspaceApiId ?? null)
     const hasExplicitProjectSelection = filters.project !== 'All projects'
     // Upload is allowed without picking a project. When none is chosen we still need a storage
     // bucket (the repository lists documents per-project), so we fall back to the first project,
@@ -7104,7 +7329,7 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryUploadBusy(true)
     try {
       const created = await createProjectDocument(targetProject.id, {
-        workspace_id: null,
+        workspace_id: uploadWorkspaceId,
         title: inferredTitle,
         // Uploading while inside a folder files the document directly into that folder.
         folder_id: uploadFolderId,
@@ -7254,6 +7479,7 @@ export function DocumentKnowledgeManagementPage() {
       setRepositoryUploadBusy(false)
     }
   }, [
+    activeWorkspaceApiId,
     addToast,
     filters.project,
     loadRepositoryItems,
@@ -7269,12 +7495,216 @@ export function DocumentKnowledgeManagementPage() {
     kbApiItems,
   ])
 
+  const resolveRepositoryUploadWorkspaceCandidates = useCallback(():
+    | { mode: 'single'; workspaceId: string | null }
+    | { mode: 'choose'; candidates: Array<{ id: string; name: string }> } => {
+    const isMultiScope = isAllWorkspacesSelection(tenant?.workspaceId)
+    if (!isMultiScope && tenant?.workspaceId) {
+      return { mode: 'single', workspaceId: tenant.workspaceId }
+    }
+
+    let effectiveIds = [
+      ...resolveWorkspaceSwitcherCheckedIds(userWorkspaceOptions, {
+        isMultiScope: true,
+        activeWorkspaceId: tenant?.workspaceId ?? null,
+        selectedWorkspaceIds: tenant?.selectedWorkspaceIds ?? [],
+      }),
+    ]
+    if (effectiveIds.length === 0) {
+      effectiveIds = (readAccessibleWorkspaceIds() ?? []).filter((id) => Boolean(id?.trim()))
+    }
+    effectiveIds = [...new Set(effectiveIds)]
+
+    if (effectiveIds.length <= 1) {
+      return { mode: 'single', workspaceId: effectiveIds[0] ?? activeWorkspaceApiId ?? null }
+    }
+
+    return {
+      mode: 'choose',
+      candidates: effectiveIds.map((id) => ({
+        id,
+        name:
+          formatKbWorkspaceLabel(id, kbWorkspaceOptions)
+          || userWorkspaceOptions.find((option) => option.workspaceId === id)?.workspaceName
+          || id,
+      })),
+    }
+  }, [
+    activeWorkspaceApiId,
+    kbWorkspaceOptions,
+    tenant?.selectedWorkspaceIds,
+    tenant?.workspaceId,
+    userWorkspaceOptions,
+  ])
+
+  const resolveTemplateWorkspaceCandidates = useCallback((): Array<{ id: string; name: string }> => {
+    const resolved = resolveRepositoryUploadWorkspaceCandidates()
+    if (resolved.mode === 'choose') return resolved.candidates
+    if (resolved.workspaceId) {
+      return [{
+        id: resolved.workspaceId,
+        name:
+          formatKbWorkspaceLabel(resolved.workspaceId, kbWorkspaceOptions)
+          || userWorkspaceOptions.find((option) => option.workspaceId === resolved.workspaceId)?.workspaceName
+          || resolved.workspaceId,
+      }]
+    }
+    return (readAccessibleWorkspaceIds() ?? []).map((id) => ({
+      id,
+      name:
+        formatKbWorkspaceLabel(id, kbWorkspaceOptions)
+        || userWorkspaceOptions.find((option) => option.workspaceId === id)?.workspaceName
+        || id,
+    }))
+  }, [kbWorkspaceOptions, resolveRepositoryUploadWorkspaceCandidates, userWorkspaceOptions])
+
+  const loadMasterTemplates = useCallback(async () => {
+    setTemplateLoading(true)
+    setTemplateError(null)
+    try {
+      const scope = dkmWorkspaceScope
+      const workspaceCandidates = resolveTemplateWorkspaceCandidates()
+      let items = await listTemplates()
+      if (!Array.isArray(items)) items = []
+      const scoped = items.filter((item) => belongsToDkmTemplateScope(item, scope, workspaceCandidates))
+      setTemplateApiItems(scoped)
+    } catch (error) {
+      setTemplateApiItems([])
+      setTemplateError(error instanceof Error ? error.message : 'Failed to load master templates from backend.')
+    } finally {
+      setTemplateLoading(false)
+    }
+  }, [dkmWorkspaceScope, resolveTemplateWorkspaceCandidates])
+
+  const checkTemplateUploadForDuplicates = useCallback(async (
+    pendingFile: File,
+    fileName: string,
+    extractText: string,
+    fingerprint: string,
+    workspaceId: string,
+    workspaceName: string,
+  ): Promise<TemplateUploadDuplicateVerdict> => {
+    const workspaceCandidates = resolveTemplateWorkspaceCandidates()
+    const { docs, summaryById } = gatherExistingTemplateDocs(templateApiItems, workspaceId, workspaceCandidates)
+
+    if (fingerprint) {
+      const exact = findExactDuplicate(fingerprint, docs)
+      if (exact) {
+        addToast({
+          title: 'Upload blocked — identical template already exists',
+          description: `Identical content to "${exact.title}" in workspace ${exact.projectName || workspaceName || '—'}.`,
+          variant: 'error',
+        })
+        return { proceed: false, revisionTargetId: null }
+      }
+    }
+
+    const subject: ExistingBrdDoc = {
+      id: '__new__',
+      title: fileName,
+      fileName,
+      projectName: workspaceName,
+      contentSha256: fingerprint,
+      structured: parseStructuredDocumentName(fileName),
+    }
+    const nameMatches = findNameMatches(subject, docs)
+    const excludeIds = new Set(nameMatches.map((doc) => doc.id))
+    const shortlist = shortlistByKeywordOverlap(`${fileName} ${extractText.slice(0, 1500)}`, docs, { excludeIds })
+
+    let samePurpose: { doc: ExistingBrdDoc; reason: string }[] = []
+    if (shortlist.length > 0) {
+      try {
+        const resp = await compareBrdPurpose({
+          subject: { id: '__new__', title: fileName, purpose: extractText.slice(0, 2000) },
+          candidates: shortlist.map((doc) => ({
+            id: doc.id,
+            title: doc.title,
+            summary: summaryById.get(doc.id) ?? '',
+          })),
+        })
+        const byId = new Map(resp.matches.map((match) => [match.id, match]))
+        samePurpose = shortlist
+          .filter((doc) => {
+            const match = byId.get(doc.id)
+            return Boolean(match?.same_purpose) && (match?.confidence ?? 0) >= 0.55
+          })
+          .map((doc) => ({ doc, reason: byId.get(doc.id)?.reason ?? '' }))
+      } catch {
+        /* semantic check is best-effort */
+      }
+    }
+
+    const revisionTargetId = pickTemplateRevisionTargetId(nameMatches, samePurpose)
+    if (nameMatches.length === 0 && samePurpose.length === 0) {
+      return { proceed: true, revisionTargetId: null }
+    }
+
+    return new Promise<TemplateUploadDuplicateVerdict>((resolve) => {
+      setTemplateDuplicatePrompt({
+        fileName,
+        workspaceName,
+        pendingFile,
+        uploadExtractText: extractText,
+        nameMatches: nameMatches.map((doc) => ({
+          id: doc.id,
+          title: doc.title,
+          workspaceName: doc.projectName || workspaceName,
+        })),
+        samePurpose: samePurpose.map((entry) => ({
+          id: entry.doc.id,
+          title: entry.doc.title,
+          workspaceName: entry.doc.projectName || workspaceName,
+          reason: entry.reason,
+        })),
+        resolve: (proceed) => {
+          setTemplateDuplicatePrompt(null)
+          resolve({
+            proceed,
+            revisionTargetId: proceed ? revisionTargetId : null,
+          })
+        },
+      })
+    })
+  }, [addToast, resolveTemplateWorkspaceCandidates, templateApiItems])
+
+  const openTemplateDuplicateCompare = useCallback((templateId: string, templateTitle: string) => {
+    if (!templateDuplicatePrompt) return
+    setTemplateCompareSession({
+      templateId,
+      templateTitle,
+      pendingFile: templateDuplicatePrompt.pendingFile,
+      serverLabel: templateTitle,
+      uploadLabel: templateDuplicatePrompt.fileName,
+    })
+  }, [templateDuplicatePrompt])
+
+  useEffect(() => {
+    void loadMasterTemplates()
+  }, [loadMasterTemplates, workspaceScopeKey])
+
+  const queueRepositoryUploadFile = useCallback((file: File, folderId?: string | null) => {
+    const resolved = resolveRepositoryUploadWorkspaceCandidates()
+    if (resolved.mode === 'choose') {
+      setUploadWorkspacePicker({
+        purpose: 'repository-document',
+        candidates: resolved.candidates,
+        pendingFile: file,
+        targetFolderId: folderId ?? repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId,
+      })
+      return
+    }
+    if (folderId !== undefined) {
+      repositoryUploadTargetFolderIdRef.current = folderId
+    }
+    void processRepositoryUploadFile(file, resolved.workspaceId)
+  }, [processRepositoryUploadFile, repositoryCurrentFolderId, resolveRepositoryUploadWorkspaceCandidates])
+
   const handleRepositoryFilePicked = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    await processRepositoryUploadFile(file)
-  }, [processRepositoryUploadFile])
+    queueRepositoryUploadFile(file)
+  }, [queueRepositoryUploadFile])
 
   const handleRepositoryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     // Only show the file-upload highlight for external file drags, not internal document drags.
@@ -7318,9 +7748,9 @@ export function DocumentKnowledgeManagementPage() {
 
     const files = event.dataTransfer.files
     if (files && files.length > 0) {
-      void processRepositoryUploadFile(files[0])
+      queueRepositoryUploadFile(files[0])
     }
-  }, [processRepositoryUploadFile])
+  }, [queueRepositoryUploadFile])
 
   const handleFolderDrop = useCallback((event: React.DragEvent, folderId: string | null) => {
     const files = event.dataTransfer.files
@@ -7330,7 +7760,7 @@ export function DocumentKnowledgeManagementPage() {
       setRepositoryDropTarget(null)
       setIsRepositoryDragActive(false)
       repositoryUploadTargetFolderIdRef.current = folderId
-      void processRepositoryUploadFile(files[0])
+      queueRepositoryUploadFile(files[0], folderId)
       return
     }
 
@@ -7341,7 +7771,7 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryDropTarget(null)
     const item = repositoryItems.find((entry) => entry.id === documentId)
     if (item) void handleMoveDocumentToFolder(item, folderId)
-  }, [repositoryItems, handleMoveDocumentToFolder, processRepositoryUploadFile])
+  }, [repositoryItems, handleMoveDocumentToFolder, queueRepositoryUploadFile])
 
   const loadKbRelations = useCallback(
     async (entryId: string) => {
@@ -7633,6 +8063,22 @@ export function DocumentKnowledgeManagementPage() {
   }, [repositoryDeleteTarget, repositoryDeleteBusyId])
 
   useEffect(() => {
+    if (!templateDeleteTarget) return
+
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (templateDeleteBusyId === templateDeleteTarget.id) return
+      event.preventDefault()
+      setTemplateDeleteTarget(null)
+    }
+
+    window.addEventListener('keydown', onWindowKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown)
+    }
+  }, [templateDeleteTarget, templateDeleteBusyId])
+
+  useEffect(() => {
     if (!kbAddOpen) return
 
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -7848,34 +8294,192 @@ export function DocumentKnowledgeManagementPage() {
 
   const isOverviewSectionActive = activePanel === 'overview'
 
-  const docKpiCards = useMemo(() => {
-    const parseNum = (s: string) => parseInt(s.replace(/,/g, '').replace(/[^\d]/g, ''), 10) || 0
-    const colors = ['#0ea5e9', '#6366f1', '#10b981', '#f59e0b', '#a855f7', '#06b6d4']
-    return overviewMetrics.map((m, i) => {
-      const n = parseNum(m.value)
-      const series = Array.from({ length: 8 }, (_, j) => Math.max(0, n - 6 + j + i))
-      series[7] = n
+  const formatCount = (n: number) => n.toLocaleString('en-US')
+
+  const overviewLiveStats = useMemo(() => {
+    const totalDocuments = repositoryItems.length
+    const activeTemplates = templateApiItems.filter((item) => {
+      const status = (item.status_code || '').toLowerCase()
+      return status !== 'archived' && status !== 'inactive' && status !== 'retired'
+    }).length
+    const knowledgeAssets = kbLive ? kbApiItems.length : 0
+    const linkedArtifacts = repositoryItems.filter((item) => {
+      const hasProject = Boolean(item.project && item.project !== UNIDENTIFIED_PROJECT_LABEL && item.project !== '-')
+      const hasWorkItem = Boolean(item.linkedTask && item.linkedTask !== '-' && item.linkedTask.trim())
+      return hasProject || hasWorkItem
+    }).length
+    const meetingNotes = meetingNotesLive.length
+    const pendingFollowUp = meetingNotesLive.filter((note) => note.followUpOpenCount > 0).length
+    const recentCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+    const recentlyUpdated = repositoryItems.filter((item) => {
+      if (!item.updatedAt) return false
+      const ts = new Date(item.updatedAt).getTime()
+      return Number.isFinite(ts) && ts >= recentCutoff
+    }).length
+    const awaitingApproval = repositoryItems.filter((item) =>
+      /draft|review|pending|approval/i.test(item.status || ''),
+    ).length
+    const standardTemplates = templateApiItems.filter((item) =>
+      /standard|approved|published|active/i.test(item.status_code || ''),
+    ).length
+    const activeDocs = repositoryItems.filter((item) => !/archiv/i.test(item.status || '')).length
+    const archivedDocs = repositoryItems.filter((item) => /archiv/i.test(item.status || '')).length
+    const reusedDocs = repositoryItems.filter((item) => Boolean(item.templateId)).length
       return {
-        id: `m${i}`,
-        label: m.label,
-        value: m.value,
-        subtext: m.delta,
-        trend: i % 2 === 0 ? '+3%' : '+2',
-        icon: m.icon,
-        trendColor: colors[i % colors.length],
-        trendSeries: series,
-      }
-    })
-  }, [])
+      totalDocuments,
+      activeTemplates,
+      knowledgeAssets,
+      linkedArtifacts,
+      meetingNotes,
+      pendingFollowUp,
+      recentlyUpdated,
+      awaitingApproval,
+      standardTemplates,
+      activeDocs,
+      archivedDocs,
+      reusedDocs,
+    }
+  }, [kbApiItems.length, kbLive, meetingNotesLive, repositoryItems, templateApiItems])
+
+  const contentHealth = useMemo(() => {
+    const total = repositoryItems.length
+    const pct = (count: number) => (total === 0 ? 0 : Math.round((count / total) * 100))
+    const metadataOk = repositoryItems.filter(
+      (item) => item.type && item.type !== '-' && item.owner && item.owner !== '-',
+    ).length
+    const versionOk = repositoryItems.filter((item) => item.version && item.version !== '-').length
+    const linkedOk = repositoryItems.filter((item) => {
+      const hasProject = Boolean(item.project && item.project !== UNIDENTIFIED_PROJECT_LABEL && item.project !== '-')
+      const hasWorkItem = Boolean(item.linkedTask && item.linkedTask !== '-' && item.linkedTask.trim())
+      return hasProject || hasWorkItem
+    }).length
+    const archiveOk = repositoryItems.filter((item) => !/archiv/i.test(item.status || '')).length
+    const rows = [
+      { label: 'Metadata completeness', valuePct: pct(metadataOk), tone: 'bg-emerald-500' },
+      { label: 'Version policy compliance', valuePct: pct(versionOk), tone: 'bg-sky-500' },
+      { label: 'Linkage coverage', valuePct: pct(linkedOk), tone: 'bg-amber-500' },
+      { label: 'Archive hygiene', valuePct: pct(archiveOk), tone: 'bg-violet-500' },
+    ]
+    return rows.map((row) => ({
+      label: row.label,
+      value: `${row.valuePct}%`,
+      width: `w-[${row.valuePct}%]`,
+      tone: row.tone,
+      valuePct: row.valuePct,
+    }))
+  }, [repositoryItems])
+
+  const distributionByType = useMemo(() => {
+    const meetingDocs = repositoryItems.filter((item) => /meeting/i.test(item.type || '')).length
+    const reusableDocs = repositoryItems.filter(
+      (item) => /reusable|content block/i.test(item.type || '') || /reusable/i.test(item.category || ''),
+    ).length
+    const controlledDocs = Math.max(0, repositoryItems.length - meetingDocs - reusableDocs)
+    const buckets = [
+      { label: 'Controlled documents', count: controlledDocs, color: 'bg-slate-900' },
+      { label: 'Templates', count: overviewLiveStats.activeTemplates, color: 'bg-sky-600' },
+      { label: 'Knowledge articles', count: overviewLiveStats.knowledgeAssets, color: 'bg-emerald-500' },
+      { label: 'Meeting notes', count: Math.max(overviewLiveStats.meetingNotes, meetingDocs), color: 'bg-violet-500' },
+      { label: 'Reusable content', count: reusableDocs, color: 'bg-amber-500' },
+    ]
+    const sum = buckets.reduce((acc, row) => acc + row.count, 0)
+    return buckets.map((row) => ({
+      label: row.label,
+      value: sum === 0 ? 0 : Math.round((row.count / sum) * 100),
+      color: row.color,
+      count: row.count,
+    }))
+  }, [overviewLiveStats.activeTemplates, overviewLiveStats.knowledgeAssets, overviewLiveStats.meetingNotes, repositoryItems])
+
+  const docKpiCards = useMemo(() => {
+    const emptySeries = [0, 0, 0, 0, 0, 0, 0, 0]
+    const seriesFor = (n: number) => (n <= 0 ? emptySeries : Array.from({ length: 8 }, () => n))
+    const cards = [
+      {
+        id: 'm0',
+        label: 'Total Documents',
+        value: formatCount(overviewLiveStats.totalDocuments),
+        subtext: overviewLiveStats.totalDocuments === 0 ? 'No documents yet' : `${formatCount(overviewLiveStats.activeDocs)} active`,
+        trend: overviewLiveStats.totalDocuments === 0 ? '0%' : `${formatCount(overviewLiveStats.recentlyUpdated)} updated`,
+        icon: FileText,
+        trendColor: '#0ea5e9',
+        trendSeries: seriesFor(overviewLiveStats.totalDocuments),
+      },
+      {
+        id: 'm1',
+        label: 'Active Templates',
+        value: formatCount(overviewLiveStats.activeTemplates),
+        subtext: overviewLiveStats.activeTemplates === 0 ? 'No templates yet' : `${formatCount(overviewLiveStats.standardTemplates)} marked active`,
+        trend: overviewLiveStats.activeTemplates === 0 ? '0' : `${formatCount(overviewLiveStats.standardTemplates)}`,
+        icon: FileStack,
+        trendColor: '#6366f1',
+        trendSeries: seriesFor(overviewLiveStats.activeTemplates),
+      },
+      {
+        id: 'm2',
+        label: 'Knowledge Assets',
+        value: formatCount(overviewLiveStats.knowledgeAssets),
+        subtext: overviewLiveStats.knowledgeAssets === 0 ? 'No KB entries yet' : 'From knowledge base service',
+        trend: overviewLiveStats.knowledgeAssets === 0 ? '0' : `${formatCount(overviewLiveStats.knowledgeAssets)}`,
+        icon: BrainCircuit,
+        trendColor: '#10b981',
+        trendSeries: seriesFor(overviewLiveStats.knowledgeAssets),
+      },
+      {
+        id: 'm3',
+        label: 'Linked Artifacts',
+        value: formatCount(overviewLiveStats.linkedArtifacts),
+        subtext:
+          overviewLiveStats.totalDocuments === 0
+            ? 'No linked artifacts yet'
+            : `${Math.round((overviewLiveStats.linkedArtifacts / Math.max(1, overviewLiveStats.totalDocuments)) * 100)}% of documents linked`,
+        trend:
+          overviewLiveStats.totalDocuments === 0
+            ? '0%'
+            : `${Math.round((overviewLiveStats.linkedArtifacts / Math.max(1, overviewLiveStats.totalDocuments)) * 100)}%`,
+        icon: Link2,
+        trendColor: '#f59e0b',
+        trendSeries: seriesFor(overviewLiveStats.linkedArtifacts),
+      },
+      {
+        id: 'm4',
+        label: 'Meeting Notes',
+        value: formatCount(overviewLiveStats.meetingNotes),
+        subtext:
+          overviewLiveStats.meetingNotes === 0
+            ? 'No meeting notes yet'
+            : `${formatCount(overviewLiveStats.pendingFollowUp)} pending follow-up`,
+        trend: overviewLiveStats.meetingNotes === 0 ? '0' : `${formatCount(overviewLiveStats.pendingFollowUp)}`,
+        icon: StickyNote,
+        trendColor: '#a855f7',
+        trendSeries: seriesFor(overviewLiveStats.meetingNotes),
+      },
+      {
+        id: 'm5',
+        label: 'Recently Updated',
+        value: formatCount(overviewLiveStats.recentlyUpdated),
+        subtext:
+          overviewLiveStats.recentlyUpdated === 0
+            ? 'No updates in the last 7 days'
+            : `${formatCount(overviewLiveStats.awaitingApproval)} awaiting approval`,
+        trend: overviewLiveStats.recentlyUpdated === 0 ? '0' : `${formatCount(overviewLiveStats.awaitingApproval)}`,
+        icon: FileClock,
+        trendColor: '#06b6d4',
+        trendSeries: seriesFor(overviewLiveStats.recentlyUpdated),
+      },
+    ]
+    return cards
+  }, [overviewLiveStats])
 
   const libraryHealthScore = useMemo(() => {
-    const vals = contentHealth.map((c) => parseInt(c.value.replace('%', ''), 10)).filter((x) => !Number.isNaN(x))
+    if (repositoryItems.length === 0) return 0
+    const vals = contentHealth.map((c) => c.valuePct)
     return Math.round(vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length))
-  }, [])
+  }, [contentHealth, repositoryItems.length])
 
   const distributionPie = useMemo(
     () => distributionByType.map((d) => ({ name: d.label, value: d.value })),
-    []
+    [distributionByType],
   )
 
   function openDetail(id: string, tab: 'detail' | 'version' | 'activity' = 'detail') {
@@ -8412,8 +9016,8 @@ export function DocumentKnowledgeManagementPage() {
   const openKbAddDrawer = useCallback(() => {
     if (!kbLive) {
       addToast({
-        title: 'Service KB tidak tersedia',
-        description: 'Jalankan service di port 8415 atau sesuaikan URL di Platform Settings → Knowledge Base.',
+        title: 'KB service unavailable',
+        description: 'Start the service on port 8415 or adjust the URL in Platform Settings → Knowledge Base.',
         variant: 'error',
       })
       return
@@ -8509,6 +9113,7 @@ export function DocumentKnowledgeManagementPage() {
   const openRepositoryRowContextMenu = useCallback((event: React.MouseEvent, item: RepositoryItem) => {
     event.preventDefault()
     setRepositoryFolderContextMenu(null)
+    setTemplateRowContextMenu(null)
     const menuWidth = 280
     const menuHeight = 230
     const gap = 8
@@ -8517,10 +9122,24 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryRowContextMenu({ documentId: item.id, detailId: item.detailId, x: Math.max(gap, x), y: Math.max(gap, y) })
   }, [])
 
+  const openTemplateRowContextMenu = useCallback((event: React.MouseEvent, templateId: string) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setRepositoryRowContextMenu(null)
+    setRepositoryFolderContextMenu(null)
+    const menuWidth = 260
+    const menuHeight = 360
+    const gap = 8
+    const x = Math.min(event.clientX, window.innerWidth - menuWidth - gap)
+    const y = Math.min(event.clientY, window.innerHeight - menuHeight - gap)
+    setTemplateRowContextMenu({ templateId, x: Math.max(gap, x), y: Math.max(gap, y) })
+  }, [])
+
   const openRepositoryFolderContextMenu = useCallback((event: React.MouseEvent, folder: DocumentFolder) => {
     event.preventDefault()
     event.stopPropagation()
     setRepositoryRowContextMenu(null)
+    setTemplateRowContextMenu(null)
     const menuWidth = 280
     const menuHeight = 360
     const gap = 8
@@ -8535,7 +9154,7 @@ export function DocumentKnowledgeManagementPage() {
           ...kbApiToKnowledgeEntry(row, kbWorkspaceOptions),
           category: formatKbCategoryLabel(row.category, kbCategoryOptions),
         }))
-      : demoKnowledgeEntries
+      : []
     const withOverrides = source.map((entry) => {
       const overrideTitle = kbTitleOverrides[entry.id]
       return overrideTitle ? { ...entry, title: overrideTitle } : entry
@@ -8594,13 +9213,21 @@ export function DocumentKnowledgeManagementPage() {
     return workspaceColumnOptions.filter((workspace) => workspace !== 'Global')
   }, [workspaceColumnOptions])
 
+  const relevanceColumnOptions = useMemo(() => {
+    const values = new Set(displayedKbEntries.map((entry) => entry.relevance))
+    return Array.from(values)
+      .filter((v) => v && v.length > 0)
+      .sort((a, b) => a.localeCompare(b))
+  }, [displayedKbEntries])
+
   const filteredKbEntries = useMemo(() => {
     return displayedKbEntries.filter((entry) => {
       if (categoryColumnFilters.size > 0 && !categoryColumnFilters.has(entry.category)) return false
       if (workspaceColumnFilters.size > 0 && !workspaceColumnFilters.has(entry.linkedWorkspace)) return false
+      if (relevanceColumnFilters.size > 0 && !relevanceColumnFilters.has(entry.relevance)) return false
       return true
     })
-  }, [displayedKbEntries, categoryColumnFilters, workspaceColumnFilters])
+  }, [displayedKbEntries, categoryColumnFilters, workspaceColumnFilters, relevanceColumnFilters])
 
   const kbContentTextLength = useMemo(() => kbExtractPlainText(kbFormContent).length, [kbFormContent])
 
@@ -8666,7 +9293,7 @@ export function DocumentKnowledgeManagementPage() {
       page += 1
     }
 
-    throw new Error(`Prompt template \"${templateTitle}\" tidak ditemukan atau kosong di KB.`)
+    throw new Error(`Prompt template \"${templateTitle}\" was not found or is empty in the KB.`)
   }, [kbApiItems])
 
   const requestKbAiBackend = useCallback(async (instruction: string, options?: { contentEncoding?: 'plain' | 'base64'; contentPlainOverride?: string; suppressPolicyToast?: boolean }) => {
@@ -8733,7 +9360,7 @@ export function DocumentKnowledgeManagementPage() {
           : isTimeout
             ? 'LLM provider timed out. Try again in a moment.'
             : isPayloadTooLarge
-              ? 'Permintaan AI terlalu panjang untuk runtime. Konten otomatis dipersingkat, silakan jalankan lagi.'
+              ? 'The AI request is too long for the runtime. Content was automatically shortened, please run it again.'
             : raw
       throw new Error(description)
     }
@@ -8751,7 +9378,7 @@ export function DocumentKnowledgeManagementPage() {
         if (!options?.suppressPolicyToast) {
           addToast({
             title: 'AI request blocked',
-            description: 'Permintaan diblokir oleh kebijakan runtime agent. Ubah konten/prompt agar sesuai kebijakan lalu coba lagi.',
+            description: 'The request was blocked by the agent runtime policy. Adjust the content/prompt to comply with the policy, then try again.',
             variant: 'error',
           })
         }
@@ -8777,7 +9404,7 @@ export function DocumentKnowledgeManagementPage() {
       if (!options?.suppressPolicyToast) {
         addToast({
           title: 'AI request blocked',
-          description: 'Permintaan diblokir oleh kebijakan runtime agent. Ubah konten/prompt agar sesuai kebijakan lalu coba lagi.',
+          description: 'The request was blocked by the agent runtime policy. Adjust the content/prompt to comply with the policy, then try again.',
           variant: 'error',
         })
       }
@@ -8823,7 +9450,7 @@ export function DocumentKnowledgeManagementPage() {
     if (isKbAiContentTruncated(response)) {
       addToast({
         title: 'Content too long for AI rewrite',
-        description: `Konten melebihi batas request AI. Demi menghindari kehilangan bagian isi, hasil AI tidak diterapkan. Ringkas konten dahulu (<= ${KB_AI_FORM_CONTENT_MAX_CHARS} karakter) lalu coba lagi.`,
+        description: `Content exceeds the AI request limit. To avoid losing part of the content, the AI result was not applied. Shorten the content first (<= ${KB_AI_FORM_CONTENT_MAX_CHARS} characters) then try again.`,
         variant: 'error',
       })
       return
@@ -8855,7 +9482,7 @@ export function DocumentKnowledgeManagementPage() {
     } catch {
       addToast({
         title: 'Make Structured failed',
-        description: 'Prompt template Make Structured tidak ditemukan/aktif di KB.',
+        description: 'The Make Structured prompt template was not found/active in the KB.',
         variant: 'error',
       })
       return
@@ -8866,7 +9493,7 @@ export function DocumentKnowledgeManagementPage() {
 
     const fullPlainContent = restoreKbSoftLineBreaks(rawPlainContent).trim()
     if (!fullPlainContent) {
-      addToast({ title: 'Make Structured failed', description: 'Konten tidak dapat diproses setelah normalisasi struktur.', variant: 'error' })
+      addToast({ title: 'Make Structured failed', description: 'Content could not be processed after structure normalization.', variant: 'error' })
       return
     }
 
@@ -8889,7 +9516,7 @@ export function DocumentKnowledgeManagementPage() {
       setKbEditorHtml(applyKbStructuredCodeStyleHints(deDuplicatedFallbackHtml))
       addToast({
         title: 'Content structured',
-        description: 'Struktur dirapikan memakai safe preserve mode agar isi tetap identik dengan source.',
+        description: 'Structure was cleaned up using safe preserve mode so the content stays identical to the source.',
         variant: 'success',
       })
     }
@@ -8917,7 +9544,7 @@ export function DocumentKnowledgeManagementPage() {
     if (fullPlainContent.length > KB_AI_FORM_CONTENT_MAX_CHARS) {
       const chunks = splitKbBySectionAware(fullPlainContent, Math.min(KB_AI_STRUCTURE_CHUNK_MAX_CHARS, 1200))
       if (chunks.length === 0) {
-        applySafePreserveRescue('Konten terlalu panjang dan tidak dapat diproses per-bagian.')
+        applySafePreserveRescue('Content is too long and could not be processed section by section.')
         return
       }
 
@@ -8937,7 +9564,7 @@ export function DocumentKnowledgeManagementPage() {
           const chunkMessage = chunkErr instanceof Error ? chunkErr.message : String(chunkErr)
           addToast({
             title: 'Make Structured failed',
-            description: `Chunk ${i + 1}/${chunks.length} gagal: ${chunkMessage || 'LLM error'}`,
+            description: `Chunk ${i + 1}/${chunks.length} failed: ${chunkMessage || 'LLM error'}`,
             variant: 'error',
           })
           return
@@ -8946,7 +9573,7 @@ export function DocumentKnowledgeManagementPage() {
         if (isKbAiAuthWarning(chunkResponse) || isKbAiPolicyBlocked(chunkResponse) || isKbAiContentTruncated(chunkResponse)) {
           addToast({
             title: 'Make Structured failed',
-            description: `Chunk ${i + 1}/${chunks.length} tidak dapat diproses oleh runtime LLM.`,
+            description: `Chunk ${i + 1}/${chunks.length} could not be processed by the LLM runtime.`,
             variant: 'error',
           })
           return
@@ -8954,7 +9581,7 @@ export function DocumentKnowledgeManagementPage() {
 
         const chunkHtml = extractKbStructuredHtmlFromAnswer(chunkResponse.answer)
         if (!chunkHtml) {
-          applySafePreserveRescue(`Chunk ${i + 1}/${chunks.length} mengembalikan format tidak valid.`)
+          applySafePreserveRescue(`Chunk ${i + 1}/${chunks.length} returned an invalid format.`)
           return
         }
 
@@ -8974,7 +9601,7 @@ export function DocumentKnowledgeManagementPage() {
       if (sectionOrder.length > 0) {
         const unknownHeadings = listUnknownKbHeadings(canonicalMergedHtml, sectionOrder)
         if (unknownHeadings.length > 0) {
-          applySafePreserveRescue(`LLM menambah heading baru di luar source: ${unknownHeadings.slice(0, 3).join(', ')}.`)
+          applySafePreserveRescue(`The LLM added new headings not present in the source: ${unknownHeadings.slice(0, 3).join(', ')}.`)
           return
         }
       }
@@ -8989,7 +9616,7 @@ export function DocumentKnowledgeManagementPage() {
       setKbEditorHtml(applyKbStructuredCodeStyleHints(deDuplicatedChunkHtml))
       addToast({
         title: 'Content structured',
-        description: `Struktur dirapikan oleh LLM per-bagian (${chunks.length} chunks).`,
+        description: `Structure was cleaned up by the LLM section by section (${chunks.length} chunks).`,
         variant: 'success',
       })
       return
@@ -9009,7 +9636,7 @@ export function DocumentKnowledgeManagementPage() {
           const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr)
           addToast({
             title: 'Make Structured failed',
-            description: retryMessage || 'LLM gagal merespons setelah percobaan ulang.',
+            description: retryMessage || 'The LLM failed to respond after a retry.',
             variant: 'error',
           })
           return
@@ -9017,7 +9644,7 @@ export function DocumentKnowledgeManagementPage() {
       } else {
         addToast({
           title: 'Make Structured failed',
-          description: firstError || 'LLM tidak tersedia atau gagal merespons. Silakan coba lagi.',
+          description: firstError || 'The LLM is unavailable or failed to respond. Please try again.',
           variant: 'error',
         })
         return
@@ -9028,14 +9655,14 @@ export function DocumentKnowledgeManagementPage() {
       if (isKbAiPolicyBlocked(response)) {
         addToast({
           title: 'Make Structured failed',
-          description: 'Request tetap diblokir kebijakan runtime agent untuk konten ini. Ubah redaksi konten yang menyerupai instruksi agent, lalu coba lagi.',
+          description: 'The request is still blocked by the agent runtime policy for this content. Reword content that resembles agent instructions, then try again.',
           variant: 'error',
         })
       }
       if (isKbAiContentTruncated(response)) {
         addToast({
           title: 'Make Structured failed',
-          description: `Konten melebihi batas request AI (maks ${KB_AI_FORM_CONTENT_MAX_CHARS} karakter). Ringkas konten lalu coba lagi.`,
+          description: `Content exceeds the AI request limit (max ${KB_AI_FORM_CONTENT_MAX_CHARS} characters). Shorten the content then try again.`,
           variant: 'error',
         })
       }
@@ -9045,7 +9672,7 @@ export function DocumentKnowledgeManagementPage() {
     const structuredHtmlCandidate = extractKbStructuredHtmlFromAnswer(response.answer)
 
     if (!structuredHtmlCandidate) {
-      applySafePreserveRescue('Format respons LLM tidak valid. Backend harus mengembalikan STRICT JSON dengan content_html.')
+      applySafePreserveRescue('Invalid LLM response format. The backend must return STRICT JSON with content_html.')
       return
     }
 
@@ -9056,7 +9683,7 @@ export function DocumentKnowledgeManagementPage() {
     if (sectionOrder.length > 0) {
       const unknownHeadings = listUnknownKbHeadings(canonicalStructuredHtml, sectionOrder)
       if (unknownHeadings.length > 0) {
-        applySafePreserveRescue(`LLM menambah heading baru di luar source: ${unknownHeadings.slice(0, 3).join(', ')}.`)
+        applySafePreserveRescue(`The LLM added new headings not present in the source: ${unknownHeadings.slice(0, 3).join(', ')}.`)
         return
       }
     }
@@ -9138,7 +9765,7 @@ export function DocumentKnowledgeManagementPage() {
       setKbEditorHtml(applyKbStructuredCodeStyleHints(strictDeDuplicatedHtml))
       addToast({
         title: 'Content structured',
-        description: 'Struktur dirapikan oleh LLM (verbatim preserve mode).',
+        description: 'Structure was cleaned up by the LLM (verbatim preserve mode).',
         variant: 'success',
       })
       return
@@ -9148,7 +9775,7 @@ export function DocumentKnowledgeManagementPage() {
     setKbEditorHtml(applyKbStructuredCodeStyleHints(deDuplicatedHtml))
     addToast({
       title: 'Content structured',
-      description: 'Struktur dirapikan oleh LLM dengan validasi preserve-content.',
+      description: 'Structure was cleaned up by the LLM with content-preservation validation.',
       variant: 'success',
     })
   }, [addToast, getKbPromptTemplateContent, isKbAiAuthWarning, isKbAiContentTruncated, isKbAiPolicyBlocked, kbFormContent, requestKbAiBackend, setKbEditorHtml])
@@ -9472,8 +10099,8 @@ export function DocumentKnowledgeManagementPage() {
     const context = findKbEditorTableContext(editor, selection)
     if (!context) {
       addToast({
-        title: 'Tidak ada tabel',
-        description: 'Klik di dalam tabel terlebih dahulu, atau sisipkan tabel baru.',
+        title: 'No table found',
+        description: 'Click inside a table first, or insert a new table.',
         variant: 'warning',
       })
       return
@@ -9569,8 +10196,8 @@ export function DocumentKnowledgeManagementPage() {
 
     if (style.kind === 'block' && selectionIsInsideKbTable(editor)) {
       addToast({
-        title: 'Format tidak tersedia di tabel',
-        description: 'Style paragraf/heading tidak boleh dipakai saat kursor di dalam tabel. Gunakan style inline (Emphasis, Strong, …) atau edit teks di sel.',
+        title: 'Formatting unavailable inside table',
+        description: 'Paragraph/heading styles cannot be used while the cursor is inside a table. Use an inline style (Emphasis, Strong, …) or edit the text in the cell.',
         variant: 'warning',
       })
       return
@@ -9668,11 +10295,24 @@ export function DocumentKnowledgeManagementPage() {
 
     return kbTableSort.dir === 'asc' ? sorted : sorted.reverse()
   }, [filteredKbEntries, kbTableSort])
-  const kbTableTotalPages = useMemo(() => Math.max(1, Math.ceil(sortedKbEntries.length / kbTablePageSize)), [sortedKbEntries.length, kbTablePageSize])
-  const kbTableRows = useMemo(() => {
+  const kbTableFlatRows = useMemo(() => {
+    if (kbTableGroupBy) {
+      const grouped = [...sortedKbEntries].sort((a, b) =>
+        kbTableGroupLabel(a, kbTableGroupBy).localeCompare(
+          kbTableGroupLabel(b, kbTableGroupBy),
+          undefined,
+          { sensitivity: 'base' },
+        ),
+      )
+      return grouped.map((entry) => ({ entry, groupLabel: kbTableGroupLabel(entry, kbTableGroupBy) }))
+    }
+    return sortedKbEntries.map((entry) => ({ entry, groupLabel: null as string | null }))
+  }, [sortedKbEntries, kbTableGroupBy])
+  const kbTableTotalPages = useMemo(() => Math.max(1, Math.ceil(kbTableFlatRows.length / kbTablePageSize)), [kbTableFlatRows.length, kbTablePageSize])
+  const pagedKbTableRows = useMemo(() => {
     const start = (kbTablePage - 1) * kbTablePageSize
-    return sortedKbEntries.slice(start, start + kbTablePageSize)
-  }, [sortedKbEntries, kbTablePage, kbTablePageSize])
+    return kbTableFlatRows.slice(start, start + kbTablePageSize)
+  }, [kbTableFlatRows, kbTablePage, kbTablePageSize])
   const kbGlossaryRows = useMemo(() => {
     if (kbGlossaryLetter === 'ALL') return sortedKbEntries
     return sortedKbEntries.filter((entry) => {
@@ -9688,6 +10328,104 @@ export function DocumentKnowledgeManagementPage() {
     })
     return letters
   }, [sortedKbEntries])
+
+  const kbTableColumns = useEnterpriseSortableColumns<KbTableColumnKey>({
+    initialOrder: KB_TABLE_DEFAULT_COLUMN_ORDER,
+    pinnedFirstKey: KB_TABLE_PINNED_FIRST_COLUMN,
+    initialHiddenColumns: KB_TABLE_DEFAULT_HIDDEN_COLUMNS,
+    maxVisibleColumns: KB_TABLE_MAX_VISIBLE_COLUMNS,
+    hasSelectionColumn: showKbTableSelection,
+    onColumnHidden: (key) => {
+      if (kbTableGroupBy && (key as string) === kbTableGroupBy) setKbTableGroupBy(null)
+    },
+  })
+
+  const toggleKbTableRowSelection = useCallback((id: string) => {
+    setKbTableSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }, [])
+
+  useEffect(() => {
+    if (!showKbTableSelection && kbTableSelectedIds.length > 0) setKbTableSelectedIds([])
+  }, [showKbTableSelection, kbTableSelectedIds.length])
+
+  const renderKbTableColumnCell = useCallback((entry: KnowledgeEntry, key: KbTableColumnKey) => {
+    switch (key) {
+      case 'reference':
+        return (
+          <div className="min-w-0">
+            {kbInlineRename?.entryId === entry.id ? (
+              <Input
+                ref={kbInlineRenameInputRef}
+                autoFocus
+                value={kbInlineRename.value}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const nextValue = normalizeKbTitleInput(e.target.value)
+                  setKbInlineRename({ entryId: entry.id, value: nextValue })
+                  kbInlineRenameCursorRef.current = e.target.selectionStart ?? nextValue.length
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void commitKbInlineRename(entry)
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    cancelKbInlineRename()
+                  }
+                }}
+                onBlur={() => {
+                  void commitKbInlineRename(entry)
+                }}
+                className="h-8 rounded-lg text-sm font-semibold"
+              />
+            ) : (
+              <p className="text-sm font-semibold text-slate-900 line-clamp-1">{entry.title}</p>
+            )}
+            <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-2">
+              {entry.shortSummary?.trim() || `Category: ${entry.category} | Workspace: ${entry.linkedWorkspace}`}
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {entry.departmentId ? (
+                <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50/80 px-2 py-0 text-[9px] font-medium text-slate-600">
+                  Dept: {entry.departmentName || entry.departmentId}
+                </Badge>
+              ) : null}
+              {entry.divisionId ? (
+                <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50/80 px-2 py-0 text-[9px] font-medium text-slate-600">
+                  Div: {entry.divisionName || entry.divisionId}
+                </Badge>
+              ) : null}
+            </div>
+          </div>
+        )
+      case 'category':
+        return <span className="text-foreground">{entry.category}</span>
+      case 'workspace':
+        return <span className="text-foreground">{entry.linkedWorkspace}</span>
+      case 'department':
+        return <span className="text-foreground">{entry.departmentName || entry.departmentId || '-'}</span>
+      case 'division':
+        return <span className="text-foreground">{entry.divisionName || entry.divisionId || '-'}</span>
+      case 'relevance':
+        return (
+          <Badge variant="outline" className="rounded-full border-sky-200 bg-sky-50 px-2 py-0 text-[10px] font-medium text-sky-700">
+            {entry.relevance}
+          </Badge>
+        )
+      case 'created':
+        return <span className="text-foreground">{entry.created}</span>
+      case 'updated':
+        return <span className="text-foreground">{entry.referenced}</span>
+    }
+  }, [
+    kbInlineRename,
+    kbInlineRenameInputRef,
+    kbInlineRenameCursorRef,
+    commitKbInlineRename,
+    cancelKbInlineRename,
+  ])
 
   useEffect(() => {
     setKbTablePage((prev) => Math.min(prev, kbTableTotalPages))
@@ -9765,7 +10503,7 @@ export function DocumentKnowledgeManagementPage() {
     const dedupe = new Set<string>()
     const graphRelations = kbGraphMode === 'federated' ? kbOverviewRelations : kbRelations
 
-    const addLink = (source: string, target: string, predicate: string, provenance: 'global' | 'workspace-local' | 'inferred') => {
+    const addLink = (source: string, target: string, predicate: string, provenance: 'global' | 'workspace-local' | 'inferred' | 'ai-suggested') => {
       if (!source || !target || source === target) return
       if (!nodeMap.has(source) || !nodeMap.has(target)) return
       const key = `${source}|${target}|${predicate}|${provenance}`
@@ -9777,7 +10515,13 @@ export function DocumentKnowledgeManagementPage() {
 
     if (kbLive && graphRelations.length > 0) {
       for (const rel of graphRelations) {
-        addLink(rel.source_entry_id, rel.target_entry_id, rel.predicate, rel.workspace_id ? 'workspace-local' : 'global')
+        const provenance: KbGraphLink['provenance'] =
+          rel.properties?.relation_kind === 'ai_suggested'
+            ? 'ai-suggested'
+            : rel.workspace_id
+              ? 'workspace-local'
+              : 'global'
+        addLink(rel.source_entry_id, rel.target_entry_id, rel.predicate, provenance)
       }
     }
 
@@ -9890,11 +10634,12 @@ export function DocumentKnowledgeManagementPage() {
       .attr('stroke', (d) => {
         if (d.provenance === 'global') return '#16a34a'
         if (d.provenance === 'workspace-local') return '#0284c7'
+        if (d.provenance === 'ai-suggested') return '#9333ea'
         return '#94a3b8'
       })
       .attr('stroke-opacity', 0.42)
       .attr('stroke-width', (d) => (d.predicate === 'depends_on' ? 2.2 : 1.4))
-      .attr('stroke-dasharray', (d) => (d.provenance === 'inferred' ? '4 3' : null))
+      .attr('stroke-dasharray', (d) => (d.provenance === 'inferred' || d.provenance === 'ai-suggested' ? '4 3' : null))
 
     const node = nodeLayer
       .selectAll('g')
@@ -10540,6 +11285,148 @@ export function DocumentKnowledgeManagementPage() {
     }
   }
 
+  const closeKbRelationScan = useCallback(() => {
+    setKbRelationScanOpen(false)
+    setKbRelationScanSuggestions([])
+    setKbRelationScanError(null)
+  }, [])
+
+  const toggleKbRelationScanSuggestion = useCallback((key: string) => {
+    setKbRelationScanSuggestions((prev) => prev.map((s) => (s.key === key ? { ...s, accepted: !s.accepted } : s)))
+  }, [])
+
+  const handleKbRelationScan = useCallback(async () => {
+    const nodes = kbOverviewGraph.nodes
+    if (nodes.length < 2) {
+      addToast({
+        title: 'Not enough entries',
+        description: 'Need at least 2 KB entries in the current graph to scan for relations.',
+        variant: 'error',
+      })
+      return
+    }
+
+    setKbRelationScanOpen(true)
+    setKbRelationScanBusy(true)
+    setKbRelationScanError(null)
+    setKbRelationScanSuggestions([])
+
+    try {
+      const entryById = new Map(displayedKbEntries.map((entry) => [entry.id, entry]))
+      const cappedNodes = nodes.slice(0, 180)
+      const truncated = nodes.length > cappedNodes.length
+      const nodeIds = new Set(cappedNodes.map((n) => n.id))
+
+      const entries: KbRelationSuggestionEntryInput[] = cappedNodes.map((node) => {
+        const entry = entryById.get(node.id)
+        return {
+          id: node.id,
+          title: node.label,
+          category: node.category,
+          excerpt: entry?.shortSummary ?? '',
+        }
+      })
+
+      const graphRelations = kbGraphMode === 'federated' ? kbOverviewRelations : kbRelations
+      const existing_relations = graphRelations
+        .filter((rel) => nodeIds.has(rel.source_entry_id) && nodeIds.has(rel.target_entry_id))
+        .map((rel) => ({
+          source_entry_id: rel.source_entry_id,
+          target_entry_id: rel.target_entry_id,
+          predicate: rel.predicate,
+        }))
+
+      const predicates = kbActivePredicateOptions.map((p) => p.value)
+
+      const response = await suggestKbRelations({
+        context: { workspace_id: activeWorkspaceApiId ?? null },
+        entries,
+        existing_relations,
+        predicates: predicates.length > 0 ? predicates : undefined,
+        options: { allow_llm: true },
+      })
+
+      const suggestions: KbRelationScanSuggestion[] = response.suggestions.map((s, idx) => ({
+        ...s,
+        key: `${s.source_entry_id}|${s.target_entry_id}|${s.predicate}|${idx}`,
+        sourceTitle: entryById.get(s.source_entry_id)?.title ?? s.source_entry_id,
+        targetTitle: entryById.get(s.target_entry_id)?.title ?? s.target_entry_id,
+        accepted: true,
+        status: 'pending',
+      }))
+
+      setKbRelationScanSuggestions(suggestions)
+      if (suggestions.length === 0) {
+        setKbRelationScanError(
+          'The AI did not find any new relations — no topically related entries that are not already linked.',
+        )
+      } else if (truncated) {
+        addToast({
+          title: 'Scan scope limited',
+          description: `Scanned the first ${cappedNodes.length} of ${nodes.length} visible nodes.`,
+          variant: 'default',
+        })
+      }
+    } catch (e) {
+      setKbRelationScanError(e instanceof Error ? e.message : 'Failed to scan for relations.')
+    } finally {
+      setKbRelationScanBusy(false)
+    }
+  }, [
+    activeWorkspaceApiId,
+    addToast,
+    displayedKbEntries,
+    kbActivePredicateOptions,
+    kbGraphMode,
+    kbOverviewGraph,
+    kbOverviewRelations,
+    kbRelations,
+  ])
+
+  const handleKbRelationScanCreateSelected = useCallback(async () => {
+    const toCreate = kbRelationScanSuggestions.filter((s) => s.accepted && s.status === 'pending')
+    if (toCreate.length === 0) return
+
+    setKbRelationScanCreating(true)
+    let successCount = 0
+    let failCount = 0
+
+    for (const suggestion of toCreate) {
+      try {
+        await createKbRelation({
+          source_entry_id: suggestion.source_entry_id,
+          predicate: suggestion.predicate,
+          target_entry_id: suggestion.target_entry_id,
+          workspace_id: activeWorkspaceApiId ?? null,
+          properties: {
+            relation_kind: 'ai_suggested',
+            reason: suggestion.reason,
+            confidence: suggestion.confidence,
+          },
+        })
+        successCount += 1
+        setKbRelationScanSuggestions((prev) =>
+          prev.map((s) => (s.key === suggestion.key ? { ...s, status: 'created' } : s)),
+        )
+      } catch {
+        failCount += 1
+        setKbRelationScanSuggestions((prev) =>
+          prev.map((s) => (s.key === suggestion.key ? { ...s, status: 'failed' } : s)),
+        )
+      }
+    }
+
+    setKbRelationScanCreating(false)
+    await loadKbOverviewRelations()
+    if (kbViewEntry) await loadKbRelations(kbViewEntry.id)
+
+    addToast({
+      title: successCount > 0 ? 'Relations created' : 'No relations created',
+      description: `${successCount} relation(s) created${failCount > 0 ? `, ${failCount} failed` : ''}.`,
+      variant: successCount > 0 ? 'success' : 'error',
+    })
+  }, [activeWorkspaceApiId, addToast, kbRelationScanSuggestions, kbViewEntry, loadKbOverviewRelations, loadKbRelations])
+
   const startEditKbRelation = (relation: KbRelationResponse) => {
     if (!kbViewEntry) return
     setKbRelationEditingId(relation.id)
@@ -10629,11 +11516,200 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryPage(1)
   }, [deferredQuery, filters, repositoryItems.length])
 
-  const repositoryTotalPages = Math.max(1, Math.ceil(filteredRepository.length / repositoryPageSize))
+  const filteredActivityRows = useMemo(() => {
+    if (!deferredQuery || activePanel !== 'activity') return activityFeed
+    return activityFeed.filter((activity) =>
+      [activity.timestamp, activity.actor, activity.action, activity.relatedObject]
+        .join(' ')
+        .toLowerCase()
+        .includes(deferredQuery),
+    )
+  }, [activePanel, deferredQuery])
+
+  useEffect(() => {
+    setActivityPage(1)
+  }, [deferredQuery, activityPageSize])
+
+  const activityTotalPages = Math.max(1, Math.ceil(filteredActivityRows.length / activityPageSize))
+  const activityPageSafe = Math.min(activityPage, activityTotalPages)
+  const activityTableRows = useMemo(() => {
+    const start = (activityPageSafe - 1) * activityPageSize
+    return filteredActivityRows.slice(start, start + activityPageSize)
+  }, [activityPageSafe, activityPageSize, filteredActivityRows])
+
+  const toggleRepositoryTableSort = useCallback((key: RepositoryTableColumnKey) => {
+    setRepositoryTableSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }, [])
+
+  const sortedRepository = useMemo(() => {
+    if (!repositoryTableSort) return filteredRepository
+    const { key, dir } = repositoryTableSort
+    const mul = dir === 'asc' ? 1 : -1
+    const valueByKey = (item: RepositoryItem): string | number => {
+      switch (key) {
+        case 'document': return item.name
+        case 'type': return item.type
+        case 'capability': return item.capability
+        case 'linkedContext': return item.linkedContext
+        case 'owner': return item.owner
+        case 'version': return item.version
+        case 'status': return item.status
+        case 'accessScope': return item.accessScope
+        case 'kbProgress': return repositoryKbProcessByDocumentId[item.id]?.progress ?? 0
+      }
+    }
+    const sorted = [...filteredRepository].sort((a, b) => {
+      const left = valueByKey(a)
+      const right = valueByKey(b)
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * mul
+      return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' }) * mul
+    })
+    return sorted
+  }, [filteredRepository, repositoryTableSort, repositoryKbProcessByDocumentId])
+
+  const repositoryFlatRows = useMemo(() => {
+    if (repositoryTableGroupBy) {
+      const grouped = [...sortedRepository].sort((a, b) =>
+        repositoryTableGroupLabel(a, repositoryTableGroupBy).localeCompare(
+          repositoryTableGroupLabel(b, repositoryTableGroupBy),
+          undefined,
+          { sensitivity: 'base' },
+        ),
+      )
+      return grouped.map((item) => ({ item, groupLabel: repositoryTableGroupLabel(item, repositoryTableGroupBy) }))
+    }
+    return sortedRepository.map((item) => ({ item, groupLabel: null as string | null }))
+  }, [sortedRepository, repositoryTableGroupBy])
+
+  const repositoryTotalPages = Math.max(1, Math.ceil(repositoryFlatRows.length / repositoryPageSize))
   const repositoryPageSafe = Math.min(repositoryPage, repositoryTotalPages)
-  const repositoryStart = filteredRepository.length === 0 ? 0 : (repositoryPageSafe - 1) * repositoryPageSize + 1
-  const repositoryEnd = Math.min(filteredRepository.length, repositoryPageSafe * repositoryPageSize)
-  const pagedRepository = filteredRepository.slice(repositoryStart === 0 ? 0 : repositoryStart - 1, repositoryEnd)
+  const repositoryStart = repositoryFlatRows.length === 0 ? 0 : (repositoryPageSafe - 1) * repositoryPageSize + 1
+  const repositoryEnd = Math.min(repositoryFlatRows.length, repositoryPageSafe * repositoryPageSize)
+  const pagedRepositoryRows = repositoryFlatRows.slice(repositoryStart === 0 ? 0 : repositoryStart - 1, repositoryEnd)
+
+  const repositoryTableColumns = useEnterpriseSortableColumns<RepositoryTableColumnKey>({
+    initialOrder: REPOSITORY_TABLE_DEFAULT_COLUMN_ORDER,
+    pinnedFirstKey: REPOSITORY_TABLE_PINNED_FIRST_COLUMN,
+    initialHiddenColumns: REPOSITORY_TABLE_DEFAULT_HIDDEN_COLUMNS,
+    maxVisibleColumns: REPOSITORY_TABLE_MAX_VISIBLE_COLUMNS,
+    hasSelectionColumn: showRepositoryTableSelection,
+    onColumnHidden: (key) => {
+      if (repositoryTableGroupBy && (key as string) === repositoryTableGroupBy) setRepositoryTableGroupBy(null)
+    },
+  })
+
+  const toggleRepositoryTableRowSelection = useCallback((id: string) => {
+    setRepositoryTableSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }, [])
+
+  useEffect(() => {
+    if (!showRepositoryTableSelection && repositoryTableSelectedIds.length > 0) setRepositoryTableSelectedIds([])
+  }, [showRepositoryTableSelection, repositoryTableSelectedIds.length])
+
+  const renderRepositoryTableColumnCell = (item: RepositoryItem, key: RepositoryTableColumnKey) => {
+    switch (key) {
+      case 'document':
+        return (
+          <button type="button" className="min-w-0 text-left" onClick={() => openDetail(item.detailId)}>
+            <div className="flex items-start gap-3">
+              <FileTypeIconImg fileName={item.fileName || item.name} />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 line-clamp-1">{item.name}</p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {item.tags.map((tagItem) => (
+                    <Badge key={tagItem} variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
+                      {tagItem}
+                    </Badge>
+                  ))}
+                </div>
+                <p className="mt-0.5 text-[11px] text-slate-500">Updated {item.updated}</p>
+              </div>
+            </div>
+          </button>
+        )
+      case 'type':
+        return <span className="text-foreground">{item.type}</span>
+      case 'capability':
+        return <span className="text-foreground">{item.capability}</span>
+      case 'linkedContext':
+        return <span className="text-foreground">{item.linkedContext}</span>
+      case 'owner':
+        return <span className="text-foreground">{item.owner}</span>
+      case 'version':
+        return <span className="font-semibold text-foreground">{item.version}</span>
+      case 'status':
+        return (
+          <Badge variant="outline" className={cn('rounded-full px-2 py-0 text-[10px] font-medium', statusBadgeClass(item.status))}>
+            {item.status}
+          </Badge>
+        )
+      case 'kbProgress': {
+        const processState = repositoryKbProcessByDocumentId[item.id] ?? {
+          status: 'idle' as const,
+          progress: 0,
+          message: repositoryAutoGenerateKb ? 'Ready to generate KB' : 'Auto-generate is off',
+        }
+        const processTone =
+          processState.status === 'success'
+            ? 'bg-emerald-500'
+            : processState.status === 'failed'
+              ? 'bg-rose-500'
+              : processState.status === 'queued' || processState.status === 'processing'
+                ? 'bg-blue-500'
+                : 'bg-slate-300'
+        const kbStatus = getKbGenerationStatusForDocument(item.id, item.name)
+        return (
+          <div className="min-w-[280px] space-y-2">
+            <div className="h-2 overflow-hidden rounded-full bg-slate-200/80">
+              <div className={cn('h-full rounded-full transition-[width] duration-300', processTone)} style={{ width: `${Math.max(0, Math.min(100, processState.progress))}%` }} />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn(
+                  'font-medium text-[10px]',
+                  processState.status === 'failed'
+                    ? 'text-rose-700'
+                    : processState.status === 'success'
+                      ? 'text-emerald-700'
+                      : processState.status === 'queued' || processState.status === 'processing'
+                        ? 'text-blue-700'
+                        : 'text-slate-500'
+                )}>
+                  {processState.status === 'queued' || processState.status === 'processing'
+                    ? 'Processing'
+                    : processState.status === 'success'
+                      ? 'Completed'
+                      : processState.status === 'failed'
+                        ? 'Failed'
+                        : 'Idle'}
+                </span>
+                <span className="text-[10px] font-semibold text-slate-600">{processState.progress}%</span>
+              </div>
+              <Badge className={cn(
+                'shrink-0 whitespace-nowrap rounded-full px-2 py-0 text-[9px] font-semibold',
+                kbStatus === 'generated'
+                  ? 'border border-emerald-300 bg-emerald-100 text-emerald-700'
+                  : 'border border-slate-300 bg-slate-100 text-slate-600'
+              )}>
+                {kbStatus === 'generated' ? '✓ Generated' : '○ Not Generated'}
+              </Badge>
+            </div>
+            <p className="line-clamp-2 text-[10px] leading-tight text-slate-500">{processState.message}</p>
+          </div>
+        )
+      }
+      case 'accessScope':
+        return (
+          <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
+            {item.accessScope}
+          </Badge>
+        )
+    }
+  }
 
   type MasterTemplateRow = {
     id: string
@@ -10647,6 +11723,8 @@ export function DocumentKnowledgeManagementPage() {
     updated: string
     templateCode: string
     documentType: string
+    hasAttachment: boolean
+    fileName: string | null
   }
 
   const masterTemplateRows = useMemo<MasterTemplateRow[]>(() => {
@@ -10664,12 +11742,14 @@ export function DocumentKnowledgeManagementPage() {
         name: item.name,
         category: humanizeCode(item.category_code),
         ownerOrUsedIn: humanizeCode(item.document_type_code),
-        versionOrStatus: `v${item.version}`,
+        versionOrStatus: formatTemplateVersionForDisplay(resolveTemplateVersionLabelFromResponse(item)),
         statusCode: item.status_code,
-        usage: usageCount > 0 ? `${usageCount} document${usageCount === 1 ? '' : 's'}` : item.template_code,
+        usage: usageCount > 0 ? `${usageCount} document${usageCount === 1 ? '' : 's'}` : 'Not used yet',
         updated: formatRelativeTimestamp(item.updated_date || item.created_date),
         templateCode: item.template_code,
         documentType: humanizeCode(item.document_type_code),
+        hasAttachment: Boolean(item.has_attachment),
+        fileName: item.latest_file_name ?? null,
       }
     })
   }, [templateApiItems, repositoryItems])
@@ -10680,6 +11760,11 @@ export function DocumentKnowledgeManagementPage() {
     return map
   }, [templateApiItems])
 
+  const templateContextMenuItem = useMemo(
+    () => (templateRowContextMenu ? templateById.get(templateRowContextMenu.templateId) ?? null : null),
+    [templateById, templateRowContextMenu]
+  )
+
   const openTemplateDetail = useCallback((templateId: string) => {
     const template = templateById.get(templateId)
     if (!template) {
@@ -10689,61 +11774,621 @@ export function DocumentKnowledgeManagementPage() {
     openDetail(template.id)
   }, [addToast, templateById])
 
-  const handleUseMasterTemplate = useCallback(async (templateId: string) => {
+  const closeTemplatePreview = useCallback(() => {
+    try {
+      templatePreviewEditorRef.current?.destroyEditor?.()
+    } catch {
+      // already torn down
+    }
+    templatePreviewEditorRef.current = null
+    templatePreviewHostRef.current?.replaceChildren()
+    setTemplatePreviewId(null)
+    setTemplatePreviewBusy(false)
+    setTemplatePreviewError(null)
+    setTemplatePreviewConfig(null)
+  }, [])
+
+  const openTemplatePreview = useCallback(async (templateId: string) => {
     const template = templateById.get(templateId)
     if (!template) {
       addToast({ title: 'Template not found', description: 'Reload the library and try again.', variant: 'error' })
+      return
+    }
+    if (!template.has_attachment) {
+      addToast({
+        title: 'Template has no file',
+        description: 'Edit or upload a Word template file before previewing it.',
+        variant: 'error',
+      })
+      return
+    }
+    setTemplatePreviewId(templateId)
+    setTemplatePreviewBusy(true)
+    setTemplatePreviewError(null)
+    setTemplatePreviewConfig(null)
+    try {
+      const filled = await fillDkmTemplate({
+        template_id: templateId,
+        source_text: '',
+        instructions:
+          'PREVIEW REQUEST: this template has no real source document yet. Invent realistic, clearly '
+          + 'fictional sample/mock content for every placeholder and section so a reviewer can see what '
+          + 'the finished document looks like (e.g. a plausible sample project/company name, sample dates, '
+          + 'illustrative descriptions). Do not leave anything blank or write that data is unavailable — '
+          + 'this is a demonstrative mock preview, not a real document.',
+        context: { workspace_id: activeWorkspaceApiId ?? null },
+        options: { allow_llm: true },
+      })
+      const staged = await stageMasterTemplatePreview(templateId, {
+        fills: filled.payload.fills,
+        sections: filled.payload.sections,
+        diagrams: filled.rendered_diagrams,
+        agent_schema: filled.agent_schema,
+      })
+      const config = await fetchTemplatePreviewOnlyOfficeConfig(staged.staging_id)
+      setTemplatePreviewConfig(config)
+    } catch (error) {
+      setTemplatePreviewError(
+        error instanceof Error ? error.message : 'Unable to generate a mock preview for this template.',
+      )
+    } finally {
+      setTemplatePreviewBusy(false)
+    }
+  }, [activeWorkspaceApiId, addToast, templateById])
+
+  useEffect(() => {
+    if (!templatePreviewConfig) return
+    let cancelled = false
+    void (async () => {
+      try {
+        await loadDocumentServerApi(templatePreviewConfig.documentServerUrl)
+        if (cancelled || !templatePreviewHostRef.current) return
+        if (!window.DocsAPI) throw new Error('Document editor failed to initialize.')
+
+        templatePreviewEditorRef.current?.destroyEditor?.()
+        templatePreviewHostRef.current.replaceChildren()
+        const surface = document.createElement('div')
+        surface.id = 'template-preview-editor-surface'
+        surface.style.height = '100%'
+        surface.style.width = '100%'
+        templatePreviewHostRef.current.appendChild(surface)
+
+        templatePreviewEditorRef.current = new window.DocsAPI.DocEditor('template-preview-editor-surface', {
+          ...templatePreviewConfig.config,
+          width: '100%',
+          height: '100%',
+        })
+      } catch (mountError) {
+        if (!cancelled) {
+          setTemplatePreviewError(
+            mountError instanceof Error ? mountError.message : 'Unable to open the preview editor.',
+          )
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [templatePreviewConfig])
+
+  const openGenerateFromMasterTemplate = useCallback((templateId: string) => {
+    const template = templateById.get(templateId)
+    if (!template) {
+      addToast({ title: 'Template not found', description: 'Reload the library and try again.', variant: 'error' })
+      return
+    }
+    if (!template.has_attachment) {
+      addToast({
+        title: 'Template has no file',
+        description: 'Edit or upload a Word template file before generating.',
+        variant: 'error',
+      })
+      return
+    }
+    setTemplateGenerateId(templateId)
+    setTemplateGenerateSource('')
+    setTemplateGenerateInstructions('')
+    setTemplateGenerateOpen(true)
+  }, [addToast, templateById])
+
+  const handleGenerateFromMasterTemplate = useCallback(async () => {
+    const templateId = templateGenerateId
+    if (!templateId) return
+    const template = templateById.get(templateId)
+    if (!template) {
+      addToast({ title: 'Template not found', description: 'Reload the library and try again.', variant: 'error' })
+      return
+    }
+    const sourceText = templateGenerateSource.trim()
+    if (!sourceText) {
+      addToast({
+        title: 'Source context required',
+        description: 'Paste idea notes, meeting summary, or requirements for the agent to fill the template.',
+        variant: 'error',
+      })
       return
     }
     const targetProject = repositoryProjects[0]
     if (!targetProject) {
       addToast({
         title: 'No project available',
-        description: 'Create or load a project before using a master template.',
+        description: 'Create or load a project before generating a document.',
         variant: 'error',
       })
       return
     }
-    if (templateBusy) return
+    if (templateGenerateBusy || templateBusy) return
+    setTemplateGenerateBusy(true)
     setTemplateBusy(true)
     try {
-      const created = await createProjectDocument(targetProject.id, {
-        workspace_id: null,
-        title: template.name,
-        summary: template.description ?? `Created from master template ${template.template_code}`,
-        content: template.body_template || `<p>${template.name}</p>`,
+      const filled = await fillDkmTemplate({
+        template_id: template.id,
+        source_text: sourceText.slice(0, 12000),
+        instructions: templateGenerateInstructions.trim().slice(0, 2000) || undefined,
+        context: {
+          workspace_id: activeWorkspaceApiId ?? null,
+        },
+        options: { allow_llm: true },
+      })
+
+      let namingRule: RepositoryUploadNamingRule | null = null
+      try {
+        namingRule = await resolveRepositoryUploadNamingRule()
+      } catch {
+        namingRule = null
+      }
+      const namingPlan = buildTemplateInstantiateNamingPlan({
+        template,
+        projectName: targetProject.name,
+        namingRule,
+      })
+
+      const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
+        title: namingPlan.title,
+        summary:
+          filled.payload.summary?.trim()
+          || template.description
+          || `AI-generated from master template ${template.template_code}`,
+        workspace_id: activeWorkspaceApiId ?? null,
         document_type_code: template.document_type_code,
         category_code: template.category_code,
         status_code: 'draft',
-        template_id: template.id,
-        tags: ['from-template', template.template_code],
+        tags: ['from-template', 'ai-generated', template.template_code],
         access_scope_codes: ['project_team'],
-        context_links: [],
+        attachment_file_name: namingPlan.effectiveFileName,
         metadata: {
-          source: 'react-tectona-master-template',
+          source: 'react-tectona-master-template-ai',
           template_code: template.template_code,
           template_name: template.name,
+          ai_generated: true,
+          fill_correlation_id: filled.correlation_id,
+          ...namingPlan.namingMetadata,
         },
-        version_notes: `Created from template ${template.template_code}`,
+        version_notes: `AI-generated from template ${template.template_code}`,
+        fills: filled.payload.fills ?? {},
+        sections: filled.payload.sections ?? {},
+        agent_schema: filled.agent_schema,
+        diagrams: filled.rendered_diagrams ?? {},
       })
+
       const optimisticItem = mapDocumentToRepositoryItem(created, targetProject.name)
       setRepositoryItems((prev) => {
         const next = [optimisticItem, ...prev.filter((entry) => entry.id !== optimisticItem.id)]
         next.sort((a, b) => a.name.localeCompare(b.name))
         return next
       })
+      setTemplateGenerateOpen(false)
+      setTemplateGenerateId(null)
       addToast({
-        title: 'Document created from template',
-        description: created.title,
+        title: 'Document generated',
+        description: filled.warnings.length
+          ? `${created.title} (warnings: ${filled.warnings.slice(0, 2).join(', ')})`
+          : `${created.title} — opening in OnlyOffice.`,
         variant: 'success',
       })
       setActivePanel('repository')
       openDetail(created.id)
+      setRepositoryEditItem(optimisticItem)
       void loadRepositoryItems()
       void loadMasterTemplates()
     } catch (error) {
       addToast({
-        title: 'Failed to use template',
+        title: 'Failed to generate document',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setTemplateGenerateBusy(false)
+      setTemplateBusy(false)
+    }
+  }, [
+    activeWorkspaceApiId,
+    addToast,
+    loadMasterTemplates,
+    loadRepositoryItems,
+    mapDocumentToRepositoryItem,
+    repositoryProjects,
+    resolveRepositoryUploadNamingRule,
+    templateBusy,
+    templateById,
+    templateGenerateBusy,
+    templateGenerateId,
+    templateGenerateInstructions,
+    templateGenerateSource,
+  ])
+
+  const openTemplateInEditor = useCallback(async (template: DocumentTemplateResponse) => {
+    if (templateBusy) return
+    setTemplateBusy(true)
+    try {
+      if (!template.has_attachment) {
+        await bootstrapTemplateAttachment(template.id)
+        await loadMasterTemplates()
+      }
+      setTemplateEditItem({ id: template.id, name: template.name })
+    } catch (error) {
+      addToast({
+        title: 'Failed to open template editor',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setTemplateBusy(false)
+    }
+  }, [addToast, loadMasterTemplates, templateBusy])
+
+  const handleEditMasterTemplate = useCallback(async (templateId: string) => {
+    const template = templateById.get(templateId)
+    if (!template) {
+      addToast({ title: 'Template not found', description: 'Reload the library and try again.', variant: 'error' })
+      return
+    }
+    await openTemplateInEditor(template)
+  }, [addToast, openTemplateInEditor, templateById])
+
+  const handleTemplateSetStatus = useCallback(async (
+    templateId: string,
+    statusCode: string,
+    successTitle: string,
+  ) => {
+    if (templateStatusBusyId) return
+    setTemplateStatusBusyId(templateId)
+    try {
+      await patchTemplate(templateId, { status_code: statusCode })
+      await loadMasterTemplates()
+      addToast({ title: successTitle, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Status update failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setTemplateStatusBusyId(null)
+    }
+  }, [addToast, loadMasterTemplates, templateStatusBusyId])
+
+  const handleTemplateDownload = useCallback(async (templateId: string) => {
+    const template = templateById.get(templateId)
+    if (!template?.has_attachment) {
+      addToast({
+        title: 'No file to download',
+        description: 'Upload or edit this template first.',
+        variant: 'error',
+      })
+      return
+    }
+    setTemplateDownloadBusyId(templateId)
+    try {
+      const { blob, fileName } = await downloadTemplateAttachmentBlob(
+        templateId,
+        template.latest_attachment_id ?? null,
+      )
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = fileName || template.latest_file_name || `${template.name}.docx`
+      anchor.rel = 'noopener'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+    } catch (error) {
+      addToast({
+        title: 'Download failed',
+        description: error instanceof Error ? error.message : 'Unable to download template file.',
+        variant: 'error',
+      })
+    } finally {
+      setTemplateDownloadBusyId(null)
+    }
+  }, [addToast, templateById])
+
+  const handleTemplateRename = useCallback(async (templateId: string) => {
+    const template = templateById.get(templateId)
+    if (!template) {
+      addToast({ title: 'Template not found', description: 'Reload the library and try again.', variant: 'error' })
+      return
+    }
+    const nextName = window.prompt('Rename template', template.name)
+    if (nextName === null) return
+    const trimmed = nextName.trim()
+    if (trimmed.length < 3) {
+      addToast({ title: 'Name too short', description: 'Template name must be at least 3 characters.', variant: 'error' })
+      return
+    }
+    if (trimmed === template.name) return
+    if (templateStatusBusyId) return
+    setTemplateStatusBusyId(templateId)
+    try {
+      await patchTemplate(templateId, { name: trimmed })
+      await loadMasterTemplates()
+      addToast({ title: 'Template renamed', description: trimmed, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Rename failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setTemplateStatusBusyId(null)
+    }
+  }, [addToast, loadMasterTemplates, templateById, templateStatusBusyId])
+
+  const handleTemplateDelete = useCallback((templateId: string, templateName: string) => {
+    setTemplateDeleteTarget({ id: templateId, name: templateName })
+  }, [])
+
+  const handleTemplateDeleteConfirm = useCallback(async () => {
+    if (!templateDeleteTarget) return
+    const { id, name } = templateDeleteTarget
+    setTemplateDeleteBusyId(id)
+    try {
+      await deleteTemplate(id)
+      setTemplateApiItems((prev) => prev.filter((item) => item.id !== id))
+      if (selectedDetailId === id) {
+        setDetailDrawerOpen(false)
+        setSelectedDetailId('knowledge')
+      }
+      if (templateEditItem?.id === id) {
+        setTemplateEditItem(null)
+      }
+      setTemplateDeleteTarget(null)
+      addToast({ title: 'Template deleted', description: name, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : 'Unable to delete this template.',
+        variant: 'error',
+      })
+    } finally {
+      setTemplateDeleteBusyId(null)
+    }
+  }, [addToast, selectedDetailId, templateDeleteTarget, templateEditItem?.id])
+
+  const processUploadMasterTemplateFile = useCallback(async (
+    file: File,
+    workspaceId: string | null,
+    options?: { category_code?: string; document_type_code?: string; workspaceName?: string },
+  ) => {
+    if (!workspaceId?.trim()) {
+      addToast({
+        title: 'Workspace required',
+        description: 'Pick a workspace before uploading a template to your personal library.',
+        variant: 'error',
+      })
+      return
+    }
+    const lowerName = file.name.toLowerCase()
+    const isWordFile =
+      /\.(doc|docx|dot|dotx)$/i.test(lowerName)
+      || file.type.includes('word')
+      || file.type === 'application/msword'
+      || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    if (!isWordFile) {
+      addToast({
+        title: 'Unsupported file type',
+        description: 'Drop a Word template (.doc, .docx, .dot, .dotx).',
+        variant: 'error',
+      })
+      return
+    }
+
+    const workspaceName =
+      options?.workspaceName?.trim()
+      || formatKbWorkspaceLabel(workspaceId.trim(), kbWorkspaceOptions)
+      || userWorkspaceOptions.find((item) => item.workspaceId === workspaceId.trim())?.workspaceName
+      || workspaceId.trim()
+
+    let namingRule: RepositoryUploadNamingRule | null = null
+    try {
+      namingRule = await resolveRepositoryUploadNamingRule()
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unable to resolve active naming convention.'
+      addToast({
+        title: 'Naming standard check skipped',
+        description: `${reason}. Template will use library fallback naming for this upload.`,
+        variant: 'error',
+      })
+      namingRule = null
+    }
+
+    const namingPlan = buildTemplateUploadNamingPlan({
+      fileName: file.name,
+      workspaceName,
+      namingRule,
+      lastModified: file.lastModified,
+    })
+    const uploadFile = namingPlan.autoRenamed
+      ? new File([file], namingPlan.effectiveFileName, { type: file.type, lastModified: file.lastModified })
+      : file
+
+    let extractText = ''
+    try {
+      extractText = (await extractCompareDocumentText(uploadFile)).trim()
+    } catch {
+      /* duplicate scan is best-effort when text extraction fails */
+    }
+
+    const contentFingerprint = extractText ? await computeContentFingerprint(extractText) : ''
+    const duplicateVerdict = await checkTemplateUploadForDuplicates(
+      uploadFile,
+      namingPlan.effectiveFileName,
+      extractText,
+      contentFingerprint,
+      workspaceId.trim(),
+      workspaceName,
+    )
+    if (!duplicateVerdict.proceed) return
+
+    const revisionTarget = duplicateVerdict.revisionTargetId
+      ? templateApiItems.find((item) => item.id === duplicateVerdict.revisionTargetId) ?? null
+      : null
+
+    let finalNamingPlan = namingPlan
+    let finalUploadFile = uploadFile
+    if (revisionTarget) {
+      const workspaceCandidates = resolveTemplateWorkspaceCandidates()
+      const { docs: scopedTemplateDocs } = gatherExistingTemplateDocs(
+        templateApiItems,
+        workspaceId.trim(),
+        workspaceCandidates,
+      )
+      const subjectDoc: ExistingBrdDoc = {
+        id: '__new__',
+        title: namingPlan.effectiveFileName,
+        fileName: namingPlan.effectiveFileName,
+        projectName: workspaceName,
+        contentSha256: contentFingerprint,
+        structured: parseStructuredDocumentName(namingPlan.effectiveFileName),
+      }
+      const familyDocs = findNameMatches(subjectDoc, scopedTemplateDocs)
+      const nextVersionLabel = resolveNextTemplateVersionLabelForFamily(
+        familyDocs.length > 0 ? familyDocs : scopedTemplateDocs.filter((doc) => doc.id === revisionTarget.id),
+      )
+      finalNamingPlan = buildTemplateUploadNamingPlan({
+        fileName: file.name,
+        workspaceName,
+        namingRule,
+        lastModified: file.lastModified,
+        versionOverride: nextVersionLabel,
+      })
+      finalUploadFile = finalNamingPlan.autoRenamed
+        ? new File([file], finalNamingPlan.effectiveFileName, { type: file.type, lastModified: file.lastModified })
+        : file
+    }
+
+    setTemplateBusy(true)
+    try {
+      const workspaceCandidates = [{
+        id: workspaceId.trim(),
+        name: workspaceName,
+      }]
+
+      if (revisionTarget) {
+        const existingMeta = (revisionTarget.metadata ?? {}) as Record<string, unknown>
+        const existingAgentSchema =
+          typeof existingMeta.agent_schema === 'object' && existingMeta.agent_schema !== null
+            ? existingMeta.agent_schema as Record<string, unknown>
+            : {}
+        const updated = await patchTemplate(revisionTarget.id, {
+          name: finalNamingPlan.displayName,
+          version: revisionTarget.version,
+          metadata: {
+            ...existingMeta,
+            workspace_id: workspaceId.trim(),
+            ...(contentFingerprint ? { content_sha256: contentFingerprint } : {}),
+            agent_schema: {
+              ...existingAgentSchema,
+              document_kind: finalNamingPlan.documentKind,
+            },
+            ...finalNamingPlan.namingMetadata,
+            template_revision_source: 'duplicate-upload-confirmed',
+            revised_from_template_id: revisionTarget.id,
+          },
+        })
+        await uploadTemplateAttachment(revisionTarget.id, finalUploadFile, {
+          source: 'user-upload-revision',
+          workspace_id: workspaceId.trim(),
+          original_file_name: finalNamingPlan.sourceFileName,
+          repository_file_name: finalNamingPlan.effectiveFileName,
+          auto_renamed_by_standard: finalNamingPlan.autoRenamed,
+          ...(contentFingerprint ? { content_sha256: contentFingerprint } : {}),
+          version_notes: `Revised to ${finalNamingPlan.namingMetadata.document_version_label ?? 'next version'}`,
+        })
+        const enrichedUpdated: DocumentTemplateResponse = {
+          ...updated,
+          workspace_id: updated.workspace_id ?? workspaceId.trim(),
+          has_attachment: true,
+          latest_file_name: finalNamingPlan.effectiveFileName,
+        }
+        setTemplateApiItems((prev) => {
+          const merged = [enrichedUpdated, ...prev.filter((entry) => entry.id !== enrichedUpdated.id)]
+          return merged.filter((item) => belongsToDkmTemplateScope(item, dkmWorkspaceScope, workspaceCandidates))
+        })
+        await loadMasterTemplates()
+        addToast({
+          title: 'Template version updated',
+          description: `${finalNamingPlan.displayName} — new attachment saved on the existing template (${String(finalNamingPlan.namingMetadata.document_version_label ?? 'next version')}).`,
+          variant: 'success',
+        })
+        return
+      }
+
+      const created = await createMasterTemplateWithStatusFallback({
+        template_code: finalNamingPlan.templateCode,
+        name: finalNamingPlan.displayName,
+        description: null,
+        category_code: options?.category_code ?? 'delivery_governance',
+        document_type_code: options?.document_type_code ?? 'delivery_artifact',
+        body_template: `<h1>${finalNamingPlan.displayName}</h1><p>Uploaded master template file.</p>`,
+        status_code: 'draft',
+        workspace_id: workspaceId.trim(),
+        metadata: {
+          source: 'react-tectona-template-upload',
+          workspace_id: workspaceId.trim(),
+          ...(contentFingerprint ? { content_sha256: contentFingerprint } : {}),
+          agent_schema: {
+            document_kind: finalNamingPlan.documentKind,
+            placeholders: [],
+            sections: [],
+          },
+          ...finalNamingPlan.namingMetadata,
+        },
+      })
+      await uploadTemplateAttachment(created.id, finalUploadFile, {
+        source: 'user-upload',
+        workspace_id: workspaceId.trim(),
+        original_file_name: finalNamingPlan.sourceFileName,
+        repository_file_name: finalNamingPlan.effectiveFileName,
+        auto_renamed_by_standard: finalNamingPlan.autoRenamed,
+        ...(contentFingerprint ? { content_sha256: contentFingerprint } : {}),
+      })
+      const enrichedCreated: DocumentTemplateResponse = {
+        ...created,
+        workspace_id: created.workspace_id ?? workspaceId.trim(),
+        metadata: {
+          ...created.metadata,
+          workspace_id: workspaceId.trim(),
+        },
+      }
+      setTemplateApiItems((prev) => {
+        const merged = [enrichedCreated, ...prev.filter((entry) => entry.id !== enrichedCreated.id)]
+        return merged.filter((item) => belongsToDkmTemplateScope(item, dkmWorkspaceScope, workspaceCandidates))
+      })
+      await loadMasterTemplates()
+      addToast({
+        title: 'Template uploaded',
+        description: finalNamingPlan.autoRenamed
+          ? `${finalNamingPlan.displayName} — file name adjusted to naming standard. You can rename later in template details.`
+          : created.status_code === 'active'
+            ? `${finalNamingPlan.displayName} — saved as Active (restart DKM service to enable Draft status in DB).`
+            : finalNamingPlan.displayName,
+        variant: 'success',
+      })
+    } catch (error) {
+      addToast({
+        title: 'Failed to upload template',
         description: error instanceof Error ? error.message : '',
         variant: 'error',
       })
@@ -10752,16 +12397,51 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [
     addToast,
+    checkTemplateUploadForDuplicates,
+    dkmWorkspaceScope,
+    kbWorkspaceOptions,
     loadMasterTemplates,
-    loadRepositoryItems,
-    mapDocumentToRepositoryItem,
-    repositoryProjects,
+    resolveRepositoryUploadNamingRule,
+    resolveTemplateWorkspaceCandidates,
+    templateApiItems,
     templateBusy,
-    templateById,
+    userWorkspaceOptions,
   ])
 
-  const handleCreateMasterTemplate = useCallback(async () => {
+  const queueTemplateUploadFile = useCallback((
+    file: File,
+    options?: { category_code?: string; document_type_code?: string },
+  ) => {
     if (templateBusy) return
+    const resolved = resolveRepositoryUploadWorkspaceCandidates()
+    if (resolved.mode === 'choose') {
+      setUploadWorkspacePicker({
+        purpose: 'template-upload',
+        candidates: resolved.candidates,
+        pendingFile: file,
+        templateUploadOptions: options,
+      })
+      return
+    }
+    void processUploadMasterTemplateFile(file, resolved.workspaceId, options)
+  }, [processUploadMasterTemplateFile, resolveRepositoryUploadWorkspaceCandidates, templateBusy])
+
+  const handleUploadMasterTemplateFile = useCallback(async (
+    file: File,
+    options?: { category_code?: string; document_type_code?: string },
+  ) => {
+    queueTemplateUploadFile(file, options)
+  }, [queueTemplateUploadFile])
+
+  const processCreateMasterTemplate = useCallback(async (workspaceId: string | null) => {
+    if (!workspaceId?.trim()) {
+      addToast({
+        title: 'Workspace required',
+        description: 'Pick a workspace for this template library entry.',
+        variant: 'error',
+      })
+      return
+    }
     const name = window.prompt('New master template name', 'Untitled master template')
     if (name === null) return
     const trimmed = name.trim()
@@ -10777,18 +12457,28 @@ export function DocumentKnowledgeManagementPage() {
         .replace(/^-+|-+$/g, '')
         .slice(0, 48)
       const template_code = `${slug || 'template'}-${Date.now().toString(36)}`.slice(0, 80)
-      await createTemplate({
+      const created = await createMasterTemplateWithStatusFallback({
         template_code,
         name: trimmed,
         description: null,
-        category_code: 'knowledge_asset',
+        category_code: 'delivery_governance',
         document_type_code: 'delivery_artifact',
-        body_template: `<h1>${trimmed}</h1><p>Start with governed reusable sections here.</p>`,
-        status_code: 'active',
-        metadata: { source: 'react-tectona-master-template' },
+        body_template: `<h1>${trimmed}</h1><p>Master template — open in the document editor.</p>`,
+        status_code: 'draft',
+        workspace_id: workspaceId.trim(),
+        metadata: {
+          source: 'react-tectona-master-template',
+          agent_schema: {
+            document_kind: 'general',
+            placeholders: [],
+            sections: [],
+          },
+        },
       })
+      await bootstrapTemplateAttachment(created.id)
       await loadMasterTemplates()
-      addToast({ title: 'Master template created', description: trimmed, variant: 'success' })
+      setTemplateEditItem({ id: created.id, name: created.name })
+      addToast({ title: 'Master template created', description: 'Opening editor…', variant: 'success' })
     } catch (error) {
       addToast({
         title: 'Failed to create template',
@@ -10800,61 +12490,255 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [addToast, loadMasterTemplates, templateBusy])
 
-  const templateCategoryFolders = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const row of masterTemplateRows) {
-      counts.set(row.category, (counts.get(row.category) ?? 0) + 1)
+  const handleCreateMasterTemplate = useCallback(async () => {
+    if (templateBusy) return
+    const resolved = resolveRepositoryUploadWorkspaceCandidates()
+    if (resolved.mode === 'choose') {
+      setUploadWorkspacePicker({
+        purpose: 'template-create',
+        candidates: resolved.candidates,
+      })
+      return
     }
-    return Array.from(counts.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, count]) => ({
-        id: name,
-        name,
-        description: null as string | null,
-        parent_id: null as string | null,
-        owner_id: 'master-template',
-        document_count: count,
-        children_count: 0,
-        created_date: '',
-        updated_date: null as string | null,
-      }))
-  }, [masterTemplateRows])
+    await processCreateMasterTemplate(resolved.workspaceId)
+  }, [processCreateMasterTemplate, resolveRepositoryUploadWorkspaceCandidates, templateBusy])
+
+  const handleTemplateDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!Array.from(event.dataTransfer.types || []).includes('Files')) return
+    event.preventDefault()
+    event.stopPropagation()
+    setIsTemplateDragActive(true)
+  }, [])
+
+  const handleTemplateDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const related = event.relatedTarget as Node | null
+    if (related && event.currentTarget.contains(related)) return
+    event.preventDefault()
+    event.stopPropagation()
+    setIsTemplateDragActive(false)
+  }, [])
+
+  const handleTemplateDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsTemplateDragActive(false)
+
+    const files = event.dataTransfer.files
+    if (files && files.length > 0) {
+      void handleUploadMasterTemplateFile(files[0])
+    }
+  }, [handleUploadMasterTemplateFile])
 
   const filteredMasterTemplates = useMemo(() => {
     return masterTemplateRows.filter((row) => {
-      const matchesCategory = !templateCategoryFilter || row.category === templateCategoryFilter
-      if (!matchesCategory) return false
+      if (templateStatusFilter === 'draft' && row.statusCode !== 'draft') return false
+      if (templateStatusFilter === 'active' && row.statusCode !== 'active') return false
+      if (templateTypeFilterTags.size > 0 && !templateTypeFilterTags.has(row.documentType)) return false
+      if (templateCategoryFilterTags.size > 0 && !templateCategoryFilterTags.has(row.category)) return false
+      if (
+        templateColumnStatusFilterTags.size > 0
+        && !templateColumnStatusFilterTags.has(humanizeCode(row.statusCode))
+      ) return false
       if (!deferredQuery) return true
       return [row.name, row.category, row.ownerOrUsedIn, row.versionOrStatus, row.usage, row.templateCode, row.documentType, row.statusCode]
         .join(' ')
         .toLowerCase()
         .includes(deferredQuery)
     })
-  }, [masterTemplateRows, templateCategoryFilter, deferredQuery])
+  }, [
+    masterTemplateRows,
+    templateStatusFilter,
+    templateTypeFilterTags,
+    templateCategoryFilterTags,
+    templateColumnStatusFilterTags,
+    deferredQuery,
+  ])
+
+  const sortedMasterTemplates = useMemo(() => {
+    const rows = [...filteredMasterTemplates]
+    if (!templateSort) return rows
+    const { key, dir } = templateSort
+    const mul = dir === 'asc' ? 1 : -1
+    rows.sort((a, b) => {
+      let cmp = 0
+      switch (key) {
+        case 'name':
+          cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          break
+        case 'documentType':
+          cmp = a.documentType.localeCompare(b.documentType, undefined, { sensitivity: 'base' })
+          break
+        case 'category':
+          cmp = a.category.localeCompare(b.category, undefined, { sensitivity: 'base' })
+          break
+        case 'templateCode':
+          cmp = a.templateCode.localeCompare(b.templateCode, undefined, { sensitivity: 'base' })
+          break
+        case 'versionOrStatus':
+          cmp = a.versionOrStatus.localeCompare(b.versionOrStatus, undefined, { sensitivity: 'base', numeric: true })
+          break
+        case 'statusCode':
+          cmp = a.statusCode.localeCompare(b.statusCode, undefined, { sensitivity: 'base' })
+          break
+        case 'file':
+          cmp = (a.fileName ?? '').localeCompare(b.fileName ?? '', undefined, { sensitivity: 'base' })
+          break
+        case 'usage':
+          cmp = a.usage.localeCompare(b.usage, undefined, { sensitivity: 'base' })
+          break
+      }
+      return cmp * mul
+    })
+    return rows
+  }, [filteredMasterTemplates, templateSort])
+
+  const templateFlatRows = useMemo(() => {
+    if (templateGroupBy) {
+      const grouped = [...sortedMasterTemplates].sort((a, b) =>
+        templateGroupLabel(a, templateGroupBy).localeCompare(
+          templateGroupLabel(b, templateGroupBy),
+          undefined,
+          { sensitivity: 'base' },
+        ),
+      )
+      return grouped.map((row) => ({ row, groupLabel: templateGroupLabel(row, templateGroupBy) }))
+    }
+    return sortedMasterTemplates.map((row) => ({ row, groupLabel: null as string | null }))
+  }, [sortedMasterTemplates, templateGroupBy])
 
   useEffect(() => {
     setTemplatePage(1)
-  }, [deferredQuery, templateCategoryFilter, filteredMasterTemplates.length])
+  }, [deferredQuery, templateStatusFilter, filteredMasterTemplates.length])
 
   useEffect(() => {
-    if (activePanel !== 'templates') setTemplateCategoryFilter(null)
+    if (activePanel !== 'templates') {
+      setTemplateStatusFilter('all')
+    }
   }, [activePanel])
 
-  const templateTotalPages = Math.max(1, Math.ceil(filteredMasterTemplates.length / templatePageSize))
+  useEffect(() => {
+    if (!showTemplateSelection && templateSelectedIds.length > 0) setTemplateSelectedIds([])
+  }, [showTemplateSelection, templateSelectedIds.length])
+
+  const templateTotalPages = Math.max(1, Math.ceil(templateFlatRows.length / templatePageSize))
   const templatePageSafe = Math.min(templatePage, templateTotalPages)
-  const templateStart = filteredMasterTemplates.length === 0 ? 0 : (templatePageSafe - 1) * templatePageSize + 1
-  const templateEnd = Math.min(filteredMasterTemplates.length, templatePageSafe * templatePageSize)
-  const pagedMasterTemplates = filteredMasterTemplates.slice(
+  const templateStart = templateFlatRows.length === 0 ? 0 : (templatePageSafe - 1) * templatePageSize + 1
+  const templateEnd = Math.min(templateFlatRows.length, templatePageSafe * templatePageSize)
+  const pagedMasterTemplateRows = templateFlatRows.slice(
     templateStart === 0 ? 0 : templateStart - 1,
     templateEnd,
   )
+
+  const templateTypeOptionsList = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const row of masterTemplateRows) counts.set(row.documentType, (counts.get(row.documentType) ?? 0) + 1)
+    return [...counts.entries()]
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => a.value.localeCompare(b.value))
+  }, [masterTemplateRows])
+
+  const templateCategoryOptionsList = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const row of masterTemplateRows) counts.set(row.category, (counts.get(row.category) ?? 0) + 1)
+    return [...counts.entries()]
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => a.value.localeCompare(b.value))
+  }, [masterTemplateRows])
+
+  const templateColumnStatusOptionsList = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const row of masterTemplateRows) {
+      const label = humanizeCode(row.statusCode)
+      counts.set(label, (counts.get(label) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => a.value.localeCompare(b.value))
+  }, [masterTemplateRows])
+
+  const toggleTemplateSort = useCallback((key: TemplateTableColumnKey) => {
+    setTemplateSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }, [])
+
+  const templateColumns = useEnterpriseSortableColumns<TemplateTableColumnKey>({
+    initialOrder: TEMPLATE_TABLE_DEFAULT_COLUMN_ORDER,
+    pinnedFirstKey: TEMPLATE_TABLE_PINNED_FIRST_COLUMN,
+    initialHiddenColumns: TEMPLATE_TABLE_DEFAULT_HIDDEN_COLUMNS,
+    maxVisibleColumns: TEMPLATE_TABLE_MAX_VISIBLE_COLUMNS,
+    hasSelectionColumn: showTemplateSelection,
+    onColumnHidden: (key) => {
+      if (templateGroupBy && (key as string) === templateGroupBy) setTemplateGroupBy(null)
+    },
+  })
+
+  const toggleTemplateRowSelection = useCallback((id: string) => {
+    setTemplateSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }, [])
+
+  const renderTemplateColumnCell = useCallback((row: MasterTemplateRow, key: TemplateTableColumnKey) => {
+    switch (key) {
+      case 'name':
+        return (
+          <button type="button" className="min-w-0 text-left" onClick={() => openTemplateDetail(row.id)}>
+            <div className="flex items-start gap-3">
+              {row.hasAttachment ? (
+                <FileTypeIconImg fileName={row.fileName || `${row.name}.docx`} />
+              ) : (
+                <span className="mt-0.5 inline-flex size-14 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600">
+                  <FileStack className="h-6 w-6" />
+                </span>
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 line-clamp-1">{row.name}</p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
+                    {row.templateCode}
+                  </Badge>
+                </div>
+                <p className="mt-0.5 text-[11px] text-slate-500">Updated {row.updated}</p>
+              </div>
+            </div>
+          </button>
+        )
+      case 'documentType':
+        return <span className="text-foreground">{row.documentType}</span>
+      case 'category':
+        return <span className="text-foreground">{row.category}</span>
+      case 'templateCode':
+        return <span className="font-mono text-[11px] text-foreground">{row.templateCode}</span>
+      case 'versionOrStatus':
+        return <span className="font-semibold text-foreground">{row.versionOrStatus}</span>
+      case 'statusCode':
+        return (
+          <Badge variant="outline" className={cn('rounded-full px-2 py-0 text-[10px] font-medium', statusBadgeClass(humanizeCode(row.statusCode)))}>
+            {humanizeCode(row.statusCode)}
+          </Badge>
+        )
+      case 'file':
+        return row.hasAttachment ? (
+          <span className="line-clamp-2 text-[11px] text-foreground" title={row.fileName ?? undefined}>{row.fileName ?? 'Word file'}</span>
+        ) : (
+          <span className="text-[11px] text-muted-foreground">No file yet</span>
+        )
+      case 'usage':
+        return (
+          <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
+            {row.usage}
+          </Badge>
+        )
+    }
+  }, [openTemplateDetail])
 
   const selectedTemplateItem = templateById.get(selectedDetailId) ?? null
   const selectedDetail = selectedRepositoryItem
     ? repositoryDetailsById[selectedRepositoryItem.id] ?? buildFallbackDetail(selectedRepositoryItem)
     : selectedTemplateItem
       ? buildTemplateDetail(selectedTemplateItem)
-      : detailEntries[selectedDetailId] ?? detailEntries.brd
+      : (selectedDetailId ? detailEntries[selectedDetailId] : undefined) ?? null
 
   const versionLineageRows = useMemo(() => {
     const rows = [...repositoryItems].sort((a, b) => {
@@ -10895,7 +12779,6 @@ export function DocumentKnowledgeManagementPage() {
       }
     })
 
-    // Prefer live repository rows; keep curated examples only when repository is still empty.
     const rows = fromRepository.length > 0 ? fromRepository : artifactLinks
     if (!deferredQuery) return rows
     return rows.filter((item) =>
@@ -11240,11 +13123,14 @@ export function DocumentKnowledgeManagementPage() {
     try {
       const projectNameById = new Map(repositoryProjects.map((project) => [project.id, project.name]))
       const response = await listAllDocuments({
+        ...(activeWorkspaceApiId ? { workspace_id: activeWorkspaceApiId } : {}),
         document_type: 'meeting_note',
         page: 1,
         page_size: 100,
       })
+      const scope = dkmWorkspaceScope
       const notes = response.items
+        .filter((doc) => belongsToDkmRepositoryScope(doc.workspace_id, scope))
         .map((doc) => mapDocumentToMeetingNote(doc, projectNameById))
         .sort((a, b) => {
           const aTime = Date.parse(a.date) || 0
@@ -11281,12 +13167,12 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setMeetingNotesLoading(false)
     }
-  }, [repositoryProjects])
+  }, [activeWorkspaceApiId, dkmWorkspaceScope, repositoryProjects])
 
   useEffect(() => {
     if (activePanel !== 'meetings') return
     void refreshMeetingNotesFromBackend()
-  }, [activePanel, refreshMeetingNotesFromBackend])
+  }, [activePanel, refreshMeetingNotesFromBackend, workspaceScopeKey])
 
   const openMeetingCreateDialog = useCallback(() => {
     setMeetingCreateError(null)
@@ -11574,7 +13460,7 @@ export function DocumentKnowledgeManagementPage() {
         : []),
     ]
     const created = await createProjectDocument(storageProject.id, {
-      workspace_id: null,
+      workspace_id: activeWorkspaceApiId,
       title: cleanTitle,
       summary: cleanContext,
       content: content.trim() || '<p></p>',
@@ -11607,7 +13493,7 @@ export function DocumentKnowledgeManagementPage() {
       participantNames: parseMeetingParticipantNames(cleanParticipants),
       voiceSummary: voiceSummary?.trim() || undefined,
     }
-  }, [repositoryProjects])
+  }, [activeWorkspaceApiId, repositoryProjects])
 
   const generateMeetingVoiceSummary = useCallback(async (transcriptInput?: string) => {
     const transcript = (transcriptInput ?? meetingVoiceTranscript).trim()
@@ -11647,7 +13533,7 @@ export function DocumentKnowledgeManagementPage() {
       const response = await chatWithTectonaAgentRuntime({
         message: runtimeMessage.slice(0, 4500),
         context: {
-          workspace_id: null,
+          workspace_id: activeWorkspaceApiId,
           session_id: 'meeting-voice-summary',
         },
         options: {
@@ -11681,7 +13567,7 @@ export function DocumentKnowledgeManagementPage() {
         setMeetingVoiceSummaryLoading(false)
       }
     }
-  }, [meetingVoiceTranscript])
+  }, [activeWorkspaceApiId, meetingVoiceTranscript])
 
   useEffect(() => {
     if (!meetingVoiceSummaryPending) return
@@ -12120,7 +14006,12 @@ export function DocumentKnowledgeManagementPage() {
       {showKpiCards ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
           {docKpiCards.map((item) => (
-            <button key={item.id} type="button" className="group text-left" onClick={() => setActivePanel('overview')}>
+            <button
+              key={item.id}
+              type="button"
+              className="group text-left"
+              onClick={() => setActivePanel('overview')}
+            >
               <Card className={kpiCardChromeDoc(item.id)}>
                 <div className="pointer-events-none absolute -right-3 -bottom-4 opacity-[0.08] transition-all duration-500 group-hover:scale-110 group-hover:opacity-[0.12]">
                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/60 text-slate-700/80 ring-1 ring-white/50 backdrop-blur-sm">
@@ -12158,7 +14049,7 @@ export function DocumentKnowledgeManagementPage() {
         )}
       >
         {showEnterpriseNavPanel ? (
-        <aside className={workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)}>
+        <aside className={cn(workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant), sidebarFixed && 'self-stretch')}>
           <div
             ref={navPanelRef}
             className={cn(
@@ -12166,7 +14057,7 @@ export function DocumentKnowledgeManagementPage() {
               // Match platanus Enterprise Navigation panel corner radius (rounded-2xl, not rounded-[28px]).
               'rounded-2xl xl:rounded-r-2xl',
               // Fixed Sidebar = true: tinggi panel dikunci dinamis berdasarkan posisi aktual panel di viewport
-              !navDocked && 'overflow-hidden'
+              !navDocked && 'h-full overflow-hidden'
             )}
             style={!navDocked && navPanelHeightPx ? { height: navPanelHeightPx, maxHeight: navPanelHeightPx, minHeight: navPanelHeightPx } : undefined}
             aria-label="Document workspace navigation"
@@ -12207,7 +14098,7 @@ export function DocumentKnowledgeManagementPage() {
             {isWorkspaceCollapsed ? (
               <div className={cn(workspaceNavMenuScrollClass(), 'pt-0')}>
                 <EnterpriseNavIconRail
-                  items={DOC_PANEL_ITEMS}
+                  items={docPanelItems}
                   activeId={activePanel}
                   onSelect={setActivePanel}
                 />
@@ -12216,7 +14107,7 @@ export function DocumentKnowledgeManagementPage() {
               <>
                 <div className={workspaceNavMenuScrollClass()}>
                   <div className={cn(enterpriseNavUltra ? 'space-y-1.5' : enterpriseNavCompact ? 'space-y-2' : 'space-y-4')}>
-                    {DOC_PANEL_GROUPS.map(({ group, items }) => (
+                    {docPanelGroups.map(({ group, items }) => (
                       <div key={group} className="space-y-1.5">
                         {!enterpriseNavCompact ? (
                           <div className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{group}</div>
@@ -12394,8 +14285,13 @@ export function DocumentKnowledgeManagementPage() {
                         )}
                         New folder
                       </button>
+                      <label htmlFor="dkm-repository-document-upload" className="sr-only">
+                        Upload repository document
+                      </label>
                       <input
                         ref={repositoryUploadInputRef}
+                        id="dkm-repository-document-upload"
+                        name="dkm-repository-document-upload"
                         type="file"
                         className="hidden"
                         onChange={(event) => void handleRepositoryFilePicked(event)}
@@ -12410,51 +14306,11 @@ export function DocumentKnowledgeManagementPage() {
                         <div className="leading-tight">
                           <p className="text-[11px] font-semibold text-foreground">Auto-generate KB</p>
                           <p className="text-[10px] text-muted-foreground">
-                            Ringkasan KB dari ekstrak dokumen (bukan salinan BRD penuh) + tautan ke repository
+                            KB summary from document extraction (not a full BRD copy) + link to the repository
                           </p>
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        aria-pressed={filters.project === UNIDENTIFIED_PROJECT_LABEL}
-                        onClick={() =>
-                          setFilters((current) => ({
-                            ...current,
-                            project: current.project === UNIDENTIFIED_PROJECT_LABEL ? 'All projects' : UNIDENTIFIED_PROJECT_LABEL,
-                          }))
-                        }
-                        title="Tampilkan hanya dokumen yang tidak tertaut ke project (general)"
-                        className={cn(
-                          'inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors',
-                          filters.project === UNIDENTIFIED_PROJECT_LABEL
-                            ? 'border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-500/60 dark:bg-blue-950/50 dark:text-blue-300'
-                            : 'border-border/50 bg-background/70 text-foreground hover:bg-muted/50',
-                        )}
-                      >
-                        <Filter className="h-3.5 w-3.5" strokeWidth={2.5} />
-                        Unidentified Project
-                      </button>
-
-                      <div className="inline-flex min-w-[160px] items-center gap-2">
-                        <Select
-                          aria-label="Filter by capability"
-                          value={filters.capability}
-                          onChange={(event) =>
-                            setFilters((current) => ({
-                              ...current,
-                              capability: event.target.value,
-                            }))
-                          }
-                          className="h-9 rounded-xl text-xs"
-                        >
-                          {filterOptions.capability.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {option}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      </div>
                     </>
                   ) : null}
 
@@ -12596,6 +14452,53 @@ export function DocumentKnowledgeManagementPage() {
                     </button>
                   ) : null}
 
+                  {activePanel === 'templates' ? (
+                    <>
+                      <button
+                        type="button"
+                        className={enterpriseCyanGradientActionButtonClass()}
+                        onClick={() => templateUploadInputRef.current?.click()}
+                        disabled={templateBusy}
+                      >
+                        {templateBusy ? (
+                          <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                        ) : (
+                          <Upload className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                        )}
+                        Upload template
+                      </button>
+                      <button
+                        type="button"
+                        className={enterpriseIndigoGradientActionButtonClass()}
+                        onClick={() => { void handleCreateMasterTemplate() }}
+                        disabled={templateBusy}
+                      >
+                        {templateBusy ? (
+                          <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                        ) : (
+                          <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                        )}
+                        New template
+                      </button>
+
+                      <div className="inline-flex items-center gap-2 rounded-xl border border-border/50 bg-background/70 px-3 py-2">
+                        <Switch
+                          checked={templateStatusFilter === 'draft'}
+                          onCheckedChange={(checked) =>
+                            setTemplateStatusFilter(checked ? 'draft' : 'all')
+                          }
+                          aria-label="Show draft templates only"
+                        />
+                        <div className="leading-tight">
+                          <p className="text-[11px] font-semibold text-foreground">Draft only</p>
+                          <p className="text-[10px] text-muted-foreground">
+                            Show only master templates still in draft status
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+
                   {activePanel !== 'artifacts' && activePanel !== 'meetings' ? (
                     <div className="hidden min-w-[1rem] flex-1 lg:block" aria-hidden />
                   ) : null}
@@ -12663,28 +14566,30 @@ export function DocumentKnowledgeManagementPage() {
                   { key: 'Archive hygiene', label: 'Archive' },
                 ] as const
 
-                const healthByKey = new Map(contentHealth.map((h) => [h.label, parseInt(h.value.replace('%', ''), 10) || 0]))
+                const healthByKey = new Map(contentHealth.map((h) => [h.label, h.valuePct]))
                 const radarData = healthAxes.map((axis) => ({ metric: axis.label, value: Math.max(0, Math.min(100, healthByKey.get(axis.key) ?? 0)) }))
-                const overall = Math.round(radarData.reduce((a, b) => a + b.value, 0) / Math.max(1, radarData.length))
+                const overall = repositoryItems.length === 0
+                  ? 0
+                  : Math.round(radarData.reduce((a, b) => a + b.value, 0) / Math.max(1, radarData.length))
                 const overallHue = Math.round((overall / 100) * 120) // 0=red → 120=green
                 const overallColor = `hsl(${overallHue} 82% 42%)`
                 const overallSoft = `hsl(${overallHue} 86% 92%)`
 
                 const funnelData = [
-                  { stage: 'Created', value: 1000 },
-                  { stage: 'Active', value: 760 },
-                  { stage: 'Linked', value: Math.round(760 * ((healthByKey.get('Linkage coverage') ?? 80) / 100)) },
-                  { stage: 'Reused', value: 260 },
-                  { stage: 'Archived', value: 90 },
+                  { stage: 'Created', value: overviewLiveStats.totalDocuments },
+                  { stage: 'Active', value: overviewLiveStats.activeDocs },
+                  { stage: 'Linked', value: overviewLiveStats.linkedArtifacts },
+                  { stage: 'Reused', value: overviewLiveStats.reusedDocs },
+                  { stage: 'Archived', value: overviewLiveStats.archivedDocs },
                 ]
 
-                const trendSeries = [
-                  { month: 'Jan', documents: 980, templates: 220, knowledge: 140 },
-                  { month: 'Feb', documents: 1030, templates: 240, knowledge: 165 },
-                  { month: 'Mar', documents: 1095, templates: 255, knowledge: 190 },
-                  { month: 'Apr', documents: 1178, templates: 268, knowledge: 215 },
-                  { month: 'May', documents: 1284, templates: 286, knowledge: 248 },
-                ]
+                const trendMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May'] as const
+                const trendSeries = trendMonths.map((month) => ({
+                  month,
+                  documents: overviewLiveStats.totalDocuments,
+                  templates: overviewLiveStats.activeTemplates,
+                  knowledge: overviewLiveStats.knowledgeAssets,
+                }))
 
                 const trendDelta = (k: 'documents' | 'templates' | 'knowledge') => {
                   const last = trendSeries.at(-1)?.[k] ?? 0
@@ -12695,17 +14600,14 @@ export function DocumentKnowledgeManagementPage() {
 
                 const heatmapTypes = ['Controlled docs', 'Templates', 'Knowledge', 'Meeting notes', 'Reusable'] as const
                 const heatmapTeams = ['PMO', 'Risk', 'Delivery', 'Ops', 'Compliance'] as const
-                const heatmap = heatmapTypes.map((row, r) => ({
+                const heatmap = heatmapTypes.map((row) => ({
                   type: row,
-                  cells: heatmapTeams.map((team, c) => {
-                    const base = 10 + r * 7 + c * 5
-                    const v = Math.max(0, Math.min(100, base + ((r + c) % 3 === 0 ? 22 : 0)))
-                    return { team, value: v }
-                  }),
+                  cells: heatmapTeams.map((team) => ({ team, value: 0 })),
                 }))
 
+                const linkagePct = healthByKey.get('Linkage coverage') ?? 0
                 const linkageCoverage = distributionByType.map((d) => {
-                  const linked = Math.round((d.value / 100) * (healthByKey.get('Linkage coverage') ?? 80))
+                  const linked = Math.round((d.value / 100) * linkagePct)
                   const notLinked = Math.max(0, d.value - linked)
                   return { type: d.label, linked, notLinked }
                 })
@@ -12717,17 +14619,17 @@ export function DocumentKnowledgeManagementPage() {
                   >
                     {!kbLoading && !kbLive ? (
                       <motion.div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
-                        Knowledge Base Graph memakai data demo (4 node) karena API gagal
-                        {kbLoadError ? `: ${kbLoadError}` : ''}. Perbaiki koneksi ke{' '}
+                        Knowledge Base Graph is empty because the API failed
+                        {kbLoadError ? `: ${kbLoadError}` : ''}. Fix the connection to{' '}
                         <code className="rounded bg-white/90 px-1">/api/gateway-runtime/api/tectona-kb/v1</code>{' '}
-                        atau{' '}
+                        or{' '}
                         <Link
                           to="/platform-settings-administration?section=knowledge-base"
                           className="font-semibold underline underline-offset-2"
                         >
                           Platform Settings → Knowledge Base
                         </Link>
-                        , lalu muat ulang halaman.
+                        , then reload the page.
                       </motion.div>
                     ) : null}
                     {/* ROW 1 — Knowledge Base Graph */}
@@ -12836,6 +14738,19 @@ export function DocumentKnowledgeManagementPage() {
                           ) : null}
                           <button
                             type="button"
+                            className="inline-flex items-center gap-1 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-[11px] font-medium text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => void handleKbRelationScan()}
+                            disabled={!kbLive || kbRelationScanBusy}
+                          >
+                            {kbRelationScanBusy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                            ) : (
+                              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                            )}
+                            AI Scan for relations
+                          </button>
+                          <button
+                            type="button"
                             className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-white"
                             onClick={() => setKbGraphSeed((seed) => seed + 1)}
                           >
@@ -12872,6 +14787,10 @@ export function DocumentKnowledgeManagementPage() {
                         <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
                           <span className="h-2 w-2 rounded-full bg-slate-400" />
                           Inferred edge
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
+                          <span className="h-2 w-2 rounded-full bg-purple-600" />
+                          AI-suggested edge
                         </span>
                       </div>
 
@@ -13036,7 +14955,7 @@ export function DocumentKnowledgeManagementPage() {
                           </div>
                         </div>
                         <div className="relative z-0 mt-4 h-64 pl-8">
-                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                          <MeasuredResponsiveContainer>
                             <RadarChart data={radarData}>
                               <defs>
                                 <linearGradient id="healthGradientDoc" x1="0" y1="0" x2="1" y2="1">
@@ -13074,7 +14993,7 @@ export function DocumentKnowledgeManagementPage() {
                                 labelStyle={{ color: '#0f172a', fontWeight: 700 }}
                               />
                             </RadarChart>
-                          </ResponsiveContainer>
+                          </MeasuredResponsiveContainer>
                         </div>
                       </Card>
 
@@ -13164,7 +15083,7 @@ export function DocumentKnowledgeManagementPage() {
                             <div className="absolute inset-x-6 top-[50%] h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
                             <div className="absolute inset-x-8 top-[74%] h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
                           </div>
-                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                          <MeasuredResponsiveContainer>
                             <FunnelChart margin={{ top: 8, right: 6, bottom: 4, left: 6 }}>
                               <Tooltip
                                 formatter={(v: number, _n: string, item: { payload?: { stage?: string } }) => {
@@ -13194,7 +15113,7 @@ export function DocumentKnowledgeManagementPage() {
                                 ))}
                               </Funnel>
                             </FunnelChart>
-                          </ResponsiveContainer>
+                          </MeasuredResponsiveContainer>
                         </div>
                       </Card>
 
@@ -13235,7 +15154,7 @@ export function DocumentKnowledgeManagementPage() {
                         </div>
 
                         <div className="mt-3 h-64 overflow-hidden rounded-2xl border border-slate-100 bg-gradient-to-b from-slate-50/80 to-white p-2">
-                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                          <MeasuredResponsiveContainer>
                             <LineChart data={trendSeries} margin={{ top: 10, right: 12, bottom: 2, left: 2 }}>
                               <defs>
                                 <linearGradient id="trendDocsArea" x1="0" y1="0" x2="0" y2="1">
@@ -13321,7 +15240,7 @@ export function DocumentKnowledgeManagementPage() {
                                 isAnimationActive
                               />
                             </LineChart>
-                          </ResponsiveContainer>
+                          </MeasuredResponsiveContainer>
                         </div>
                       </Card>
                     </div>
@@ -13440,7 +15359,7 @@ export function DocumentKnowledgeManagementPage() {
                             <div className="absolute inset-x-6 top-[52%] h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
                             <div className="absolute inset-x-8 top-[78%] h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
                           </div>
-                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                          <MeasuredResponsiveContainer>
                             <BarChart data={linkageCoverage} barGap={10} barCategoryGap="24%" margin={{ top: 8, right: 8, bottom: 4, left: 2 }}>
                               <defs>
                                 <linearGradient id="linkageLinkedBar" x1="0" y1="0" x2="0" y2="1">
@@ -13506,7 +15425,7 @@ export function DocumentKnowledgeManagementPage() {
                                 <LabelList dataKey="notLinked" position="top" fill={pal.linkageNotLinkedLabel} fontSize={10} fontWeight={700} />
                               </Bar>
                             </BarChart>
-                          </ResponsiveContainer>
+                          </MeasuredResponsiveContainer>
                         </div>
                       </Card>
                     </div>
@@ -13534,6 +15453,21 @@ export function DocumentKnowledgeManagementPage() {
               )}
               right={
                 <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                  <EnterpriseGroupByControl
+                    options={REPOSITORY_TABLE_GROUP_BY_OPTIONS}
+                    value={repositoryTableGroupBy}
+                    onChange={setRepositoryTableGroupBy}
+                  />
+                  <EnterpriseSelectionToggle checked={showRepositoryTableSelection} onChange={setShowRepositoryTableSelection} />
+                  <EnterpriseColumnVisibilityControl
+                    columns={REPOSITORY_TABLE_COLUMN_VISIBILITY_OPTIONS}
+                    hidden={repositoryTableColumns.hiddenColumns}
+                    visibleCount={repositoryTableColumns.visibleColumnOrder.length}
+                    onToggle={repositoryTableColumns.toggleColumnVisibility}
+                    onShowAll={repositoryTableColumns.showAllColumns}
+                    canEnable={repositoryTableColumns.canShowColumn}
+                    limitReachedMessage={`Maximum ${REPOSITORY_TABLE_MAX_VISIBLE_COLUMNS} columns shown at once — hide one below to show another.`}
+                  />
                   {repositoryLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   <p className="text-xs text-muted-foreground">
                     Showing <span className="font-semibold text-foreground">{repositoryStart}</span>-<span className="font-semibold text-foreground">{repositoryEnd}</span> of <span className="font-semibold text-foreground">{filteredRepository.length}</span>
@@ -13663,130 +15597,332 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col">
                 {filteredRepository.length > 0 ? (
-                  <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl border-2 border-border/30 scrollbar-hide">
-                    <table className="w-full text-xs select-none">
-                      <thead className="sticky top-0 z-10 border-b border-border/40 bg-white/90 backdrop-blur dark:bg-slate-900/90">
+                  <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl scrollbar-hide">
+                    <DndContext sensors={repositoryTableColumns.dndSensors} onDragEnd={repositoryTableColumns.handleColumnDragEnd}>
+                      <table
+                        ref={repositoryTableColumns.tableRef}
+                        className={cn(
+                          'border-collapse text-xs select-none',
+                          repositoryTableColumns.hasAnyCustomWidth || repositoryTableColumns.resizingKey ? 'table-fixed w-full' : 'w-full',
+                        )}
+                      >
+                        <colgroup>
+                          {showRepositoryTableSelection ? <col className="w-10" /> : null}
+                          {repositoryTableColumns.visibleColumnOrder.map((key) => (
+                            <col key={key} style={repositoryTableColumns.columnWidthStyle(key)} />
+                          ))}
+                        </colgroup>
+                        <thead className="sticky top-0 z-10">
                         <tr className="text-left text-muted-foreground">
-                          <th className="px-3 py-2 text-left font-semibold">Document</th>
-                          <th className="px-3 py-2 text-left font-semibold">Type</th>
-                          <th className="px-3 py-2 text-left font-semibold">Capability</th>
-                          <th className="px-3 py-2 text-left font-semibold">Linked project / task</th>
-                          <th className="px-3 py-2 text-left font-semibold">Owner</th>
-                          <th className="px-3 py-2 text-left font-semibold">Version</th>
-                          <th className="px-3 py-2 text-left font-semibold">Status</th>
-                          <th className="px-3 py-2 text-left font-semibold">KB progress</th>
-                          <th className="px-3 py-2 text-left font-semibold">Access</th>
+                            {showRepositoryTableSelection ? (
+                              <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                <input
+                                  type="checkbox"
+                                  id="repository-table-select-all"
+                                  name="repository-table-select-all"
+                                  checked={
+                                    repositoryTableSelectedIds.length > 0
+                                    && repositoryTableSelectedIds.length === pagedRepositoryRows.length
+                                  }
+                                  onChange={() =>
+                                    setRepositoryTableSelectedIds(
+                                      repositoryTableSelectedIds.length === pagedRepositoryRows.length
+                                        ? []
+                                        : pagedRepositoryRows.map(({ item }) => item.id)
+                                    )
+                                  }
+                                  aria-label="Select all rows on this page"
+                                />
+                              </th>
+                            ) : null}
+                            <SortableContext items={repositoryTableColumns.visibleColumnOrder} strategy={rectSortingStrategy}>
+                              {repositoryTableColumns.visibleColumnOrder.map((key) => (
+                                <EnterpriseSortableHeaderCell
+                                  key={key}
+                                  columnKey={key}
+                                  label={repositoryTableColumnLabel(key)}
+                                  icon={repositoryTableColumnHeaderIcon(key)}
+                                  isPinned={repositoryTableColumns.isPinnedColumn(key)}
+                                  isFirstColumn={repositoryTableColumns.isFirstColumn(key)}
+                                  isLastColumn={repositoryTableColumns.isLastColumn(key)}
+                                  widthStyle={repositoryTableColumns.columnWidthStyle(key)}
+                                  sortDir={repositoryTableSort?.key === key ? repositoryTableSort.dir : null}
+                                  onToggleSort={toggleRepositoryTableSort}
+                                  frozenColumnClass={repositoryTableColumns.frozenColumnHeaderClass}
+                                  firstColumnTintClass={repositoryTableColumns.firstColumnTintHeaderClass}
+                                  isResizing={repositoryTableColumns.resizingKey === key}
+                                  onBeginResize={repositoryTableColumns.beginColumnResize}
+                                  onContextMenu={(event, columnKey) =>
+                                    repositoryTableColumns.setHeaderContextMenu({ x: event.clientX, y: event.clientY, columnKey })
+                                  }
+                                />
+                              ))}
+                            </SortableContext>
                         </tr>
                       </thead>
                       <tbody>
-                        {pagedRepository.map((item) => (
-                        (() => {
-                          const processState = repositoryKbProcessByDocumentId[item.id] ?? {
-                            status: 'idle' as const,
-                            progress: 0,
-                            message: repositoryAutoGenerateKb ? 'Ready to generate KB' : 'Auto-generate is off',
-                          }
-                          const canRunManualGenerate = processState.status !== 'queued' && processState.status !== 'processing'
-                          const processTone =
-                            processState.status === 'success'
-                              ? 'bg-emerald-500'
-                              : processState.status === 'failed'
-                                ? 'bg-rose-500'
-                                : processState.status === 'queued' || processState.status === 'processing'
-                                  ? 'bg-blue-500'
-                                  : 'bg-slate-300'
+                          {pagedRepositoryRows.map(({ item, groupLabel }, rowIndex) => {
+                            const previousGroupLabel = pagedRepositoryRows[rowIndex - 1]?.groupLabel ?? null
+                            const showGroupHeader = repositoryTableGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                            const groupTint = repositoryTableGroupBy && groupLabel ? getEnterpriseGroupTint(repositoryTableGroupBy, groupLabel) : null
+                            const isSelected = showRepositoryTableSelection && repositoryTableSelectedIds.includes(item.id)
+                            const resolveBodyCellBackground = (isFirstColumn: boolean) => {
+                              if (isSelected) return ''
+                              const stickyFirstClass =
+                                repositoryTableColumns.freezeFirstColumn && isFirstColumn
+                                  ? 'sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+                                  : ''
+                              if (groupTint) {
+                                return cn(isFirstColumn ? groupTint.first : groupTint.row, stickyFirstClass)
+                              }
+                              if (repositoryTableColumns.freezeFirstColumn && isFirstColumn) return repositoryTableColumns.frozenColumnBodyClass
+                              if (isFirstColumn) return repositoryTableColumns.firstColumnTintBodyClass
+                              return ''
+                            }
+                            const cellClass = cn(
+                              'border-b border-slate-200/20 px-3 py-2 align-top transition-colors dark:border-slate-700/20',
+                              isSelected
+                                ? 'bg-primary/10'
+                                : groupTint
+                                  ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
+                                  : 'group-hover:bg-accent/20',
+                            )
 
                           return (
-                        <tr
-                          key={item.id}
+                              <Fragment key={item.id}>
+                                {showGroupHeader ? (
+                                  <tr>
+                                    <td
+                                      colSpan={repositoryTableColumns.visibleColumnOrder.length + (showRepositoryTableSelection ? 1 : 0)}
+                                      className={cn(
+                                        'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                        groupTint?.first,
+                                      )}
+                                    >
+                                      {REPOSITORY_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === repositoryTableGroupBy)?.label}: {groupLabel}
+                                    </td>
+                                  </tr>
+                                ) : null}
+                                <tr
                           draggable
                           onDragStart={(event) => handleDocumentDragStart(event, item.id)}
-                          className="cursor-grab border-t border-border/25 transition-colors hover:bg-accent/20 active:cursor-grabbing"
+                                  className="group cursor-grab transition-colors active:cursor-grabbing"
                           onContextMenu={(event) => openRepositoryRowContextMenu(event, item)}
                         >
-                          <td className="px-3 py-2 align-top">
-                            <button type="button" className="min-w-0 text-left" onClick={() => openDetail(item.detailId)}>
-                              <div className="flex items-start gap-3">
-                                <FileTypeIconImg fileName={item.fileName || item.name} />
-                                <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-slate-900 line-clamp-1">{item.name}</p>
-                                  <div className="mt-1 flex flex-wrap gap-1.5">
-                                    {item.tags.map((tagItem) => (
-                                      <Badge key={tagItem} variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
-                                        {tagItem}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                  <p className="mt-0.5 text-[11px] text-slate-500">Updated {item.updated}</p>
-                                </div>
-                              </div>
-                            </button>
+                                  {showRepositoryTableSelection ? (
+                                    <td
+                                      className={cn(cellClass, 'w-10', resolveBodyCellBackground(false))}
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        id={`repository-table-select-${item.id}`}
+                                        name={`repository-table-select-${item.id}`}
+                                        checked={repositoryTableSelectedIds.includes(item.id)}
+                                        onChange={() => toggleRepositoryTableRowSelection(item.id)}
+                                        aria-label={`Select ${item.name}`}
+                                      />
                           </td>
-                          <td className="px-3 py-2 align-top text-foreground">{item.type}</td>
-                          <td className="px-3 py-2 align-top text-foreground">{item.capability}</td>
-                          <td className="px-3 py-2 align-top text-foreground">{item.linkedContext}</td>
-                          <td className="px-3 py-2 align-top text-foreground">{item.owner}</td>
-                          <td className="px-3 py-2 align-top text-foreground font-semibold">{item.version}</td>
-                          <td className="px-3 py-2 align-top">
-                            <Badge variant="outline" className={cn('rounded-full px-2 py-0 text-[10px] font-medium', statusBadgeClass(item.status))}>
-                              {item.status}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-2 align-top min-w-[300px]">
-                            <div className="space-y-2">
-                              <div className="h-2 overflow-hidden rounded-full bg-slate-200/80">
-                                <div className={cn('h-full rounded-full transition-[width] duration-300', processTone)} style={{ width: `${Math.max(0, Math.min(100, processState.progress))}%` }} />
-                              </div>
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className={cn(
-                                    'font-medium text-[10px]',
-                                    processState.status === 'failed'
-                                      ? 'text-rose-700'
-                                      : processState.status === 'success'
-                                        ? 'text-emerald-700'
-                                        : processState.status === 'queued' || processState.status === 'processing'
-                                          ? 'text-blue-700'
-                                          : 'text-slate-500'
-                                  )}>
-                                    {processState.status === 'queued' || processState.status === 'processing'
-                                      ? 'Processing'
-                                      : processState.status === 'success'
-                                        ? 'Completed'
-                                        : processState.status === 'failed'
-                                          ? 'Failed'
-                                          : 'Idle'}
-                                  </span>
-                                  <span className="font-semibold text-slate-600 text-[10px]">{processState.progress}%</span>
-                                </div>
-                                {(() => {
-                                  const kbStatus = getKbGenerationStatusForDocument(item.id, item.name)
+                                  ) : null}
+                                  {repositoryTableColumns.visibleColumnOrder.map((key) => {
+                                    const isFirstCol = repositoryTableColumns.visibleColumnOrder[0] === key
                                   return (
-                                    <Badge className={cn(
-                                      'rounded-full px-2 py-0 text-[9px] font-semibold flex-shrink-0 whitespace-nowrap',
-                                      kbStatus === 'generated'
-                                        ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                                        : 'bg-slate-100 text-slate-600 border border-slate-300'
-                                    )}>
-                                      {kbStatus === 'generated' ? '✓ Generated' : '○ Not Generated'}
-                                    </Badge>
-                                  )
-                                })()}
-                              </div>
-                              <p className="line-clamp-2 text-[10px] leading-tight text-slate-500">{processState.message}</p>
-                            </div>
+                                      <td
+                                        key={key}
+                                        className={cn(cellClass, resolveBodyCellBackground(isFirstCol))}
+                                        style={repositoryTableColumns.columnWidthStyle(key)}
+                                      >
+                                        {renderRepositoryTableColumnCell(item, key)}
                           </td>
-                          <td className="px-3 py-2 align-top">
-                            <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
-                              {item.accessScope}
-                            </Badge>
-                          </td>
+                                    )
+                                  })}
                         </tr>
+                              </Fragment>
                           )
-                        })()
-                      ))}
+                          })}
                       </tbody>
                     </table>
+                    </DndContext>
+
+                    <ContextMenu
+                      open={repositoryTableColumns.headerContextMenu !== null}
+                      x={repositoryTableColumns.headerContextMenu?.x ?? 0}
+                      y={repositoryTableColumns.headerContextMenu?.y ?? 0}
+                      onClose={() => repositoryTableColumns.setHeaderContextMenu(null)}
+                    >
+                      <ContextMenuItem
+                        onSelect={() => {
+                          const key = repositoryTableColumns.headerContextMenu?.columnKey
+                          if (!key) return
+                          repositoryTableColumns.autoResizeColumn(key)
+                          repositoryTableColumns.setHeaderContextMenu(null)
+                        }}
+                      >
+                        <UnfoldHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                        Auto Resize Column
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem
+                        onSelect={() => {
+                          const key = repositoryTableColumns.headerContextMenu?.columnKey
+                          if (!key) return
+                          repositoryTableColumns.setColumnWidthDialog({ open: true, columnKey: key, valuePx: '' })
+                          repositoryTableColumns.setHeaderContextMenu(null)
+                        }}
+                      >
+                        <Ruler className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                        Column Width...
+                      </ContextMenuItem>
+                      {repositoryTableColumns.hasAnyCustomWidth ? (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onSelect={() => {
+                              repositoryTableColumns.resetAllColumnWidths()
+                              repositoryTableColumns.setHeaderContextMenu(null)
+                            }}
+                          >
+                            <RotateCcw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            Reset Column Width
+                          </ContextMenuItem>
+                        </>
+                      ) : null}
+                      {repositoryTableColumns.headerContextMenu?.columnKey
+                      && repositoryTableColumns.isSecondColumn(repositoryTableColumns.headerContextMenu.columnKey)
+                      && !repositoryTableColumns.isLastColumn(repositoryTableColumns.headerContextMenu.columnKey) ? (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onSelect={() => {
+                              const key = repositoryTableColumns.headerContextMenu?.columnKey
+                              if (!key) return
+                              repositoryTableColumns.moveColumnRight(key)
+                              repositoryTableColumns.setHeaderContextMenu(null)
+                            }}
+                          >
+                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            Move Column to Right
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onSelect={() => {
+                              const key = repositoryTableColumns.headerContextMenu?.columnKey
+                              if (!key) return
+                              repositoryTableColumns.moveColumnToLast(key)
+                              repositoryTableColumns.setHeaderContextMenu(null)
+                            }}
+                          >
+                            <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            Move Column to Last Position
+                          </ContextMenuItem>
+                        </>
+                      ) : null}
+                      {repositoryTableColumns.headerContextMenu?.columnKey
+                      && repositoryTableColumns.isThirdColumnOrLater(repositoryTableColumns.headerContextMenu.columnKey) ? (
+                        <>
+                          <ContextMenuSeparator />
+                          {(() => {
+                            const key = repositoryTableColumns.headerContextMenu.columnKey
+                            const columnIndex = repositoryTableColumns.getColumnIndex(key)
+                            const canMoveEarlier = columnIndex > 1
+                            const canMoveLater = columnIndex >= 0 && columnIndex < repositoryTableColumns.columnOrder.length - 1
+                            return (
+                              <>
+                                {canMoveEarlier ? (
+                                  <ContextMenuItem
+                                    onSelect={() => {
+                                      repositoryTableColumns.moveColumnToFirst(key)
+                                      repositoryTableColumns.setHeaderContextMenu(null)
+                                    }}
+                                  >
+                                    <ArrowLeftToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                    Move Column to First Position
+                                  </ContextMenuItem>
+                                ) : null}
+                                {canMoveEarlier ? (
+                                  <ContextMenuItem
+                                    onSelect={() => {
+                                      repositoryTableColumns.moveColumnLeft(key)
+                                      repositoryTableColumns.setHeaderContextMenu(null)
+                                    }}
+                                  >
+                                    <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                    Move Column to Left
+                                  </ContextMenuItem>
+                                ) : null}
+                                {canMoveLater ? (
+                                  <ContextMenuItem
+                                    onSelect={() => {
+                                      repositoryTableColumns.moveColumnRight(key)
+                                      repositoryTableColumns.setHeaderContextMenu(null)
+                                    }}
+                                  >
+                                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                    Move Column to Right
+                                  </ContextMenuItem>
+                                ) : null}
+                                {canMoveLater ? (
+                                  <ContextMenuItem
+                                    onSelect={() => {
+                                      repositoryTableColumns.moveColumnToLast(key)
+                                      repositoryTableColumns.setHeaderContextMenu(null)
+                                    }}
+                                  >
+                                    <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                    Move Column to Last Position
+                                  </ContextMenuItem>
+                                ) : null}
+                              </>
+                            )
+                          })()}
+                        </>
+                      ) : null}
+                      {repositoryTableColumns.headerContextMenu?.columnKey
+                      && repositoryTableColumns.isFirstColumn(repositoryTableColumns.headerContextMenu.columnKey) ? (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onSelect={() => {
+                              repositoryTableColumns.setFreezeFirstColumn((v) => !v)
+                              repositoryTableColumns.setHeaderContextMenu(null)
+                            }}
+                          >
+                            <Pin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            Freeze Column
+                            <span className="ml-auto text-xs text-muted-foreground">
+                              {repositoryTableColumns.freezeFirstColumn ? 'On' : 'Off'}
+                            </span>
+                          </ContextMenuItem>
+                        </>
+                      ) : null}
+                    </ContextMenu>
+
+                    <EnterpriseColumnWidthModal
+                      open={repositoryTableColumns.columnWidthDialog?.open ?? false}
+                      onClose={() => repositoryTableColumns.setColumnWidthDialog(null)}
+                      columnLabel={
+                        repositoryTableColumns.columnWidthDialog
+                          ? repositoryTableColumnLabel(repositoryTableColumns.columnWidthDialog.columnKey)
+                          : '—'
+                      }
+                      valuePx={repositoryTableColumns.columnWidthDialog?.valuePx ?? ''}
+                      onValuePxChange={(value) =>
+                        repositoryTableColumns.setColumnWidthDialog((prev) => (prev ? { ...prev, valuePx: value } : prev))
+                      }
+                      onApply={(widthPx) => {
+                        if (!repositoryTableColumns.columnWidthDialog) return
+                        const key = repositoryTableColumns.columnWidthDialog.columnKey
+                        repositoryTableColumns.setColumnWidthsWithSnapshot((prev) => {
+                          if (widthPx == null) {
+                            const next = { ...prev }
+                            delete next[key]
+                            return next
+                          }
+                          return { ...prev, [key]: widthPx }
+                        }, repositoryTableColumns.tableRef.current)
+                        repositoryTableColumns.setColumnWidthDialog(null)
+                      }}
+                      dialogTitleId="repository-table-column-width-dialog-title"
+                    />
                   </div>
                 ) : repositoryLoading ? (
                   <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10">
@@ -14081,6 +16217,25 @@ export function DocumentKnowledgeManagementPage() {
                               <LayoutGrid className="h-3.5 w-3.5 shrink-0" />
                             </button>
                           </div>
+                          {kbViewMode === 'table' ? (
+                            <>
+                              <EnterpriseGroupByControl
+                                options={KB_TABLE_GROUP_BY_OPTIONS}
+                                value={kbTableGroupBy}
+                                onChange={setKbTableGroupBy}
+                              />
+                              <EnterpriseSelectionToggle checked={showKbTableSelection} onChange={setShowKbTableSelection} />
+                              <EnterpriseColumnVisibilityControl
+                                columns={KB_TABLE_COLUMN_VISIBILITY_OPTIONS}
+                                hidden={kbTableColumns.hiddenColumns}
+                                visibleCount={kbTableColumns.visibleColumnOrder.length}
+                                onToggle={kbTableColumns.toggleColumnVisibility}
+                                onShowAll={kbTableColumns.showAllColumns}
+                                canEnable={kbTableColumns.canShowColumn}
+                                limitReachedMessage={`Maximum ${KB_TABLE_MAX_VISIBLE_COLUMNS} columns shown at once — hide one below to show another.`}
+                              />
+                            </>
+                          ) : null}
                           <p className="text-xs text-muted-foreground">
                             Showing{' '}
                             <span className="font-semibold text-foreground">
@@ -14171,177 +16326,416 @@ export function DocumentKnowledgeManagementPage() {
                   </div>
                   {!kbLoading && !kbLive ? (
                     <div className="shrink-0 rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
-                      Tidak dapat menghubungi Knowledge Base
-                      {kbLoadError ? ` (${kbLoadError})` : ''}. Pastikan service berjalan (default{' '}
-                      <code className="rounded bg-white/90 px-1">localhost:8415</code>) atau atur base URL di{' '}
+                      Unable to reach the Knowledge Base
+                      {kbLoadError ? ` (${kbLoadError})` : ''}. Make sure the service is running (default{' '}
+                      <code className="rounded bg-white/90 px-1">localhost:8415</code>) or set the base URL in{' '}
                       <Link to="/platform-settings-administration?section=knowledge-base" className="font-semibold underline underline-offset-2">
                         Platform Settings → Knowledge Base
                       </Link>
-                      . Di bawah ini contoh UI saja (4 entri demo).
+                      . The panel stays empty until the connection recovers — no demo data is used.
                     </div>
                   ) : null}
                   {kbLoading ? (
                     <div className="flex flex-1 items-center justify-center py-12">
                       <PlatformServiceLoadingPanel
-                        title="Memuat knowledge base"
-                        description="Menghubungkan ke layanan knowledge-base dan memuat referensi."
+                        title="Loading knowledge base"
+                        description="Connecting to the knowledge-base service and loading references."
                         compact
                       />
                     </div>
                   ) : (
                     <>
-                      {kbLive && displayedKbEntries.length === 0 ? (
+                      {displayedKbEntries.length === 0 ? (
                         <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-6 text-center text-xs text-slate-600">
-                          No entries yet. Click <span className="font-semibold">Add reference</span> to add context (for example glossary or business rules).
+                          {kbLive
+                            ? <>No entries yet. Click <span className="font-semibold">Add reference</span> to add context (for example glossary or business rules).</>
+                            : 'No knowledge base entries to show while the service is unavailable.'}
                         </p>
                       ) : null}
 
                       {sortedKbEntries.length > 0 && kbViewMode === 'table' ? (
-                        <div className="flex-1 min-h-0 w-full overflow-auto rounded-xl border border-border/30 scrollbar-hide [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                          <table className="w-full text-xs select-none">
-                            <thead className="sticky top-0 z-10 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-border/40">
+                        <div className="flex-1 min-h-0 w-full overflow-auto rounded-xl scrollbar-hide [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                          <DndContext sensors={kbTableColumns.dndSensors} onDragEnd={kbTableColumns.handleColumnDragEnd}>
+                            <table
+                              ref={kbTableColumns.tableRef}
+                              className={cn(
+                                'border-collapse text-xs select-none',
+                                kbTableColumns.hasAnyCustomWidth || kbTableColumns.resizingKey ? 'table-fixed w-full' : 'w-full',
+                              )}
+                            >
+                              <colgroup>
+                                {showKbTableSelection ? <col className="w-10" /> : null}
+                                {kbTableColumns.visibleColumnOrder.map((key) => (
+                                  <col key={key} style={kbTableColumns.columnWidthStyle(key)} />
+                                ))}
+                              </colgroup>
+                              <thead className="sticky top-0 z-10">
                               <tr className="text-left text-muted-foreground">
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('reference')}>
-                                    Reference
-                                    {kbTableSort?.key === 'reference'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
+                                  {showKbTableSelection ? (
+                                    <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                      <input
+                                        type="checkbox"
+                                        id="kb-table-select-all"
+                                        name="kb-table-select-all"
+                                        checked={
+                                          kbTableSelectedIds.length > 0
+                                          && kbTableSelectedIds.length === pagedKbTableRows.length
+                                        }
+                                        onChange={() =>
+                                          setKbTableSelectedIds(
+                                            kbTableSelectedIds.length === pagedKbTableRows.length
+                                              ? []
+                                              : pagedKbTableRows.map(({ entry }) => entry.id)
+                                          )
+                                        }
+                                        aria-label="Select all rows on this page"
+                                      />
                                 </th>
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('category')}>
-                                    Category
-                                    {kbTableSort?.key === 'category'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
-                                </th>
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('workspace')}>
-                                    Workspace
-                                    {kbTableSort?.key === 'workspace'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
-                                </th>
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('department')}>
-                                    Department
-                                    {kbTableSort?.key === 'department'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
-                                </th>
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('division')}>
-                                    Division
-                                    {kbTableSort?.key === 'division'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
-                                </th>
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('relevance')}>
-                                    Relevance
-                                    {kbTableSort?.key === 'relevance'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
-                                </th>
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('created')}>
-                                    Created
-                                    {kbTableSort?.key === 'created'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
-                                </th>
-                                <th className="px-3 py-2 text-left font-semibold">
-                                  <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleKbTableSort('updated')}>
-                                    Updated
-                                    {kbTableSort?.key === 'updated'
-                                      ? (kbTableSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
-                                      : <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                                  </button>
-                                </th>
+                                  ) : null}
+                                  <SortableContext items={kbTableColumns.visibleColumnOrder} strategy={rectSortingStrategy}>
+                                    {kbTableColumns.visibleColumnOrder.map((key) => {
+                                      const filterSlot =
+                                        key === 'category' ? (
+                                          <EnterpriseColumnFilterDropdown
+                                            label="Category"
+                                            ariaLabel="Filter categories in table"
+                                            options={categoryColumnOptions.map((value) => ({ value }))}
+                                            selected={categoryColumnFilters}
+                                            onShowAll={() => setCategoryColumnFilters(new Set())}
+                                            onToggleOption={(value) =>
+                                              setCategoryColumnFilters((prev) => {
+                                                const next = new Set(prev)
+                                                if (next.has(value)) next.delete(value)
+                                                else next.add(value)
+                                                return next
+                                              })
+                                            }
+                                          />
+                                        ) : key === 'workspace' ? (
+                                          <EnterpriseColumnFilterDropdown
+                                            label="Workspace"
+                                            ariaLabel="Filter workspaces in table"
+                                            options={workspaceColumnOptions.map((value) => ({ value }))}
+                                            selected={workspaceColumnFilters}
+                                            onShowAll={() => setWorkspaceColumnFilters(new Set())}
+                                            onToggleOption={(value) =>
+                                              setWorkspaceColumnFilters((prev) => {
+                                                const next = new Set(prev)
+                                                if (next.has(value)) next.delete(value)
+                                                else next.add(value)
+                                                return next
+                                              })
+                                            }
+                                          />
+                                        ) : key === 'relevance' ? (
+                                          <EnterpriseColumnFilterDropdown
+                                            label="Relevance"
+                                            ariaLabel="Filter relevance in table"
+                                            options={relevanceColumnOptions.map((value) => ({ value }))}
+                                            selected={relevanceColumnFilters}
+                                            onShowAll={() => setRelevanceColumnFilters(new Set())}
+                                            onToggleOption={(value) =>
+                                              setRelevanceColumnFilters((prev) => {
+                                                const next = new Set(prev)
+                                                if (next.has(value)) next.delete(value)
+                                                else next.add(value)
+                                                return next
+                                              })
+                                            }
+                                          />
+                                        ) : undefined
+                                      return (
+                                        <EnterpriseSortableHeaderCell
+                                          key={key}
+                                          columnKey={key}
+                                          label={kbTableColumnLabel(key)}
+                                          icon={kbTableColumnHeaderIcon(key)}
+                                          isPinned={kbTableColumns.isPinnedColumn(key)}
+                                          isFirstColumn={kbTableColumns.isFirstColumn(key)}
+                                          isLastColumn={kbTableColumns.isLastColumn(key)}
+                                          widthStyle={kbTableColumns.columnWidthStyle(key)}
+                                          sortDir={kbTableSort?.key === key ? kbTableSort.dir : null}
+                                          onToggleSort={toggleKbTableSort}
+                                          filterSlot={filterSlot}
+                                          frozenColumnClass={kbTableColumns.frozenColumnHeaderClass}
+                                          firstColumnTintClass={kbTableColumns.firstColumnTintHeaderClass}
+                                          isResizing={kbTableColumns.resizingKey === key}
+                                          onBeginResize={kbTableColumns.beginColumnResize}
+                                          onContextMenu={(event, columnKey) =>
+                                            kbTableColumns.setHeaderContextMenu({ x: event.clientX, y: event.clientY, columnKey })
+                                          }
+                                        />
+                                      )
+                                    })}
+                                  </SortableContext>
                               </tr>
                             </thead>
                             <tbody>
-                              {kbTableRows.map((entry) => (
-                                <tr
-                                  key={entry.id}
-                                  className="cursor-pointer border-t border-border/25 transition-colors hover:bg-accent/20"
-                                  onClick={() => openKbEntryFromTable(entry)}
-                                  onContextMenu={(event) => openKbRowContextMenu(event, entry.id, entry.detailId)}
-                                >
-                                  <td className="px-3 py-2 align-top">
-                                    <div className="min-w-0">
-                                      {kbInlineRename?.entryId === entry.id ? (
-                                        <Input
-                                          ref={kbInlineRenameInputRef}
-                                          autoFocus
-                                          value={kbInlineRename.value}
-                                          onClick={(e) => e.stopPropagation()}
-                                          onMouseDown={(e) => e.stopPropagation()}
-                                          onChange={(e) => {
-                                            const nextValue = normalizeKbTitleInput(e.target.value)
-                                            setKbInlineRename({ entryId: entry.id, value: nextValue })
-                                            kbInlineRenameCursorRef.current = e.target.selectionStart ?? nextValue.length
-                                          }}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              e.preventDefault()
-                                              void commitKbInlineRename(entry)
-                                            }
-                                            if (e.key === 'Escape') {
-                                              e.preventDefault()
-                                              cancelKbInlineRename()
-                                            }
-                                          }}
-                                          onBlur={() => {
-                                            void commitKbInlineRename(entry)
-                                          }}
-                                          className="h-8 rounded-lg text-sm font-semibold"
-                                        />
-                                      ) : (
-                                        <p className="text-sm font-semibold text-slate-900 line-clamp-1">{entry.title}</p>
-                                      )}
-                                      <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-2">
-                                        {entry.shortSummary?.trim() || `Category: ${entry.category} | Workspace: ${entry.linkedWorkspace}`}
-                                      </p>
-                                      <div className="mt-1.5 flex flex-wrap gap-1">
-                                        {entry.departmentId ? (
-                                          <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50/80 px-2 py-0 text-[9px] font-medium text-slate-600">
-                                            Dept: {entry.departmentName || entry.departmentId}
-                                          </Badge>
+                                {pagedKbTableRows.map(({ entry, groupLabel }, rowIndex) => {
+                                  const previousGroupLabel = pagedKbTableRows[rowIndex - 1]?.groupLabel ?? null
+                                  const showGroupHeader = kbTableGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                                  const groupTint = kbTableGroupBy && groupLabel ? getEnterpriseGroupTint(kbTableGroupBy, groupLabel) : null
+                                  const isSelected = showKbTableSelection && kbTableSelectedIds.includes(entry.id)
+                                  const resolveBodyCellBackground = (isFirstColumn: boolean) => {
+                                    if (isSelected) return ''
+                                    const stickyFirstClass =
+                                      kbTableColumns.freezeFirstColumn && isFirstColumn
+                                        ? 'sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+                                        : ''
+                                    if (groupTint) {
+                                      return cn(isFirstColumn ? groupTint.first : groupTint.row, stickyFirstClass)
+                                    }
+                                    if (kbTableColumns.freezeFirstColumn && isFirstColumn) return kbTableColumns.frozenColumnBodyClass
+                                    if (isFirstColumn) return kbTableColumns.firstColumnTintBodyClass
+                                    return ''
+                                  }
+                                  const cellClass = cn(
+                                    'border-b border-slate-200/20 px-3 py-2 align-top transition-colors dark:border-slate-700/20',
+                                    isSelected
+                                      ? 'bg-primary/10'
+                                      : groupTint
+                                        ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
+                                        : 'group-hover:bg-accent/20',
+                                  )
+
+                                  return (
+                                    <Fragment key={entry.id}>
+                                      {showGroupHeader ? (
+                                        <tr>
+                                          <td
+                                            colSpan={kbTableColumns.visibleColumnOrder.length + (showKbTableSelection ? 1 : 0)}
+                                            className={cn(
+                                              'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                              groupTint?.first,
+                                            )}
+                                          >
+                                            {KB_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === kbTableGroupBy)?.label}: {groupLabel}
+                                          </td>
+                                        </tr>
                                         ) : null}
-                                        {entry.divisionId ? (
-                                          <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50/80 px-2 py-0 text-[9px] font-medium text-slate-600">
-                                            Div: {entry.divisionName || entry.divisionId}
-                                          </Badge>
+                                      <tr
+                                        className="group cursor-pointer transition-colors"
+                                        onClick={(event) => {
+                                          const target = event.target as HTMLElement
+                                          if (target.closest('button') || target.closest('input') || target.closest('a')) return
+                                          openKbEntryFromTable(entry)
+                                        }}
+                                        onContextMenu={(event) => openKbRowContextMenu(event, entry.id, entry.detailId)}
+                                      >
+                                        {showKbTableSelection ? (
+                                          <td
+                                            className={cn(cellClass, 'w-10', resolveBodyCellBackground(false))}
+                                            onClick={(event) => event.stopPropagation()}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              id={`kb-table-select-${entry.id}`}
+                                              name={`kb-table-select-${entry.id}`}
+                                              checked={kbTableSelectedIds.includes(entry.id)}
+                                              onChange={() => toggleKbTableRowSelection(entry.id)}
+                                              aria-label={`Select ${entry.title}`}
+                                            />
+                                  </td>
                                         ) : null}
-                                      </div>
-                                    </div>
+                                        {kbTableColumns.visibleColumnOrder.map((key) => {
+                                          const isFirstCol = kbTableColumns.visibleColumnOrder[0] === key
+                                          return (
+                                            <td
+                                              key={key}
+                                              className={cn(cellClass, resolveBodyCellBackground(isFirstCol))}
+                                              style={kbTableColumns.columnWidthStyle(key)}
+                                            >
+                                              {renderKbTableColumnCell(entry, key)}
                                   </td>
-                                  <td className="px-3 py-2 align-top text-foreground">{entry.category}</td>
-                                  <td className="px-3 py-2 align-top text-foreground">{entry.linkedWorkspace}</td>
-                                  <td className="px-3 py-2 align-top text-foreground">{entry.departmentName || entry.departmentId || '-'}</td>
-                                  <td className="px-3 py-2 align-top text-foreground">{entry.divisionName || entry.divisionId || '-'}</td>
-                                  <td className="px-3 py-2 align-top">
-                                    <Badge
-                                      variant="outline"
-                                      className="rounded-full border-sky-200 bg-sky-50 px-2 py-0 text-[10px] font-medium text-sky-700"
-                                    >
-                                      {entry.relevance}
-                                    </Badge>
-                                  </td>
-                                  <td className="px-3 py-2 align-top text-foreground">{entry.created}</td>
-                                  <td className="px-3 py-2 align-top text-foreground">{entry.referenced}</td>
+                                          )
+                                        })}
                                 </tr>
-                              ))}
+                                    </Fragment>
+                                  )
+                                })}
                             </tbody>
                           </table>
+                          </DndContext>
+
+                          <ContextMenu
+                            open={kbTableColumns.headerContextMenu !== null}
+                            x={kbTableColumns.headerContextMenu?.x ?? 0}
+                            y={kbTableColumns.headerContextMenu?.y ?? 0}
+                            onClose={() => kbTableColumns.setHeaderContextMenu(null)}
+                          >
+                            <ContextMenuItem
+                              onSelect={() => {
+                                const key = kbTableColumns.headerContextMenu?.columnKey
+                                if (!key) return
+                                kbTableColumns.autoResizeColumn(key)
+                                kbTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <UnfoldHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Auto Resize Column
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                const key = kbTableColumns.headerContextMenu?.columnKey
+                                if (!key) return
+                                kbTableColumns.setColumnWidthDialog({ open: true, columnKey: key, valuePx: '' })
+                                kbTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <Ruler className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Column Width...
+                            </ContextMenuItem>
+                            {kbTableColumns.hasAnyCustomWidth ? (
+                              <>
+                                <ContextMenuSeparator />
+                                <ContextMenuItem
+                                  onSelect={() => {
+                                    kbTableColumns.resetAllColumnWidths()
+                                    kbTableColumns.setHeaderContextMenu(null)
+                                  }}
+                                >
+                                  <RotateCcw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                  Reset Column Width
+                                </ContextMenuItem>
+                              </>
+                            ) : null}
+                            {kbTableColumns.headerContextMenu?.columnKey
+                            && kbTableColumns.isSecondColumn(kbTableColumns.headerContextMenu.columnKey)
+                            && !kbTableColumns.isLastColumn(kbTableColumns.headerContextMenu.columnKey) ? (
+                              <>
+                                <ContextMenuSeparator />
+                                <ContextMenuItem
+                                  onSelect={() => {
+                                    const key = kbTableColumns.headerContextMenu?.columnKey
+                                    if (!key) return
+                                    kbTableColumns.moveColumnRight(key)
+                                    kbTableColumns.setHeaderContextMenu(null)
+                                  }}
+                                >
+                                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                  Move Column to Right
+                                </ContextMenuItem>
+                                <ContextMenuItem
+                                  onSelect={() => {
+                                    const key = kbTableColumns.headerContextMenu?.columnKey
+                                    if (!key) return
+                                    kbTableColumns.moveColumnToLast(key)
+                                    kbTableColumns.setHeaderContextMenu(null)
+                                  }}
+                                >
+                                  <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                  Move Column to Last Position
+                                </ContextMenuItem>
+                              </>
+                            ) : null}
+                            {kbTableColumns.headerContextMenu?.columnKey
+                            && kbTableColumns.isThirdColumnOrLater(kbTableColumns.headerContextMenu.columnKey) ? (
+                              <>
+                                <ContextMenuSeparator />
+                                {(() => {
+                                  const key = kbTableColumns.headerContextMenu.columnKey
+                                  const columnIndex = kbTableColumns.getColumnIndex(key)
+                                  const canMoveEarlier = columnIndex > 1
+                                  const canMoveLater = columnIndex >= 0 && columnIndex < kbTableColumns.columnOrder.length - 1
+                                  return (
+                                    <>
+                                      {canMoveEarlier ? (
+                                        <ContextMenuItem
+                                          onSelect={() => {
+                                            kbTableColumns.moveColumnToFirst(key)
+                                            kbTableColumns.setHeaderContextMenu(null)
+                                          }}
+                                        >
+                                          <ArrowLeftToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                          Move Column to First Position
+                                        </ContextMenuItem>
+                                      ) : null}
+                                      {canMoveEarlier ? (
+                                        <ContextMenuItem
+                                          onSelect={() => {
+                                            kbTableColumns.moveColumnLeft(key)
+                                            kbTableColumns.setHeaderContextMenu(null)
+                                          }}
+                                        >
+                                          <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                          Move Column to Left
+                                        </ContextMenuItem>
+                                      ) : null}
+                                      {canMoveLater ? (
+                                        <ContextMenuItem
+                                          onSelect={() => {
+                                            kbTableColumns.moveColumnRight(key)
+                                            kbTableColumns.setHeaderContextMenu(null)
+                                          }}
+                                        >
+                                          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                          Move Column to Right
+                                        </ContextMenuItem>
+                                      ) : null}
+                                      {canMoveLater ? (
+                                        <ContextMenuItem
+                                          onSelect={() => {
+                                            kbTableColumns.moveColumnToLast(key)
+                                            kbTableColumns.setHeaderContextMenu(null)
+                                          }}
+                                        >
+                                          <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                          Move Column to Last Position
+                                        </ContextMenuItem>
+                                      ) : null}
+                                    </>
+                                  )
+                                })()}
+                              </>
+                            ) : null}
+                            {kbTableColumns.headerContextMenu?.columnKey
+                            && kbTableColumns.isFirstColumn(kbTableColumns.headerContextMenu.columnKey) ? (
+                              <>
+                                <ContextMenuSeparator />
+                                <ContextMenuItem
+                                  onSelect={() => {
+                                    kbTableColumns.setFreezeFirstColumn((v) => !v)
+                                    kbTableColumns.setHeaderContextMenu(null)
+                                  }}
+                                >
+                                  <Pin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                  Freeze Column
+                                  <span className="ml-auto text-xs text-muted-foreground">
+                                    {kbTableColumns.freezeFirstColumn ? 'On' : 'Off'}
+                                  </span>
+                                </ContextMenuItem>
+                              </>
+                            ) : null}
+                          </ContextMenu>
+
+                          <EnterpriseColumnWidthModal
+                            open={kbTableColumns.columnWidthDialog?.open ?? false}
+                            onClose={() => kbTableColumns.setColumnWidthDialog(null)}
+                            columnLabel={
+                              kbTableColumns.columnWidthDialog
+                                ? kbTableColumnLabel(kbTableColumns.columnWidthDialog.columnKey)
+                                : '—'
+                            }
+                            valuePx={kbTableColumns.columnWidthDialog?.valuePx ?? ''}
+                            onValuePxChange={(value) =>
+                              kbTableColumns.setColumnWidthDialog((prev) => (prev ? { ...prev, valuePx: value } : prev))
+                            }
+                            onApply={(widthPx) => {
+                              if (!kbTableColumns.columnWidthDialog) return
+                              const key = kbTableColumns.columnWidthDialog.columnKey
+                              kbTableColumns.setColumnWidthsWithSnapshot((prev) => {
+                                if (widthPx == null) {
+                                  const next = { ...prev }
+                                  delete next[key]
+                                  return next
+                                }
+                                return { ...prev, [key]: widthPx }
+                              }, kbTableColumns.tableRef.current)
+                              kbTableColumns.setColumnWidthDialog(null)
+                            }}
+                            dialogTitleId="kb-table-column-width-dialog-title"
+                          />
                         </div>
                       ) : null}
 
@@ -14615,7 +17009,7 @@ export function DocumentKnowledgeManagementPage() {
             <DocPanelSection
               id="templates"
               title="Templates & reusable content"
-              description="Master template library from Document Knowledge — create, preview, and use governed templates across documents."
+              description="Structured template library with category folders, sorting, and quick preview context."
               highlight={activePanel === 'templates'}
               variant="glass"
               contentOverflow="visible"
@@ -14629,16 +17023,22 @@ export function DocumentKnowledgeManagementPage() {
               )}
               right={
                 <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                  <EnterpriseGroupByControl
+                    options={TEMPLATE_GROUP_BY_OPTIONS}
+                    value={templateGroupBy}
+                    onChange={setTemplateGroupBy}
+                  />
+                  <EnterpriseSelectionToggle checked={showTemplateSelection} onChange={setShowTemplateSelection} />
+                  <EnterpriseColumnVisibilityControl
+                    columns={TEMPLATE_TABLE_COLUMN_VISIBILITY_OPTIONS}
+                    hidden={templateColumns.hiddenColumns}
+                    visibleCount={templateColumns.visibleColumnOrder.length}
+                    onToggle={templateColumns.toggleColumnVisibility}
+                    onShowAll={templateColumns.showAllColumns}
+                    canEnable={templateColumns.canShowColumn}
+                    limitReachedMessage={`Maximum ${TEMPLATE_TABLE_MAX_VISIBLE_COLUMNS} columns shown at once — hide one below to show another.`}
+                  />
                   {templateLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  <div className="flex flex-wrap gap-2">
-                    {panelActionButton('Use Template', Copy, () => {
-                      const first = pagedMasterTemplates[0]
-                      if (first) void handleUseMasterTemplate(first.id)
-                    })}
-                    {panelActionButton('New Template', Plus, () => {
-                      void handleCreateMasterTemplate()
-                    })}
-                  </div>
                   <p className="text-xs text-muted-foreground">
                     Showing <span className="font-semibold text-foreground">{templateStart}</span>-<span className="font-semibold text-foreground">{templateEnd}</span> of <span className="font-semibold text-foreground">{filteredMasterTemplates.length}</span>
                   </p>
@@ -14675,150 +17075,433 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
               }
             >
-              <div className="relative flex h-full min-h-0 flex-col gap-3 overflow-visible">
+              <div
+                className={cn(
+                  'relative flex h-full min-h-0 flex-col gap-3 overflow-visible transition-all duration-200',
+                  isTemplateDragActive && 'rounded-xl bg-blue-50/30 ring-2 ring-inset ring-blue-400/70',
+                )}
+                onDragOver={handleTemplateDragOver}
+                onDragLeave={handleTemplateDragLeave}
+                onDrop={handleTemplateDrop}
+              >
+                {isTemplateDragActive ? (
+                  <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-blue-500/5">
+                    <div className="text-center">
+                      <Upload className="mx-auto mb-2 h-8 w-8 text-blue-500" />
+                      <p className="text-sm font-semibold text-blue-700">Drop Word template to upload</p>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="flex shrink-0 flex-col gap-3">
                   {templateError ? (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                       Failed to load master templates: {templateError}
                     </div>
                   ) : null}
-                  {templateCategoryFilter ? (
-                    <div className="flex flex-wrap items-center gap-1 text-sm">
-                      <button
-                        type="button"
-                        className="inline-flex items-center rounded-md px-1.5 py-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                        title="Back to all categories"
-                        onClick={() => setTemplateCategoryFilter(null)}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md px-2 py-1 font-medium text-foreground"
-                        onClick={() => setTemplateCategoryFilter(null)}
-                      >
-                        All categories
-                      </button>
-                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
-                      <span className="rounded-md px-2 py-1 font-medium text-foreground">{templateCategoryFilter}</span>
-                    </div>
-                  ) : null}
-
-                  {deferredQuery.length === 0 && templateCategoryFolders.length > 0 ? (
-                    <div className="flex shrink-0 flex-wrap gap-2 overflow-visible pt-2">
-                      {templateCategoryFolders.map((folder) => (
-                        <DocumentRepositoryFolderCard
-                          key={folder.id}
-                          folder={folder}
-                          isRenaming={false}
-                          isDragOver={false}
-                          onOpen={() => setTemplateCategoryFilter(folder.name)}
-                          onStartRename={() => undefined}
-                          onRename={() => undefined}
-                          onCancelRename={() => undefined}
-                          onContextMenu={(event) => event.preventDefault()}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDragLeave={() => undefined}
-                          onDrop={(event) => event.preventDefault()}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
 
                 <div className="flex min-h-0 flex-1 flex-col">
                   {filteredMasterTemplates.length > 0 ? (
-                    <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl border-2 border-border/30 scrollbar-hide">
-                      <table className="w-full text-xs select-none">
-                        <thead className="sticky top-0 z-10 border-b border-border/40 bg-white/90 backdrop-blur dark:bg-slate-900/90">
+                    <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl scrollbar-hide">
+                      <DndContext sensors={templateColumns.dndSensors} onDragEnd={templateColumns.handleColumnDragEnd}>
+                        <table
+                          ref={templateColumns.tableRef}
+                          className={cn(
+                            'border-collapse text-xs select-none',
+                            templateColumns.hasAnyCustomWidth || templateColumns.resizingKey ? 'table-fixed w-full' : 'w-full',
+                          )}
+                        >
+                          <colgroup>
+                            {showTemplateSelection ? <col className="w-10" /> : null}
+                            {templateColumns.visibleColumnOrder.map((key) => (
+                              <col key={key} style={templateColumns.columnWidthStyle(key)} />
+                            ))}
+                          </colgroup>
+                          <thead className="sticky top-0 z-10">
                           <tr className="text-left text-muted-foreground">
-                            <th className="px-3 py-2 text-left font-semibold">Master template</th>
-                            <th className="px-3 py-2 text-left font-semibold">Document type</th>
-                            <th className="px-3 py-2 text-left font-semibold">Category</th>
-                            <th className="px-3 py-2 text-left font-semibold">Code</th>
-                            <th className="px-3 py-2 text-left font-semibold">Version / status</th>
-                            <th className="px-3 py-2 text-left font-semibold">Usage</th>
-                            <th className="px-3 py-2 text-left font-semibold">Actions</th>
+                              {showTemplateSelection ? (
+                                <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                  <input
+                                    type="checkbox"
+                                    id="template-select-all"
+                                    name="template-select-all"
+                                    checked={
+                                      templateSelectedIds.length > 0
+                                      && templateSelectedIds.length === pagedMasterTemplateRows.length
+                                    }
+                                    onChange={() =>
+                                      setTemplateSelectedIds(
+                                        templateSelectedIds.length === pagedMasterTemplateRows.length
+                                          ? []
+                                          : pagedMasterTemplateRows.map(({ row }) => row.id)
+                                      )
+                                    }
+                                    aria-label="Select all rows on this page"
+                                  />
+                                </th>
+                              ) : null}
+                              <SortableContext items={templateColumns.visibleColumnOrder} strategy={rectSortingStrategy}>
+                                {templateColumns.visibleColumnOrder.map((key) => {
+                                  const filterSlot =
+                                    key === 'documentType' ? (
+                                      <EnterpriseColumnFilterDropdown
+                                        label="Type"
+                                        ariaLabel="Filter template types in table"
+                                        options={templateTypeOptionsList}
+                                        selected={templateTypeFilterTags}
+                                        onShowAll={() => setTemplateTypeFilterTags(new Set())}
+                                        onToggleOption={(value) =>
+                                          setTemplateTypeFilterTags((prev) => {
+                                            const next = new Set(prev)
+                                            if (next.has(value)) next.delete(value)
+                                            else next.add(value)
+                                            return next
+                                          })
+                                        }
+                                      />
+                                    ) : key === 'category' ? (
+                                      <EnterpriseColumnFilterDropdown
+                                        label="Category"
+                                        ariaLabel="Filter template categories in table"
+                                        options={templateCategoryOptionsList}
+                                        selected={templateCategoryFilterTags}
+                                        onShowAll={() => setTemplateCategoryFilterTags(new Set())}
+                                        onToggleOption={(value) =>
+                                          setTemplateCategoryFilterTags((prev) => {
+                                            const next = new Set(prev)
+                                            if (next.has(value)) next.delete(value)
+                                            else next.add(value)
+                                            return next
+                                          })
+                                        }
+                                      />
+                                    ) : key === 'statusCode' ? (
+                                      <EnterpriseColumnFilterDropdown
+                                        label="Status"
+                                        ariaLabel="Filter template status in table"
+                                        options={templateColumnStatusOptionsList}
+                                        selected={templateColumnStatusFilterTags}
+                                        onShowAll={() => setTemplateColumnStatusFilterTags(new Set())}
+                                        onToggleOption={(value) =>
+                                          setTemplateColumnStatusFilterTags((prev) => {
+                                            const next = new Set(prev)
+                                            if (next.has(value)) next.delete(value)
+                                            else next.add(value)
+                                            return next
+                                          })
+                                        }
+                                      />
+                                    ) : undefined
+                                  return (
+                                    <EnterpriseSortableHeaderCell
+                                      key={key}
+                                      columnKey={key}
+                                      label={templateColumnLabel(key)}
+                                      icon={templateColumnHeaderIcon(key)}
+                                      isPinned={templateColumns.isPinnedColumn(key)}
+                                      isFirstColumn={templateColumns.isFirstColumn(key)}
+                                      isLastColumn={templateColumns.isLastColumn(key)}
+                                      widthStyle={templateColumns.columnWidthStyle(key)}
+                                      sortDir={templateSort?.key === key ? templateSort.dir : null}
+                                      onToggleSort={toggleTemplateSort}
+                                      filterSlot={filterSlot}
+                                      frozenColumnClass={templateColumns.frozenColumnHeaderClass}
+                                      firstColumnTintClass={templateColumns.firstColumnTintHeaderClass}
+                                      isResizing={templateColumns.resizingKey === key}
+                                      onBeginResize={templateColumns.beginColumnResize}
+                                      onContextMenu={(event, columnKey) =>
+                                        templateColumns.setHeaderContextMenu({ x: event.clientX, y: event.clientY, columnKey })
+                                      }
+                                    />
+                                  )
+                                })}
+                              </SortableContext>
                           </tr>
                         </thead>
                         <tbody>
-                          {pagedMasterTemplates.map((row) => (
-                            <tr
-                              key={row.id}
-                              className="border-t border-border/25 transition-colors hover:bg-accent/20"
-                            >
-                              <td className="px-3 py-2 align-top">
-                                <button type="button" className="min-w-0 text-left" onClick={() => openTemplateDetail(row.id)}>
-                                  <div className="flex items-start gap-3">
-                                    <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600">
-                                      <FileStack className="h-5 w-5" />
-                                    </span>
-                                    <div className="min-w-0">
-                                      <p className="text-sm font-semibold text-slate-900 line-clamp-1">{row.name}</p>
-                                      <p className="mt-0.5 text-[11px] text-slate-500">Updated {row.updated}</p>
-                                    </div>
-                                  </div>
-                                </button>
+                            {pagedMasterTemplateRows.map(({ row, groupLabel }, rowIndex) => {
+                              const previousGroupLabel = pagedMasterTemplateRows[rowIndex - 1]?.groupLabel ?? null
+                              const showGroupHeader = templateGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                              const groupTint = templateGroupBy && groupLabel ? getEnterpriseGroupTint(templateGroupBy, groupLabel) : null
+                              const isSelected = showTemplateSelection && templateSelectedIds.includes(row.id)
+                              const resolveBodyCellBackground = (isFirstColumn: boolean) => {
+                                if (isSelected) return ''
+                                const stickyFirstClass =
+                                  templateColumns.freezeFirstColumn && isFirstColumn
+                                    ? 'sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+                                    : ''
+                                if (groupTint) {
+                                  return cn(isFirstColumn ? groupTint.first : groupTint.row, stickyFirstClass)
+                                }
+                                if (templateColumns.freezeFirstColumn && isFirstColumn) return templateColumns.frozenColumnBodyClass
+                                if (isFirstColumn) return templateColumns.firstColumnTintBodyClass
+                                return ''
+                              }
+                              const cellClass = cn(
+                                'border-b border-slate-200/20 px-3 py-2 align-top transition-colors dark:border-slate-700/20',
+                                isSelected
+                                  ? 'bg-primary/10'
+                                  : groupTint
+                                    ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
+                                    : 'group-hover:bg-accent/20',
+                              )
+
+                              return (
+                                <Fragment key={row.id}>
+                                  {showGroupHeader ? (
+                                    <tr>
+                                      <td
+                                        colSpan={templateColumns.visibleColumnOrder.length + (showTemplateSelection ? 1 : 0)}
+                                        className={cn(
+                                          'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                          groupTint?.first,
+                                        )}
+                                      >
+                                        {TEMPLATE_GROUP_BY_OPTIONS.find((opt) => opt.key === templateGroupBy)?.label}: {groupLabel}
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                  <tr
+                                    className="group cursor-pointer transition-colors"
+                                    onClick={(event) => {
+                                      const target = event.target as HTMLElement
+                                      if (target.closest('button') || target.closest('input') || target.closest('a')) return
+                                      openTemplateDetail(row.id)
+                                    }}
+                                    onContextMenu={(event) => openTemplateRowContextMenu(event, row.id)}
+                                  >
+                                    {showTemplateSelection ? (
+                                      <td
+                                        className={cn(cellClass, 'w-10', resolveBodyCellBackground(false))}
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          id={`template-select-${row.id}`}
+                                          name={`template-select-${row.id}`}
+                                          checked={templateSelectedIds.includes(row.id)}
+                                          onChange={() => toggleTemplateRowSelection(row.id)}
+                                          aria-label={`Select ${row.name}`}
+                                        />
                               </td>
-                              <td className="px-3 py-2 align-top text-foreground">{row.documentType}</td>
-                              <td className="px-3 py-2 align-top text-foreground">{row.category}</td>
-                              <td className="px-3 py-2 align-top font-mono text-[11px] text-foreground">{row.templateCode}</td>
-                              <td className="px-3 py-2 align-top">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="font-semibold text-foreground">{row.versionOrStatus}</span>
-                                  <Badge variant="outline" className={cn('rounded-full px-2 py-0 text-[10px] font-medium', statusBadgeClass(humanizeCode(row.statusCode)))}>
-                                    {humanizeCode(row.statusCode)}
-                                  </Badge>
-                                </div>
+                                    ) : null}
+                                    {templateColumns.visibleColumnOrder.map((key) => {
+                                      const isFirstCol = templateColumns.visibleColumnOrder[0] === key
+                                      return (
+                                        <td
+                                          key={key}
+                                          className={cn(cellClass, resolveBodyCellBackground(isFirstCol))}
+                                          style={templateColumns.columnWidthStyle(key)}
+                                        >
+                                          {renderTemplateColumnCell(row, key)}
                               </td>
-                              <td className="px-3 py-2 align-top text-foreground">{row.usage}</td>
-                              <td className="px-3 py-2 align-top">
-                                <div className="flex flex-wrap gap-1.5">
-                                  {panelActionButton('Use', Copy, () => { void handleUseMasterTemplate(row.id) })}
-                                  {panelActionButton('Preview', BookOpenText, () => openTemplateDetail(row.id))}
-                                </div>
-                              </td>
+                                      )
+                                    })}
                             </tr>
-                          ))}
+                                </Fragment>
+                              )
+                            })}
                         </tbody>
                       </table>
+                      </DndContext>
+
+                      <ContextMenu
+                        open={templateColumns.headerContextMenu !== null}
+                        x={templateColumns.headerContextMenu?.x ?? 0}
+                        y={templateColumns.headerContextMenu?.y ?? 0}
+                        onClose={() => templateColumns.setHeaderContextMenu(null)}
+                      >
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = templateColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            templateColumns.autoResizeColumn(key)
+                            templateColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <UnfoldHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Auto Resize Column
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = templateColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            templateColumns.setColumnWidthDialog({ open: true, columnKey: key, valuePx: '' })
+                            templateColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <Ruler className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Column Width...
+                        </ContextMenuItem>
+                        {templateColumns.hasAnyCustomWidth ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                templateColumns.resetAllColumnWidths()
+                                templateColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <RotateCcw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Reset Column Width
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                        {templateColumns.headerContextMenu?.columnKey
+                        && templateColumns.isSecondColumn(templateColumns.headerContextMenu.columnKey)
+                        && !templateColumns.isLastColumn(templateColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                const key = templateColumns.headerContextMenu?.columnKey
+                                if (!key) return
+                                templateColumns.moveColumnRight(key)
+                                templateColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Move Column to Right
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onSelect={() => {
+                                const key = templateColumns.headerContextMenu?.columnKey
+                                if (!key) return
+                                templateColumns.moveColumnToLast(key)
+                                templateColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Move Column to Last Position
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                        {templateColumns.headerContextMenu?.columnKey
+                        && templateColumns.isThirdColumnOrLater(templateColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            {(() => {
+                              const key = templateColumns.headerContextMenu.columnKey
+                              const columnIndex = templateColumns.getColumnIndex(key)
+                              const canMoveEarlier = columnIndex > 1
+                              const canMoveLater = columnIndex >= 0 && columnIndex < templateColumns.columnOrder.length - 1
+                              return (
+                                <>
+                                  {canMoveEarlier ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        templateColumns.moveColumnToFirst(key)
+                                        templateColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ArrowLeftToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to First Position
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveEarlier ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        templateColumns.moveColumnLeft(key)
+                                        templateColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Left
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveLater ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        templateColumns.moveColumnRight(key)
+                                        templateColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Right
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveLater ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        templateColumns.moveColumnToLast(key)
+                                        templateColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Last Position
+                                    </ContextMenuItem>
+                                  ) : null}
+                                </>
+                              )
+                            })()}
+                          </>
+                        ) : null}
+                        {templateColumns.headerContextMenu?.columnKey
+                        && templateColumns.isFirstColumn(templateColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                templateColumns.setFreezeFirstColumn((v) => !v)
+                                templateColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <Pin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Freeze Column
+                              <span className="ml-auto text-xs text-muted-foreground">
+                                {templateColumns.freezeFirstColumn ? 'On' : 'Off'}
+                              </span>
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                      </ContextMenu>
+
+                      <EnterpriseColumnWidthModal
+                        open={templateColumns.columnWidthDialog?.open ?? false}
+                        onClose={() => templateColumns.setColumnWidthDialog(null)}
+                        columnLabel={
+                          templateColumns.columnWidthDialog
+                            ? templateColumnLabel(templateColumns.columnWidthDialog.columnKey)
+                            : '—'
+                        }
+                        valuePx={templateColumns.columnWidthDialog?.valuePx ?? ''}
+                        onValuePxChange={(value) =>
+                          templateColumns.setColumnWidthDialog((prev) => (prev ? { ...prev, valuePx: value } : prev))
+                        }
+                        onApply={(widthPx) => {
+                          if (!templateColumns.columnWidthDialog) return
+                          const key = templateColumns.columnWidthDialog.columnKey
+                          templateColumns.setColumnWidthsWithSnapshot((prev) => {
+                            if (widthPx == null) {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            }
+                            return { ...prev, [key]: widthPx }
+                          }, templateColumns.tableRef.current)
+                          templateColumns.setColumnWidthDialog(null)
+                        }}
+                        dialogTitleId="template-column-width-dialog-title"
+                      />
                     </div>
                   ) : templateLoading ? (
-                    <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-muted/20 px-4 py-10 text-center">
-                      <Loader2 className="mb-2 h-8 w-8 animate-spin text-muted-foreground/70" />
-                      <p className="text-sm font-semibold text-foreground">Loading master templates…</p>
+                    <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     </div>
                   ) : (
-                    <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-muted/20 px-4 py-10 text-center">
-                      <FileStack className="mb-2 h-8 w-8 text-muted-foreground/70" />
-                      <p className="text-sm font-semibold text-foreground">No master templates found</p>
-                      <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-                        {deferredQuery || templateCategoryFilter
-                          ? 'Try a different search, or clear the category filter.'
-                          : 'Create a master template to standardize delivery documents across projects.'}
+                    <div className="flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10 text-center">
+                      <Upload className="mb-3 h-8 w-8 text-muted-foreground/60" strokeWidth={1.75} />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        {deferredQuery || templateStatusFilter !== 'all'
+                          ? 'No master templates match the current filters'
+                          : 'No master templates in this library yet'}
                       </p>
-                      {templateCategoryFilter ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="mt-3"
-                          onClick={() => setTemplateCategoryFilter(null)}
-                        >
-                          Show all categories
-                        </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="mt-3"
-                          disabled={templateBusy}
-                          onClick={() => { void handleCreateMasterTemplate() }}
-                        >
-                          New Template
-                        </Button>
-                      )}
+                      <p className="mt-1 text-xs text-muted-foreground/80">
+                        {deferredQuery || templateStatusFilter !== 'all'
+                          ? 'Try a different search or clear filters above'
+                          : 'Drag and drop Word templates anywhere in this panel · Or use Upload template above'}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -15237,29 +17920,210 @@ export function DocumentKnowledgeManagementPage() {
           ) : null}
 
           {activePanel === 'activity' ? (
-            <DocPanelSection
+            <div
               id="activity"
-              title="Content activity & audit"
-              description="Recent content operations across upload, versioning, linking, reuse, and restore events."
-              highlight={activePanel === 'activity'}
-              right={<div className="flex gap-2">{panelActionButton('Export audit', ArrowDownToLine)}</div>}
+              ref={activityPanelRef}
+              className={cn(
+                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+              )}
+              style={resolveWorkspacePanelHeightStyle(
+                docMainPanelViewportHeightPx,
+                activityPanelAlignedHeightPx,
+                activityPanelMaxHeightPx,
+                navDocked,
+              )}
             >
-              <div className="space-y-3">
-                  {activityFeed.map((activity) => (
-                    <button
-                      key={activity.id}
-                      type="button"
-                      onClick={() => openDetail(activity.detailId)}
-                      className="grid w-full grid-cols-[96px_120px_minmax(0,1fr)_180px] gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left transition-all hover:border-slate-300 hover:shadow-sm"
-                    >
-                      <div className="text-[11px] font-medium text-slate-500">{activity.timestamp}</div>
-                      <div className="text-xs font-medium text-slate-700">{activity.actor}</div>
-                      <div className="text-xs text-slate-600">{activity.action}</div>
-                      <div className="text-xs font-medium text-slate-900">{activity.relatedObject}</div>
-                    </button>
-                  ))}
+              <div className="flex h-full min-h-0 w-full flex-col">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                  <div className="shrink-0">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <ClipboardList className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                          <h2 className="text-lg font-semibold text-foreground">Activity & Audit</h2>
+                          <Badge variant="outline" className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                            Full Audit Access
+                          </Badge>
+                        </div>
+                        <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
+                          Security matrix privilege active: showing complete document activity & audit stream.
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                        <p className="text-xs text-muted-foreground">
+                          Showing{' '}
+                          <span className="font-semibold text-foreground">
+                            {filteredActivityRows.length === 0
+                              ? 0
+                              : Math.min(filteredActivityRows.length, (activityPageSafe - 1) * activityPageSize + 1)}
+                          </span>
+                          -
+                          <span className="font-semibold text-foreground">
+                            {Math.min(filteredActivityRows.length, activityPageSafe * activityPageSize)}
+                          </span>{' '}
+                          of <span className="font-semibold text-foreground">{filteredActivityRows.length}</span>
+                        </p>
+                        <span className="text-xs text-muted-foreground">Rows:</span>
+                        <Select
+                          value={String(activityPageSize)}
+                          onChange={(e) => setActivityPageSize(parseInt(e.target.value, 10))}
+                          className="h-10 w-[84px] text-sm"
+                        >
+                          <option value="5">5</option>
+                          <option value="10">10</option>
+                          <option value="15">15</option>
+                          <option value="25">25</option>
+                        </Select>
+                        <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setActivityPage((prev) => Math.max(1, prev - 1))}
+                            disabled={activityPageSafe <= 1}
+                          >
+                            Previous
+                          </button>
+                          <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">
+                            {activityPageSafe} / {activityTotalPages}
+                          </div>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                            onClick={() => setActivityPage((prev) => Math.min(activityTotalPages, prev + 1))}
+                            disabled={activityPageSafe >= activityTotalPages}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="scrollbar-hide min-h-0 w-full min-w-0 flex-1 overflow-hidden rounded-xl">
+                {activityTableRows.length === 0 ? (
+                  <div className="flex h-full min-h-[220px] items-center justify-center p-6">
+                    <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border/60 bg-card/85 px-8 py-11 text-center shadow-[0_22px_55px_-18px_rgba(15,23,42,0.12)] backdrop-blur-md dark:bg-slate-950/75">
+                      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-400/35 to-transparent" />
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-muted/80 ring-1 ring-border/70 dark:bg-white/[0.06]">
+                        <ClipboardList className="h-7 w-7 text-muted-foreground" aria-hidden />
+                      </div>
+                      <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
+                        No matching activity
+                      </p>
+                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                        Try changing the search keywords, or perform a new document action to populate the activity feed.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="scrollbar-hide relative h-full min-h-0 overflow-auto px-4 py-4 md:px-6">
+                    <div className="pointer-events-none absolute bottom-4 left-[30px] top-4 w-px bg-gradient-to-b from-slate-200 via-slate-300 to-slate-200 dark:from-slate-800 dark:via-slate-700 dark:to-slate-800" />
+                    <div className="space-y-3 pb-1">
+                      {activityTableRows.map((item) => {
+                        const actionLower = item.action.toLowerCase()
+                        const isRestore = actionLower.includes('restore') || actionLower.includes('revision')
+                        const isGovernance =
+                          actionLower.includes('governance')
+                          || actionLower.includes('template')
+                          || actionLower.includes('published')
+                        const isLink = actionLower.includes('linked') || actionLower.includes('link')
+                        const isUpload =
+                          actionLower.includes('upload')
+                          || actionLower.includes('inserted')
+                          || actionLower.includes('created')
+                          || actionLower.includes('updated')
+
+                        const toneClass = isRestore
+                          ? 'border-cyan-200/70 bg-[linear-gradient(155deg,rgba(236,254,255,0.96),rgba(239,246,255,0.88))] dark:border-cyan-900/40 dark:bg-[linear-gradient(155deg,rgba(8,47,73,0.32),rgba(15,23,42,0.55))]'
+                          : isGovernance
+                            ? 'border-indigo-200/70 bg-[linear-gradient(155deg,rgba(238,242,255,0.96),rgba(248,250,252,0.9))] dark:border-indigo-900/40 dark:bg-[linear-gradient(155deg,rgba(30,27,75,0.35),rgba(15,23,42,0.55))]'
+                            : 'border-slate-200/80 bg-[linear-gradient(155deg,rgba(248,250,252,0.96),rgba(255,255,255,0.9))] dark:border-slate-700 dark:bg-[linear-gradient(155deg,rgba(30,41,59,0.4),rgba(15,23,42,0.6))]'
+                        const dotClass = isRestore
+                          ? 'border-cyan-300 bg-cyan-100 text-cyan-700 dark:border-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-300'
+                          : isGovernance
+                            ? 'border-indigo-300 bg-indigo-100 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
+                            : 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
+                        const actorBadgeClass = isRestore
+                          ? 'border-cyan-200/90 bg-[linear-gradient(135deg,rgba(236,254,255,0.98),rgba(219,234,254,0.92))] text-cyan-800 shadow-[0_8px_18px_-14px_rgba(6,182,212,0.6)] dark:border-cyan-800/60 dark:bg-[linear-gradient(135deg,rgba(8,47,73,0.7),rgba(15,23,42,0.7))] dark:text-cyan-200'
+                          : isGovernance
+                            ? 'border-indigo-200/90 bg-[linear-gradient(135deg,rgba(238,242,255,0.98),rgba(224,231,255,0.92))] text-indigo-800 shadow-[0_8px_18px_-14px_rgba(99,102,241,0.55)] dark:border-indigo-800/60 dark:bg-[linear-gradient(135deg,rgba(30,27,75,0.72),rgba(15,23,42,0.72))] dark:text-indigo-200'
+                            : 'border-slate-200/90 bg-[linear-gradient(135deg,rgba(248,250,252,0.98),rgba(241,245,249,0.92))] text-slate-700 shadow-[0_8px_18px_-14px_rgba(15,23,42,0.45)] dark:border-slate-700/70 dark:bg-[linear-gradient(135deg,rgba(51,65,85,0.75),rgba(15,23,42,0.7))] dark:text-slate-200'
+                        const timestampChipClass = isRestore
+                          ? 'border-cyan-200/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.86),rgba(236,254,255,0.86))] text-cyan-800 shadow-[0_10px_20px_-16px_rgba(14,116,144,0.6)] dark:border-cyan-900/60 dark:bg-[linear-gradient(145deg,rgba(8,47,73,0.55),rgba(15,23,42,0.62))] dark:text-cyan-200'
+                          : isGovernance
+                            ? 'border-indigo-200/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.86),rgba(238,242,255,0.86))] text-indigo-800 shadow-[0_10px_20px_-16px_rgba(67,56,202,0.55)] dark:border-indigo-900/60 dark:bg-[linear-gradient(145deg,rgba(30,27,75,0.58),rgba(15,23,42,0.62))] dark:text-indigo-200'
+                            : 'border-slate-200/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.86),rgba(248,250,252,0.86))] text-slate-700 shadow-[0_10px_20px_-16px_rgba(15,23,42,0.45)] dark:border-slate-700/70 dark:bg-[linear-gradient(145deg,rgba(30,41,59,0.65),rgba(15,23,42,0.62))] dark:text-slate-200'
+
+                        return (
+                          <article
+                            key={item.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openDetail(item.detailId)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                openDetail(item.detailId)
+                              }
+                            }}
+                            className={cn(
+                              'relative ml-10 cursor-pointer rounded-2xl border p-4 text-left shadow-[0_10px_30px_-20px_rgba(15,23,42,0.35)] transition-transform hover:-translate-y-[1px] hover:shadow-[0_18px_34px_-22px_rgba(15,23,42,0.45)]',
+                              toneClass,
+                            )}
+                          >
+                            <div className={cn('absolute -left-[34px] top-5 flex h-8 w-8 items-center justify-center rounded-full border shadow-sm', dotClass)}>
+                              {isRestore ? (
+                                <RotateCcw className="h-4 w-4" aria-hidden />
+                              ) : isGovernance ? (
+                                <ShieldCheck className="h-4 w-4" aria-hidden />
+                              ) : isLink ? (
+                                <Link2 className="h-4 w-4" aria-hidden />
+                              ) : isUpload ? (
+                                <TextCursorInput className="h-4 w-4" aria-hidden />
+                              ) : (
+                                <ClipboardList className="h-4 w-4" aria-hidden />
+                              )}
+                            </div>
+
+                            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={cn(
+                                      'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] backdrop-blur-sm ring-1 ring-white/40 dark:ring-white/5',
+                                      actorBadgeClass,
+                                    )}
+                                  >
+                                    {item.actor}
+                                  </span>
+                                  <p className="text-sm font-semibold text-foreground">{item.action}</p>
+                                </div>
+                                <p className="mt-1.5 break-all text-xs text-muted-foreground">
+                                  Affected object:{' '}
+                                  <span className="font-mono text-[11px] text-foreground/80">{item.relatedObject}</span>
+                                </p>
+                              </div>
+                              <div
+                                className={cn(
+                                  'inline-flex items-center gap-1.5 self-start rounded-lg border px-2.5 py-1.5 text-[11px] font-medium tabular-nums backdrop-blur-sm ring-1 ring-white/45 dark:ring-white/5',
+                                  timestampChipClass,
+                                )}
+                              >
+                                <Clock3 className="h-3.5 w-3.5" aria-hidden />
+                                {item.timestamp}
+                              </div>
+                            </div>
+                          </article>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+                  </div>
+                </div>
               </div>
-            </DocPanelSection>
+            </div>
           ) : null}
         </main>
       </div>
@@ -15822,10 +18686,12 @@ export function DocumentKnowledgeManagementPage() {
               <div className="pr-3">
                 <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
                   <FileText className="w-5 h-5 text-primary" />
-                  Document Detail
+                  {selectedTemplateItem ? 'Template Detail' : 'Document Detail'}
                 </h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  View repository metadata, linked knowledge context, version history, and activity trail.
+                  {selectedTemplateItem
+                    ? 'Metadata master template, agent schema, version history, dan activity trail.'
+                    : 'View repository metadata, linked knowledge context, version history, and activity trail.'}
                 </p>
               </div>
               <Button
@@ -15994,6 +18860,13 @@ export function DocumentKnowledgeManagementPage() {
                         ))}
                       </div>
                     </div>
+
+                    {selectedTemplateItem ? (
+                      <TemplateAgentSchemaPanel
+                        template={selectedTemplateItem}
+                        onSaved={() => void loadMasterTemplates()}
+                      />
+                    ) : null}
                   </TabsContent>
 
                   <TabsContent value="version" className="mt-0 space-y-2">
@@ -16073,6 +18946,39 @@ export function DocumentKnowledgeManagementPage() {
                     </Button>
                   </div>
                 </div>
+              ) : selectedTemplateItem ? (
+                <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+                  <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-stretch">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 flex-1 justify-center gap-2 rounded-xl"
+                      onClick={() => { void handleEditMasterTemplate(selectedTemplateItem.id) }}
+                    >
+                      <PencilLine className="h-4 w-4 shrink-0" aria-hidden />
+                      Edit template
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 flex-1 justify-center gap-2 rounded-xl"
+                      disabled={templateBusy || templateGenerateBusy || !selectedTemplateItem.has_attachment}
+                      onClick={() => { void openTemplatePreview(selectedTemplateItem.id) }}
+                    >
+                      <Eye className="h-4 w-4 shrink-0" aria-hidden />
+                      Preview
+                    </Button>
+                    <Button
+                      type="button"
+                      className="h-10 flex-1 justify-center gap-2 rounded-xl"
+                      disabled={templateBusy || templateGenerateBusy || !selectedTemplateItem.has_attachment}
+                      onClick={() => openGenerateFromMasterTemplate(selectedTemplateItem.id)}
+                    >
+                      <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                      Generate with AI
+                    </Button>
+                  </div>
+                </div>
               ) : null}
             </div>
           </>
@@ -16101,6 +19007,377 @@ export function DocumentKnowledgeManagementPage() {
         documentTitle={repositoryEditItem?.name ?? null}
         onClose={() => setRepositoryEditItem(null)}
         onEdited={() => setRepositoryPreviewRefreshSignal((value) => value + 1)}
+      />
+
+      {templateGenerateOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close generate dialog"
+                disabled={templateGenerateBusy}
+                onClick={() => {
+                  if (!templateGenerateBusy) setTemplateGenerateOpen(false)
+                }}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-generate-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
+                      <Sparkles className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="template-generate-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Generate document with AI
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        Agent fills the selected DKM template, creates a repository document, then opens it in
+                        OnlyOffice.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 px-6 py-5">
+                  <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                    <Label
+                      htmlFor="template-generate-source"
+                      className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                    >
+                      Source context
+                    </Label>
+                    <textarea
+                      id="template-generate-source"
+                      value={templateGenerateSource}
+                      onChange={(event) => setTemplateGenerateSource(event.target.value)}
+                      rows={8}
+                      disabled={templateGenerateBusy}
+                      placeholder="Paste idea description, AS-IS/TO-BE notes, meeting summary, or requirements…"
+                      className="mt-1.5 w-full resize-none border-0 bg-transparent p-0 text-sm leading-6 text-foreground outline-none focus-visible:ring-0"
+                    />
+
+                    <div className="mt-3 border-t border-border pt-3">
+                      <Label
+                        htmlFor="template-generate-instructions"
+                        className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                      >
+                        Extra instructions (optional)
+                      </Label>
+                      <textarea
+                        id="template-generate-instructions"
+                        value={templateGenerateInstructions}
+                        onChange={(event) => setTemplateGenerateInstructions(event.target.value)}
+                        rows={3}
+                        disabled={templateGenerateBusy}
+                        placeholder="e.g. Prefer Bahasa Indonesia, keep BRD sections concise…"
+                        className="mt-1.5 w-full resize-none border-0 bg-transparent p-0 text-sm leading-6 text-foreground outline-none focus-visible:ring-0"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Enterprise note: you can download the generated file anytime from Document repository.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    disabled={templateGenerateBusy}
+                    onClick={() => setTemplateGenerateOpen(false)}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    disabled={templateGenerateBusy || !templateGenerateSource.trim()}
+                    onClick={() => { void handleGenerateFromMasterTemplate() }}
+                  >
+                    {templateGenerateBusy ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                    )}
+                    {templateGenerateBusy ? 'Generating…' : 'Generate & open'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {templatePreviewId && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close template preview"
+                onClick={closeTemplatePreview}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-preview-title"
+                className="relative z-[1401] flex h-[min(90vh,1100px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border/70 bg-muted/25 px-6 py-4">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
+                      <Eye className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="template-preview-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Template preview
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        AI-generated mock data — a demonstration only, not a real document.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-lg"
+                    onClick={closeTemplatePreview}
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                  </Button>
+                </div>
+
+                <div className="relative flex-1 overflow-hidden bg-muted/20">
+                  <div ref={templatePreviewHostRef} className="absolute inset-0" />
+                  {templatePreviewBusy ? (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-muted/20 text-center">
+                      <Loader2 className="h-6 w-6 animate-spin text-blue-600" aria-hidden />
+                      <p className="text-sm font-medium text-foreground">Generating mock preview…</p>
+                      <p className="max-w-xs text-xs text-muted-foreground">
+                        AI is filling the template with sample data, then opening it in the document editor.
+                        This can take up to a minute.
+                      </p>
+                    </div>
+                  ) : templatePreviewError ? (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-muted/20 px-6 text-center">
+                      <p className="text-sm font-medium text-destructive">{templatePreviewError}</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => { void openTemplatePreview(templatePreviewId) }}
+                      >
+                        <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                        Retry
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {kbRelationScanOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close relation scan"
+                onClick={closeKbRelationScan}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="kb-relation-scan-title"
+                className="relative z-[1401] flex h-[min(85vh,780px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border/70 bg-muted/25 px-6 py-4">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/12 text-purple-700 ring-1 ring-purple-500/25">
+                      <Sparkles className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="kb-relation-scan-title" className="text-base font-semibold tracking-tight text-foreground">
+                        AI relation suggestions
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        The agent scanned the visible graph for topically related entries that aren't linked yet.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-lg"
+                    onClick={closeKbRelationScan}
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                  </Button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-6 py-4">
+                  {kbRelationScanBusy ? (
+                    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                      <Loader2 className="h-6 w-6 animate-spin text-purple-600" aria-hidden />
+                      <p className="text-sm font-medium text-foreground">Analyzing relationships between nodes…</p>
+                      <p className="max-w-xs text-xs text-muted-foreground">
+                        This can take up to a minute depending on how many entries are in the graph.
+                      </p>
+                    </div>
+                  ) : kbRelationScanError ? (
+                    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                      <p className="text-sm font-medium text-muted-foreground">{kbRelationScanError}</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => void handleKbRelationScan()}
+                      >
+                        <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                        Scan again
+                      </Button>
+                    </div>
+                  ) : kbRelationScanSuggestions.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
+                      No suggestions yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {kbRelationScanSuggestions.map((suggestion) => (
+                        <label
+                          key={suggestion.key}
+                          className={cn(
+                            'flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors',
+                            suggestion.status === 'created'
+                              ? 'border-emerald-200 bg-emerald-50/60'
+                              : suggestion.status === 'failed'
+                                ? 'border-red-200 bg-red-50/60'
+                                : suggestion.accepted
+                                  ? 'border-purple-200 bg-purple-50/40'
+                                  : 'border-border bg-card'
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                            checked={suggestion.accepted}
+                            disabled={suggestion.status !== 'pending'}
+                            onChange={() => toggleKbRelationScanSuggestion(suggestion.key)}
+                          />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                              <span className="font-medium text-foreground">{suggestion.sourceTitle}</span>
+                              <span className="rounded-full border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-700">
+                                {suggestion.predicate}
+                              </span>
+                              <span className="font-medium text-foreground">{suggestion.targetTitle}</span>
+                            </div>
+                            {suggestion.reason ? (
+                              <p className="text-xs text-muted-foreground">{suggestion.reason}</p>
+                            ) : null}
+                            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                              <span>Confidence: {Math.round(suggestion.confidence * 100)}%</span>
+                              {suggestion.status === 'created' ? (
+                                <span className="inline-flex items-center gap-1 text-emerald-600">
+                                  <CheckCircle2 className="h-3 w-3" aria-hidden />
+                                  Created
+                                </span>
+                              ) : suggestion.status === 'failed' ? (
+                                <span className="text-red-600">Failed</span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {!kbRelationScanBusy && !kbRelationScanError && kbRelationScanSuggestions.length > 0 ? (
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/70 bg-muted/25 px-6 py-4">
+                    <p className="text-xs text-muted-foreground">
+                      {kbRelationScanSuggestions.filter((s) => s.accepted && s.status === 'pending').length} selected
+                    </p>
+                    <Button
+                      type="button"
+                      className="gap-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800"
+                      onClick={() => void handleKbRelationScanCreateSelected()}
+                      disabled={
+                        kbRelationScanCreating
+                        || kbRelationScanSuggestions.filter((s) => s.accepted && s.status === 'pending').length === 0
+                      }
+                    >
+                      {kbRelationScanCreating ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      ) : (
+                        <Link2 className="h-4 w-4" aria-hidden />
+                      )}
+                      Create relations
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      <DocumentOnlyOfficeEditor
+        open={!!templateEditItem}
+        templateId={templateEditItem?.id ?? null}
+        documentTitle={templateEditItem?.name ?? null}
+        onClose={() => setTemplateEditItem(null)}
+        onEdited={() => {
+          void loadMasterTemplates()
+          addToast({
+            title: 'Template saved',
+            description: 'A new document version was recorded after your edit.',
+            variant: 'success',
+          })
+        }}
+      />
+
+      <TemplateDuplicateCompareEditor
+        open={!!templateCompareSession}
+        session={templateCompareSession}
+        onClose={() => setTemplateCompareSession(null)}
+      />
+
+      <label htmlFor="dkm-master-template-upload" className="sr-only">
+        Upload master template file
+      </label>
+      <input
+        ref={templateUploadInputRef}
+        id="dkm-master-template-upload"
+        name="dkm-master-template-upload"
+        type="file"
+        accept=".doc,.docx,.dot,.dotx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (file) void handleUploadMasterTemplateFile(file)
+        }}
       />
 
       {/* New / Edit Meeting Note drawer — portal to body (full-viewport, no top gap). */}
@@ -16363,6 +19640,255 @@ export function DocumentKnowledgeManagementPage() {
           )
         : null}
 
+      {templateDuplicatePrompt && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close template duplicate confirmation"
+                onClick={() => templateDuplicatePrompt.resolve(false)}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-duplicate-dialog-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/12 text-amber-700 ring-1 ring-amber-500/25">
+                      <FileStack className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="template-duplicate-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Possible duplicate template
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        This file looks similar to templates already in workspace {templateDuplicatePrompt.workspaceName}.
+                        Upload anyway?
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="max-h-[50vh] space-y-4 overflow-y-auto px-6 py-5 text-sm">
+                  <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">File</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-foreground">{templateDuplicatePrompt.fileName}</p>
+                  </div>
+
+                  {templateDuplicatePrompt.nameMatches.length > 0 ? (
+                    <div>
+                      <div className="font-medium text-foreground">Similar template (same workspace/module/version family)</div>
+                      <ul className="mt-2 space-y-2">
+                        {templateDuplicatePrompt.nameMatches.map((match) => {
+                          const hasAttachment = templateById.get(match.id)?.has_attachment
+                          return (
+                            <li key={match.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <span className="font-medium text-foreground">{match.title}</span>
+                                  {match.workspaceName ? ` · ${match.workspaceName}` : ''}
+                                </div>
+                                {hasAttachment ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1.5 px-2 text-[11px]"
+                                    onClick={() => openTemplateDuplicateCompare(match.id, match.title)}
+                                  >
+                                    <ArrowRightLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                    Compare versions
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {templateDuplicatePrompt.samePurpose.length > 0 ? (
+                    <div>
+                      <div className="font-medium text-foreground">Similar purpose/content</div>
+                      <ul className="mt-2 space-y-2">
+                        {templateDuplicatePrompt.samePurpose.map((match) => {
+                          const hasAttachment = templateById.get(match.id)?.has_attachment
+                          return (
+                            <li key={match.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <span className="font-medium text-foreground">{match.title}</span>
+                                  {match.workspaceName ? ` · ${match.workspaceName}` : ''}
+                                  {match.reason ? <div className="mt-1 text-xs text-muted-foreground/80">{match.reason}</div> : null}
+                                </div>
+                                {hasAttachment ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1.5 px-2 text-[11px]"
+                                    onClick={() => openTemplateDuplicateCompare(match.id, match.title)}
+                                  >
+                                    <ArrowRightLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                    Compare versions
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  <p className="text-xs text-muted-foreground">
+                    Guardrail: identical file content is always blocked. Confirming upload saves a new version on the matched template (filename version increments, e.g. V1 → V2). Use Compare to review differences first.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    onClick={() => templateDuplicatePrompt.resolve(false)}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    onClick={() => templateDuplicatePrompt.resolve(true)}
+                  >
+                    <Upload className="h-4 w-4 shrink-0" aria-hidden />
+                    Save as new version
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {uploadWorkspacePicker && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close workspace selection"
+                onClick={() => setUploadWorkspacePicker(null)}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="upload-workspace-dialog-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
+                      <FolderKanban className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="upload-workspace-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        {uploadWorkspacePicker.purpose === 'template-create'
+                          ? 'Choose workspace for new template'
+                          : uploadWorkspacePicker.purpose === 'template-upload'
+                            ? 'Choose workspace for template upload'
+                            : 'Choose workspace for upload'}
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        {uploadWorkspacePicker.purpose === 'template-create'
+                          ? 'Several workspaces are selected in the header. This template will be saved to one workspace library — pick where it belongs (e.g. personal workspace).'
+                          : uploadWorkspacePicker.purpose === 'template-upload'
+                            ? 'Several workspaces are selected in the header. The template will be tagged to one workspace only — pick your personal or team library.'
+                            : 'Several workspaces are selected in the header. The document will be tagged to one workspace only — pick where it should appear.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 px-6 py-5">
+                  {uploadWorkspacePicker.pendingFile ? (
+                    <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">File</p>
+                      <p
+                        className="mt-1 break-words text-sm font-semibold text-foreground"
+                        title={uploadWorkspacePicker.pendingFile.name}
+                      >
+                        {uploadWorkspacePicker.pendingFile.name}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <p className="text-xs text-muted-foreground">
+                    {uploadWorkspacePicker.purpose === 'template-upload' || uploadWorkspacePicker.purpose === 'template-create'
+                      ? 'Guardrail: templates are scoped to the chosen workspace and will not appear in other workspace libraries.'
+                      : 'Guardrail: the uploaded document is tagged to the chosen workspace only and will not be duplicated across all selected workspaces.'}
+                  </p>
+
+                  <div className="max-h-[40vh] space-y-2 overflow-y-auto pt-1">
+                    {uploadWorkspacePicker.candidates.map((candidate) => (
+                      <button
+                        key={candidate.id}
+                        type="button"
+                        className="flex w-full items-center justify-between rounded-xl border border-border bg-background/70 px-4 py-3 text-left text-sm transition-colors hover:border-blue-300/80 hover:bg-blue-50/50"
+                        onClick={() => {
+                          const pending = uploadWorkspacePicker
+                          setUploadWorkspacePicker(null)
+                          if (pending.purpose === 'repository-document') {
+                            if (!pending.pendingFile) return
+                            repositoryUploadTargetFolderIdRef.current = pending.targetFolderId ?? null
+                            void processRepositoryUploadFile(pending.pendingFile, candidate.id)
+                            return
+                          }
+                          if (pending.purpose === 'template-upload') {
+                            if (!pending.pendingFile) return
+                            void processUploadMasterTemplateFile(
+                              pending.pendingFile,
+                              candidate.id,
+                              {
+                                ...pending.templateUploadOptions,
+                                workspaceName: candidate.name,
+                              },
+                            )
+                            return
+                          }
+                          void processCreateMasterTemplate(candidate.id)
+                        }}
+                      >
+                        <span className="font-semibold text-foreground">{candidate.name}</span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    onClick={() => setUploadWorkspacePicker(null)}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
       {typeof document !== 'undefined'
         ? createPortal(
             <>
@@ -16472,6 +19998,7 @@ export function DocumentKnowledgeManagementPage() {
                       </Label>
                       <Input
                         id="kb-title"
+                        name="kb-title"
                         ref={kbTitleInputRef}
                         value={kbFormTitle}
                         onChange={(e) => {
@@ -16495,7 +20022,7 @@ export function DocumentKnowledgeManagementPage() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="kb-content" className="text-xs text-muted-foreground">
+                      <Label id="kb-content-label" className="text-xs text-muted-foreground">
                         Content (max 8000 characters) <span className="text-red-500">*</span>
                       </Label>
                       <div ref={kbAiStickySentinelRef} className="h-px w-full" aria-hidden="true" />
@@ -16781,6 +20308,8 @@ export function DocumentKnowledgeManagementPage() {
                                 <label className="mt-2 flex items-center gap-2 rounded-md px-1 py-1 text-[11px] text-foreground hover:bg-muted">
                                   <span>Custom</span>
                                   <input
+                                    id="kb-text-color-custom"
+                                    name="kb-text-color-custom"
                                     type="color"
                                     value={kbTextColor}
                                     className="h-5 w-8 cursor-pointer rounded border border-border bg-transparent p-0"
@@ -16956,7 +20485,7 @@ export function DocumentKnowledgeManagementPage() {
                                   <p className="mt-2 text-[11px] tabular-nums text-muted-foreground">
                                     {kbTableInsertHover.rows > 0
                                       ? `${kbTableInsertHover.rows} × ${kbTableInsertHover.cols}`
-                                      : 'Pilih ukuran tabel'}
+                                      : 'Select table size'}
                                   </p>
                                   <div className="my-2 border-t border-slate-200" />
                                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-slate-700">
@@ -17014,6 +20543,9 @@ export function DocumentKnowledgeManagementPage() {
                             ref={kbContentEditorRef}
                             contentEditable
                             suppressContentEditableWarning
+                            aria-labelledby="kb-content-label"
+                            aria-multiline="true"
+                            role="textbox"
                             className={`min-h-[170px] max-w-full px-3 py-3 outline-none ${KB_RICH_CONTENT_PROSE_CLASSES} ${KB_RICH_TABLE_CLASSES}`}
                             onKeyUp={syncKbToolbarActive}
                             onMouseUp={syncKbToolbarActive}
@@ -17114,6 +20646,7 @@ export function DocumentKnowledgeManagementPage() {
                         <Label htmlFor="kb-prio" className="text-xs text-muted-foreground">Priority (0-100)</Label>
                         <Input
                           id="kb-prio"
+                          name="kb-prio"
                           type="number"
                           min={0}
                           max={100}
@@ -17714,7 +21247,7 @@ export function DocumentKnowledgeManagementPage() {
 
                       {!kbLive ? (
                         <p className="rounded-xl border border-dashed border-border bg-blue-50/50 dark:bg-blue-950/30 px-3 py-3 text-xs text-muted-foreground">
-                          Relation editor tersedia saat KB service terkoneksi (mode live).
+                          The relation editor is available when the KB service is connected (live mode).
                         </p>
                       ) : null}
 
@@ -17793,7 +21326,7 @@ export function DocumentKnowledgeManagementPage() {
                           </div>
                         ) : kbRelations.length === 0 ? (
                           <p className="rounded-xl border border-dashed border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
-                            Belum ada relation untuk entri ini.
+                            No relations for this entry yet.
                           </p>
                         ) : (
                           <div className="space-y-2">
@@ -18071,10 +21604,10 @@ export function DocumentKnowledgeManagementPage() {
                     </div>
                     <div className="space-y-1">
                       <h3 id="repository-delete-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
-                        Delete Repository Document
+                        Delete document
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        This action permanently removes the document and its auto-generated KB links for the same source file.
+                        This action permanently removes the document and cannot be undone.
                       </p>
                     </div>
                   </div>
@@ -18086,7 +21619,8 @@ export function DocumentKnowledgeManagementPage() {
                     <p className="mt-1 break-words text-sm font-semibold text-foreground">{repositoryDeleteTarget.name}</p>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Guardrail: all generated KB entries with matching Document ID traceability will be cleaned up to prevent duplicates.
+                    Enterprise note: deleting this document also cleans up auto-generated KB links for the same
+                    source file to prevent duplicates.
                   </p>
                 </div>
 
@@ -18495,6 +22029,203 @@ export function DocumentKnowledgeManagementPage() {
               </button>
             </div>,
             document.body
+          )
+        : null}
+
+      {templateDeleteTarget && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close template delete confirmation"
+                disabled={templateDeleteBusyId === templateDeleteTarget.id}
+                onClick={() => {
+                  if (templateDeleteBusyId !== templateDeleteTarget.id) setTemplateDeleteTarget(null)
+                }}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-delete-dialog-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/12 text-red-700 ring-1 ring-red-500/25">
+                      <Trash2 className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="template-delete-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Delete Master Template
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        This action permanently removes the master template and its Word file from the enterprise library.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 px-6 py-5">
+                  <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Template</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-foreground">{templateDeleteTarget.name}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Guardrail: documents already created from this template are not deleted — only the library master and stored file are removed.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    disabled={templateDeleteBusyId === templateDeleteTarget.id}
+                    onClick={() => setTemplateDeleteTarget(null)}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2 bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500')}
+                    disabled={templateDeleteBusyId === templateDeleteTarget.id}
+                    onClick={() => void handleTemplateDeleteConfirm()}
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                    {templateDeleteBusyId === templateDeleteTarget.id ? 'Deleting...' : 'Delete template'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {templateRowContextMenu && templateContextMenuItem
+        ? (
+            <ContextMenu
+              open
+              x={templateRowContextMenu.x}
+              y={templateRowContextMenu.y}
+              onClose={() => setTemplateRowContextMenu(null)}
+              className="z-[1190] w-64"
+            >
+              <ContextMenuItem
+                onClick={() => {
+                  setTemplateRowContextMenu(null)
+                  openTemplateDetail(templateContextMenuItem.id)
+                }}
+              >
+                <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                Open details
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={cn((templateBusy || templateStatusBusyId === templateContextMenuItem.id) && 'pointer-events-none opacity-50')}
+                onClick={() => {
+                  const target = templateContextMenuItem
+                  setTemplateRowContextMenu(null)
+                  void handleEditMasterTemplate(target.id)
+                }}
+              >
+                <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                Edit
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={cn(
+                  (!templateContextMenuItem.has_attachment || templateDownloadBusyId === templateContextMenuItem.id)
+                    && 'pointer-events-none opacity-50',
+                )}
+                onClick={() => {
+                  const target = templateContextMenuItem
+                  setTemplateRowContextMenu(null)
+                  void handleTemplateDownload(target.id)
+                }}
+              >
+                <Download className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                {templateDownloadBusyId === templateContextMenuItem.id ? 'Downloading…' : 'Download'}
+              </ContextMenuItem>
+              {templateContextMenuItem.status_code !== 'active' ? (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    className={cn(templateStatusBusyId === templateContextMenuItem.id && 'pointer-events-none opacity-50')}
+                    onClick={() => {
+                      const target = templateContextMenuItem
+                      setTemplateRowContextMenu(null)
+                      void handleTemplateSetStatus(target.id, 'active', 'Template published')
+                    }}
+                  >
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    Publish template
+                  </ContextMenuItem>
+                </>
+              ) : null}
+              {templateContextMenuItem.status_code === 'active' ? (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    className={cn(templateStatusBusyId === templateContextMenuItem.id && 'pointer-events-none opacity-50')}
+                    onClick={() => {
+                      const target = templateContextMenuItem
+                      setTemplateRowContextMenu(null)
+                      void handleTemplateSetStatus(target.id, 'inactive', 'Template deactivated')
+                    }}
+                  >
+                    <Ban className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    Unpublish / Deactivate
+                  </ContextMenuItem>
+                </>
+              ) : null}
+              {templateContextMenuItem.status_code !== 'deprecated' ? (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    className={cn(templateStatusBusyId === templateContextMenuItem.id && 'pointer-events-none opacity-50')}
+                    onClick={() => {
+                      const target = templateContextMenuItem
+                      setTemplateRowContextMenu(null)
+                      void handleTemplateSetStatus(target.id, 'deprecated', 'Template marked as deprecated')
+                    }}
+                  >
+                    <Archive className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    Mark as deprecated
+                  </ContextMenuItem>
+                </>
+              ) : null}
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={cn(templateStatusBusyId === templateContextMenuItem.id && 'pointer-events-none opacity-50')}
+                onClick={() => {
+                  const target = templateContextMenuItem
+                  setTemplateRowContextMenu(null)
+                  void handleTemplateRename(target.id)
+                }}
+              >
+                <CaseSensitive className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                Rename template
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={cn(
+                  'text-destructive hover:text-destructive focus:text-destructive',
+                  templateDeleteBusyId === templateContextMenuItem.id && 'pointer-events-none opacity-50',
+                )}
+                onClick={() => {
+                  const target = templateContextMenuItem
+                  setTemplateRowContextMenu(null)
+                  handleTemplateDelete(target.id, target.name)
+                }}
+              >
+                <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                Delete template
+              </ContextMenuItem>
+            </ContextMenu>
           )
         : null}
 

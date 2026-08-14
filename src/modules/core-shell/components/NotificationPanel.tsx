@@ -91,7 +91,7 @@ export function NotificationPanel({
       const isUnavailable = msg === 'Failed to fetch' || msg.toLowerCase().includes('network')
       setError(
         isUnavailable
-          ? 'Layanan notifikasi tidak tersedia. Jalankan Notification Service (port 8700) untuk mengaktifkan fitur.'
+          ? 'Notification service is unavailable. Start the Notification Service (port 8700) to enable this feature.'
           : msg
       )
       setNotifications([])
@@ -183,7 +183,7 @@ export function NotificationPanel({
               className="mt-3"
               onClick={loadNotifications}
             >
-              Coba lagi
+              Retry
             </Button>
           </div>
         ) : notifications.length === 0 ? (

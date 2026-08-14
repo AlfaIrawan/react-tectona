@@ -21,11 +21,12 @@ export function computeWorkspaceMainPanelViewportHeightPx(panelTopPx: number): n
   return Math.max(240, raw) + WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX + WORKSPACE_PANEL_PAIR_EXTRA_HEIGHT_PX
 }
 
-/** Samakan batas bawah Enterprise Navigation dengan panel konten utama. */
+/** Samakan tinggi Enterprise Navigation dengan kolom konten (filter + panel utama). */
 export function measureEnterpriseNavHeightFromMainPanel(navEl: HTMLElement, mainPanelEl: HTMLElement): number {
   const navTop = navEl.getBoundingClientRect().top
   const mainBottom = mainPanelEl.getBoundingClientRect().bottom
-  return Math.max(220, Math.floor(mainBottom - navTop))
+  const span = Math.floor(mainBottom - navTop)
+  return Math.max(220, span)
 }
 
 export function resolveWorkspacePanelHeightStyle(
@@ -85,8 +86,11 @@ export function workspaceMainColumnClass(
   isCollapsed: boolean,
   widthVariant: WorkspaceNavWidthVariant = 'default'
 ) {
-  if (!docked) return 'space-y-4'
-  return cn('space-y-4', workspaceDockedContentInsetClass(docked, isCollapsed, widthVariant))
+  if (!docked) return 'min-w-0 w-full max-w-full space-y-4'
+  return cn(
+    'min-w-0 w-full max-w-full space-y-4',
+    workspaceDockedContentInsetClass(docked, isCollapsed, widthVariant)
+  )
 }
 
 export function workspaceAsideClass(
@@ -121,37 +125,29 @@ export function workspaceNavMenuScrollClass() {
   )
 }
 
-export function workspaceNavInnerClass(docked: boolean, sidebarFixed: boolean, isCollapsed: boolean) {
+export function workspaceNavInnerClass(docked: boolean, _sidebarFixed: boolean, isCollapsed: boolean) {
   return cn(
-    'rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.92))] p-3 transition-all duration-200',
+    'liquid-glass-enterprise-nav rounded-[28px] border p-3 transition-all duration-200',
     'max-xl:shrink-0',
     // Selalu jadikan panel sebagai flex column + overflow hidden agar hanya area menu yang scroll
     'flex min-h-0 flex-col overflow-hidden',
     // Mode non-docked (Fixed Sidebar = true): batasi tinggi panel agar tidak melebihi viewport
-    // Gunakan dvh agar akurat di browser modern (fallback 100vh).
     !docked &&
-      'glass-card shadow-[0_22px_60px_rgba(15,23,42,0.12)] max-h-[calc(100dvh-3rem+10px)] max-h-[calc(100vh-3rem+10px)]',
+      'max-h-[calc(100dvh-3rem+10px)] max-h-[calc(100vh-3rem+10px)]',
     docked &&
       cn(
-        // Batasi tinggi panel docked agar tidak melebihi viewport di semua breakpoint
-        // p-2 agar tidak ada "gap" kosong berlebihan di bawah saat panel mengisi viewport
-        'p-2 max-xl:max-h-[calc(100vh-4rem+10px)] backdrop-blur-lg xl:flex-1 xl:h-full xl:max-h-full xl:rounded-r-[28px] xl:rounded-l-none xl:border-r-0',
-        // Enterprise rail: tepi terdefinisi + dua lapisan ambient (halus, tidak “glow” kasar)
-        'xl:shadow-[1px_0_0_0_rgba(15,23,42,0.07),8px_0_32px_-8px_rgba(15,23,42,0.06),24px_0_64px_-18px_rgba(15,23,42,0.085)]'
+        'liquid-glass-enterprise-nav--docked p-2 max-xl:max-h-[calc(100vh-4rem+10px)] xl:flex-1 xl:h-full xl:max-h-full xl:rounded-r-[28px] xl:rounded-l-none xl:border-r-0',
       ),
-    // Mode sticky (fixed sidebar): tetap batasi tinggi panel agar tidak melewati layar
-    // Topbar app = h-12 (3rem), jadi gunakan top-12 + 100vh-3rem agar pas 1 layar.
-    sidebarFixed &&
-      'sticky top-12 h-[calc(100dvh-3rem+10px)] h-[calc(100vh-3rem+10px)] max-h-[calc(100dvh-3rem+10px)] max-h-[calc(100vh-3rem+10px)]',
+    // Fixed Sidebar (non-docked): tinggi diset via JS agar selaras panel utama — jangan pakai sticky + h viewport penuh.
     isCollapsed ? 'w-[56px] p-1.5' : 'w-full'
   )
 }
 
 export function workspaceOuterGridClass(sidebarFixed: boolean, isCollapsed: boolean, widthVariant: WorkspaceNavWidthVariant = 'default') {
-  if (!sidebarFixed) return 'relative'
+  if (!sidebarFixed) return 'relative w-full min-w-0'
   // items-start: kolom nav tidak meregang mengikuti tinggi konten utama (mencegah panel setinggi halaman) di semua lebar grid.
   return cn(
-    'grid gap-4 items-start',
+    'grid w-full min-w-0 gap-4 items-start',
     isCollapsed
       ? 'xl:grid-cols-[56px_1fr]'
       : widthVariant === 'ultra'

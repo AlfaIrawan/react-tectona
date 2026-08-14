@@ -2,6 +2,10 @@ import { registerSW } from 'virtual:pwa-register'
 import { pushGlobalToast } from '@/components/ui/toast'
 
 const OFFLINE_READY_TOAST_KEY = 'tectona:pwa-offline-ready-toast'
+/** Runtime image cache (Workbox CacheFirst for /images/*). Cleared on sign-out. */
+export const TECTONA_STATIC_IMAGES_CACHE = 'tectona-static-images'
+/** Precached + runtime background video (/images/background-*.mp4). Cleared on sign-out. */
+export const TECTONA_BACKGROUND_MEDIA_CACHE = 'tectona-background-media'
 
 /** Unregister any leftover production SW so Vite dev is never controlled by stale caches. */
 async function unregisterDevServiceWorkers(): Promise<void> {
@@ -21,12 +25,25 @@ async function unregisterDevServiceWorkers(): Promise<void> {
   }
 }
 
+/** Drop runtime /images cache so remote or session-scoped assets are not kept after logout. */
+export async function clearSensitiveRuntimeCaches(): Promise<void> {
+  if (typeof caches === 'undefined') return
+  try {
+    await Promise.all([
+      caches.delete(TECTONA_STATIC_IMAGES_CACHE),
+      caches.delete(TECTONA_BACKGROUND_MEDIA_CACHE),
+    ])
+  } catch {
+    // Best-effort; must not block sign-out.
+  }
+}
+
 /** Register the service worker (production builds only). */
-export function initPwa(): void {
+export async function initPwa(): Promise<void> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
   if (!import.meta.env.PROD) {
-    void unregisterDevServiceWorkers()
+    await unregisterDevServiceWorkers()
     return
   }
 

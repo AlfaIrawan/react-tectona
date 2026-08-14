@@ -155,7 +155,7 @@ export function TeamChatContactInfoPanel({
         <p className="text-center text-base font-semibold tracking-tight text-foreground">{contact.name}</p>
         <p className="mt-0.5 text-center text-[11px] text-muted-foreground">{secondaryLine}</p>
         <p className="mt-1 text-center text-[10px] text-muted-foreground/80">
-          Profil dari Identity Lite — tidak dapat diedit di chat.
+          Profile from Identity Lite — cannot be edited in chat.
         </p>
         <Button
           type="button"
@@ -221,8 +221,8 @@ export function TeamChatContactInfoPanel({
             title={isChatLocked ? 'Unlock chat' : 'Lock chat'}
             subtitle={
               isChatLocked
-                ? 'Nonaktifkan lock dan hapus kode rahasia'
-                : 'Kode rahasia diperlukan untuk membuka chat'
+                ? 'Turn off the lock and remove the secret code'
+                : 'A secret code is required to open this chat'
             }
             onClick={onToggleChatLock}
           />

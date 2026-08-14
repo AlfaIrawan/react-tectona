@@ -1,5 +1,5 @@
-import { Loader2 } from 'lucide-react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { PlatformDataLoadingState } from '@/components/loading'
 import { type ModuleId, useModuleAccess } from '@/auth/useModuleAccess'
 
 export function ModuleRouteGuard(props: { moduleId: ModuleId }) {
@@ -9,10 +9,10 @@ export function ModuleRouteGuard(props: { moduleId: ModuleId }) {
 
   if (access.loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background" role="status">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
-        <span className="sr-only">Checking access</span>
-      </div>
+      <PlatformDataLoadingState
+        title="Checking module access"
+        description="Verifying your workspace permissions."
+      />
     )
   }
 

@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getSession } from '@/auth/authService'
+import { useTenantContextOptional } from '@/auth/TenantContext'
 import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
-import { fetchSubjectMemberships, TECTONA_WAC_APP_ID, wacRoleCodeToUiRole } from '@/lib/api/workspaceAccessControlApi'
+import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
+import {
+  type WacMembershipDto,
+  wacRoleCodeToUiRole,
+} from '@/lib/api/workspaceAccessControlApi'
+import {
+  fetchSubjectMembershipsCached,
+  peekCachedSubjectMemberships,
+} from '@/lib/wacMembershipCache'
 
 export type ModuleId =
   | 'workspace'
@@ -20,6 +29,7 @@ export type ModuleId =
   | 'ai_project'
   | 'ai_idea'
   | 'platform_settings'
+  | 'traceability_monitoring'
 
 export type ModuleAccessState = {
   loading: boolean
@@ -52,24 +62,57 @@ function roleRank(role: ModuleAccessState['maxWorkspaceRole']): number {
   }
 }
 
+function maxRoleInMemberships(
+  items: WacMembershipDto[] | undefined,
+  workspaceId: string | null | undefined,
+): ModuleAccessState['maxWorkspaceRole'] {
+  const scoped =
+    workspaceId && !isAllWorkspacesSelection(workspaceId)
+      ? items?.filter((membership) => membership.workspace_id === workspaceId)
+      : items
+
+  let max: ModuleAccessState['maxWorkspaceRole'] = 'None'
+  for (const membership of scoped ?? []) {
+    const role = wacRoleCodeToUiRole(membership.role_code)
+    if (roleRank(role) > roleRank(max)) max = role
+  }
+  return max
+}
+
 /**
  * Module access policy (production-like default):
  * - Root/Administrator bypass everything (platform admin).
  * - All other modules require at least one active WAC membership (AppAccessGate already enforces this).
- * - Workspace + Document/Knowledge require WAC role Admin/Manager (owner/admin/editor).
+ * - End-user GA launcher always includes Workspace + Document (see END_USER_GA_MODULE_IDS).
+ * - Workspace module stays available in multi-select scope; WM page aggregates selected workspaces.
  * - Security & Access Control + Platform Settings require platform admin only.
+ * - GA-pending modules hidden via tenantUiProfile.
  */
 export function useModuleAccess(): ModuleAccessState {
   const session = getSession()
   const subjectId = session?.user.id
+  const tenant = useTenantContextOptional()
 
   const isPlatformAdmin = useMemo(
     () => hasPlatformAdminAccess(sessionRoles(), session?.user.role),
     [session?.user.id, session?.user.role],
   )
 
-  const [loading, setLoading] = useState(!isPlatformAdmin && Boolean(subjectId))
-  const [maxWorkspaceRole, setMaxWorkspaceRole] = useState<ModuleAccessState['maxWorkspaceRole']>('None')
+  const cachedMemberships = subjectId ? peekCachedSubjectMemberships(subjectId) : null
+
+  const [loading, setLoading] = useState(
+    !isPlatformAdmin && Boolean(subjectId) && !cachedMemberships,
+  )
+  const [maxWorkspaceRole, setMaxWorkspaceRole] = useState<ModuleAccessState['maxWorkspaceRole']>(() => {
+    if (!cachedMemberships || !subjectId) return 'None'
+    let role = maxRoleInMemberships(cachedMemberships.items, tenant?.workspaceId ?? null)
+    if (role === 'None' && cachedMemberships.items.length > 0) {
+      role = maxRoleInMemberships(cachedMemberships.items, null)
+    }
+    return role
+  })
+
+  const activeWorkspaceId = tenant?.workspaceId ?? null
 
   useEffect(() => {
     if (isPlatformAdmin || !subjectId) {
@@ -78,16 +121,17 @@ export function useModuleAccess(): ModuleAccessState {
       return
     }
     let cancelled = false
-    setLoading(true)
-    void fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly: true })
+    const warm = peekCachedSubjectMemberships(subjectId)
+    if (!warm) setLoading(true)
+    void fetchSubjectMembershipsCached(subjectId, { activeOnly: true })
       .then((res) => {
         if (cancelled) return
-        let max: ModuleAccessState['maxWorkspaceRole'] = 'None'
-        for (const m of res.items ?? []) {
-          const r = wacRoleCodeToUiRole(m.role_code)
-          if (roleRank(r) > roleRank(max)) max = r
+        const items = res.items ?? []
+        let role = maxRoleInMemberships(items, activeWorkspaceId)
+        if (role === 'None' && items.length > 0) {
+          role = maxRoleInMemberships(items, null)
         }
-        setMaxWorkspaceRole(max)
+        setMaxWorkspaceRole(role)
         setLoading(false)
       })
       .catch(() => {
@@ -98,20 +142,35 @@ export function useModuleAccess(): ModuleAccessState {
     return () => {
       cancelled = true
     }
-  }, [isPlatformAdmin, subjectId])
+  }, [isPlatformAdmin, subjectId, activeWorkspaceId])
 
   const canAccess = useMemo(() => {
     return (moduleId: ModuleId) => {
       if (isPlatformAdmin) return true
       if (moduleId === 'security_access' || moduleId === 'platform_settings') return false
 
-      const elevated = roleRank(maxWorkspaceRole) >= roleRank('Manager')
-      if (moduleId === 'workspace' || moduleId === 'document_knowledge') return elevated
+      if (moduleId === 'workspace' && tenant?.uiProfile.hideWorkspaceModule) return false
 
-      // Default: allowed (AppAccessGate already requires membership).
+      if (tenant?.uiProfile.hiddenModuleIds.includes(moduleId)) return false
+
+      if (moduleId === 'workspace') {
+        // End-user GA menu always includes Workspace (personal + multi-select aggregated view).
+        return true
+      }
+
+      if (moduleId === 'document_knowledge') {
+        // End-user GA menu always includes Document & Knowledge.
+        return true
+      }
+
       return true
     }
-  }, [isPlatformAdmin, maxWorkspaceRole])
+  }, [
+    isPlatformAdmin,
+    tenant?.workspaceId,
+    tenant?.uiProfile.hideWorkspaceModule,
+    tenant?.uiProfile.hiddenModuleIds,
+  ])
 
   return {
     loading,
@@ -120,4 +179,3 @@ export function useModuleAccess(): ModuleAccessState {
     canAccess,
   }
 }
-

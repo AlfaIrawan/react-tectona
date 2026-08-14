@@ -1,10 +1,13 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ComponentProps } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Calendar,
   CalendarDays,
   CalendarRange,
   GanttChartSquare,
   LayoutGrid,
+  Maximize2,
+  Minimize2,
   Search,
   type LucideIcon,
 } from 'lucide-react'
@@ -14,10 +17,12 @@ import { Input } from '@/components/ui/input'
 import {
   PlanningSvarGantt,
   type PlanningGanttItem,
+  type PlanningGanttTaskGridEditEvent,
   type PlanningGanttTaskMoveEvent,
+  type PlanningGanttTaskScheduleUpdateEvent,
   type PlanningGanttZoomLevel,
 } from '@/modules/planning-scheduling/components/PlanningSvarGantt'
-import { DIRECTORY_GANTT_GRID_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
+import { TIMELINE_GANTT_GRID_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 import { applyDirectorySiblingOrder, type DirectorySiblingOrderMap } from '@/modules/task-work-management/utils/directorySiblingOrder'
 import { cn } from '@/lib/utils'
 import type { ProjectTemplate } from '../data/projectTemplates'
@@ -26,6 +31,11 @@ import {
   applyReparentToWorkItem,
   resolveTimelineTaskMove,
 } from '../lib/resolveTimelineTaskMove'
+import {
+  applyScheduleToWorkItem,
+  resolveTimelineTaskScheduleUpdate,
+} from '../lib/resolveTimelineTaskSchedule'
+import { resolveTimelineTaskInlineEdit } from '../lib/resolveTimelineTaskInlineEdit'
 import type { Project } from '../store/projectStore'
 import {
   measureProjectPanelHeight,
@@ -114,6 +124,7 @@ export function ProjectTimelinePanel({
   const [siblingOrder, setSiblingOrder] = useState<DirectorySiblingOrderMap>({})
   const [timelineMoveHint, setTimelineMoveHint] = useState<string | null>(null)
   const [taskStructureRevision, setTaskStructureRevision] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const localWorkItemsRef = useRef(workItems)
   const siblingOrderRef = useRef<DirectorySiblingOrderMap>({})
 
@@ -138,6 +149,20 @@ export function ProjectTimelinePanel({
   useEffect(() => {
     if (!timelineSelectMode && selectedIds.length > 0) setSelectedIds([])
   }, [selectedIds.length, timelineSelectMode])
+
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isFullscreen])
 
   const orderedWorkItems = useMemo(
     () => applyDirectorySiblingOrder(localWorkItems, siblingOrder, null),
@@ -190,6 +215,7 @@ export function ProjectTimelinePanel({
 
       const resolved = resolveTimelineTaskMove(event, previousItems, previousOrder)
       if (!resolved?.valid) {
+        // SVAR already applied the move during drag; remount to restore props tree.
         startTransition(() => {
           setTimelineMoveHint(resolved?.message ?? 'This move is not allowed.')
           setTaskStructureRevision((value) => value + 1)
@@ -201,7 +227,10 @@ export function ProjectTimelinePanel({
 
       if (resolved.parentChanged) {
         const dragged = previousItems.find((item) => item.id === resolved.draggedId)
-        if (!dragged) return true
+        if (!dragged) {
+          startTransition(() => setSiblingOrder(resolved.siblingOrder))
+          return true
+        }
 
         const newParent = resolved.newParentId
           ? previousItems.find((item) => item.id === resolved.newParentId) ?? null
@@ -210,6 +239,12 @@ export function ProjectTimelinePanel({
           item.id === resolved.draggedId ? applyReparentToWorkItem(dragged, newParent) : item,
         )
         localWorkItemsRef.current = nextItems
+
+        startTransition(() => {
+          setSiblingOrder(resolved.siblingOrder)
+          setLocalWorkItems(nextItems)
+          setTimelineMoveHint(null)
+        })
 
         if (usesApiItems) {
           void patchWorkItem(resolved.draggedId, { parentId: resolved.newParentId }).catch(() => {
@@ -223,6 +258,74 @@ export function ProjectTimelinePanel({
             })
           })
         }
+
+        return true
+      }
+
+      startTransition(() => {
+        setSiblingOrder(resolved.siblingOrder)
+        setTimelineMoveHint(null)
+      })
+      return true
+    },
+    [usesApiItems],
+  )
+
+  const handleTaskScheduleCommit = useCallback(
+    (event: PlanningGanttTaskScheduleUpdateEvent): boolean => {
+      if (hasActiveSearchRef.current) {
+        startTransition(() => {
+          setTimelineMoveHint('Clear search before editing dates on the chart.')
+          setTaskStructureRevision((value) => value + 1)
+        })
+        return false
+      }
+
+      const previousItems = localWorkItemsRef.current
+      const resolved = resolveTimelineTaskScheduleUpdate(
+        event.id,
+        {
+          start: new Date(`${event.startDate}T00:00:00`),
+          end: new Date(`${event.endDate}T00:00:00`),
+          progress: event.progress,
+        },
+        previousItems,
+      )
+
+      if (!resolved.valid || !resolved.update) {
+        startTransition(() => {
+          setTimelineMoveHint(resolved.message || 'This schedule change is not allowed.')
+          setTaskStructureRevision((value) => value + 1)
+        })
+        return false
+      }
+
+      const workItem = previousItems.find((item) => item.id === resolved.update!.id)
+      if (!workItem) return false
+
+      const nextItems = previousItems.map((item) =>
+        item.id === resolved.update!.id ? applyScheduleToWorkItem(item, resolved.update!) : item,
+      )
+      localWorkItemsRef.current = nextItems
+
+      startTransition(() => {
+        setLocalWorkItems(nextItems)
+        setTimelineMoveHint(null)
+      })
+
+      if (usesApiItems) {
+        void patchWorkItem(resolved.update.id, {
+          startDate: resolved.update.startDate,
+          dueDate: resolved.update.endDate,
+          progress: resolved.update.progress,
+        }).catch(() => {
+          localWorkItemsRef.current = previousItems
+          startTransition(() => {
+            setLocalWorkItems(previousItems)
+            setTimelineMoveHint('Failed to save schedule — reverted to previous dates.')
+            setTaskStructureRevision((value) => value + 1)
+          })
+        })
       }
 
       return true
@@ -230,7 +333,62 @@ export function ProjectTimelinePanel({
     [usesApiItems],
   )
 
+  const handleTaskGridEditCommit = useCallback(
+    (event: PlanningGanttTaskGridEditEvent): boolean => {
+      if (hasActiveSearchRef.current) {
+        startTransition(() => {
+          setTimelineMoveHint('Clear search before editing tasks inline.')
+        })
+        return false
+      }
+
+      const previousItems = localWorkItemsRef.current
+      const resolved = resolveTimelineTaskInlineEdit(event, previousItems)
+      if (!resolved.valid || !resolved.nextItem) {
+        if (resolved.message) {
+          startTransition(() => setTimelineMoveHint(resolved.message))
+        }
+        return false
+      }
+      if (!resolved.patchBody) return true
+
+      const nextItems = previousItems.map((item) =>
+        item.id === resolved.nextItem!.id ? resolved.nextItem! : item,
+      )
+      localWorkItemsRef.current = nextItems
+
+      startTransition(() => {
+        setLocalWorkItems(nextItems)
+        setTimelineMoveHint(null)
+      })
+
+      if (usesApiItems) {
+        void patchWorkItem(resolved.nextItem.id, resolved.patchBody).catch(() => {
+          localWorkItemsRef.current = previousItems
+          startTransition(() => {
+            setLocalWorkItems(previousItems)
+            setTimelineMoveHint('Failed to save inline edit — reverted.')
+            setTaskStructureRevision((value) => value + 1)
+          })
+        })
+      }
+
+      return true
+    },
+    [usesApiItems],
+  )
+
+  const timelineGanttColumns = useMemo(
+    () => TIMELINE_GANTT_GRID_COLUMNS as ComponentProps<typeof PlanningSvarGantt>['columns'],
+    [],
+  )
+
   useLayoutEffect(() => {
+    if (isFullscreen) {
+      setPanelHeightPx(null)
+      return
+    }
+
     const panelEl = panelRef.current
     if (!panelEl) return
 
@@ -251,39 +409,68 @@ export function ProjectTimelinePanel({
       window.removeEventListener('scroll', updateHeight)
       observer.disconnect()
     }
-  }, [])
+  }, [isFullscreen])
 
-  return (
+  const panel = (
     <div
       ref={panelRef}
       id="panel-timeline"
       style={
-        panelHeightPx != null
-          ? { height: panelHeightPx, maxHeight: panelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
-          : undefined
+        isFullscreen
+          ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+          : panelHeightPx != null
+            ? { height: panelHeightPx, maxHeight: panelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+            : undefined
       }
       className={cn(
         'scroll-mt-24',
-        'glass-card flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/40',
+        'glass-card flex min-h-0 flex-col overflow-hidden border border-border/40',
         'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+        isFullscreen
+          ? 'fixed inset-x-0 top-12 bottom-0 z-50 rounded-none border-0 bg-background'
+          : 'rounded-2xl',
       )}
     >
       <div className="flex h-full min-h-0 w-full flex-col">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
-          <div className="shrink-0">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <GanttChartSquare className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                  <h2 className="text-lg font-semibold text-foreground">Project Timeline</h2>
-                </div>
-                <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
-                  Gantt timeline of milestones, workstreams, and delivery checkpoints for this project workspace.
-                  Drag rows to reorder within a parent or drop onto another item to reparent (Epic → Feature → Task rules apply).
-                </p>
+        <div
+          className={cn(
+            'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+            isFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+          )}
+        >
+          <div className="shrink-0 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <GanttChartSquare className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                <h2 className="text-lg font-semibold text-foreground">Project Timeline</h2>
               </div>
+              <button
+                type="button"
+                aria-pressed={isFullscreen}
+                aria-label={isFullscreen ? 'Exit timeline fullscreen' : 'Expand timeline to fullscreen'}
+                title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen (header stays visible)'}
+                onClick={() => setIsFullscreen((prev) => !prev)}
+                className={cn(
+                  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                  timelineToolbarFocusClass,
+                  isFullscreen && 'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                )}
+              >
+                {isFullscreen ? (
+                  <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                )}
+              </button>
+            </div>
 
-              <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 text-xs text-muted-foreground scrollbar-hide">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+              <p className="max-w-xl text-[11px] leading-snug text-muted-foreground">
+                Gantt of milestones and workstreams for this project. Edit title, start, or duration inline;
+                drag bars for dates and rows to reorder or reparent (Epic → Feature → Task).
+              </p>
+
+              <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 text-xs text-muted-foreground scrollbar-hide lg:ml-auto">
                 <div className="relative w-[168px] shrink-0">
                   <Search
                     className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
@@ -413,7 +600,7 @@ export function ProjectTimelinePanel({
               <PlanningSvarGantt
                 items={filteredGanttItems}
                 layout="project-tree"
-                columns={DIRECTORY_GANTT_GRID_COLUMNS as ComponentProps<typeof PlanningSvarGantt>['columns']}
+                columns={timelineGanttColumns}
                 zoomLevel={zoomLevel}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
@@ -422,6 +609,10 @@ export function ProjectTimelinePanel({
                 onSelectedIdsChange={setSelectedIds}
                 enableRowReorder={!hasActiveSearch}
                 onTaskMoveCommit={handleTaskMoveCommit}
+                enableChartEdit={!hasActiveSearch}
+                onTaskScheduleCommit={handleTaskScheduleCommit}
+                enableGridEdit={!hasActiveSearch}
+                onTaskGridEditCommit={handleTaskGridEditCommit}
                 taskStructureRevision={taskStructureRevision}
                 surface="transparent"
               />
@@ -431,4 +622,15 @@ export function ProjectTimelinePanel({
       </div>
     </div>
   )
+
+  if (isFullscreen && typeof document !== 'undefined') {
+    return (
+      <>
+        <div className="min-h-[50vh]" aria-hidden />
+        {createPortal(panel, document.body)}
+      </>
+    )
+  }
+
+  return panel
 }

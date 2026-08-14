@@ -83,7 +83,6 @@ import {
   Trello,
   TrendingUp,
   UnfoldHorizontal,
-  Upload,
   Users,
   Workflow,
   X,
@@ -110,6 +109,7 @@ import {
 import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/EnterpriseDeleteConfirmModal'
 import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
 import { useToast } from '@/components/ui/toast'
+import { PlatformDataLoadingState } from '@/components/loading'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -146,6 +146,9 @@ import {
   fetchWorkspaceMembers,
   TECTONA_WAC_APP_ID,
 } from '@/lib/api/workspaceAccessControlApi'
+import { getSession } from '@/auth/authService'
+import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import {
   DEFAULT_OPERATIONAL_TEAM_VALUE,
   mapWacOperationalTeamDto,
@@ -185,7 +188,6 @@ import {
 type WorkItemType = 'Task' | 'Subtask' | 'Checklist' | 'Epic' | 'Feature' | 'Bug'
 type WorkStatus = 'Backlog' | 'To Do' | 'In Progress' | 'In Review' | 'Done'
 type Priority = 'Critical' | 'High' | 'Medium' | 'Low'
-type DependencyType = 'FS' | 'SS' | 'FF'
 type DependencyState = 'Clear' | 'Blocked' | 'At Risk'
 type GroupByKey = 'project' | 'assignee' | 'priority' | 'status' | 'workspace' | 'label' | 'type' | null
 type SortKey =
@@ -433,6 +435,9 @@ import {
   type WorkspacePickerGroups,
 } from '@/lib/work/workspacePickerGroups'
 import { DirectoryKanbanView } from '@/modules/task-work-management/components/DirectoryKanbanView'
+import { EpicStructureTreePanel, canDetachStructureItem } from '@/modules/task-work-management/components/EpicStructureTreePanel'
+import { DependencyManagementPanel } from '@/modules/task-work-management/components/DependencyManagementPanel'
+import { OwnershipAssignmentPanel } from '@/modules/task-work-management/components/OwnershipAssignmentPanel'
 import { DIRECTORY_GANTT_GRID_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 import {
   PlanningSvarGantt,
@@ -480,15 +485,6 @@ const DIRECTORY_VIEW_OPTIONS: Array<{
   { mode: 'kanban', label: 'Board', icon: FolderKanban },
   { mode: 'gantt', label: 'Gantt', icon: GanttChartSquare },
 ]
-
-interface DependencyRecord {
-  id: string
-  blockingId: string
-  dependentId: string
-  type: DependencyType
-  status: DependencyState
-  delayDays: number
-}
 
 interface WorklogRecord {
   id: string
@@ -976,8 +972,6 @@ function WorkItemPersonSelect({
 const WORK_MANAGEMENT_UNAVAILABLE_MESSAGE =
   'Work Management API is unavailable. Start python-work-management-service-fastapi (port 8432), ensure PostgreSQL is running, then try again.'
 
-const DEPENDENCIES: DependencyRecord[] = []
-
 const WORKLOGS: WorklogRecord[] = []
 
 const ACTIVITIES: ActivityRecord[] = []
@@ -1148,69 +1142,11 @@ function WorkItemStatusIcon({ status, className }: { status: WorkStatus; classNa
 const PIE_COLORS = ['#1d4ed8', '#2563eb', '#60a5fa', '#93c5fd', '#cbd5e1']
 
 // ──────────────────────────────────────────────────────────────────────────
-// Work Execution Overview Panel — operational command-center telemetry.
-// Enterprise PMO sample dataset powering the multi-widget overview workspace.
+// Work Execution Overview Panel — telemetry derived from live work items.
 // ──────────────────────────────────────────────────────────────────────────
-const OVERVIEW_DISTRIBUTION: Array<{ name: string; value: number; pct: number }> = [
-  { name: 'Epic', value: 23, pct: 18 },
-  { name: 'Feature', value: 29, pct: 24 },
-  { name: 'User Story', value: 38, pct: 32 },
-  { name: 'Task', value: 19, pct: 16 },
-  { name: 'Bug', value: 7, pct: 6 },
-  { name: 'Checklist', value: 5, pct: 4 },
-]
-
-const OVERVIEW_WORKFLOW: Array<{ stage: string; count: number }> = [
-  { stage: 'Backlog', count: 18 },
-  { stage: 'To Do', count: 28 },
-  { stage: 'In Progress', count: 41 },
-  { stage: 'In Review', count: 16 },
-  { stage: 'Done', count: 23 },
-]
-
-const OVERVIEW_DELIVERY_TREND = Array.from({ length: 30 }, (_, i) => ({
-  day: `D${i + 1}`,
-  created: Math.round(20 + 7 * Math.sin(i / 3) + (i % 5)),
-  completed: Math.round(16 + 5 * Math.sin(i / 3 + 0.8) + (i % 4)),
-  closed: Math.round(12 + 4 * Math.sin(i / 4 + 1.6) + (i % 3)),
-}))
-
-const OVERVIEW_OWNERSHIP: Array<{ name: string; count: number; util: number }> = [
-  { name: 'Alice', count: 15, util: 126 },
-  { name: 'Bob', count: 12, util: 100 },
-  { name: 'Charlie', count: 8, util: 67 },
-  { name: 'David', count: 5, util: 42 },
-  { name: 'PMO Core', count: 4, util: 33 },
-]
-
-const OVERVIEW_SLA: Array<{ label: string; value: number; pct: number; color: string }> = [
-  { label: 'On Track', value: 57, pct: 52, color: '#10b981' },
-  { label: 'At Risk', value: 31, pct: 28, color: '#f59e0b' },
-  { label: 'Overdue', value: 22, pct: 20, color: '#f43f5e' },
-]
-
-const OVERVIEW_VELOCITY: Array<{ sprint: string; sp: number }> = [
-  { sprint: 'Sprint 1', sp: 32 },
-  { sprint: 'Sprint 2', sp: 35 },
-  { sprint: 'Sprint 3', sp: 28 },
-  { sprint: 'Sprint 4', sp: 40 },
-]
-
-// Columns: 0–7, 8–14, 15–30, >30 days
-const OVERVIEW_AGING_COLUMNS = ['0–7d', '8–14d', '15–30d', '>30d']
-const OVERVIEW_AGING: Array<{ type: string; buckets: [number, number, number, number] }> = [
-  { type: 'Epic', buckets: [3, 2, 1, 1] },
-  { type: 'Feature', buckets: [6, 4, 2, 1] },
-  { type: 'User Story', buckets: [11, 9, 4, 4] },
-  { type: 'Bug', buckets: [4, 2, 1, 2] },
-  { type: 'Checklist', buckets: [14, 6, 4, 1] },
-]
-
-const OVERVIEW_AGING_SUMMARY: Array<{ label: string; value: number; pct: number; tone: string }> = [
-  { label: '>30 Days', value: 17, pct: 14, tone: 'text-rose-600' },
-  { label: '15–30 Days', value: 32, pct: 27, tone: 'text-amber-600' },
-  { label: '≤14 Days', value: 70, pct: 59, tone: 'text-emerald-600' },
-]
+const OVERVIEW_TYPE_ORDER: WorkItemType[] = ['Epic', 'Feature', 'Task', 'Subtask', 'Bug', 'Checklist']
+const OVERVIEW_WORKFLOW_STAGES: WorkStatus[] = ['Backlog', 'To Do', 'In Progress', 'In Review', 'Done']
+const OVERVIEW_AGING_COLUMNS = ['0–7d', '8–14d', '15–30d', '>30d'] as const
 
 type DepStatus = 'Healthy' | 'Warning' | 'Blocked'
 const DEP_STATUS_COLOR: Record<DepStatus, string> = {
@@ -1218,35 +1154,6 @@ const DEP_STATUS_COLOR: Record<DepStatus, string> = {
   Warning: '#f59e0b',
   Blocked: '#f43f5e',
 }
-const OVERVIEW_DEP_NODES: Array<{ id: string; label: string; x: number; y: number; col: number }> = [
-  { id: 'EA', label: 'Epic Alpha', x: 6, y: 34, col: 0 },
-  { id: 'EB', label: 'Epic Beta', x: 6, y: 100, col: 0 },
-  { id: 'FA1', label: 'Feature A1', x: 133, y: 14, col: 1 },
-  { id: 'FA2', label: 'Feature A2', x: 133, y: 66, col: 1 },
-  { id: 'FB1', label: 'Feature B1', x: 133, y: 118, col: 1 },
-  { id: 'TA1', label: 'Task A1.1', x: 260, y: 14, col: 2 },
-  { id: 'TA2', label: 'Task A2.1', x: 260, y: 66, col: 2 },
-  { id: 'TB1', label: 'Task B1.1', x: 260, y: 118, col: 2 },
-]
-const OVERVIEW_DEP_EDGES: Array<{ from: string; to: string; status: DepStatus }> = [
-  { from: 'EA', to: 'FA1', status: 'Healthy' },
-  { from: 'EA', to: 'FA2', status: 'Warning' },
-  { from: 'EB', to: 'FB1', status: 'Blocked' },
-  { from: 'FA1', to: 'TA1', status: 'Healthy' },
-  { from: 'FA2', to: 'TA2', status: 'Warning' },
-  { from: 'FB1', to: 'TB1', status: 'Blocked' },
-]
-
-const OVERVIEW_AI_INSIGHTS: string[] = [
-  '2 work items are predicted to miss SLA within 3 days.',
-  'PMO Core team utilization exceeds 118%.',
-  'Review stage has become a bottleneck.',
-  'Reassignment to Operations Team is recommended.',
-  'Delivery risk score increased by 7%.',
-]
-
-const VELOCITY_AVG = Math.round(OVERVIEW_VELOCITY.reduce((s, v) => s + v.sp, 0) / OVERVIEW_VELOCITY.length)
-const VELOCITY_BEST = Math.max(...OVERVIEW_VELOCITY.map((v) => v.sp))
 
 function agingCellTone(value: number): string {
   if (value >= 10) return 'bg-rose-500/90 text-white'
@@ -1255,6 +1162,322 @@ function agingCellTone(value: number): string {
   if (value >= 1) return 'bg-amber-100 text-amber-700'
   return 'bg-slate-100 text-slate-400'
 }
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function parseWorkItemDate(value?: string | null): Date | null {
+  if (!value?.trim()) return null
+  const parsed = new Date(value.includes('T') ? value : value.replace(' ', 'T'))
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function daysBetween(from: Date, to: Date): number {
+  return Math.floor((startOfLocalDay(to).getTime() - startOfLocalDay(from).getTime()) / 86_400_000)
+}
+
+function classifyOpenItemHealth(item: WorkItem, today: Date): DepStatus {
+  const due = parseWorkItemDate(item.dueDate)
+  const overdue = due != null && due < today
+  if (item.dependencyStatus === 'Blocked' || overdue || item.priority === 'Critical') return 'Blocked'
+  if (item.dependencyStatus === 'At Risk' || item.priority === 'High') return 'Warning'
+  if (due != null && daysBetween(today, due) <= 7) return 'Warning'
+  return 'Healthy'
+}
+
+function depStatusFromItem(item: WorkItem): DepStatus {
+  if (item.dependencyStatus === 'Blocked') return 'Blocked'
+  if (item.dependencyStatus === 'At Risk') return 'Warning'
+  return 'Healthy'
+}
+
+function truncateOverviewLabel(value: string, max = 14): string {
+  const trimmed = value.trim() || 'Untitled'
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed
+}
+
+function buildOverviewDependencyGraph(items: WorkItem[]): {
+  nodes: Array<{ id: string; label: string; x: number; y: number; col: number }>
+  edges: Array<{ from: string; to: string; status: DepStatus }>
+} {
+  const byId = new Map(items.map((item) => [item.id, item]))
+  const childrenByParent = new Map<string, WorkItem[]>()
+  for (const item of items) {
+    const parentId = item.parentId || item.featureId || item.epicId
+    if (!parentId || !byId.has(parentId) || parentId === item.id) continue
+    const siblings = childrenByParent.get(parentId) ?? []
+    siblings.push(item)
+    childrenByParent.set(parentId, siblings)
+  }
+
+  const roots = items
+    .filter((item) => {
+      const parentId = item.parentId || item.featureId || item.epicId
+      return !parentId || !byId.has(parentId)
+    })
+    .sort((left, right) => left.title.localeCompare(right.title))
+    .slice(0, 3)
+
+  const selected = new Map<string, { item: WorkItem; col: number }>()
+  for (const root of roots) {
+    selected.set(root.id, { item: root, col: 0 })
+    const mid = (childrenByParent.get(root.id) ?? []).slice(0, 2)
+    for (const child of mid) {
+      selected.set(child.id, { item: child, col: 1 })
+      for (const leaf of (childrenByParent.get(child.id) ?? []).slice(0, 1)) {
+        selected.set(leaf.id, { item: leaf, col: 2 })
+      }
+    }
+  }
+
+  const colBuckets: WorkItem[][] = [[], [], []]
+  for (const entry of selected.values()) {
+    colBuckets[entry.col]?.push(entry.item)
+  }
+
+  const nodes: Array<{ id: string; label: string; x: number; y: number; col: number }> = []
+  const colX = [6, 133, 260]
+  for (let col = 0; col < 3; col += 1) {
+    const bucket = colBuckets[col] ?? []
+    const gap = bucket.length <= 1 ? 0 : 100 / Math.max(1, bucket.length - 1)
+    bucket.forEach((item, index) => {
+      const y = bucket.length === 1 ? 63 : 14 + index * Math.min(52, gap)
+      nodes.push({
+        id: item.id,
+        label: truncateOverviewLabel(item.title),
+        x: colX[col] ?? 6,
+        y,
+        col,
+      })
+    })
+  }
+
+  const edges: Array<{ from: string; to: string; status: DepStatus }> = []
+  for (const node of nodes) {
+    const item = byId.get(node.id)
+    if (!item) continue
+    const parentId = item.parentId || item.featureId || item.epicId
+    if (!parentId || !selected.has(parentId)) continue
+    edges.push({ from: parentId, to: item.id, status: depStatusFromItem(item) })
+  }
+
+  return { nodes, edges }
+}
+
+function withPct(rows: Array<{ name: string; value: number }>): Array<{ name: string; value: number; pct: string }> {
+  const total = rows.reduce((sum, row) => sum + row.value, 0) || 1
+  return rows.map((row) => ({ ...row, pct: `${Math.round((row.value / total) * 100)}%` }))
+}
+
+function buildOverviewTelemetry(items: WorkItem[], todayInput = new Date()) {
+  const today = startOfLocalDay(todayInput)
+  const openItems = items.filter((item) => item.status !== 'Done')
+
+  const healthCounts = { Healthy: 0, 'At Risk': 0, Critical: 0 }
+  for (const item of openItems) {
+    const band = classifyOpenItemHealth(item, today)
+    if (band === 'Blocked') healthCounts.Critical += 1
+    else if (band === 'Warning') healthCounts['At Risk'] += 1
+    else healthCounts.Healthy += 1
+  }
+
+  const workflow = OVERVIEW_WORKFLOW_STAGES.map((stage) => ({
+    stage,
+    count: items.filter((item) => item.status === stage).length,
+  }))
+
+  const typeCounts = new Map<string, number>()
+  for (const item of items) {
+    typeCounts.set(item.type, (typeCounts.get(item.type) ?? 0) + 1)
+  }
+  const distribution = OVERVIEW_TYPE_ORDER.map((type) => {
+    const value = typeCounts.get(type) ?? 0
+    const pct = items.length === 0 ? 0 : Math.round((value / items.length) * 100)
+    return { name: type, value, pct }
+  })
+
+  const deliveryTrend = Array.from({ length: 30 }, (_, index) => {
+    const day = new Date(today)
+    day.setDate(today.getDate() - (29 - index))
+    const key = localDateInputValue(day)
+    let created = 0
+    let completed = 0
+    let closed = 0
+    for (const item of items) {
+      const startDate = parseWorkItemDate(item.startDate)
+      const startKey = startDate ? localDateInputValue(startDate) : null
+      const updated = parseWorkItemDate(item.lastUpdated)
+      const updatedKey = updated ? localDateInputValue(updated) : null
+      if (startKey === key) created += 1
+      if (item.status === 'Done' && updatedKey === key) {
+        completed += 1
+        closed += 1
+      }
+    }
+    return { day: `D${index + 1}`, created, completed, closed }
+  })
+
+  const createdPrev = deliveryTrend.slice(0, 15).reduce((sum, row) => sum + row.created, 0)
+  const createdCurr = deliveryTrend.slice(15).reduce((sum, row) => sum + row.created, 0)
+  const deliveryTrendDeltaPct =
+    createdPrev === 0
+      ? createdCurr > 0
+        ? 100
+        : 0
+      : Math.round(((createdCurr - createdPrev) / createdPrev) * 100)
+
+  const assigneeCounts = new Map<string, number>()
+  for (const item of openItems) {
+    const name = item.assignee?.trim() || 'Unassigned'
+    assigneeCounts.set(name, (assigneeCounts.get(name) ?? 0) + 1)
+  }
+  const ownershipCapacity = 5
+  const ownership = Array.from(assigneeCounts.entries())
+    .map(([name, count]) => ({
+      name,
+      count,
+      util: Math.round((count / ownershipCapacity) * 100),
+    }))
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 8)
+
+  let onTrack = 0
+  let atRisk = 0
+  let overdue = 0
+  for (const item of openItems) {
+    const due = parseWorkItemDate(item.dueDate)
+    if (!due) {
+      atRisk += 1
+      continue
+    }
+    if (due < today) overdue += 1
+    else if (daysBetween(today, due) <= 7 || item.dependencyStatus !== 'Clear') atRisk += 1
+    else onTrack += 1
+  }
+  const slaTotal = Math.max(1, onTrack + atRisk + overdue)
+  const sla = [
+    { label: 'On Track', value: onTrack, pct: Math.round((onTrack / slaTotal) * 100), color: '#10b981' },
+    { label: 'At Risk', value: atRisk, pct: Math.round((atRisk / slaTotal) * 100), color: '#f59e0b' },
+    { label: 'Overdue', value: overdue, pct: Math.round((overdue / slaTotal) * 100), color: '#f43f5e' },
+  ]
+
+  const velocity = Array.from({ length: 4 }, (_, weekIndex) => {
+    const weekEnd = new Date(today)
+    weekEnd.setDate(today.getDate() - (3 - weekIndex) * 7)
+    const weekStart = new Date(weekEnd)
+    weekStart.setDate(weekEnd.getDate() - 6)
+    const weekEndEod = new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate(), 23, 59, 59)
+    const doneHours = items
+      .filter((item) => {
+        if (item.status !== 'Done') return false
+        const updated = parseWorkItemDate(item.lastUpdated)
+        if (!updated) return false
+        return updated >= weekStart && updated <= weekEndEod
+      })
+      .reduce((sum, item) => sum + Math.max(0, item.estimatedHours || item.actualHours || 1), 0)
+    return { sprint: `W${weekIndex + 1}`, sp: doneHours }
+  })
+  const velocityAvg = velocity.length
+    ? Math.round(velocity.reduce((sum, row) => sum + row.sp, 0) / velocity.length)
+    : 0
+  const velocityBest = velocity.length ? Math.max(...velocity.map((row) => row.sp)) : 0
+  const velocityPrev = velocity[2]?.sp ?? 0
+  const velocityCurr = velocity[3]?.sp ?? 0
+  const velocityDeltaPct =
+    velocityPrev === 0 ? (velocityCurr > 0 ? 100 : 0) : Math.round(((velocityCurr - velocityPrev) / velocityPrev) * 100)
+
+  const aging = OVERVIEW_TYPE_ORDER.map((type) => {
+    const buckets: [number, number, number, number] = [0, 0, 0, 0]
+    for (const item of openItems.filter((entry) => entry.type === type)) {
+      const anchor = parseWorkItemDate(item.startDate) ?? parseWorkItemDate(item.lastUpdated) ?? today
+      const age = Math.max(0, daysBetween(anchor, today))
+      if (age <= 7) buckets[0] += 1
+      else if (age <= 14) buckets[1] += 1
+      else if (age <= 30) buckets[2] += 1
+      else buckets[3] += 1
+    }
+    return { type, buckets }
+  })
+  const agingTotals = aging.reduce(
+    (acc, row) => {
+      acc.d7 += row.buckets[0]
+      acc.d14 += row.buckets[1]
+      acc.d30 += row.buckets[2]
+      acc.over += row.buckets[3]
+      return acc
+    },
+    { d7: 0, d14: 0, d30: 0, over: 0 }
+  )
+  const agingOpen = Math.max(1, openItems.length)
+  const agingSummary = [
+    { label: '>30 Days', value: agingTotals.over, pct: Math.round((agingTotals.over / agingOpen) * 100), tone: 'text-rose-600' },
+    { label: '15–30 Days', value: agingTotals.d30, pct: Math.round((agingTotals.d30 / agingOpen) * 100), tone: 'text-amber-600' },
+    {
+      label: '≤14 Days',
+      value: agingTotals.d7 + agingTotals.d14,
+      pct: Math.round(((agingTotals.d7 + agingTotals.d14) / agingOpen) * 100),
+      tone: 'text-emerald-600',
+    },
+  ]
+
+  const { nodes: depNodes, edges: depEdges } = buildOverviewDependencyGraph(items)
+
+  const insights: string[] = []
+  if (overdue > 0) insights.push(`${overdue} open work item${overdue === 1 ? '' : 's'} are past due date.`)
+  const unassigned = openItems.filter((item) => !item.assignee || item.assignee === 'Unassigned').length
+  if (unassigned > 0) insights.push(`${unassigned} open item${unassigned === 1 ? '' : 's'} remain unassigned.`)
+  const backlog = workflow.find((row) => row.stage === 'Backlog')?.count ?? 0
+  const inReview = workflow.find((row) => row.stage === 'In Review')?.count ?? 0
+  if (backlog > 0 && backlog >= Math.max(1, openItems.length * 0.35)) {
+    insights.push(`Backlog holds ${backlog} items — consider pulling work into active flow.`)
+  }
+  if (inReview > 0 && inReview >= Math.max(1, openItems.length * 0.25)) {
+    insights.push(`In Review has ${inReview} items and may be a bottleneck.`)
+  }
+  const overloaded = ownership.filter((row) => row.util > 120 || row.count >= 5)
+  for (const owner of overloaded.slice(0, 2)) {
+    if (owner.name === 'Unassigned') continue
+    insights.push(`${owner.name} currently owns ${owner.count} open items.`)
+  }
+  if (healthCounts.Critical > 0) {
+    insights.push(`${healthCounts.Critical} item${healthCounts.Critical === 1 ? '' : 's'} classified as critical delivery exposure.`)
+  }
+  if (insights.length === 0) {
+    insights.push(
+      items.length > 0
+        ? 'No elevated delivery risks detected in the current workspace scope.'
+        : 'No work items in scope yet — charts stay at zero until memberships or backlog data appear.',
+    )
+  }
+
+  return {
+    hasData: items.length > 0,
+    healthDonut: withPct([
+      { name: 'Healthy', value: healthCounts.Healthy },
+      { name: 'At Risk', value: healthCounts['At Risk'] },
+      { name: 'Critical', value: healthCounts.Critical },
+    ]),
+    workflow,
+    workflowDonut: withPct(workflow.map((row) => ({ name: row.stage, value: row.count }))),
+    typeDonut: withPct(distribution.map((row) => ({ name: row.name, value: row.value }))),
+    deliveryTrend,
+    deliveryTrendDeltaPct,
+    ownership,
+    sla,
+    velocity,
+    velocityAvg,
+    velocityBest,
+    velocityDeltaPct,
+    aging,
+    agingSummary,
+    depNodes,
+    depEdges,
+    insights,
+    backlogCount: backlog,
+  }
+}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Intelligence Control Tower design system (mirrors Workspace Management's
@@ -1301,19 +1524,6 @@ const OVERVIEW_PANEL_TONES = {
   indigo: { accent: 'from-indigo-300 via-blue-400 to-violet-400', iconBg: 'bg-indigo-50 ring-1 ring-indigo-100', iconColor: 'text-indigo-500' },
 } as const
 type OverviewTone = keyof typeof OVERVIEW_PANEL_TONES
-
-function withPct(rows: Array<{ name: string; value: number }>): Array<{ name: string; value: number; pct: string }> {
-  const total = rows.reduce((sum, row) => sum + row.value, 0) || 1
-  return rows.map((row) => ({ ...row, pct: `${Math.round((row.value / total) * 100)}%` }))
-}
-
-const OVERVIEW_TYPE_DONUT = withPct(OVERVIEW_DISTRIBUTION.map((d) => ({ name: d.name, value: d.value })))
-const OVERVIEW_WORKFLOW_DONUT = withPct(OVERVIEW_WORKFLOW.map((d) => ({ name: d.stage, value: d.count })))
-const OVERVIEW_HEALTH_DONUT = withPct([
-  { name: 'Healthy', value: 64 },
-  { name: 'At Risk', value: 44 },
-  { name: 'Critical', value: 7 },
-])
 
 function OverviewChartPanel({
   title,
@@ -1530,9 +1740,9 @@ function OverviewExecutiveDonut({
   const segOf = (name: string): [string, string] =>
     name === 'Healthy' ? palette.healthSeg.healthy : name === 'At Risk' ? palette.healthSeg.risk : palette.healthSeg.critical
   const statusTrends: Record<string, number[]> = {
-    Healthy: [48, 51, 54, 56, 58, 60],
-    'At Risk': [26, 24, 23, 22, 21, 20],
-    Critical: [26, 25, 23, 22, 21, 20],
+    Healthy: Array.from({ length: 6 }, () => healthy),
+    'At Risk': Array.from({ length: 6 }, () => atRisk),
+    Critical: Array.from({ length: 6 }, () => critical),
   }
 
   return (
@@ -2085,7 +2295,7 @@ function reparentWorkItem(child: WorkItem, newParent: WorkItem): WorkItem {
     featureId: newParent.type === 'Feature' ? newParent.id : newParent.featureId,
     project: newParent.project,
     workspace: newParent.workspace,
-    lastUpdated: '2026-04-16 09:05',
+    lastUpdated: new Date().toISOString().slice(0, 16).replace('T', ' '),
   }
 }
 
@@ -2259,9 +2469,9 @@ function Panel({
       ref={outerRef}
       style={style}
       className={cn(
-        'rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
+        'w-full min-w-0 rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
         highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80',
-        scrollBody && 'flex min-h-0 w-full flex-col overflow-hidden',
+        scrollBody && 'flex min-h-0 flex-col overflow-hidden',
         className
       )}
     >
@@ -2291,26 +2501,6 @@ function Panel({
         {children}
       </div>
     </section>
-  )
-}
-
-function SkeletonBlock() {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <div key={index} className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-slate-100" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
-        <div className="h-[540px] animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-        <div className="space-y-4">
-          <div className="h-56 animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-          <div className="h-80 animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-          <div className="h-72 animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -2382,7 +2572,17 @@ function publishWorkActionFeedback(
 export function TaskWorkManagementPage() {
   const { addToast } = useToast()
   const boardColumnLabels = useBoardColumnLabels()
-  const [isLoading, setIsLoading] = useState(true)
+  const session = getSession()
+  const sessionRoles = session?.user.roles?.length
+    ? session.user.roles
+    : session?.user.role === 'root'
+      ? ['tectona_root']
+      : session?.user.role === 'admin'
+        ? ['tectona_admin']
+        : []
+  const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles, session?.user.role)
+  const { options: userWorkspaceOptions, loading: userWorkspacesLoading } = useUserWorkspaceOptions()
+  const [shellReady, setShellReady] = useState(false)
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [statusFilter, setStatusFilter] = useState<string>('All')
@@ -2458,6 +2658,7 @@ export function TaskWorkManagementPage() {
     width: number
   } | null>(null)
   const [drawer, setDrawer] = useState<DrawerState>({ open: false, workItemId: null })
+  const [dependencyAddOpenToken, setDependencyAddOpenToken] = useState(0)
   const [workItemAddOpen, setWorkItemAddOpen] = useState(false)
   const [workItemAddSaving, setWorkItemAddSaving] = useState(false)
   const [workItemFormError, setWorkItemFormError] = useState<string | null>(null)
@@ -2940,10 +3141,17 @@ export function TaskWorkManagementPage() {
   }, [operationalTeamOptions])
 
   useEffect(() => {
+    if (userWorkspacesLoading) return
     let cancelled = false
     void fetchAllWorkspaceOrgWorkspaces({ status: 'active' })
       .then((rows) => {
-        if (!cancelled) setTectonaOrgWorkspaces(rows)
+        if (cancelled) return
+        if (isPlatformAdmin) {
+          setTectonaOrgWorkspaces(rows)
+          return
+        }
+        const allowedIds = new Set(userWorkspaceOptions.map((option) => option.workspaceId))
+        setTectonaOrgWorkspaces(rows.filter((row) => allowedIds.has(row.id)))
       })
       .catch(() => {
         if (!cancelled) setTectonaOrgWorkspaces([])
@@ -2951,7 +3159,35 @@ export function TaskWorkManagementPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [isPlatformAdmin, userWorkspaceOptions, userWorkspacesLoading])
+
+  const accessibleWorkspaceKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const workspace of tectonaOrgWorkspaces) {
+      const name = workspace.name?.trim()
+      const key = workspace.workspace_key?.trim()
+      if (name) keys.add(name)
+      if (key) keys.add(key)
+    }
+    for (const option of userWorkspaceOptions) {
+      const name = option.workspaceName?.trim()
+      if (name) keys.add(name)
+    }
+    return keys
+  }, [tectonaOrgWorkspaces, userWorkspaceOptions])
+
+  /** Work items visible to the signed-in user (membership-scoped; platform admins see all). */
+  const visibleWorkItems = useMemo(() => {
+    if (isPlatformAdmin) return workItems
+    if (userWorkspacesLoading) return []
+    if (accessibleWorkspaceKeys.size === 0) return []
+    return workItems.filter((item) => {
+      const workspace = item.workspace?.trim()
+      return Boolean(workspace && accessibleWorkspaceKeys.has(workspace))
+    })
+  }, [accessibleWorkspaceKeys, isPlatformAdmin, userWorkspacesLoading, workItems])
+
+  const directoryDataLoading = workItemsLoading || userWorkspacesLoading
 
   useEffect(() => {
     if (tectonaOrgWorkspaces.length === 0) {
@@ -3029,7 +3265,7 @@ export function TaskWorkManagementPage() {
   }, [applyWorkItemsFromCacheSilently])
 
   useEffect(() => {
-    const groups = buildWorkspacePickerGroups(tectonaOrgWorkspaces, workItems)
+    const groups = buildWorkspacePickerGroups(tectonaOrgWorkspaces, visibleWorkItems)
     const fallback = defaultTectonaWorkspaceName(groups)
     if (!fallback) return
     setWorkItemFormWorkspace((current) => {
@@ -3038,7 +3274,7 @@ export function TaskWorkManagementPage() {
       }
       return fallback
     })
-  }, [tectonaOrgWorkspaces, workItems])
+  }, [tectonaOrgWorkspaces, visibleWorkItems])
 
   useEffect(() => {
     if (!workItemAddOpen) {
@@ -3169,12 +3405,12 @@ export function TaskWorkManagementPage() {
   )
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 650)
-    return () => window.clearTimeout(timer)
-  }, [])
+    // First completed work-items fetch unlocks the page shell (data loader, not fake skeleton).
+    if (!directoryDataLoading) setShellReady(true)
+  }, [directoryDataLoading])
 
   useLayoutEffect(() => {
-    if (isLoading) return
+    if (!shellReady) return
     if (activePanel !== 'overview' && activePanel !== 'directory') {
       setMainPanelViewportHeightPx(null)
       return
@@ -3211,7 +3447,7 @@ export function TaskWorkManagementPage() {
     }
   }, [
     activePanel,
-    isLoading,
+    shellReady,
     isWorkspaceCollapsed,
     showFiltersPanel,
     showKpiCards,
@@ -3220,7 +3456,7 @@ export function TaskWorkManagementPage() {
   ])
 
   useLayoutEffect(() => {
-    if (isLoading) return
+    if (!shellReady) return
     if (navDocked || !showEnterpriseNavPanel) {
       setNavPanelHeightPx(null)
       return
@@ -3270,7 +3506,7 @@ export function TaskWorkManagementPage() {
     }
   }, [
     activePanel,
-    isLoading,
+    shellReady,
     isWorkspaceCollapsed,
     mainPanelViewportHeightPx,
     navDocked,
@@ -3278,7 +3514,7 @@ export function TaskWorkManagementPage() {
     showKpiCards,
     showEnterpriseNavPanel,
     sidebarFixed,
-    workItems.length,
+    visibleWorkItems.length,
   ])
 
   useLayoutEffect(() => {
@@ -3340,8 +3576,8 @@ export function TaskWorkManagementPage() {
   }, [activePanel, navDocked, showFiltersPanel, showKpiCards, isWorkspaceCollapsed, showEnterpriseNavPanel])
 
   const workspacePickerGroups = useMemo(
-    () => buildWorkspacePickerGroups(tectonaOrgWorkspaces, workItems),
-    [tectonaOrgWorkspaces, workItems]
+    () => buildWorkspacePickerGroups(tectonaOrgWorkspaces, visibleWorkItems),
+    [tectonaOrgWorkspaces, visibleWorkItems]
   )
 
   const confirmDeleteWorkItemImpact = useMemo(() => {
@@ -3359,26 +3595,26 @@ export function TaskWorkManagementPage() {
   }, [confirmDeleteWorkItemTarget, workItems])
 
   const filterOptions = useMemo(() => {
-    const workItemAssignees = workItems.map((item) => item.assignee).filter(Boolean)
+    const workItemAssignees = visibleWorkItems.map((item) => item.assignee).filter(Boolean)
     const assignees = mergeWorkspaceAssigneeDirectory(workspaceAssigneesByName, workItemAssignees)
     const reporters = Array.from(
       new Set([
-        ...workItems.map((item) => item.reporter ?? item.owner),
+        ...visibleWorkItems.map((item) => item.reporter ?? item.owner),
         ...assignees,
         'Unassigned',
         'System',
       ])
     )
-    const teams = buildWorkItemTeamPickerOptions(operationalTeamOptions, workItems)
+    const teams = buildWorkItemTeamPickerOptions(operationalTeamOptions, visibleWorkItems)
 
     return {
       assignees,
       reporters,
       teams,
-      projects: Array.from(new Set(workItems.map((item) => item.project))),
+      projects: Array.from(new Set(visibleWorkItems.map((item) => item.project))),
       workspaces: allWorkspacePickerNames(workspacePickerGroups),
     }
-  }, [workspaceAssigneesByName, workItems, workspacePickerGroups, operationalTeamOptions])
+  }, [workspaceAssigneesByName, visibleWorkItems, workspacePickerGroups, operationalTeamOptions])
 
   const resolveWorkspaceAssigneeOptions = useCallback(
     (workspaceName: string, currentAssignee?: string | null) =>
@@ -3390,31 +3626,38 @@ export function TaskWorkManagementPage() {
   )
 
   const directoryMoveTargets = useMemo(() => {
-    const labels = workItems
+    const labels = visibleWorkItems
       .map((item) => resolveWorkItemDirectoryLabel(item))
       .filter((label): label is string => Boolean(label))
     return {
       workspaces: allWorkspacePickerNames(workspacePickerGroups),
       labels: Array.from(new Set(labels)).sort(),
     }
-  }, [workItems, workspacePickerGroups])
+  }, [visibleWorkItems, workspacePickerGroups])
 
   const workItemParentOptions = useMemo(() => {
     const allowedParentTypes = DIRECTORY_ALLOWED_PARENTS[workItemFormType]
-    return workItems.filter((item) => allowedParentTypes.includes(item.type))
-  }, [workItemFormType, workItems])
+    return visibleWorkItems.filter((item) => allowedParentTypes.includes(item.type))
+  }, [workItemFormType, visibleWorkItems])
 
   useEffect(() => {
     if (!workItemFormParentId) return
-    const parent = workItems.find((item) => item.id === workItemFormParentId)
+    const parent = visibleWorkItems.find((item) => item.id === workItemFormParentId)
     if (!parent || !isValidWorkItemParentChild(parent, workItemFormType)) {
       setWorkItemFormParentId('')
     }
-  }, [workItemFormParentId, workItemFormType, workItems])
+  }, [workItemFormParentId, workItemFormType, visibleWorkItems])
+
+  useEffect(() => {
+    if (userWorkspacesLoading || workspaceFilter === 'All') return
+    if (!filterOptions.workspaces.includes(workspaceFilter)) {
+      setWorkspaceFilter('All')
+    }
+  }, [filterOptions.workspaces, userWorkspacesLoading, workspaceFilter])
 
   const filteredItems = useMemo(() => {
-    const today = new Date('2026-04-16T00:00:00')
-    return workItems.filter((item) => {
+    const today = startOfLocalDay(new Date())
+    return visibleWorkItems.filter((item) => {
       const matchesSearch =
         deferredSearch.length === 0 ||
         [item.title, item.id, item.project, item.workspace, item.assignee, item.type]
@@ -3430,12 +3673,15 @@ export function TaskWorkManagementPage() {
       const matchesType = typeFilter === 'All' || item.type === typeFilter
       const matchesDependency = dependencyFilter === 'All' || item.dependencyStatus === dependencyFilter
 
-      const dueDate = new Date(item.dueDate)
+      const dueDate = parseWorkItemDate(item.dueDate)
+      const weekEnd = new Date(today)
+      weekEnd.setDate(today.getDate() + 7)
+      weekEnd.setHours(23, 59, 59, 999)
       const matchesDue =
         dueFilter === 'All' ||
-        (dueFilter === 'Overdue' && dueDate < today && item.status !== 'Done') ||
-        (dueFilter === 'This Week' && dueDate >= today && dueDate <= new Date('2026-04-22T23:59:59')) ||
-        (dueFilter === 'No Date' && Number.isNaN(dueDate.getTime()))
+        (dueFilter === 'Overdue' && dueDate != null && dueDate < today && item.status !== 'Done') ||
+        (dueFilter === 'This Week' && dueDate != null && dueDate >= today && dueDate <= weekEnd) ||
+        (dueFilter === 'No Date' && dueDate == null)
 
       return (
         matchesSearch &&
@@ -3458,7 +3704,7 @@ export function TaskWorkManagementPage() {
     projectFilter,
     statusFilter,
     typeFilter,
-    workItems,
+    visibleWorkItems,
     workspaceFilter,
   ])
 
@@ -3722,15 +3968,15 @@ export function TaskWorkManagementPage() {
   }, [directoryGanttItems, directoryGanttSelectedId])
 
   const workMap = useMemo(() => {
-    return workItems.reduce<Record<string, WorkItem>>((map, item) => {
+    return visibleWorkItems.reduce<Record<string, WorkItem>>((map, item) => {
       map[item.id] = item
       return map
     }, {})
-  }, [workItems])
+  }, [visibleWorkItems])
 
   const drawerItem = useMemo(
-    () => (drawer.workItemId ? workItems.find((item) => item.id === drawer.workItemId) ?? null : null),
-    [drawer.workItemId, workItems]
+    () => (drawer.workItemId ? visibleWorkItems.find((item) => item.id === drawer.workItemId) ?? null : null),
+    [drawer.workItemId, visibleWorkItems]
   )
 
   function upsertWorkItemInState(updated: WorkItem) {
@@ -3762,15 +4008,23 @@ export function TaskWorkManagementPage() {
   }, [drawerItem])
 
   const summary = useMemo(() => {
-    const overdue = workItems.filter((item) => item.status !== 'Done' && new Date(item.dueDate) < new Date('2026-04-16')).length
-    const completed = workItems.filter((item) => item.status === 'Done').length
-    const inProgress = workItems.filter((item) => item.status === 'In Progress').length
-    const backlog = workItems.filter((item) => item.status === 'Backlog').length
-    const openTasks = workItems.filter((item) => item.status !== 'Done').length
-    const executionHealth = Math.max(48, Math.round(100 - backlog * 6 - overdue * 4 + completed * 2))
+    const today = startOfLocalDay(new Date())
+    const overdue = visibleWorkItems.filter((item) => {
+      if (item.status === 'Done') return false
+      const due = parseWorkItemDate(item.dueDate)
+      return due != null && due < today
+    }).length
+    const completed = visibleWorkItems.filter((item) => item.status === 'Done').length
+    const inProgress = visibleWorkItems.filter((item) => item.status === 'In Progress').length
+    const backlog = visibleWorkItems.filter((item) => item.status === 'Backlog').length
+    const openTasks = visibleWorkItems.filter((item) => item.status !== 'Done').length
+    const executionHealth =
+      visibleWorkItems.length === 0
+        ? 100
+        : Math.max(0, Math.min(100, Math.round(100 - backlog * 6 - overdue * 4 + completed * 2)))
 
     return {
-      total: workItems.length,
+      total: visibleWorkItems.length,
       openTasks,
       inProgress,
       backlog,
@@ -3778,7 +4032,7 @@ export function TaskWorkManagementPage() {
       overdue,
       executionHealth,
     }
-  }, [workItems])
+  }, [visibleWorkItems])
 
   const kpiCards = useMemo(
     () => [
@@ -3787,60 +4041,60 @@ export function TaskWorkManagementPage() {
         label: 'Total Work Items',
         value: String(summary.total),
         subtext: 'All active execution records in scope',
-        trend: '+6%',
+        trend: '—',
         icon: LayoutList,
         trendColor: '#0ea5e9',
-        trendSeries: [9, 9, 10, 10, 11, 11, 12, summary.total],
+        trendSeries: Array.from({ length: 8 }, () => summary.total),
       },
       {
         id: 'open',
         label: 'Open Tasks',
         value: String(summary.openTasks),
         subtext: 'Operational items not yet done',
-        trend: '+2',
+        trend: '—',
         icon: Briefcase,
         trendColor: '#6366f1',
-        trendSeries: [8, 8, 9, 9, 10, 10, 10, summary.openTasks],
+        trendSeries: Array.from({ length: 8 }, () => summary.openTasks),
       },
       {
         id: 'health',
         label: 'Execution Health',
         value: `${summary.executionHealth}%`,
         subtext: 'Composite health across flow and blockers',
-        trend: '+1.2%',
+        trend: '—',
         icon: Signal,
         trendColor: '#10b981',
-        trendSeries: [82, 83, 84, 84, 85, 86, 86, summary.executionHealth],
+        trendSeries: Array.from({ length: 8 }, () => summary.executionHealth),
       },
       {
         id: 'backlog',
         label: 'Backlog Items',
         value: String(summary.backlog),
         subtext: 'Queued work not yet in active flow',
-        trend: '-1',
+        trend: '—',
         icon: Inbox,
         trendColor: '#8b5cf6',
-        trendSeries: [5, 5, 4, 4, 4, 3, 3, summary.backlog],
+        trendSeries: Array.from({ length: 8 }, () => summary.backlog),
       },
       {
         id: 'overdue',
         label: 'Overdue Items',
         value: String(summary.overdue),
         subtext: 'Due-date breach requiring escalation',
-        trend: '-2',
+        trend: '—',
         icon: CalendarClock,
         trendColor: '#f97316',
-        trendSeries: [6, 6, 6, 5, 5, 5, 4, summary.overdue],
+        trendSeries: Array.from({ length: 8 }, () => summary.overdue),
       },
       {
         id: 'done',
         label: 'Completed',
         value: String(summary.completed),
         subtext: 'Delivery outcomes logged to history',
-        trend: '+3',
+        trend: '—',
         icon: CheckCircle2,
         trendColor: '#06b6d4',
-        trendSeries: [0, 1, 1, 2, 2, 3, 3, summary.completed],
+        trendSeries: Array.from({ length: 8 }, () => summary.completed),
       },
     ],
     [summary]
@@ -3849,65 +4103,55 @@ export function TaskWorkManagementPage() {
   const workflowDistribution = useMemo(() => {
     return ['Backlog', 'To Do', 'In Progress', 'In Review', 'Done'].map((status) => ({
       stage: status,
-      count: workItems.filter((item) => item.status === status).length,
+      count: visibleWorkItems.filter((item) => item.status === status).length,
     }))
-  }, [workItems])
+  }, [visibleWorkItems])
 
-  const ownershipRows = useMemo(() => {
-    const assignees = Array.from(new Set(workItems.map((item) => item.assignee)))
-    return assignees.map((assignee) => {
-      const entries = workItems.filter((item) => item.assignee === assignee)
-      return {
-        name: assignee,
-        role: entries[0]?.role ?? 'Unassigned Pool',
-        assigned: entries.length,
-        inProgress: entries.filter((item) => item.status === 'In Progress').length,
-        overdue: entries.filter((item) => item.status !== 'Done' && new Date(item.dueDate) < new Date('2026-04-16')).length,
-        team: entries[0]?.team ?? 'Unassigned',
+  const overviewTelemetry = useMemo(
+    () => buildOverviewTelemetry(visibleWorkItems),
+    [visibleWorkItems]
+  )
+
+  /** Structure tree respects search while keeping ancestor nodes for matched descendants. */
+  const structureBrowseItems = useMemo(() => {
+    const query = deferredSearch.trim().toLowerCase()
+    if (!query) return visibleWorkItems
+
+    const byId = new Map(visibleWorkItems.map((item) => [item.id, item]))
+    const itemIds = new Set(visibleWorkItems.map((item) => item.id))
+    const matched = new Set<string>()
+
+    for (const item of visibleWorkItems) {
+      const haystack = [item.title, item.id, item.project, item.workspace, item.assignee, item.type]
+        .join(' ')
+        .toLowerCase()
+      if (haystack.includes(query)) matched.add(item.id)
+    }
+
+    const keep = new Set(matched)
+    for (const id of matched) {
+      let current = byId.get(id)
+      while (current) {
+        const parentId = resolveWorkItemParentId(current, itemIds)
+        if (!parentId) break
+        keep.add(parentId)
+        current = byId.get(parentId)
       }
-    })
-  }, [workItems])
+    }
 
-  const typeTree = useMemo(() => {
-    const epics = workItems.filter((item) => item.type === 'Epic')
-    return epics.map((epic) => ({
-      epic,
-      features: workItems
-        .filter((item) => item.type === 'Feature' && item.epicId === epic.id)
-        .map((feature) => ({
-          feature,
-          tasks: workItems
-            .filter((item) => item.featureId === feature.id && item.type === 'Task')
-            .map((task) => ({
-              task,
-              subtasks: workItems.filter((item) => item.parentId === task.id && item.type === 'Subtask'),
-              checklists: workItems.filter((item) => item.parentId === task.id && item.type === 'Checklist'),
-            })),
-        })),
-    }))
-  }, [workItems])
-
-  const workloadSummary = useMemo(() => {
-    const unassigned = workItems.filter((item) => item.assignee === 'Unassigned').length
-    const overloaded = ownershipRows.filter((item) => item.assigned >= 3 || item.overdue > 0).length
-    const byTeam = Array.from(new Set(workItems.map((item) => item.team))).map((team) => ({
-      team,
-      count: workItems.filter((item) => item.team === team).length,
-    }))
-
-    return { unassigned, overloaded, byTeam }
-  }, [ownershipRows, workItems])
+    return visibleWorkItems.filter((item) => keep.has(item.id))
+  }, [deferredSearch, visibleWorkItems])
 
   const timeSummary = useMemo(() => {
-    const estimated = workItems.reduce((sum, item) => sum + item.estimatedHours, 0)
-    const actual = workItems.reduce((sum, item) => sum + item.actualHours, 0)
+    const estimated = visibleWorkItems.reduce((sum, item) => sum + item.estimatedHours, 0)
+    const actual = visibleWorkItems.reduce((sum, item) => sum + item.actualHours, 0)
     return {
       estimated,
       actual,
       remaining: Math.max(0, estimated - actual),
       variance: actual - estimated,
     }
-  }, [workItems])
+  }, [visibleWorkItems])
 
   async function handleDirectoryFieldUpdate(id: string, field: DirectoryInlineField, rawValue: string) {
     const previous = workItems.find((item) => item.id === id)
@@ -4044,6 +4288,46 @@ export function TaskWorkManagementPage() {
     }
   }
 
+  async function handleStructureDetach(draggedId: string) {
+    const dragged = workItems.find((item) => item.id === draggedId)
+    if (!dragged) return
+    if (!canDetachStructureItem(dragged, workItems)) {
+      setDirectoryReparentHint('This item cannot be moved to Ungrouped.')
+      return
+    }
+
+    const previousItems = workItems
+    startTransition(() => {
+      setWorkItems((current) =>
+        current.map((item) => {
+          if (item.id !== draggedId) return item
+          return {
+            ...item,
+            parentId: undefined,
+            epicId: undefined,
+            featureId: undefined,
+            lastUpdated: new Date().toISOString().slice(0, 16).replace('T', ' '),
+          }
+        })
+      )
+      setDirectoryReparentHint(null)
+    })
+
+    try {
+      const updated = await patchWorkItem(draggedId, { parentId: null })
+      startTransition(() => {
+        upsertWorkItemInState(mapApiWorkItemToPage(updated) as WorkItem)
+      })
+    } catch (error) {
+      if (error instanceof WorkItemVersionConflictError) {
+        applyWorkItemConflictToState(error)
+        return
+      }
+      startTransition(() => setWorkItems(previousItems))
+      setDirectoryReparentHint('Failed to detach work item — reverted to previous state.')
+    }
+  }
+
   async function handleDrawerQuickSave() {
     if (!drawerItem) return
     setDrawerSaving(true)
@@ -4132,6 +4416,19 @@ export function TaskWorkManagementPage() {
       setBulkError('Bulk update failed. Check Work Management service (8432).')
     } finally {
       setBulkSaving(false)
+    }
+  }
+
+  async function handleOwnershipBulkAssign(itemIds: string[], assignee: string) {
+    if (itemIds.length === 0) return
+    const result = await batchPatchWorkItems({ ids: itemIds, assignee })
+    for (const item of result.updated) {
+      upsertWorkItemInState(mapApiWorkItemToPage(item) as WorkItem)
+    }
+    if (result.failed.length > 0) {
+      setDirectoryReparentHint(
+        `${result.failed.length} of ${itemIds.length} item(s) could not be reassigned.`,
+      )
     }
   }
 
@@ -4464,7 +4761,11 @@ export function TaskWorkManagementPage() {
     return siblingIds.indexOf(item.id)
   }
 
-  function openWorkItemAddDrawerForParent(parent: WorkItem, childType: WorkItemType) {
+  function openWorkItemAddDrawerForParent(
+    parent: WorkItem,
+    childType: WorkItemType,
+    options?: { stayOnPanel?: boolean },
+  ) {
     if (workItemsLoadError) return
     resetWorkItemAddForm()
     setWorkItemFormType(childType)
@@ -4476,7 +4777,15 @@ export function TaskWorkManagementPage() {
         || defaultOperationalTeamLabel(operationalTeamOptions),
     )
     setWorkItemFormAssignee(parent.assignee === 'Unassigned' ? 'Unassigned' : parent.assignee)
-    setActivePanel('directory')
+    if (!options?.stayOnPanel) setActivePanel('directory')
+    setWorkItemAddOpen(true)
+    window.requestAnimationFrame(() => workItemTitleInputRef.current?.focus())
+  }
+
+  function openCreateEpicFromStructure() {
+    if (workItemsLoadError) return
+    resetWorkItemAddForm()
+    setWorkItemFormType('Epic')
     setWorkItemAddOpen(true)
     window.requestAnimationFrame(() => workItemTitleInputRef.current?.focus())
   }
@@ -4919,11 +5228,14 @@ export function TaskWorkManagementPage() {
     setActivePanel(id)
   }
 
-  if (isLoading) {
+  if (!shellReady) {
     return (
       <div className="space-y-5">
         <Breadcrumb items={[{ label: 'Task & Work Management' }]} />
-        <SkeletonBlock />
+        <PlatformDataLoadingState
+          title="Loading Task & Work data"
+          description="Retrieving work items from Work Management."
+        />
       </div>
     )
   }
@@ -5007,7 +5319,7 @@ export function TaskWorkManagementPage() {
         )}
       />
 
-      {workItemsLoading && !workItemsLoadError ? (
+      {directoryDataLoading && !workItemsLoadError ? (
         <div className="text-sm text-muted-foreground">Loading work items from Work Management API…</div>
       ) : null}
 
@@ -5204,10 +5516,13 @@ export function TaskWorkManagementPage() {
 
         <div
           className={cn(
+            // Page wrapper already applies docked-nav inset when Fixed Sidebar is off.
+            // Passing navDocked here would double the left padding and leave the Overview panel short.
             showEnterpriseNavPanel
-              ? workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
+              ? workspaceMainColumnClass(false, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
               : 'space-y-4',
-            activePanel === 'directory' && 'flex min-h-0 min-w-0 flex-col'
+            'min-w-0 w-full',
+            (activePanel === 'directory' || activePanel === 'structure' || activePanel === 'dependencies' || activePanel === 'ownership') && 'flex min-h-0 min-w-0 flex-col'
           )}
         >
           {!isOverviewSectionActive && showFiltersPanel ? (
@@ -5238,10 +5553,37 @@ export function TaskWorkManagementPage() {
                   className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_0%,hsl(var(--border)/0.2)_18%,hsl(var(--border)/0.75)_50%,hsl(var(--border)/0.2)_82%,transparent_100%)]"
                 />
                 <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                  <button type="button" onClick={openCreateWorkItemDrawer} disabled={Boolean(workItemsLoadError)} className={enterpriseCyanGradientActionButtonClass()}>
+                  {activePanel === 'structure' ? (
+                    <button
+                      type="button"
+                      onClick={openCreateEpicFromStructure}
+                      disabled={Boolean(workItemsLoadError)}
+                      className={enterpriseCyanGradientActionButtonClass()}
+                    >
+                      <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                      Add Epic
+                    </button>
+                  ) : activePanel === 'dependencies' ? (
+                    <button
+                      type="button"
+                      onClick={() => setDependencyAddOpenToken((value) => value + 1)}
+                      disabled={Boolean(workItemsLoadError) || visibleWorkItems.length < 2}
+                      className={enterpriseCyanGradientActionButtonClass()}
+                    >
+                      <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                      Link Items
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openCreateWorkItemDrawer}
+                      disabled={Boolean(workItemsLoadError)}
+                      className={enterpriseCyanGradientActionButtonClass()}
+                    >
                     <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
                     New Work Item
                   </button>
+                  )}
                 </div>
               </div>
             </Card>
@@ -5256,15 +5598,14 @@ export function TaskWorkManagementPage() {
               headerIcon={<BarChart3 className="h-5 w-5" />}
               outerRef={activeMainPanelRef}
               style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
-              className={cn(mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              className={cn('w-full min-w-0 max-w-none', mainPanelViewportHeightPx != null && 'overflow-hidden')}
               scrollBody={mainPanelViewportHeightPx != null}
               showDivider={false}
             >
-              {OVERVIEW_DISTRIBUTION.some((entry) => entry.value > 0) ? (
-                (() => {
+              {(() => {
                   const pal = OVERVIEW_PALETTES[overviewPalette]
                   const isVivid = (overviewPalette as string) === 'vivid'
-                  const backlogCount = OVERVIEW_WORKFLOW.find((d) => d.stage === 'Backlog')?.count ?? 0
+                  const backlogCount = overviewTelemetry.backlogCount
                   return (
                     <div className="space-y-4">
                       {/* ROW 1 — Execution Health + Workflow State (executive donuts) */}
@@ -5277,7 +5618,7 @@ export function TaskWorkManagementPage() {
                           palette={pal}
                         >
                           <OverviewExecutiveDonut
-                            data={OVERVIEW_HEALTH_DONUT}
+                            data={overviewTelemetry.healthDonut}
                             palette={pal}
                             selectedBand={focusBlocked ? 'Critical' : null}
                             onBandClick={(band) => setFocusBlocked(band === 'Critical' ? (current) => !current : false)}
@@ -5295,7 +5636,7 @@ export function TaskWorkManagementPage() {
                           }
                         >
                           <OverviewDonut
-                            data={OVERVIEW_WORKFLOW_DONUT}
+                            data={overviewTelemetry.workflowDonut}
                             centerLabel="Workflow"
                             pieColors={pal.workflowPieColors}
                             isVivid={isVivid}
@@ -5315,7 +5656,7 @@ export function TaskWorkManagementPage() {
                           palette={pal}
                         >
                           <OverviewDonut
-                            data={OVERVIEW_TYPE_DONUT}
+                            data={overviewTelemetry.typeDonut}
                             centerLabel="Work Items"
                             pieColors={pal.typePieColors}
                             isVivid={isVivid}
@@ -5330,13 +5671,13 @@ export function TaskWorkManagementPage() {
                           palette={pal}
                           right={
                             <Badge className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700">
-                              <TrendingUp className="h-3 w-3" /> 12%
+                              <TrendingUp className="h-3 w-3" /> {overviewTelemetry.deliveryTrendDeltaPct > 0 ? '+' : ''}{overviewTelemetry.deliveryTrendDeltaPct}%
                             </Badge>
                           }
                         >
                           <div className="h-56">
                             <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={OVERVIEW_DELIVERY_TREND} margin={{ top: 8, right: 6, left: -20, bottom: 0 }}>
+                              <LineChart data={overviewTelemetry.deliveryTrend} margin={{ top: 8, right: 6, left: -20, bottom: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
                                 <XAxis dataKey="day" tick={{ fill: '#94a3b8', fontSize: 9 }} axisLine={false} tickLine={false} interval={5} />
                                 <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
@@ -5361,7 +5702,9 @@ export function TaskWorkManagementPage() {
                           palette={pal}
                         >
                           <div className="space-y-2.5">
-                            {OVERVIEW_OWNERSHIP.map((owner) => {
+                            {overviewTelemetry.ownership.length === 0 ? (
+                              <p className="text-xs text-slate-500">No open assignees in scope.</p>
+                            ) : overviewTelemetry.ownership.map((owner) => {
                               const overloaded = owner.util > 120
                               const underutilized = owner.util < 60
                               const barColor = overloaded ? '#f43f5e' : underutilized ? '#f59e0b' : '#2563eb'
@@ -5395,12 +5738,12 @@ export function TaskWorkManagementPage() {
                         >
                           <div className="space-y-4">
                             <div className="flex h-3 w-full overflow-hidden rounded-full ring-1 ring-black/[0.03]">
-                              {OVERVIEW_SLA.map((segment) => (
+                              {overviewTelemetry.sla.map((segment) => (
                                 <div key={segment.label} style={{ width: `${segment.pct}%`, background: segment.color }} title={`${segment.label}: ${segment.value}`} />
                               ))}
                             </div>
                             <div className="grid grid-cols-3 gap-2">
-                              {OVERVIEW_SLA.map((segment) => (
+                              {overviewTelemetry.sla.map((segment) => (
                                 <div key={segment.label} className="rounded-xl border border-slate-200/80 bg-white p-2.5">
                                   <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                                     <span className="h-2 w-2 rounded-full" style={{ background: segment.color }} />
@@ -5428,10 +5771,17 @@ export function TaskWorkManagementPage() {
                         >
                           <div className="space-y-2">
                             <div className="h-40 w-full">
+                              {overviewTelemetry.depNodes.length === 0 ? (
+                                <div className="flex h-full items-center justify-center text-xs text-slate-500">
+                                  No parent/child links in scope yet.
+                                </div>
+                              ) : (
                               <svg viewBox="0 0 320 150" className="h-full w-full" role="img" aria-label="Dependency graph">
-                                {OVERVIEW_DEP_EDGES.map((edge) => {
-                                  const from = OVERVIEW_DEP_NODES.find((node) => node.id === edge.from)!
-                                  const to = OVERVIEW_DEP_NODES.find((node) => node.id === edge.to)!
+                                {overviewTelemetry.depEdges.map((edge) => {
+                                  const from = overviewTelemetry.depNodes.find((node) => node.id === edge.from)
+                                  if (!from) return null
+                                  const to = overviewTelemetry.depNodes.find((node) => node.id === edge.to)
+                                  if (!to) return null
                                   const x1 = from.x + 58
                                   const y1 = from.y + 12
                                   const x2 = to.x
@@ -5450,8 +5800,8 @@ export function TaskWorkManagementPage() {
                                     />
                                   )
                                 })}
-                                {OVERVIEW_DEP_NODES.map((node) => {
-                                  const isBlocked = OVERVIEW_DEP_EDGES.some((edge) => (edge.from === node.id || edge.to === node.id) && edge.status === 'Blocked')
+                                {overviewTelemetry.depNodes.map((node) => {
+                                  const isBlocked = overviewTelemetry.depEdges.some((edge) => (edge.from === node.id || edge.to === node.id) && edge.status === 'Blocked')
                                   const dimmed = focusBlocked && !isBlocked
                                   return (
                                     <g key={node.id} opacity={dimmed ? 0.3 : 1}>
@@ -5461,6 +5811,7 @@ export function TaskWorkManagementPage() {
                                   )
                                 })}
                               </svg>
+                              )}
                             </div>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
                               <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />Healthy</span>
@@ -5472,7 +5823,7 @@ export function TaskWorkManagementPage() {
 
                         <OverviewChartPanel
                           title="Team Velocity"
-                          description="Story points completed per sprint."
+                          description="Estimated hours completed per week (from Done items in scope)."
                           icon={Timer}
                           tone="sky"
                           palette={pal}
@@ -5480,11 +5831,11 @@ export function TaskWorkManagementPage() {
                           <div className="flex items-stretch gap-3">
                             <div className="h-44 flex-1">
                               <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={OVERVIEW_VELOCITY} margin={{ top: 16, right: 10, left: -22, bottom: 0 }}>
+                                <LineChart data={overviewTelemetry.velocity} margin={{ top: 16, right: 10, left: -22, bottom: 0 }}>
                                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
                                   <XAxis dataKey="sprint" tick={{ fill: '#94a3b8', fontSize: 9 }} axisLine={false} tickLine={false} />
                                   <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
-                                  <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }} formatter={(value: number) => [`${value} SP`, 'Velocity']} />
+                                  <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }} formatter={(value: number) => [`${value}h`, 'Completed']} />
                                   <Line type="monotone" dataKey="sp" stroke={pal.workflowPieColors[1]} strokeWidth={2.2} dot={{ r: 3, fill: pal.workflowPieColors[1] }} activeDot={{ r: 4 }}>
                                     <LabelList dataKey="sp" position="top" formatter={(value: number) => `${value}`} style={{ fill: '#475569', fontSize: 9, fontWeight: 600 }} />
                                   </Line>
@@ -5494,14 +5845,14 @@ export function TaskWorkManagementPage() {
                             <div className="flex w-24 shrink-0 flex-col justify-center gap-2 text-xs">
                               <div className="rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5">
                                 <p className="text-[10px] text-slate-500">Average</p>
-                                <p className="font-semibold text-slate-900">{VELOCITY_AVG} SP</p>
+                                <p className="font-semibold text-slate-900">{overviewTelemetry.velocityAvg}h</p>
                               </div>
                               <div className="rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5">
                                 <p className="text-[10px] text-slate-500">Best</p>
-                                <p className="font-semibold text-slate-900">{VELOCITY_BEST} SP</p>
+                                <p className="font-semibold text-slate-900">{overviewTelemetry.velocityBest}h</p>
                               </div>
-                              <div className="flex items-center gap-1 px-0.5 font-semibold text-emerald-600">
-                                <TrendingUp className="h-3.5 w-3.5" /> +15%
+                              <div className={cn('flex items-center gap-1 px-0.5 font-semibold', overviewTelemetry.velocityDeltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600')}>
+                                <TrendingUp className="h-3.5 w-3.5" /> {overviewTelemetry.velocityDeltaPct > 0 ? '+' : ''}{overviewTelemetry.velocityDeltaPct}%
                               </div>
                             </div>
                           </div>
@@ -5524,7 +5875,7 @@ export function TaskWorkManagementPage() {
                                 {OVERVIEW_AGING_COLUMNS.map((col) => (
                                   <span key={col} className="text-center font-medium text-slate-400">{col}</span>
                                 ))}
-                                {OVERVIEW_AGING.map((row) => (
+                                {overviewTelemetry.aging.map((row) => (
                                   <Fragment key={row.type}>
                                     <span className="flex items-center truncate pr-1 font-medium text-slate-600">{row.type}</span>
                                     {row.buckets.map((value, index) => (
@@ -5537,7 +5888,7 @@ export function TaskWorkManagementPage() {
                               </div>
                             </div>
                             <div className="flex w-20 shrink-0 flex-col justify-center gap-1.5">
-                              {OVERVIEW_AGING_SUMMARY.map((summaryRow) => (
+                              {overviewTelemetry.agingSummary.map((summaryRow) => (
                                 <div key={summaryRow.label} className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5 text-center">
                                   <p className={cn('text-base font-semibold tabular-nums', summaryRow.tone)}>{summaryRow.value}</p>
                                   <p className="text-[9px] leading-tight text-slate-500">{summaryRow.label} ({summaryRow.pct}%)</p>
@@ -5573,7 +5924,7 @@ export function TaskWorkManagementPage() {
                                 Backlog focus active — {backlogCount} items queued before active flow.
                               </li>
                             ) : null}
-                            {OVERVIEW_AI_INSIGHTS.map((insight) => (
+                            {overviewTelemetry.insights.map((insight) => (
                               <li key={insight} className="flex items-start gap-1.5">
                                 <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-indigo-400" />
                                 {insight}
@@ -5582,7 +5933,7 @@ export function TaskWorkManagementPage() {
                           </ul>
 
                           <p className="mt-3 shrink-0 text-[10px] text-slate-400">
-                            Generated 5 minutes ago · Powered by <span className="font-semibold text-indigo-500">TECTONA AI</span>
+                            Derived from live work items in your workspace scope · <span className="font-semibold text-indigo-500">TECTONA</span>
                           </p>
                           <div className="mt-2.5 flex shrink-0 flex-wrap gap-2">
                             <button type="button" className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-50">View Recommendation</button>
@@ -5593,34 +5944,12 @@ export function TaskWorkManagementPage() {
                       </div>
                     </div>
                   )
-                })()
-              ) : (
-                <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-16 text-center">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
-                    <Activity className="h-6 w-6" />
-                  </span>
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900">No execution telemetry available yet.</h3>
-                    <p className="mt-1 text-xs text-slate-500">Connect a workspace or import a backlog to populate the operational overview.</p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <button type="button" className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-700">
-                      <Plug className="h-4 w-4" /> Connect Workspace
-                    </button>
-                    <button type="button" className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50">
-                      <Upload className="h-4 w-4" /> Import Backlog
-                    </button>
-                    <button type="button" className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50">
-                      <ListChecks className="h-4 w-4" /> Create Work Item
-                    </button>
-                  </div>
-                </div>
-              )}
+                })()}
             </Panel>
           ) : null}
 
           {isDirectorySectionGroupActive ? (
-          <div className={cn('grid grid-cols-1 gap-4', activePanel === 'directory' && 'min-h-0 flex flex-1 flex-col')}>
+          <div className={cn('grid grid-cols-1 gap-4', (activePanel === 'directory' || activePanel === 'ownership') && 'min-h-0 flex flex-1 flex-col')}>
             {activePanel === 'directory' ? (
             <div
               id="directory"
@@ -6121,7 +6450,7 @@ export function TaskWorkManagementPage() {
                   <div
                     className={cn(
                       'scrollbar-hide min-h-0 w-full min-w-0 flex-1',
-                      sortedItems.length === 0 || workItemsLoading || Boolean(workItemsLoadError)
+                      sortedItems.length === 0 || directoryDataLoading || Boolean(workItemsLoadError)
                         ? 'flex flex-col items-center justify-center overflow-hidden overflow-y-auto rounded-xl bg-gradient-to-b from-muted/50 via-background to-background py-8 dark:from-muted/25'
                         : directoryViewMode === 'kanban'
                           ? 'flex min-h-0 flex-col overflow-hidden border-t border-border/40'
@@ -6130,7 +6459,7 @@ export function TaskWorkManagementPage() {
                             : 'overflow-auto rounded-xl'
                     )}
                   >
-                    {workItemsLoading ? (
+                    {directoryDataLoading ? (
                       <div className="flex w-full flex-col items-center justify-center px-6 py-12">
                         <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
                         <p className="mt-4 text-sm text-muted-foreground">Loading work items…</p>
@@ -6160,10 +6489,21 @@ export function TaskWorkManagementPage() {
                           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-muted/80 ring-1 ring-border/70 dark:bg-white/[0.06]">
                             <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
                           </div>
+                          {visibleWorkItems.length === 0 && !isPlatformAdmin ? (
+                            <>
+                              <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">No workspaces in your scope</p>
+                              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                                Join or create a workspace to see work items here. Shared directory data from other workspaces stays hidden until you are a member.
+                              </p>
+                            </>
+                          ) : (
+                            <>
                           <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">No work items match</p>
                           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                             Adjust search or filters to restore the operational directory view.
                           </p>
+                            </>
+                          )}
                         </div>
                       </div>
                     ) : directoryViewMode === 'kanban' ? (
@@ -6209,7 +6549,7 @@ export function TaskWorkManagementPage() {
                         >
                           <table
                             className={cn(
-                              'w-full min-w-[960px] border-separate border-spacing-x-2 border-spacing-y-0 text-xs select-none',
+                              'w-full min-w-[960px] border-separate border-spacing-0 text-xs select-none',
                               (Object.keys(directoryColumnWidthsPx).length > 0 || directoryColumnResizingKey) &&
                                 'table-fixed'
                             )}
@@ -6686,7 +7026,7 @@ export function TaskWorkManagementPage() {
             ) : null}
 
             {activePanel === 'workflow' || activePanel === 'ownership' ? (
-            <div className="space-y-4">
+            <div className={cn('space-y-4', activePanel === 'ownership' && 'flex min-h-0 flex-1 flex-col')}>
               {activePanel === 'workflow' ? (
               <Panel
                 id="workflow"
@@ -6720,66 +7060,32 @@ export function TaskWorkManagementPage() {
               ) : null}
 
               {activePanel === 'ownership' ? (
-              <Panel
+              <div
                 id="ownership"
-                title="Ownership & Assignment Panel"
-                description="Workload, ownership, unassigned tasks, overloaded assignees, and team-level distribution."
-                highlight={activePanel === 'ownership'}
-                outerRef={activeMainPanelRef}
+                ref={activeMainPanelRef}
+                className={cn(
+                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                  'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+                )}
+                style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
               >
-                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Assigned</div>
-                        <div className="mt-2 text-2xl font-bold text-slate-900">{workItems.length - workloadSummary.unassigned}</div>
+                <div className="flex h-full min-h-0 w-full flex-col">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                    <OwnershipAssignmentPanel
+                      items={visibleWorkItems}
+                      search={deferredSearch}
+                      disabled={Boolean(workItemsLoadError)}
+                      assigneeOptions={filterOptions.assignees}
+                      resolveAssigneeOptions={(item) =>
+                        resolveWorkspaceAssigneeOptions(item.workspace, item.assignee)
+                      }
+                      onOpenItem={(id) => setDrawer({ open: true, workItemId: id })}
+                      onAssign={(id, assignee) => handleDirectoryFieldUpdate(id, 'assignee', assignee)}
+                      onBulkAssign={handleOwnershipBulkAssign}
+                    />
                       </div>
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Unassigned</div>
-                        <div className="mt-2 text-2xl font-bold text-slate-900">{workloadSummary.unassigned}</div>
                       </div>
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Overloaded</div>
-                        <div className="mt-2 text-2xl font-bold text-slate-900">{workloadSummary.overloaded}</div>
                       </div>
-                    </div>
-                    <div className="mt-4 space-y-2">
-                      {workloadSummary.byTeam.map((team) => (
-                        <div key={team.team} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-700">
-                          <span>{team.team}</span>
-                          <span className="font-semibold text-slate-900">{team.count} items</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    {ownershipRows.map((row) => (
-                      <div key={row.name} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-slate-900">{row.name}</div>
-                            <div className="mt-1 text-xs text-slate-600">{row.role} - {row.team}</div>
-                          </div>
-                          <Badge className={cn('rounded-full border', row.overdue > 0 || row.assigned >= 3 ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
-                            {row.assigned >= 3 ? 'Load attention' : 'Balanced'}
-                          </Badge>
-                        </div>
-                        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                          <div className="rounded-xl border border-slate-200 bg-white/90 p-2"><div className="text-slate-500">Assigned</div><div className="mt-1 font-semibold text-slate-900">{row.assigned}</div></div>
-                          <div className="rounded-xl border border-slate-200 bg-white/90 p-2"><div className="text-slate-500">In progress</div><div className="mt-1 font-semibold text-slate-900">{row.inProgress}</div></div>
-                          <div className="rounded-xl border border-slate-200 bg-white/90 p-2"><div className="text-slate-500">Overdue</div><div className="mt-1 font-semibold text-slate-900">{row.overdue}</div></div>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {['Reassign Task', 'Balance Workload', 'Assign Owner'].map((action) => (
-                            <button key={action} className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-blue-300 hover:text-blue-700">{action}</button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Panel>
               ) : null}
             </div>
             ) : null}
@@ -6787,144 +7093,75 @@ export function TaskWorkManagementPage() {
           ) : null}
 
           {isStructureSectionGroupActive ? (
-          <div className="grid grid-cols-1 gap-4">
+          <div className={cn('grid grid-cols-1 gap-4', (activePanel === 'structure' || activePanel === 'dependencies') && 'min-h-0 flex flex-1 flex-col')}>
             {(activePanel === 'structure' || activePanel === 'dependencies') ? (
-            <div className="space-y-4">
+            <div className={cn((activePanel === 'structure' || activePanel === 'dependencies') && 'min-h-0 flex flex-1 flex-col')}>
               {activePanel === 'structure' ? (
-              <Panel
+              <div
                 id="structure"
-                title="Epic & Feature Structure Panel"
-                description="Hierarchical execution structure across epic, feature, task, subtask, and checklist levels."
-                highlight={activePanel === 'structure'}
-                outerRef={activeMainPanelRef}
-                right={<Button variant="outline" className="h-8 rounded-full border-slate-200 text-xs text-slate-700">Add Feature</Button>}
+                ref={activeMainPanelRef}
+                className={cn(
+                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                  'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+                )}
+                style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
               >
-                <div className="space-y-3">
-                  {typeTree.map((epicGroup) => (
-                    <div key={epicGroup.epic.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <Badge className="rounded-full border border-blue-200 bg-blue-50 text-blue-700">Epic</Badge>
-                            <span className="text-sm font-semibold text-slate-900">{epicGroup.epic.title}</span>
+                <div className="flex h-full min-h-0 w-full flex-col">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                    <EpicStructureTreePanel
+                      items={structureBrowseItems}
+                      disabled={Boolean(workItemsLoadError)}
+                      reparentHint={directoryReparentHint}
+                      onOpenItem={(id) => setDrawer({ open: true, workItemId: id })}
+                      onAddEpic={openCreateEpicFromStructure}
+                      onAddChild={(parent, childType) => {
+                        const full = visibleWorkItems.find((item) => item.id === parent.id)
+                        if (!full) return
+                        openWorkItemAddDrawerForParent(full, childType, { stayOnPanel: true })
+                      }}
+                      onCanDrop={(draggedId, parentId) => canReparentWorkItem(draggedId, parentId, workItems)}
+                      onReparent={(draggedId, parentId) => {
+                        void handleDirectoryReparent(draggedId, parentId)
+                      }}
+                      onCanDetach={(draggedId) => {
+                        const item = workItems.find((entry) => entry.id === draggedId)
+                        return item ? canDetachStructureItem(item, workItems) : false
+                      }}
+                      onDetach={(draggedId) => {
+                        void handleStructureDetach(draggedId)
+                      }}
+                      onReparentRejected={(message) => setDirectoryReparentHint(message)}
+                    />
                           </div>
-                          <div className="mt-1 text-xs text-slate-600">{epicGroup.epic.project} - {epicGroup.epic.progress}% complete</div>
                         </div>
-                        <div className="flex flex-wrap gap-1">
-                          {['Add Feature', 'Add Task', 'Reorder hierarchy', 'Link to Project'].map((action) => (
-                            <button key={action} className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-blue-300 hover:text-blue-700">{action}</button>
-                          ))}
                         </div>
-                      </div>
-
-                      <div className="mt-4 space-y-3">
-                        {epicGroup.features.map((featureGroup) => (
-                          <div key={featureGroup.feature.id} className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-                            <div className="flex items-center gap-2">
-                              <Badge className="rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700">Feature</Badge>
-                              <span className="text-sm font-semibold text-slate-900">{featureGroup.feature.title}</span>
-                              <span className="text-xs text-slate-500">{featureGroup.feature.progress}%</span>
-                            </div>
-                            <div className="mt-3 space-y-2">
-                              {featureGroup.tasks.map((taskGroup) => (
-                                <div key={taskGroup.task.id} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                                  <div className="flex items-center gap-2">
-                                    <Badge className="rounded-full border border-slate-200 bg-slate-100 text-slate-700">Task</Badge>
-                                    <span className="text-sm font-medium text-slate-800">{taskGroup.task.title}</span>
-                                  </div>
-                                  {taskGroup.subtasks.length > 0 && (
-                                    <div className="mt-2 ml-3 space-y-1 border-l border-slate-200 pl-3">
-                                      {taskGroup.subtasks.map((subtask) => (
-                                        <div key={subtask.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs text-slate-700">
-                                          <span>{subtask.title}</span>
-                                          <StatusBadge status={subtask.status} />
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {taskGroup.checklists.length > 0 && (
-                                    <div className="mt-2 ml-3 space-y-1 border-l border-slate-200 pl-3">
-                                      {taskGroup.checklists.map((checklist) => (
-                                        <div key={checklist.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs text-slate-700">
-                                          <span>{checklist.title}</span>
-                                          <span className="text-slate-500">{checklist.checklist.filter((item) => item.done).length}/{checklist.checklist.length}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Panel>
               ) : null}
 
               {activePanel === 'dependencies' ? (
-              <Panel
+              <div
                 id="dependencies"
-                title="Task Dependency Management Panel"
-                description="Blocking relationships, delay indicators, and a compact dependency map across work items."
-                highlight={activePanel === 'dependencies'}
-                outerRef={activeMainPanelRef}
+                ref={activeMainPanelRef}
+                className={cn(
+                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                  'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+                )}
+                style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
               >
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                  <div className="overflow-hidden rounded-2xl border border-slate-200">
-                    <table className="w-full text-xs">
-                      <thead className="bg-slate-50/90 text-slate-600">
-                        <tr>
-                          {['Blocking task', 'Dependent task', 'Type', 'Status', 'Delay'].map((header) => (
-                            <th key={header} className="px-3 py-3 text-left font-semibold">{header}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {DEPENDENCIES.map((dependency) => (
-                          <tr key={dependency.id} className="border-t border-slate-100 bg-white/90">
-                            <td className="px-3 py-3 font-medium text-slate-800">{workMap[dependency.blockingId]?.title}</td>
-                            <td className="px-3 py-3 text-slate-700">{workMap[dependency.dependentId]?.title}</td>
-                            <td className="px-3 py-3"><Badge className="rounded-full border border-slate-200 bg-slate-100 text-slate-700">{dependency.type}</Badge></td>
-                            <td className="px-3 py-3"><DependencyBadge status={dependency.status} /></td>
-                            <td className="px-3 py-3 text-slate-700">{dependency.delayDays === 0 ? 'On track' : `${dependency.delayDays} day(s)`}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <div className="flex h-full min-h-0 w-full flex-col">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
+                    <DependencyManagementPanel
+                      items={visibleWorkItems}
+                      search={deferredSearch}
+                      disabled={Boolean(workItemsLoadError)}
+                      addOpenRequestToken={dependencyAddOpenToken}
+                      onOpenItem={(id) => setDrawer({ open: true, workItemId: id })}
+                      onDependenciesChanged={() => {
+                        void reloadWorkItemsFromApi()
+                      }}
+                    />
                   </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-900">Mini Dependency Map</h3>
-                        <p className="mt-1 text-xs text-slate-600">Compact blocking chain view for critical execution paths.</p>
                       </div>
-                      <Link2 className="h-4 w-4 text-slate-400" />
                     </div>
-                    <div className="mt-4 space-y-3">
-                      {DEPENDENCIES.map((dependency) => (
-                        <div key={`map-${dependency.id}`} className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800">{workMap[dependency.blockingId]?.id}</div>
-                          <div className="my-2 flex items-center justify-center gap-2 text-[11px] text-slate-500">
-                            <GitBranch className="h-3.5 w-3.5" />
-                            {dependency.type}
-                            <ArrowRightLeft className="h-3.5 w-3.5" />
-                          </div>
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800">{workMap[dependency.dependentId]?.id}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-1">
-                      {['Add Dependency', 'Remove Dependency', 'View Blocking Chain'].map((action) => (
-                        <button key={action} className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-blue-300 hover:text-blue-700">{action}</button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </Panel>
               ) : null}
             </div>
             ) : null}

@@ -1,7 +1,13 @@
-import { useEffect, useRef, type DragEvent, type MouseEvent } from 'react'
+import { useEffect, useRef, type CSSProperties, type DragEvent, type MouseEvent } from 'react'
+import { Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { DocumentFolder } from '@/lib/api/documentFolderApi'
 import folderCardStyles from '@/modules/projects/components/FolderCard.module.css'
+import { buildFolderCardThemeVariables } from '@/modules/projects/lib/folderColorPalette'
+import {
+  isProjectLinkedDocumentFolder,
+  PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR,
+} from '@/modules/projects/lib/projectDocumentFolder'
 import compactStyles from './DocumentRepositoryFolderCard.module.css'
 
 type DocumentRepositoryFolderCardProps = {
@@ -34,12 +40,17 @@ export function DocumentRepositoryFolderCard({
   const renameInputRef = useRef<HTMLInputElement>(null)
   const hasDocuments = folder.document_count > 0
   const metaLabel = `${folder.document_count} docs · ${folder.children_count} subfolders`
+  const isProjectFolder = isProjectLinkedDocumentFolder(folder.description)
+  const themedStyle = isProjectFolder
+    ? (buildFolderCardThemeVariables(PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR, hasDocuments) as CSSProperties)
+    : undefined
+  const showRenameInput = isRenaming && !isProjectFolder
 
   useEffect(() => {
-    if (!isRenaming) return
+    if (!showRenameInput) return
     renameInputRef.current?.focus()
     renameInputRef.current?.select()
-  }, [isRenaming])
+  }, [showRenameInput])
 
   return (
     <div
@@ -47,15 +58,17 @@ export function DocumentRepositoryFolderCard({
         folderCardStyles.folderCard,
         compactStyles.compactCard,
         'group/folder',
+        isProjectFolder && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         isDragOver && folderCardStyles.dragOver,
       )}
+      style={themedStyle}
       onContextMenu={onContextMenu}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       onDoubleClick={(event) => {
-        if (isRenaming) return
+        if (showRenameInput) return
         if ((event.target as HTMLElement).closest('button,input')) return
         onOpen()
       }}
@@ -73,7 +86,7 @@ export function DocumentRepositoryFolderCard({
         ) : null}
 
         <div className={cn(folderCardStyles.folderTitleRow, compactStyles.compactTitleRow)}>
-          {isRenaming ? (
+          {showRenameInput ? (
             <input
               ref={renameInputRef}
               type="text"
@@ -94,14 +107,24 @@ export function DocumentRepositoryFolderCard({
           ) : (
             <button
               type="button"
-              className={cn(folderCardStyles.folderTitle, compactStyles.compactTitle, 'min-w-0 flex-1 text-left hover:text-sky-700')}
-              title={folder.name}
+              className={cn(
+                folderCardStyles.folderTitle,
+                compactStyles.compactTitle,
+                'min-w-0 flex-1 text-left',
+                isProjectFolder ? 'flex items-center gap-1 cursor-pointer' : 'hover:text-sky-700',
+              )}
+              title={isProjectFolder ? `${folder.name} (linked to project — name and color are locked)` : folder.name}
               onClick={(event) => {
                 event.stopPropagation()
+                if (isProjectFolder) {
+                  onOpen()
+                  return
+                }
                 onStartRename()
               }}
             >
-              {folder.name}
+              {isProjectFolder ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
+              <span className="min-w-0 truncate">{folder.name}</span>
             </button>
           )}
         </div>

@@ -145,6 +145,7 @@ export interface IdeaApi {
   scope_summary?: string | null
   risk_summary?: string | null
   category?: string | null
+  card_accent_color?: string | null
   tags: string[]
   owner_id?: string | null
   assignee_id?: string | null
@@ -182,7 +183,11 @@ function parseApiErrorMessage(status: number, body: string): string {
     const nested = parsed.error?.message
     if (nested) {
       if (status === 403 && nested.includes('idea_backlog')) {
-        return 'Anda tidak memiliki izin Idea & Backlog. Keluar lalu masuk lagi sebagai root/administrator agar token memuat role terbaru.'
+        return (
+          'Your current token does not have Idea & Backlog API permission yet. '
+          + 'Reload the page, or sign out and sign in again so your latest role is loaded. '
+          + 'If it still fails, ask an admin to add the idea_backlog role to your account.'
+        )
       }
       return nested
     }
@@ -231,14 +236,14 @@ export interface IdeaSummaryPersistent {
 
 /**
  * Retrieve persistent AI-generated summary for an idea.
- * Returns `null` when no summary has been saved yet (404).
+ * Returns `null` when no summary has been saved yet (204 / legacy 404).
  */
 export async function getPersistentIdeaSummary(ideaId: string): Promise<IdeaSummaryPersistent | null> {
   const res = await apiFetch(
     `${BASE_URL}/v1/ideas/${ideaId}/summary`,
     { headers: defaultHeaders() }
   )
-  if (res.status === 404) return null
+  if (res.status === 204 || res.status === 404) return null
   return handleResponse<IdeaSummaryPersistent>(res)
 }
 
@@ -259,6 +264,46 @@ export async function upsertPersistentIdeaSummary(
     body: JSON.stringify(body),
   })
   return handleResponse<IdeaSummaryPersistent>(res)
+}
+
+export interface IdeaIntegrationPersistent {
+  id: string
+  idea_id: string
+  integration_json: Record<string, unknown>
+  status: 'ok' | 'insufficient_data' | 'draft' | string
+  confidence_score: number
+  generated_at: string
+  generated_by: string
+  source_correlation_id?: string | null
+  version: number
+  created_date: string
+  updated_date?: string | null
+}
+
+export async function getPersistentIdeaIntegration(ideaId: string): Promise<IdeaIntegrationPersistent | null> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/integration`, { headers: defaultHeaders() })
+  // 204 = intentionally empty (no architecture saved yet); 404 kept for older backends.
+  if (res.status === 204 || res.status === 404) return null
+  return handleResponse<IdeaIntegrationPersistent>(res)
+}
+
+export async function upsertPersistentIdeaIntegration(
+  ideaId: string,
+  body: {
+    integration_json: Record<string, unknown>
+    status: 'ok' | 'insufficient_data' | 'draft'
+    confidence_score: number
+    generated_by: string
+    source_correlation_id?: string | null
+    version: number
+  },
+): Promise<IdeaIntegrationPersistent> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/integration`, {
+    method: 'PUT',
+    headers: defaultHeaders(),
+    body: JSON.stringify(body),
+  })
+  return handleResponse<IdeaIntegrationPersistent>(res)
 }
 
 // ── API functions ─────────────────────────────────────────────────────────────
@@ -299,6 +344,7 @@ export async function createIdea(body: {
   title: string
   description?: string
   category?: string
+  card_accent_color?: string
   tags?: string[]
   workspace_id?: string
   owner_id?: string
@@ -323,8 +369,10 @@ export async function patchIdea(
     scope_summary?: string | null
     risk_summary?: string | null
     category?: string
+    card_accent_color?: string
     tags?: string[]
     workspace_id?: string
+    project_id?: string | null
     version: number
   }
 ): Promise<IdeaApi> {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Fragment, useContext } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment, useContext } from 'react'
 import {
   Plus,
   Loader2,
@@ -30,7 +30,9 @@ import {
   type TodoItem,
   type TodoPriorityCode,
 } from '@/lib/api/todoApi'
+import { getSession } from '@/auth/authService'
 import { notifyEvent } from '@/lib/api/notificationApi'
+import { pushGlobalToast } from '@/components/ui/toast'
 import { useSettingsPanelStore } from '@/stores/settings-panel-store'
 import { cn } from '@/lib/utils'
 import {
@@ -62,8 +64,30 @@ import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { InlineCalendar } from '@/components/ui/inline-calendar'
 import { DatePicker } from '@/components/ui/date-picker'
+import todoAnim from './TodoListPanel.module.css'
 
 type FilterType = 'active' | 'done'
+type TodoStatusAnim = 'completing' | 'reopening'
+
+const TODO_STATUS_ANIM_MS = 520
+
+/** Immediate UI toast + notification-panel event (WS echo is deduped). */
+function toastTodoEvent(params: {
+  title: string
+  body?: string
+  variant?: 'default' | 'success' | 'error' | 'info' | 'warning'
+}) {
+  pushGlobalToast({
+    title: params.title,
+    description: params.body,
+    variant: params.variant ?? 'success',
+  })
+  notifyEvent({
+    type_code: 'todo',
+    title: params.title,
+    body: params.body ?? null,
+  })
+}
 
 const TODO_CATEGORIES = ['General', 'Work', 'Personal'] as const
 type TodoCategory = (typeof TODO_CATEGORIES)[number]
@@ -195,7 +219,8 @@ function SortableTodoRow({
   onContextMenu: onContextMenuProp,
   togglingId,
   deletingId,
-  getTodoTooltipContent,
+  statusAnim,
+  getTodoTooltipText,
 }: {
   todo: TodoItem
   isSelected: boolean
@@ -207,7 +232,8 @@ function SortableTodoRow({
   onContextMenu?: (e: React.MouseEvent, todo: TodoItem) => void
   togglingId: string | null
   deletingId: string | null
-  getTodoTooltipContent: (todo: TodoItem) => React.ReactNode
+  statusAnim?: TodoStatusAnim | null
+  getTodoTooltipText: (todo: TodoItem) => string
 }) {
   const {
     attributes,
@@ -220,13 +246,14 @@ function SortableTodoRow({
   const style = transform ? { transform: CSS.Transform.toString(transform), transition } : undefined
   const priority = getPriorityCode(todo)
   const categoryInfo = getTodoCategoryInfo(todo)
+  const showAsCompleted = todo.is_completed || statusAnim === 'completing'
 
   return (
       <div
         ref={setNodeRef}
         style={{
           ...style,
-          ...(!isSelected && categoryInfo
+          ...(!isSelected && categoryInfo && statusAnim !== 'completing'
             ? { backgroundColor: categoryInfo.bgColor, borderColor: categoryInfo.textColor }
             : undefined),
         }}
@@ -234,11 +261,13 @@ function SortableTodoRow({
         className={cn(
           'group flex items-center gap-3 rounded-xl border shadow-sm hover:shadow-md transition-shadow px-4 py-3 cursor-pointer select-none',
           !categoryInfo && 'bg-white dark:bg-slate-800/50',
-          todo.is_completed && 'opacity-70',
+          showAsCompleted && !statusAnim && 'opacity-70',
           isDragging && 'opacity-90 shadow-lg z-10 ring-2 ring-primary/20',
           isSelected
             ? 'border-primary ring-2 ring-primary/20 bg-primary/5 dark:bg-primary/10'
-            : !categoryInfo && 'border-slate-200/80 dark:border-slate-700/50'
+            : !categoryInfo && 'border-slate-200/80 dark:border-slate-700/50',
+          statusAnim === 'completing' && todoAnim.rowCompleting,
+          statusAnim === 'reopening' && todoAnim.rowReopening,
         )}
         onClick={(e) => onSelectRow(todo, e)}
         onContextMenu={(e) => {
@@ -257,23 +286,24 @@ function SortableTodoRow({
         type="button"
         className="shrink-0 rounded-full p-0.5 text-slate-400 hover:text-primary transition-colors disabled:opacity-50"
         onClick={() => onToggleComplete(todo)}
-        disabled={togglingId === todo.id}
+        disabled={togglingId === todo.id || statusAnim === 'completing'}
         aria-label={todo.is_completed ? 'Mark incomplete' : 'Mark complete'}
       >
-        {togglingId === todo.id ? (
+        {togglingId === todo.id && !statusAnim ? (
           <Loader2 className="h-5 w-5 animate-spin" />
-        ) : todo.is_completed ? (
-          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+        ) : showAsCompleted ? (
+          <CheckCircle2 className={cn('h-5 w-5 text-emerald-500', statusAnim === 'completing' && todoAnim.checkPop)} />
         ) : (
           <Circle className="h-5 w-5" />
         )}
       </button>
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        <Tooltip content={getTodoTooltipContent(todo)} side="top">
+        <Tooltip content={getTodoTooltipText(todo)} side="top" size="compact" sideOffset={6}>
           <span
             className={cn(
-              'text-sm font-medium text-slate-800 dark:text-slate-200 truncate inline-block min-w-0 max-w-full',
-              todo.is_completed && 'line-through text-slate-500 dark:text-slate-400'
+              'text-sm font-medium text-slate-800 dark:text-slate-200 truncate inline-block min-w-0 max-w-full transition-colors duration-300',
+              showAsCompleted && 'text-slate-500 dark:text-slate-400',
+              showAsCompleted && (statusAnim === 'completing' ? todoAnim.titleStrike : 'line-through'),
             )}
           >
             {todo.title}
@@ -290,19 +320,19 @@ function SortableTodoRow({
               <button
                 type="button"
                 onClick={(e) => e.stopPropagation()}
-                disabled={togglingId === todo.id}
+                disabled={togglingId === todo.id || statusAnim === 'completing'}
                 className={cn(
                   'inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors hover:opacity-90 disabled:opacity-50',
-                  todo.is_completed
+                  showAsCompleted
                     ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
                     : 'bg-gradient-to-r from-blue-500/15 to-indigo-500/15 text-blue-700 dark:text-blue-300 border border-blue-200/50 dark:border-blue-500/20'
                 )}
                 aria-label="Change status"
               >
-                {togglingId === todo.id ? (
+                {togglingId === todo.id && !statusAnim ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  todo.is_completed ? 'Done' : 'In Progress'
+                  showAsCompleted ? 'Done' : 'In Progress'
                 )}
               </button>
             </DropdownMenuTrigger>
@@ -316,7 +346,7 @@ function SortableTodoRow({
             </DropdownMenuContent>
           </DropdownMenu>
           {priority && <PriorityBadge code={priority} />}
-          {!todo.is_completed && !todo.due_date && (
+          {!showAsCompleted && !todo.due_date && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onOpenDueDate?.(todo) }}
@@ -384,14 +414,60 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
   const [editDialog, setEditDialog] = useState<{ todo: TodoItem; field: 'title' | 'due_date' | 'category' } | null>(null)
   const [editValue, setEditValue] = useState('')
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [statusAnimById, setStatusAnimById] = useState<Record<string, TodoStatusAnim>>({})
+  const statusAnimTimers = useRef<Map<string, number>>(new Map())
   const { todoContext, clearTodoContext } = useSettingsPanelStore()
+
+  const clearStatusAnim = useCallback((id: string) => {
+    const timer = statusAnimTimers.current.get(id)
+    if (timer != null) {
+      window.clearTimeout(timer)
+      statusAnimTimers.current.delete(id)
+    }
+    setStatusAnimById((prev) => {
+      if (!(id in prev)) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }, [])
+
+  const playStatusAnim = useCallback((id: string, kind: TodoStatusAnim) => {
+    const existing = statusAnimTimers.current.get(id)
+    if (existing != null) window.clearTimeout(existing)
+    setStatusAnimById((prev) => ({ ...prev, [id]: kind }))
+    const timer = window.setTimeout(() => {
+      statusAnimTimers.current.delete(id)
+      setStatusAnimById((prev) => {
+        if (!(id in prev)) return prev
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
+    }, TODO_STATUS_ANIM_MS)
+    statusAnimTimers.current.set(id, timer)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      statusAnimTimers.current.forEach((timer) => window.clearTimeout(timer))
+      statusAnimTimers.current.clear()
+    }
+  }, [])
 
   const loadTodos = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
+      const userId = getSession()?.user.id
+      if (!userId) {
+        setTodos([])
+        setError('Sesi tidak ditemukan. Silakan login ulang.')
+        return
+      }
       const res = await fetchTodos({
         app_id: TECTONA_TODO_APP_ID,
+        owned_by: userId,
         page: 1,
         page_size: 100,
       })
@@ -420,8 +496,11 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
 
   const filteredTodos = useMemo(() => {
     let list = todos
-    if (filter === 'active') list = list.filter((t) => !t.is_completed)
-    else list = list.filter((t) => t.is_completed)
+    if (filter === 'active') {
+      list = list.filter((t) => !t.is_completed || statusAnimById[t.id] === 'completing')
+    } else {
+      list = list.filter((t) => t.is_completed || statusAnimById[t.id] === 'reopening')
+    }
     const q = searchQuery.trim().toLowerCase()
     if (q) {
       list = list.filter((t) => {
@@ -431,7 +510,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
       })
     }
     return list
-  }, [todos, filter, searchQuery])
+  }, [todos, filter, searchQuery, statusAnimById])
 
   type DueSection = 'overdue' | 'today' | 'tomorrow' | 'other'
   const todosByDueSection = useMemo(() => {
@@ -475,17 +554,23 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
   const handleAdd = async () => {
     const title = newTitle.trim()
     if (!title || adding) return
+    const userId = getSession()?.user.id
+    if (!userId) {
+      setError('Sesi tidak ditemukan. Silakan login ulang.')
+      return
+    }
     setAdding(true)
     try {
       await createTodo({
         title,
         app_id: TECTONA_TODO_APP_ID,
+        owned_by: userId,
         due_date: newDueDate || null,
         priority_ids: newPriority ? [TODO_PRIORITY_IDS[newPriority]] : null,
         display_order: todos.length,
         entity_links: buildTodoEntityLinks(todoContext?.projectId ? { projectId: todoContext.projectId } : null),
       })
-      notifyEvent({ type_code: 'todo', title: `Todo: ${title}`, body: 'Added to your list' })
+      toastTodoEvent({ title: `Todo: ${title}`, body: 'Added to your list' })
       setNewTitle('')
       setNewDueDate('')
       setNewPriority(null)
@@ -498,41 +583,46 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
     }
   }
 
-  const handleToggle = async (todo: TodoItem) => {
-    if (togglingId) return
-    setTogglingId(todo.id)
-    try {
-      await updateTodo(todo.id, { is_completed: !todo.is_completed })
-      notifyEvent({
-        type_code: 'todo',
-        title: todo.is_completed ? `Todo aktif: ${todo.title}` : `Todo selesai: ${todo.title}`,
-        body: todo.is_completed ? 'Ditandai belum selesai' : 'Ditandai selesai',
+  const patchTodoLocal = useCallback((id: string, patch: Partial<TodoItem>) => {
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
+  }, [])
+
+  const applyStatusChange = useCallback(
+    async (todo: TodoItem, isCompleted: boolean) => {
+      if (todo.is_completed === isCompleted) return
+      if (togglingId) return
+      const previous = { is_completed: todo.is_completed, completed_at: todo.completed_at }
+      setTogglingId(todo.id)
+      playStatusAnim(todo.id, isCompleted ? 'completing' : 'reopening')
+      patchTodoLocal(todo.id, {
+        is_completed: isCompleted,
+        completed_at: isCompleted ? new Date().toISOString() : null,
       })
-      await loadTodos()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to update status')
-    } finally {
-      setTogglingId(null)
-    }
+      try {
+        await updateTodo(todo.id, { is_completed: isCompleted })
+        toastTodoEvent({
+          title: isCompleted ? `Todo selesai: ${todo.title}` : `Todo aktif: ${todo.title}`,
+          body: isCompleted ? 'Ditandai selesai' : 'Ditandai belum selesai',
+          variant: isCompleted ? 'success' : 'info',
+        })
+        window.dispatchEvent(new CustomEvent('tectona-todos-changed'))
+      } catch (e) {
+        clearStatusAnim(todo.id)
+        patchTodoLocal(todo.id, previous)
+        setError(e instanceof Error ? e.message : 'Failed to update status')
+      } finally {
+        setTogglingId(null)
+      }
+    },
+    [togglingId, playStatusAnim, patchTodoLocal, clearStatusAnim],
+  )
+
+  const handleToggle = async (todo: TodoItem) => {
+    await applyStatusChange(todo, !todo.is_completed)
   }
 
   const handleSetStatus = async (todo: TodoItem, isCompleted: boolean) => {
-    if (togglingId) return
-    if (todo.is_completed === isCompleted) return
-    setTogglingId(todo.id)
-    try {
-      await updateTodo(todo.id, { is_completed: isCompleted })
-      notifyEvent({
-        type_code: 'todo',
-        title: isCompleted ? `Todo selesai: ${todo.title}` : `Todo aktif: ${todo.title}`,
-        body: isCompleted ? 'Ditandai selesai' : 'Ditandai belum selesai',
-      })
-      await loadTodos()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to update status')
-    } finally {
-      setTogglingId(null)
-    }
+    await applyStatusChange(todo, isCompleted)
   }
 
   const handleSelectRow = useCallback(
@@ -582,10 +672,10 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
     try {
       const n = selectedIds.size
       await Promise.all(Array.from(selectedIds).map((id) => deleteTodo(id)))
-      notifyEvent({
-        type_code: 'todo',
+      toastTodoEvent({
         title: n === 1 ? 'Todo dihapus' : `${n} todo dihapus`,
         body: n === 1 ? '1 todo telah dihapus dari daftar' : `${n} todo telah dihapus dari daftar`,
+        variant: 'info',
       })
       setSelectedIds(new Set())
       setAnchorId(null)
@@ -605,7 +695,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
     try {
       await deleteTodo(id)
       if (todo) {
-        notifyEvent({ type_code: 'todo', title: `Todo dihapus: ${todo.title}`, body: 'Telah dihapus dari daftar' })
+        toastTodoEvent({ title: `Todo dihapus: ${todo.title}`, body: 'Telah dihapus dari daftar', variant: 'info' })
       }
       setSelectedIds((s) => {
         const next = new Set(s)
@@ -678,15 +768,15 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
     try {
       if (editDialog.field === 'title') {
         await updateTodo(editDialog.todo.id, { title: (editValue || '').trim() || editDialog.todo.title })
-        notifyEvent({ type_code: 'todo', title: `Todo diubah: ${(editValue || '').trim() || editDialog.todo.title}`, body: 'Judul diperbarui' })
+        toastTodoEvent({ title: `Todo diubah: ${(editValue || '').trim() || editDialog.todo.title}`, body: 'Judul diperbarui' })
       } else if (editDialog.field === 'due_date') {
         await updateTodo(editDialog.todo.id, { due_date: editValue || null })
-        notifyEvent({ type_code: 'todo', title: `Todo diperbarui: ${editDialog.todo.title}`, body: editValue ? `Batas waktu: ${editValue}` : 'Batas waktu dihapus' })
+        toastTodoEvent({ title: `Todo diperbarui: ${editDialog.todo.title}`, body: editValue ? `Batas waktu: ${editValue}` : 'Batas waktu dihapus' })
       } else if (editDialog.field === 'category') {
         const body = getDescriptionBody(editDialog.todo.description)
         const newDesc = descriptionWithCategory(editValue as TodoCategory, body)
         await updateTodo(editDialog.todo.id, { description: newDesc || null })
-        notifyEvent({ type_code: 'todo', title: `Todo diperbarui: ${editDialog.todo.title}`, body: `Kategori: ${editValue}` })
+        toastTodoEvent({ title: `Todo diperbarui: ${editDialog.todo.title}`, body: `Kategori: ${editValue}` })
       }
       await loadTodos()
       setEditDialog(null)
@@ -703,7 +793,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
       setUpdatingId(todo.id)
       try {
         await updateTodo(todo.id, { priority_ids: [TODO_PRIORITY_IDS[code]] })
-        notifyEvent({ type_code: 'todo', title: `Prioritas diubah: ${todo.title}`, body: `Prioritas: ${code}` })
+        toastTodoEvent({ title: `Prioritas diubah: ${todo.title}`, body: `Prioritas: ${code}` })
         await loadTodos()
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to update priority')
@@ -717,22 +807,9 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
   const handleStatusSelect = useCallback(
     async (todo: TodoItem, isCompleted: boolean) => {
       setContextMenu(null)
-      setUpdatingId(todo.id)
-      try {
-        await updateTodo(todo.id, { is_completed: isCompleted })
-        notifyEvent({
-          type_code: 'todo',
-          title: isCompleted ? `Todo selesai: ${todo.title}` : `Todo aktif: ${todo.title}`,
-          body: isCompleted ? 'Ditandai selesai' : 'Ditandai belum selesai',
-        })
-        await loadTodos()
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to update status')
-      } finally {
-        setUpdatingId(null)
-      }
+      await applyStatusChange(todo, isCompleted)
     },
-    [loadTodos]
+    [applyStatusChange]
   )
 
   const handleCategorySelect = useCallback(
@@ -743,7 +820,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
         const categoryId = TODO_CATEGORY_IDS[category]
         const category_ids = categoryId ? [categoryId] : []
         await updateTodo(todo.id, { category_ids })
-        notifyEvent({ type_code: 'todo', title: `Todo diperbarui: ${todo.title}`, body: `Kategori: ${category}` })
+        toastTodoEvent({ title: `Todo diperbarui: ${todo.title}`, body: `Kategori: ${category}` })
         await loadTodos()
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to update category')
@@ -760,10 +837,10 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
       setUpdatingId(todo.id)
       try {
         await updateTodo(todo.id, { is_flagged: !todo.is_flagged })
-        notifyEvent({
-          type_code: 'todo',
+        toastTodoEvent({
           title: todo.is_flagged ? `Todo unflagged: ${todo.title}` : `Todo ditandai: ${todo.title}`,
           body: todo.is_flagged ? 'Tanda penting dihapus' : 'Ditandai penting',
+          variant: 'info',
         })
         await loadTodos()
       } catch (e) {
@@ -798,20 +875,9 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
     return parts
   }, [])
 
-  const getTodoTooltip = useCallback((todo: TodoItem) => getTodoTooltipParts(todo).join('\n'), [getTodoTooltipParts])
-
-  const getTodoTooltipContent = useCallback(
-    (todo: TodoItem) => {
-      const parts = getTodoTooltipParts(todo)
-      return (
-        <div className="space-y-1.5 text-[13px] font-normal text-slate-700 dark:text-slate-300 leading-relaxed">
-          {parts.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
-        </div>
-      )
-    },
-    [getTodoTooltipParts]
+  const getTodoTooltipText = useCallback(
+    (todo: TodoItem) => getTodoTooltipParts(todo).join('\n'),
+    [getTodoTooltipParts],
   )
 
   const sensors = useSensors(
@@ -1193,7 +1259,8 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
                           onContextMenu={openContextMenu}
                           togglingId={togglingId}
                           deletingId={deletingId}
-                          getTodoTooltipContent={getTodoTooltipContent}
+                          statusAnim={statusAnimById[todo.id] ?? null}
+                          getTodoTooltipText={getTodoTooltipText}
                         />
                       ))}
                     </div>

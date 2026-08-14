@@ -2,6 +2,7 @@ import { LogOut, Mail, ShieldAlert } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { logoutAsync } from '@/auth/authService'
+import { authCardButtonClass } from '@/lib/authUiClasses'
 
 export function NoWorkspaceAccessPage() {
   const navigate = useNavigate()
@@ -68,7 +69,7 @@ export function NoWorkspaceAccessPage() {
           <Button
             type="button"
             variant="outline"
-            className="w-full gap-2"
+            className={authCardButtonClass}
             onClick={() => void handleSignOut()}
           >
             <LogOut className="h-4 w-4" aria-hidden />

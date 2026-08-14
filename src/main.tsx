@@ -45,7 +45,7 @@ if (typeof window !== 'undefined') {
 }
 
 async function bootstrap() {
-  initPwa()
+  await initPwa()
   await initTelemetry()
   void selfRegisterWithRegistryCore()
   createRoot(document.getElementById('root')!).render(

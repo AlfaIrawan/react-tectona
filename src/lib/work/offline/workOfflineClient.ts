@@ -48,9 +48,16 @@ const activityListeners = new Set<ActivityListener>()
 
 let flushInFlight: Promise<void> | null = null
 let pullInFlight: Promise<WorkItemApiModel[]> | null = null
-let listenersBound = false
+let offlineSyncSubscriberCount = 0
+let offlineSyncTeardown: (() => void) | null = null
 let workApiReachable = true
 let healthProbeIntervalId: number | null = null
+let probeFailureStreak = 0
+let probeSuccessStreak = 0
+
+/** Require consecutive probe failures before flipping to offline — avoids toast flapping on transient errors. */
+const PROBE_OFFLINE_STREAK_THRESHOLD = 2
+const PROBE_ONLINE_STREAK_THRESHOLD = 1
 
 function createOpId(): string {
   return crypto.randomUUID()
@@ -62,6 +69,23 @@ function isBrowserOnline(): boolean {
 
 function markWorkApiReachable(reachable: boolean): void {
   workApiReachable = reachable
+}
+
+function applyProbeReachability(ok: boolean): void {
+  if (ok) {
+    probeFailureStreak = 0
+    probeSuccessStreak += 1
+    if (!workApiReachable && probeSuccessStreak >= PROBE_ONLINE_STREAK_THRESHOLD) {
+      markWorkApiReachable(true)
+    }
+    return
+  }
+
+  probeSuccessStreak = 0
+  probeFailureStreak += 1
+  if (workApiReachable && probeFailureStreak >= PROBE_OFFLINE_STREAK_THRESHOLD) {
+    markWorkApiReachable(false)
+  }
 }
 
 async function probeWorkApiHealth(): Promise<boolean> {
@@ -86,7 +110,7 @@ async function syncWorkApiReachabilityFromProbe(): Promise<void> {
 
   const ok = await probeWorkApiHealth()
   const wasReachable = workApiReachable
-  markWorkApiReachable(ok)
+  applyProbeReachability(ok)
   await emitStatus()
 
   if (!ok) return
@@ -313,8 +337,16 @@ export async function requestOpenWorkSyncConflicts(): Promise<void> {
 
 export function initWorkOfflineSync(): () => void {
   if (typeof window === 'undefined') return () => undefined
-  if (listenersBound) return () => undefined
-  listenersBound = true
+
+  offlineSyncSubscriberCount += 1
+  if (offlineSyncSubscriberCount > 1) {
+    return () => {
+      offlineSyncSubscriberCount = Math.max(0, offlineSyncSubscriberCount - 1)
+      if (offlineSyncSubscriberCount > 0) return
+      offlineSyncTeardown?.()
+      offlineSyncTeardown = null
+    }
+  }
 
   const onOnline = () => {
     void emitStatus()
@@ -325,6 +357,8 @@ export function initWorkOfflineSync(): () => void {
   }
   const onOffline = () => {
     markWorkApiReachable(false)
+    probeFailureStreak = PROBE_OFFLINE_STREAK_THRESHOLD
+    probeSuccessStreak = 0
     void emitStatus()
   }
 
@@ -347,14 +381,22 @@ export function initWorkOfflineSync(): () => void {
     })()
   }
 
-  return () => {
+  offlineSyncTeardown = () => {
     window.removeEventListener('online', onOnline)
     window.removeEventListener('offline', onOffline)
     if (healthProbeIntervalId != null) {
       window.clearInterval(healthProbeIntervalId)
       healthProbeIntervalId = null
     }
-    listenersBound = false
+    probeFailureStreak = 0
+    probeSuccessStreak = 0
+  }
+
+  return () => {
+    offlineSyncSubscriberCount = Math.max(0, offlineSyncSubscriberCount - 1)
+    if (offlineSyncSubscriberCount > 0) return
+    offlineSyncTeardown?.()
+    offlineSyncTeardown = null
   }
 }
 
@@ -437,7 +479,8 @@ export async function pullWorkItemsDelta(options?: PullWorkItemsDeltaOptions): P
       return getCachedWorkItems()
     } catch (error) {
       if (isWorkApiUnavailableError(error)) {
-        markWorkApiReachable(false)
+        // Leave reachability to the periodic health probe — avoids offline/online toast flapping
+        // when a background sync fails once while the service is still up.
       }
       await emitStatus()
       return cached
@@ -463,14 +506,14 @@ export async function loadWorkItemsWithCache(): Promise<{
     const items = await pullWorkItemsDelta()
     return { items, fromCache: false }
   } catch (error) {
-    if (isWorkApiUnavailableError(error)) {
-      markWorkApiReachable(false)
-    }
     if (cached.length > 0) {
       await emitStatus()
       return { items: cached, fromCache: true }
     }
-    throw new Error('WORK_API_UNAVAILABLE')
+    if (isWorkApiUnavailableError(error)) {
+      throw new Error('WORK_API_UNAVAILABLE')
+    }
+    throw error
   }
 }
 

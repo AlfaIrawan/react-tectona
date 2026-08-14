@@ -71,8 +71,15 @@ export function AssistantActionCard({
   const isCreate = action.action_code === 'workspace.create'
   const isGovernance = action.action_code === 'workspace.governance.apply'
   const isFormAction = FORM_ACTION_CODES.includes(action.action_code)
-  // Navigation OFFER (requires_confirmation=true) — render as an "Buka" button, no route noise.
+  // Navigation OFFER (requires_confirmation=true) — render as an "Open" button, no route noise.
   const isNavigate = action.action_code === 'app.navigate'
+  const isApplyDocumentEdit = action.action_code === 'document.apply_chat_edit'
+  const initialDocumentEditText =
+    isApplyDocumentEdit && typeof action.payload.proposed_text === 'string'
+      ? action.payload.proposed_text
+      : ''
+  const [documentEditOpen, setDocumentEditOpen] = useState(false)
+  const [documentEditText, setDocumentEditText] = useState(initialDocumentEditText)
 
   // Generic field values, seeded from the proposed payload.
   const [values, setValues] = useState<Record<string, string>>(() => {
@@ -201,7 +208,7 @@ export function AssistantActionCard({
           })
         }
       } catch (e) {
-        if (!cancelled) setOptionsError(e instanceof Error ? e.message : 'Gagal memuat pilihan.')
+        if (!cancelled) setOptionsError(e instanceof Error ? e.message : 'Failed to load options.')
       }
     })()
     return () => {
@@ -214,12 +221,12 @@ export function AssistantActionCard({
     ? [
         {
           key: 'name',
-          label: 'Nama workspace',
+          label: 'Workspace name',
           required: true,
           kind: 'text',
           minLen: 2,
-          placeholder: 'mis. Adira Finance Ops',
-          explain: 'Nama yang tampil di Workspace Directory. Buat jelas & unik — mis. "Adira Finance Ops".',
+          placeholder: 'e.g. Adira Finance Ops',
+          explain: 'Name shown in the Workspace Directory. Keep it clear & unique — e.g. "Adira Finance Ops".',
         },
         {
           key: 'organization_id',
@@ -227,25 +234,25 @@ export function AssistantActionCard({
           required: true,
           kind: 'select',
           options: orgs,
-          explain: 'Unit/organisasi induk tempat workspace bernaung. Menentukan konteks tata kelola & kepemilikan.',
+          explain: 'The parent organization/unit this workspace belongs to. Determines governance context & ownership.',
         },
         {
           key: 'workspace_type',
-          label: 'Tipe workspace',
+          label: 'Workspace type',
           required: true,
           kind: 'select',
           options: types,
           freeTextFallback: typesLoaded && types.length === 0,
-          placeholder: 'mis. Division',
-          explain: 'Klasifikasi workspace (mis. Organization, Division) untuk pengelompokan & kebijakan governance.',
+          placeholder: 'e.g. Division',
+          explain: 'Workspace classification (e.g. Organization, Division) used for grouping & governance policy.',
         },
         {
           key: 'owner',
           label: 'Owner',
           required: true,
           kind: 'text',
-          placeholder: 'mis. Alfa Irawan',
-          explain: 'Penanggung jawab utama workspace. Idealnya nama yang terdaftar di direktori orang.',
+          placeholder: 'e.g. Alfa Irawan',
+          explain: 'The person primarily responsible for the workspace. Ideally a name registered in the people directory.',
         },
         {
           key: 'lifecycle_stage',
@@ -253,15 +260,15 @@ export function AssistantActionCard({
           required: false,
           kind: 'select',
           options: WORKSPACE_LIFECYCLE_STAGES.map((s) => ({ value: s, label: s })),
-          explain: 'Tahap siklus hidup workspace. Pilih "Active" agar langsung bisa dipakai.',
+          explain: 'Workspace lifecycle stage. Choose "Active" so it can be used right away.',
         },
         {
           key: 'description',
-          label: 'Deskripsi',
+          label: 'Description',
           required: false,
           kind: 'text',
-          placeholder: 'Deskripsi singkat workspace',
-          explain: 'Penjelasan singkat tujuan workspace. Opsional, tapi membantu anggota lain memahami konteks.',
+          placeholder: 'Short workspace description',
+          explain: 'A brief explanation of the workspace purpose. Optional, but helps other members understand the context.',
         },
       ]
     : isGovernance
@@ -272,15 +279,15 @@ export function AssistantActionCard({
             required: true,
             kind: 'select',
             options: workspaces,
-            explain: 'Workspace yang akan diterapkan template governance-nya.',
+            explain: 'The workspace the governance template will be applied to.',
           },
           {
             key: 'governance_template_id',
-            label: 'Template governance',
+            label: 'Governance template',
             required: true,
             kind: 'select',
             options: templates,
-            explain: 'Paket kebijakan (workflow, SLA, naming, approval) yang diterapkan sekaligus ke workspace.',
+            explain: 'A policy bundle (workflow, SLA, naming, approval) applied to the workspace all at once.',
           },
         ]
       : []
@@ -304,7 +311,7 @@ export function AssistantActionCard({
     .filter((f) => (values[f.key] ?? '').trim())
     .map((f) => ({ label: f.label, value: displayValue(f) }))
 
-  const successTitle = isGovernance ? '✅ Template governance diterapkan' : '✅ Workspace berhasil dibuat'
+  const successTitle = isGovernance ? '✅ Governance template applied' : '✅ Workspace created successfully'
 
   // Choice fields whose inline value wasn't among the options — surfaced to the user.
   const rejectedEntries = Object.entries(rejectedChoices).map(([key, provided]) => {
@@ -313,11 +320,15 @@ export function AssistantActionCard({
   })
 
   // Data came in fully + valid → show a read-only CONFIRMATION (no editable form) so the
-  // user just Jalankan. If anything is missing/invalid, fall through to the form (= asking).
+  // user just clicks Run. If anything is missing/invalid, fall through to the form (= asking).
   const showConfirm =
     isFormAction && cameComplete && formValid && rejectedEntries.length === 0 && !forceEdit
 
   const handleConfirm = () => {
+    if (isApplyDocumentEdit) {
+      onConfirm?.(action.action_id, { proposed_text: documentEditText.trim() })
+      return
+    }
     if (!isFormAction) {
       onConfirm?.(action.action_id)
       return
@@ -347,7 +358,7 @@ export function AssistantActionCard({
       .catch(() => {
         window.dispatchEvent(
           new CustomEvent('tectona:chat-inject-assistant', {
-            detail: { text: `Aku belum bisa memuat detail Workspace "${explainEntityLabel}" sekarang.` },
+            detail: { text: `I can't load the details for Workspace "${explainEntityLabel}" right now.` },
           }),
         )
       })
@@ -367,9 +378,9 @@ export function AssistantActionCard({
           className={SELECT_CLASS}
         >
           {opts.length === 0 ? (
-            <option value="">Memuat…</option>
+            <option value="">Loading…</option>
           ) : (
-            <option value="">{f.required ? 'Pilih…' : '—'}</option>
+            <option value="">{f.required ? 'Select…' : '—'}</option>
           )}
           {opts.map((o) => (
             <option key={o.value} value={o.value}>
@@ -426,10 +437,10 @@ export function AssistantActionCard({
         <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-2 dark:border-amber-800/60 dark:bg-amber-950/30">
           {rejectedEntries.map((e) => (
             <p key={e.key} className="text-xs text-amber-800 dark:text-amber-300">
-              ⚠️ <strong>{e.label}</strong> "{e.provided}" belum ada di pilihan.{' '}
+              ⚠️ <strong>{e.label}</strong> "{e.provided}" isn't among the options yet.{' '}
               {e.options.length > 0
-                ? `Pilih salah satu: ${e.options.join(', ')}.`
-                : 'Silakan pilih dari daftar.'}
+                ? `Choose one of: ${e.options.join(', ')}.`
+                : 'Please choose from the list.'}
             </p>
           ))}
         </div>
@@ -459,7 +470,7 @@ export function AssistantActionCard({
               <p className="mb-2 text-xs text-rose-700 dark:text-rose-400">{execution.error}</p>
             ) : null}
             {status === 'cancelled' ? (
-              <p className="mb-2 text-xs text-[#667781] dark:text-[#8696a0]">Aksi dibatalkan.</p>
+              <p className="mb-2 text-xs text-[#667781] dark:text-[#8696a0]">Action cancelled.</p>
             ) : null}
           </>
         ) : showConfirm ? (
@@ -478,7 +489,7 @@ export function AssistantActionCard({
                 onClick={() => setForceEdit(true)}
                 className="mt-1 text-[10px] font-medium text-[#008069] underline dark:text-[#00a884]"
               >
-                Ubah data
+                Edit details
               </button>
             </dl>
             <div className="flex gap-2">
@@ -490,7 +501,7 @@ export function AssistantActionCard({
                 disabled={status === 'executing'}
                 onClick={() => onCancel?.(action.action_id)}
               >
-                Batalkan
+                Cancel
               </Button>
               <Button
                 type="button"
@@ -502,10 +513,10 @@ export function AssistantActionCard({
                 {status === 'executing' ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Menjalankan…
+                    Running…
                   </>
                 ) : (
-                  'Jalankan'
+                  'Run'
                 )}
               </Button>
             </div>
@@ -513,8 +524,8 @@ export function AssistantActionCard({
         ) : formMode === 'choose' ? (
           <div className="space-y-2">
             <p className="text-xs text-[#667781] dark:text-[#8696a0]">
-              Mau aku kasih <strong>formulir lengkap</strong> sekaligus, atau{' '}
-              <strong>langkah demi langkah</strong> sambil aku jelaskan tiap field-nya?
+              Would you like the <strong>full form</strong> all at once, or{' '}
+              <strong>step by step</strong> while I explain each field?
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
               <button
@@ -523,10 +534,10 @@ export function AssistantActionCard({
                 className="rounded-md border border-[#d1d7db] bg-white p-2 text-left transition hover:border-[#008069] dark:border-[#3b4a54] dark:bg-[#111b21]"
               >
                 <span className="block text-xs font-semibold text-[#111b21] dark:text-[#e9edef]">
-                  📋 Formulir lengkap
+                  📋 Full form
                 </span>
                 <span className="block text-[10px] text-[#667781] dark:text-[#8696a0]">
-                  Isi semua field sekaligus
+                  Fill in every field at once
                 </span>
               </button>
               <button
@@ -538,10 +549,10 @@ export function AssistantActionCard({
                 className="rounded-md border border-[#d1d7db] bg-white p-2 text-left transition hover:border-[#008069] dark:border-[#3b4a54] dark:bg-[#111b21]"
               >
                 <span className="block text-xs font-semibold text-[#111b21] dark:text-[#e9edef]">
-                  🪜 Langkah demi langkah
+                  🪜 Step by step
                 </span>
                 <span className="block text-[10px] text-[#667781] dark:text-[#8696a0]">
-                  Aku pandu & jelaskan satu per satu
+                  I'll guide you through it one at a time
                 </span>
               </button>
             </div>
@@ -552,7 +563,7 @@ export function AssistantActionCard({
               className="h-8 w-full"
               onClick={() => onCancel?.(action.action_id)}
             >
-              Batalkan
+              Cancel
             </Button>
           </div>
         ) : formMode === 'full' ? (
@@ -566,16 +577,16 @@ export function AssistantActionCard({
               ))}
               {isCreate && !payloadHas('organization_id') ? (
                 <p className="text-[10px] text-[#008069] dark:text-[#00a884]">
-                  ℹ️ Organization belum kamu sebut — aku pilih default. Cek & sesuaikan kalau perlu
-                  sebelum Jalankan.
+                  ℹ️ You didn't specify an Organization — I picked a default. Check & adjust if
+                  needed before running.
                 </p>
               ) : null}
               {optionsError ? (
                 <p className="text-[10px] text-rose-600 dark:text-rose-400">{optionsError}</p>
               ) : (
                 <p className="text-[10px] text-[#667781] dark:text-[#8696a0]">
-                  Field bertanda * wajib diisi.
-                  {!formValid ? ' Lengkapi field wajib untuk lanjut.' : ''}
+                  Fields marked * are required.
+                  {!formValid ? ' Complete the required fields to continue.' : ''}
                 </p>
               )}
             </div>
@@ -588,7 +599,7 @@ export function AssistantActionCard({
                 disabled={status === 'executing'}
                 onClick={() => onCancel?.(action.action_id)}
               >
-                Batalkan
+                Cancel
               </Button>
               <Button
                 type="button"
@@ -600,10 +611,10 @@ export function AssistantActionCard({
                 {status === 'executing' ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Menjalankan…
+                    Running…
                   </>
                 ) : (
-                  'Jalankan'
+                  'Run'
                 )}
               </Button>
             </div>
@@ -612,7 +623,7 @@ export function AssistantActionCard({
           <>
             <div className="mb-3 space-y-2 rounded-md bg-white/60 p-2 dark:bg-black/20">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-[#008069] dark:text-[#00a884]">
-                {isReviewStep ? 'Tinjau & jalankan' : `Langkah ${stepIndex + 1}/${fields.length}`}
+                {isReviewStep ? 'Review & run' : `Step ${stepIndex + 1}/${fields.length}`}
               </p>
               {isReviewStep ? (
                 <dl className="space-y-1">
@@ -651,7 +662,7 @@ export function AssistantActionCard({
                   stepIndex === 0 ? setFormMode('choose') : setStepIndex((i) => Math.max(0, i - 1))
                 }
               >
-                {stepIndex === 0 ? 'Kembali' : 'Sebelumnya'}
+                {stepIndex === 0 ? 'Back' : 'Previous'}
               </Button>
               {isReviewStep ? (
                 <Button
@@ -664,10 +675,10 @@ export function AssistantActionCard({
                   {status === 'executing' ? (
                     <>
                       <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      Menjalankan…
+                      Running…
                     </>
                   ) : (
-                    'Jalankan'
+                    'Run'
                   )}
                 </Button>
               ) : (
@@ -678,7 +689,7 @@ export function AssistantActionCard({
                   disabled={stepBlocked}
                   onClick={() => setStepIndex((i) => i + 1)}
                 >
-                  Lanjut
+                  Next
                 </Button>
               )}
             </div>
@@ -704,14 +715,14 @@ export function AssistantActionCard({
           ) : null}
           {status === 'cancelled' ? (
             <p className="mb-2 text-xs text-[#667781] dark:text-[#8696a0]">
-              {isNavigateChoice ? '💬 Oke, aku jelaskan di chat ya 👇' : 'Aksi dibatalkan.'}
+              {isNavigateChoice ? "💬 Okay, I'll explain it in chat 👇" : 'Action cancelled.'}
             </p>
           ) : null}
           {!isTerminal && isNavigateChoice ? (
             <div className="space-y-2">
               <p className="text-xs text-[#667781] dark:text-[#8696a0]">
-                Mau aku <strong>buka langsung di UI</strong> biar bisa kamu lihat, atau cukup{' '}
-                <strong>aku jelaskan di chat</strong>?
+                Would you like me to <strong>open it directly in the UI</strong> so you can see it,
+                or just <strong>explain it in chat</strong>?
               </p>
               <div className="grid gap-2 sm:grid-cols-2">
                 <Button
@@ -720,7 +731,7 @@ export function AssistantActionCard({
                   className="h-8 bg-[#008069] text-white hover:bg-[#006e59] dark:bg-[#00a884] dark:hover:bg-[#008f6f]"
                   onClick={handleConfirm}
                 >
-                  🔎 Buka di UI
+                  🔎 Open in UI
                 </Button>
                 <Button
                   type="button"
@@ -729,11 +740,61 @@ export function AssistantActionCard({
                   className="h-8"
                   onClick={handleExplainInChat}
                 >
-                  💬 Jelaskan di chat
+                  💬 Explain in chat
                 </Button>
               </div>
             </div>
           ) : !isTerminal ? (
+            isApplyDocumentEdit ? (
+              <div className="space-y-2">
+                {documentEditOpen ? (
+                  <textarea
+                    className="min-h-[120px] w-full resize-y rounded-md border border-[#d1d7db] bg-white px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#008069] dark:border-[#3b4a54] dark:bg-[#111b21] dark:text-[#e9edef]"
+                    value={documentEditText}
+                    disabled={status === 'executing'}
+                    onChange={(event) => setDocumentEditText(event.target.value)}
+                  />
+                ) : null}
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 flex-1"
+                    disabled={status === 'executing'}
+                    onClick={() => onCancel?.(action.action_id)}
+                  >
+                    Saya ubah sendiri
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 flex-1"
+                    disabled={status === 'executing'}
+                    onClick={() => setDocumentEditOpen((prev) => !prev)}
+                  >
+                    Edit hasil terlebih dahulu
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 flex-1 bg-[#008069] text-white hover:bg-[#006e59] dark:bg-[#00a884] dark:hover:bg-[#008f6f]"
+                    disabled={status === 'executing' || !documentEditText.trim()}
+                    onClick={handleConfirm}
+                  >
+                    {status === 'executing' ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Running…
+                      </>
+                    ) : (
+                      'Terapkan langsung ke dokumen'
+                    )}
+                  </Button>
+                </div>
+              </div>
+            ) : (
             <div className="flex gap-2">
               <Button
                 type="button"
@@ -743,7 +804,7 @@ export function AssistantActionCard({
                 disabled={status === 'executing'}
                 onClick={() => onCancel?.(action.action_id)}
               >
-                Batalkan
+                Cancel
               </Button>
               <Button
                 type="button"
@@ -760,17 +821,18 @@ export function AssistantActionCard({
                 {status === 'executing' ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Menjalankan…
+                    Running…
                   </>
                 ) : isNavigate ? (
-                  'Buka'
+                  'Open'
                 ) : isHighRisk ? (
-                  'Ya, hapus'
+                  'Yes, delete'
                 ) : (
-                  'Jalankan'
+                  'Run'
                 )}
               </Button>
             </div>
+            )
           ) : null}
         </>
       )}

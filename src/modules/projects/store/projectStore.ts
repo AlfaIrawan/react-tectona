@@ -8,11 +8,23 @@ import {
   archiveProject as archiveProjectApi,
   deleteProject as deleteProjectApi,
 } from '@/lib/api/projectApi'
+import {
+  applyWorkspaceIdFromWrite,
+  belongsToActiveWorkspaceScope,
+  readActiveWorkspaceScope,
+  resolveWorkspaceIdForFetch,
+  resolveWorkspaceIdForWrite,
+} from '@/lib/tenantWorkspaceScope'
+import {
+  ensureProjectDocumentFolder,
+  syncProjectDocumentFolderName,
+} from '../lib/ensureProjectDocumentFolder'
 
 export type ProjectStatus = 'active' | 'archived'
 
 export interface Project {
   id: string
+  workspaceId?: string | null
   name: string
   description?: string
   tags?: string[]
@@ -35,6 +47,7 @@ export interface Project {
 export function mapApiToProject(api: ProjectApi): Project {
   return {
     id: api.id,
+    workspaceId: api.workspace_id ?? undefined,
     name: api.name,
     description: api.description ?? undefined,
     tags: api.tags ?? [],  // Keep as array (even if empty) for consistent handling
@@ -73,6 +86,7 @@ interface ProjectState {
   moveProjectToFolder: (projectId: string, folderId: string | null) => Promise<void>
   moveProjectsToFolder: (projectIds: string[], folderId: string | null) => Promise<void>
   getProjectsByFolder: (folderId: string | null) => Project[]
+  clearLocalCache: () => void
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -85,20 +99,30 @@ export const useProjectStore = create<ProjectState>()(
       fetchProjects: async () => {
         set({ projectsLoading: true, projectsError: null })
         try {
-          const res = await fetchProjectsApi({ page: 1, page_size: 100 })
-          const projects = res.projects.map(mapApiToProject)
+          const scope = readActiveWorkspaceScope()
+          const workspace_id = resolveWorkspaceIdForFetch(scope)
+          const res = await fetchProjectsApi({
+            page: 1,
+            page_size: 100,
+            workspace_id,
+          })
+          const projects = res.projects
+            .filter((api) => belongsToActiveWorkspaceScope(api.workspace_id, scope))
+            .map(mapApiToProject)
           set({ projects, projectsLoading: false, projectsError: null })
         } catch (e) {
           const raw = e instanceof Error ? e.message : 'Failed to fetch projects'
           const msg =
             raw === 'Failed to fetch' || raw.toLowerCase().includes('network')
-              ? 'Tidak dapat terhubung ke Project Service. Pastikan python-project-service-fastapi berjalan di port 8500 (atau set VITE_PROJECT_API_URL di .env).'
+              ? 'Unable to connect to the Project Service. Make sure python-project-service-fastapi is running on port 8500 (or set VITE_PROJECT_API_URL in .env).'
               : raw
           set({ projectsLoading: false, projectsError: msg })
         }
       },
 
       addProject: async (projectData) => {
+        const scope = readActiveWorkspaceScope()
+        const workspace_id = resolveWorkspaceIdForWrite(scope)
         const created = await createProjectApi({
           name: projectData.name,
           description: projectData.description,
@@ -106,11 +130,28 @@ export const useProjectStore = create<ProjectState>()(
           icon_name: projectData.iconName,
           border_color: projectData.borderColor,
           folder_id: projectData.folderId ?? null,
+          workspace_id,
         })
         await get().fetchProjects()
-        const project = mapApiToProject(created)
+        const mapped = mapApiToProject(created)
+        const project: Project = {
+          ...mapped,
+          workspaceId: applyWorkspaceIdFromWrite(mapped.workspaceId, workspace_id) ?? mapped.workspaceId,
+        }
         const found = get().projects.find((p) => p.id === project.id)
-        return found ?? project
+        const result = found ?? project
+
+        if (!found && belongsToActiveWorkspaceScope(project.workspaceId, scope)) {
+          set((state) => ({ projects: [project, ...state.projects] }))
+        }
+
+        try {
+          await ensureProjectDocumentFolder({ id: result.id, name: result.name })
+        } catch {
+          // Project creation succeeded; document folder can be created on first Docs visit.
+        }
+
+        return result
       },
 
       updateProject: async (id, updates) => {
@@ -127,6 +168,13 @@ export const useProjectStore = create<ProjectState>()(
           payload.status_id = '550e8400-e29b-41d4-a716-446655440101'
         }
         await updateProjectApi(id, payload)
+        if (updates.name != null) {
+          try {
+            await syncProjectDocumentFolderName(id, updates.name)
+          } catch {
+            // best-effort
+          }
+        }
         // Optimistic update: apply saved borderColor/iconName to local state so card color does not flicker or revert before fetch completes
         const current = get().projects
         const idx = current.findIndex((p) => p.id === id)
@@ -213,10 +261,21 @@ export const useProjectStore = create<ProjectState>()(
           (project) => project.folderId === folderId
         )
       },
+
+      clearLocalCache: () => {
+        set({ projects: [], projectsLoading: false, projectsError: null })
+      },
     }),
     {
-      name: 'project-storage',
+      name: 'project-storage-v2',
       partialize: (state) => ({ projects: state.projects }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        const scope = readActiveWorkspaceScope()
+        state.projects = state.projects.filter((project) =>
+          belongsToActiveWorkspaceScope(project.workspaceId, scope),
+        )
+      },
     }
   )
 )

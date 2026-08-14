@@ -40,7 +40,7 @@ export async function fetchIdentityUsers(params?: {
   const limit = params?.limit ?? 200
   const offset = params?.offset ?? 0
   const base = IDENTITY_API_BASE.replace(/\/$/, '')
-  const res = await apiFetch(`${base}/api/identity-lite/v1/users?limit=${limit}&offset=${offset}`, {
+  const res = await apiFetch(`${base}/v1/users?limit=${limit}&offset=${offset}`, {
     headers: tectonaServiceHeaders(),
   })
   return handleJson<IdentityUserListResponse>(res)
@@ -63,7 +63,7 @@ export async function provisionIdentityUser(payload: {
   manager_email?: string
 }): Promise<IdentityUserProvisionResponse> {
   const base = IDENTITY_API_BASE.replace(/\/$/, '')
-  const res = await apiFetch(`${base}/api/identity-lite/v1/users/provision`, {
+  const res = await apiFetch(`${base}/v1/users/provision`, {
     method: 'POST',
     headers: tectonaServiceHeaders(),
     body: JSON.stringify({
@@ -82,11 +82,35 @@ export async function activateIdentityUser(email: string): Promise<{ email: stri
   const normalized = email.trim().toLowerCase()
   const base = IDENTITY_API_BASE.replace(/\/$/, '')
   const res = await apiFetch(
-    `${base}/api/identity-lite/v1/users/${encodeURIComponent(normalized)}/activate`,
+    `${base}/v1/users/${encodeURIComponent(normalized)}/activate`,
     {
       method: 'POST',
       headers: tectonaServiceHeaders(),
     }
   )
   return handleJson<{ email: string; status_code: string }>(res)
+}
+
+export type IdentityUserDeleteResponse = {
+  id: string
+  email: string
+  deleted: boolean
+}
+
+/** Soft-delete identity user — revokes tokens; email can be used for Sign up again. */
+export async function deleteIdentityUser(
+  identityRef: string,
+  options?: { actorId?: string | null },
+): Promise<IdentityUserDeleteResponse> {
+  const ref = identityRef.trim()
+  const base = IDENTITY_API_BASE.replace(/\/$/, '')
+  const headers = tectonaServiceHeaders()
+  if (options?.actorId?.trim()) {
+    headers['X-Actor-Id'] = options.actorId.trim()
+  }
+  const res = await apiFetch(`${base}/v1/users/${encodeURIComponent(ref)}`, {
+    method: 'DELETE',
+    headers,
+  })
+  return handleJson<IdentityUserDeleteResponse>(res)
 }

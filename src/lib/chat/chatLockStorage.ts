@@ -10,7 +10,7 @@ export function hasChatLockPassword(hasPasswordFlag?: boolean): boolean {
   return hasPasswordFlag === true
 }
 
-/** Chat memakai kode rahasia (terkunci di server atau sudah punya password). */
+/** Chat uses a secret code (locked on the server or already has a password). */
 export function isConversationChatLockActive(conv: {
   isLocked?: boolean
   hasChatLockPassword?: boolean

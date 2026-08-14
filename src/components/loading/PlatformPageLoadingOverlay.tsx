@@ -11,10 +11,15 @@ export type PlatformPageLoadingOverlayProps = {
   fillViewport?: boolean
 }
 
-/** Fullscreen in-layout (bukan service). Untuk data API gunakan `PlatformServiceLoadingPanel`. */
+/**
+ * Overlay inisialisasi tampilan modul.
+ * - `fullScreen`: menutup viewport (setara route load).
+ * - Tanpa fullScreen: area konten saja.
+ * Untuk fetch API / list data → `PlatformDataLoadingState` / `PlatformServiceLoadingPanel`.
+ */
 export function PlatformPageLoadingOverlay({
-  title = 'Memuat halaman...',
-  description = 'Menyiapkan tampilan modul.',
+  title = 'Loading page...',
+  description = 'Preparing Tectona module.',
   className,
   fullScreen = false,
   fillViewport = false,
@@ -22,13 +27,13 @@ export function PlatformPageLoadingOverlay({
   if (fullScreen) {
     return (
       <div
-        className={cn('fixed inset-x-0 bottom-0 top-12 z-30 flex flex-col', className)}
+        className={cn('fixed inset-0 z-[100] flex flex-col', className)}
         role="status"
         aria-live="polite"
         aria-busy="true"
         aria-label={title}
       >
-        <PlatformLoadingBackdrop className="flex min-h-full w-full flex-1 items-center justify-center">
+        <PlatformLoadingBackdrop className="flex min-h-dvh w-full flex-1 items-center justify-center">
           <PlatformLoadingCard title={title} description={description} />
         </PlatformLoadingBackdrop>
       </div>

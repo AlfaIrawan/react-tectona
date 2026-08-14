@@ -66,9 +66,18 @@ function currentServiceId(): string {
 
 function currentRegistryBaseUrl(): string {
   const fromEnv = (import.meta.env.VITE_REGISTRY_API_URL as string | undefined)?.trim()
+  if (fromEnv === 'same-origin' || fromEnv === '/') return ''
   if (fromEnv) return fromEnv.replace(/\/+$/, '')
   if (import.meta.env.DEV) return ''
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname
+    if (host !== 'localhost' && host !== '127.0.0.1') return ''
+  }
   return DEFAULT_REGISTRY_BASE_URL.replace(/\/+$/, '')
+}
+
+function isSameOriginRegistryIngest(): boolean {
+  return !currentRegistryBaseUrl()
 }
 
 function average(values: number[]): number | null {
@@ -207,7 +216,7 @@ async function postRumSample(): Promise<void> {
     flushInFlight = true
     const response = await fetch(currentRumIngestUrl(), {
       method: 'POST',
-      mode: 'cors',
+      mode: isSameOriginRegistryIngest() ? 'same-origin' : 'cors',
       keepalive: true,
       headers,
       body: JSON.stringify(payload),

@@ -1,261 +1,446 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Calendar,
+  CalendarDays,
+  CalendarRange,
+  ChevronLeft,
+  ChevronRight,
+  GanttChartSquare,
+  LayoutGrid,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
 import type { IdeaConversionSprint } from '@/lib/api/tectonaAgentRuntimeApi'
+import {
+  PlanningSvarGantt,
+  type PlanningGanttItem,
+  type PlanningGanttTaskGridEditEvent,
+  type PlanningGanttTaskMoveEvent,
+  type PlanningGanttTaskScheduleUpdateEvent,
+  type PlanningGanttZoomLevel,
+} from '@/modules/planning-scheduling/components/PlanningSvarGantt'
+import { TIMELINE_GANTT_GRID_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 
-export type ConversionZoom = 'Day' | 'Week' | 'Month' | 'Quarter'
+const GANTT_ZOOM_OPTIONS: {
+  level: PlanningGanttZoomLevel
+  label: string
+  icon: LucideIcon
+}[] = [
+  { level: 'Day', label: 'Day', icon: CalendarDays },
+  { level: 'Week', label: 'Week', icon: CalendarRange },
+  { level: 'Month', label: 'Month', icon: Calendar },
+  { level: 'Quarter', label: 'Quarter', icon: LayoutGrid },
+]
 
-type FlatRow = {
-  id: string
-  title: string
-  kind: 'sprint' | 'epic' | 'task' | 'subtask'
-  depth: number
-  startDate: string
-  endDate: string
-  durationDays: number
-  parentId: string | null
+const toolbarFocusClass =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30 focus-visible:ring-offset-0'
+
+const CONVERSION_GANTT_SCROLL_STYLES = `
+  .idea-conversion-gantt-host .wx-chart {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.75) rgba(241, 245, 249, 0.65);
+  }
+
+  .idea-conversion-gantt-host .wx-chart::-webkit-scrollbar {
+    height: 8px;
+  }
+
+  .idea-conversion-gantt-host .wx-chart::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.75);
+    border-radius: 9999px;
+  }
+`
+
+function normalizeConversionDateRange(
+  startDate: string,
+  endDate: string,
+  durationDays: number,
+): { startDate: string; endDate: string; durationDays: number } {
+  const start = startDate?.trim() || endDate?.trim() || ''
+  let end = endDate?.trim() || start
+  if (!start) {
+    const today = new Date()
+    const iso = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}-${String(today.getUTCDate()).padStart(2, '0')}`
+    return { startDate: iso, endDate: iso, durationDays: Math.max(0, durationDays) }
+  }
+  if (end < start) end = start
+  return { startDate: start, endDate: end, durationDays: Math.max(0, durationDays) }
 }
 
-function parseIso(value: string): Date {
-  const [y, m, d] = (value || '').split('-').map(Number)
-  if (!y || !m || !d) return new Date()
-  return new Date(Date.UTC(y, m - 1, d))
+function isoAddDays(startDate: string, days: number): string {
+  const [y, m, d] = startDate.split('-').map(Number)
+  const date = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1))
+  if (days <= 0) return startDate
+  date.setUTCDate(date.getUTCDate() + days)
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
 }
 
-function daysBetween(a: Date, b: Date): number {
-  return Math.round((b.getTime() - a.getTime()) / 86_400_000)
-}
+function mapConversionSprintsToGanttItems(
+  sprints: IdeaConversionSprint[],
+  projectName: string,
+): PlanningGanttItem[] {
+  const items: PlanningGanttItem[] = []
+  let listOrder = 0
+  const project = projectName.trim() || 'Idea Conversion'
 
-function addDays(base: Date, days: number): Date {
-  return new Date(base.getTime() + days * 86_400_000)
-}
-
-function formatDay(value: Date): string {
-  const dd = String(value.getUTCDate()).padStart(2, '0')
-  const mm = String(value.getUTCMonth() + 1).padStart(2, '0')
-  const yyyy = value.getUTCFullYear()
-  return `${dd}-${mm}-${yyyy}`
-}
-
-function flattenSprints(sprints: IdeaConversionSprint[]): FlatRow[] {
-  const rows: FlatRow[] = []
-  for (const sprint of sprints) {
-    rows.push({
-      id: sprint.id,
-      title: sprint.title,
-      kind: 'sprint',
-      depth: 0,
-      startDate: sprint.start_date,
-      endDate: sprint.end_date,
-      durationDays: sprint.duration_days,
-      parentId: null,
+  const pushItem = (
+    id: string,
+    title: string,
+    parentId: string | null,
+    startDate: string,
+    endDate: string,
+    durationDays: number,
+    type: PlanningGanttItem['type'],
+    workItemType: string,
+  ) => {
+    const schedule = normalizeConversionDateRange(startDate, endDate, durationDays)
+    items.push({
+      id,
+      title,
+      workspace: project,
+      project,
+      team: '',
+      owner: '',
+      sprint: '',
+      type: schedule.durationDays <= 0 ? 'Milestone' : type,
+      startDate: schedule.startDate,
+      endDate: schedule.endDate,
+      progress: 0,
+      parentId,
+      listOrder: listOrder++,
+      workItemType,
+      itemSource: 'tectona',
     })
+  }
+
+  for (const sprint of sprints) {
+    pushItem(
+      sprint.id,
+      sprint.title,
+      null,
+      sprint.start_date,
+      sprint.end_date,
+      sprint.duration_days,
+      'Phase',
+      'Sprint',
+    )
     for (const epic of sprint.epics) {
-      rows.push({
-        id: epic.id,
-        title: epic.title,
-        kind: 'epic',
-        depth: 1,
-        startDate: epic.start_date,
-        endDate: epic.end_date,
-        durationDays: epic.duration_days,
-        parentId: sprint.id,
-      })
+      pushItem(
+        epic.id,
+        epic.title,
+        sprint.id,
+        epic.start_date,
+        epic.end_date,
+        epic.duration_days,
+        'Workstream',
+        'Epic',
+      )
       for (const task of epic.tasks) {
-        rows.push({
-          id: task.id,
-          title: task.title,
-          kind: 'task',
-          depth: 2,
-          startDate: task.start_date,
-          endDate: task.end_date,
-          durationDays: task.duration_days,
-          parentId: epic.id,
-        })
+        pushItem(
+          task.id,
+          task.title,
+          epic.id,
+          task.start_date,
+          task.end_date,
+          task.duration_days,
+          'Workstream',
+          'Task',
+        )
         for (const sub of task.sub_tasks) {
-          rows.push({
-            id: sub.id,
-            title: sub.title,
-            kind: 'subtask',
-            depth: 3,
-            startDate: sub.start_date,
-            endDate: sub.end_date,
-            durationDays: sub.duration_days,
-            parentId: task.id,
-          })
+          pushItem(
+            sub.id,
+            sub.title,
+            task.id,
+            sub.start_date,
+            sub.end_date,
+            sub.duration_days,
+            'Workstream',
+            'Sub-task',
+          )
         }
       }
     }
   }
-  return rows
+
+  return items
 }
 
-function monthLabels(start: Date, end: Date): Array<{ label: string; offset: number; width: number }> {
-  const labels: Array<{ label: string; offset: number; width: number }> = []
-  let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))
-  const endMs = end.getTime()
-  while (cursor.getTime() <= endMs) {
-    const next = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
-    const left = Math.max(0, daysBetween(start, cursor))
-    const right = Math.max(left + 1, daysBetween(start, next < end ? next : addDays(end, 1)))
-    labels.push({
-      label: cursor.toLocaleString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' }),
-      offset: left,
-      width: Math.max(1, right - left),
-    })
-    cursor = next
+function applyConversionGanttMove(
+  items: PlanningGanttItem[],
+  event: PlanningGanttTaskMoveEvent,
+): PlanningGanttItem[] | null {
+  const dragged = items.find((item) => item.id === event.id)
+  if (!dragged) return null
+
+  if (event.mode === 'child' && event.target) {
+    return items.map((item) =>
+      item.id === event.id ? { ...item, parentId: event.target ?? null } : item,
+    )
   }
-  return labels
+
+  if ((event.mode === 'before' || event.mode === 'after') && event.target) {
+    const target = items.find((item) => item.id === event.target)
+    if (!target) return null
+    const parentId = target.parentId ?? null
+    const targetOrder = target.listOrder ?? 0
+    const nextOrder = event.mode === 'before' ? targetOrder - 0.5 : targetOrder + 0.5
+    return items.map((item) =>
+      item.id === event.id ? { ...item, parentId, listOrder: nextOrder } : item,
+    )
+  }
+
+  if (event.mode === 'up' || event.mode === 'down') {
+    const parentId = dragged.parentId ?? null
+    const siblings = items
+      .filter((item) => (item.parentId ?? null) === parentId)
+      .sort((left, right) => (left.listOrder ?? 0) - (right.listOrder ?? 0))
+    const index = siblings.findIndex((item) => item.id === event.id)
+    if (index < 0) return null
+    const swapIndex = event.mode === 'up' ? index - 1 : index + 1
+    if (swapIndex < 0 || swapIndex >= siblings.length) return items
+    const swapOrder = siblings[swapIndex].listOrder ?? swapIndex
+    const currentOrder = dragged.listOrder ?? index
+    return items.map((item) => {
+      if (item.id === event.id) return { ...item, listOrder: swapOrder }
+      if (item.id === siblings[swapIndex].id) return { ...item, listOrder: currentOrder }
+      return item
+    })
+  }
+
+  return items
 }
 
-const KIND_BAR: Record<FlatRow['kind'], string> = {
-  sprint: 'bg-emerald-300/90',
-  epic: 'bg-teal-400/90',
-  task: 'bg-sky-500',
-  subtask: 'bg-indigo-400',
+export function scrollConversionGanttChart(
+  host: HTMLElement | null,
+  direction: 'prev' | 'next',
+  zoomLevel: PlanningGanttZoomLevel,
+) {
+  const chart = host?.querySelector<HTMLElement>('.wx-chart')
+  if (!chart) return
+
+  const stepRatio =
+    zoomLevel === 'Day' ? 0.45 : zoomLevel === 'Week' ? 0.55 : zoomLevel === 'Month' ? 0.65 : 0.75
+  const delta = chart.clientWidth * stepRatio * (direction === 'prev' ? -1 : 1)
+  const maxScroll = Math.max(0, chart.scrollWidth - chart.clientWidth)
+  chart.scrollLeft = Math.max(0, Math.min(maxScroll, chart.scrollLeft + delta))
+}
+
+type IdeaConversionGanttToolbarProps = {
+  sprints: IdeaConversionSprint[]
+  projectName?: string
+  zoomLevel: PlanningGanttZoomLevel
+  onZoomLevelChange: (level: PlanningGanttZoomLevel) => void
+  onTimelineNavigate?: (direction: 'prev' | 'next') => void
+  className?: string
+}
+
+export function IdeaConversionGanttToolbar({
+  sprints,
+  projectName,
+  zoomLevel,
+  onZoomLevelChange,
+  onTimelineNavigate,
+  className,
+}: IdeaConversionGanttToolbarProps) {
+  const itemCount = useMemo(
+    () => mapConversionSprintsToGanttItems(sprints, projectName ?? 'Idea Conversion').length,
+    [projectName, sprints],
+  )
+
+  return (
+    <div
+      className={cn(
+        'flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 text-xs text-muted-foreground scrollbar-hide lg:ml-auto',
+        className,
+      )}
+    >
+      {onTimelineNavigate ? (
+        <div
+          className="inline-flex shrink-0 rounded-lg border border-border/60 bg-muted/20 p-0.5"
+          role="group"
+          aria-label="Timeline navigation"
+        >
+          <button
+            type="button"
+            aria-label="Previous period"
+            title="Previous period"
+            onClick={() => onTimelineNavigate('prev')}
+            className={cn(
+              'inline-flex h-8 w-8 items-center justify-center rounded-md transition hover:text-foreground',
+              toolbarFocusClass,
+            )}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            type="button"
+            aria-label="Next period"
+            title="Next period"
+            onClick={() => onTimelineNavigate('next')}
+            className={cn(
+              'inline-flex h-8 w-8 items-center justify-center rounded-md transition hover:text-foreground',
+              toolbarFocusClass,
+            )}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        className="inline-flex shrink-0 rounded-lg border border-border/60 bg-muted/20 p-0.5"
+        role="group"
+        aria-label="Gantt zoom level"
+      >
+        {GANTT_ZOOM_OPTIONS.map(({ level, label, icon: Icon }) => {
+          const active = zoomLevel === level
+          return (
+            <button
+              key={level}
+              type="button"
+              aria-pressed={active}
+              aria-label={`${label} view`}
+              onClick={() => onZoomLevelChange(level)}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition',
+                toolbarFocusClass,
+                active
+                  ? 'bg-foreground text-background shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              {label}
+            </button>
+          )
+        })}
+      </div>
+      <p className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+        Showing <span className="font-semibold text-foreground">{itemCount}</span> work items
+      </p>
+    </div>
+  )
 }
 
 type IdeaConversionTimelineProps = {
   sprints: IdeaConversionSprint[]
+  projectName?: string
+  zoomLevel: PlanningGanttZoomLevel
+  onChartHostReady?: (host: HTMLDivElement | null) => void
   className?: string
 }
 
-export function IdeaConversionTimeline({ sprints, className }: IdeaConversionTimelineProps) {
-  const [zoom, setZoom] = useState<ConversionZoom>('Month')
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+export function IdeaConversionTimeline({
+  sprints,
+  projectName,
+  zoomLevel,
+  onChartHostReady,
+  className,
+}: IdeaConversionTimelineProps) {
+  const [selectedId, setSelectedId] = useState('')
+  const [taskStructureRevision, setTaskStructureRevision] = useState(0)
+  const [ganttItems, setGanttItems] = useState<PlanningGanttItem[]>(() =>
+    mapConversionSprintsToGanttItems(sprints, projectName ?? 'Idea Conversion'),
+  )
+  const chartHostRef = useRef<HTMLDivElement>(null)
 
-  const rows = useMemo(() => flattenSprints(sprints), [sprints])
-  const visibleRows = useMemo(() => {
-    const hiddenParents = new Set<string>()
-    const out: FlatRow[] = []
-    for (const row of rows) {
-      if (row.parentId && (collapsed[row.parentId] || hiddenParents.has(row.parentId))) {
-        hiddenParents.add(row.id)
-        continue
+  useEffect(() => {
+    setGanttItems(mapConversionSprintsToGanttItems(sprints, projectName ?? 'Idea Conversion'))
+    setTaskStructureRevision((value) => value + 1)
+  }, [projectName, sprints])
+
+  useEffect(() => {
+    onChartHostReady?.(chartHostRef.current)
+    return () => onChartHostReady?.(null)
+  }, [onChartHostReady])
+
+  const handleTaskScheduleCommit = useCallback((event: PlanningGanttTaskScheduleUpdateEvent) => {
+    setGanttItems((prev) =>
+      prev.map((item) =>
+        item.id === event.id
+          ? { ...item, startDate: event.startDate, endDate: event.endDate }
+          : item,
+      ),
+    )
+    return true
+  }, [])
+
+  const handleTaskGridEditCommit = useCallback((event: PlanningGanttTaskGridEditEvent) => {
+    setGanttItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== event.id) return item
+        if (event.field === 'title') {
+          return { ...item, title: String(event.value) }
+        }
+        if (event.field === 'startDate') {
+          const startDate = String(event.value).slice(0, 10)
+          const endDate = item.endDate >= startDate ? item.endDate : startDate
+          return { ...item, startDate, endDate }
+        }
+        if (event.field === 'durationDays') {
+          const durationDays = Math.max(0, Number(event.value) || 0)
+          const endDate =
+            durationDays <= 0 ? item.startDate : isoAddDays(item.startDate, durationDays)
+          return {
+            ...item,
+            endDate,
+            type: durationDays <= 0 ? 'Milestone' : item.type === 'Milestone' ? 'Workstream' : item.type,
+          }
+        }
+        return item
+      }),
+    )
+    return true
+  }, [])
+
+  const handleTaskMoveCommit = useCallback((event: PlanningGanttTaskMoveEvent) => {
+    setGanttItems((prev) => {
+      const next = applyConversionGanttMove(prev, event)
+      if (!next) {
+        setTaskStructureRevision((value) => value + 1)
+        return prev
       }
-      out.push(row)
-    }
-    return out
-  }, [rows, collapsed])
-
-  const window = useMemo(() => {
-    if (rows.length === 0) {
-      const now = new Date()
-      return {
-        start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
-        end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 3, 0)),
-      }
-    }
-    let min = Number.POSITIVE_INFINITY
-    let max = Number.NEGATIVE_INFINITY
-    for (const row of rows) {
-      min = Math.min(min, parseIso(row.startDate).getTime())
-      max = Math.max(max, parseIso(row.endDate).getTime())
-    }
-    return { start: new Date(min - 3 * 86_400_000), end: new Date(max + 7 * 86_400_000) }
-  }, [rows])
-
-  const totalDays = Math.max(14, daysBetween(window.start, window.end) + 1)
-  const pxPerDay = zoom === 'Day' ? 28 : zoom === 'Week' ? 12 : zoom === 'Quarter' ? 4 : 8
-  const timelineWidth = totalDays * pxPerDay
-  const labels = monthLabels(window.start, window.end)
+      return next
+    })
+    return true
+  }, [])
 
   return (
-    <div className={cn('overflow-hidden rounded-xl border border-border/50 bg-white', className)}>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
-        <div>
-          <p className="text-sm font-semibold text-slate-800">Timeline & Gantt</p>
-          <p className="text-[11px] text-slate-500">Sprint → Epic → Task → Sub-task</p>
-        </div>
-        <div className="flex gap-1 rounded-lg border border-border/50 bg-slate-50 p-0.5">
-          {(['Day', 'Week', 'Month', 'Quarter'] as ConversionZoom[]).map((level) => (
-            <Button
-              key={level}
-              type="button"
-              size="sm"
-              variant={zoom === level ? 'default' : 'ghost'}
-              className="h-7 px-2 text-[11px]"
-              onClick={() => setZoom(level)}
-            >
-              {level}
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex max-h-[560px] overflow-auto">
-        <div className="sticky left-0 z-10 w-[360px] shrink-0 border-r border-border/40 bg-white">
-          <div className="grid grid-cols-[1fr_88px_56px] gap-2 border-b border-border/40 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-            <span>Workspace</span>
-            <span>Start</span>
-            <span>Durasi</span>
+    <div
+      ref={chartHostRef}
+      className={cn('idea-conversion-gantt-host flex h-full min-h-0 w-full flex-col', className)}
+    >
+      <style>{CONVERSION_GANTT_SCROLL_STYLES}</style>
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
+        {ganttItems.length === 0 ? (
+          <div className="flex w-full flex-1 flex-col items-center justify-center px-6 py-12">
+            <GanttChartSquare className="h-10 w-10 text-muted-foreground" aria-hidden />
+            <p className="mt-4 text-sm font-semibold text-foreground">No schedule items</p>
+            <p className="mt-1 max-w-sm text-center text-sm text-muted-foreground">
+              Conversion timeline will appear here once generated.
+            </p>
           </div>
-          {visibleRows.map((row) => {
-            const hasChildren = rows.some((candidate) => candidate.parentId === row.id)
-            const isCollapsed = Boolean(collapsed[row.id])
-            return (
-              <div
-                key={row.id}
-                className="grid grid-cols-[1fr_88px_56px] gap-2 border-b border-border/30 px-3 py-2 text-xs text-slate-700"
-              >
-                <button
-                  type="button"
-                  className="flex items-start gap-1 text-left"
-                  style={{ paddingLeft: row.depth * 14 }}
-                  onClick={() => {
-                    if (!hasChildren) return
-                    setCollapsed((prev) => ({ ...prev, [row.id]: !prev[row.id] }))
-                  }}
-                >
-                  <span className="mt-0.5 w-3 text-slate-400">{hasChildren ? (isCollapsed ? '▸' : '▾') : '•'}</span>
-                  <span className={cn(row.kind === 'sprint' || row.kind === 'epic' ? 'font-semibold' : '')}>
-                    {row.title}
-                  </span>
-                </button>
-                <span className="tabular-nums text-slate-500">{formatDay(parseIso(row.startDate))}</span>
-                <span className="tabular-nums text-slate-500">{row.durationDays}</span>
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="relative border-b border-border/40 bg-slate-50" style={{ width: timelineWidth, height: 36 }}>
-            {labels.map((label) => (
-              <div
-                key={`${label.label}-${label.offset}`}
-                className="absolute top-0 h-full border-l border-slate-200 px-1 text-[10px] font-semibold text-slate-500"
-                style={{ left: label.offset * pxPerDay, width: label.width * pxPerDay }}
-              >
-                <span className="inline-block pt-2">{label.label}</span>
-              </div>
-            ))}
-          </div>
-          {visibleRows.map((row) => {
-            const start = parseIso(row.startDate)
-            const end = parseIso(row.endDate)
-            const left = Math.max(0, daysBetween(window.start, start)) * pxPerDay
-            const width = Math.max(pxPerDay * 0.6, (Math.max(1, daysBetween(start, end) + 1)) * pxPerDay - 4)
-            const isMilestone = row.durationDays <= 0
-            return (
-              <div key={`bar-${row.id}`} className="relative border-b border-border/20" style={{ width: timelineWidth, height: 41 }}>
-                {isMilestone ? (
-                  <div
-                    className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rotate-45 bg-violet-400"
-                    style={{ left: left + 2 }}
-                    title={row.title}
-                  />
-                ) : (
-                  <div
-                    className={cn('absolute top-2 h-5 rounded-full shadow-sm', KIND_BAR[row.kind])}
-                    style={{ left, width }}
-                    title={`${row.title} (${row.durationDays}d)`}
-                  />
-                )}
-              </div>
-            )
-          })}
-        </div>
+        ) : (
+          <PlanningSvarGantt
+            items={ganttItems}
+            layout="project-tree"
+            columns={TIMELINE_GANTT_GRID_COLUMNS}
+            zoomLevel={zoomLevel}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            enableRowReorder
+            onTaskMoveCommit={handleTaskMoveCommit}
+            enableChartEdit
+            onTaskScheduleCommit={handleTaskScheduleCommit}
+            enableGridEdit
+            onTaskGridEditCommit={handleTaskGridEditCommit}
+            taskStructureRevision={taskStructureRevision}
+            timelineScaleResize={false}
+            enableTimelineScrollExtension
+            scrollToTaskWindowOnMount
+            surface="solid"
+          />
+        )}
       </div>
     </div>
   )

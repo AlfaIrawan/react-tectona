@@ -25,7 +25,6 @@ import {
   ListTodo,
   Share2,
   Palette,
-  UserPlus,
   Pencil,
   FolderInput,
   Tag,
@@ -42,8 +41,11 @@ import { useProjectStore, useFolderStore } from '@/modules/projects'
 import { useToast } from '@/components/ui/toast'
 import { notifyEvent } from '@/lib/api/notificationApi'
 import { createTodo, TECTONA_TODO_APP_ID, buildTodoEntityLinks } from '@/lib/api/todoApi'
+import { getSession } from '@/auth/authService'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DeleteProjectsConfirmModal } from './DeleteProjectsConfirmModal'
+import { AddProjectMembersDrawer } from './AddProjectMembersDrawer'
+import type { GridSelectionModifiers } from '../lib/gridSelection'
 import {
   formatProjectTagLabel,
   getProjectTagBadgeClass,
@@ -57,7 +59,7 @@ interface ProjectCardProps {
   /** Tooltip text: list of todo titles for this project (e.g. newline-joined) */
   todoListTooltip?: string
   isSelected?: boolean
-  onSelect?: (projectId: string, selected: boolean, shiftKey?: boolean) => void
+  onSelect?: (projectId: string, modifiers: GridSelectionModifiers) => void
   showCheckbox?: boolean
   onDoubleClick?: () => void
   isDragActive?: boolean
@@ -94,7 +96,8 @@ export function ProjectCard({
   onDeleteSelected,
 }: ProjectCardProps) {
   const navigate = useNavigate()
-  const { archiveProject, restoreProject, deleteProject, updateProject, moveProjectToFolder } = useProjectStore()
+  const { archiveProject, restoreProject, deleteProject, updateProject, moveProjectToFolder } =
+    useProjectStore()
   const { folders } = useFolderStore()
   const { addToast } = useToast()
 
@@ -138,6 +141,8 @@ export function ProjectCard({
   const descriptionInputRef = useRef<HTMLTextAreaElement>(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [addMembersOpen, setAddMembersOpen] = useState(false)
+  const [shareProjectOverride, setShareProjectOverride] = useState<Project | null>(null)
   const closeContextMenu = () => setContextMenu(null)
 
   const closeContextMenuPreservingScroll = (saved?: { x: number; y: number }) => {
@@ -150,6 +155,12 @@ export function ProjectCard({
     setTimeout(restore, 0)
     setTimeout(restore, 80)
     setTimeout(restore, 200)
+  }
+
+  const openAddMembersDrawer = () => {
+    closeContextMenu()
+    setShareProjectOverride(null)
+    setAddMembersOpen(true)
   }
 
   useEffect(() => {
@@ -212,7 +223,7 @@ export function ProjectCard({
     try {
       await updateProject(project.id, { description: trimmed || undefined })
       addToast({ title: 'Description updated', variant: 'success' })
-      notifyEvent({ type_code: 'project', title: 'Deskripsi project diupdate', body: `Deskripsi "${project.name}" diperbarui.` })
+      notifyEvent({ type_code: 'project', title: 'Project description updated', body: `Description for "${project.name}" was updated.` })
     } catch (e) {
       addToast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to update', variant: 'error' })
     }
@@ -275,7 +286,7 @@ export function ProjectCard({
     try {
       await updateProject(project.id, { tags: tagsEditList })
       addToast({ title: 'Tags updated', variant: 'success' })
-      notifyEvent({ type_code: 'project', title: 'Tags project diupdate', body: `Tags "${project.name}" diperbarui.` })
+      notifyEvent({ type_code: 'project', title: 'Project tags updated', body: `Tags for "${project.name}" were updated.` })
     } catch (e) {
       addToast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to update', variant: 'error' })
     }
@@ -307,12 +318,12 @@ export function ProjectCard({
     e.stopPropagation()
     try {
       await archiveProject(project.id)
-      addToast({ 
-        title: 'Project Diarchive', 
-        description: `Project "${project.name}" telah diarchive.`, 
-        variant: 'success' 
+      addToast({
+        title: 'Project archived',
+        description: `Project "${project.name}" has been archived.`,
+        variant: 'success'
       })
-      notifyEvent({ type_code: 'project', title: 'Project Diarchive', body: `Project "${project.name}" telah diarchive.` })
+      notifyEvent({ type_code: 'project', title: 'Project archived', body: `Project "${project.name}" has been archived.` })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to archive project'
       addToast({ title: 'Error', description: msg, variant: 'error' })
@@ -323,12 +334,12 @@ export function ProjectCard({
     e.stopPropagation()
     try {
       await restoreProject(project.id)
-      addToast({ 
-        title: 'Project Direstore', 
-        description: `Project "${project.name}" telah dikembalikan ke status aktif.`, 
-        variant: 'success' 
+      addToast({
+        title: 'Project restored',
+        description: `Project "${project.name}" has been restored to active status.`,
+        variant: 'success'
       })
-      notifyEvent({ type_code: 'project', title: 'Project Direstore', body: `Project "${project.name}" telah dikembalikan ke status aktif.` })
+      notifyEvent({ type_code: 'project', title: 'Project restored', body: `Project "${project.name}" has been restored to active status.` })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to restore project'
       addToast({ title: 'Error', description: msg, variant: 'error' })
@@ -345,14 +356,14 @@ export function ProjectCard({
     try {
       await deleteProject(project.id)
       addToast({
-        title: 'Project Dihapus',
-        description: `Project "${project.name}" telah dihapus.`,
+        title: 'Project deleted',
+        description: `Project "${project.name}" has been deleted.`,
         variant: 'success',
       })
       notifyEvent({
         type_code: 'project',
-        title: 'Project Dihapus',
-        body: `Project "${project.name}" telah dihapus.`,
+        title: 'Project deleted',
+        body: `Project "${project.name}" has been deleted.`,
       })
       setDeleteConfirmOpen(false)
     } catch (err) {
@@ -498,8 +509,12 @@ export function ProjectCard({
     if ((e.target as HTMLElement).closest('[role="menuitem"]')) {
       return
     }
-    // Click: pass shiftKey so parent can enforce multi-select only with Shift
-    onSelect?.(project.id, !isSelected, e.shiftKey)
+    // Plain click = single; Ctrl/Cmd = toggle; Shift = range (handled in parent).
+    onSelect?.(project.id, {
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+    })
   }
 
   const handleCardDoubleClick = (e: React.MouseEvent) => {
@@ -738,8 +753,8 @@ export function ProjectCard({
                         await onMoveSelectedToFolder(null)
                       } else {
                         await moveProjectToFolder(project.id, null)
-                        addToast({ title: 'Project dipindahkan', description: 'Ke All Projects.', variant: 'success' })
-                        notifyEvent({ type_code: 'project', title: 'Project dipindahkan', body: 'Ke All Projects.' })
+                        addToast({ title: 'Project moved', description: 'Moved to All Projects.', variant: 'success' })
+                        notifyEvent({ type_code: 'project', title: 'Project moved', body: 'Moved to All Projects.' })
                       }
                       closeContextMenuPreservingScroll(scroll)
                     } catch (e) {
@@ -761,8 +776,8 @@ export function ProjectCard({
                           await onMoveSelectedToFolder(f.id)
                         } else {
                           await moveProjectToFolder(project.id, f.id)
-                          addToast({ title: 'Project dipindahkan', description: `Ke "${f.name}".`, variant: 'success' })
-                          notifyEvent({ type_code: 'project', title: 'Project dipindahkan', body: `Ke "${f.name}".` })
+                          addToast({ title: 'Project moved', description: `Moved to "${f.name}".`, variant: 'success' })
+                          notifyEvent({ type_code: 'project', title: 'Project moved', body: `Moved to "${f.name}".` })
                         }
                         closeContextMenuPreservingScroll(scroll)
                       } catch (e) {
@@ -775,11 +790,7 @@ export function ProjectCard({
                 ))}
               </div>
             </ContextMenuSubmenu>
-            <ContextMenuItem onClick={() => { addToast({ title: 'Add Member', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
-              <UserPlus className="w-4 h-4 mr-2" />
-              Add member
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => { addToast({ title: 'Share', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
+            <ContextMenuItem onClick={openAddMembersDrawer}>
               <Share2 className="w-4 h-4 mr-2" />
               Share
             </ContextMenuItem>
@@ -814,11 +825,11 @@ export function ProjectCard({
               View Details
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => { addToast({ title: 'Create Comment', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
+            <ContextMenuItem onClick={() => { addToast({ title: 'Create Comment', description: 'This feature is coming soon.', variant: 'default' }); closeContextMenu(); }}>
               <MessageSquare className="w-4 h-4 mr-2" />
               Create comment
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => { addToast({ title: 'Add Notes', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
+            <ContextMenuItem onClick={() => { addToast({ title: 'Add Notes', description: 'This feature is coming soon.', variant: 'default' }); closeContextMenu(); }}>
               <StickyNote className="w-4 h-4 mr-2" />
               Add notes
             </ContextMenuItem>
@@ -831,10 +842,6 @@ export function ProjectCard({
             >
               <ListTodo className="w-4 h-4 mr-2" />
               Add todo
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => { addToast({ title: 'Share', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
-              <Share2 className="w-4 h-4 mr-2" />
-              Share
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuSubmenu
@@ -862,7 +869,7 @@ export function ProjectCard({
                       try {
                         await updateProject(project.id, { borderColor: color })
                         addToast({ title: 'Color updated', variant: 'success' })
-                        notifyEvent({ type_code: 'project', title: 'Warna project diupdate', body: `Warna "${project.name}" diperbarui.` })
+                        notifyEvent({ type_code: 'project', title: 'Project color updated', body: `Color for "${project.name}" was updated.` })
                         closeContextMenuPreservingScroll(scroll)
                       } catch (err) {
                         addToast({ title: 'Error', description: err instanceof Error ? err.message : 'Failed', variant: 'error' })
@@ -872,9 +879,9 @@ export function ProjectCard({
                 ))}
               </div>
             </ContextMenuSubmenu>
-            <ContextMenuItem onClick={() => { addToast({ title: 'Add Member', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
-              <UserPlus className="w-4 h-4 mr-2" />
-              Add member
+            <ContextMenuItem onClick={openAddMembersDrawer}>
+              <Share2 className="w-4 h-4 mr-2" />
+              Share
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -909,7 +916,7 @@ export function ProjectCard({
                       try {
                         await updateProject(project.id, { iconName: name })
                         addToast({ title: 'Icon updated', variant: 'success' })
-                        notifyEvent({ type_code: 'project', title: 'Icon project diupdate', body: `Icon "${project.name}" diperbarui.` })
+                        notifyEvent({ type_code: 'project', title: 'Project icon updated', body: `Icon for "${project.name}" was updated.` })
                         closeContextMenuPreservingScroll(scroll)
                       } catch (err) {
                         addToast({ title: 'Error', description: err instanceof Error ? err.message : 'Failed', variant: 'error' })
@@ -956,8 +963,8 @@ export function ProjectCard({
                     const scroll = { x: window.scrollX, y: window.scrollY }
                     try {
                       await moveProjectToFolder(project.id, null)
-                      addToast({ title: 'Project dipindahkan', description: 'Ke All Projects.', variant: 'success' })
-                      notifyEvent({ type_code: 'project', title: 'Project dipindahkan', body: 'Ke All Projects.' })
+                      addToast({ title: 'Project moved', description: 'Moved to All Projects.', variant: 'success' })
+                      notifyEvent({ type_code: 'project', title: 'Project moved', body: 'Moved to All Projects.' })
                       closeContextMenuPreservingScroll(scroll)
                     } catch (e) {
                       addToast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed', variant: 'error' })
@@ -975,8 +982,8 @@ export function ProjectCard({
                     const scroll = { x: window.scrollX, y: window.scrollY }
                     try {
                       await moveProjectToFolder(project.id, f.id)
-                      addToast({ title: 'Project dipindahkan', description: `Ke "${f.name}".`, variant: 'success' })
-                      notifyEvent({ type_code: 'project', title: 'Project dipindahkan', body: `Ke "${f.name}".` })
+                      addToast({ title: 'Project moved', description: `Moved to "${f.name}".`, variant: 'success' })
+                      notifyEvent({ type_code: 'project', title: 'Project moved', body: `Moved to "${f.name}".` })
                       closeContextMenuPreservingScroll(scroll)
                     } catch (e) {
                       addToast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed', variant: 'error' })
@@ -1035,15 +1042,22 @@ export function ProjectCard({
                 if (e.key === 'Enter') {
                   e.preventDefault()
                   if (addTodoTitle.trim()) {
+                    const userId = getSession()?.user.id
+                    if (!userId) {
+                      addToast({ title: 'Failed to add todo', description: 'Sesi tidak ditemukan. Silakan login ulang.', variant: 'error' })
+                      return
+                    }
                     setAddTodoSubmitting(true)
                     createTodo({
                       title: addTodoTitle.trim(),
                       app_id: TECTONA_TODO_APP_ID,
+                      owned_by: userId,
                       entity_links: buildTodoEntityLinks({ projectId: project.id }),
                     })
                       .then(() => {
                         addToast({ title: 'Todo added', variant: 'success' })
                         setAddTodoPopover(null)
+                        window.dispatchEvent(new CustomEvent('tectona-todos-changed'))
                         window.dispatchEvent(new CustomEvent('sequoia-todos-changed'))
                       })
                       .catch((err) => {
@@ -1069,15 +1083,22 @@ export function ProjectCard({
                 disabled={!addTodoTitle.trim() || addTodoSubmitting}
                 onClick={() => {
                   if (!addTodoTitle.trim()) return
+                  const userId = getSession()?.user.id
+                  if (!userId) {
+                    addToast({ title: 'Failed to add todo', description: 'Sesi tidak ditemukan. Silakan login ulang.', variant: 'error' })
+                    return
+                  }
                   setAddTodoSubmitting(true)
                   createTodo({
                     title: addTodoTitle.trim(),
                     app_id: TECTONA_TODO_APP_ID,
+                    owned_by: userId,
                     entity_links: buildTodoEntityLinks({ projectId: project.id }),
                   })
                     .then(() => {
                       addToast({ title: 'Todo added', variant: 'success' })
                       setAddTodoPopover(null)
+                      window.dispatchEvent(new CustomEvent('tectona-todos-changed'))
                       window.dispatchEvent(new CustomEvent('sequoia-todos-changed'))
                     })
                     .catch((err) => {
@@ -1242,6 +1263,13 @@ export function ProjectCard({
           )}
         </div>
       )}
+
+      <AddProjectMembersDrawer
+        open={addMembersOpen}
+        onOpenChange={setAddMembersOpen}
+        project={shareProjectOverride ?? project}
+        onProjectUpdated={setShareProjectOverride}
+      />
 
       <DeleteProjectsConfirmModal
         open={deleteConfirmOpen}

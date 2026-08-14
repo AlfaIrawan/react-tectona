@@ -36,7 +36,7 @@ export function splitAssistantGreetingLead(content: string): AssistantGreetingLe
 
   const tailFirstLine = firstLine.slice(headMatch[0].length).trim()
 
-  // Baris pertama khusus sapaan (sisanya hanya emoji dekorasi).
+  // First line is purely the greeting (the rest is only decorative emoji).
   if (isGreetingTailDecoration(tailFirstLine)) {
     let bodyStart = 1
     while (bodyStart < lines.length && lines[bodyStart]?.trim() === '') bodyStart += 1
@@ -73,13 +73,13 @@ export function choicesToConversationalQuestion(choices: string[]): string | nul
     const a = lowerFirstChoicePhrase(normalized[0])
     const b = lowerFirstChoicePhrase(normalized[1])
     if (!a || !b) return null
-    return `Mau ${a}, atau ${b}?`
+    return `Would you like ${a}, or ${b}?`
   }
 
   const last = lowerFirstChoicePhrase(normalized[normalized.length - 1])
   const rest = normalized.slice(0, -1).map(lowerFirstChoicePhrase).filter(Boolean)
   if (!last || rest.length === 0) return null
-  return `Mau ${rest.join(', ')}, atau ${last}?`
+  return `Would you like ${rest.join(', ')}, or ${last}?`
 }
 
 /** Split trailing task-list block from the main narrative. */

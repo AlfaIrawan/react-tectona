@@ -109,8 +109,12 @@ export function applyDirectorySiblingOrder<T extends DirectoryOrderWorkItem>(
   }
 
   const ordered: T[] = []
+  const visited = new Set<string>()
+  // `visited` guards against a corrupted/cyclic parent chain recursing forever.
   const walk = (parentId: string | null) => {
     for (const item of sortSiblings(childrenByParent.get(parentId) ?? [], parentId)) {
+      if (visited.has(item.id)) continue
+      visited.add(item.id)
       ordered.push(item)
       walk(item.id)
     }

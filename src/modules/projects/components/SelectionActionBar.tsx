@@ -1,5 +1,4 @@
-import { FolderOpen, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { FolderOpen } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -7,16 +6,13 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
 import { useFolderStore } from '@/modules/projects'
+import { enterpriseIndigoGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
 
 interface SelectionActionBarProps {
   selectedProjectCount: number
   selectedFolderCount: number
-  onClear: () => void
   onMoveToFolder: (folderId: string | null) => void
-  /** Jumlah project archived di antara yang terpilih; tombol Delete tampil jika > 0. */
-  archivedSelectedCount?: number
-  onDeleteSelected?: () => void
   className?: string
   /** Saat true, render di dalam panel search (tanpa sticky/glass-card). */
   inline?: boolean
@@ -25,10 +21,7 @@ interface SelectionActionBarProps {
 export function SelectionActionBar({
   selectedProjectCount,
   selectedFolderCount,
-  onClear,
   onMoveToFolder,
-  archivedSelectedCount = 0,
-  onDeleteSelected,
   className,
   inline = false,
 }: SelectionActionBarProps) {
@@ -61,10 +54,13 @@ export function SelectionActionBar({
             <>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="default" size="sm">
-                    <FolderOpen className="w-4 h-4 mr-2" />
+                  <button type="button" className={enterpriseIndigoGradientActionButtonClass()}>
+                    <FolderOpen
+                      className="h-4 w-4 transition-transform duration-200 group-hover:scale-110"
+                      strokeWidth={2.5}
+                    />
                     Move to Folder
-                  </Button>
+                  </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" side="top">
                   <DropdownMenuItem onClick={() => onMoveToFolder(null)}>
@@ -80,16 +76,6 @@ export function SelectionActionBar({
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-              {archivedSelectedCount > 0 && onDeleteSelected && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={onDeleteSelected}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete{archivedSelectedCount > 1 ? ` (${archivedSelectedCount})` : ''}
-                </Button>
-              )}
             </>
           )}
         </div>

@@ -120,16 +120,16 @@ export function TeamChatLockPanel({
             <>
               Protect messages with{' '}
               <span className="font-medium text-[#111b21] dark:text-[#e9edef]">{contactLabel}</span>.
-              Disimpan aman di akun Anda dan sinkron di semua perangkat.
+              Stored securely in your account and synced across all your devices.
             </>
           ) : isRemove ? (
             <>
-              Masukkan kode rahasia untuk menonaktifkan lock pada chat dengan{' '}
+              Enter your secret code to turn off the lock on the chat with{' '}
               <span className="font-medium text-[#111b21] dark:text-[#e9edef]">{contactLabel}</span>.
             </>
           ) : (
             <>
-              Masukkan kode rahasia untuk membuka chat dengan{' '}
+              Enter your secret code to open the chat with{' '}
               <span className="font-medium text-[#111b21] dark:text-[#e9edef]">{contactLabel}</span>.
             </>
           )}
@@ -152,10 +152,10 @@ export function TeamChatLockPanel({
             />
           ) : null}
           {tooShort ? (
-            <p className="text-[11px] text-amber-700 dark:text-amber-400">Minimal 4 karakter.</p>
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">Minimum 4 characters.</p>
           ) : null}
           {localMismatch ? (
-            <p className="text-[11px] text-red-600 dark:text-red-400">Kode tidak sama.</p>
+            <p className="text-[11px] text-red-600 dark:text-red-400">Codes don't match.</p>
           ) : null}
           {errorMessage ? (
             <p className="text-[12px] font-medium text-red-600 dark:text-red-400" role="alert">

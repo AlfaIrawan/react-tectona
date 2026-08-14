@@ -1,158 +1,240 @@
-import { useState } from 'react'
-import { AlertTriangle } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { useEffect, useMemo, useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
+import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/EnterpriseDeleteConfirmModal'
 import { useFolderStore } from '@/modules/projects'
 import { useProjectStore } from '@/modules/projects'
+import { useFolderNotesStore } from '../store/folderNotesStore'
 import { useToast } from '@/components/ui/toast'
+import { parseApiErrorMessage } from '@/lib/api/httpClient'
 import { notifyEvent } from '@/lib/api/notificationApi'
+import {
+  collectFolderDeletionOrder,
+  resolveChildFolderCount,
+} from '../lib/folderHierarchy'
 import type { Folder } from '@/modules/projects'
+
+const MAX_LISTED_FOLDER_NAMES = 6
 
 interface DeleteFolderConfirmModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  folder: Folder | null
-  projectCount: number
+  folders: Folder[]
+  totalProjectCount: number
+  onDeleted?: () => void
 }
 
 export function DeleteFolderConfirmModal({
   open,
   onOpenChange,
-  folder,
-  projectCount,
+  folders,
+  totalProjectCount,
+  onDeleted,
 }: DeleteFolderConfirmModalProps) {
-  const { deleteFolder } = useFolderStore()
+  const { deleteFolder, folders: allFolders, fetchFolders } = useFolderStore()
   const { moveProjectsToFolder, getProjectsByFolder } = useProjectStore()
+  const deleteNotesForFolders = useFolderNotesStore((state) => state.deleteNotesForFolders)
   const { addToast } = useToast()
   const [deleteOption, setDeleteOption] = useState<'move' | 'delete'>('move')
   const [deleting, setDeleting] = useState(false)
 
-  if (!folder) return null
+  const folderList = useMemo(() => folders.filter(Boolean), [folders])
+  const isSingle = folderList.length === 1
+  const single = folderList[0]
+  const deletionOrder = useMemo(
+    () => collectFolderDeletionOrder(folderList.map((folder) => folder.id), allFolders),
+    [folderList, allFolders],
+  )
+  const descendantFolderCount = Math.max(deletionOrder.length - folderList.length, 0)
+  const totalChildrenCount = useMemo(
+    () =>
+      folderList.reduce(
+        (sum, folder) => sum + resolveChildFolderCount(folder, allFolders),
+        0,
+      ),
+    [folderList, allFolders],
+  )
+  const totalProjectsInDeletion = useMemo(() => {
+    const seen = new Set<string>()
+    let count = 0
+    for (const folderId of deletionOrder) {
+      if (seen.has(folderId)) continue
+      seen.add(folderId)
+      count += getProjectsByFolder(folderId).length
+    }
+    return count
+  }, [deletionOrder, getProjectsByFolder])
+
+  useEffect(() => {
+    if (open) setDeleteOption('move')
+  }, [open, folderList.map((folder) => folder.id).join('|')])
+
+  if (!open || folderList.length === 0) return null
 
   const handleDelete = async () => {
     setDeleting(true)
     try {
-      if (deleteOption === 'move') {
-        // Move all projects to root (folderId = null)
-        const projectsInFolder = getProjectsByFolder(folder.id)
+      await fetchFolders()
+      const freshFolders = useFolderStore.getState().folders
+      const orderedFolderIds = collectFolderDeletionOrder(
+        folderList.map((folder) => folder.id),
+        freshFolders,
+      )
+
+      for (const folderId of orderedFolderIds) {
+        const projectsInFolder = getProjectsByFolder(folderId)
         if (projectsInFolder.length > 0) {
           await moveProjectsToFolder(
-            projectsInFolder.map((p) => p.id),
-            null
+            projectsInFolder.map((project) => project.id),
+            null,
           )
         }
-      } else {
-        // Delete projects too - in real app, this would call deleteProject API
-        // For now, we'll just move them to root as a safety measure
-        // In production, you would call: deleteProject for each project
-        const projectsInFolder = getProjectsByFolder(folder.id)
-        if (projectsInFolder.length > 0) {
-          // TODO: Implement actual project deletion API call
-          // For now, move to root as safety
-          await moveProjectsToFolder(
-            projectsInFolder.map((p) => p.id),
-            null
-          )
-          addToast({
-            title: 'Warning',
-            description: 'Projects were moved to root instead of deleted (delete not implemented).',
-            variant: 'error',
-          })
-        }
+
+        await deleteFolder(folderId)
       }
 
-      await deleteFolder(folder.id)
+      deleteNotesForFolders(orderedFolderIds)
+
+      await fetchFolders()
+
+      if (deleteOption === 'delete' && totalProjectsInDeletion > 0) {
+        addToast({
+          title: 'Warning',
+          description: 'Projects were moved to root instead of deleted (delete not implemented).',
+          variant: 'error',
+        })
+      }
+
       onOpenChange(false)
-      addToast({
-        title: 'Folder dihapus',
-        description: `Folder "${folder.name}" telah dihapus.`,
-        variant: 'success',
-      })
-      notifyEvent({
-        type_code: 'folder',
-        title: 'Folder dihapus',
-        body: `Folder "${folder.name}" telah dihapus.`,
-      })
+      onDeleted?.()
+
+      if (isSingle && single) {
+        const cascadeNote =
+          descendantFolderCount > 0
+            ? ` ${descendantFolderCount} subfolder${descendantFolderCount === 1 ? '' : 's'} also removed.`
+            : ''
+        notifyEvent({
+          type_code: 'folder',
+          title: 'Folder dihapus',
+          body: `Folder "${single.name}" telah dihapus.${cascadeNote}`,
+        })
+      } else {
+        notifyEvent({
+          type_code: 'folder',
+          title: 'Folders dihapus',
+          body: `${folderList.length} folder telah dihapus${
+            descendantFolderCount > 0
+              ? ` (${descendantFolderCount} subfolder${descendantFolderCount === 1 ? '' : 's'} included).`
+              : '.'
+          }`,
+        })
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to delete folder'
-      addToast({ title: 'Error', description: msg, variant: 'error' })
+      const raw = err instanceof Error ? err.message : 'Failed to delete folder'
+      const msg = parseApiErrorMessage(raw, 'Failed to delete folder')
+      addToast({ title: 'Cannot delete folder', description: msg, variant: 'error' })
     } finally {
       setDeleting(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-destructive" />
-            Delete Folder
-          </DialogTitle>
-          <DialogDescription>
-            Are you sure you want to delete "{folder.name}"?
-            {projectCount > 0 && (
-              <span className="block mt-1">
-                This folder contains {projectCount} {projectCount === 1 ? 'project' : 'projects'}.
-              </span>
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        {projectCount > 0 && (
-          <div className="space-y-4">
-            <RadioGroup value={deleteOption} onValueChange={(value) => setDeleteOption(value as 'move' | 'delete')}>
-              <div className="flex items-start space-x-2 space-y-0 rounded-md border p-4">
-                <RadioGroupItem value="move" id="move" className="mt-0.5" />
-                <div className="flex-1 space-y-1">
-                  <Label htmlFor="move" className="cursor-pointer">
-                    Move projects to All Projects
-                  </Label>
-                  <p className="text-sm text-muted-foreground">
-                    Projects will be moved to the root level (default)
-                  </p>
-                </div>
+    <EnterpriseDeleteConfirmModal
+      open={open}
+      onClose={() => onOpenChange(false)}
+      onConfirm={handleDelete}
+      busy={deleting}
+      title={isSingle ? 'Delete Folder' : 'Delete Folders'}
+      description={
+        isSingle
+          ? 'This action permanently removes the folder and cannot be undone.'
+          : `This action permanently removes ${folderList.length} folders and cannot be undone.`
+      }
+      entityLabel={isSingle ? 'Folder' : 'Folders'}
+      entityValue={
+        isSingle
+          ? (single?.name ?? '—')
+          : `${folderList.length} selected folders`
+      }
+      impactSummary={
+        totalProjectsInDeletion > 0 || totalChildrenCount > 0 || !isSingle ? (
+          <>
+            <div className="font-medium text-foreground">Impact summary</div>
+            {totalProjectsInDeletion > 0 ? (
+              <div className="mt-1">
+                Projects in selected folders: {totalProjectsInDeletion}{' '}
+                {totalProjectsInDeletion === 1 ? 'project' : 'projects'}
+                {totalProjectsInDeletion !== totalProjectCount && totalProjectCount > 0
+                  ? ` (including ${totalProjectsInDeletion - totalProjectCount} in subfolders)`
+                  : null}
               </div>
-              <div className="flex items-start space-x-2 space-y-0 rounded-md border border-destructive/50 p-4">
-                <RadioGroupItem value="delete" id="delete" className="mt-0.5" />
-                <div className="flex-1 space-y-1">
-                  <Label htmlFor="delete" className="cursor-pointer text-destructive">
-                    Delete projects too
-                  </Label>
-                  <p className="text-sm text-muted-foreground">
-                    This will permanently delete all projects in this folder
-                  </p>
-                </div>
+            ) : null}
+            {totalChildrenCount > 0 ? (
+              <div>
+                Subfolders: {totalChildrenCount}
+                <span className="mt-1 block text-sm text-muted-foreground">
+                  All subfolders will also be permanently deleted.
+                </span>
               </div>
-            </RadioGroup>
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2 pt-4">
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={deleting}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={handleDelete}
-            disabled={deleting}
-          >
-            {deleting ? 'Deleting...' : 'Delete Folder'}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+            ) : null}
+            {!isSingle ? (
+              <ol className="mt-2 list-decimal space-y-1 pl-5 marker:font-medium marker:text-muted-foreground">
+                {folderList.slice(0, MAX_LISTED_FOLDER_NAMES).map((folder) => (
+                  <li key={folder.id} className="pl-1 text-foreground">
+                    {folder.name}
+                  </li>
+                ))}
+                {folderList.length > MAX_LISTED_FOLDER_NAMES ? (
+                  <li className="list-none pl-0 text-muted-foreground">
+                    + {folderList.length - MAX_LISTED_FOLDER_NAMES} more
+                  </li>
+                ) : null}
+              </ol>
+            ) : null}
+          </>
+        ) : null
+      }
+      footerExtra={
+        totalProjectsInDeletion > 0 ? (
+          <RadioGroup value={deleteOption} onValueChange={(value) => setDeleteOption(value as 'move' | 'delete')}>
+            <div className="flex items-start gap-3 rounded-xl border border-border bg-background/70 p-4">
+              <RadioGroupItem value="move" id="delete-folder-move" className="mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <Label htmlFor="delete-folder-move" className="cursor-pointer text-sm font-medium text-foreground">
+                  Move projects to All Projects
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Projects will be moved to the root level before the selected folders are removed.
+                </p>
+              </div>
+            </div>
+            <div className="mt-2 flex items-start gap-3 rounded-xl border border-destructive/30 bg-background/70 p-4">
+              <RadioGroupItem value="delete" id="delete-folder-delete-projects" className="mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <Label
+                  htmlFor="delete-folder-delete-projects"
+                  className="cursor-pointer text-sm font-medium text-destructive"
+                >
+                  Delete projects too
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Permanently delete all projects in the selected folders before removing the folders.
+                </p>
+              </div>
+            </div>
+          </RadioGroup>
+        ) : null
+      }
+      enterpriseNote={
+        totalChildrenCount > 0
+          ? 'All subfolders and their contents will be permanently removed along with the selected folder(s).'
+          : totalProjectsInDeletion > 0
+            ? 'Choose how projects in the selected folders should be handled before the folders are removed.'
+            : 'Enterprise note: folder structure changes apply immediately across the project workspace.'
+      }
+      confirmLabel={isSingle ? 'Delete folder' : `Delete ${folderList.length} folders`}
+      confirmBusyLabel="Deleting..."
+      dialogTitleId="delete-folder-dialog-title"
+    />
   )
 }

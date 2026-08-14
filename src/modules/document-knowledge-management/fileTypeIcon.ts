@@ -11,3 +11,22 @@ export function getFileTypeIcon(fileName: string): string {
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return '/images/icons/icon-html.png'
   return '/images/icons/icon-file.png'
 }
+
+/** Human-readable file format label (for table "Type" columns) derived from the file name/extension. */
+export function getFileTypeLabel(fileName: string): string {
+  const lower = fileName.toLowerCase()
+  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'Word'
+  if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) return 'PowerPoint'
+  if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) return 'Excel'
+  if (lower.endsWith('.csv')) return 'CSV'
+  if (lower.endsWith('.pdf')) return 'PDF'
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'Markdown'
+  if (lower.endsWith('.txt')) return 'Text'
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'HTML'
+  if (lower.endsWith('.js') || lower.endsWith('.ts') || lower.endsWith('.jsx') || lower.endsWith('.tsx')) return 'Code'
+  if (lower.endsWith('.json')) return 'JSON'
+  if (lower.endsWith('.zip') || lower.endsWith('.rar') || lower.endsWith('.7z')) return 'Archive'
+  if (/\.(png|jpe?g|gif|svg|webp|bmp)$/.test(lower)) return 'Image'
+  const extMatch = lower.match(/\.([a-z0-9]+)$/)
+  return extMatch ? extMatch[1].toUpperCase() : 'File'
+}

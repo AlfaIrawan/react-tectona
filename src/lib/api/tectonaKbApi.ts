@@ -6,7 +6,7 @@
  * Atur base URL lengkap di Platform Settings → Knowledge Base untuk override browser.
  */
 
-import { readKbConfig } from '@/lib/kb/kbConfig'
+import { readKbConfig, resolveKbServiceBaseUrl } from '@/lib/kb/kbConfig'
 import { convertPipeTablesToHtml } from '@/lib/kb/pipeTableToHtml'
 import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
@@ -18,6 +18,7 @@ export const KB_CATEGORIES = [
   { value: 'domain_glossary', label: 'Domain glossary' },
   { value: 'strategic_priorities', label: 'Strategic priorities' },
   { value: 'business_rules', label: 'Business rules' },
+  { value: 'idea_intake_checklist', label: 'Idea intake checklist' },
 ] as const
 
 export type KbCategoryValue = (typeof KB_CATEGORIES)[number]['value']
@@ -206,16 +207,14 @@ function getV1Base(): string {
   if (env) return env.replace(/\/+$/, '')
 
   const cfg = readKbConfig()
-  if (cfg.baseUrl.trim()) {
-    const base = cfg.baseUrl.trim().replace(/\/+$/, '')
-    // Platform Settings stores gateway prefix ending in /api/tectona-kb — do not append twice.
-    if (base.endsWith('/api/tectona-kb')) {
-      return `${base}/v1`
-    }
-    return `${base}/api/tectona-kb/v1`
+  const base = resolveKbServiceBaseUrl(cfg.baseUrl)
+  if (base.endsWith('/api/tectona-kb')) {
+    return `${base}/v1`
   }
-  // Same-origin — nginx/Vite proxy /api/tectona-kb → :8415
-  return '/api/tectona-kb/v1'
+  if (base.endsWith('/v1')) {
+    return base
+  }
+  return `${base}/api/tectona-kb/v1`
 }
 
 async function handleJson<T>(res: Response): Promise<T> {

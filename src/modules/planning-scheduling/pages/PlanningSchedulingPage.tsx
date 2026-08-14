@@ -17,11 +17,13 @@ import {
   GripVertical,
   Layers,
   LayoutGrid,
+  CheckCircle2,
   MoreVertical,
   Network,
   Plus,
   Search,
   Settings2,
+  X,
   ShieldAlert,
   ShieldCheck,
   Signal,
@@ -57,6 +59,10 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectItem } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import {
+  enterpriseCyanGradientActionButtonClass,
+  enterpriseSecondaryButtonClass,
+} from '@/lib/enterpriseButtonClasses'
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import {
   computeWorkspaceMainPanelViewportHeightPx,
@@ -70,12 +76,15 @@ import {
   workspaceNavMenuScrollClass,
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
+import { getSession } from '@/auth/authService'
+import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { PlanningSvarGantt, type PlanningGanttItem } from '@/modules/planning-scheduling/components/PlanningSvarGantt'
 import { PLANNING_TIMELINE_GANTT_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 import { mapWorkItemsToPlanningGantt } from '@/modules/planning-scheduling/utils/mapWorkItemsToPlanningGantt'
-import { listWorkItems } from '@/lib/api/workApi'
-import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
+import { listWorkItems, type WorkItemApiModel } from '@/lib/api/workApi'
+import { fetchAllWorkspaceOrgWorkspaces, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
 
 type ZoomLevel = 'Day' | 'Week' | 'Month' | 'Quarter'
 const ZOOM_LEVEL_OPTIONS: { level: ZoomLevel; icon: LucideIcon }[] = [
@@ -507,22 +516,26 @@ function PlanningPanelSection({
       ref={outerRef}
       style={style}
       className={cn(
-        'glass-card flex min-h-0 flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-[0_16px_44px_rgba(15,23,42,0.10)] ring-1 ring-slate-900/[0.04] transition-all lg:p-5',
-        highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80',
-        (scrollBody || bodyFill) && 'flex min-h-0 w-full flex-col overflow-hidden',
+        'glass-card flex min-h-0 w-full min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-2xl border border-border/40 p-4 shadow-[0_14px_40px_rgba(15,23,42,0.06)] transition-all lg:p-5 dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+        highlight ? 'border-blue-300 ring-2 ring-blue-100' : null,
+        (scrollBody || bodyFill) && 'flex min-h-0 flex-col overflow-hidden',
         className
       )}
     >
       <div className="shrink-0">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <div className="min-w-0 shrink-0">
-            <div className="flex items-center gap-2">
-              {headerIcon ? <span className="text-slate-900">{headerIcon}</span> : null}
-              <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              {headerIcon ? <span className="shrink-0 text-foreground">{headerIcon}</span> : null}
+              <h2 className="text-lg font-semibold text-foreground">{title}</h2>
             </div>
-            <p className="mt-0.5 text-[11px] text-slate-600">{description}</p>
+            <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">{description}</p>
           </div>
-          {right ? <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 sm:ml-auto sm:justify-end">{right}</div> : null}
+          {right ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 overflow-x-auto py-1 whitespace-nowrap lg:justify-end">
+              {right}
+            </div>
+          ) : null}
         </div>
       </div>
       <div
@@ -565,6 +578,17 @@ const PLANNING_PANEL_GROUPS = [
 ]
 
 export function PlanningSchedulingPage() {
+  const session = getSession()
+  const sessionRoles = session?.user.roles?.length
+    ? session.user.roles
+    : session?.user.role === 'root'
+      ? ['tectona_root']
+      : session?.user.role === 'admin'
+        ? ['tectona_admin']
+        : []
+  const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles, session?.user.role)
+  const { options: userWorkspaceOptions, loading: userWorkspacesLoading } = useUserWorkspaceOptions()
+
   const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)
   const sidebarMini = usePreferencesStore((s) => s.preferences.sidebarMini ?? true)
   const navDocked = isWorkspaceNavDocked(sidebarFixed)
@@ -578,9 +602,9 @@ export function PlanningSchedulingPage() {
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
 
   const [isLoading, setIsLoading] = useState(false)
-  const [timelineItems, setTimelineItems] = useState<PlanningGanttItem[]>([])
-  const [timelineWorkspaceOrder, setTimelineWorkspaceOrder] = useState<string[]>([])
-  const [timelineLoading, setTimelineLoading] = useState(true)
+  const [rawWorkItems, setRawWorkItems] = useState<WorkItemApiModel[]>([])
+  const [orgWorkspaces, setOrgWorkspaces] = useState<WorkspaceOrgWorkspaceDto[]>([])
+  const [workItemsLoading, setWorkItemsLoading] = useState(true)
   const [timelineLoadError, setTimelineLoadError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('Month')
@@ -590,6 +614,11 @@ export function PlanningSchedulingPage() {
   const [activePanel, setActivePanel] = useState<PlanningPanelId>('overview')
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
   const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+
+  const setPlanningPanel = (panel: PlanningPanelId) => {
+    setActivePanel(panel)
+    if (panel === 'sprint') setShowFiltersPanel(true)
+  }
   const navPanelRef = useRef<HTMLDivElement | null>(null)
   const activeMainPanelRef = useRef<HTMLElement | null>(null)
   const mainPanelFiltersRef = useRef<HTMLDivElement | null>(null)
@@ -601,7 +630,7 @@ export function PlanningSchedulingPage() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      setTimelineLoading(true)
+      setWorkItemsLoading(true)
       setTimelineLoadError(null)
       try {
         const [workRes, workspaces] = await Promise.all([
@@ -609,26 +638,72 @@ export function PlanningSchedulingPage() {
           fetchAllWorkspaceOrgWorkspaces().catch(() => []),
         ])
         if (cancelled) return
-        const mapped = mapWorkItemsToPlanningGantt(workRes.items ?? [], workspaces)
-        setTimelineItems(Array.isArray(mapped.items) ? mapped.items : [])
-        setTimelineWorkspaceOrder(Array.isArray(mapped.workspaceOrder) ? mapped.workspaceOrder : [])
-        if (mapped.items.length > 0) {
-          setSelectedItemId((prev) => (mapped.items.some((item) => item.id === prev) ? prev : mapped.items[0].id))
-        }
+        setRawWorkItems(Array.isArray(workRes.items) ? workRes.items : [])
+        setOrgWorkspaces(Array.isArray(workspaces) ? workspaces : [])
       } catch {
         if (!cancelled) {
-          setTimelineItems([])
-          setTimelineWorkspaceOrder([])
+          setRawWorkItems([])
+          setOrgWorkspaces([])
           setTimelineLoadError(WORK_TIMELINE_UNAVAILABLE_MESSAGE)
         }
       } finally {
-        if (!cancelled) setTimelineLoading(false)
+        if (!cancelled) setWorkItemsLoading(false)
       }
     })()
     return () => {
       cancelled = true
     }
   }, [])
+
+  const accessibleOrgWorkspaces = useMemo(() => {
+    if (isPlatformAdmin) return orgWorkspaces
+    const allowedIds = new Set(userWorkspaceOptions.map((option) => option.workspaceId))
+    return orgWorkspaces.filter((row) => allowedIds.has(row.id))
+  }, [isPlatformAdmin, orgWorkspaces, userWorkspaceOptions])
+
+  const accessibleWorkspaceKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const workspace of accessibleOrgWorkspaces) {
+      const name = workspace.name?.trim()
+      const key = workspace.workspace_key?.trim()
+      if (name) keys.add(name)
+      if (key) keys.add(key)
+    }
+    for (const option of userWorkspaceOptions) {
+      const name = option.workspaceName?.trim()
+      if (name) keys.add(name)
+    }
+    return keys
+  }, [accessibleOrgWorkspaces, userWorkspaceOptions])
+
+  /** Membership-scoped — same rule as Task & Work Management (admins see all). */
+  const visibleWorkItems = useMemo(() => {
+    if (isPlatformAdmin) return rawWorkItems
+    if (userWorkspacesLoading) return []
+    if (accessibleWorkspaceKeys.size === 0) return []
+    return rawWorkItems.filter((item) => {
+      const workspace = item.workspace?.trim()
+      return Boolean(workspace && accessibleWorkspaceKeys.has(workspace))
+    })
+  }, [accessibleWorkspaceKeys, isPlatformAdmin, rawWorkItems, userWorkspacesLoading])
+
+  const timelineModel = useMemo(
+    () => mapWorkItemsToPlanningGantt(visibleWorkItems, accessibleOrgWorkspaces),
+    [accessibleOrgWorkspaces, visibleWorkItems],
+  )
+  const timelineItems = Array.isArray(timelineModel.items) ? timelineModel.items : []
+  const timelineWorkspaceOrder = Array.isArray(timelineModel.workspaceOrder)
+    ? timelineModel.workspaceOrder
+    : []
+  const timelineLoading = workItemsLoading || userWorkspacesLoading
+
+  useEffect(() => {
+    if (timelineItems.length === 0) {
+      setSelectedItemId('')
+      return
+    }
+    setSelectedItemId((prev) => (timelineItems.some((item) => item.id === prev) ? prev : timelineItems[0].id))
+  }, [timelineItems])
 
   useLayoutEffect(() => {
     if (isLoading) return
@@ -726,38 +801,63 @@ export function PlanningSchedulingPage() {
       .includes(normalizedQuery)
   })
 
-  const visibleDeadlines = deadlineRecords.filter((item) => {
-    if (normalizedQuery.length === 0) return true
-    return [item.title, item.project, item.owner].join(' ').toLowerCase().includes(normalizedQuery)
-  })
+  /**
+   * Demo/mock planning datasets stay off until real sprint/KPI APIs exist.
+   * Do not re-enable them just because Timeline has work items (e.g. Monday sync).
+   */
+  const hasPlanningData = false
 
-  const visibleCalendarEvents = calendarEvents.filter((item) => {
-    if (normalizedQuery.length === 0) return true
-    return [item.title, item.project, item.owner].join(' ').toLowerCase().includes(normalizedQuery)
-  })
+  const overviewScheduleHealth = scheduleHealth.map((item) => ({ ...item, value: 0 }))
+  const overviewTimelineDistribution = timelineDistribution.map((item) => ({ ...item, value: 0 }))
+  const overviewScheduleTrend = scheduleTrend.map((item) => ({ ...item, baseline: 0, actual: 0 }))
+  const overviewMilestoneStatus = milestoneStatus.map((item) => ({ ...item, value: 0 }))
+  const overviewSprintBurnup = sprintBurnup.map((item) => ({ ...item, ideal: 0, remaining: 0, completed: 0 }))
+  const overviewDependencyNodes: DependencyNode[] = []
+  const overviewDependencyEdges: DependencyEdge[] = []
+  const overviewCapacityForecast: typeof capacityForecast = []
+  const overviewScheduleVariance: typeof scheduleVariance = []
+  const overviewAiInsights: typeof aiPlanningInsights = []
+  const overviewCapacityRows: typeof capacityRows = []
+  const overviewResourceAllocations: ResourceAllocationRecord[] = []
+  const overviewBaselineRecords: BaselineRecord[] = []
+  const overviewAlertFeed: AlertRecord[] = []
 
-  const kpiCards = useMemo(
-    () => [
-      { id: 'plans', label: 'Total Active Plans', value: '42', subtext: '6 new this week', trend: '+6%', icon: Layers, trendColor: '#0ea5e9', trendSeries: [35, 36, 37, 38, 39, 40, 41, 42] },
-      { id: 'milestones', label: 'Upcoming Milestones', value: '18', subtext: '5 due within 7 days', trend: '+2', icon: Flag, trendColor: '#6366f1', trendSeries: [12, 13, 14, 15, 16, 16, 17, 18] },
-      { id: 'sprints', label: 'Active Sprints', value: '9', subtext: 'Across 6 programs', trend: '+1', icon: CalendarRange, trendColor: '#10b981', trendSeries: [6, 6, 7, 7, 8, 8, 8, 9] },
-      { id: 'overdue', label: 'Overdue Items', value: '11', subtext: '3 need escalation', trend: '-1', icon: AlertTriangle, trendColor: '#f59e0b', trendSeries: [15, 14, 14, 13, 13, 12, 12, 11] },
-      { id: 'sla', label: 'SLA at Risk', value: '7', subtext: '2 breach windows today', trend: '-2', icon: ShieldAlert, trendColor: '#f97316', trendSeries: [12, 11, 10, 9, 9, 8, 8, 7] },
-      { id: 'variance', label: 'Plan vs Actual', value: '+6.2%', subtext: 'Improved 1.8% vs prior cycle', trend: '+1.8%', icon: Activity, trendColor: '#06b6d4', trendSeries: [11, 10, 9, 9, 8, 7.5, 7, 6.2] },
-    ],
-    []
+  const [sprintRows, setSprintRows] = useState<SprintPlanRow[]>([])
+  const [createSprintOpen, setCreateSprintOpen] = useState(false)
+
+  const selectedSprint = useMemo(
+    () => sprintRows.find((row) => row.id === selectedItemId) ?? sprintRows[0] ?? null,
+    [selectedItemId, sprintRows],
   )
 
-  const scheduleHealthScore = useMemo(
-    () =>
-      Math.round(
-        scheduleHealth.reduce((sum, { label, value }) => {
-          const weight = label === 'Healthy' ? 1 : label === 'Watchlist' ? 0.74 : 0.42
-          return sum + value * weight
-        }, 0)
-      ),
-    []
-  )
+  const sprintBoardSummaryCards = useMemo(() => {
+    if (!selectedSprint) return []
+    const remaining = Math.max(0, selectedSprint.totalItems - selectedSprint.doneItems)
+    const buffer = Math.max(0, selectedSprint.capacity - selectedSprint.committed)
+    return [
+      { label: 'Committed', value: selectedSprint.workItems, tone: 'bg-slate-100 text-slate-700 border-slate-200' },
+      { label: 'In Progress', value: remaining, tone: 'bg-sky-100 text-sky-700 border-sky-200' },
+      { label: 'Done', value: selectedSprint.doneItems, tone: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+      { label: 'Capacity buffer', value: buffer, tone: 'bg-amber-100 text-amber-700 border-amber-200' },
+    ]
+  }, [selectedSprint])
+
+  const visibleDeadlines: DeadlineRecord[] = []
+  const visibleCalendarEvents: CalendarEventRecord[] = []
+
+  const kpiCards = useMemo(() => {
+    const emptySeries = [0, 0, 0, 0, 0, 0, 0, 0]
+    return [
+      { id: 'plans', label: 'Total Active Plans', value: '0', subtext: 'No plans yet', trend: '0%', icon: Layers, trendColor: '#0ea5e9', trendSeries: emptySeries },
+      { id: 'milestones', label: 'Upcoming Milestones', value: '0', subtext: 'No milestones scheduled', trend: '0', icon: Flag, trendColor: '#6366f1', trendSeries: emptySeries },
+      { id: 'sprints', label: 'Active Sprints', value: '0', subtext: 'No active sprints', trend: '0', icon: CalendarRange, trendColor: '#10b981', trendSeries: emptySeries },
+      { id: 'overdue', label: 'Overdue Items', value: '0', subtext: 'Nothing overdue', trend: '0', icon: AlertTriangle, trendColor: '#f59e0b', trendSeries: emptySeries },
+      { id: 'sla', label: 'SLA at Risk', value: '0', subtext: 'No SLA risk', trend: '0', icon: ShieldAlert, trendColor: '#f97316', trendSeries: emptySeries },
+      { id: 'variance', label: 'Plan vs Actual', value: '0%', subtext: 'No variance data', trend: '0%', icon: Activity, trendColor: '#06b6d4', trendSeries: emptySeries },
+    ]
+  }, [])
+
+  const scheduleHealthScore = 0
 
   const currentPlanningPanel = useMemo(
     () => PLANNING_PANELS.find((p) => p.id === activePanel) ?? PLANNING_PANELS[0],
@@ -822,17 +922,33 @@ export function PlanningSchedulingPage() {
           </Select>
         )
       case 'deadline':
-        return <Badge className="border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-semibold text-rose-700">92.4% compliance</Badge>
+        return (
+          <Badge className="border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-semibold text-rose-700">
+            {hasPlanningData ? '92.4% compliance' : '0% compliance'}
+          </Badge>
+        )
       case 'resource':
-        return <Badge className="border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-700">2 conflicts open</Badge>
+        return (
+          <Badge className="border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-700">
+            {hasPlanningData ? '2 conflicts open' : '0 conflicts open'}
+          </Badge>
+        )
       case 'baseline':
-        return <Badge className="border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-700">Variance controls active</Badge>
+        return (
+          <Badge className="border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-700">
+            {hasPlanningData ? 'Variance controls active' : 'No baselines yet'}
+          </Badge>
+        )
       case 'insight':
-        return <Badge className="border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] font-semibold text-indigo-700">AI-assisted</Badge>
+        return (
+          <Badge className="border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] font-semibold text-indigo-700">
+            {hasPlanningData ? 'AI-assisted' : 'No insights yet'}
+          </Badge>
+        )
       default:
         return null
     }
-  }, [activePanel, zoomLevel, calendarMode, capacityView])
+  }, [activePanel, zoomLevel, calendarMode, capacityView, hasPlanningData])
 
   return (
     <div className="min-h-0 space-y-6 pb-0">
@@ -977,7 +1093,7 @@ export function PlanningSchedulingPage() {
                             <button
                               key={panel.id}
                               type="button"
-                              onClick={() => setActivePanel(panel.id)}
+                              onClick={() => setPlanningPanel(panel.id)}
                               className={cn(
                                 'group relative flex w-full overflow-hidden border text-left transition-all duration-200',
                                 enterpriseNavCompact
@@ -1048,7 +1164,9 @@ export function PlanningSchedulingPage() {
                       <div className="mt-3 flex items-start gap-3">
                         <div className="shrink-0 text-3xl font-bold leading-none tabular-nums text-slate-900">{scheduleHealthScore}%</div>
                         <p className="min-w-0 flex-1 text-[10px] leading-snug text-slate-600">
-                          Balanced delivery sequencing with dependency pressure that still needs active intervention.
+                          {hasPlanningData
+                            ? 'Balanced delivery sequencing with dependency pressure that still needs active intervention.'
+                            : 'No schedule data yet. Create work items to start tracking schedule health.'}
                         </p>
                       </div>
                       <div className="mt-3 h-2 rounded-full bg-blue-100">
@@ -1064,21 +1182,52 @@ export function PlanningSchedulingPage() {
 
         <div
           className={cn(
-            workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant),
+            // Outer wrapper already applies workspaceDockedContentInsetClass — pass docked=false
+            // to avoid double left padding that narrows Planning Overview when Fixed Sidebar is off.
+            workspaceMainColumnClass(false, isWorkspaceCollapsed, enterpriseNavLayoutVariant),
             sidebarFixed && 'flex min-h-0 min-w-0 flex-col'
           )}
         >
           {!isOverviewSectionActive && showFiltersPanel ? (
-            <Card ref={mainPanelFiltersRef} className="glass-card shrink-0 rounded-2xl p-4">
+            <Card
+              ref={mainPanelFiltersRef}
+              className={cn(
+                'glass-card mb-0 shrink-0 space-y-3 rounded-2xl p-4',
+                'border border-white/40 dark:border-white/10',
+                'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
+                'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
+                'bg-gradient-to-br from-white/70 via-background/75 to-slate-50/70 dark:from-slate-900/45 dark:via-background/40 dark:to-slate-950/20'
+              )}
+            >
               <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
+                  type="search"
                   value={query}
                   onChange={(event) => startTransition(() => setQuery(event.target.value))}
                   placeholder="Search project, sprint, milestone, assignee, or schedule item"
-                  className="h-11 rounded-2xl border-slate-200 bg-white pl-9 text-sm"
+                  className="h-10 w-full pl-9"
                 />
               </div>
+
+              {activePanel === 'sprint' ? (
+                <div className="relative pt-3">
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_0%,hsl(var(--border)/0.2)_18%,hsl(var(--border)/0.75)_50%,hsl(var(--border)/0.2)_82%,transparent_100%)]"
+                  />
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setCreateSprintOpen(true)}
+                      className={enterpriseCyanGradientActionButtonClass()}
+                    >
+                      <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                      Create Sprint
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </Card>
           ) : null}
 
@@ -1086,7 +1235,7 @@ export function PlanningSchedulingPage() {
             id={`planning-panel-${activePanel}`}
             title={currentPlanningPanel.label}
             description={currentPlanningPanel.description}
-            highlight
+            highlight={activePanel === 'overview'}
             headerIcon={<PlanningHeaderIcon className="h-5 w-5" />}
             right={planningMainHeaderRight}
             outerRef={activeMainPanelRef}
@@ -1096,7 +1245,7 @@ export function PlanningSchedulingPage() {
               sidebarFixed && mainPanelViewportHeightPx == null && 'min-h-0 flex-1'
             )}
             scrollBody={mainPanelViewportHeightPx != null && activePanel !== 'timeline'}
-            bodyFill={activePanel === 'timeline'}
+            bodyFill={activePanel === 'timeline' || activePanel === 'sprint'}
           >
           {activePanel === 'overview' ? (
             <div className="space-y-5">
@@ -1111,9 +1260,9 @@ export function PlanningSchedulingPage() {
                 iconColorClass="text-emerald-500"
               >
                 <ScheduleHealthExecutiveDonut
-                  data={scheduleHealth.map((item) => ({ name: item.label, value: item.value, pct: `${item.value}%` }))}
+                  data={overviewScheduleHealth.map((item) => ({ name: item.label, value: item.value, pct: `${item.value}%` }))}
                   score={scheduleHealthScore}
-                  predictability={92}
+                  predictability={hasPlanningData ? 92 : 0}
                 />
               </IntelligenceChartPanel>
 
@@ -1130,8 +1279,8 @@ export function PlanningSchedulingPage() {
                   unitLabel="projects"
                   pieColors={PLAN_OVERVIEW_PAL.lifecyclePieColors}
                   data={(() => {
-                    const t = timelineDistribution.reduce((sum, d) => sum + d.value, 0)
-                    return timelineDistribution.map((d) => ({
+                    const t = overviewTimelineDistribution.reduce((sum, d) => sum + d.value, 0)
+                    return overviewTimelineDistribution.map((d) => ({
                       name: d.name,
                       value: d.value,
                       color: d.fill,
@@ -1152,8 +1301,18 @@ export function PlanningSchedulingPage() {
                 footer={
                   <div className="flex w-full items-center justify-between">
                     <div className="flex gap-4 text-[11px]">
-                      <span className="text-slate-500">Schedule Variance <span className="font-semibold text-rose-600">-8%</span></span>
-                      <span className="text-slate-500">Forecast <span className="font-semibold text-rose-600">-6 days</span></span>
+                      <span className="text-slate-500">
+                        Schedule Variance{' '}
+                        <span className={cn('font-semibold', hasPlanningData ? 'text-rose-600' : 'text-slate-700')}>
+                          {hasPlanningData ? '-8%' : '0%'}
+                        </span>
+                      </span>
+                      <span className="text-slate-500">
+                        Forecast{' '}
+                        <span className={cn('font-semibold', hasPlanningData ? 'text-rose-600' : 'text-slate-700')}>
+                          {hasPlanningData ? '-6 days' : '0 days'}
+                        </span>
+                      </span>
                     </div>
                     <OverviewLink>View Trend Analysis</OverviewLink>
                   </div>
@@ -1161,7 +1320,7 @@ export function PlanningSchedulingPage() {
               >
                 <div className="h-[220px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={scheduleTrend} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <LineChart data={overviewScheduleTrend} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef2f7" />
                       <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b' }} interval={1} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} domain={[0, 100]} />
@@ -1183,17 +1342,17 @@ export function PlanningSchedulingPage() {
                 iconColorClass="text-emerald-500"
                 right={
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200/80 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-600 shadow-sm">
-                    Completion 43%
+                    Completion {hasPlanningData ? '43%' : '0%'}
                   </span>
                 }
               >
                 <IntelligenceDonut
                   centerLabel="Milestones"
                   unitLabel="milestones"
-                  pieColors={milestoneStatus.map((m) => m.fill)}
+                  pieColors={overviewMilestoneStatus.map((m) => m.fill)}
                   data={(() => {
-                    const t = milestoneStatus.reduce((sum, d) => sum + d.value, 0)
-                    return milestoneStatus.map((d) => ({
+                    const t = overviewMilestoneStatus.reduce((sum, d) => sum + d.value, 0)
+                    return overviewMilestoneStatus.map((d) => ({
                       name: d.name,
                       value: d.value,
                       color: d.fill,
@@ -1208,18 +1367,18 @@ export function PlanningSchedulingPage() {
                 title="Sprint Burnup / Burndown"
                 subtitle="Sprint progress vs commitment"
                 icon={<Activity className="h-4 w-4 text-indigo-500" />}
-                badge={<OverviewBadge tone="emerald">92% Predictability</OverviewBadge>}
+                badge={<OverviewBadge tone="emerald">{hasPlanningData ? '92% Predictability' : '0% Predictability'}</OverviewBadge>}
                 footer={
                   <div className="flex w-full items-center justify-between text-[11px] text-slate-500">
-                    <span>Committed <span className="font-semibold text-slate-800">86 SP</span></span>
-                    <span>Completed <span className="font-semibold text-slate-800">76 SP</span></span>
+                    <span>Committed <span className="font-semibold text-slate-800">{hasPlanningData ? '86 SP' : '0 SP'}</span></span>
+                    <span>Completed <span className="font-semibold text-slate-800">{hasPlanningData ? '76 SP' : '0 SP'}</span></span>
                     <OverviewLink>View Sprint Detail</OverviewLink>
                   </div>
                 }
               >
                 <div className="h-[220px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={sprintBurnup} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <LineChart data={overviewSprintBurnup} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef2f7" />
                       <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b' }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
@@ -1238,7 +1397,7 @@ export function PlanningSchedulingPage() {
                 subtitle="Critical dependencies and risk exposure"
                 accent="from-amber-300 via-orange-400 to-rose-400"
                 icon={<Network className="h-4 w-4 text-rose-500" />}
-                badge={<OverviewBadge tone="rose">Risk Index 64</OverviewBadge>}
+                badge={<OverviewBadge tone="rose">Risk Index {hasPlanningData ? '64' : '0'}</OverviewBadge>}
                 footer={
                   <div className="flex w-full items-center justify-between">
                     <div className="flex items-center gap-3 text-[10px] text-slate-500">
@@ -1251,44 +1410,52 @@ export function PlanningSchedulingPage() {
                 }
               >
                 <div className="relative h-[220px] w-full overflow-hidden rounded-xl border border-slate-100 bg-slate-50/50">
-                  <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
-                    {dependencyEdges.map((edge) => {
-                      const from = dependencyNodes.find((n) => n.id === edge.from)!
-                      const to = dependencyNodes.find((n) => n.id === edge.to)!
-                      const stroke = edge.kind === 'blocked' ? '#ef4444' : edge.kind === 'cross-team' ? '#f59e0b' : '#cbd5e1'
-                      return (
-                        <line
-                          key={`${edge.from}-${edge.to}`}
-                          x1={from.x}
-                          y1={from.y}
-                          x2={to.x}
-                          y2={to.y}
-                          stroke={stroke}
-                          strokeWidth={edge.kind === 'normal' ? 0.5 : 0.8}
-                          strokeDasharray={edge.kind === 'cross-team' ? '2 1.5' : undefined}
-                          vectorEffect="non-scaling-stroke"
-                        />
-                      )
-                    })}
-                  </svg>
-                  {dependencyNodes.map((node) => {
-                    const tone =
-                      node.status === 'blocked'
-                        ? 'border-rose-300 bg-rose-50 text-rose-700'
-                        : node.status === 'at-risk'
-                          ? 'border-amber-300 bg-amber-50 text-amber-700'
-                          : 'border-slate-200 bg-white text-slate-700'
-                    return (
-                      <div
-                        key={node.id}
-                        className={cn('absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border px-2 py-1 text-center shadow-sm', tone)}
-                        style={{ left: `${node.x}%`, top: `${node.y}%` }}
-                      >
-                        <div className="text-[10px] font-semibold leading-tight">{node.label}</div>
-                        <div className="text-[8px] leading-tight opacity-70">{node.meta}</div>
-                      </div>
-                    )
-                  })}
+                  {overviewDependencyNodes.length === 0 ? (
+                    <div className="flex h-full items-center justify-center px-4 text-center text-xs text-slate-400">
+                      No dependency map yet. Link work items to surface risk.
+                    </div>
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
+                        {overviewDependencyEdges.map((edge) => {
+                          const from = overviewDependencyNodes.find((n) => n.id === edge.from)!
+                          const to = overviewDependencyNodes.find((n) => n.id === edge.to)!
+                          const stroke = edge.kind === 'blocked' ? '#ef4444' : edge.kind === 'cross-team' ? '#f59e0b' : '#cbd5e1'
+                          return (
+                            <line
+                              key={`${edge.from}-${edge.to}`}
+                              x1={from.x}
+                              y1={from.y}
+                              x2={to.x}
+                              y2={to.y}
+                              stroke={stroke}
+                              strokeWidth={edge.kind === 'normal' ? 0.5 : 0.8}
+                              strokeDasharray={edge.kind === 'cross-team' ? '2 1.5' : undefined}
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          )
+                        })}
+                      </svg>
+                      {overviewDependencyNodes.map((node) => {
+                        const tone =
+                          node.status === 'blocked'
+                            ? 'border-rose-300 bg-rose-50 text-rose-700'
+                            : node.status === 'at-risk'
+                              ? 'border-amber-300 bg-amber-50 text-amber-700'
+                              : 'border-slate-200 bg-white text-slate-700'
+                        return (
+                          <div
+                            key={node.id}
+                            className={cn('absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border px-2 py-1 text-center shadow-sm', tone)}
+                            style={{ left: `${node.x}%`, top: `${node.y}%` }}
+                          >
+                            <div className="text-[10px] font-semibold leading-tight">{node.label}</div>
+                            <div className="text-[8px] leading-tight opacity-70">{node.meta}</div>
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
                 </div>
               </PlanningOverviewCard>
 
@@ -1300,32 +1467,40 @@ export function PlanningSchedulingPage() {
                 badge={<OverviewBadge tone="slate">Next 3 Periods</OverviewBadge>}
                 footer={
                   <div className="flex w-full items-center justify-between text-[11px] text-slate-500">
-                    <span>Capacity Utilization <span className="font-semibold text-slate-800">93%</span></span>
+                    <span>Capacity Utilization <span className="font-semibold text-slate-800">{hasPlanningData ? '93%' : '0%'}</span></span>
                     <OverviewLink>View Capacity Plan</OverviewLink>
                   </div>
                 }
               >
-                <div className="grid grid-cols-[88px_repeat(3,minmax(0,1fr))] gap-1.5 text-[10px]">
-                  <span className="" />
-                  {capacityForecastColumns.map((col) => (
-                    <span key={col} className="text-center font-semibold uppercase tracking-[0.08em] text-slate-500">{col.replace(' ', '\n')}</span>
-                  ))}
-                  {capacityForecast.map((row) => (
-                    <Fragment key={row.team}>
-                      <span className="flex items-center text-[11px] font-medium text-slate-700">{row.team}</span>
-                      {row.values.map((value, idx) => (
-                        <div key={row.team + idx} className={cn('rounded-md py-1.5 text-center text-[11px] font-semibold shadow-sm', capacityColor(value))}>
-                          {value}%
-                        </div>
+                {overviewCapacityForecast.length === 0 ? (
+                  <div className="flex h-[180px] items-center justify-center text-xs text-slate-400">
+                    No capacity forecast yet.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-[88px_repeat(3,minmax(0,1fr))] gap-1.5 text-[10px]">
+                      <span className="" />
+                      {capacityForecastColumns.map((col) => (
+                        <span key={col} className="text-center font-semibold uppercase tracking-[0.08em] text-slate-500">{col.replace(' ', '\n')}</span>
                       ))}
-                    </Fragment>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center gap-3 text-[10px] text-slate-500">
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-emerald-400/85" />Underutilized</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-amber-400/90" />Balanced</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-rose-500/85" />Overallocated</span>
-                </div>
+                      {overviewCapacityForecast.map((row) => (
+                        <Fragment key={row.team}>
+                          <span className="flex items-center text-[11px] font-medium text-slate-700">{row.team}</span>
+                          {row.values.map((value, idx) => (
+                            <div key={row.team + idx} className={cn('rounded-md py-1.5 text-center text-[11px] font-semibold shadow-sm', capacityColor(value))}>
+                              {value}%
+                            </div>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </div>
+                    <div className="mt-3 flex items-center gap-3 text-[10px] text-slate-500">
+                      <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-emerald-400/85" />Underutilized</span>
+                      <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-amber-400/90" />Balanced</span>
+                      <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-rose-500/85" />Overallocated</span>
+                    </div>
+                  </>
+                )}
               </PlanningOverviewCard>
 
               {/* Row 3 · Card 8 — Schedule Variance */}
@@ -1337,25 +1512,31 @@ export function PlanningSchedulingPage() {
                 footer={<OverviewLink>View Schedule Analysis</OverviewLink>}
               >
                 <div className="space-y-2">
-                  {scheduleVariance.map((row) => {
-                    const tone =
-                      row.variance <= 0 ? 'bg-emerald-500' : row.variance <= 5 ? 'bg-amber-400' : 'bg-rose-500'
-                    const width = Math.min(Math.abs(row.variance) * 6 + 14, 100)
-                    return (
-                      <div key={row.project} className="grid grid-cols-[112px_1fr_56px] items-center gap-2 text-[11px]">
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-slate-700">{row.project}</p>
-                          <p className="text-[9px] text-slate-400">{row.planned} → {row.forecast}</p>
+                  {overviewScheduleVariance.length === 0 ? (
+                    <div className="flex h-[180px] items-center justify-center text-xs text-slate-400">
+                      No schedule variance yet.
+                    </div>
+                  ) : (
+                    overviewScheduleVariance.map((row) => {
+                      const tone =
+                        row.variance <= 0 ? 'bg-emerald-500' : row.variance <= 5 ? 'bg-amber-400' : 'bg-rose-500'
+                      const width = Math.min(Math.abs(row.variance) * 6 + 14, 100)
+                      return (
+                        <div key={row.project} className="grid grid-cols-[112px_1fr_56px] items-center gap-2 text-[11px]">
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-slate-700">{row.project}</p>
+                            <p className="text-[9px] text-slate-400">{row.planned} → {row.forecast}</p>
+                          </div>
+                          <div className="h-3.5 rounded-full bg-slate-100">
+                            <div className={cn('h-3.5 rounded-full', tone)} style={{ width: `${width}%` }} />
+                          </div>
+                          <span className={cn('text-right font-semibold tabular-nums', row.variance <= 0 ? 'text-emerald-600' : row.variance <= 5 ? 'text-amber-600' : 'text-rose-600')}>
+                            {row.variance > 0 ? `+${row.variance}` : row.variance}d
+                          </span>
                         </div>
-                        <div className="h-3.5 rounded-full bg-slate-100">
-                          <div className={cn('h-3.5 rounded-full', tone)} style={{ width: `${width}%` }} />
-                        </div>
-                        <span className={cn('text-right font-semibold tabular-nums', row.variance <= 0 ? 'text-emerald-600' : row.variance <= 5 ? 'text-amber-600' : 'text-rose-600')}>
-                          {row.variance > 0 ? `+${row.variance}` : row.variance}d
-                        </span>
-                      </div>
-                    )
-                  })}
+                      )
+                    })
+                  )}
                 </div>
               </PlanningOverviewCard>
 
@@ -1375,18 +1556,24 @@ export function PlanningSchedulingPage() {
                       <p className="text-[11px] text-slate-500">AI-generated planning recommendations</p>
                     </div>
                   </div>
-                  <OverviewBadge tone="indigo">92% Confidence</OverviewBadge>
+                  <OverviewBadge tone="indigo">{hasPlanningData ? '92% Confidence' : '0% Confidence'}</OverviewBadge>
                 </div>
                 <ul className="relative mt-3 flex-1 space-y-2">
-                  {aiPlanningInsights.map((insight) => {
-                    const Icon = insight.icon
-                    return (
-                      <li key={insight.text} className="flex items-start gap-2 rounded-lg border border-slate-100 bg-white/70 px-2.5 py-2 text-[11px] leading-snug text-slate-600">
-                        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-500" />
-                        <span>{insight.text}</span>
-                      </li>
-                    )
-                  })}
+                  {overviewAiInsights.length === 0 ? (
+                    <li className="rounded-lg border border-dashed border-slate-200 bg-white/70 px-2.5 py-4 text-center text-[11px] leading-snug text-slate-400">
+                      No AI planning insights yet. Add work items to generate recommendations.
+                    </li>
+                  ) : (
+                    overviewAiInsights.map((insight) => {
+                      const Icon = insight.icon
+                      return (
+                        <li key={insight.text} className="flex items-start gap-2 rounded-lg border border-slate-100 bg-white/70 px-2.5 py-2 text-[11px] leading-snug text-slate-600">
+                          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                          <span>{insight.text}</span>
+                        </li>
+                      )
+                    })
+                  )}
                 </ul>
                 <div className="relative mt-3 flex flex-wrap gap-2">
                   <Button className="h-8 rounded-lg bg-gradient-to-r from-indigo-500 to-blue-500 px-3 text-xs text-white hover:from-indigo-600 hover:to-blue-600">
@@ -1424,16 +1611,69 @@ export function PlanningSchedulingPage() {
           ) : null}
 
           {activePanel === 'sprint' ? (
-            <div className="space-y-4">
-              <SprintPlanningTable selectedId={selectedItemId} onSelect={setSelectedItemId} />
-              <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
-                {sprintBoardSummary.map((column) => (
-                  <div key={column.label} className={cn('rounded-2xl border px-3 py-3', column.tone)}>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em]">{column.label}</div>
-                    <div className="mt-2 text-2xl font-semibold">{column.value}</div>
+            <div className="flex min-h-0 flex-1 flex-col gap-4">
+              {sprintRows.length === 0 ? (
+                <SprintPlanningEmptyState onOpenTimeline={() => setActivePanel('timeline')} />
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" className="h-9 rounded-xl px-3 text-xs" disabled>
+                      <Layers className="mr-1.5 h-3.5 w-3.5" />
+                      Add Work Items
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="h-9 rounded-xl px-3 text-xs"
+                      disabled={!selectedSprint || selectedSprint.status === 'Not Planned'}
+                      onClick={() => {
+                        if (!selectedSprint) return
+                        setSprintRows((rows) =>
+                          rows.map((row) =>
+                            row.id === selectedSprint.id
+                              ? { ...row, status: 'Not Planned', health: 'Not Planned', healthNote: 'Closed', progress: 100 }
+                              : row,
+                          ),
+                        )
+                      }}
+                    >
+                      <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                      Close Sprint
+                    </Button>
                   </div>
-                ))}
-              </div>
+
+                  <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
+                    <SprintPlanningTable
+                      rows={sprintRows}
+                      selectedId={selectedSprint?.id ?? ''}
+                      onSelect={setSelectedItemId}
+                    />
+                    <SprintSelectedDetail sprint={selectedSprint} />
+                  </div>
+
+                  {sprintBoardSummaryCards.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                      {sprintBoardSummaryCards.map((column) => (
+                        <div key={column.label} className={cn('rounded-2xl border px-3 py-3', column.tone)}>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em]">{column.label}</div>
+                          <div className="mt-2 text-2xl font-semibold tabular-nums">{column.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              )}
+
+              {createSprintOpen ? (
+                <CreateSprintDialog
+                  ownerName={session?.user.name?.trim() || 'Unassigned'}
+                  onClose={() => setCreateSprintOpen(false)}
+                  onCreate={(row) => {
+                    setSprintRows((rows) => [...rows, row])
+                    setSelectedItemId(row.id)
+                    setCreateSprintOpen(false)
+                  }}
+                />
+              ) : null}
             </div>
           ) : null}
 
@@ -1445,24 +1685,30 @@ export function PlanningSchedulingPage() {
                 <Button variant="outline" className="h-8 rounded-lg px-3 text-xs"><ArrowRight className="mr-2 h-4 w-4" />View Linked Work</Button>
               </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {visibleCalendarEvents.map((event) => (
-                  <button
-                    key={event.id + event.dateLabel}
-                    onClick={() => setSelectedItemId(event.id)}
-                    className="group rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForCalendarType(event.type))}>{event.type}</Badge>
-                      <GripVertical className="h-4 w-4 text-slate-300 group-hover:text-sky-400" />
-                    </div>
-                    <p className="mt-3 text-sm font-semibold text-slate-950">{event.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{event.project}</p>
-                    <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                      <span>{event.dateLabel}</span>
-                      <span>{event.owner}</span>
-                    </div>
-                  </button>
-                ))}
+                {visibleCalendarEvents.length === 0 ? (
+                  <div className="col-span-full rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-6 py-12 text-center text-sm text-slate-400">
+                    No calendar events yet.
+                  </div>
+                ) : (
+                  visibleCalendarEvents.map((event) => (
+                    <button
+                      key={event.id + event.dateLabel}
+                      onClick={() => setSelectedItemId(event.id)}
+                      className="group rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForCalendarType(event.type))}>{event.type}</Badge>
+                        <GripVertical className="h-4 w-4 text-slate-300 group-hover:text-sky-400" />
+                      </div>
+                      <p className="mt-3 text-sm font-semibold text-slate-950">{event.title}</p>
+                      <p className="mt-1 text-xs text-slate-500">{event.project}</p>
+                      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                        <span>{event.dateLabel}</span>
+                        <span>{event.owner}</span>
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           ) : null}
@@ -1475,30 +1721,44 @@ export function PlanningSchedulingPage() {
                 <Button variant="outline" className="h-8 rounded-lg px-3 text-xs"><CalendarRange className="mr-2 h-4 w-4" />Adjust Plan</Button>
               </div>
               <div className="overflow-hidden rounded-2xl border border-slate-200/80">
-                <div className="grid grid-cols-[160px_repeat(5,minmax(0,1fr))] gap-2 border-b border-slate-200/70 bg-slate-50/90 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  <span>{capacityView}</span>
-                  {capacityPeriods.map((period) => <span key={period} className="text-center">{period}</span>)}
-                </div>
-                <div className="space-y-2 px-3 py-3">
-                  {capacityRows.map((row) => (
-                    <div key={row.name} className="grid grid-cols-[160px_repeat(5,minmax(0,1fr))] gap-2 items-center">
-                      <div className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700">{row.name}</div>
-                      {row.values.map((value, index) => (
-                        <div key={row.name + index} className={cn('rounded-xl px-2 py-2 text-center text-xs font-semibold shadow-sm', capacityColor(value))}>
-                          {value}%
+                {overviewCapacityRows.length === 0 ? (
+                  <div className="px-6 py-12 text-center text-sm text-slate-400">No capacity rows yet.</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-[160px_repeat(5,minmax(0,1fr))] gap-2 border-b border-slate-200/70 bg-slate-50/90 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      <span>{capacityView}</span>
+                      {capacityPeriods.map((period) => <span key={period} className="text-center">{period}</span>)}
+                    </div>
+                    <div className="space-y-2 px-3 py-3">
+                      {overviewCapacityRows.map((row) => (
+                        <div key={row.name} className="grid grid-cols-[160px_repeat(5,minmax(0,1fr))] gap-2 items-center">
+                          <div className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700">{row.name}</div>
+                          {row.values.map((value, index) => (
+                            <div key={row.name + index} className={cn('rounded-xl px-2 py-2 text-center text-xs font-semibold shadow-sm', capacityColor(value))}>
+                              {value}%
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>
-                  ))}
-                </div>
+                  </>
+                )}
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-                {[
-                  ['Available Capacity', '1,740 h'],
-                  ['Planned Load', '1,612 h'],
-                  ['Overallocated', '5 resources'],
-                  ['Unused Capacity', '128 h'],
-                ].map(([label, value]) => (
+                {(hasPlanningData
+                  ? [
+                      ['Available Capacity', '1,740 h'],
+                      ['Planned Load', '1,612 h'],
+                      ['Overallocated', '5 resources'],
+                      ['Unused Capacity', '128 h'],
+                    ]
+                  : [
+                      ['Available Capacity', '0 h'],
+                      ['Planned Load', '0 h'],
+                      ['Overallocated', '0 resources'],
+                      ['Unused Capacity', '0 h'],
+                    ]
+                ).map(([label, value]) => (
                   <div key={label} className="rounded-2xl border border-slate-200/80 bg-white p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
                     <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
@@ -1517,28 +1777,34 @@ export function PlanningSchedulingPage() {
                 <Button variant="outline" className="h-8 rounded-lg px-3 text-xs"><ShieldAlert className="mr-2 h-4 w-4" />Review SLA</Button>
               </div>
               <div className="space-y-3">
-                {visibleDeadlines.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setSelectedItemId(item.id)}
-                    className="w-full rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-950">{item.title}</p>
-                        <p className="mt-1 text-xs text-slate-500">{item.project} · {item.owner}</p>
+                {visibleDeadlines.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-6 py-12 text-center text-sm text-slate-400">
+                    No deadlines or SLA items yet.
+                  </div>
+                ) : (
+                  visibleDeadlines.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setSelectedItemId(item.id)}
+                      className="w-full rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-950">{item.title}</p>
+                          <p className="mt-1 text-xs text-slate-500">{item.project} · {item.owner}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForDeadline(item.deadlineStatus))}>{item.deadlineStatus}</Badge>
+                          <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForSla(item.slaStatus))}>{item.slaStatus}</Badge>
+                        </div>
                       </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForDeadline(item.deadlineStatus))}>{item.deadlineStatus}</Badge>
-                        <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForSla(item.slaStatus))}>{item.slaStatus}</Badge>
+                      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                        <span>Due {item.due}</span>
+                        <span className="inline-flex items-center gap-1 font-medium text-slate-700"><Flag className="h-3.5 w-3.5" />Linked work open</span>
                       </div>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                      <span>Due {item.due}</span>
-                      <span className="inline-flex items-center gap-1 font-medium text-slate-700"><Flag className="h-3.5 w-3.5" />Linked work open</span>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           ) : null}
@@ -1551,33 +1817,39 @@ export function PlanningSchedulingPage() {
                 <Button variant="outline" className="h-8 rounded-lg px-3 text-xs"><AlertTriangle className="mr-2 h-4 w-4" />Resolve Conflict</Button>
               </div>
               <div className="space-y-3">
-                {resourceAllocations.map((row) => (
-                  <button
-                    key={row.id}
-                    onClick={() => setSelectedItemId(row.id.replace('res-001', 'plan-001').replace('res-002', 'stream-data').replace('res-003', 'milestone-ux').replace('res-004', 'deadline-qa'))}
-                    className="w-full rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-950">{row.resource}</p>
-                        <p className="mt-1 text-xs text-slate-500">{row.project} · {row.team}</p>
-                      </div>
-                      <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', row.conflict === 'None' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : row.conflict === 'Overlap' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-rose-200 bg-rose-50 text-rose-700')}>{row.conflict}</Badge>
-                    </div>
-                    <div className="mt-3 grid grid-cols-[1fr_96px] gap-3 items-center">
-                      <div>
-                        <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
-                          <span>{row.period}</span>
-                          <span className="font-medium text-slate-700">{row.allocation}% allocation</span>
+                {overviewResourceAllocations.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-6 py-12 text-center text-sm text-slate-400">
+                    No resource allocations yet.
+                  </div>
+                ) : (
+                  overviewResourceAllocations.map((row) => (
+                    <button
+                      key={row.id}
+                      onClick={() => setSelectedItemId(row.id.replace('res-001', 'plan-001').replace('res-002', 'stream-data').replace('res-003', 'milestone-ux').replace('res-004', 'deadline-qa'))}
+                      className="w-full rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-950">{row.resource}</p>
+                          <p className="mt-1 text-xs text-slate-500">{row.project} · {row.team}</p>
                         </div>
-                        <div className="h-2 rounded-full bg-slate-200">
-                          <div className={cn('h-2 rounded-full', row.allocation >= 100 ? 'bg-rose-500' : row.allocation >= 90 ? 'bg-amber-500' : 'bg-sky-500')} style={{ width: `${Math.min(row.allocation, 100)}%` }} />
-                        </div>
+                        <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', row.conflict === 'None' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : row.conflict === 'Overlap' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-rose-200 bg-rose-50 text-rose-700')}>{row.conflict}</Badge>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-700">{row.period}</div>
-                    </div>
-                  </button>
-                ))}
+                      <div className="mt-3 grid grid-cols-[1fr_96px] gap-3 items-center">
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
+                            <span>{row.period}</span>
+                            <span className="font-medium text-slate-700">{row.allocation}% allocation</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-slate-200">
+                            <div className={cn('h-2 rounded-full', row.allocation >= 100 ? 'bg-rose-500' : row.allocation >= 90 ? 'bg-amber-500' : 'bg-sky-500')} style={{ width: `${Math.min(row.allocation, 100)}%` }} />
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-700">{row.period}</div>
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           ) : null}
@@ -1590,69 +1862,81 @@ export function PlanningSchedulingPage() {
                 <Button variant="outline" className="h-8 rounded-lg px-3 text-xs"><Download className="mr-2 h-4 w-4" />Export Tracking Report</Button>
               </div>
               <div className="space-y-3">
-                {baselineRecords.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setSelectedItemId(item.id)}
-                    className="w-full rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-950">{item.title}</p>
-                        <p className="mt-1 text-xs text-slate-500">{item.project}</p>
+                {overviewBaselineRecords.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-6 py-12 text-center text-sm text-slate-400">
+                    No baseline records yet.
+                  </div>
+                ) : (
+                  overviewBaselineRecords.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setSelectedItemId(item.id)}
+                      className="w-full rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-950">{item.title}</p>
+                          <p className="mt-1 text-xs text-slate-500">{item.project}</p>
+                        </div>
+                        <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForVariance(item.delayDays))}>
+                          {item.delayDays > 0 ? `+${item.delayDays} days` : `${item.delayDays} days`}
+                        </Badge>
                       </div>
-                      <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForVariance(item.delayDays))}>
-                        {item.delayDays > 0 ? `+${item.delayDays} days` : `${item.delayDays} days`}
-                      </Badge>
-                    </div>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2 text-xs text-slate-500">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div className="font-semibold text-slate-700">Planned</div>
-                        <div className="mt-1">{item.planned}</div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2 text-xs text-slate-500">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="font-semibold text-slate-700">Planned</div>
+                          <div className="mt-1">{item.planned}</div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="font-semibold text-slate-700">Actual</div>
+                          <div className="mt-1">{item.actual}</div>
+                        </div>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div className="font-semibold text-slate-700">Actual</div>
-                        <div className="mt-1">{item.actual}</div>
+                      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                        <span>Deviation {item.deviation}%</span>
+                        <span className="font-semibold text-slate-700">Baseline adherence {item.adherence}</span>
                       </div>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                      <span>Deviation {item.deviation}%</span>
-                      <span className="font-semibold text-slate-700">Baseline adherence {item.adherence}</span>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           ) : null}
 
           {activePanel === 'insight' ? (
             <div className="grid gap-3 xl:grid-cols-2">
-              {alertFeed.map((alert) => (
-                <button
-                  key={alert.id}
-                  onClick={() => setSelectedItemId(alert.linkedItemId)}
-                  className="group rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 group-hover:border-sky-200 group-hover:text-sky-600">
-                        <AlertTriangle className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-semibold text-slate-950">{alert.title}</h3>
-                          <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForSeverity(alert.severity))}>{alert.severity}</Badge>
+              {overviewAlertFeed.length === 0 ? (
+                <div className="col-span-full rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-6 py-12 text-center text-sm text-slate-400">
+                  No planning alerts yet.
+                </div>
+              ) : (
+                overviewAlertFeed.map((alert) => (
+                  <button
+                    key={alert.id}
+                    onClick={() => setSelectedItemId(alert.linkedItemId)}
+                    className="group rounded-2xl border border-slate-200/80 bg-white/95 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 group-hover:border-sky-200 group-hover:text-sky-600">
+                          <AlertTriangle className="h-4 w-4" />
                         </div>
-                        <p className="mt-2 text-xs leading-5 text-slate-500">{alert.detail}</p>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-semibold text-slate-950">{alert.title}</h3>
+                            <Badge className={cn('border px-2 py-0.5 text-[10px] font-semibold', toneForSeverity(alert.severity))}>{alert.severity}</Badge>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-slate-500">{alert.detail}</p>
+                        </div>
                       </div>
+                      <ArrowRight className="h-4 w-4 text-slate-300 group-hover:text-sky-500" />
                     </div>
-                    <ArrowRight className="h-4 w-4 text-slate-300 group-hover:text-sky-500" />
-                  </div>
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
-                    <span className="font-semibold text-slate-800">Recommendation:</span> {alert.recommendation}
-                  </div>
-                </button>
-              ))}
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                      <span className="font-semibold text-slate-800">Recommendation:</span> {alert.recommendation}
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
           ) : null}
             </div>
@@ -2113,15 +2397,6 @@ type SprintPlanRow = {
   accent: string
 }
 
-const sprintPlanRows: SprintPlanRow[] = [
-  { id: 'sprint-24', name: 'Sprint 24', subtitle: 'Adira Digital Lending', status: 'Active', dateRange: '14 Apr – 25 Apr 2025', timing: '12 days remaining', timingTone: 'remaining', capacity: 68, committed: 61, utilization: 89.7, workItems: 24, highItems: 8, progress: 62, doneItems: 15, totalItems: 24, health: 'On Track', healthNote: 'Healthy', ownerName: 'Ayla Putri', ownerRole: 'Product Owner', accent: 'bg-emerald-500' },
-  { id: 'sprint-25', name: 'Sprint 25', subtitle: 'Adira Collection', status: 'Upcoming', dateRange: '28 Apr – 09 May 2025', timing: 'Starts in 3 days', timingTone: 'starts', capacity: 66, committed: 48, utilization: 72.7, workItems: 20, highItems: 5, progress: 0, doneItems: 0, totalItems: 20, health: 'Planned', healthNote: 'Good', ownerName: 'Jonas Rahardian', ownerRole: 'Tech Lead', accent: 'bg-sky-500' },
-  { id: 'sprint-26', name: 'Sprint 26', subtitle: 'AI & Analytics Platform', status: 'Upcoming', dateRange: '12 May – 23 May 2025', timing: 'Starts in 17 days', timingTone: 'starts', capacity: 64, committed: 52, utilization: 81.3, workItems: 22, highItems: 6, progress: 0, doneItems: 0, totalItems: 22, health: 'Planned', healthNote: 'Good', ownerName: 'Mina Aulia', ownerRole: 'Backend Engineer', accent: 'bg-sky-500' },
-  { id: 'sprint-27', name: 'Sprint 27', subtitle: 'Migration Initiative', status: 'At Capacity', dateRange: '26 May – 06 Jun 2025', timing: 'Starts in 31 days', timingTone: 'starts', capacity: 60, committed: 60, utilization: 100, workItems: 18, highItems: 7, progress: 0, doneItems: 0, totalItems: 18, health: 'At Capacity', healthNote: 'Monitor', ownerName: 'Rizky Pratama', ownerRole: 'UI/UX Designer', accent: 'bg-amber-500' },
-  { id: 'sprint-28', name: 'Sprint 28', subtitle: 'Fraud Prevention', status: 'Not Planned', dateRange: '09 Jun – 20 Jun 2025', timing: 'Starts in 45 days', timingTone: 'starts', capacity: 62, committed: 0, utilization: 0, workItems: 0, highItems: 0, progress: 0, doneItems: 0, totalItems: 0, health: 'Not Planned', healthNote: 'N/A', ownerName: '', ownerRole: '', accent: 'bg-slate-300' },
-  { id: 'sprint-29', name: 'Sprint 29', subtitle: 'CRM Enhancement', status: 'Not Planned', dateRange: '23 Jun – 04 Jul 2025', timing: 'Starts in 59 days', timingTone: 'starts', capacity: 62, committed: 0, utilization: 0, workItems: 0, highItems: 0, progress: 0, doneItems: 0, totalItems: 0, health: 'Not Planned', healthNote: 'N/A', ownerName: '', ownerRole: '', accent: 'bg-slate-300' },
-]
-
 function sprintStatusBadgeTone(status: SprintPlanStatus): string {
   switch (status) {
     case 'Active': return 'border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -2165,11 +2440,250 @@ function SprintOwnerAvatar({ name }: { name: string }) {
   return <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white', color)}>{initials}</span>
 }
 
+function formatSprintDateRange(startIso: string, endIso: string): string {
+  const format = (value: string) => {
+    const [y, m, d] = value.split('-').map(Number)
+    const date = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1))
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
+  }
+  return `${format(startIso)} – ${format(endIso)}`
+}
+
+function daysUntil(startIso: string): number {
+  const [y, m, d] = startIso.split('-').map(Number)
+  const start = Date.UTC(y, (m ?? 1) - 1, d ?? 1)
+  const today = new Date()
+  const now = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
+  return Math.round((start - now) / 86_400_000)
+}
+
+function SprintPlanningEmptyState({ onOpenTimeline }: { onOpenTimeline: () => void }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-12 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border/60 bg-muted/40 text-muted-foreground shadow-sm">
+        <Layers className="h-6 w-6" aria-hidden />
+      </div>
+      <h3 className="mt-4 text-lg font-semibold tracking-tight text-foreground">No sprints yet</h3>
+      <p className="mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
+        Use <span className="font-medium text-foreground">Create Sprint</span> in Search and Filters to start balancing commitment and capacity.
+      </p>
+      <div className="mt-5">
+        <button type="button" className={cn(enterpriseSecondaryButtonClass(), 'h-10 rounded-xl px-4 text-sm')} onClick={onOpenTimeline}>
+          <CalendarRange className="mr-1.5 h-4 w-4" />
+          Open Timeline
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SprintSelectedDetail({ sprint }: { sprint: SprintPlanRow | null }) {
+  if (!sprint) return null
+  const buffer = sprint.capacity - sprint.committed
+  return (
+    <div className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Selected sprint</p>
+          <h3 className="mt-1 truncate text-sm font-semibold text-slate-950">{sprint.name}</h3>
+          <p className="mt-0.5 truncate text-xs text-slate-500">{sprint.subtitle || 'Unassigned project'}</p>
+        </div>
+        <Badge className={cn('shrink-0 border px-2 py-0.5 text-[10px] font-semibold', sprintStatusBadgeTone(sprint.status))}>
+          {sprint.status}
+        </Badge>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+        <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Window</div>
+          <div className="mt-1 font-medium text-slate-800">{sprint.dateRange}</div>
+          <div className="mt-0.5 text-slate-500">{sprint.timing}</div>
+        </div>
+        <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Capacity</div>
+          <div className="mt-1 font-medium text-slate-800">{sprint.committed} / {sprint.capacity} pts</div>
+          <div className={cn('mt-0.5 font-medium', buffer <= 0 ? 'text-rose-600' : 'text-emerald-600')}>
+            {buffer >= 0 ? `+${buffer}` : buffer} buffer
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center justify-between text-xs text-slate-500">
+          <span>Progress</span>
+          <span className="font-semibold text-slate-700">{sprint.progress}%</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-500" style={{ width: `${sprint.progress}%` }} />
+        </div>
+        <p className="mt-1.5 text-[11px] text-slate-400">
+          {sprint.doneItems} / {sprint.totalItems} work items done · {sprint.workItems} committed
+        </p>
+      </div>
+
+      <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-4">
+        <SprintOwnerAvatar name={sprint.ownerName} />
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-slate-700">{sprint.ownerName || 'Unassigned'}</div>
+          <div className="truncate text-[11px] text-slate-400">{sprint.ownerRole || 'Owner'}</div>
+        </div>
+      </div>
+
+      <p className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-3 py-3 text-[11px] leading-relaxed text-slate-500">
+        Work items for this sprint will appear here once they are linked from Timeline or Task & Work Management.
+      </p>
+    </div>
+  )
+}
+
+function CreateSprintDialog({
+  ownerName,
+  onClose,
+  onCreate,
+}: {
+  ownerName: string
+  onClose: () => void
+  onCreate: (row: SprintPlanRow) => void
+}) {
+  const today = new Date()
+  const startDefault = today.toISOString().slice(0, 10)
+  const endDate = new Date(today)
+  endDate.setUTCDate(endDate.getUTCDate() + 13)
+  const endDefault = endDate.toISOString().slice(0, 10)
+
+  const [name, setName] = useState('')
+  const [subtitle, setSubtitle] = useState('')
+  const [startDate, setStartDate] = useState(startDefault)
+  const [endDateValue, setEndDateValue] = useState(endDefault)
+  const [capacity, setCapacity] = useState('40')
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  const submit = () => {
+    const trimmed = name.trim()
+    if (!trimmed || !startDate || !endDateValue) return
+    const capacityPts = Math.max(0, Number(capacity) || 0)
+    const until = daysUntil(startDate)
+    const timing =
+      until <= 0 ? 'Starts today' : until === 1 ? 'Starts in 1 day' : `Starts in ${until} days`
+    onCreate({
+      id: `sprint-${Date.now()}`,
+      name: trimmed,
+      subtitle: subtitle.trim() || 'Unassigned project',
+      status: 'Upcoming',
+      dateRange: formatSprintDateRange(startDate, endDateValue),
+      timing,
+      timingTone: 'starts',
+      capacity: capacityPts,
+      committed: 0,
+      utilization: 0,
+      workItems: 0,
+      highItems: 0,
+      progress: 0,
+      doneItems: 0,
+      totalItems: 0,
+      health: 'Planned',
+      healthNote: 'Ready',
+      ownerName,
+      ownerRole: 'Sprint Owner',
+      accent: 'bg-sky-500',
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[2px]" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-sprint-title"
+        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 id="create-sprint-title" className="text-base font-semibold text-slate-950">
+              Create Sprint
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">Set a delivery window and capacity for the next commitment cycle.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500" htmlFor="sprint-name">
+              Sprint name
+            </label>
+            <Input id="sprint-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sprint 1" className="mt-1.5 h-10 rounded-xl" autoFocus />
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500" htmlFor="sprint-project">
+              Project / focus
+            </label>
+            <Input id="sprint-project" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} placeholder="Optional" className="mt-1.5 h-10 rounded-xl" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500" htmlFor="sprint-start">
+                Start
+              </label>
+              <Input id="sprint-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1.5 h-10 rounded-xl" />
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500" htmlFor="sprint-end">
+                End
+              </label>
+              <Input id="sprint-end" type="date" value={endDateValue} onChange={(e) => setEndDateValue(e.target.value)} className="mt-1.5 h-10 rounded-xl" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500" htmlFor="sprint-capacity">
+              Capacity (pts)
+            </label>
+            <Input id="sprint-capacity" type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} className="mt-1.5 h-10 rounded-xl" />
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className={cn(enterpriseSecondaryButtonClass(), 'h-9 rounded-xl px-3 text-xs')} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={cn(enterpriseCyanGradientActionButtonClass(), 'h-9 rounded-xl px-3.5 text-xs', !name.trim() && 'pointer-events-none opacity-50')}
+            onClick={submit}
+            disabled={!name.trim()}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Sprint Planning table — column-rich roster view (status, capacity, utilization, progress, health, owner). */
-function SprintPlanningTable({ selectedId, onSelect }: { selectedId: string; onSelect: (id: string) => void }) {
+function SprintPlanningTable({
+  rows,
+  selectedId,
+  onSelect,
+}: {
+  rows: SprintPlanRow[]
+  selectedId: string
+  onSelect: (id: string) => void
+}) {
   const headClass = 'whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400'
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm [scrollbar-width:thin]">
+    <div className="min-h-0 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm [scrollbar-width:thin]">
       <table className="w-full min-w-[1080px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/70">
@@ -2187,7 +2701,7 @@ function SprintPlanningTable({ selectedId, onSelect }: { selectedId: string; onS
           </tr>
         </thead>
         <tbody>
-          {sprintPlanRows.map((row) => {
+          {rows.map((row) => {
             const buffer = row.capacity - row.committed
             const selected = selectedId === row.id
             const muted = row.status === 'Not Planned'

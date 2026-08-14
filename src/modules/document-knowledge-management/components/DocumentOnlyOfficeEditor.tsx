@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2, MessageSquare, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ChatSidebarPanel } from '@/modules/core-shell/components/ChatSidebarPanel'
-import { fetchLatestAttachmentId, fetchOnlyOfficeEditorConfig } from '@/lib/api/documentKnowledgeApi'
+import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
+import {
+  fetchLatestAttachmentId,
+  fetchLatestTemplateAttachmentId,
+  fetchOnlyOfficeEditorConfig,
+  fetchTemplateOnlyOfficeEditorConfig,
+} from '@/lib/api/documentKnowledgeApi'
 
-type DocEditorInstance = { destroyEditor?: () => void }
-type DocsApi = { DocEditor: new (placeholderId: string, config: Record<string, unknown>) => DocEditorInstance }
+export type DocEditorInstance = { destroyEditor?: () => void }
+export type DocsApi = { DocEditor: new (placeholderId: string, config: Record<string, unknown>) => DocEditorInstance }
 
 declare global {
   interface Window {
@@ -15,14 +21,76 @@ declare global {
   }
 }
 
-const PLACEHOLDER_ID = 'onlyoffice-editor-surface'
-// How long to wait for the Document Server to persist edits as a new version after closing.
+const PLACEHOLDER_ID = 'document-editor-surface'
 const SAVE_POLL_TIMEOUT_MS = 30_000
 const SAVE_POLL_INTERVAL_MS = 1_500
 
-// Load the Document Server's api.js once per URL; subsequent opens reuse the resolved promise.
+type OnlyOfficeErrorPayload = {
+  errorCode?: unknown
+  errorDescription?: unknown
+}
+
+function extractOnlyOfficeError(code: unknown): { code: number | null; description: string | null } {
+  if (code && typeof code === 'object') {
+    const payload = code as OnlyOfficeErrorPayload
+    const rawCode = payload.errorCode
+    const parsedCode =
+      typeof rawCode === 'number'
+        ? rawCode
+        : typeof rawCode === 'string' && rawCode.trim() !== ''
+          ? Number(rawCode)
+          : Number.NaN
+    const description =
+      typeof payload.errorDescription === 'string' && payload.errorDescription.trim()
+        ? payload.errorDescription.trim()
+        : null
+    return {
+      code: Number.isFinite(parsedCode) ? parsedCode : null,
+      description,
+    }
+  }
+  if (typeof code === 'number') return { code, description: null }
+  if (typeof code === 'string' && code.trim() !== '') {
+    const parsed = Number(code)
+    return Number.isFinite(parsed) ? { code: parsed, description: null } : { code: null, description: code.trim() }
+  }
+  return { code: null, description: null }
+}
+
+function describeOnlyOfficeError(code: unknown): string {
+  const { code: num, description } = extractOnlyOfficeError(code)
+  if (description) {
+    const lower = description.toLowerCase()
+    if (lower.includes('minio') || lower.includes('object storage')) {
+      return `${description} Pastikan container minio berjalan (docker start minio).`
+    }
+  }
+  switch (num) {
+    case -2:
+      return (
+        'OnlyOffice timeout saat memproses dokumen. Coba tutup editor, tunggu beberapa detik, lalu buka lagi.'
+      )
+    case -3:
+      return 'File .docx tidak bisa dibuka OnlyOffice (rusak atau format tidak didukung). Jika baru saja menerapkan edit dari Assistant, coba buat ulang dari template atau attachment sebelumnya.'
+    case -4:
+      return 'OnlyOffice tidak bisa mengunduh file dari Document Knowledge Management. Biasanya masalah jaringan antar container (Document Server → DKM) atau layanan DKM/MinIO belum siap.'
+    case -5:
+      return 'Dokumen dilindungi password — OnlyOffice tidak bisa membukanya.'
+    case -6:
+      return 'OnlyOffice Document Server mengalami error database internal.'
+    case -7:
+      return 'Konfigurasi editor tidak valid (input error).'
+    case -8:
+      return 'Token JWT OnlyOffice tidak valid. Pastikan TECTONA_ONLYOFFICE_JWT_SECRET sama di container Document Server dan document-knowledge-management.'
+    case -1:
+    default:
+      if (description) return description
+      return 'OnlyOffice melaporkan error saat membuka dokumen. Periksa log container onlyoffice-documentserver dan document-knowledge-management.'
+  }
+}
+
 const scriptPromises = new Map<string, Promise<void>>()
-function loadDocumentServerApi(documentServerUrl: string): Promise<void> {
+export function loadDocumentServerApi(documentServerUrl: string): Promise<void> {
   const src = `${documentServerUrl.replace(/\/$/, '')}/web-apps/apps/api/documents/api.js`
   const cached = scriptPromises.get(src)
   if (cached) return cached
@@ -46,16 +114,17 @@ const delay = (ms: number) => new Promise<void>((resolve) => { window.setTimeout
 
 type DocumentOnlyOfficeEditorProps = {
   open: boolean
-  documentId: string | null
+  documentId?: string | null
+  templateId?: string | null
   documentTitle: string | null
   onClose: () => void
-  /** Called once edits have been persisted as a new version, so callers can refresh their preview. */
   onEdited?: () => void
 }
 
 export function DocumentOnlyOfficeEditor({
   open,
-  documentId,
+  documentId = null,
+  templateId = null,
   documentTitle,
   onClose,
   onEdited,
@@ -64,16 +133,52 @@ export function DocumentOnlyOfficeEditor({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
+  // Bumped when the Tectona Assistant chat applies an edit directly into this document (see
+  // `tectonaAgentActions.ts`'s `document.apply_chat_edit` executor) — added to the init effect's
+  // dependency array below to force a full destroy+reinit of the editor with the freshly-mutated
+  // attachment, since there's no live in-place reload mechanism for an already-open DocsAPI
+  // instance (a new attachment id always means OnlyOffice's `document.key` is fresh, so this is
+  // guaranteed to never serve stale cached content).
+  const [reloadNonce, setReloadNonce] = useState(0)
   const editorRef = useRef<DocEditorInstance | null>(null)
-  // React-managed wrapper. OnlyOffice mutates a *plain* child div we create inside it (not this node
-  // and not anything React reconciles), so React's commit phase never trips over OnlyOffice's DOM.
   const hostRef = useRef<HTMLDivElement | null>(null)
-  // Latest attachment id captured at open; edits produce a newer one we can poll for.
   const baselineAttachmentIdRef = useRef<string | null>(null)
   const editedRef = useRef(false)
 
+  const resourceKey = templateId ? `template:${templateId}` : documentId ? `document:${documentId}` : null
+  const isTemplate = Boolean(templateId)
+
+  // The editor opens as a full-screen overlay on top of whatever page was already active — it
+  // never changes the URL. Without reporting its own page context, the chat assistant still
+  // sees whatever the underlying page (e.g. Idea Detail, some tab) last published, so an opening
+  // greeting would talk about "the Docs tab" instead of "the document you're editing right now."
+  const editorPageContext = useMemo(() => {
+    if (!open || !resourceKey) return null
+    return {
+      module_label: 'Document & Knowledge Management',
+      page_title: isTemplate ? 'Edit Master Template' : 'Edit Document',
+      view_label: isTemplate ? 'Edit Master Template' : 'Edit Document',
+      entity_type: isTemplate ? 'template' : 'document',
+      entity_id: templateId ?? documentId ?? null,
+      entity_title: documentTitle,
+    }
+  }, [open, resourceKey, isTemplate, templateId, documentId, documentTitle])
+  useTectonaPageContextReporter(`document-editor:${resourceKey ?? 'none'}`, editorPageContext)
+
   useEffect(() => {
-    if (!open || !documentId) return
+    if (!open || isTemplate || !documentId) return
+    const handleDocumentEdited = (event: Event) => {
+      const detail = (event as CustomEvent<{ documentId?: string }>).detail
+      if (detail?.documentId === documentId) setReloadNonce((n) => n + 1)
+    }
+    window.addEventListener('tectona:document-edited', handleDocumentEdited)
+    return () => window.removeEventListener('tectona:document-edited', handleDocumentEdited)
+  }, [open, isTemplate, documentId])
+
+  useEffect(() => {
+    if (!open || !resourceKey) return
+    if (isTemplate && !templateId) return
+    if (!isTemplate && !documentId) return
 
     let cancelled = false
     setLoading(true)
@@ -86,8 +191,12 @@ export function DocumentOnlyOfficeEditor({
     void (async () => {
       try {
         const [{ documentServerUrl, config }, baselineId] = await Promise.all([
-          fetchOnlyOfficeEditorConfig(documentId),
-          fetchLatestAttachmentId(documentId).catch(() => null),
+          isTemplate
+            ? fetchTemplateOnlyOfficeEditorConfig(templateId!)
+            : fetchOnlyOfficeEditorConfig(documentId!),
+          isTemplate
+            ? fetchLatestTemplateAttachmentId(templateId!).catch(() => null)
+            : fetchLatestAttachmentId(documentId!).catch(() => null),
         ])
         if (cancelled) return
         baselineAttachmentIdRef.current = baselineId
@@ -96,7 +205,6 @@ export function DocumentOnlyOfficeEditor({
         if (cancelled || !hostRef.current) return
         if (!window.DocsAPI) throw new Error('Document editor failed to initialize.')
 
-        // Hand OnlyOffice a fresh plain DOM node it fully owns; React only ever sees the empty host.
         editorRef.current?.destroyEditor?.()
         hostRef.current.replaceChildren()
         const surface = document.createElement('div')
@@ -113,8 +221,17 @@ export function DocumentOnlyOfficeEditor({
             onDocumentStateChange: (event: { data?: boolean }) => {
               if (event?.data) editedRef.current = true
             },
-            onError: () => {
-              if (!cancelled) setError('The editor reported an error while opening this document.')
+            onError: (event: { data?: unknown }) => {
+              if (cancelled) return
+              const payload = event?.data
+              const parsed = extractOnlyOfficeError(payload)
+              console.error('[OnlyOffice] onError', {
+                errorCode: parsed.code,
+                errorDescription: parsed.description,
+                documentId,
+                templateId,
+              })
+              setError(describeOnlyOfficeError(payload))
             },
           },
         })
@@ -133,13 +250,18 @@ export function DocumentOnlyOfficeEditor({
         // editor already torn down
       }
       editorRef.current = null
-      // Drop OnlyOffice's leftover DOM before React unmounts the host, so React only removes its own node.
       hostRef.current?.replaceChildren()
     }
-  }, [open, documentId])
+  }, [open, resourceKey, isTemplate, templateId, documentId, reloadNonce])
+
+  const resolveLatestAttachmentId = async (): Promise<string | null> => {
+    if (isTemplate && templateId) return fetchLatestTemplateAttachmentId(templateId).catch(() => null)
+    if (documentId) return fetchLatestAttachmentId(documentId).catch(() => null)
+    return null
+  }
 
   const handleClose = async () => {
-    if (!documentId) {
+    if (!resourceKey) {
       onClose()
       return
     }
@@ -147,11 +269,9 @@ export function DocumentOnlyOfficeEditor({
     const baseline = baselineAttachmentIdRef.current
     let detected = false
 
-    // Decide whether to wait for a save: the edit event fired, OR a new version already landed
-    // (autosave) even if the event was missed.
     let shouldWait = editedRef.current
     if (!shouldWait) {
-      const latest = await fetchLatestAttachmentId(documentId).catch(() => null)
+      const latest = await resolveLatestAttachmentId()
       if (latest && latest !== baseline) {
         shouldWait = true
         detected = true
@@ -163,8 +283,6 @@ export function DocumentOnlyOfficeEditor({
       return
     }
 
-    // Disconnect the editor so the Document Server flushes the final save, then wait for the new
-    // version to land before telling the caller to refresh its preview.
     try {
       editorRef.current?.destroyEditor?.()
     } catch {
@@ -175,7 +293,7 @@ export function DocumentOnlyOfficeEditor({
     setSaving(true)
     const deadline = Date.now() + SAVE_POLL_TIMEOUT_MS
     while (Date.now() < deadline) {
-      const latest = await fetchLatestAttachmentId(documentId).catch(() => null)
+      const latest = await resolveLatestAttachmentId()
       if (latest && latest !== baseline) {
         detected = true
         break
@@ -193,8 +311,10 @@ export function DocumentOnlyOfficeEditor({
     <div className="fixed inset-0 z-[1200] flex flex-col bg-background">
       <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
         <div className="min-w-0 pr-3">
-          <h2 className="truncate text-lg font-semibold text-foreground">Edit Document</h2>
-          <p className="truncate text-sm text-muted-foreground">{documentTitle ?? 'Document'}</p>
+          <h2 className="truncate text-lg font-semibold text-foreground">
+            {isTemplate ? 'Edit Master Template' : 'Edit Document'}
+          </h2>
+          <p className="truncate text-sm text-muted-foreground">{documentTitle ?? (isTemplate ? 'Template' : 'Document')}</p>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -210,7 +330,6 @@ export function DocumentOnlyOfficeEditor({
                 : 'border border-slate-200/80 bg-white/80 text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_8px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.03] backdrop-blur-sm hover:-translate-y-0.5 hover:border-blue-200/80 hover:text-blue-700 hover:shadow-[0_10px_24px_-10px_rgba(37,99,235,0.35)]',
             )}
           >
-            {/* soft top sheen on hover */}
             <span
               aria-hidden
               className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/15 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100"
@@ -239,35 +358,34 @@ export function DocumentOnlyOfficeEditor({
       </div>
 
       <div className="flex min-h-0 flex-1">
-      <div className="relative min-h-0 flex-1">
-        {/* Stable host rendered first; OnlyOffice injects into a plain child of this node. */}
-        <div ref={hostRef} className="absolute inset-0" />
-
-        {/* Overlay layer always rendered last, so React appends/removes it without an insertBefore
-            against the OnlyOffice-mutated host. */}
-        {error ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center px-6">
-            <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              {error}
+        <div className="relative min-h-0 flex-1">
+          <div ref={hostRef} className="absolute inset-0" />
+          {error ? (
+            <div className="absolute inset-0 z-20 flex items-center justify-center px-6">
+              <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {error}
+              </div>
             </div>
-          </div>
-        ) : loading || saving ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 bg-background/90 text-sm text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            {saving ? 'Saving changes...' : 'Opening editor...'}
-          </div>
-        ) : null}
-      </div>
+          ) : loading || saving ? (
+            <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 bg-background/90 text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              {saving ? 'Saving changes...' : 'Opening editor...'}
+            </div>
+          ) : null}
+        </div>
 
-      {/* Chat panel on the right (same component as the global chat sidebar). */}
-      <div
-        className={cn(
-          'h-full shrink-0 overflow-hidden border-l border-border bg-background transition-[width] duration-200',
-          chatOpen ? 'w-[min(380px,90vw)]' : 'w-0 border-l-0',
-        )}
-      >
-        {chatOpen ? <ChatSidebarPanel /> : null}
-      </div>
+        <div
+          className={cn(
+            'h-full shrink-0 overflow-hidden border-l border-border bg-background transition-[width] duration-200',
+            chatOpen ? 'w-[min(380px,90vw)]' : 'w-0 border-l-0',
+          )}
+        >
+          {chatOpen ? (
+            <ChatSidebarPanel
+              documentContext={documentId ? { documentId, documentTitle } : null}
+            />
+          ) : null}
+        </div>
       </div>
     </div>,
     document.body,

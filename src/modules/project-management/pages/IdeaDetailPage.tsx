@@ -1,5 +1,6 @@
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getSession } from '@/auth/authService'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -10,6 +11,7 @@ import {
   Bot,
   Brain,
   Briefcase,
+  Building2,
   Check,
   ChevronLeft,
   ChevronDown,
@@ -23,6 +25,7 @@ import {
   Download,
   Eraser,
   FileText,
+  Files,
   Gauge,
   GitBranch,
   IndentDecrease,
@@ -47,7 +50,29 @@ import {
   UserRound,
   Wand2,
   X,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Folder,
+  FolderPlus,
+  PencilLine,
+  Trash2,
+  CheckCircle2,
+  Circle,
+  Info,
+  GripVertical,
 } from 'lucide-react'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import {
   Bar,
   BarChart,
@@ -87,9 +112,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { enterpriseCyanGradientActionButtonClass, enterpriseIndigoGradientActionButtonClass, enterpriseSecondaryButtonClass, enterpriseControlFocusClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import {
   analyzeIdeaScoring,
+  analyzeIdeaIntegration,
+  fillDkmTemplate,
   generateBenefitAnalysis,
   generateIdeaBrd,
   generateIdeaConversion,
@@ -106,10 +135,45 @@ import {
   type RuntimeSummaryStrategicFramingItem,
 } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
+  createProjectDocument,
+  deleteDocument,
+  instantiateTemplateFromProject,
+  listAllDocuments,
+  listTemplates,
+  patchDocument,
+  resolveLatestDocumentAttachmentBlob,
+  type DocumentResponse,
+  type DocumentTemplateResponse,
+} from '@/lib/api/documentKnowledgeApi'
+import { createDocumentFolder, fetchDocumentFolders, type DocumentFolder } from '@/lib/api/documentFolderApi'
+import { fetchProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { ensureProjectDocumentFolder } from '@/modules/projects/lib/ensureProjectDocumentFolder'
+import { nextUntitledDocumentFolderName } from '@/modules/document-knowledge-management/lib/documentFolderUtils'
+import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
+import { findRepositoryTraceEntryByDocumentId } from '@/lib/kb/repositoryKbFromDocument'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { DocumentOnlyOfficeEditor } from '@/modules/document-knowledge-management/components/DocumentOnlyOfficeEditor'
+import {
+  DocumentRepositoryPaginationControls,
+  DocumentRepositoryTableView,
+} from '@/modules/document-knowledge-management/components/DocumentRepositoryTableView'
+import {
+  mapDocumentToRepositoryItem,
+  type RepositoryItem,
+} from '@/modules/document-knowledge-management/lib/documentRepositoryPresentation'
+import { generateIdeaDocKb } from '@/modules/project-management/lib/ideaDocKbGeneration'
+import {
+  measureProjectPanelHeight,
+  PROJECT_PANEL_MIN_HEIGHT_PX,
+} from '@/modules/projects/lib/projectPanelLayout'
+import { Label } from '@/components/ui/label'
+import {
   extractScoringDimensions,
   getIdeaById,
   patchIdea,
   getPersistentIdeaSummary,
+  getPersistentIdeaIntegration,
+  upsertPersistentIdeaIntegration,
   type ScoringResponseApi,
   upsertPersistentIdeaSummary,
   toBackendStatus,
@@ -117,7 +181,11 @@ import {
   type IdeaApi,
   type IdeaSummaryPersistent,
 } from '@/lib/api/ideaBacklogApi'
+import { useTenantContextOptional } from '@/auth/TenantContext'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { fetchWorkspaceOrgWorkspaceById } from '@/lib/api/workspaceOrgApi'
+import { resolveWorkspaceApiId } from '@/lib/tenantWorkspaceScope'
+import { workspaceScopedPath } from '@/lib/workspaceRouting'
 import {
   fetchWorkspaceMembers,
   TECTONA_WAC_APP_ID,
@@ -127,7 +195,34 @@ import {
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
-import { IdeaConversionTimeline } from '@/modules/project-management/components/IdeaConversionTimeline'
+import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
+import {
+  buildPersistentIntegrationPayload,
+  EMPTY_RUNTIME_INTEGRATION_ANALYSIS,
+  graphRecordFromIntegrationAnalysis,
+  graphRecordFromPersistentIntegration,
+  runtimeIntegrationFromAgentResponse,
+  runtimeIntegrationFromPersistent,
+  type RuntimeIntegrationAnalysis,
+} from '@/modules/project-management/lib/integrationArchitectureService'
+import type { IntegrationGraphRecord } from '@/modules/project-management/lib/integrationGraphStorage'
+import { saveIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
+import {
+  IdeaConversionGanttToolbar,
+  IdeaConversionTimeline,
+  scrollConversionGanttChart,
+} from '@/modules/project-management/components/IdeaConversionTimeline'
+import type { PlanningGanttZoomLevel } from '@/modules/planning-scheduling/components/PlanningSvarGantt'
+import { ManageCustomStatusesModal } from '@/modules/project-management/components/ManageCustomStatusesModal'
+import { ManageActionControlListModal } from '@/modules/project-management/components/ManageActionControlListModal'
+import {
+  DEFAULT_IDEA_NAV_SECTIONS,
+  getIdeaPanelCatalogEntry,
+  resolveIdeaNavSections,
+  type IdeaPanelKey,
+} from '@/modules/project-management/lib/ideaPanelCatalog'
+import { useIdeaNavSectionsStore } from '@/modules/project-management/store/ideaNavSectionsStore'
+import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 
 type IdeaStatus = 'New Submission' | 'Under Review' | 'Approved' | 'Rejected' | 'Converted to Project'
 type IdeaType = 'Innovation' | 'Improvement' | 'Request' | 'Issue'
@@ -169,15 +264,7 @@ type BrdTemplate = {
   body: string
 }
 
-type PanelKey =
-  | 'summary'
-  | 'brd'
-  | 'scoring'
-  | 'impact'
-  | 'integration'
-  | 'process'
-  | 'costBenefit'
-  | 'conversion'
+type PanelKey = IdeaPanelKey
 
 type BrdSection = {
   key: string
@@ -192,39 +279,13 @@ type BpmnNodeData = {
   kind: BpmnKind
 }
 
-type ArchimateLayer = 'business' | 'application' | 'data' | 'technology'
-
-type ArchimateElementNodeData = {
-  kind: 'element'
-  layer: ArchimateLayer
-  stereotype: string
-  title: string
-  description: string[]
-  variant: 'business-role' | 'application-component' | 'application-service' | 'data-object' | 'technology-node'
-}
-
-type ArchimateBoundaryNodeData = {
-  kind: 'boundary'
-  title: string
-}
-
-type ArchimateNoteNodeData = {
-  kind: 'note'
-  title: string
-  lines: string[]
-}
-
-type ArchimateLegendNodeData = {
-  kind: 'legend'
-}
-
-type ArchimateNodeData =
-  | ArchimateElementNodeData
-  | ArchimateBoundaryNodeData
-  | ArchimateNoteNodeData
-  | ArchimateLegendNodeData
-
 const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request', 'Issue']
+const WORKSPACE_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isWorkspaceUuid(value: string | null | undefined): value is string {
+  const trimmed = value?.trim()
+  return !!trimmed && WORKSPACE_GUID_RE.test(trimmed)
+}
 
 function ideaFromApi(api: IdeaApi): Idea {
   const type: IdeaType = IDEA_TYPES.includes(api.category as IdeaType)
@@ -243,7 +304,7 @@ function ideaFromApi(api: IdeaApi): Idea {
     workspace: api.workspace_id ?? undefined,
     tags: api.tags,
     createdAt: api.created_date.slice(0, 10),
-    reviewer: api.assignee_id ?? 'â€”',
+    reviewer: api.assignee_id?.trim() ?? '',
     status: toDisplayStatus(api.status_code),
     latestScoring: api.latest_scoring ?? null,
     scoring: extractScoringDimensions(api.latest_scoring),
@@ -279,6 +340,40 @@ const FALLBACK_IDEA: Idea = {
   latestScoring: null,
   scoring: { businessValue: 9, effort: 6, risk: 4, roi: 8 },
   version: 1,
+}
+
+/** Pull supporting-doc bullets / file refs from idea description for the Document panel. */
+function extractSupportingDocumentsFromText(text: string): string[] {
+  const src = (text || '').trim()
+  if (!src) return []
+
+  const sectionMatch = src.match(
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:Dokumen Pendukung|Supporting Documents)\s*\n([\s\S]*?)(?=\n\s*(?:#{1,6}\s*)?(?:Tujuan|Permasalahan|Solusi|Risiko|Objective|Problem Statement|Solution|Risk)\b|\n\s*#{1,3}\s+\S|$)/i,
+  )
+  const chunk = sectionMatch?.[1] ?? ''
+  const items: string[] = []
+
+  const pushUnique = (value: string) => {
+    const cleaned = value.replace(/\s+/g, ' ').trim()
+    if (!cleaned) return
+    if (items.some((existing) => existing.toLowerCase() === cleaned.toLowerCase())) return
+    items.push(cleaned)
+  }
+
+  for (const line of chunk.split('\n')) {
+    const bullet = line.match(/^\s*(?:[-*]|\d+[.)])\s+(.+)$/)
+    if (bullet) pushUnique(bullet[1])
+  }
+
+  for (const match of src.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
+    pushUnique(`${match[1]} - ${match[2]}`)
+  }
+
+  for (const match of src.matchAll(/\b[\w./-]+\.(?:pdf|docx?|xlsx?|pptx?|md)\b/gi)) {
+    pushUnique(match[0])
+  }
+
+  return items.slice(0, 40)
 }
 
 const DEFAULT_SUMMARY: RuntimeSummaryResponse = {
@@ -575,6 +670,21 @@ const SUMMARY_WARNING_BADGE_CLASS: Record<SummaryWarningTone, string> = {
   degraded: 'border-amber-300 bg-amber-50 text-amber-700',
   info: 'border-sky-300 bg-sky-50 text-sky-700',
 }
+
+const IDEA_SUMMARY_LIQUID_GLASS_SHELL =
+  'liquid-glass-enterprise-filter-bar flex min-h-0 flex-col overflow-hidden border'
+
+const IDEA_SUMMARY_LIQUID_GLASS_CARD =
+  'relative overflow-hidden rounded-2xl border border-white/50 bg-white/35 shadow-[0_30px_80px_-46px_rgba(15,23,42,0.4)] backdrop-blur-2xl'
+
+const IDEA_SUMMARY_LIQUID_GLASS_INNER =
+  'rounded-2xl border border-white/70 bg-white/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_12px_28px_-20px_rgba(15,23,42,0.35)] backdrop-blur-xl'
+
+const IDEA_SUMMARY_LIQUID_GLASS_TILE =
+  'rounded-2xl border border-white/60 bg-white/40 backdrop-blur-lg shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]'
+
+const IDEA_SUMMARY_LIQUID_GLASS_AGENTS_BAR =
+  'rounded-2xl border border-white/55 bg-white/25 px-4 py-3 backdrop-blur-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_12px_32px_-24px_rgba(15,23,42,0.2)]'
 
 const ROLE_WARNING_KEY_MAP: Record<string, string> = {
   BUSINESS_ANALYST: 'business_analyst',
@@ -917,6 +1027,8 @@ const statusClass: Record<IdeaStatus, string> = {
   'Converted to Project': 'bg-violet-50 text-violet-700 border-violet-200',
 }
 
+const intakeStatusClass = 'bg-slate-50 text-slate-700 border-slate-200'
+
 const typeClass: Record<IdeaType, string> = {
   Innovation: 'bg-sky-100 text-sky-700 border-sky-200',
   Improvement: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -1142,138 +1254,6 @@ function BpmnNode({ data }: NodeProps<BpmnNodeData>) {
 
 const bpmnNodeTypes: NodeTypes = { bpmn: BpmnNode }
 
-const archimateLayerStyles: Record<ArchimateLayer, { bg: string; border: string; accent: string; text: string }> = {
-  business: { bg: '#f9c78f', border: '#9a6a22', accent: '#9a6a22', text: '#0f172a' },
-  application: { bg: '#bfe0ff', border: '#4f7ca8', accent: '#4f7ca8', text: '#0f172a' },
-  data: { bg: '#bfe0ff', border: '#4f7ca8', accent: '#4f7ca8', text: '#0f172a' },
-  technology: { bg: '#c4f0cb', border: '#4a8a56', accent: '#4a8a56', text: '#0f172a' },
-}
-
-function ArchimateElementNode({ data }: NodeProps<ArchimateElementNodeData>) {
-  const style = archimateLayerStyles[data.layer]
-  const handleClassName = '!h-2 !w-2 !border-0 !bg-slate-600 !opacity-0'
-
-  return (
-    <div className="relative">
-      <Handle id="target-left" type="target" position={Position.Left} className={handleClassName} />
-      <Handle id="target-top" type="target" position={Position.Top} className={handleClassName} />
-      <Handle id="target-right" type="target" position={Position.Right} className={handleClassName} />
-      <Handle id="target-bottom" type="target" position={Position.Bottom} className={handleClassName} />
-
-      <div
-        className="relative overflow-hidden rounded-[18px] border shadow-[0_12px_30px_-22px_rgba(15,23,42,0.45)]"
-        style={{ backgroundColor: style.bg, borderColor: style.border, color: style.text }}
-      >
-        {data.variant === 'technology-node' && (
-          <div
-            className="absolute left-4 top-0 h-[14px] w-[96px] -translate-y-1/2 rounded-[3px] border"
-            style={{ backgroundColor: '#dff7e4', borderColor: style.border }}
-          />
-        )}
-
-        {data.variant === 'application-component' && (
-          <div
-            className="absolute left-4 top-4 h-[14px] w-[22px] rounded-[3px] border"
-            style={{ backgroundColor: 'rgba(255,255,255,0.72)', borderColor: style.border }}
-          />
-        )}
-
-        {data.variant === 'application-service' && (
-          <div className="absolute left-6 top-5 space-y-1">
-            <div className="h-[2px] w-5 rounded-full" style={{ backgroundColor: style.border }} />
-            <div className="h-[2px] w-5 rounded-full" style={{ backgroundColor: style.border }} />
-          </div>
-        )}
-
-        {data.variant === 'business-role' && (
-          <div className="absolute left-4 top-4 space-y-1">
-            <div className="h-[2px] w-6 rounded-full" style={{ backgroundColor: style.accent }} />
-            <div className="h-[2px] w-4 rounded-full" style={{ backgroundColor: style.accent }} />
-          </div>
-        )}
-
-        {data.variant === 'data-object' && (
-          <div
-            className="absolute right-4 top-4 h-[14px] w-[18px] rounded-[1px] border"
-            style={{ backgroundColor: 'rgba(255,255,255,0.72)', borderColor: style.border }}
-          />
-        )}
-
-        <div className="flex min-h-[78px] w-full flex-col items-center justify-center px-4 py-4 text-center">
-          <p className="text-[11px] font-semibold">{data.stereotype}</p>
-          <p className="mt-2 text-[13px] font-semibold leading-tight">{data.title}</p>
-          {data.description.map((line) => (
-            <p key={line} className="mt-1 text-[11px] leading-4 text-slate-600">
-              {line}
-            </p>
-          ))}
-        </div>
-      </div>
-
-      <Handle id="source-left" type="source" position={Position.Left} className={handleClassName} />
-      <Handle id="source-top" type="source" position={Position.Top} className={handleClassName} />
-      <Handle id="source-right" type="source" position={Position.Right} className={handleClassName} />
-      <Handle id="source-bottom" type="source" position={Position.Bottom} className={handleClassName} />
-    </div>
-  )
-}
-
-function ArchimateBoundaryNode({ data }: NodeProps<ArchimateBoundaryNodeData>) {
-  return (
-    <div className="h-full w-full rounded-[18px] border-2 border-dashed border-slate-400/80 bg-white/15 px-4 py-3">
-      <p className="text-xs font-semibold text-slate-600">{data.title}</p>
-    </div>
-  )
-}
-
-function ArchimateNoteNode({ data }: NodeProps<ArchimateNoteNodeData>) {
-  return (
-    <div className="h-full w-full rounded-[16px] border border-slate-200 bg-white/88 px-4 py-3 shadow-sm">
-      <p className="text-xs font-semibold text-slate-900">{data.title}</p>
-      {data.lines.map((line) => (
-        <p key={line} className="mt-1 text-[11px] leading-4 text-slate-600">
-          {line}
-        </p>
-      ))}
-    </div>
-  )
-}
-
-function ArchimateLegendNode() {
-  return (
-    <div className="h-full w-full rounded-[18px] border border-slate-200 bg-white/92 px-4 py-3 shadow-sm">
-      <p className="text-xs font-semibold text-slate-900">Legend Inside Canvas</p>
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-slate-600">
-        <span className="rounded-lg border border-[#9a6a22] bg-[#f9c78f] px-3 py-1 font-semibold text-slate-900">Business Role</span>
-        <span className="rounded-lg border border-[#4f7ca8] bg-[#bfe0ff] px-3 py-1 font-semibold text-slate-900">App Component / Service</span>
-        <span className="rounded-lg border border-[#4f7ca8] bg-[#bfe0ff] px-3 py-1 font-semibold text-slate-900">Data Object</span>
-        <span className="rounded-lg border border-[#4a8a56] bg-[#c4f0cb] px-3 py-1 font-semibold text-slate-900">Technology Node</span>
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-[2px] w-8 bg-slate-900" />
-          Serving
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-[2px] w-8 border-t-2 border-dashed border-slate-600" />
-          Flow
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-[2px] w-8 border-t-2 border-dotted border-slate-500" />
-          Access
-        </span>
-        <span className="rounded-lg border border-slate-300 border-dashed px-3 py-1 font-semibold text-slate-900">Boundary / Grouping</span>
-        <span>ArchiMate-inspired notation</span>
-      </div>
-    </div>
-  )
-}
-
-const archimateNodeTypes: NodeTypes = {
-  archimateElement: ArchimateElementNode,
-  archimateBoundary: ArchimateBoundaryNode,
-  archimateNote: ArchimateNoteNode,
-  archimateLegend: ArchimateLegendNode,
-}
-
 function parseMermaidToReactFlow(mermaidSource: string) {
   const lines = mermaidSource.split('\n').map((line) => line.trim())
   const nodeOrder: string[] = []
@@ -1348,6 +1328,744 @@ function confidenceClass(value: number) {
   return 'text-rose-700 bg-rose-50 border-rose-200'
 }
 
+type ScoringDimensionKey = 'businessValue' | 'effort' | 'risk' | 'roi'
+
+type ScoringDimensionRow = {
+  key: ScoringDimensionKey
+  label: string
+  score: number
+  fill: string
+  fillMuted: string
+  detail: string
+  borderClass: string
+  bgClass: string
+  textClass: string
+  barTrackClass: string
+}
+
+const SCORING_DIMENSION_THEMES: Record<
+  ScoringDimensionKey,
+  Omit<ScoringDimensionRow, 'key' | 'score'> & { weightLabel: string; weightPercent: string }
+> = {
+  businessValue: {
+    label: 'Business Value',
+    fill: '#5f7de0',
+    fillMuted: '#b8c7f2',
+    detail: 'Enterprise upside and strategic relevance.',
+    borderClass: 'border-[#5f7de0]/30',
+    bgClass: 'bg-[#5f7de0]/10',
+    textClass: 'text-[#4f6bd0]',
+    barTrackClass: 'bg-[#5f7de0]/15',
+    weightLabel: 'Value weight',
+    weightPercent: '30%',
+  },
+  effort: {
+    label: 'Effort',
+    fill: '#e2a234',
+    fillMuted: '#f3d38a',
+    detail: 'Delivery load required to operationalize the idea.',
+    borderClass: 'border-[#e2a234]/35',
+    bgClass: 'bg-[#e2a234]/12',
+    textClass: 'text-[#b45309]',
+    barTrackClass: 'bg-[#e2a234]/18',
+    weightLabel: 'Effort adjuster',
+    weightPercent: '20%',
+  },
+  risk: {
+    label: 'Risk',
+    fill: '#d97706',
+    fillMuted: '#fdba74',
+    detail: 'Execution exposure and governance watchpoints.',
+    borderClass: 'border-[#d97706]/35',
+    bgClass: 'bg-[#d97706]/10',
+    textClass: 'text-[#c2410c]',
+    barTrackClass: 'bg-[#d97706]/15',
+    weightLabel: 'Risk adjuster',
+    weightPercent: '20%',
+  },
+  roi: {
+    label: 'ROI',
+    fill: '#4f46e5',
+    fillMuted: '#c4b5fd',
+    detail: 'Commercial return signal and payback strength.',
+    borderClass: 'border-[#4f46e5]/30',
+    bgClass: 'bg-[#4f46e5]/10',
+    textClass: 'text-[#4338ca]',
+    barTrackClass: 'bg-[#4f46e5]/15',
+    weightLabel: 'ROI weight',
+    weightPercent: '30%',
+  },
+}
+
+/** Single display order for weight cards, dimension cards, and chart — Value → ROI → Effort → Risk. */
+const SCORING_DISPLAY_ORDER: ScoringDimensionKey[] = ['businessValue', 'roi', 'effort', 'risk']
+
+function buildScoreDataFromIdea(idea: Idea): ScoringDimensionRow[] {
+  return SCORING_DISPLAY_ORDER.map((key) => {
+    const theme = SCORING_DIMENSION_THEMES[key]
+    return {
+      key,
+      label: theme.label,
+      score: idea.scoring[key],
+      fill: theme.fill,
+      fillMuted: theme.fillMuted,
+      detail: theme.detail,
+      borderClass: theme.borderClass,
+      bgClass: theme.bgClass,
+      textClass: theme.textClass,
+      barTrackClass: theme.barTrackClass,
+    }
+  })
+}
+
+function scoringBarFill(item: ScoringDimensionRow, hasNumericScoring: boolean): string {
+  if (hasNumericScoring && item.score > 0) return item.fill
+  return item.fillMuted
+}
+
+function scoringBarWidth(item: ScoringDimensionRow, hasNumericScoring: boolean): string {
+  if (hasNumericScoring && item.score > 0) return `${(item.score / 10) * 100}%`
+  return '12%'
+}
+
+type ScoringEvidenceItem = {
+  id: string
+  label: string
+  detail: string
+  complete: boolean
+  ctaPanel?: PanelKey
+  ctaBacklog?: boolean
+}
+
+function ideaHasNumericScoring(idea: Idea): boolean {
+  const { businessValue, effort, risk, roi } = idea.scoring
+  if (businessValue > 0 || effort > 0 || risk > 0 || roi > 0) return true
+  return (idea.latestScoring?.score_dimensions ?? []).some((dimension) => dimension.score > 0)
+}
+
+function buildScoringEvidenceChecklist(idea: Idea): ScoringEvidenceItem[] {
+  return [
+    {
+      id: 'title',
+      label: 'Idea title',
+      detail: 'Clear naming for board prioritization.',
+      complete: Boolean(idea.title.trim()),
+      ctaPanel: 'summary',
+    },
+    {
+      id: 'description',
+      label: 'Problem & solution narrative',
+      detail: 'Description that explains the business need.',
+      complete: Boolean(idea.description.trim()),
+      ctaPanel: 'summary',
+    },
+    {
+      id: 'business_objective',
+      label: 'Business objective',
+      detail: 'Expected outcome and value hypothesis.',
+      complete: Boolean((idea.businessObjective ?? '').trim()),
+      ctaPanel: 'summary',
+    },
+    {
+      id: 'scope',
+      label: 'Scope summary',
+      detail: 'In/out boundaries for feasibility scoring.',
+      complete: Boolean((idea.scopeSummary ?? '').trim()),
+      ctaPanel: 'summary',
+    },
+    {
+      id: 'risk',
+      label: 'Risk summary',
+      detail: 'Execution and governance watchpoints.',
+      complete: Boolean((idea.riskSummary ?? '').trim()),
+      ctaPanel: 'summary',
+    },
+    {
+      id: 'dimensions',
+      label: 'Backlog score dimensions',
+      detail: 'Value, effort, risk, and ROI from Idea & Backlog.',
+      complete: ideaHasNumericScoring(idea),
+      ctaBacklog: true,
+    },
+  ]
+}
+
+type CostBenefitEvidenceItem = {
+  id: string
+  label: string
+  detail: string
+  complete: boolean
+  ctaPanel?: PanelKey
+  ctaBacklog?: boolean
+}
+
+type CostBenefitValueEffortPosture = {
+  label: string
+  description: string
+  accent: string
+  quadrant: string
+}
+
+type BenefitScenarioBand = {
+  name: string
+  roiLabel: string
+  description?: string
+}
+
+function hasBenefitFinancialEvidence(analysis: GenerateBenefitAnalysisResponse | null): boolean {
+  if (!analysis) return false
+  if (analysis.presentation_mode !== 'narrative') return true
+  return (
+    analysis.total_development_cost > 0 ||
+    analysis.total_benefit_5year > 0 ||
+    analysis.total_cost_5year > 0
+  )
+}
+
+function buildCostBenefitEvidenceChecklist(
+  idea: Idea,
+  benefitAnalysis: GenerateBenefitAnalysisResponse | null,
+  supportingDocCount: number,
+): CostBenefitEvidenceItem[] {
+  return [
+    {
+      id: 'financial',
+      label: 'Financial evidence',
+      detail: 'Absolute cost/benefit figures from Idea, scoring, or knowledge base.',
+      complete: hasBenefitFinancialEvidence(benefitAnalysis),
+      ctaPanel: 'summary',
+    },
+    {
+      id: 'dimensions',
+      label: 'Scoring dimensions',
+      detail: 'Business value, effort, risk, and ROI as finance proxy inputs.',
+      complete: ideaHasNumericScoring(idea),
+      ctaPanel: 'scoring',
+    },
+    {
+      id: 'assumptions',
+      label: 'Business assumptions',
+      detail: 'Objective, scope, and risk framing for the cost narrative.',
+      complete:
+        Boolean((idea.businessObjective ?? '').trim()) &&
+        Boolean((idea.scopeSummary ?? '').trim()) &&
+        Boolean((idea.riskSummary ?? '').trim()),
+      ctaPanel: 'summary',
+    },
+    {
+      id: 'documents',
+      label: 'Supporting documents',
+      detail: 'Finance notes, BRD, or templates linked to this idea.',
+      complete: supportingDocCount > 0,
+      ctaPanel: 'document',
+    },
+  ]
+}
+
+function buildCostBenefitValueEffortPosture(
+  idea: Idea,
+  hasNumericScoring: boolean,
+): CostBenefitValueEffortPosture {
+  if (!hasNumericScoring) {
+    return {
+      label: 'Awaiting scoring',
+      description: 'Value–effort positioning unlocks after backlog dimensions are populated.',
+      accent: '#94a3b8',
+      quadrant: 'Pending evidence',
+    }
+  }
+
+  const { businessValue, effort } = idea.scoring
+  const valueHigh = businessValue >= 6
+  const effortLow = effort <= 5
+
+  if (valueHigh && effortLow) {
+    return {
+      label: 'Quick win candidate',
+      description: 'Strong relative value with manageable delivery effort — good for phased funding.',
+      accent: '#10b981',
+      quadrant: 'High value · Lower effort',
+    }
+  }
+  if (valueHigh && !effortLow) {
+    return {
+      label: 'Strategic bet',
+      description: 'Compelling upside but heavier delivery — fund governance and change enablement upfront.',
+      accent: '#6366f1',
+      quadrant: 'High value · Higher effort',
+    }
+  }
+  if (!valueHigh && effortLow) {
+    return {
+      label: 'Operational tune-up',
+      description: 'Modest strategic lift with lighter delivery — validate incremental benefit clearly.',
+      accent: '#0ea5e9',
+      quadrant: 'Moderate value · Lower effort',
+    }
+  }
+  return {
+    label: 'Reframe or defer',
+    description: 'Value thesis is thin relative to effort — tighten scope or strengthen evidence first.',
+    accent: '#f59e0b',
+    quadrant: 'Lower value · Higher effort',
+  }
+}
+
+function buildCostBenefitQualitativeLevers(
+  idea: Idea,
+  benefitAnalysis: GenerateBenefitAnalysisResponse | null,
+): { costDrivers: string[]; benefitLevers: string[] } {
+  const extended = benefitAnalysis as GenerateBenefitAnalysisResponse & {
+    recommendations?: string[]
+    key_risks_to_monitor?: string[]
+  }
+
+  const costDrivers = [
+    idea.scoring.effort >= 7
+      ? 'Delivery effort and cross-team coordination load'
+      : 'Implementation, integration, and rollout effort',
+    idea.scoring.risk >= 7
+      ? 'Governance, compliance, and model drift monitoring'
+      : 'Change adoption and operating ownership design',
+    'Data quality, workflow redesign, and enablement funding',
+  ]
+
+  const benefitLevers = [
+    idea.scoring.businessValue >= 6
+      ? 'Earlier intervention timing and process efficiency gains'
+      : 'Incremental visibility and coordination improvements',
+    idea.scoring.roi >= 6
+      ? 'Reduced escalation cost and rework avoidance'
+      : 'Clearer stakeholder signals before cases turn critical',
+    'Stronger executive control over operational variance',
+  ]
+
+  if (extended?.key_risks_to_monitor?.[0]) {
+    costDrivers[0] = extended.key_risks_to_monitor[0]
+  }
+  if (extended?.recommendations?.[0]) {
+    benefitLevers[0] = extended.recommendations[0]
+  }
+
+  return {
+    costDrivers: costDrivers.slice(0, 3),
+    benefitLevers: benefitLevers.slice(0, 3),
+  }
+}
+
+function buildCostBenefitScenarioBands(
+  benefitAnalysis: GenerateBenefitAnalysisResponse | null,
+): BenefitScenarioBand[] {
+  const extended = benefitAnalysis as GenerateBenefitAnalysisResponse & {
+    scenarios?: Array<{
+      name?: string
+      scenario_name?: string
+      roi_percentage?: number
+      description?: string
+      label?: string
+    }>
+  }
+
+  const scenarios = extended?.scenarios ?? []
+  if (scenarios.length === 0) return []
+
+  return scenarios.slice(0, 3).map((scenario, index) => {
+    const name = scenario.name || scenario.scenario_name || scenario.label || `Scenario ${index + 1}`
+    const roi = scenario.roi_percentage
+    return {
+      name,
+      roiLabel: typeof roi === 'number' && roi > 0 ? `${roi.toFixed(0)}% ROI (hipotesis)` : 'Qualitative band',
+      description: scenario.description,
+    }
+  })
+}
+
+function buildCostBenefitUpgradeHint(
+  evidenceItems: CostBenefitEvidenceItem[],
+  confidencePercent: number,
+): string {
+  const incomplete = evidenceItems.filter((item) => !item.complete)
+  if (incomplete.length === 0) {
+    return 'Evidence cukup lengkap — regenerate analysis untuk meningkatkan confidence model numerik.'
+  }
+  const labels = incomplete.map((item) => item.label.toLowerCase()).join(', ')
+  return `Lengkapi ${labels}, lalu regenerate analysis untuk menaikkan confidence dari ${confidencePercent}%.`
+}
+
+function CostBenefitEvidenceSection({
+  evidenceItems,
+  readinessPercent,
+  onNavigateToPanel,
+  onOpenBacklog,
+}: {
+  evidenceItems: CostBenefitEvidenceItem[]
+  readinessPercent: number
+  onNavigateToPanel: (panel: PanelKey) => void
+  onOpenBacklog: () => void
+}) {
+  const completedCount = evidenceItems.filter((item) => item.complete).length
+
+  return (
+    <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+      <CardContent className="relative z-10 space-y-4 p-4">
+        <div className="flex flex-col gap-3 border-b border-white/45 pb-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-900 backdrop-blur-md">
+              <ClipboardList className="h-3.5 w-3.5" />
+              Evidence readiness
+            </div>
+            <h3 className="text-base font-semibold text-slate-950">Finance upgrade path</h3>
+            <p className="text-sm leading-6 text-slate-600">
+              Cost–benefit stays in narrative mode until the evidence below is strong enough for an honest numeric model.
+            </p>
+          </div>
+          <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex shrink-0 flex-col items-center gap-1 px-4 py-3')}>
+            <div
+              className="relative flex h-16 w-16 items-center justify-center rounded-full"
+              style={{
+                background: `conic-gradient(#f59e0b ${readinessPercent * 3.6}deg, #e2e8f0 0deg)`,
+              }}
+            >
+              <div className="flex h-[52px] w-[52px] flex-col items-center justify-center rounded-full bg-white text-center">
+                <span className="text-sm font-bold tabular-nums text-slate-900">{readinessPercent}%</span>
+              </div>
+            </div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Evidence ready</p>
+            <p className="text-[11px] text-slate-600">
+              {completedCount}/{evidenceItems.length} signals
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          {evidenceItems.map((item) => (
+            <div
+              key={item.id}
+              className={cn(
+                'flex items-start gap-3 rounded-xl border px-3 py-2.5 backdrop-blur-md',
+                item.complete
+                  ? 'border-emerald-200/80 bg-emerald-50/40'
+                  : cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'border-white/60'),
+              )}
+            >
+              {item.complete ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              ) : (
+                <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                <p className="mt-0.5 text-[11px] leading-4 text-slate-500">{item.detail}</p>
+                {!item.complete && item.ctaPanel ? (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="mt-1 h-auto px-0 py-0 text-[11px] font-semibold text-violet-700"
+                    onClick={() => onNavigateToPanel(item.ctaPanel!)}
+                  >
+                    {item.ctaPanel === 'summary'
+                      ? 'Complete in Summary'
+                      : item.ctaPanel === 'scoring'
+                        ? 'Open Scoring'
+                        : item.ctaPanel === 'document'
+                          ? 'Open Docs'
+                          : 'Open panel'}
+                  </Button>
+                ) : null}
+                {!item.complete && item.ctaBacklog ? (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="mt-1 h-auto px-0 py-0 text-[11px] font-semibold text-violet-700"
+                    onClick={onOpenBacklog}
+                  >
+                    Open Idea &amp; Backlog
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function formatScoringDimensionValue(score: number, hasNumericScoring: boolean): string {
+  if (!hasNumericScoring || score <= 0) return 'Pending'
+  return `${score}/10`
+}
+
+function ScoringFrameworkSection({
+  ideaTitle,
+  scoreData,
+  totalScore,
+  hasNumericScoring,
+  priorityLabel,
+}: {
+  ideaTitle: string
+  scoreData: ScoringDimensionRow[]
+  totalScore: number
+  hasNumericScoring: boolean
+  priorityLabel: string
+}) {
+  const scoreTierLabel = !hasNumericScoring
+    ? 'Awaiting intake'
+    : totalScore >= 80
+      ? 'Executive ready'
+      : totalScore >= 60
+        ? 'Strategic candidate'
+        : 'Needs refinement'
+
+  return (
+    <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+      <CardContent className="relative z-10 space-y-4 p-4">
+        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700 backdrop-blur-md">
+                <Gauge className="h-3.5 w-3.5" />
+                Scoring framework
+              </div>
+              <p className="text-sm font-semibold text-slate-900 truncate">{ideaTitle}</p>
+              <p className="text-[11px] text-slate-500">
+                Weighted model for enterprise prioritization — numbers appear only when backlog evidence exists.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-stretch justify-end gap-2 shrink-0">
+              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'min-w-[168px] px-4 py-2.5 text-right')}>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Weighted score</p>
+                <p className="text-3xl font-bold text-slate-900 leading-none mt-1 tabular-nums">
+                  {hasNumericScoring ? totalScore : '—'}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  {hasNumericScoring ? priorityLabel : 'Pending intake scoring'}
+                </p>
+              </div>
+              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex min-w-[168px] flex-col justify-center gap-2 px-4 py-2.5')}>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Decision signal</p>
+                <Badge variant="outline" className={cn(
+                  'w-fit text-[10px] font-semibold',
+                  hasNumericScoring
+                    ? totalScore >= 80
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : totalScore >= 60
+                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                        : 'border-rose-200 bg-rose-50 text-rose-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-600',
+                )}
+                >
+                  {scoreTierLabel}
+                </Badge>
+                <p className="text-[11px] leading-5 text-slate-600">
+                  Decision SLA: target within 2 business days from intake review.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 overflow-x-auto pb-0.5">
+            <div className="grid min-w-[640px] grid-cols-4 gap-3">
+              {SCORING_DISPLAY_ORDER.map((key) => {
+                const theme = SCORING_DIMENSION_THEMES[key]
+                const item = scoreData.find((row) => row.key === key)
+                if (!item) return null
+                return (
+                  <div key={key} className="flex min-w-0 flex-col gap-2">
+                    <div
+                      className={cn(
+                        'rounded-lg border px-3 py-2',
+                        theme.borderClass,
+                        theme.bgClass,
+                      )}
+                    >
+                      <p className={cn('text-[10px] font-medium uppercase tracking-wide', theme.textClass)}>
+                        {theme.weightLabel}
+                      </p>
+                      <p className={cn('text-sm font-semibold tabular-nums', theme.textClass)}>{theme.weightPercent}</p>
+                    </div>
+                    <div
+                      className={cn(
+                        'flex flex-1 flex-col rounded-xl border px-3 py-2.5',
+                        item.borderClass,
+                        item.bgClass,
+                      )}
+                    >
+                      <div className="mb-2 flex items-center justify-between text-xs">
+                        <span className={cn('font-semibold', item.textClass)}>{item.label}</span>
+                        <span className={cn(
+                          'font-semibold tabular-nums',
+                          hasNumericScoring && item.score > 0 ? item.textClass : 'text-slate-400',
+                        )}
+                        >
+                          {formatScoringDimensionValue(item.score, hasNumericScoring)}
+                        </span>
+                      </div>
+                      <div className={cn('h-2 overflow-hidden rounded-full', item.barTrackClass)}>
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: scoringBarWidth(item, hasNumericScoring),
+                            backgroundColor: scoringBarFill(item, hasNumericScoring),
+                          }}
+                        />
+                      </div>
+                      <p className="mt-2 text-[10px] leading-4 text-slate-600">{item.detail}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'h-[150px] px-2 pb-2 pt-3')}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={scoreData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis
+                dataKey="label"
+                tick={({ x, y, payload }) => {
+                  const row = scoreData.find((item) => item.label === payload.value)
+                  return (
+                    <text x={x} y={y} dy={12} textAnchor="middle" fontSize={11} fill={row?.fill ?? '#64748b'}>
+                      {payload.value}
+                    </text>
+                  )
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis domain={[0, 10]} ticks={[0, 3, 6, 10]} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+              <RechartsTooltip
+                formatter={(value, _name, props) => {
+                  const row = props.payload as ScoringDimensionRow | undefined
+                  const label = row?.label ?? 'Score'
+                  const display = hasNumericScoring && Number(value) > 0 ? `${value}/10` : 'Pending'
+                  return [display, label]
+                }}
+              />
+              <Bar dataKey="score" radius={[6, 6, 0, 0]}>
+                {scoreData.map((row) => (
+                  <Cell
+                    key={row.label}
+                    fill={scoringBarFill(row, hasNumericScoring)}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ScoringDraftReadinessCard({
+  title,
+  executiveBrief,
+  missingFields,
+  evidenceItems,
+  readinessPercent,
+  onNavigateToPanel,
+  onOpenBacklog,
+}: {
+  title: string
+  executiveBrief: string
+  missingFields: string[]
+  evidenceItems: ScoringEvidenceItem[]
+  readinessPercent: number
+  onNavigateToPanel: (panel: PanelKey) => void
+  onOpenBacklog: () => void
+}) {
+  const completedCount = evidenceItems.filter((item) => item.complete).length
+
+  return (
+    <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+      <CardContent className="relative z-10 space-y-4 p-4">
+        <div className="flex flex-col gap-3 border-b border-white/45 pb-4 lg:flex-row lg:items-start lg:gap-4">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-900 backdrop-blur-md">
+              <ClipboardList className="h-3.5 w-3.5" />
+              Draft readiness
+            </div>
+            <h3 className="text-base font-semibold text-slate-950">{title}</h3>
+            <p className="w-full text-sm leading-6 text-slate-600">{executiveBrief}</p>
+            <p className="w-full text-xs text-amber-800">
+              Backlog score dimensions are empty — the panel does not invent numbers until evidence is available.
+            </p>
+          </div>
+          <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex shrink-0 flex-col items-center gap-1 px-4 py-3 lg:mt-0')}>
+            <div
+              className="relative flex h-16 w-16 items-center justify-center rounded-full"
+              style={{
+                background: `conic-gradient(#f59e0b ${readinessPercent * 3.6}deg, #e2e8f0 0deg)`,
+              }}
+            >
+              <div className="flex h-[52px] w-[52px] flex-col items-center justify-center rounded-full bg-white text-center">
+                <span className="text-sm font-bold tabular-nums text-slate-900">{readinessPercent}%</span>
+              </div>
+            </div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Evidence ready</p>
+            <p className="text-[11px] text-slate-600">{completedCount}/{evidenceItems.length} fields</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          {evidenceItems.map((item) => (
+            <div
+              key={item.id}
+              className={cn(
+                'flex items-start gap-3 rounded-xl border px-3 py-2.5 backdrop-blur-md',
+                item.complete
+                  ? 'border-emerald-200/80 bg-emerald-50/40'
+                  : cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'border-white/60'),
+              )}
+            >
+              {item.complete ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              ) : (
+                <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                <p className="mt-0.5 text-[11px] leading-4 text-slate-500">{item.detail}</p>
+                {!item.complete && item.ctaPanel ? (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto px-0 py-0 mt-1 text-[11px] font-semibold text-violet-700"
+                    onClick={() => onNavigateToPanel(item.ctaPanel!)}
+                  >
+                    Complete in Summary
+                  </Button>
+                ) : null}
+                {!item.complete && item.ctaBacklog ? (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto px-0 py-0 mt-1 text-[11px] font-semibold text-violet-700"
+                    onClick={onOpenBacklog}
+                  >
+                    Open Idea &amp; Backlog
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {missingFields.length > 0 ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Runtime missing signals</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">{missingFields.join(', ')}</p>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
 function CollapsiblePanel({
   panelKey,
   title,
@@ -1356,6 +2074,9 @@ function CollapsiblePanel({
   onToggle,
   showToggle = true,
   confidence,
+  statusBadge,
+  fillHeight = false,
+  immersive = false,
   children,
 }: {
   panelKey: PanelKey
@@ -1365,11 +2086,21 @@ function CollapsiblePanel({
   onToggle: (key: PanelKey) => void
   showToggle?: boolean
   confidence?: number
+  statusBadge?: { label: string; className: string }
+  fillHeight?: boolean
+  immersive?: boolean
   children: React.ReactNode
 }) {
   return (
-    <Card className="glass-card rounded-2xl border-border/30 shadow-sm">
-      <CardHeader className="pb-3">
+    <Card
+      className={cn(
+        'glass-card rounded-2xl border-border/30 shadow-sm',
+        fillHeight && 'flex h-full min-h-0 flex-col overflow-hidden',
+        immersive && 'overflow-hidden',
+      )}
+    >
+      {!immersive && (
+      <CardHeader className={cn('pb-3', fillHeight && 'shrink-0')}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <CardTitle className="text-base text-slate-900 flex items-center gap-2">
@@ -1382,11 +2113,15 @@ function CollapsiblePanel({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {typeof confidence === 'number' && (
+            {statusBadge ? (
+              <Badge variant="outline" className={cn('text-[10px] font-semibold', statusBadge.className)}>
+                {statusBadge.label}
+              </Badge>
+            ) : typeof confidence === 'number' ? (
               <Badge variant="outline" className={cn('text-[10px] font-semibold', confidenceClass(confidence))}>
                 Confidence {confidence}%
               </Badge>
-            )}
+            ) : null}
             {showToggle && (
               <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => onToggle(panelKey)}>
                 {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -1395,7 +2130,19 @@ function CollapsiblePanel({
           </div>
         </div>
       </CardHeader>
-      {isOpen && <CardContent>{children}</CardContent>}
+      )}
+      {isOpen && (
+        <CardContent
+          className={cn(
+            immersive && 'min-h-0 flex-1 overflow-hidden p-0',
+            !immersive &&
+              fillHeight &&
+              'min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+          )}
+        >
+          {children}
+        </CardContent>
+      )}
     </Card>
   )
 }
@@ -1403,41 +2150,503 @@ function CollapsiblePanel({
 const IDEA_DETAIL_SIDEBAR_STORAGE_KEY = 'idea-detail-context-sidebar-collapsed'
 const IDEA_DETAIL_BRD_POLISH_MODE_STORAGE_KEY = 'idea-detail-brd-polish-mode'
 
-const IDEA_MENU_ITEMS: Array<{ key: PanelKey; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { key: 'summary', label: 'Summary', icon: ClipboardList },
-  { key: 'scoring', label: 'Scoring', icon: Gauge },
-  { key: 'impact', label: 'Impact', icon: TrendingUp },
-  { key: 'integration', label: 'Integration', icon: Cpu },
-  { key: 'process', label: 'Process', icon: GitBranch },
-  { key: 'costBenefit', label: 'Cost Benefit', icon: DollarSign },
-  { key: 'conversion', label: 'Conversion', icon: Layers },
-  { key: 'brd', label: 'BRD', icon: FileText },
+const IDEA_STATUSES: IdeaStatus[] = [
+  'New Submission',
+  'Under Review',
+  'Approved',
+  'Rejected',
+  'Converted to Project',
 ]
+
+const IDEA_ACTION_CONTROLS_STORAGE_KEY = 'tectona-idea-detail-action-controls-v1'
+const IDEA_ACTION_CONTROL_ORG_SHARES_KEY = 'tectona-idea-detail-org-shares-v1'
+const IDEA_ORG_PUBLISHED_KEY = 'tectona-idea-org-published-v1'
+
+type IdeaActionControlGroup = {
+  id: string
+  status: string
+  role: string
+  department: string
+  reviewerUserId: string
+  reviewerDisplayName: string
+}
+
+type IdeaActionControlStore = {
+  panels: Partial<Record<PanelKey, IdeaActionControlGroup[]>>
+  customStatuses: string[]
+  customRoles: string[]
+  customDepartments: string[]
+  publishedToOrgAt?: string
+  lastSubmittedAt?: string
+}
+
+type IdeaOrgPublishedRecord = {
+  organization_id: string
+  published_at: string
+  published_by: string
+}
+
+type IdeaOrgShareRecord = {
+  id: string
+  organization_id: string
+  idea_id: string
+  idea_title: string
+  submitted_by: string
+  submitted_at: string
+  panels: Partial<Record<PanelKey, IdeaActionControlGroup[]>>
+  custom_statuses: string[]
+  custom_roles: string[]
+  custom_departments: string[]
+}
+
+function createActionControlGroup(): IdeaActionControlGroup {
+  return {
+    id: `ac-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    status: '',
+    role: '',
+    department: '',
+    reviewerUserId: '',
+    reviewerDisplayName: '',
+  }
+}
+
+function normalizeActionControlGroup(raw: Partial<IdeaActionControlGroup> & { reviewerId?: string }): IdeaActionControlGroup {
+  return {
+    id: raw.id ?? createActionControlGroup().id,
+    status: raw.status ?? '',
+    role: typeof raw.role === 'string' ? raw.role : '',
+    department: raw.department ?? '',
+    reviewerUserId: raw.reviewerUserId ?? raw.reviewerId ?? '',
+    reviewerDisplayName: raw.reviewerDisplayName ?? '',
+  }
+}
+
+function defaultActionControlStore(seed?: Partial<IdeaActionControlStore>): IdeaActionControlStore {
+  const panels = seed?.panels ?? {}
+  const normalizedPanels = Object.fromEntries(
+    Object.entries(panels).map(([key, groups]) => [
+      key,
+      (groups ?? []).map((group) => normalizeActionControlGroup(group)),
+    ]),
+  ) as Partial<Record<PanelKey, IdeaActionControlGroup[]>>
+
+  return {
+    panels: normalizedPanels,
+    customStatuses: seed?.customStatuses ?? [],
+    customRoles: seed?.customRoles ?? [],
+    customDepartments: seed?.customDepartments ?? [],
+    publishedToOrgAt: seed?.publishedToOrgAt,
+    lastSubmittedAt: seed?.lastSubmittedAt,
+  }
+}
+
+function readActionControlStore(ideaId: string): IdeaActionControlStore {
+  if (typeof window === 'undefined') return defaultActionControlStore()
+  try {
+    const raw = localStorage.getItem(IDEA_ACTION_CONTROLS_STORAGE_KEY)
+    if (!raw) return defaultActionControlStore()
+    const parsed = JSON.parse(raw) as Record<string, IdeaActionControlStore>
+    return defaultActionControlStore(parsed[ideaId])
+  } catch {
+    return defaultActionControlStore()
+  }
+}
+
+function writeActionControlStore(ideaId: string, store: IdeaActionControlStore) {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = localStorage.getItem(IDEA_ACTION_CONTROLS_STORAGE_KEY)
+    const parsed = raw ? (JSON.parse(raw) as Record<string, IdeaActionControlStore>) : {}
+    parsed[ideaId] = store
+    localStorage.setItem(IDEA_ACTION_CONTROLS_STORAGE_KEY, JSON.stringify(parsed))
+  } catch {
+    // non-fatal
+  }
+}
+
+function readIdeaOrgPublished(ideaId: string): IdeaOrgPublishedRecord | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(IDEA_ORG_PUBLISHED_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Record<string, IdeaOrgPublishedRecord>
+    return parsed[ideaId] ?? null
+  } catch {
+    return null
+  }
+}
+
+function writeIdeaOrgPublished(ideaId: string, record: IdeaOrgPublishedRecord) {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = localStorage.getItem(IDEA_ORG_PUBLISHED_KEY)
+    const parsed = raw ? (JSON.parse(raw) as Record<string, IdeaOrgPublishedRecord>) : {}
+    parsed[ideaId] = record
+    localStorage.setItem(IDEA_ORG_PUBLISHED_KEY, JSON.stringify(parsed))
+  } catch {
+    // non-fatal
+  }
+}
+
+function appendOrgShareRecord(record: IdeaOrgShareRecord) {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = localStorage.getItem(IDEA_ACTION_CONTROL_ORG_SHARES_KEY)
+    const parsed = raw ? (JSON.parse(raw) as IdeaOrgShareRecord[]) : []
+    parsed.unshift(record)
+    localStorage.setItem(IDEA_ACTION_CONTROL_ORG_SHARES_KEY, JSON.stringify(parsed.slice(0, 200)))
+  } catch {
+    // non-fatal
+  }
+}
+
+function groupsForPanel(store: IdeaActionControlStore, panel: PanelKey): IdeaActionControlGroup[] {
+  const existing = store.panels[panel]
+  if (existing && existing.length > 0) return existing
+  return [createActionControlGroup()]
+}
+
+function remapActionControlFieldInPanels(
+  panels: Partial<Record<PanelKey, IdeaActionControlGroup[]>>,
+  field: 'status' | 'role' | 'department',
+  fromValue: string,
+  toValue: string,
+): Partial<Record<PanelKey, IdeaActionControlGroup[]>> {
+  const next: Partial<Record<PanelKey, IdeaActionControlGroup[]>> = {}
+  for (const [key, groups] of Object.entries(panels)) {
+    next[key as PanelKey] = (groups ?? []).map((group) => (
+      group[field] === fromValue ? { ...group, [field]: toValue } : group
+    ))
+  }
+  return next
+}
+
+function remapActionControlStatusInPanels(
+  panels: Partial<Record<PanelKey, IdeaActionControlGroup[]>>,
+  fromStatus: string,
+  toStatus: string,
+): Partial<Record<PanelKey, IdeaActionControlGroup[]>> {
+  return remapActionControlFieldInPanels(panels, 'status', fromStatus, toStatus)
+}
+
+type ActionControlSidebarMode = 'hidden' | 'readonly' | 'editable'
+
+function renderIdeaPanelWithOptionalFullscreen(
+  isFullscreen: boolean,
+  panel: React.ReactNode,
+): React.ReactNode {
+  if (isFullscreen && typeof document !== 'undefined') {
+    return (
+      <>
+        <div className="min-h-[50vh]" aria-hidden />
+        {createPortal(panel, document.body)}
+      </>
+    )
+  }
+  return panel
+}
 
 type IdeaDetailSidebarProps = {
   collapsed: boolean
   onCollapsedChange: (collapsed: boolean) => void
   activePanel: PanelKey
   onNavigatePanel: (key: PanelKey) => void
-  status: IdeaStatus
-  reviewer: string
-  isMetaSaving: boolean
-  metaSaveError: string | null
-  metaSavedAtLabel: string | null
-  reviewerOptions: IdeaReviewerOption[]
-  isReviewerOptionsLoading: boolean
-  reviewerOptionsError: string
-  onStatusChange: (status: IdeaStatus) => void
-  onReviewerChange: (value: string) => void
-  activeConfidence: number
-  isRegenerating: boolean
-  onRegenerate: (key: PanelKey) => void
-  brdTemplates?: BrdTemplate[]
-  brdSelectedTemplateId?: string
-  onSelectBrdTemplate?: (templateId: string) => void
-  onManageBrdTemplates?: () => void
-  brdLayoutPolishMode?: 'conservative' | 'aggressive'
-  onBrdLayoutPolishModeChange?: (mode: 'conservative' | 'aggressive') => void
+  menuSections: PanelKey[]
+  onReorderMenuSections: (orderedKeys: PanelKey[]) => void
+  actionControlMode: ActionControlSidebarMode
+  actionControlGroups: IdeaActionControlGroup[]
+  customStatuses: string[]
+  customRoles: string[]
+  customDepartments: string[]
+  onUpdateActionControlGroup: (groupId: string, patch: Partial<IdeaActionControlGroup>) => void
+  onAddCustomStatus: (label: string) => void
+  onUpdateCustomStatus: (previousLabel: string, nextLabel: string) => void
+  onRemoveCustomStatus: (label: string) => void
+  onAddCustomRole: (label: string) => void
+  onUpdateCustomRole: (previousLabel: string, nextLabel: string) => void
+  onRemoveCustomRole: (label: string) => void
+  onAddCustomDepartment: (label: string) => void
+  onUpdateCustomDepartment: (previousLabel: string, nextLabel: string) => void
+  onRemoveCustomDepartment: (label: string) => void
+  onPublishToOrganization: () => void
+  isPublishingToOrganization: boolean
+  canPublishToOrganization: boolean
+  publishShareHint: string
+  showManualPublishFooter: boolean
+  orgWorkspaceNotice: string | null
+  publishedAtLabel?: string | null
+  onWidthChange: (width: number) => void
+}
+
+const enterpriseSidebarSelectClass = cn(
+  'h-10 w-full appearance-none rounded-xl border border-slate-200/80 bg-gradient-to-b from-white to-slate-50/90',
+  'px-3.5 pr-9 text-[13px] font-medium tracking-tight text-slate-800',
+  'shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_1px_2px_rgba(15,23,42,0.05)]',
+  'transition-[border-color,box-shadow,background-color] duration-200',
+  'hover:border-slate-300 hover:shadow-[inset_0_1px_0_rgba(255,255,255,1),0_2px_6px_rgba(15,23,42,0.06)]',
+  'focus:border-primary/35 focus:outline-none focus:ring-2 focus:ring-primary/15',
+  'disabled:cursor-not-allowed disabled:opacity-55',
+  'dark:border-slate-700/70 dark:from-slate-900/50 dark:to-slate-950/40 dark:text-slate-100',
+)
+
+function ActionControlField({
+  label,
+  icon: Icon,
+  action,
+  children,
+}: {
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden />
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function ActionControlReadonlyBadge({
+  value,
+  emptyLabel,
+  tone = 'neutral',
+}: {
+  value: string
+  emptyLabel: string
+  tone?: 'neutral' | 'status' | 'role' | 'department' | 'reviewer'
+}) {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return (
+      <span className="inline-flex max-w-full items-center rounded-full border border-dashed border-slate-300/90 bg-slate-50/60 px-3 py-1 text-[11px] font-medium text-slate-400 dark:border-slate-600/70 dark:bg-slate-900/20 dark:text-slate-500">
+        {emptyLabel}
+      </span>
+    )
+  }
+
+  const toneClass = {
+    neutral: 'border-slate-200/90 bg-slate-100/90 text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-100',
+    status: 'border-sky-200/90 bg-sky-50 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-100',
+    role: 'border-emerald-200/90 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100',
+    department: 'border-violet-200/90 bg-violet-50 text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-100',
+    reviewer: 'border-slate-300/90 bg-slate-900 text-white dark:border-slate-600 dark:bg-slate-100 dark:text-slate-900',
+  }[tone]
+
+  return (
+    <span
+      className={cn(
+        'inline-flex max-w-full items-center rounded-full border px-3 py-1 text-[11px] font-semibold tracking-tight',
+        toneClass,
+      )}
+    >
+      <span className="truncate">{trimmed}</span>
+    </span>
+  )
+}
+
+function ActionControlManageButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary transition-colors hover:bg-primary/8',
+        enterpriseControlFocusClass(),
+      )}
+      onClick={onClick}
+    >
+      Manage
+    </button>
+  )
+}
+
+function ActionControlReviewerInfo({
+  reviewerDisplayName,
+  reviewerUserId,
+  isEditable,
+}: {
+  reviewerDisplayName: string
+  reviewerUserId: string
+  isEditable: boolean
+}) {
+  const hasReviewer = Boolean(reviewerDisplayName.trim() || reviewerUserId.trim())
+  if (hasReviewer) {
+    return (
+      <ActionControlReadonlyBadge
+        value={reviewerDisplayName.trim() || reviewerUserId}
+        emptyLabel="No reviewer yet"
+        tone="reviewer"
+      />
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-dashed border-amber-200/80 bg-amber-50/70 px-3.5 py-2.5 dark:border-amber-900/40 dark:bg-amber-950/20">
+      <p className="text-[12px] font-semibold text-amber-900 dark:text-amber-200">No reviewer yet</p>
+      <p className="mt-1 text-[11px] leading-5 text-amber-800/90 dark:text-amber-200/80">
+        {isEditable
+          ? 'You will be recorded as the reviewer once you update Status, Role, or Department in this section.'
+          : 'A reviewer appears here after an organization member completes Action & Control for this section.'}
+      </p>
+    </div>
+  )
+}
+
+type ActionControlGroupCardProps = {
+  group: IdeaActionControlGroup
+  index: number
+  isEditable: boolean
+  statusOptions: string[]
+  customRoles: string[]
+  customDepartments: string[]
+  onUpdateActionControlGroup: (groupId: string, patch: Partial<IdeaActionControlGroup>) => void
+  onManageStatus: () => void
+  onManageRole: () => void
+  onManageDepartment: () => void
+}
+
+function ActionControlGroupCard({
+  group,
+  index,
+  isEditable,
+  statusOptions,
+  customRoles,
+  customDepartments,
+  onUpdateActionControlGroup,
+  onManageStatus,
+  onManageRole,
+  onManageDepartment,
+}: ActionControlGroupCardProps) {
+  const [expanded, setExpanded] = useState(false)
+  const filledCount = [group.status, group.role, group.department].filter(Boolean).length
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-2xl border border-slate-200/75 bg-gradient-to-br from-white via-white to-slate-50/80 shadow-[0_12px_30px_-20px_rgba(15,23,42,0.35)] dark:border-slate-800/70 dark:from-slate-900/45 dark:to-slate-950/50"
+    >
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+      <button
+        type="button"
+        className={cn(
+          'flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-900/30',
+          expanded && 'border-b border-slate-100/90 dark:border-slate-800/60',
+        )}
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+        aria-controls={`action-control-group-${group.id}`}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex h-6 min-w-[1.75rem] shrink-0 items-center justify-center rounded-lg bg-slate-900 px-1.5 text-[10px] font-bold tracking-wide text-white shadow-sm">
+            {index + 1}
+          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Control group
+            </p>
+            <p className="text-[10px] text-slate-400">{filledCount}/3 fields set</p>
+          </div>
+        </div>
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200',
+            expanded && 'rotate-180',
+          )}
+          aria-hidden
+        />
+      </button>
+
+      {expanded ? (
+        <div id={`action-control-group-${group.id}`} className="space-y-3.5 p-3.5 pt-3">
+          <ActionControlField
+            label="Status"
+            icon={ClipboardList}
+            action={isEditable ? <ActionControlManageButton onClick={onManageStatus} /> : undefined}
+          >
+            {isEditable ? (
+              <div className="relative">
+                <select
+                  value={group.status}
+                  onChange={(event) => onUpdateActionControlGroup(group.id, { status: event.target.value })}
+                  className={enterpriseSidebarSelectClass}
+                >
+                  <option value="">Select status</option>
+                  {statusOptions.map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+              </div>
+            ) : (
+              <ActionControlReadonlyBadge value={group.status} emptyLabel="No status yet" tone="status" />
+            )}
+          </ActionControlField>
+
+          <ActionControlField
+            label="Role"
+            icon={Briefcase}
+            action={isEditable ? <ActionControlManageButton onClick={onManageRole} /> : undefined}
+          >
+            {isEditable ? (
+              <div className="relative">
+                <select
+                  value={group.role}
+                  onChange={(event) => onUpdateActionControlGroup(group.id, { role: event.target.value })}
+                  className={enterpriseSidebarSelectClass}
+                >
+                  <option value="">Select role</option>
+                  {customRoles.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+              </div>
+            ) : (
+              <ActionControlReadonlyBadge value={group.role} emptyLabel="No role yet" tone="role" />
+            )}
+          </ActionControlField>
+
+          <ActionControlField
+            label="Department"
+            icon={Building2}
+            action={isEditable ? <ActionControlManageButton onClick={onManageDepartment} /> : undefined}
+          >
+            {isEditable ? (
+              <div className="relative">
+                <select
+                  value={group.department}
+                  onChange={(event) => onUpdateActionControlGroup(group.id, { department: event.target.value })}
+                  className={enterpriseSidebarSelectClass}
+                >
+                  <option value="">Select department</option>
+                  {customDepartments.map((department) => (
+                    <option key={department} value={department}>{department}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+              </div>
+            ) : (
+              <ActionControlReadonlyBadge value={group.department} emptyLabel="No department yet" tone="department" />
+            )}
+          </ActionControlField>
+
+          <ActionControlField label="Reviewer" icon={UserRound}>
+            <ActionControlReviewerInfo
+              reviewerDisplayName={group.reviewerDisplayName}
+              reviewerUserId={group.reviewerUserId}
+              isEditable={isEditable}
+            />
+          </ActionControlField>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function BrdTemplateHeader({
@@ -1469,7 +2678,7 @@ function BrdTemplateHeader({
         <div className="px-2 py-1 text-center font-['Arial',sans-serif]">
           <p className="text-[28px] font-semibold leading-8 text-slate-700">Business Requirement Document</p>
           <p className="mt-1 text-[14px] leading-5 text-sky-700">
-            Nama System: <span className="font-semibold">{title}</span>
+            System Name: <span className="font-semibold">{title}</span>
           </p>
         </div>
       </div>
@@ -1661,43 +2870,147 @@ function BrdPageCanvasEditor({
   )
 }
 */
+function SortableIdeaNavItem({
+  sectionKey,
+  collapsed,
+  active,
+  onNavigate,
+}: {
+  sectionKey: PanelKey
+  collapsed: boolean
+  active: boolean
+  onNavigate: (key: PanelKey) => void
+}) {
+  const item = getIdeaPanelCatalogEntry(sectionKey)
+  const Icon = item.icon
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: sectionKey,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className={cn(isDragging && 'z-10 opacity-70')}>
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={() => onNavigate(sectionKey)}
+        className={cn(
+          'group h-9 w-full justify-start gap-1 rounded-lg pr-2 pl-1',
+          collapsed && 'justify-center px-0',
+          active ? 'bg-primary/12 text-primary hover:bg-primary/15' : 'text-muted-foreground hover:text-foreground',
+        )}
+        title={collapsed ? item.label : undefined}
+      >
+        {!collapsed && (
+          <span
+            {...attributes}
+            {...listeners}
+            className="flex h-6 w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
+            aria-label={`Drag to reorder ${item.label}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </span>
+        )}
+        <Icon className="h-4 w-4 shrink-0" />
+        {!collapsed && <span className="truncate">{item.label}</span>}
+      </Button>
+    </div>
+  )
+}
+
 function IdeaDetailSidebar({
   collapsed,
   onCollapsedChange,
   activePanel,
   onNavigatePanel,
-  status,
-  reviewer,
-  isMetaSaving,
-  metaSaveError,
-  metaSavedAtLabel,
-  reviewerOptions,
-  isReviewerOptionsLoading,
-  reviewerOptionsError,
-  onStatusChange,
-  onReviewerChange,
-  activeConfidence,
-  isRegenerating,
-  onRegenerate,
-  brdTemplates,
-  brdSelectedTemplateId,
-  onSelectBrdTemplate,
-  onManageBrdTemplates,
-  brdLayoutPolishMode,
-  onBrdLayoutPolishModeChange,
+  menuSections,
+  onReorderMenuSections,
+  actionControlMode,
+  actionControlGroups,
+  customStatuses,
+  customRoles,
+  customDepartments,
+  onUpdateActionControlGroup,
+  onAddCustomStatus,
+  onUpdateCustomStatus,
+  onRemoveCustomStatus,
+  onAddCustomRole,
+  onUpdateCustomRole,
+  onRemoveCustomRole,
+  onAddCustomDepartment,
+  onUpdateCustomDepartment,
+  onRemoveCustomDepartment,
+  showManualPublishFooter,
+  orgWorkspaceNotice,
+  onPublishToOrganization,
+  isPublishingToOrganization,
+  canPublishToOrganization,
+  publishShareHint,
+  publishedAtLabel,
+  onWidthChange,
 }: IdeaDetailSidebarProps) {
-  const activeMenu = IDEA_MENU_ITEMS.find((item) => item.key === activePanel)
+  const asideRef = useRef<HTMLElement>(null)
+  const activeMenu = getIdeaPanelCatalogEntry(activePanel)
+  const isEditable = actionControlMode === 'editable'
+  const isReadonly = actionControlMode === 'readonly'
+  const showActionControl = isEditable || isReadonly
+  const showActionControlSection = showActionControl || showManualPublishFooter || Boolean(orgWorkspaceNotice)
+  const [statusManagerOpen, setStatusManagerOpen] = useState(false)
+  const [roleManagerOpen, setRoleManagerOpen] = useState(false)
+  const [departmentManagerOpen, setDepartmentManagerOpen] = useState(false)
+  const statusOptions = useMemo(
+    () => [...IDEA_STATUSES, ...customStatuses.filter((item) => !IDEA_STATUSES.includes(item as IdeaStatus))],
+    [customStatuses],
+  )
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+
+  useLayoutEffect(() => {
+    const el = asideRef.current
+    if (el) onWidthChange(el.getBoundingClientRect().width)
+  }, [collapsed, onWidthChange])
+
+  useEffect(() => {
+    const el = asideRef.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (width) onWidthChange(width)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [onWidthChange])
+
+  const handleMenuDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = menuSections.indexOf(active.id as PanelKey)
+    const newIndex = menuSections.indexOf(over.id as PanelKey)
+    if (oldIndex === -1 || newIndex === -1) return
+    onReorderMenuSections(arrayMove(menuSections, oldIndex, newIndex))
+  }
 
   return (
     <aside
+      ref={asideRef}
       className={cn(
-        'fixed right-0 top-12 h-[calc(100vh-3rem)] glass-sidebar border-l border-border/20 transition-all duration-300 z-40',
-        collapsed ? 'w-12' : 'w-72'
+        'fixed right-0 top-12 z-40 flex h-[calc(100vh-3rem)] flex-col border-l border-slate-200/70',
+        'bg-gradient-to-b from-slate-50/95 via-white to-slate-100/80 backdrop-blur-xl',
+        'shadow-[-8px_0_32px_-12px_rgba(15,23,42,0.12)] transition-all duration-300 dark:border-slate-800/80 dark:from-slate-950/95 dark:via-slate-950 dark:to-slate-900/90',
+        collapsed ? 'w-12' : 'w-72',
       )}
     >
-      <div className="flex h-full flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-border/20 p-2">
-          {!collapsed && <span className="px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Idea Menu</span>}
+          {!collapsed && (
+            <span className="px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Idea Menu
+            </span>
+          )}
+          <div className={cn('flex items-center', collapsed ? 'w-full justify-center' : 'ml-auto')}>
           <Button
             variant="ghost"
             size="icon"
@@ -1707,239 +3020,206 @@ function IdeaDetailSidebar({
           >
             {collapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </Button>
+          </div>
         </div>
 
-        <div
-          className="flex-1 overflow-y-auto p-2 space-y-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-          style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
-        >
-          {IDEA_MENU_ITEMS.map((item) => {
-            const Icon = item.icon
-            const active = activePanel === item.key
-            return (
-              <Button
-                key={item.key}
-                type="button"
-                variant="ghost"
-                onClick={() => onNavigatePanel(item.key)}
-                className={cn(
-                  'w-full justify-start gap-2 h-9 rounded-lg',
-                  collapsed && 'justify-center px-0',
-                  active ? 'bg-primary/12 text-primary hover:bg-primary/15' : 'text-muted-foreground hover:text-foreground'
-                )}
-                title={collapsed ? item.label : undefined}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                {!collapsed && <span className="truncate">{item.label}</span>}
-              </Button>
-            )
-          })}
-
-          {!collapsed && (
-            <>
-              {activePanel === 'brd' && (
-                <Card className="mt-2 border-border/30 shadow-sm">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">BRD Template</CardTitle>
-                    <CardDescription className="text-[11px]">Pilih template atau kelola template BRD.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      {(brdTemplates ?? []).map((t) => {
-                        const selected = (brdSelectedTemplateId ?? '') === t.id
-                        const header = (t.header ?? '').trim()
-                        const body = (t.body ?? '').replace(/\u00A0/g, ' ').trim()
-                        const bodyPreview = body ? body.split('\n').filter(Boolean).slice(0, 4).join('\n') : ''
-                        return (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() => onSelectBrdTemplate?.(t.id)}
-                            className={cn(
-                              'group rounded-xl border bg-white p-2 text-left shadow-sm transition',
-                              'hover:border-slate-300 hover:bg-slate-50',
-                              selected ? 'border-primary/40 ring-2 ring-primary/20' : 'border-slate-200'
-                            )}
-                            aria-label={`Select BRD template: ${t.name}`}
-                            title={t.name}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="truncate text-[11px] font-semibold text-slate-900">{t.name}</p>
-                              {selected && <Check className="h-3.5 w-3.5 text-primary" />}
-                            </div>
-                            <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                              <div className="aspect-[3/4] w-full rounded-md bg-white p-2 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.08)]">
-                                {header ? (
-                                  <div className="text-[9px] font-semibold text-slate-700 line-clamp-1">{header}</div>
-                                ) : (
-                                  <div className="text-[9px] text-slate-400">(No header)</div>
-                                )}
-                                <div className="mt-1 space-y-1">
-                                  {(bodyPreview ? bodyPreview.split('\n') : ['']).map((line, idx) => (
-                                    <div
-                                      key={idx}
-                                      className={cn(
-                                        'h-2 rounded-sm',
-                                        line ? 'bg-slate-200' : 'bg-transparent'
-                                      )}
-                                      style={{ width: `${Math.max(45, Math.min(100, 92 - idx * 8))}%` }}
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleMenuDragEnd}>
+            <SortableContext items={menuSections} strategy={verticalListSortingStrategy}>
+              {menuSections.map((sectionKey) => (
+                <SortableIdeaNavItem
+                  key={sectionKey}
+                  sectionKey={sectionKey}
+                  collapsed={collapsed}
+                  active={activePanel === sectionKey}
+                  onNavigate={onNavigatePanel}
                                     />
                                   ))}
+            </SortableContext>
+          </DndContext>
+
+          {!collapsed && showActionControlSection ? (
+            <div className="mt-3 space-y-3 border-t border-slate-200/70 pt-3 dark:border-slate-800/70">
+              <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-white via-white to-slate-50/90 p-3 shadow-[0_10px_28px_-18px_rgba(15,23,42,0.28)] dark:border-slate-800/70 dark:from-slate-900/50 dark:to-slate-950/40">
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 to-slate-950 text-white shadow-[0_6px_14px_-6px_rgba(15,23,42,0.55)] ring-1 ring-white/10">
+                    <Target className="h-4 w-4" aria-hidden />
                                 </div>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                      Action & Control
+                    </p>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                      {activeMenu ? `${activeMenu.label} section` : 'Current section'}
+                    </p>
+                    {isReadonly ? (
+                      <Badge
+                        variant="outline"
+                        className="mt-2 h-5 rounded-full border-slate-200/80 bg-slate-50 px-2 text-[10px] font-semibold text-slate-600"
+                      >
+                        Read-only
+                      </Badge>
+                    ) : null}
+                    {isEditable ? (
+                      <Badge
+                        variant="outline"
+                        className="mt-2 h-5 rounded-full border-emerald-200/80 bg-emerald-50 px-2 text-[10px] font-semibold text-emerald-700"
+                      >
+                        Reviewer mode
+                      </Badge>
+                    ) : null}
                               </div>
                             </div>
-                          </button>
-                        )
-                      })}
                     </div>
 
-                    <Button variant="outline" className="w-full h-9" onClick={() => onManageBrdTemplates?.()}>
-                      Manage Template BRD
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-            <Card className="mt-2 border-border/30 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Action & Control</CardTitle>
-                <CardDescription className="text-[11px]">Status and reviewer updates.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-slate-600">Idea status</p>
-                  <select
-                    value={status}
-                    onChange={(e) => onStatusChange(e.target.value as IdeaStatus)}
-                    disabled={isMetaSaving}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  >
-                    <option value="New Submission">New Submission</option>
-                    <option value="Under Review">Under Review</option>
-                    <option value="Approved">Approved</option>
-                    <option value="Rejected">Rejected</option>
-                    <option value="Converted to Project">Converted to Project</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-slate-600">Reviewer</p>
-                  <select
-                    value={reviewer}
-                    onChange={(e) => onReviewerChange(e.target.value)}
-                    disabled={isMetaSaving || isReviewerOptionsLoading || reviewerOptions.length === 0}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  >
-                    <option value="">
-                      {isReviewerOptionsLoading
-                        ? 'Loading workspace members...'
-                        : reviewerOptionsError
-                          ? 'Failed to load members'
-                          : 'Select workspace member'}
-                    </option>
-                    {reviewer && !reviewerOptions.some((option) => option.subjectId === reviewer) ? (
-                      <option value={reviewer}>{reviewer}</option>
+              {showManualPublishFooter && !showActionControl ? (
+                <p className="rounded-xl border border-slate-200/70 bg-slate-50/80 px-3 py-2.5 text-[11px] leading-5 text-slate-500 dark:border-slate-800/70 dark:bg-slate-900/30 dark:text-slate-400">
+                  Submit this idea to the organization to unlock Action & Control for organization reviewers.
+                </p>
                     ) : null}
-                    {reviewerOptions.map((option) => (
-                      <option key={option.subjectId} value={option.subjectId}>
-                        {option.displayName} ({option.roleLabel})
-                      </option>
-                    ))}
-                  </select>
-                  {reviewerOptionsError ? (
-                    <p className="text-[11px] text-rose-600">{reviewerOptionsError}</p>
-                  ) : null}
-                  {isMetaSaving ? (
-                    <p className="inline-flex items-center gap-1.5 text-[11px] text-blue-700">
-                      <RefreshCcw className="h-3 w-3 animate-spin" />
-                      Saving metadata update...
+
+              {orgWorkspaceNotice && !showActionControl ? (
+                <p className="rounded-xl border border-sky-200/70 bg-sky-50/80 px-3 py-2.5 text-[11px] leading-5 text-sky-900 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-100">
+                  {orgWorkspaceNotice}
                     </p>
                   ) : null}
-                  {!isMetaSaving && !metaSaveError && metaSavedAtLabel ? (
-                    <p className="text-[11px] text-emerald-700">Last saved: {metaSavedAtLabel}</p>
-                  ) : null}
-                  {!isMetaSaving && metaSaveError ? (
-                    <p className="text-[11px] text-rose-600">Last update failed: {metaSaveError}</p>
-                  ) : null}
-                </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">AI Refresh</p>
-                      <p className="mt-1 text-xs text-slate-600">
-                        {activeMenu ? `${activeMenu.label} panel refresh` : 'Refresh current panel'}
-                      </p>
+              {showActionControl ? actionControlGroups.map((group, index) => (
+                <ActionControlGroupCard
+                  key={group.id}
+                  group={group}
+                  index={index}
+                  isEditable={isEditable}
+                  statusOptions={statusOptions}
+                  customRoles={customRoles}
+                  customDepartments={customDepartments}
+                  onUpdateActionControlGroup={onUpdateActionControlGroup}
+                  onManageStatus={() => setStatusManagerOpen(true)}
+                  onManageRole={() => setRoleManagerOpen(true)}
+                  onManageDepartment={() => setDepartmentManagerOpen(true)}
+                />
+              )) : null}
+
+              {publishedAtLabel ? (
+                <p className="flex items-center gap-1.5 rounded-xl border border-emerald-200/70 bg-emerald-50/70 px-3 py-2 text-[11px] font-medium text-emerald-800">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Published {publishedAtLabel}
+                </p>
+              ) : null}
                     </div>
-                    <Badge variant="outline" className={cn('text-[10px] font-semibold', confidenceClass(activeConfidence))}>
-                      {activeConfidence}%
-                    </Badge>
+          ) : null}
                   </div>
 
-                  {activePanel === 'brd' && (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1">
-                        <p className="text-xs font-medium text-slate-600">BRD polish mode</p>
-                        <CircleHelp
-                          className="h-3.5 w-3.5 text-slate-400"
-                          aria-label="Conservative: perubahan minimal, menjaga redaksi asli. Aggressive: perapihan lebih kuat untuk keterbacaan dan ketahanan pagination."
-                        />
+        {!collapsed && showManualPublishFooter ? (
+          <div className="shrink-0 border-t border-slate-200/70 bg-gradient-to-t from-slate-100/90 via-white to-white p-3.5 backdrop-blur-md dark:border-slate-800/70 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
+            <div className="mb-3 rounded-xl border border-slate-200/70 bg-white/80 px-3 py-2.5 dark:border-slate-800/70 dark:bg-slate-900/40">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Organization</p>
+              <p className="mt-1 text-[11px] leading-5 text-slate-500">{publishShareHint}</p>
                       </div>
-                      <select
-                        value={brdLayoutPolishMode ?? 'aggressive'}
-                        onChange={(e) => onBrdLayoutPolishModeChange?.(e.target.value as 'conservative' | 'aggressive')}
-                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        disabled={isRegenerating}
-                      >
-                        <option value="conservative">Conservative (minimal rewrite)</option>
-                        <option value="aggressive">Aggressive (strong readability polish)</option>
-                      </select>
-                      <p className="text-[11px] leading-4 text-slate-500">
-                        {(brdLayoutPolishMode ?? 'aggressive') === 'aggressive'
-                          ? 'Aggressive cocok saat hasil BRD masih panjang, padat, atau sering rawan terpotong di pergantian halaman.'
-                          : 'Conservative cocok saat struktur BRD sudah baik dan Anda hanya ingin perapihan ringan tanpa banyak perubahan redaksi.'}
-                      </p>
-                      <div className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1.5">
-                        <p className="text-[11px] font-medium text-slate-600">Selected mode</p>
-                        <Badge
-                          variant="outline"
+            <Button
+              type="button"
                           className={cn(
-                            'text-[10px] font-semibold',
-                            (brdLayoutPolishMode ?? 'aggressive') === 'aggressive'
-                              ? 'border-sky-200 bg-sky-50 text-sky-700'
-                              : 'border-slate-300 bg-slate-50 text-slate-700'
-                          )}
-                        >
-                          {(brdLayoutPolishMode ?? 'aggressive') === 'aggressive' ? 'Aggressive' : 'Conservative'}
-                        </Badge>
-                      </div>
-                    </div>
-                  )}
-
-                  <Button
-                    variant="outline"
-                    className="w-full h-9"
-                    onClick={() => onRegenerate(activePanel)}
-                    disabled={isRegenerating}
-                  >
-                    <RefreshCcw className={cn('h-3.5 w-3.5 mr-1.5', isRegenerating && 'animate-spin')} />
-                    {isRegenerating ? 'Regenerating...' : `Regenerate ${activeMenu?.label ?? 'Panel'}`}
+                enterpriseCyanGradientActionButtonClass(),
+                'h-11 w-full justify-center rounded-xl text-sm',
+                (!canPublishToOrganization || isPublishingToOrganization) && 'opacity-55 saturate-75',
+              )}
+              disabled={!canPublishToOrganization || isPublishingToOrganization}
+              onClick={onPublishToOrganization}
+            >
+              {isPublishingToOrganization ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Submitting…
+                </>
+              ) : (
+                <>
+                  <MoveRight className="h-4 w-4" />
+                  Submit to organization
+                </>
+              )}
                   </Button>
                 </div>
-              </CardContent>
-            </Card>
-            </>
-          )}
+        ) : null}
+
+        {!collapsed && orgWorkspaceNotice ? (
+          <div className="shrink-0 border-t border-slate-200/70 bg-gradient-to-t from-sky-50/90 via-white to-white p-3.5 backdrop-blur-md dark:border-slate-800/70 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
+            <div className="rounded-xl border border-sky-200/70 bg-sky-50/80 px-3 py-2.5 dark:border-sky-900/40 dark:bg-sky-950/20">
+              <div className="flex items-start gap-2">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-700 dark:text-sky-300" aria-hidden />
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-800 dark:text-sky-200">
+                    Organization workspace
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-sky-900/90 dark:text-sky-100/90">
+                    {orgWorkspaceNotice}
+                  </p>
         </div>
       </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <ManageCustomStatusesModal
+        open={statusManagerOpen}
+        onClose={() => setStatusManagerOpen(false)}
+        customStatuses={customStatuses}
+        reservedStatuses={[...IDEA_STATUSES]}
+        onCreateStatus={onAddCustomStatus}
+        onUpdateStatus={onUpdateCustomStatus}
+        onDeleteStatus={onRemoveCustomStatus}
+      />
+      <ManageActionControlListModal
+        open={roleManagerOpen}
+        onClose={() => setRoleManagerOpen(false)}
+        title="Manage Roles"
+        description="Add, rename, or delete organizational role titles used in Action & Control."
+        placeholder="New role (e.g., Head of IT Architecture, Product Owner)..."
+        emptyMessage="No roles yet. Add position titles that reviewers can select."
+        footerNote="Note: roles describe the reviewer's position (not workspace access level). Changes apply to this idea's Action & Control catalog."
+        items={customRoles}
+        onCreateItem={onAddCustomRole}
+        onUpdateItem={onUpdateCustomRole}
+        onDeleteItem={onRemoveCustomRole}
+      />
+      <ManageActionControlListModal
+        open={departmentManagerOpen}
+        onClose={() => setDepartmentManagerOpen(false)}
+        title="Manage Departments"
+        description="Add, rename, or delete department options for Action & Control."
+        placeholder="New department (e.g., IT Architecture, Operations)..."
+        emptyMessage="No departments yet. Add departments reviewers can assign."
+        footerNote="Note: department options are stored locally for this idea and shared with organization reviewers after publish."
+        items={customDepartments}
+        onCreateItem={onAddCustomDepartment}
+        onUpdateItem={onUpdateCustomDepartment}
+        onDeleteItem={onRemoveCustomDepartment}
+      />
     </aside>
   )
 }
+
+/**
+ * Simulated progress steps shown while generating a document from a template. The actual backend
+ * pipeline runs a planning LLM call then a fill LLM call inside one request/response, so there is no
+ * real granular progress signal to poll — this timed sequence mirrors the KB-generation progress
+ * pattern used elsewhere in the app (Document Repository) rather than introducing a new job/polling
+ * architecture just for this.
+ */
+const IDEA_DOC_GENERATE_STEPS = [
+  { key: 'analyze', label: 'Analyzing template structure' },
+  { key: 'plan', label: 'Planning content for each field' },
+  { key: 'write', label: 'Writing document content' },
+  { key: 'finish', label: 'Finalizing document' },
+] as const
+
+const IDEA_DOC_GENERATE_STEP_INTERVAL_MS = 2200
 
 export function IdeaDetailPage() {
   const { ideaId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
+  const tenant = useTenantContextOptional()
   const { addToast } = useToast()
   const fromState = location.state as { idea?: Idea } | undefined
 
@@ -1956,6 +3236,57 @@ export function IdeaDetailPage() {
   const lastMetaToastRef = useRef<{ key: string; at: number } | null>(null)
 
   const [brdPages, setBrdPages] = useState<string[]>([''])
+  const [ideaDocTemplates, setIdeaDocTemplates] = useState<DocumentTemplateResponse[]>([])
+  const [ideaDocTemplatesLoading, setIdeaDocTemplatesLoading] = useState(false)
+  const [ideaGeneratedDocs, setIdeaGeneratedDocs] = useState<DocumentResponse[]>([])
+  const [ideaDocsLoading, setIdeaDocsLoading] = useState(false)
+  const [ideaDocsPage, setIdeaDocsPage] = useState(1)
+  const [ideaDocsPageSize, setIdeaDocsPageSize] = useState(10)
+  const ideaDocsPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaDocsPanelHeightPx, setIdeaDocsPanelHeightPx] = useState<number | null>(null)
+  const [isIdeaDocsPanelFullscreen, setIsIdeaDocsPanelFullscreen] = useState(false)
+  const ideaConversionPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaConversionPanelHeightPx, setIdeaConversionPanelHeightPx] = useState<number | null>(null)
+  const [isConversionPanelFullscreen, setIsConversionPanelFullscreen] = useState(false)
+  const ideaSummaryPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaSummaryPanelHeightPx, setIdeaSummaryPanelHeightPx] = useState<number | null>(null)
+  const [isSummaryPanelFullscreen, setIsSummaryPanelFullscreen] = useState(false)
+  const ideaScoringPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaScoringPanelHeightPx, setIdeaScoringPanelHeightPx] = useState<number | null>(null)
+  const [isScoringPanelFullscreen, setIsScoringPanelFullscreen] = useState(false)
+  const ideaImpactPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaImpactPanelHeightPx, setIdeaImpactPanelHeightPx] = useState<number | null>(null)
+  const [isImpactPanelFullscreen, setIsImpactPanelFullscreen] = useState(false)
+  const ideaIntegrationPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaIntegrationPanelHeightPx, setIdeaIntegrationPanelHeightPx] = useState<number | null>(null)
+  const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
+  const ideaCostBenefitPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaCostBenefitPanelHeightPx, setIdeaCostBenefitPanelHeightPx] = useState<number | null>(null)
+  const [isCostBenefitPanelFullscreen, setIsCostBenefitPanelFullscreen] = useState(false)
+  const [ideaDocKbGeneratedIds, setIdeaDocKbGeneratedIds] = useState<Set<string>>(() => new Set())
+  const [ideaDocContextMenu, setIdeaDocContextMenu] = useState<{ item: RepositoryItem; x: number; y: number } | null>(null)
+  const [ideaDocDownloadBusyId, setIdeaDocDownloadBusyId] = useState<string | null>(null)
+  const [ideaDocKbBusyId, setIdeaDocKbBusyId] = useState<string | null>(null)
+  const [ideaDocRenameTarget, setIdeaDocRenameTarget] = useState<RepositoryItem | null>(null)
+  const [ideaDocRenameValue, setIdeaDocRenameValue] = useState('')
+  const [ideaDocRenameBusy, setIdeaDocRenameBusy] = useState(false)
+  const [ideaDocDeleteTarget, setIdeaDocDeleteTarget] = useState<RepositoryItem | null>(null)
+  const [ideaDocDeleteBusy, setIdeaDocDeleteBusy] = useState(false)
+  const [ideaDocGenerateOpen, setIdeaDocGenerateOpen] = useState(false)
+  const [ideaDocGenerateTemplateId, setIdeaDocGenerateTemplateId] = useState('')
+  const [ideaDocGenerateSource, setIdeaDocGenerateSource] = useState('')
+  const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
+  const [ideaDocGenerateStepIndex, setIdeaDocGenerateStepIndex] = useState(0)
+  const ideaDocGenerateTimerRef = useRef<number | null>(null)
+  type IdeaDocFolderStackEntry = { id: string; name: string }
+  const [ideaDocFolderStack, setIdeaDocFolderStack] = useState<IdeaDocFolderStackEntry[]>([])
+  const [ideaDocSubfolders, setIdeaDocSubfolders] = useState<DocumentFolder[]>([])
+  const [ideaDocFolderCreateBusy, setIdeaDocFolderCreateBusy] = useState(false)
+  const [ideaDocFolderInitBusy, setIdeaDocFolderInitBusy] = useState(false)
+  const selectedIdeaDocGenerateTemplate = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId) ?? null
+  const ideaDocGenerateSourceChars = ideaDocGenerateSource.trim().length
+  const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
+  const [ideaDocEditTitle, setIdeaDocEditTitle] = useState<string | null>(null)
   const brdPagesRef = useRef<string[]>([''])
   const brdContentNormalizationRef = useRef(false)
   const [brdHeaders, setBrdHeaders] = useState<string[]>([''])
@@ -2043,7 +3374,7 @@ export function IdeaDetailPage() {
         name: 'Standard BRD',
         header: 'Business Requirement Document',
         body:
-          '1) Latar Belakang\n- ...\n\n2) Tujuan\n- ...\n\n3) Ruang Lingkup\n- In scope: ...\n- Out of scope: ...\n\n4) Requirement\n- Functional:\n  - ...\n- Non-functional:\n  - ...\n\n5) Asumsi & Risiko\n- ...\n\n6) Kriteria Penerimaan\n- ...',
+          '1) Background\n- ...\n\n2) Objective\n- ...\n\n3) Scope\n- In scope: ...\n- Out of scope: ...\n\n4) Requirement\n- Functional:\n  - ...\n- Non-functional:\n  - ...\n\n5) Assumptions & Risks\n- ...\n\n6) Acceptance Criteria\n- ...',
       },
     ],
     []
@@ -2054,33 +3385,33 @@ export function IdeaDetailPage() {
   const [editingTemplate, setEditingTemplate] = useState<BrdTemplate | null>(null)
   const [collapsed, setCollapsed] = useState<Record<PanelKey, boolean>>({
     summary: true,
-    brd: true,
     scoring: true,
     impact: true,
     integration: true,
     process: true,
     costBenefit: true,
     conversion: true,
+    document: true,
   })
   const [regenerating, setRegenerating] = useState<Record<PanelKey, boolean>>({
     summary: false,
-    brd: false,
     scoring: false,
     impact: false,
     integration: false,
     process: false,
     costBenefit: false,
     conversion: false,
+    document: false,
   })
   const [confidence, setConfidence] = useState<Record<PanelKey, number>>({
     summary: 92,
-    brd: 89,
     scoring: 91,
     impact: 86,
-    integration: 82,
+    integration: 0,
     process: 88,
     costBenefit: 79,
     conversion: 90,
+    document: 84,
   })
   const isBrdGenerating = regenerating.brd
   const [isBrdRenderLocked, setIsBrdRenderLocked] = useState(false)
@@ -2111,9 +3442,100 @@ export function IdeaDetailPage() {
     [idea.submittedBy, fromState?.idea?.submittedBy, resolveIdentityDisplayName]
   )
 
+  const currentUserId = useMemo(() => getSession()?.user.id?.trim() ?? '', [])
+
+  const currentUserDisplayName = useMemo(() => {
+    if (currentUserId) {
+      const resolved = resolveIdentityDisplayName(currentUserId)
+      if (resolved) return resolved
+    }
+    const session = getSession()
+    return session?.user.email?.split('@')[0]?.trim() ?? ''
+  }, [currentUserId, resolveIdentityDisplayName])
+
+  const isIdeaCreator = useMemo(() => {
+    const ownerRaw = (idea.submittedBy ?? '').trim()
+    if (!ownerRaw) return true
+    if (currentUserId && ownerRaw === currentUserId) return true
+
+    const ownerDisplay = resolveIdentityDisplayName(ownerRaw)
+    if (
+      currentUserDisplayName
+      && ownerDisplay
+      && currentUserDisplayName.toLowerCase() === ownerDisplay.toLowerCase()
+    ) {
+      return true
+    }
+    if (
+      currentUserDisplayName
+      && ownerRaw.toLowerCase() === currentUserDisplayName.toLowerCase()
+    ) {
+      return true
+    }
+    if (
+      currentUserDisplayName
+      && ownerRaw.toLowerCase().includes(currentUserDisplayName.toLowerCase())
+    ) {
+      return true
+    }
+
+    return !currentUserId
+  }, [idea.submittedBy, currentUserId, currentUserDisplayName, resolveIdentityDisplayName])
+
   const reviewerDisplayName = useMemo(
-    () => resolveIdentityDisplayName(idea.reviewer) || 'â€”',
+    () => resolveIdentityDisplayName(idea.reviewer),
     [idea.reviewer, resolveIdentityDisplayName]
+  )
+
+  const [resolvedWorkspaceName, setResolvedWorkspaceName] = useState<string | null>(null)
+
+  useEffect(() => {
+    const raw = (idea.workspace ?? '').trim()
+    if (!isWorkspaceUuid(raw)) {
+      setResolvedWorkspaceName(null)
+      return
+    }
+
+    const tenantName = tenant?.displayName?.trim()
+    if (tenant?.workspaceId === raw && tenantName) {
+      setResolvedWorkspaceName(tenantName)
+      return
+    }
+
+    let cancelled = false
+    void fetchWorkspaceOrgWorkspaceById(raw)
+      .then((workspace) => {
+        if (cancelled) return
+        setResolvedWorkspaceName(workspace.name?.trim() || null)
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedWorkspaceName(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [idea.workspace, tenant?.displayName, tenant?.workspaceId])
+
+  const workspaceDisplayName = useMemo(() => {
+    const raw = (idea.workspace ?? '').trim()
+    if (!raw) return tenant?.displayName?.trim() || 'General'
+    if (isWorkspaceUuid(raw)) {
+      return resolvedWorkspaceName
+        || (tenant?.workspaceId === raw ? tenant?.displayName?.trim() : null)
+        || tenant?.displayName?.trim()
+        || 'Organization workspace'
+    }
+    return raw
+  }, [idea.workspace, tenant?.displayName, tenant?.workspaceId, resolvedWorkspaceName])
+
+  const workspaceManagementPath = useMemo(
+    () => workspaceScopedPath(tenant?.slug ?? null, '/workspace-management', tenant?.workspaceId),
+    [tenant?.slug, tenant?.workspaceId],
+  )
+  const ideaBacklogPath = useMemo(
+    () => workspaceScopedPath(tenant?.slug ?? null, '/idea-backlog', tenant?.workspaceId),
+    [tenant?.slug, tenant?.workspaceId],
   )
 
   // BRD and summary storage keys
@@ -2219,6 +3641,18 @@ export function IdeaDetailPage() {
   const [benefitError, setBenefitError] = useState<string | null>(null)
   const [conversionTimeline, setConversionTimeline] = useState<GenerateIdeaConversionResponse | null>(null)
   const [conversionError, setConversionError] = useState<string | null>(null)
+  const [conversionZoomLevel, setConversionZoomLevel] = useState<PlanningGanttZoomLevel>('Week')
+  const conversionGanttHostRef = useRef<HTMLDivElement | null>(null)
+  const [runtimeIntegrationAnalysis, setRuntimeIntegrationAnalysis] = useState<RuntimeIntegrationAnalysis>(
+    EMPTY_RUNTIME_INTEGRATION_ANALYSIS,
+  )
+  const [integrationLoaded, setIntegrationLoaded] = useState(false)
+  const [integrationMissing, setIntegrationMissing] = useState(false)
+  const [integrationWarnings, setIntegrationWarnings] = useState<string[]>([])
+  const [integrationGenerationError, setIntegrationGenerationError] = useState<string | null>(null)
+  const [integrationBootstrapRecord, setIntegrationBootstrapRecord] = useState<IntegrationGraphRecord | null>(null)
+  const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
+  const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
   const [isFreshIdea, setIsFreshIdea] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -2286,12 +3720,146 @@ export function IdeaDetailPage() {
     const stored = localStorage.getItem(IDEA_DETAIL_SIDEBAR_STORAGE_KEY)
     return stored ? JSON.parse(stored) : false
   })
+  // Idea Menu is a fixed right panel — float chat and reserve this sidebar width (same as Project Detail).
+  const setRightDrawerOpen = useRightDrawerStore((s) => s.setOpen)
+  const setRightDrawerWidth = useRightDrawerStore((s) => s.setWidth)
+  useEffect(() => {
+    setRightDrawerOpen(true)
+    return () => {
+      setRightDrawerOpen(false)
+      setRightDrawerWidth(DEFAULT_RIGHT_DRAWER_WIDTH)
+    }
+  }, [setRightDrawerOpen, setRightDrawerWidth])
   const [activePanel, setActivePanel] = useState<PanelKey>('summary')
+  const reorderIdeaMenuSections = useIdeaNavSectionsStore((state) => state.reorderSections)
+  const savedMenuSections = useIdeaNavSectionsStore((state) => state.sectionsByIdea[idea.id])
+  const menuSections = useMemo(
+    () => resolveIdeaNavSections(savedMenuSections),
+    [savedMenuSections],
+  )
+  const [actionControlStore, setActionControlStore] = useState<IdeaActionControlStore>(() => (
+    readActionControlStore(initialIdea.id)
+  ))
+  const [isPublishingToOrganization, setIsPublishingToOrganization] = useState(false)
+
+  useEffect(() => {
+    setActionControlStore(readActionControlStore(idea.id))
+  }, [idea.id])
+
+  const persistActionControlStore = useCallback((next: IdeaActionControlStore) => {
+    setActionControlStore(next)
+    writeActionControlStore(idea.id, next)
+  }, [idea.id])
+
+  const activeActionControlGroups = useMemo(
+    () => groupsForPanel(actionControlStore, activePanel),
+    [actionControlStore, activePanel],
+  )
+
+  const actionControlReviewerLabel = useMemo(() => {
+    for (const key of DEFAULT_IDEA_NAV_SECTIONS) {
+      for (const group of groupsForPanel(actionControlStore, key)) {
+        const displayName = group.reviewerDisplayName.trim()
+        if (displayName) return displayName
+        const userId = group.reviewerUserId.trim()
+        if (userId) return resolveIdentityDisplayName(userId) || userId
+      }
+    }
+    return ''
+  }, [actionControlStore, resolveIdentityDisplayName])
+
+  const hasActionControlActivity = useMemo(() => (
+    DEFAULT_IDEA_NAV_SECTIONS.some((key) => {
+      const groups = groupsForPanel(actionControlStore, key)
+      return groups.some((group) => (
+        Boolean(group.status.trim())
+        || Boolean(group.role.trim())
+        || Boolean(group.department.trim())
+        || Boolean(group.reviewerDisplayName.trim())
+        || Boolean(group.reviewerUserId.trim())
+      ))
+    })
+  ), [actionControlStore])
+
+  const headerStatusLabel = useMemo(() => {
+    if (idea.status === 'Under Review' && !hasActionControlActivity) return 'Intake'
+    return idea.status
+  }, [idea.status, hasActionControlActivity])
+
+  const headerStatusBadgeClass = headerStatusLabel === 'Intake'
+    ? intakeStatusClass
+    : statusClass[idea.status]
+
+  const headerDisplayTags = useMemo(() => {
+    const statusNorm = headerStatusLabel.trim().toLowerCase()
+    return idea.tags.filter((tag) => tag.trim().toLowerCase() !== statusNorm)
+  }, [idea.tags, headerStatusLabel])
+
+  const ideaOrgPublishedRecord = useMemo(
+    () => readIdeaOrgPublished(idea.id),
+    [idea.id, actionControlStore.publishedToOrgAt],
+  )
+
+  const isOrganizationWorkspaceContext = useMemo(() => (
+    tenant?.tenantMode === 'organization' && Boolean(tenant?.workspaceId)
+  ), [tenant?.tenantMode, tenant?.workspaceId])
+
+  const isIdeaPublishedToOrg = useMemo(() => {
+    if (ideaOrgPublishedRecord?.organization_id && tenant?.orgId) {
+      if (ideaOrgPublishedRecord.organization_id === tenant.orgId) return true
+    }
+    return Boolean(actionControlStore.publishedToOrgAt)
+  }, [tenant?.orgId, ideaOrgPublishedRecord, actionControlStore.publishedToOrgAt])
+
+  const isActionControlUnlocked = useMemo(() => {
+    if (isOrganizationWorkspaceContext) return true
+    if (!tenant?.orgId) return false
+    return isIdeaPublishedToOrg
+  }, [isOrganizationWorkspaceContext, tenant?.orgId, isIdeaPublishedToOrg])
+
+  const actionControlSidebarMode = useMemo((): ActionControlSidebarMode => {
+    if (!isActionControlUnlocked) return 'hidden'
+    if (isOrganizationWorkspaceContext || tenant?.orgId) {
+      return isIdeaCreator ? 'readonly' : 'editable'
+    }
+    return 'hidden'
+  }, [isActionControlUnlocked, isOrganizationWorkspaceContext, tenant?.orgId, isIdeaCreator])
+
+  const showActionControlManualPublishFooter = !isOrganizationWorkspaceContext && !isIdeaPublishedToOrg
+
+  const canPublishIdeaToOrganization = Boolean(tenant?.orgId) && isIdeaCreator && !isOrganizationWorkspaceContext
+
+  const publishShareHint = !tenant?.orgId
+    ? 'Join your organization workspace before you can publish this idea.'
+    : !isIdeaCreator
+      ? 'Waiting for the idea owner to publish this idea to the organization.'
+      : 'Publish this idea to your organization so reviewers can complete Action & Control on each section.'
+
+  const orgWorkspaceNotice = useMemo((): string | null => {
+    if (!isOrganizationWorkspaceContext) return null
+    const workspaceLabel = tenant?.displayName?.trim() || 'this organization workspace'
+    if (isIdeaCreator) {
+      return `${workspaceLabel}: already shared with your organization. No submit needed — read-only while members review.`
+    }
+    return `${workspaceLabel}: complete Action & Control here. No submit needed — you're recorded as reviewer on update.`
+  }, [isOrganizationWorkspaceContext, isIdeaCreator, tenant?.displayName])
+
+  const publishedAtLabel = useMemo(() => {
+    const publishedAt = actionControlStore.publishedToOrgAt ?? ideaOrgPublishedRecord?.published_at
+    if (!publishedAt) return null
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(publishedAt))
+    } catch {
+      return publishedAt
+    }
+  }, [actionControlStore.publishedToOrgAt, ideaOrgPublishedRecord?.published_at])
 
   const ideaPageContext = useMemo(() => {
-    const panelItem = IDEA_MENU_ITEMS.find((item) => item.key === activePanel)
-    const viewLabel =
-      activePanel === 'brd' ? 'BRD (AI-Generated)' : (panelItem?.label ?? 'Detail Ide')
+    const panelItem = getIdeaPanelCatalogEntry(activePanel)
+    const viewLabel = panelItem.label
     const fieldState = (value?: string) => ((value ?? '').trim() ? 'terisi' : 'kosong')
     return {
       view_label: viewLabel,
@@ -2306,10 +3874,7 @@ export function IdeaDetailPage() {
         `risk_summary=${fieldState(idea.riskSummary)}`,
         `description=${fieldState(idea.description)}`,
       ].join('; '),
-      notes:
-        activePanel === 'brd'
-          ? ['panel BRD aktif — editor dokumen AI-Generated BRD']
-          : undefined,
+      notes: undefined,
     }
   }, [
     activePanel,
@@ -2355,9 +3920,19 @@ export function IdeaDetailPage() {
     setIsReviewerOptionsLoading(true)
     setReviewerOptionsError('')
 
-    const defaultWorkspaceId = 'react-tectona'
-    const workspaceCandidates = [idea.workspace?.trim() || '', defaultWorkspaceId]
-      .filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index)
+    const workspaceCandidates = [
+      resolveWorkspaceApiId(tenant?.workspaceId),
+      isWorkspaceUuid(idea.workspace) ? idea.workspace.trim() : null,
+    ].filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index)
+
+    if (workspaceCandidates.length === 0) {
+      setReviewerMemberships([])
+      setReviewerOptionsError('Workspace UUID belum tersedia — pilih workspace di topbar terlebih dahulu.')
+      setIsReviewerOptionsLoading(false)
+      return () => {
+        cancelled = true
+      }
+    }
 
     void (async () => {
       let lastError: unknown = null
@@ -2387,7 +3962,7 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [idea.workspace])
+  }, [idea.workspace, tenant?.workspaceId])
 
   useEffect(() => {
     if (reviewerOptions.length === 0) return
@@ -2598,9 +4173,9 @@ export function IdeaDetailPage() {
         ...EMPTY_RUNTIME_SCORING_ANALYSIS,
         status: 'insufficient_data',
         summary_title: 'Scoring evidence is not sufficient yet',
-        executive_brief: 'Idea & Backlog belum memiliki data scoring yang cukup untuk dianalisis secara jujur.',
+        executive_brief: 'This idea does not yet have enough scoring data in Idea & Backlog for an honest analysis.',
         missing_fields: scoringSourceCheck.missingFields,
-        commentary: 'Belum ada analisa AI karena data scoring inti belum tersedia.',
+        commentary: 'No AI analysis yet because core scoring data is not available.',
       })
       setScoringLoaded(false)
       setScoringMissing(true)
@@ -2760,11 +4335,118 @@ export function IdeaDetailPage() {
     }
   }, [idea, runtimeUserId])
 
+  const applyIntegrationState = useCallback(
+    (analysis: RuntimeIntegrationAnalysis, record: IntegrationGraphRecord | null, ideaId: string) => {
+      setRuntimeIntegrationAnalysis(analysis)
+      setIntegrationWarnings(analysis.warnings)
+      setIntegrationLoaded(true)
+      setIntegrationMissing(analysis.status === 'insufficient_data')
+      setConfidence((prev) => ({
+        ...prev,
+        integration: Math.round(Math.max(0, Math.min(1, analysis.confidenceScore ?? 0)) * 100),
+      }))
+      if (record) {
+        setIntegrationBootstrapRecord(record)
+        setIntegrationBootstrapKey((current) => current + 1)
+        saveIntegrationGraph(ideaId, record)
+      }
+    },
+    [],
+  )
+
+  const loadRuntimeIntegration = useCallback(
+    async (
+      sourceIdea: Idea = idea,
+      options: { forceRefresh?: boolean; autoGenerateIfMissing?: boolean } = {},
+    ) => {
+      setIntegrationGenerationError(null)
+
+      if (!options.forceRefresh) {
+        try {
+          const persistent = await getPersistentIdeaIntegration(sourceIdea.id)
+          if (persistent) {
+            const analysis = runtimeIntegrationFromPersistent(persistent)
+            const record = graphRecordFromPersistentIntegration(persistent)
+            applyIntegrationState(analysis, record, sourceIdea.id)
+            return
+          }
+        } catch (error) {
+          setIntegrationGenerationError(
+            error instanceof Error ? error.message : 'Failed to load stored integration architecture.',
+          )
+        }
+
+        if (!options.autoGenerateIfMissing) {
+          setIntegrationLoaded(false)
+          setIntegrationMissing(true)
+          setRuntimeIntegrationAnalysis(EMPTY_RUNTIME_INTEGRATION_ANALYSIS)
+          setIntegrationBootstrapRecord(null)
+          setConfidence((prev) => ({ ...prev, integration: 0 }))
+          return
+        }
+      }
+
+      setIntegrationMissing(false)
+      try {
+        const response = await analyzeIdeaIntegration(
+          {
+            idea_id: sourceIdea.id,
+            context: {
+              workspace_id: sourceIdea.workspace ?? null,
+              user_id: runtimeUserId,
+              session_id: `idea-detail-integration-${sourceIdea.id}`,
+            },
+            idea: {
+              id: sourceIdea.id,
+              title: sourceIdea.title,
+              description: sourceIdea.description || null,
+              business_objective: sourceIdea.businessObjective ?? null,
+              scope_summary: sourceIdea.scopeSummary ?? null,
+              risk_summary: sourceIdea.riskSummary ?? null,
+              status: sourceIdea.status,
+              tags: sourceIdea.tags,
+            },
+          },
+          150_000,
+        )
+
+        const analysis = runtimeIntegrationFromAgentResponse(response)
+        const record = graphRecordFromIntegrationAnalysis(analysis, { userCustomized: false })
+
+        try {
+          await upsertPersistentIdeaIntegration(sourceIdea.id, {
+            ...buildPersistentIntegrationPayload(analysis, record, runtimeUserId || 'tectona-agent'),
+            version: sourceIdea.version,
+          })
+        } catch (persistError) {
+          analysis.warnings = [
+            ...analysis.warnings,
+            persistError instanceof Error ? persistError.message : 'INTEGRATION_PERSIST_FAILED',
+          ]
+        }
+
+        applyIntegrationState(analysis, record, sourceIdea.id)
+      } catch (error) {
+        setRuntimeIntegrationAnalysis(EMPTY_RUNTIME_INTEGRATION_ANALYSIS)
+        setIntegrationLoaded(false)
+        setIntegrationMissing(false)
+        setIntegrationBootstrapRecord(null)
+        setIntegrationGenerationError(
+          error instanceof Error ? error.message : 'AI integration analysis failed.',
+        )
+        setIntegrationWarnings(['INTEGRATION_GENERATION_FAILED'])
+        setConfidence((prev) => ({ ...prev, integration: 0 }))
+      }
+    },
+    [applyIntegrationState, idea, runtimeUserId],
+  )
+
   const loadRuntimeSummaryRef = useRef(loadRuntimeSummary)
   const loadRuntimeBrdRef = useRef(loadRuntimeBrd)
   const loadRuntimeScoringRef = useRef(loadRuntimeScoring)
   const loadRuntimeBenefitRef = useRef(loadRuntimeBenefit)
   const loadRuntimeConversionRef = useRef(loadRuntimeConversion)
+  const loadRuntimeIntegrationRef = useRef(loadRuntimeIntegration)
 
   useEffect(() => {
     loadRuntimeSummaryRef.current = loadRuntimeSummary
@@ -2785,6 +4467,10 @@ export function IdeaDetailPage() {
   useEffect(() => {
     loadRuntimeConversionRef.current = loadRuntimeConversion
   }, [loadRuntimeConversion])
+
+  useEffect(() => {
+    loadRuntimeIntegrationRef.current = loadRuntimeIntegration
+  }, [loadRuntimeIntegration])
 
   // Initial load: hydrate idea from API, then read idea_summary from DB (no agent on refresh).
   useEffect(() => {
@@ -2831,10 +4517,10 @@ export function IdeaDetailPage() {
           forceRefresh: wasFreshIdea,
           autoGenerateIfMissing: wasFreshIdea,
         })
-        await loadRuntimeBrdRef.current({ forceRefresh: false })
         await loadRuntimeScoringRef.current(hydratedIdea, { forceRefresh: wasFreshIdea })
         await loadRuntimeBenefitRef.current(hydratedIdea)
         await loadRuntimeConversionRef.current(hydratedIdea)
+        await loadRuntimeIntegrationRef.current(hydratedIdea, { autoGenerateIfMissing: wasFreshIdea })
       } finally {
         if (wasFreshIdea) {
           setRegenerating((prev) => ({ ...prev, summary: false }))
@@ -2891,6 +4577,7 @@ export function IdeaDetailPage() {
   const usesMultiRoleAgents =
     isMultiRoleSummaryMode(runtimeSummary) || summaryRoleModels.length > 0
   const isScoringRefreshing = regenerating.scoring
+  const isIntegrationRefreshing = regenerating.integration
   const scoringRefreshLabel = scoringLastRefreshedAt
     ? scoringLastRefreshedAt.toLocaleString('id-ID', {
         day: '2-digit',
@@ -2941,13 +4628,25 @@ export function IdeaDetailPage() {
     }, {})
   }, [brdSections])
 
-  const scoreData = [
-    { label: 'Business Value', score: idea.scoring.businessValue, fill: '#5f7de0', detail: 'Enterprise upside and strategic relevance.' },
-    { label: 'Effort', score: idea.scoring.effort, fill: '#e2a234', detail: 'Delivery load required to operationalize the idea.' },
-    { label: 'Risk', score: idea.scoring.risk, fill: '#d97706', detail: 'Execution exposure and governance watchpoints.' },
-    { label: 'ROI', score: idea.scoring.roi, fill: '#4f46e5', detail: 'Commercial return signal and payback strength.' },
-  ]
+  const scoreData = useMemo(() => buildScoreDataFromIdea(idea), [idea])
   const hasNumericScoring = scoreData.some((item) => item.score > 0)
+
+  const scoringEvidenceItems = useMemo(() => buildScoringEvidenceChecklist(idea), [idea])
+  const scoringReadinessPercent = useMemo(() => {
+    const complete = scoringEvidenceItems.filter((item) => item.complete).length
+    return scoringEvidenceItems.length === 0
+      ? 0
+      : Math.round((complete / scoringEvidenceItems.length) * 100)
+  }, [scoringEvidenceItems])
+  const showScoringFrameworkDraft = !scoringLoaded || scoringMissing
+  const openIdeaBacklogForScoring = useCallback(() => {
+    navigate('/idea-backlog', { state: { selectedIdeaId: idea.id } })
+  }, [navigate, idea.id])
+
+  const supportingDocuments = useMemo(
+    () => extractSupportingDocumentsFromText(idea.description || ''),
+    [idea.description],
+  )
 
   const costBenefitChartData = useMemo(() => {
     if (!benefitAnalysis) return []
@@ -2957,18 +4656,19 @@ export function IdeaDetailPage() {
       benefitAnalysis.total_benefit_5year <= 0
     if (narrativeOnly) {
       return [
-        { name: 'Business Value', value: idea.scoring.businessValue * 10, fill: '#5f7de0' },
-        { name: 'Effort', value: idea.scoring.effort * 10, fill: '#e2a234' },
-        { name: 'Risk', value: idea.scoring.risk * 10, fill: '#d97706' },
-        { name: 'ROI score', value: idea.scoring.roi * 10, fill: '#4f46e5' },
-      ].filter((item) => item.value > 0)
+        { name: 'Business Value', value: idea.scoring.businessValue * 10, fill: '#5f7de0', score: idea.scoring.businessValue },
+        { name: 'Effort', value: idea.scoring.effort * 10, fill: '#e2a234', score: idea.scoring.effort },
+        { name: 'Risk', value: idea.scoring.risk * 10, fill: '#d97706', score: idea.scoring.risk },
+        { name: 'ROI score', value: idea.scoring.roi * 10, fill: '#4f46e5', score: idea.scoring.roi },
+      ]
     }
     return [
-      { name: 'Development Cost', value: Math.round(benefitAnalysis.total_development_cost / 1000), fill: '#fb7185' },
+      { name: 'Development Cost', value: Math.round(benefitAnalysis.total_development_cost / 1000), fill: '#fb7185', score: null as number | null },
       {
         name: 'Operational Cost',
         value: Math.round(Math.max(0, benefitAnalysis.total_cost_5year - benefitAnalysis.total_development_cost) / 1000),
         fill: '#f59e0b',
+        score: null as number | null,
       },
       {
         name: 'Revenue Gain',
@@ -2976,6 +4676,7 @@ export function IdeaDetailPage() {
           (benefitAnalysis.annual_breakdown?.reduce((sum, year) => sum + (year.revenue_gains || 0), 0) || 0) / 1000,
         ),
         fill: '#10b981',
+        score: null as number | null,
       },
       {
         name: 'Efficiency Gain',
@@ -2983,14 +4684,867 @@ export function IdeaDetailPage() {
           (benefitAnalysis.annual_breakdown?.reduce((sum, year) => sum + (year.efficiency_gains || 0), 0) || 0) / 1000,
         ),
         fill: '#3b82f6',
+        score: null as number | null,
       },
-    ]
+    ].filter((item) => item.value > 0)
   }, [benefitAnalysis, idea.scoring])
+
+  const costBenefitIsNarrativeOnly = useMemo(() => {
+    if (!benefitAnalysis) return false
+    return (
+      benefitAnalysis.presentation_mode === 'narrative' &&
+      benefitAnalysis.total_development_cost <= 0 &&
+      benefitAnalysis.total_benefit_5year <= 0
+    )
+  }, [benefitAnalysis])
+
+  const costBenefitSupportingDocCount = useMemo(
+    () => supportingDocuments.length + ideaGeneratedDocs.length,
+    [supportingDocuments.length, ideaGeneratedDocs.length],
+  )
+
+  const costBenefitEvidenceItems = useMemo(
+    () => buildCostBenefitEvidenceChecklist(idea, benefitAnalysis, costBenefitSupportingDocCount),
+    [benefitAnalysis, costBenefitSupportingDocCount, idea],
+  )
+
+  const costBenefitEvidenceReadinessPercent = useMemo(() => {
+    const complete = costBenefitEvidenceItems.filter((item) => item.complete).length
+    return costBenefitEvidenceItems.length === 0
+      ? 0
+      : Math.round((complete / costBenefitEvidenceItems.length) * 100)
+  }, [costBenefitEvidenceItems])
+
+  const costBenefitValueEffortPosture = useMemo(
+    () => buildCostBenefitValueEffortPosture(idea, hasNumericScoring),
+    [hasNumericScoring, idea],
+  )
+
+  const costBenefitQualitativeLevers = useMemo(
+    () => buildCostBenefitQualitativeLevers(idea, benefitAnalysis),
+    [benefitAnalysis, idea],
+  )
+
+  const costBenefitScenarioBands = useMemo(
+    () => buildCostBenefitScenarioBands(benefitAnalysis),
+    [benefitAnalysis],
+  )
+
+  const costBenefitUpgradeHint = useMemo(
+    () => buildCostBenefitUpgradeHint(costBenefitEvidenceItems, confidence.costBenefit ?? 0),
+    [confidence.costBenefit, costBenefitEvidenceItems],
+  )
 
   const brainstormProcessDiagrams = useMemo(
     () => extractProcessDiagramsFromText(idea.description || ''),
     [idea.description],
   )
+
+  useEffect(() => {
+    if (activePanel !== 'document') return
+    let cancelled = false
+    setIdeaDocTemplatesLoading(true)
+    // Fetch without a workspace filter — templates registered without a workspace_id are shared
+    // "global" library templates (e.g. URD) and would be silently excluded by a strict server-side
+    // workspace_id match, so scoping is applied client-side instead.
+    void listTemplates({ status: 'active' })
+      .then((items) => {
+        if (cancelled) return
+        setIdeaDocTemplates(
+          items.filter(
+            (item) =>
+              item.has_attachment && (!item.workspace_id || item.workspace_id === idea.workspace),
+          ),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setIdeaDocTemplates([])
+      })
+      .finally(() => {
+        if (!cancelled) setIdeaDocTemplatesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activePanel, idea.workspace])
+
+  useEffect(() => {
+    if (activePanel !== 'document') return
+    let cancelled = false
+    setIdeaDocsLoading(true)
+    void listAllDocuments({ workspace_id: idea.workspace ?? undefined, page: 1, page_size: 100 })
+      .then((response) => {
+        if (cancelled) return
+        const linked = response.items.filter(
+          (item) => item.tags.includes(idea.id) || item.metadata?.idea_id === idea.id,
+        )
+        setIdeaGeneratedDocs((prev) => {
+          const merged = [...prev, ...linked].filter(
+            (doc, index, arr) => arr.findIndex((other) => other.id === doc.id) === index,
+          )
+          return merged.sort(
+            (a, b) =>
+              new Date(b.updated_date || b.created_date).getTime() -
+              new Date(a.updated_date || a.created_date).getTime(),
+          )
+        })
+      })
+      .catch(() => {
+        // Best-effort — the Docs table still works with session-generated documents only.
+      })
+      .finally(() => {
+        if (!cancelled) setIdeaDocsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activePanel, idea.id, idea.workspace])
+
+  useEffect(() => {
+    if (activePanel !== 'document') return
+    if (ideaGeneratedDocs.length === 0) {
+      setIdeaDocKbGeneratedIds(new Set())
+      return
+    }
+    let cancelled = false
+    void listAllKbEntries()
+      .then(({ items: kbEntries }) => {
+        if (cancelled) return
+        setIdeaDocKbGeneratedIds(
+          new Set(
+            ideaGeneratedDocs
+              .filter((doc) => findRepositoryTraceEntryByDocumentId(kbEntries, doc.id, doc.title))
+              .map((doc) => doc.id),
+          ),
+        )
+      })
+      .catch(() => {
+        // Best-effort — KB status is a display enhancement, not required to view documents.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activePanel, ideaGeneratedDocs])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'summary') return
+    if (isSummaryPanelFullscreen) {
+      setIdeaSummaryPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaSummaryPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaSummaryPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    window.addEventListener('scroll', updateHeight, { passive: true })
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      window.removeEventListener('scroll', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isSummaryPanelFullscreen, summaryLoaded, summaryRefreshLabel, summaryWarningItems.length])
+
+  useEffect(() => {
+    if (activePanel !== 'summary' && isSummaryPanelFullscreen) {
+      setIsSummaryPanelFullscreen(false)
+    }
+  }, [activePanel, isSummaryPanelFullscreen])
+
+  useEffect(() => {
+    if (!isSummaryPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsSummaryPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isSummaryPanelFullscreen])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'scoring') return
+    if (isScoringPanelFullscreen) {
+      setIdeaScoringPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaScoringPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaScoringPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    window.addEventListener('scroll', updateHeight, { passive: true })
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      window.removeEventListener('scroll', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isScoringPanelFullscreen])
+
+  useEffect(() => {
+    if (activePanel !== 'scoring' && isScoringPanelFullscreen) {
+      setIsScoringPanelFullscreen(false)
+    }
+  }, [activePanel, isScoringPanelFullscreen])
+
+  useEffect(() => {
+    if (!isScoringPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsScoringPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isScoringPanelFullscreen])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'impact') return
+    if (isImpactPanelFullscreen) {
+      setIdeaImpactPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaImpactPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaImpactPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    window.addEventListener('scroll', updateHeight, { passive: true })
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      window.removeEventListener('scroll', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isImpactPanelFullscreen])
+
+  useEffect(() => {
+    if (activePanel !== 'impact' && isImpactPanelFullscreen) {
+      setIsImpactPanelFullscreen(false)
+    }
+  }, [activePanel, isImpactPanelFullscreen])
+
+  useEffect(() => {
+    if (!isImpactPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsImpactPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isImpactPanelFullscreen])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'costBenefit') return
+    if (isCostBenefitPanelFullscreen) {
+      setIdeaCostBenefitPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaCostBenefitPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaCostBenefitPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isCostBenefitPanelFullscreen])
+
+  useEffect(() => {
+    if (activePanel !== 'costBenefit' && isCostBenefitPanelFullscreen) {
+      setIsCostBenefitPanelFullscreen(false)
+    }
+  }, [activePanel, isCostBenefitPanelFullscreen])
+
+  useEffect(() => {
+    if (!isCostBenefitPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsCostBenefitPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isCostBenefitPanelFullscreen])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'integration') return
+    if (isIntegrationPanelFullscreen) {
+      setIdeaIntegrationPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaIntegrationPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaIntegrationPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    window.addEventListener('scroll', updateHeight, { passive: true })
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      window.removeEventListener('scroll', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isIntegrationPanelFullscreen])
+
+  useEffect(() => {
+    if (activePanel !== 'integration' && isIntegrationPanelFullscreen) {
+      setIsIntegrationPanelFullscreen(false)
+    }
+  }, [activePanel, isIntegrationPanelFullscreen])
+
+  useEffect(() => {
+    if (!isIntegrationPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsIntegrationPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isIntegrationPanelFullscreen])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'document') return
+    if (isIdeaDocsPanelFullscreen) {
+      setIdeaDocsPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaDocsPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaDocsPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    window.addEventListener('scroll', updateHeight, { passive: true })
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      window.removeEventListener('scroll', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isIdeaDocsPanelFullscreen])
+
+  useEffect(() => {
+    if (activePanel !== 'document' && isIdeaDocsPanelFullscreen) {
+      setIsIdeaDocsPanelFullscreen(false)
+    }
+  }, [activePanel, isIdeaDocsPanelFullscreen])
+
+  useEffect(() => {
+    if (!isIdeaDocsPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsIdeaDocsPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isIdeaDocsPanelFullscreen])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'conversion') return
+    if (isConversionPanelFullscreen) {
+      setIdeaConversionPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaConversionPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaConversionPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isConversionPanelFullscreen])
+
+  useEffect(() => {
+    if (activePanel !== 'conversion' && isConversionPanelFullscreen) {
+      setIsConversionPanelFullscreen(false)
+    }
+  }, [activePanel, isConversionPanelFullscreen])
+
+  useEffect(() => {
+    if (!isConversionPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsConversionPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isConversionPanelFullscreen])
+
+  const ideaDocCurrentFolder = ideaDocFolderStack[ideaDocFolderStack.length - 1] ?? null
+  const isIdeaDocAtProjectRoot = ideaDocFolderStack.length <= 1
+  const ideaDocsInCurrentFolder = useMemo(() => {
+    if (!ideaDocCurrentFolder) return ideaGeneratedDocs
+    return ideaGeneratedDocs.filter((doc) => doc.folder_id === ideaDocCurrentFolder.id)
+  }, [ideaDocCurrentFolder, ideaGeneratedDocs])
+
+  const ideaRepositoryItems = useMemo(
+    () => ideaDocsInCurrentFolder.map((doc) => mapDocumentToRepositoryItem(doc, idea.title)),
+    [ideaDocsInCurrentFolder, idea.title],
+  )
+
+  const ideaDocsTotalCount = ideaRepositoryItems.length
+  const showIdeaDocEmptyState =
+    !ideaDocFolderInitBusy &&
+    !ideaDocsLoading &&
+    ideaRepositoryItems.length === 0 &&
+    ideaDocSubfolders.length === 0 &&
+    Boolean(ideaDocCurrentFolder)
+
+  const ideaDocsPaginatedItems = useMemo(() => {
+    const start = (ideaDocsPage - 1) * ideaDocsPageSize
+    return ideaRepositoryItems.slice(start, start + ideaDocsPageSize)
+  }, [ideaRepositoryItems, ideaDocsPage, ideaDocsPageSize])
+
+  const resolveIdeaTargetProject = useCallback(async () => {
+    const projectList = await fetchProjects({
+      page: 1,
+      page_size: 100,
+      app_id: TECTONA_PROJECT_APP_ID,
+      workspace_id: idea.workspace ?? null,
+    })
+
+    if (idea.project_id) {
+      const linkedProject = projectList.projects?.find((item) => item.id === idea.project_id)
+      if (linkedProject?.id) return linkedProject
+    }
+
+    const targetProject = projectList.projects?.[0]
+    if (!targetProject?.id) {
+      throw new Error('No project available to store the generated document.')
+    }
+    return targetProject
+  }, [idea.project_id, idea.workspace])
+
+  useEffect(() => {
+    if (activePanel !== 'document') return
+    let cancelled = false
+    setIdeaDocFolderInitBusy(true)
+    void (async () => {
+      try {
+        const targetProject = await resolveIdeaTargetProject()
+        const folderId = await ensureProjectDocumentFolder({
+          id: targetProject.id,
+          name: targetProject.name,
+        })
+        if (!cancelled) {
+          setIdeaDocFolderStack([{ id: folderId, name: targetProject.name }])
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setIdeaDocFolderStack([])
+          setIdeaDocSubfolders([])
+          addToast({
+            title: 'Failed to load idea docs folder',
+            description: error instanceof Error ? error.message : '',
+            variant: 'error',
+          })
+        }
+      } finally {
+        if (!cancelled) setIdeaDocFolderInitBusy(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activePanel, addToast, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject])
+
+  useEffect(() => {
+    if (activePanel !== 'document' || !ideaDocCurrentFolder) return
+    let cancelled = false
+    void fetchDocumentFolders({
+      parent_id: ideaDocCurrentFolder.id,
+      page: 1,
+      page_size: 100,
+    })
+      .then((response) => {
+        if (!cancelled) setIdeaDocSubfolders(response.folders)
+      })
+      .catch(() => {
+        if (!cancelled) setIdeaDocSubfolders([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activePanel, ideaDocCurrentFolder?.id])
+
+  const openIdeaDocSubfolder = useCallback((folder: DocumentFolder) => {
+    setIdeaDocFolderStack((prev) => [...prev, { id: folder.id, name: folder.name }])
+    setIdeaDocsPage(1)
+  }, [])
+
+  const goToIdeaDocParentFolder = useCallback(() => {
+    setIdeaDocFolderStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev))
+    setIdeaDocsPage(1)
+  }, [])
+
+  const navigateIdeaDocFolderIndex = useCallback((index: number) => {
+    setIdeaDocFolderStack((prev) => prev.slice(0, index + 1))
+    setIdeaDocsPage(1)
+  }, [])
+
+  const handleIdeaDocCreateFolder = useCallback(async () => {
+    if (!ideaDocCurrentFolder || ideaDocFolderCreateBusy) return
+
+    setIdeaDocFolderCreateBusy(true)
+    try {
+      const session = getSession()
+      const name = nextUntitledDocumentFolderName(ideaDocSubfolders)
+      await createDocumentFolder({
+        name,
+        description: null,
+        parent_id: ideaDocCurrentFolder.id,
+        owner_id: session?.user.id || session?.user.email || idea.submittedBy || null,
+      })
+
+      const folderResponse = await fetchDocumentFolders({
+        parent_id: ideaDocCurrentFolder.id,
+        page: 1,
+        page_size: 100,
+      })
+      setIdeaDocSubfolders(folderResponse.folders)
+
+      addToast({
+        title: 'Folder created',
+        description: `"${name}" is ready in this idea folder.`,
+        variant: 'success',
+      })
+    } catch (error) {
+      addToast({
+        title: 'Failed to create folder',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocFolderCreateBusy(false)
+    }
+  }, [addToast, idea.submittedBy, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders])
+
+  const openIdeaDocGenerateDialog = useCallback(() => {
+    const firstTemplate = ideaDocTemplates[0]
+    setIdeaDocGenerateTemplateId(firstTemplate?.id ?? '')
+    setIdeaDocGenerateSource((idea.description || idea.title || '').trim())
+    setIdeaDocGenerateOpen(true)
+  }, [idea.description, idea.title, ideaDocTemplates])
+
+  const handleIdeaDocGenerate = useCallback(async () => {
+    const template = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId)
+    if (!template) {
+      addToast({ title: 'Select a template', description: 'Pick a DKM master template first.', variant: 'error' })
+      return
+    }
+    const sourceText = ideaDocGenerateSource.trim()
+    if (!sourceText) {
+      addToast({
+        title: 'Source context required',
+        description: 'Provide idea notes or requirements for the agent to fill the template.',
+        variant: 'error',
+      })
+      return
+    }
+    if (ideaDocGenerateBusy) return
+    setIdeaDocGenerateBusy(true)
+    setIdeaDocGenerateStepIndex(0)
+    let stepIdx = 0
+    ideaDocGenerateTimerRef.current = window.setInterval(() => {
+      stepIdx = Math.min(stepIdx + 1, IDEA_DOC_GENERATE_STEPS.length - 1)
+      setIdeaDocGenerateStepIndex(stepIdx)
+    }, IDEA_DOC_GENERATE_STEP_INTERVAL_MS)
+    try {
+      const targetProject = await resolveIdeaTargetProject()
+      const targetFolderId = await ensureProjectDocumentFolder({
+        id: targetProject.id,
+        name: targetProject.name,
+      })
+
+      const filled = await fillDkmTemplate({
+        template_id: template.id,
+        source_text: sourceText.slice(0, 12000),
+        context: { workspace_id: idea.workspace ?? null },
+        options: { allow_llm: true },
+      })
+
+      const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
+        title: `${template.name} — ${idea.title}`.slice(0, 255),
+        summary: filled.payload.summary?.trim() || template.description || undefined,
+        workspace_id: idea.workspace ?? null,
+        folder_id: targetFolderId,
+        document_type_code: template.document_type_code,
+        category_code: template.category_code,
+        status_code: 'draft',
+        tags: ['from-template', 'ai-generated', 'idea-docs', template.template_code, idea.id],
+        access_scope_codes: ['project_team'],
+        metadata: {
+          source: 'idea-docs-ai-generate',
+          idea_id: idea.id,
+          template_code: template.template_code,
+          ai_generated: true,
+          fill_correlation_id: filled.correlation_id,
+          storage_project_id: targetProject.id,
+          storage_project_name: targetProject.name,
+        },
+        version_notes: `AI-generated from template ${template.template_code} for idea ${idea.id}`,
+        fills: filled.payload.fills ?? {},
+        sections: filled.payload.sections ?? {},
+        agent_schema: filled.agent_schema,
+        diagrams: filled.rendered_diagrams ?? {},
+      })
+
+      setIdeaGeneratedDocs((prev) => [created, ...prev.filter((doc) => doc.id !== created.id)])
+      setIdeaDocsPage(1)
+      setIdeaDocGenerateOpen(false)
+      setIdeaDocEditId(created.id)
+      setIdeaDocEditTitle(created.title)
+      addToast({
+        title: 'Document generated',
+        description: `${created.title} opened in the document editor. Download remains available from the Docs list.`,
+        variant: 'success',
+      })
+    } catch (error) {
+      addToast({
+        title: 'Failed to generate document',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      if (ideaDocGenerateTimerRef.current) {
+        window.clearInterval(ideaDocGenerateTimerRef.current)
+        ideaDocGenerateTimerRef.current = null
+      }
+      setIdeaDocGenerateBusy(false)
+    }
+  }, [
+    addToast,
+    idea.description,
+    idea.id,
+    idea.title,
+    idea.workspace,
+    ideaDocGenerateBusy,
+    ideaDocGenerateSource,
+    ideaDocGenerateTemplateId,
+    ideaDocTemplates,
+    resolveIdeaTargetProject,
+  ])
+
+  useEffect(() => {
+    return () => {
+      if (ideaDocGenerateTimerRef.current) {
+        window.clearInterval(ideaDocGenerateTimerRef.current)
+      }
+    }
+  }, [])
+
+  const openIdeaDocContextMenu = useCallback((event: { clientX: number; clientY: number }, item: RepositoryItem) => {
+    const menuWidth = 224
+    const menuHeight = 260
+    const gap = 8
+    const x = Math.min(event.clientX, window.innerWidth - menuWidth - gap)
+    const y = Math.min(event.clientY, window.innerHeight - menuHeight - gap)
+    setIdeaDocContextMenu({ item, x: Math.max(gap, x), y: Math.max(gap, y) })
+  }, [])
+
+  const handleIdeaDocDownload = useCallback(async (item: RepositoryItem) => {
+    setIdeaDocDownloadBusyId(item.id)
+    try {
+      const { blob, fileName } = await resolveLatestDocumentAttachmentBlob(item.id, {
+        fileNameHint: item.fileName || item.name,
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = fileName || item.fileName || 'document.docx'
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      addToast({
+        title: 'Download failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocDownloadBusyId(null)
+    }
+  }, [addToast])
+
+  const handleIdeaDocRenameConfirm = useCallback(async () => {
+    if (!ideaDocRenameTarget) return
+    const nextTitle = ideaDocRenameValue.trim()
+    if (!nextTitle) {
+      addToast({ title: 'Title required', description: 'Enter a document title.', variant: 'error' })
+      return
+    }
+    setIdeaDocRenameBusy(true)
+    try {
+      const updated = await patchDocument(ideaDocRenameTarget.id, {
+        version: ideaDocRenameTarget.documentVersion,
+        title: nextTitle,
+      })
+      setIdeaGeneratedDocs((prev) => prev.map((doc) => (doc.id === updated.id ? updated : doc)))
+      setIdeaDocRenameTarget(null)
+      addToast({ title: 'Document renamed', description: nextTitle, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Rename failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocRenameBusy(false)
+    }
+  }, [addToast, ideaDocRenameTarget, ideaDocRenameValue])
+
+  const handleIdeaDocRegenerateKb = useCallback(async (item: RepositoryItem) => {
+    const document_ = ideaGeneratedDocs.find((doc) => doc.id === item.id)
+    if (!document_) return
+    setIdeaDocKbBusyId(item.id)
+    try {
+      const { blob, fileName, contentType } = await resolveLatestDocumentAttachmentBlob(item.id, {
+        fileNameHint: item.fileName || item.name,
+      })
+      const file = new File([blob], fileName || item.fileName || item.name, {
+        type: contentType || 'application/octet-stream',
+      })
+      const kbResult = await generateIdeaDocKb({
+        file,
+        document: document_,
+        ideaId: idea.id,
+        ideaTitle: idea.title,
+        workspaceId: idea.workspace ?? null,
+        existingKbEntries: [],
+      })
+      if (kbResult.status === 'generated') {
+        setIdeaDocKbGeneratedIds((prev) => new Set(prev).add(item.id))
+        addToast({ title: 'KB generated', description: `Knowledge base entry created for ${item.name}.`, variant: 'success' })
+      } else if (kbResult.status === 'unsupported') {
+        addToast({
+          title: 'KB generation unavailable',
+          description: `${item.name}: ${kbResult.message}`,
+          variant: 'info',
+        })
+      } else {
+        addToast({ title: 'KB generation failed', description: `${item.name}: ${kbResult.message}`, variant: 'error' })
+      }
+    } catch (error) {
+      addToast({
+        title: 'KB generation failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocKbBusyId(null)
+    }
+  }, [addToast, idea.id, idea.title, idea.workspace, ideaGeneratedDocs])
+
+  const handleIdeaDocDeleteConfirm = useCallback(async () => {
+    if (!ideaDocDeleteTarget) return
+    setIdeaDocDeleteBusy(true)
+    try {
+      await deleteDocument(ideaDocDeleteTarget.id)
+      setIdeaGeneratedDocs((prev) => prev.filter((doc) => doc.id !== ideaDocDeleteTarget.id))
+      setIdeaDocKbGeneratedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(ideaDocDeleteTarget.id)
+        return next
+      })
+      setIdeaDocDeleteTarget(null)
+      addToast({ title: 'Document deleted', description: ideaDocDeleteTarget.name, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocDeleteBusy(false)
+    }
+  }, [addToast, ideaDocDeleteTarget])
 
   const processFlowNodes = useMemo(() => {
     const byKey = new Map(brdSections.map((section) => [section.key, section.content]))
@@ -3040,415 +5594,6 @@ export function IdeaDetailPage() {
     [fallbackMermaidCode],
   )
 
-  const integrationArchitecture = useMemo(() => {
-    const nodes: Node<ArchimateNodeData>[] = [
-      {
-        id: 'boundary-business-app',
-        type: 'archimateBoundary',
-        position: { x: 40, y: 120 },
-        data: { kind: 'boundary', title: 'Business / Application Collaboration Boundary' },
-        style: { width: 770, height: 430 },
-        draggable: false,
-        selectable: false,
-        connectable: false,
-        zIndex: 0,
-      },
-      {
-        id: 'boundary-tech',
-        type: 'archimateBoundary',
-        position: { x: 860, y: 120 },
-        data: { kind: 'boundary', title: 'Technology / External System Boundary' },
-        style: { width: 440, height: 430 },
-        draggable: false,
-        selectable: false,
-        connectable: false,
-        zIndex: 0,
-      },
-      {
-        id: 'canvas-notes',
-        type: 'archimateNote',
-        position: { x: 840, y: 20 },
-        data: {
-          kind: 'note',
-          title: 'Canvas Notes',
-          lines: [
-            'Modeled with ArchiMate-inspired layers: business role, application components and services, application data objects, and technology nodes.',
-            'Primary routes: synchronous serving, asynchronous flow, and controlled data access into internal and external delivery targets.',
-          ],
-        },
-        style: { width: 470, height: 78 },
-        draggable: false,
-        selectable: false,
-        connectable: false,
-        zIndex: 2,
-      },
-      {
-        id: 'legend',
-        type: 'archimateLegend',
-        position: { x: 40, y: 580 },
-        data: { kind: 'legend' },
-        style: { width: 1270, height: 82 },
-        draggable: false,
-        selectable: false,
-        connectable: false,
-        zIndex: 2,
-      },
-      {
-        id: 'portfolio-governance',
-        type: 'archimateElement',
-        position: { x: 70, y: 195 },
-        data: {
-          kind: 'element',
-          layer: 'business',
-          stereotype: 'Business Role',
-          title: 'Komite Multi Finance',
-          description: ['Sponsor ide, review,', 'dan pemilik prioritas'],
-          variant: 'business-role',
-        },
-        style: { width: 180 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'idea-engine',
-        type: 'archimateElement',
-        position: { x: 310, y: 160 },
-        data: {
-          kind: 'element',
-          layer: 'application',
-          stereotype: 'Application Component',
-          title: 'Idea Intelligence Engine',
-          description: ['Pengayaan AI, scoring risiko,', 'dan orkestrasi rekomendasi'],
-          variant: 'application-component',
-        },
-        style: { width: 210 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'api-gateway',
-        type: 'archimateElement',
-        position: { x: 570, y: 160 },
-        data: {
-          kind: 'element',
-          layer: 'application',
-          stereotype: 'Application Component',
-          title: 'API Gateway',
-          description: ['Enforcement kebijakan, authz,', 'routing, dan observability'],
-          variant: 'application-component',
-        },
-        style: { width: 210 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'recommendation-api',
-        type: 'archimateElement',
-        position: { x: 310, y: 300 },
-        data: {
-          kind: 'element',
-          layer: 'application',
-          stereotype: 'Application Service',
-          title: 'API Rekomendasi AI',
-          description: ['Permukaan eksekusi sinkron'],
-          variant: 'application-service',
-        },
-        style: { width: 210 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'integration-hub',
-        type: 'archimateElement',
-        position: { x: 570, y: 300 },
-        data: {
-          kind: 'element',
-          layer: 'application',
-          stereotype: 'Application Service',
-          title: 'Hub Integrasi',
-          description: ['Orkestrasi API, event, dan batch'],
-          variant: 'application-service',
-        },
-        style: { width: 210 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'forecast-signal-package',
-        type: 'archimateElement',
-        position: { x: 310, y: 450 },
-        data: {
-          kind: 'element',
-          layer: 'data',
-          stereotype: 'Data Object',
-          title: 'Paket Sinyal SLA KPR',
-          description: ['Indikator historis dan real-time', 'keterlambatan persetujuan'],
-          variant: 'data-object',
-        },
-        style: { width: 210 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'insight-outcome',
-        type: 'archimateElement',
-        position: { x: 570, y: 450 },
-        data: {
-          kind: 'element',
-          layer: 'data',
-          stereotype: 'Data Object',
-          title: 'Hasil Insight',
-          description: ['Paket keputusan untuk', 'consumer downstream'],
-          variant: 'data-object',
-        },
-        style: { width: 210 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'crm-platform',
-        type: 'archimateElement',
-        position: { x: 900, y: 170 },
-        data: {
-          kind: 'element',
-          layer: 'technology',
-          stereotype: 'Technology Node',
-          title: 'Platform CRM',
-          description: ['Pertukaran data nasabah', 'dan status persetujuan'],
-          variant: 'technology-node',
-        },
-        style: { width: 150 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'erp-platform',
-        type: 'archimateElement',
-        position: { x: 1108, y: 170 },
-        data: {
-          kind: 'element',
-          layer: 'technology',
-          stereotype: 'Technology Node',
-          title: 'Platform LOS/ERP',
-          description: ['Publikasi event approval', 'dan konfirmasi finansial'],
-          variant: 'technology-node',
-        },
-        style: { width: 150 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'data-platform',
-        type: 'archimateElement',
-        position: { x: 900, y: 300 },
-        data: {
-          kind: 'element',
-          layer: 'technology',
-          stereotype: 'Technology Node',
-          title: 'Data Platform',
-          description: ['Konsolidasi histori SLA dan', 'dataset feature engineering'],
-          variant: 'technology-node',
-        },
-        style: { width: 150 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'external-services',
-        type: 'archimateElement',
-        position: { x: 1108, y: 300 },
-        data: {
-          kind: 'element',
-          layer: 'technology',
-          stereotype: 'Technology Node',
-          title: 'Layanan Eksternal',
-          description: ['Verifikasi dokumen eksternal', 'dan data pendukung risiko'],
-          variant: 'technology-node',
-        },
-        style: { width: 150 },
-        draggable: false,
-        selectable: false,
-      },
-      {
-        id: 'virea-delivery',
-        type: 'archimateElement',
-        position: { x: 1004, y: 430 },
-        data: {
-          kind: 'element',
-          layer: 'technology',
-          stereotype: 'Technology Node',
-          title: 'Workspace Delivery',
-          description: ['Workspace eksekusi dan', 'target aksi downstream'],
-          variant: 'technology-node',
-        },
-        style: { width: 150 },
-        draggable: false,
-        selectable: false,
-      },
-    ]
-
-    const edges: Edge[] = [
-      {
-        id: 'serving-governance-idea-engine',
-        source: 'portfolio-governance',
-        target: 'idea-engine',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Serving',
-        labelStyle: { fill: '#334155', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#0f172a' },
-        style: { stroke: '#0f172a', strokeWidth: 2 },
-      },
-      {
-        id: 'serving-idea-engine-api-gateway',
-        source: 'idea-engine',
-        target: 'api-gateway',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Serving',
-        labelStyle: { fill: '#334155', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#0f172a' },
-        style: { stroke: '#0f172a', strokeWidth: 2 },
-      },
-      {
-        id: 'serving-idea-engine-recommendation-api',
-        source: 'idea-engine',
-        target: 'recommendation-api',
-        sourceHandle: 'source-bottom',
-        targetHandle: 'target-top',
-        type: 'smoothstep',
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#0f172a' },
-        style: { stroke: '#0f172a', strokeWidth: 2 },
-      },
-      {
-        id: 'serving-api-gateway-integration-hub',
-        source: 'api-gateway',
-        target: 'integration-hub',
-        sourceHandle: 'source-bottom',
-        targetHandle: 'target-top',
-        type: 'smoothstep',
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#0f172a' },
-        style: { stroke: '#0f172a', strokeWidth: 2 },
-      },
-      {
-        id: 'flow-recommendation-api-integration-hub',
-        source: 'recommendation-api',
-        target: 'integration-hub',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Flow',
-        labelStyle: { fill: '#475569', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#334155' },
-        style: { stroke: '#334155', strokeWidth: 2, strokeDasharray: '6 6' },
-      },
-      {
-        id: 'access-recommendation-api-forecast-signal',
-        source: 'recommendation-api',
-        target: 'forecast-signal-package',
-        sourceHandle: 'source-bottom',
-        targetHandle: 'target-top',
-        type: 'smoothstep',
-        label: 'Access',
-        labelStyle: { fill: '#475569', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#475569' },
-        style: { stroke: '#475569', strokeWidth: 2, strokeDasharray: '3 5' },
-      },
-      {
-        id: 'access-integration-hub-insight-outcome',
-        source: 'integration-hub',
-        target: 'insight-outcome',
-        sourceHandle: 'source-bottom',
-        targetHandle: 'target-top',
-        type: 'smoothstep',
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#475569' },
-        style: { stroke: '#475569', strokeWidth: 2, strokeDasharray: '3 5' },
-      },
-      {
-        id: 'serving-integration-hub-crm',
-        source: 'integration-hub',
-        target: 'crm-platform',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Serving',
-        labelStyle: { fill: '#334155', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#0f172a' },
-        style: { stroke: '#0f172a', strokeWidth: 2 },
-      },
-      {
-        id: 'flow-integration-hub-erp',
-        source: 'integration-hub',
-        target: 'erp-platform',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Flow',
-        labelStyle: { fill: '#475569', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#334155' },
-        style: { stroke: '#334155', strokeWidth: 2, strokeDasharray: '6 6' },
-      },
-      {
-        id: 'access-integration-hub-data-platform',
-        source: 'integration-hub',
-        target: 'data-platform',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Access',
-        labelStyle: { fill: '#475569', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#475569' },
-        style: { stroke: '#475569', strokeWidth: 2, strokeDasharray: '3 5' },
-      },
-      {
-        id: 'flow-integration-hub-external-services',
-        source: 'integration-hub',
-        target: 'external-services',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Flow',
-        labelStyle: { fill: '#475569', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#334155' },
-        style: { stroke: '#334155', strokeWidth: 2, strokeDasharray: '6 6' },
-      },
-      {
-        id: 'serving-insight-outcome-virea',
-        source: 'insight-outcome',
-        target: 'virea-delivery',
-        sourceHandle: 'source-right',
-        targetHandle: 'target-left',
-        type: 'smoothstep',
-        label: 'Serving',
-        labelStyle: { fill: '#334155', fontSize: 10, fontWeight: 500 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [4, 2],
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#0f172a' },
-        style: { stroke: '#0f172a', strokeWidth: 2 },
-      },
-    ]
-
-    return { nodes, edges }
-  }, [])
-
   // Sync render lock state to ref for immediate rebalance gating
   useEffect(() => {
     isBrdRenderLockedRef.current = isBrdRenderLocked
@@ -3472,77 +5617,6 @@ export function IdeaDetailPage() {
           if (elapsedMs < minLoadingMs) {
             await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
           }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'brd') {
-      void (async () => {
-        // Use ref for immediate locking to prevent rebalance during generation
-        isBrdRenderLockedRef.current = true
-        setIsBrdRenderLocked(true)
-        const startedAt = Date.now()
-        try {
-          // Reset to one blank page while generation is in progress.
-          const blankHeader = 'Business Requirements Document (BRD)'
-          setEditingHeaderIndex(null)
-          setBrdStylesMenuOpen(false)
-          setBrdTableMenuOpen(false)
-          setBrdSpacingMenuOpen(false)
-          setBrdTextColorMenuOpen(false)
-          setBrdHighlightMenuOpen(false)
-          setBrdShadingMenuOpen(false)
-          setBrdCaseMenuOpen(false)
-          setBrdMultilevelMenuOpen(false)
-          setBrdBulletMenuOpen(false)
-          setBrdNumberMenuOpen(false)
-          brdPagesRef.current = ['']
-          setBrdPages([''])
-          brdHeadersRef.current = [blankHeader]
-          setBrdHeaders([blankHeader])
-          brdHeaderHeightsRef.current = [18]
-          setBrdHeaderHeights([18])
-          scheduleWordCountUpdate()
-
-          const result = await loadRuntimeBrd({ forceRefresh: true })
-          // Use the freshly returned data (not stale closure state)
-          setEditingHeaderIndex(null)
-          const nextHeader = (result.brd_title ?? 'Business Requirements Document (BRD)').trim()
-          // IMPORTANT: Convert plain text to HTML only, skip full normalization to preserve all content.
-          const rawBody = (result.brd_document ?? buildLocalBrdFallback()).trim()
-          const nextBody = brdBodyHasHtmlMarkup(rawBody) ? rawBody : convertPlainTextBrdToHtml(rawBody)
-          brdPagesRef.current = [nextBody]
-          setBrdPages([nextBody])
-          brdHeadersRef.current = [nextHeader]
-          setBrdHeaders([nextHeader])
-          brdHeaderHeightsRef.current = [18]
-          setBrdHeaderHeights([18])
-          scheduleWordCountUpdate()
-        } catch {
-          // IMPORTANT: Convert plain text to HTML on fallback too
-          const rawFallback = (buildLocalBrdFallback()).trim()
-          const fallbackBody = brdBodyHasHtmlMarkup(rawFallback) ? rawFallback : convertPlainTextBrdToHtml(rawFallback)
-          setEditingHeaderIndex(null)
-          brdPagesRef.current = [fallbackBody]
-          setBrdPages([fallbackBody])
-          brdHeadersRef.current = ['Business Requirements Document (BRD)']
-          setBrdHeaders(['Business Requirements Document (BRD)'])
-          brdHeaderHeightsRef.current = [18]
-          setBrdHeaderHeights([18])
-          scheduleWordCountUpdate()
-          setConfidence((prev) => ({ ...prev, brd: Math.max(72, prev.brd - 4) }))
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 900
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          // Keep cover/TOC hidden until the editor has committed the refreshed BRD page state.
-          // IMPORTANT: Unlock immediately via ref FIRST to allow rebalance, then clear both state flags.
-          isBrdRenderLockedRef.current = false
-          setIsBrdRenderLocked(false)
           setRegenerating((prev) => ({ ...prev, [key]: false }))
         }
       })()
@@ -3599,6 +5673,31 @@ export function IdeaDetailPage() {
           const elapsedMs = Date.now() - startedAt
           if (elapsedMs < 700) {
             await new Promise((resolve) => window.setTimeout(resolve, 700 - elapsedMs))
+          }
+          setRegenerating((prev) => ({ ...prev, [key]: false }))
+        }
+      })()
+      return
+    }
+
+    if (key === 'integration') {
+      void (async () => {
+        const startedAt = Date.now()
+        try {
+          let refreshedIdea = idea
+          try {
+            const api = await getIdeaById(idea.id)
+            refreshedIdea = ideaFromApi(api)
+            setIdea(refreshedIdea)
+          } catch {
+            // keep current snapshot
+          }
+          await loadRuntimeIntegrationRef.current(refreshedIdea, { forceRefresh: true })
+        } finally {
+          const elapsedMs = Date.now() - startedAt
+          const minLoadingMs = 700
+          if (elapsedMs < minLoadingMs) {
+            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
           }
           setRegenerating((prev) => ({ ...prev, [key]: false }))
         }
@@ -3720,6 +5819,215 @@ export function IdeaDetailPage() {
       })
     })
   }
+
+  const updateActivePanelActionGroups = useCallback((groups: IdeaActionControlGroup[]) => {
+    persistActionControlStore({
+      ...actionControlStore,
+      panels: {
+        ...actionControlStore.panels,
+        [activePanel]: groups,
+      },
+    })
+  }, [actionControlStore, activePanel, persistActionControlStore])
+
+  const handleUpdateActionControlGroup = useCallback((
+    groupId: string,
+    patch: Partial<IdeaActionControlGroup>,
+  ) => {
+    const session = getSession()
+    const userId = session?.user.id?.trim() ?? ''
+    const displayName = resolveIdentityDisplayName(userId)
+      || session?.user.email?.split('@')[0]?.trim()
+      || 'Reviewer'
+    updateActivePanelActionGroups(
+      activeActionControlGroups.map((group) => (
+        group.id === groupId ? {
+          ...group,
+          ...patch,
+          reviewerUserId: userId,
+          reviewerDisplayName: displayName,
+        } : group
+      )),
+    )
+  }, [activeActionControlGroups, resolveIdentityDisplayName, updateActivePanelActionGroups])
+
+  const handleAddCustomActionStatus = useCallback((label: string) => {
+    const normalized = label.trim()
+    if (!normalized) return
+    if (IDEA_STATUSES.includes(normalized as IdeaStatus) || actionControlStore.customStatuses.includes(normalized)) {
+      return
+    }
+    persistActionControlStore({
+      ...actionControlStore,
+      customStatuses: [...actionControlStore.customStatuses, normalized],
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleUpdateCustomActionStatus = useCallback((previousLabel: string, nextLabel: string) => {
+    const normalized = nextLabel.trim()
+    if (!normalized || previousLabel === normalized) return
+    if (
+      IDEA_STATUSES.includes(normalized as IdeaStatus)
+      || actionControlStore.customStatuses.some(
+        (item) => item !== previousLabel && item.toLowerCase() === normalized.toLowerCase(),
+      )
+    ) {
+      return
+    }
+    persistActionControlStore({
+      ...actionControlStore,
+      panels: remapActionControlStatusInPanels(actionControlStore.panels, previousLabel, normalized),
+      customStatuses: actionControlStore.customStatuses.map((item) => (
+        item === previousLabel ? normalized : item
+      )),
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleRemoveCustomActionStatus = useCallback((label: string) => {
+    persistActionControlStore({
+      ...actionControlStore,
+      panels: remapActionControlStatusInPanels(actionControlStore.panels, label, ''),
+      customStatuses: actionControlStore.customStatuses.filter((item) => item !== label),
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleAddCustomActionRole = useCallback((label: string) => {
+    const normalized = label.trim()
+    if (!normalized || actionControlStore.customRoles.includes(normalized)) return
+    persistActionControlStore({
+      ...actionControlStore,
+      customRoles: [...actionControlStore.customRoles, normalized],
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleUpdateCustomActionRole = useCallback((previousLabel: string, nextLabel: string) => {
+    const normalized = nextLabel.trim()
+    if (!normalized || previousLabel === normalized) return
+    if (actionControlStore.customRoles.some(
+      (item) => item !== previousLabel && item.toLowerCase() === normalized.toLowerCase(),
+    )) {
+      return
+    }
+    persistActionControlStore({
+      ...actionControlStore,
+      panels: remapActionControlFieldInPanels(actionControlStore.panels, 'role', previousLabel, normalized),
+      customRoles: actionControlStore.customRoles.map((item) => (
+        item === previousLabel ? normalized : item
+      )),
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleRemoveCustomActionRole = useCallback((label: string) => {
+    persistActionControlStore({
+      ...actionControlStore,
+      panels: remapActionControlFieldInPanels(actionControlStore.panels, 'role', label, ''),
+      customRoles: actionControlStore.customRoles.filter((item) => item !== label),
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleAddCustomActionDepartment = useCallback((label: string) => {
+    const normalized = label.trim()
+    if (!normalized || actionControlStore.customDepartments.includes(normalized)) return
+    persistActionControlStore({
+      ...actionControlStore,
+      customDepartments: [...actionControlStore.customDepartments, normalized],
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleUpdateCustomActionDepartment = useCallback((previousLabel: string, nextLabel: string) => {
+    const normalized = nextLabel.trim()
+    if (!normalized || previousLabel === normalized) return
+    if (actionControlStore.customDepartments.some(
+      (item) => item !== previousLabel && item.toLowerCase() === normalized.toLowerCase(),
+    )) {
+      return
+    }
+    persistActionControlStore({
+      ...actionControlStore,
+      panels: remapActionControlFieldInPanels(actionControlStore.panels, 'department', previousLabel, normalized),
+      customDepartments: actionControlStore.customDepartments.map((item) => (
+        item === previousLabel ? normalized : item
+      )),
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handleRemoveCustomActionDepartment = useCallback((label: string) => {
+    persistActionControlStore({
+      ...actionControlStore,
+      panels: remapActionControlFieldInPanels(actionControlStore.panels, 'department', label, ''),
+      customDepartments: actionControlStore.customDepartments.filter((item) => item !== label),
+    })
+  }, [actionControlStore, persistActionControlStore])
+
+  const handlePublishIdeaToOrganization = useCallback(async () => {
+    if (!canPublishIdeaToOrganization || !tenant?.orgId) {
+      addToast({
+        variant: 'error',
+        title: 'Publish unavailable',
+        description: 'Join your organization workspace before publishing this idea.',
+      })
+      return
+    }
+
+    const session = getSession()
+    const publishedBy = session?.user.id?.trim() ?? 'unknown'
+    const publishedAt = new Date().toISOString()
+    const panelsSnapshot = DEFAULT_IDEA_NAV_SECTIONS.reduce<Partial<Record<PanelKey, IdeaActionControlGroup[]>>>((acc, key) => {
+      acc[key] = groupsForPanel(actionControlStore, key).map((group) => ({ ...group }))
+      return acc
+    }, {})
+
+    setIsPublishingToOrganization(true)
+    try {
+      writeIdeaOrgPublished(idea.id, {
+        organization_id: tenant.orgId,
+        published_at: publishedAt,
+        published_by: publishedBy,
+      })
+
+      appendOrgShareRecord({
+        id: `share-${Date.now()}`,
+        organization_id: tenant.orgId,
+        idea_id: idea.id,
+        idea_title: idea.title,
+        submitted_by: publishedBy,
+        submitted_at: publishedAt,
+        panels: panelsSnapshot,
+        custom_statuses: [...actionControlStore.customStatuses],
+        custom_roles: [...actionControlStore.customRoles],
+        custom_departments: [...actionControlStore.customDepartments],
+      })
+
+      persistActionControlStore({
+        ...actionControlStore,
+        panels: panelsSnapshot,
+        publishedToOrgAt: publishedAt,
+        lastSubmittedAt: publishedAt,
+      })
+
+      addToast({
+        variant: 'success',
+        title: 'Published to organization',
+        description: 'Organization reviewers can now complete Action & Control for this idea.',
+      })
+    } catch (error) {
+      addToast({
+        variant: 'error',
+        title: 'Publish failed',
+        description: error instanceof Error ? error.message : 'Unable to publish this idea to the organization.',
+      })
+    } finally {
+      setIsPublishingToOrganization(false)
+    }
+  }, [
+    actionControlStore,
+    addToast,
+    canPublishIdeaToOrganization,
+    idea.id,
+    idea.title,
+    persistActionControlStore,
+    tenant?.orgId,
+  ])
 
   const updateBrdSection = (sectionKey: string, nextContent: string) => {
     setBrdSections((prev) =>
@@ -7261,30 +9569,33 @@ export function IdeaDetailPage() {
       <IdeaDetailSidebar
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
+        onWidthChange={setRightDrawerWidth}
         activePanel={activePanel}
         onNavigatePanel={navigateToPanel}
-        status={idea.status}
-        reviewer={idea.reviewer}
-        isMetaSaving={isMetaPatchSaving}
-        metaSaveError={metaPatchInlineError}
-        metaSavedAtLabel={metaSavedAtLabel}
-        reviewerOptions={reviewerOptions}
-        isReviewerOptionsLoading={isReviewerOptionsLoading}
-        reviewerOptionsError={reviewerOptionsError}
-        onStatusChange={quickUpdateStatus}
-        onReviewerChange={quickUpdateReviewer}
-        activeConfidence={confidence[activePanel]}
-        isRegenerating={regenerating[activePanel]}
-        onRegenerate={regeneratePanel}
-        brdTemplates={brdTemplates}
-        brdSelectedTemplateId={brdSelectedTemplateId}
-        onSelectBrdTemplate={(id) => applyBrdTemplateById(id)}
-        brdLayoutPolishMode={brdLayoutPolishMode}
-        onBrdLayoutPolishModeChange={setBrdLayoutPolishMode}
-        onManageBrdTemplates={() => {
-          setManageBrdTemplatesOpen(true)
-          setEditingTemplate(null)
-        }}
+        menuSections={menuSections}
+        onReorderMenuSections={(orderedKeys) => reorderIdeaMenuSections(idea.id, orderedKeys)}
+        actionControlMode={actionControlSidebarMode}
+        showManualPublishFooter={showActionControlManualPublishFooter}
+        orgWorkspaceNotice={orgWorkspaceNotice}
+        actionControlGroups={activeActionControlGroups}
+        customStatuses={actionControlStore.customStatuses}
+        customRoles={actionControlStore.customRoles}
+        customDepartments={actionControlStore.customDepartments}
+        onUpdateActionControlGroup={handleUpdateActionControlGroup}
+        onAddCustomStatus={handleAddCustomActionStatus}
+        onUpdateCustomStatus={handleUpdateCustomActionStatus}
+        onRemoveCustomStatus={handleRemoveCustomActionStatus}
+        onAddCustomRole={handleAddCustomActionRole}
+        onUpdateCustomRole={handleUpdateCustomActionRole}
+        onRemoveCustomRole={handleRemoveCustomActionRole}
+        onAddCustomDepartment={handleAddCustomActionDepartment}
+        onUpdateCustomDepartment={handleUpdateCustomActionDepartment}
+        onRemoveCustomDepartment={handleRemoveCustomActionDepartment}
+        onPublishToOrganization={() => void handlePublishIdeaToOrganization()}
+        isPublishingToOrganization={isPublishingToOrganization}
+        canPublishToOrganization={canPublishIdeaToOrganization}
+        publishShareHint={publishShareHint}
+        publishedAtLabel={publishedAtLabel}
       />
 
       <div
@@ -7296,8 +9607,8 @@ export function IdeaDetailPage() {
       >
         <Breadcrumb
         items={[
-          { label: 'Workspace', href: '/' },
-          { label: 'Idea & Backlog', href: '/idea-backlog' },
+          { label: 'Workspace', href: workspaceManagementPath },
+          { label: 'Idea & Backlog', href: ideaBacklogPath },
           { label: idea.id },
         ]}
         />
@@ -7319,11 +9630,8 @@ export function IdeaDetailPage() {
               />
               <div className="space-y-2 min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
-                <Badge variant="outline" className="text-[10px] font-semibold bg-white/90">
-                  {idea.id}
-                </Badge>
-                <Badge variant="outline" className={cn('text-[10px] font-semibold', statusClass[idea.status])}>
-                  {idea.status}
+                <Badge variant="outline" className={cn('text-[10px] font-semibold', headerStatusBadgeClass)}>
+                  {headerStatusLabel}
                 </Badge>
                 <Badge variant="outline" className={cn('text-[10px] font-semibold', typeClass[idea.type])}>
                   {idea.type}
@@ -7331,24 +9639,26 @@ export function IdeaDetailPage() {
                 <Badge variant="outline" className="text-[10px] font-semibold border-blue-200 bg-blue-50 text-blue-700">
                   AI Transformation Engine
                 </Badge>
+                {headerDisplayTags.map((tag) => (
+                  <Badge key={tag} variant="outline" className="text-[10px] font-semibold bg-white/90 text-slate-600">
+                    {tag}
+                  </Badge>
+                ))}
               </div>
               <h1 className="text-2xl font-semibold text-slate-900 leading-tight">{idea.title}</h1>
               <p className="text-sm text-muted-foreground">
-                Workspace: <span className="font-medium text-slate-700">{idea.workspace ?? 'General'}</span>
+                Workspace: <span className="font-medium text-slate-700">{workspaceDisplayName}</span>
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
                 Submitted by <span className="font-medium text-slate-700">{submittedByDisplayName}</span>
+                {actionControlReviewerLabel ? (
+                  <>
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
-                Reviewer <span className="font-medium text-slate-700">{reviewerDisplayName}</span>
+                    Reviewer <span className="font-medium text-slate-700">{actionControlReviewerLabel}</span>
+                  </>
+                ) : null}
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
                 {idea.createdAt}
               </p>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {idea.tags.map((tag) => (
-                  <span key={tag} className="rounded-full border border-border/50 px-2 py-0.5 text-[11px] text-slate-600 bg-white/80">
-                    {tag}
-                  </span>
-                ))}
-              </div>
             </div>
             </div>
 
@@ -7404,65 +9714,7 @@ export function IdeaDetailPage() {
                   title="Develop"
                 >
                   <Wand2 className="w-5 h-5" />
-                </button>
-
-                <div ref={brdExportMenuRef} className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setBrdExportOpen((v) => !v)}
-                    ref={brdExportButtonRef}
-                    className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm"
-                    aria-label="Export BRD"
-                    title="Export"
-                  >
-                    <Download className="w-5 h-5" />
-                  </button>
-
-                  {brdExportOpen && (
-                    <div
-                      className="fixed z-[100] w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
-                      style={
-                        brdExportMenuPos
-                          ? { top: brdExportMenuPos.top, right: brdExportMenuPos.right }
-                          : { top: 0, right: 0, visibility: 'hidden' }
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          setBrdExportOpen(false)
-                          await exportBrdPdf()
-                        }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
-                      >
-                        <FileText className="h-4 w-4 text-slate-500" />
-                        Export PDF
                       </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          setBrdExportOpen(false)
-                          await exportBrdWord()
-                        }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
-                      >
-                        <FileText className="h-4 w-4 text-slate-500" />
-                        Export Word
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBrdExportOpen(false)
-                          exportBrdMarkdown()
-                        }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
-                      >
-                        <FileText className="h-4 w-4 text-slate-500" />
-                        Export Markdown
-                      </button>
-                    </div>
-                  )}
-                </div>
               </div>
 
               {activePanel === 'summary' && (
@@ -7518,21 +9770,81 @@ export function IdeaDetailPage() {
       </div>
 
       <div className="space-y-4">
-        {activePanel === 'summary' && (
-        <div id="panel-summary" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="summary"
-            title="AI-Powered Idea Summary"
-            description="AI insights that transform raw ideas into decision-ready context."
-            isOpen
-            onToggle={togglePanel}
-            showToggle={false}
-            confidence={confidence.summary}
+        {activePanel === 'summary' &&
+          renderIdeaPanelWithOptionalFullscreen(
+            isSummaryPanelFullscreen,
+            (
+        <div
+            ref={ideaSummaryPanelRef}
+            id="panel-summary"
+            style={
+              isSummaryPanelFullscreen
+                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                : ideaSummaryPanelHeightPx != null
+                  ? { height: ideaSummaryPanelHeightPx, maxHeight: ideaSummaryPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                  : undefined
+            }
+            className={cn(
+              'scroll-mt-24',
+              IDEA_SUMMARY_LIQUID_GLASS_SHELL,
+              isSummaryPanelFullscreen
+                ? 'fixed inset-x-0 top-12 bottom-0 z-[60] rounded-none border-0 bg-background'
+                : 'rounded-2xl',
+            )}
           >
+            <div className="flex h-full min-h-0 w-full flex-col">
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+                  isSummaryPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                )}
+              >
+                <div className="shrink-0 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Sparkles className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                      <h2 className="text-lg font-semibold text-foreground">AI-Powered Idea Summary</h2>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {typeof confidence.summary === 'number' ? (
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] font-semibold', confidenceClass(confidence.summary))}
+                        >
+                          Confidence {confidence.summary}%
+                        </Badge>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-pressed={isSummaryPanelFullscreen}
+                        aria-label={isSummaryPanelFullscreen ? 'Exit summary fullscreen' : 'Expand summary to fullscreen'}
+                        title={isSummaryPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                        onClick={() => setIsSummaryPanelFullscreen((prev) => !prev)}
+                        className={cn(
+                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          enterpriseControlFocusClass,
+                          isSummaryPanelFullscreen &&
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                        )}
+                      >
+                        {isSummaryPanelFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+                    AI insights that transform raw ideas into decision-ready context.
+                  </p>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="space-y-4">
               {isSummaryRefreshing && (
-                <div className="flex items-center gap-3 rounded-2xl border border-sky-200/80 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-4 py-2.5 text-sm text-sky-900 shadow-[0_8px_24px_-18px_rgba(14,165,233,0.45)]">
-                  <RefreshCcw className="h-4 w-4 animate-spin text-sky-600" />
+                <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_AGENTS_BAR, 'flex items-center gap-3 text-sm text-slate-900')}>
+                  <RefreshCcw className="h-4 w-4 animate-spin text-slate-600" />
                   <span className="flex flex-col leading-tight">
                     <span className="text-[13px] font-semibold tracking-tight text-slate-900">
                       {usesMultiRoleAgents || isSummaryRefreshing
@@ -7569,8 +9881,8 @@ export function IdeaDetailPage() {
               )}
 
               {!summaryGenerationError && !summaryMissing && summaryLoaded && !isSummaryRefreshing && summaryRoleModels.length > 0 && (
-                <div className="rounded-2xl border border-indigo-200/70 bg-indigo-50/40 px-4 py-3">
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-800">
+                <div className={IDEA_SUMMARY_LIQUID_GLASS_AGENTS_BAR}>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
                     AI agents &amp; models
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -7579,9 +9891,9 @@ export function IdeaDetailPage() {
                         key={entry.roleId}
                         variant="outline"
                         title={entry.modelId}
-                        className="border-indigo-200 bg-white/90 text-[11px] font-medium text-slate-800"
+                        className="border-white/70 bg-white/55 text-[11px] font-medium text-slate-800 backdrop-blur-md"
                       >
-                        <span className="font-semibold text-indigo-900">{entry.roleLabel}</span>
+                        <span className="font-semibold text-slate-900">{entry.roleLabel}</span>
                         {/* fromCharCode keeps ASCII-only source/bundle — avoids Â· mojibake if JS is mis-decoded */}
                         <span className="mx-1 text-slate-400" aria-hidden>
                           {String.fromCharCode(0xb7)}
@@ -7596,11 +9908,13 @@ export function IdeaDetailPage() {
               {!summaryGenerationError && summaryLoaded && (
               <>
               <div className="grid grid-cols-1 xl:grid-cols-[1.55fr_0.85fr] gap-4">
-                <Card className="overflow-hidden border-slate-200/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(239,246,255,0.92)_45%,rgba(248,250,252,0.98))] shadow-[0_22px_60px_-34px_rgba(15,23,42,0.35)]">
-                  <CardContent className="p-0">
-                    <div className="border-b border-slate-200/70 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.15),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.9),rgba(255,255,255,0.72))] px-6 py-5">
+                <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_30%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.38),transparent_34%)]" />
+                  <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-white/80" />
+                  <CardContent className="relative z-10 p-0">
+                    <div className="border-b border-white/45 bg-white/20 px-6 py-5 backdrop-blur-xl">
                       <div className="min-w-0 space-y-3">
-                          <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                          <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-700 backdrop-blur-md">
                             <Bot className="h-3.5 w-3.5" />
                             Executive AI Brief
                           </div>
@@ -7621,7 +9935,7 @@ export function IdeaDetailPage() {
                       </div>
 
                     <div className="grid grid-cols-1 gap-3 px-6 py-5 md:grid-cols-3">
-                      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-4')}>
                         <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                           <TriangleAlert className="h-3.5 w-3.5 text-amber-600" />
                           Core Pressure
@@ -7636,7 +9950,7 @@ export function IdeaDetailPage() {
                         )}
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-4')}>
                         <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                           <Target className="h-3.5 w-3.5 text-sky-700" />
                           Strategic Response
@@ -7651,7 +9965,7 @@ export function IdeaDetailPage() {
                         )}
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-4')}>
                         <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                           <Briefcase className="h-3.5 w-3.5 text-emerald-700" />
                           Value Thesis
@@ -7667,9 +9981,9 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 border-t border-slate-200/80 bg-white/55 px-6 py-5 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+                    <div className="grid grid-cols-1 gap-3 border-t border-white/45 bg-white/20 px-6 py-5 backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
                       {summaryKpiCards.slice(0, 4).map((card, index) => (
-                        <div key={`${card.label}-${index}`} className="rounded-2xl border border-slate-200/80 bg-white/90 p-4">
+                        <div key={`${card.label}-${index}`} className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'p-4')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{card.label}</p>
                           {isSummaryRefreshing ? (
                             <div className="mt-2 space-y-2 animate-pulse">
@@ -7692,14 +10006,14 @@ export function IdeaDetailPage() {
                 </Card>
 
                 {summaryDecisionSignal && (
-                  <Card className="border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.98))] shadow-[0_20px_50px_-36px_rgba(15,23,42,0.4)]">
-                    <CardContent className="p-5 space-y-4">
-                      <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+                  <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                    <CardContent className="relative z-10 space-y-4 p-5">
+                      <div className="flex items-center justify-between border-b border-white/45 pb-3">
                         <div>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Decision Signal</p>
                           <h3 className="mt-1 text-base font-semibold text-slate-950">Enterprise Readiness</h3>
                         </div>
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-right">
+                        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-3 py-1.5 text-right backdrop-blur-md">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Priority</p>
                           {isSummaryRefreshing ? (
                             <div className="mt-1 h-4 w-20 rounded-md bg-emerald-100 animate-pulse" />
@@ -7710,7 +10024,7 @@ export function IdeaDetailPage() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Overall Score</p>
                           {isSummaryRefreshing ? (
                             <div className="mt-2 space-y-2 animate-pulse">
@@ -7725,7 +10039,7 @@ export function IdeaDetailPage() {
                             </>
                           )}
                         </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Decision Bias</p>
                           {isSummaryRefreshing ? (
                             <div className="mt-2 space-y-2 animate-pulse">
@@ -7742,7 +10056,7 @@ export function IdeaDetailPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-slate-950 px-4 py-4 text-slate-50 shadow-inner">
+                      <div className="rounded-2xl border border-white/10 bg-slate-950/90 px-4 py-4 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">Board Note</p>
                         {isSummaryRefreshing ? (
                           <div className="mt-2 space-y-2 animate-pulse">
@@ -7760,14 +10074,14 @@ export function IdeaDetailPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                <Card className="border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.98))] shadow-[0_20px_50px_-38px_rgba(15,23,42,0.3)]">
-                  <CardContent className="p-5 space-y-4">
+                <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                  <CardContent className="relative z-10 space-y-4 p-5">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Strategic Framing</p>
                         <h3 className="mt-1 text-base font-semibold text-slate-950">Where enterprise value is expected</h3>
                       </div>
-                      <Badge variant="outline" className="border-slate-200 bg-white text-[10px] font-semibold text-slate-600">
+                      <Badge variant="outline" className="border-white/70 bg-white/55 text-[10px] font-semibold text-slate-600 backdrop-blur-md">
                         Executive Lens
                       </Badge>
                     </div>
@@ -7784,7 +10098,7 @@ export function IdeaDetailPage() {
                           )
 
                         return (
-                          <div key={`${item.title}-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <div key={`${item.title}-${index}`} className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-4')}>
                             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
                               {icon}
                               {isSummaryRefreshing ? (
@@ -7814,8 +10128,8 @@ export function IdeaDetailPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.98))] shadow-[0_20px_50px_-38px_rgba(15,23,42,0.3)]">
-                  <CardContent className="p-5 space-y-4">
+                <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                  <CardContent className="relative z-10 space-y-4 p-5">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Governance Readiness</p>
@@ -7828,7 +10142,7 @@ export function IdeaDetailPage() {
                       {isSummaryRefreshing ? (
                         <div className="h-6 w-20 rounded-full bg-slate-200 animate-pulse" />
                       ) : (
-                        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] font-semibold text-emerald-700">
+                        <Badge variant="outline" className="border-emerald-200/80 bg-emerald-50/70 text-[10px] font-semibold text-emerald-700 backdrop-blur-md">
                           {summaryGovernanceReadiness.badge}
                         </Badge>
                       )}
@@ -7845,8 +10159,8 @@ export function IdeaDetailPage() {
                               : 'bg-sky-50 text-sky-700'
 
                         return (
-                          <div key={`${signal.title}-${index}`} className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-3.5">
-                            <div className={cn('mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl', iconWrapClass)}>
+                          <div key={`${signal.title}-${index}`} className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'flex gap-3 p-3.5')}>
+                            <div className={cn('mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl backdrop-blur-md', iconWrapClass)}>
                               {tone === 'positive' ? (
                                 <Check className="h-4 w-4" />
                               ) : tone === 'warning' || tone === 'watch' ? (
@@ -7878,628 +10192,96 @@ export function IdeaDetailPage() {
               </>
               )}
             </div>
-          </CollapsiblePanel>
-        </div>
-        )}
-
-        {activePanel === 'brd' && (
-        <div id="panel-brd" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="brd"
-            title="AI-Generated BRD"
-            description="Structured BRD generated from idea context with controlled edit mode."
-            isOpen={collapsed.brd}
-            onToggle={togglePanel}
-            confidence={confidence.brd}
-          >
-            <div className="flex flex-col items-center">
-              <div className="w-full max-w-[980px]">
-                <div
-                  className={cn(
-                    'rounded-2xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm',
-                    isBrdGenerating && 'pointer-events-none opacity-70'
-                  )}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2"
-                        onClick={() => setBrdStylesMenuOpen((v) => !v)}
-                        aria-label="Styles"
-                        title="Styles"
-                        ref={brdStylesButtonRef}
-                      >
-                        <Type className="h-4 w-4 mr-1.5" />
-                        <span className="text-sm">Styles</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => setBrdTableMenuOpen((v) => !v)}
-                        aria-label="Insert table"
-                        title="Insert table"
-                        ref={brdTableButtonRef}
-                      >
-                        <Table className="h-4 w-4" />
-                      </Button>
-                      <select
-                        value={brdFontFamily}
-                        onChange={(e) => setBrdFontFamily(e.target.value as any)}
-                        className="h-8 rounded-md border border-slate-200 bg-white px-2 text-sm"
-                        aria-label="Font family"
-                      >
-                        <option value="Aptos">Aptos (Body)</option>
-                        <option value="Calibri">Calibri</option>
-                        <option value="Arial">Arial</option>
-                        <option value="Times New Roman">Times New Roman</option>
-                      </select>
-
-                      <select
-                        value={brdFontSize}
-                        onChange={(e) => setBrdFontSize(Number(e.target.value) as any)}
-                        className="h-8 w-20 rounded-md border border-slate-200 bg-white px-2 text-sm"
-                        aria-label="Font size"
-                      >
-                        {[11, 12, 14, 15, 16, 18].map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-
-                      <select
-                        value={brdLineHeight}
-                        onChange={(e) => setBrdLineHeight(Number(e.target.value) as any)}
-                        className="h-8 w-20 rounded-md border border-slate-200 bg-white px-2 text-sm"
-                        aria-label="Line height"
-                      >
-                        <option value={1.5}>1.5</option>
-                        <option value={1.7}>1.7</option>
-                        <option value={2}>2.0</option>
-                      </select>
-
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => setBrdSpacingMenuOpen((v) => !v)}
-                        aria-label="Line and paragraph spacing"
-                        title="Line and paragraph spacing"
-                        ref={brdSpacingButtonRef}
-                      >
-                        <ListChevronsUpDown className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    <span className="mx-1 h-6 w-px bg-slate-200" />
-
-                    <div className="flex items-center gap-1">
-                      <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => execBrdCommand('bold')}>
-                        <span className="font-bold">B</span>
-                      </Button>
-                      <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => execBrdCommand('italic')}>
-                        <span className="italic">I</span>
-                      </Button>
-                      <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => execBrdCommand('underline')}>
-                        <span className="underline">U</span>
-                      </Button>
-                      <div className="relative">
-                        <button
-                          type="button"
-                          className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-slate-100"
-                          aria-label="Text color"
-                          title="Text color"
-                          onClick={() => {
-                            setBrdTextColorMenuOpen((v) => !v)
-                          }}
-                          ref={brdTextColorButtonRef}
-                        >
-                          <span className="text-[12px] font-semibold text-slate-800">A</span>
-                          <span
-                            className="absolute bottom-1 left-2 right-2 h-[3px] rounded-full"
-                            style={{ backgroundColor: brdTextColor }}
-                          />
-                        </button>
-                      </div>
-
-                      <div className="relative">
-                        <button
-                          type="button"
-                          className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-slate-100"
-                          aria-label="Highlight"
-                          title="Highlight"
-                          onClick={() => setBrdHighlightMenuOpen((v) => !v)}
-                          ref={brdHighlightButtonRef}
-                        >
-                          <span className="text-[11px] font-semibold text-slate-800">HL</span>
-                          <span
-                            className="absolute bottom-1 left-2 right-2 h-[3px] rounded-full"
-                            style={{ backgroundColor: brdHighlightColor }}
-                          />
-                        </button>
-                      </div>
-                      <div className="relative">
-                        <button
-                          type="button"
-                          className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-slate-100"
-                          aria-label="Shading"
-                          title="Shading"
-                          onClick={() => setBrdShadingMenuOpen((v) => !v)}
-                          ref={brdShadingButtonRef}
-                        >
-                          <PaintBucket className="h-4 w-4" />
-                          <span
-                            className="absolute bottom-1 left-2 right-2 h-[3px] rounded-full"
-                            style={{ backgroundColor: brdShadingColor }}
-                          />
-                        </button>
-                      </div>
-                      <div className="relative">
-                        <button
-                          type="button"
-                          className="flex h-8 items-center justify-center rounded-md px-2 text-sm font-medium text-slate-800 hover:bg-slate-100"
-                          aria-label="Change case"
-                          title="Change case"
-                          onClick={() => setBrdCaseMenuOpen((v) => !v)}
-                          ref={brdCaseButtonRef}
-                        >
-                          Aa
-                        </button>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('strikeThrough')}
-                        aria-label="Strikethrough"
-                        title="Strikethrough"
-                      >
-                        <Strikethrough className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('subscript')}
-                        aria-label="Subscript"
-                        title="Subscript"
-                      >
-                        <Subscript className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('superscript')}
-                        aria-label="Superscript"
-                        title="Superscript"
-                      >
-                        <Superscript className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    <span className="mx-1 h-6 w-px bg-slate-200" />
-
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('justifyLeft')}
-                        aria-label="Align left"
-                        title="Align left"
-                      >
-                        <AlignLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('justifyCenter')}
-                        aria-label="Align center"
-                        title="Align center"
-                      >
-                        <AlignCenter className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('justifyRight')}
-                        aria-label="Align right"
-                        title="Align right"
-                      >
-                        <AlignRight className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('outdent')}
-                        aria-label="Decrease indent"
-                        title="Decrease indent"
-                      >
-                        <IndentDecrease className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => execBrdCommand('indent')}
-                        aria-label="Increase indent"
-                        title="Increase indent"
-                      >
-                        <IndentIncrease className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    <span className="mx-1 h-6 w-px bg-slate-200" />
-
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={clearBrdFormatting}
-                        aria-label="Clear formatting"
-                        title="Clear formatting"
-                      >
-                        <Eraser className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => setBrdMultilevelMenuOpen((v) => !v)}
-                        aria-label="Multilevel list options"
-                        title="Multilevel list"
-                        ref={brdMultilevelButtonRef}
-                      >
-                        <ListTree className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => setBrdBulletMenuOpen((v) => !v)}
-                        aria-label="Bulleted list options"
-                        title="Bulleted list"
-                        ref={brdBulletButtonRef}
-                      >
-                        <List className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => setBrdNumberMenuOpen((v) => !v)}
-                        aria-label="Numbered list options"
-                        title="Numbered list"
-                        ref={brdNumberButtonRef}
-                      >
-                        <ListOrdered className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-              {/* Keep the native color picker anchored away from the toolbar to avoid overlap */}
-              <input
-                ref={brdTextColorInputRef}
-                type="color"
-                value={brdTextColor}
-                onChange={(e) => {
-                  const next = e.target.value
-                  setBrdTextColor(next)
-                  execBrdCommand('foreColor', next)
-                }}
-                className="fixed left-[-9999px] top-[-9999px] h-0 w-0 opacity-0"
-                aria-hidden="true"
-                tabIndex={-1}
-              />
                 </div>
               </div>
-
-              <style>{`
-                ol.brd-editor-ol-decimal { list-style-type: decimal; }
-                ol.brd-editor-ol-upper-alpha { list-style-type: upper-alpha; }
-                ol.brd-editor-ol-lower-alpha { list-style-type: lower-alpha; }
-                ol.brd-editor-ol-lower-roman { list-style-type: lower-roman; }
-                ul.brd-editor-ul,
-                ol.brd-editor-ol-decimal,
-                ol.brd-editor-ol-upper-alpha,
-                ol.brd-editor-ol-lower-alpha,
-                ol.brd-editor-ol-lower-roman {
-                  margin: 0.5rem 0 1rem;
-                  padding-left: 1.75rem;
-                }
-
-                ul.brd-editor-ul > li,
-                ol.brd-editor-ol-decimal > li,
-                ol.brd-editor-ol-upper-alpha > li,
-                ol.brd-editor-ol-lower-alpha > li,
-                ol.brd-editor-ol-lower-roman > li {
-                  padding-left: 0.25rem;
-                }
-
-                /* Custom numbering variants not supported by list-style-type */
-                ol.brd-ol-decimal-paren,
-                ol.brd-ol-upper-alpha-paren,
-                ol.brd-ol-lower-alpha-paren {
-                  list-style: none;
-                  padding-left: 1.5rem;
-                  margin-left: 0;
-                }
-                ol.brd-ol-decimal-paren { counter-reset: brd_item; }
-                ol.brd-ol-decimal-paren > li { counter-increment: brd_item; }
-                ol.brd-ol-decimal-paren > li::before { content: counter(brd_item) ") "; }
-
-                ol.brd-ol-upper-alpha-paren { counter-reset: brd_item; }
-                ol.brd-ol-upper-alpha-paren > li { counter-increment: brd_item; }
-                ol.brd-ol-upper-alpha-paren > li::before { content: counter(brd_item, upper-alpha) ") "; }
-
-                ol.brd-ol-lower-alpha-paren { counter-reset: brd_item; }
-                ol.brd-ol-lower-alpha-paren > li { counter-increment: brd_item; }
-                ol.brd-ol-lower-alpha-paren > li::before { content: counter(brd_item, lower-alpha) ") "; }
-
-                ol.brd-ol-decimal-paren > li::before,
-                ol.brd-ol-upper-alpha-paren > li::before,
-                ol.brd-ol-lower-alpha-paren > li::before {
-                  display: inline-block;
-                  width: auto;
-                  margin-right: 0.25rem;
-                  color: inherit;
-                }
-
-                /* Multilevel decimal: 1.1.1 */
-                ol.brd-ol-multilevel-decimal {
-                  list-style: none;
-                  padding-left: 1.5rem;
-                  margin-left: 0;
-                  counter-reset: brd_ml;
-                }
-                ol.brd-ol-multilevel-decimal li {
-                  counter-increment: brd_ml;
-                }
-                ol.brd-ol-multilevel-decimal li::before {
-                  content: counters(brd_ml, ".") ". ";
-                  margin-right: 0.25rem;
-                }
-                ol.brd-ol-multilevel-decimal ol {
-                  list-style: none;
-                  padding-left: 1.5rem;
-                  margin-left: 0;
-                  counter-reset: brd_ml;
-                }
-
-                /* Custom bullet variants */
-                ul.brd-ul-arrow,
-                ul.brd-ul-check,
-                ul.brd-ul-diamond {
-                  list-style: none;
-                  padding-left: 1.5rem;
-                  margin-left: 0;
-                }
-                ul.brd-ul-arrow > li::before { content: "âž¤ "; }
-                ul.brd-ul-check > li::before { content: "âœ“ "; }
-                ul.brd-ul-diamond > li::before { content: "â– "; }
-                ul.brd-ul-arrow > li::before,
-                ul.brd-ul-check > li::before,
-                ul.brd-ul-diamond > li::before {
-                  display: inline-block;
-                  margin-right: 0.25rem;
-                  color: inherit;
-                }
-
-                /* Table styling */
-                table.brd-table {
-                  width: 100%;
-                  border-collapse: collapse;
-                  margin: 0.75rem 0;
-                  table-layout: fixed;
-                  font-size: inherit;
-                }
-                table.brd-table td, table.brd-table th {
-                  border: 1px solid #cbd5e1;
-                  padding: 7px 10px;
-                  vertical-align: top;
-                  min-width: 48px;
-                  line-height: 1.55;
-                }
-                table.brd-table th {
-                  background-color: #f1f5f9;
-                  font-weight: 600;
-                  color: #1e293b;
-                  text-align: left;
-                  border-color: #94a3b8;
-                }
-                table.brd-table tr:nth-child(even) td {
-                  background-color: #fafbfc;
-                }
-              `}</style>
-
-              <div
-                ref={brdViewportRef}
-                className="mt-4 w-full overflow-x-auto rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_top,rgba(14,165,233,0.1),transparent_42%),linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)] p-4 pb-10 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:w-0"
-              >
-                {isBrdGenerating && (
-                  <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
-                    Generating BRD... editor is temporarily locked until generation is complete.
-                  </div>
-                )}
-                <div
-                  ref={brdMeasureRef}
-                  className="pointer-events-none fixed left-[-99999px] top-0 w-0 overflow-hidden whitespace-pre-wrap font-['Aptos','Arial',sans-serif] text-[15px] leading-[1.7] text-slate-900 [&_h2]:mb-4 [&_h2]:mt-7 [&_h2]:border-b [&_h2]:border-slate-300 [&_h2]:pb-2 [&_h2]:text-[19px] [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-[0.08em] [&_h2]:text-slate-800 [&_h2:first-child]:mt-0 [&_h3]:mb-3 [&_h3]:mt-5 [&_h3]:text-[16px] [&_h3]:font-semibold [&_h3]:text-sky-900 [&_h3:first-child]:mt-0 [&_h4]:mb-2 [&_h4]:mt-4 [&_h4]:text-[14px] [&_h4]:font-semibold [&_h4]:text-slate-800 [&_h4:first-child]:mt-0 [&_p]:mb-3 [&_p]:mt-0 [&_p]:text-justify [&_ul]:mb-4 [&_ul]:mt-2 [&_ul]:list-disc [&_ul]:pl-8 [&_ol]:mb-4 [&_ol]:mt-2 [&_ol]:pl-8 [&_li]:mb-1.5 [&_li]:pl-1"
-                  style={{
-                    width: BRD_CONTENT_WIDTH_PX,
-                    fontFamily: brdFontFamily === 'Aptos' ? "Aptos, Arial, sans-serif" : `${brdFontFamily}, Arial, sans-serif`,
-                    fontSize: `${brdFontSize}px`,
-                    lineHeight: String(brdLineHeight),
-                  }}
-                  aria-hidden="true"
-                />
-                <div
-                  className="mx-auto space-y-6"
-                  style={{
-                    width: BRD_PAGE_WIDTH_PX * brdZoom,
-                  }}
-                >
-                  <div
-                    style={{
-                      height: brdCanvasHeightPx * brdZoom,
-                    }}
-                  >
-                    <div style={{ transform: `scale(${brdZoom})`, transformOrigin: 'top left' }} className="space-y-6">
-                      {/* Cover Page */}
-                      {showBrdCoverPage && <section className="relative h-[1123px] w-[794px] border border-slate-300 bg-white px-16 py-14 shadow-[0_28px_58px_-38px_rgba(15,23,42,0.45)]">
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: '100%',
-                            textAlign: 'center',
-                            padding: '80px 60px',
-                          }}
-                        >
-                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-                            <div style={{
-                              fontSize: '14px',
-                              color: '#94a3b8',
-                              textTransform: 'uppercase',
-                              letterSpacing: '3px',
-                              marginBottom: '40px',
-                              fontWeight: 500,
-                              fontFamily: "'Aptos', 'Calibri', Arial, sans-serif",
-                            }}>
-                              Business Requirements Document
-                            </div>
-                            <div style={{
-                              display: 'inline-block',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              color: '#0369a1',
-                              background: '#e0f2fe',
-                              borderRadius: '4px',
-                              padding: '4px 12px',
-                              letterSpacing: '1.5px',
-                              textTransform: 'uppercase',
-                              marginBottom: '24px',
-                              fontFamily: "'Aptos', 'Calibri', Arial, sans-serif",
-                            }}>
-                              {idea.type}
-                            </div>
-                            <h1 style={{
-                              fontSize: '42px',
-                              fontWeight: 700,
-                              color: '#0f172a',
-                              margin: 0,
-                              lineHeight: 1.25,
-                              marginBottom: '32px',
-                              fontFamily: "'Aptos', 'Calibri', Arial, sans-serif",
-                              letterSpacing: '-0.5px',
-                            }}>
-                              {idea.title}
-                            </h1>
-                            <div style={{
-                              fontSize: '12px',
-                              color: '#94a3b8',
-                              fontFamily: "'Aptos', 'Calibri', Arial, sans-serif",
-                              letterSpacing: '0.5px',
-                            }}>
-                              {idea.createdAt}
-                            </div>
-                          </div>
-                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', width: '100%' }}>
-                            <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '30px', textAlign: 'center' }}>
-                              <div style={{
-                                fontSize: '13px',
-                                color: '#64748b',
-                                fontFamily: "'Aptos', 'Calibri', Arial, sans-serif",
-                                letterSpacing: '0.3px',
-                              }}>
-                                Submitted by
-                              </div>
-                              <div style={{
-                                fontSize: '14px',
-                                fontWeight: 500,
-                                color: '#0f172a',
-                                marginTop: '8px',
-                                fontFamily: "'Aptos', 'Calibri', Arial, sans-serif",
-                              }}>
-                                {submittedByDisplayName && submittedByDisplayName.toLowerCase() !== 'unknown' ? submittedByDisplayName : 'â€”'}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </section>}
-
-                      {/* Table of Contents Page â€” only shown when BRD has content */}
-                      {showBrdTocPage && <section className="relative h-[1123px] w-[794px] border border-slate-300 bg-white px-16 py-14 shadow-[0_28px_58px_-38px_rgba(15,23,42,0.45)]">
-                        <div
-                          style={{
-                            fontFamily: brdFontFamily === 'Aptos' ? "Aptos, Arial, sans-serif" : `${brdFontFamily}, Arial, sans-serif`,
-                            fontSize: `${brdFontSize}px`,
-                            lineHeight: String(brdLineHeight),
-                            color: '#0f172a',
-                            paddingTop: BRD_HEADER_TOP_PX,
-                            minHeight: BRD_CONTENT_HEIGHT_PX,
-                            maxHeight: BRD_CONTENT_HEIGHT_PX,
-                            overflow: 'auto',
-                          }}
-                          dangerouslySetInnerHTML={{
-                            __html: generateBrdTableOfContents(brdPages),
-                          }}
-                        />
-                      </section>}
-
-                      {/* Main Content Pages */}
-                      {brdPages.map((_, index) => (
-                        <BrdPage key={index} index={index} />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <BrdFooter />
             </div>
-          </CollapsiblePanel>
-        </div>
-        )}
+          </div>
+            ),
+          )}
 
-        {activePanel === 'scoring' && (
-        <div id="panel-scoring" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="scoring"
-            title="AI Evaluation & Scoring"
-            description="Feasibility and priority scoring with AI explanation."
-            isOpen={collapsed.scoring}
-            onToggle={togglePanel}
-            confidence={confidence.scoring}
+
+        {activePanel === 'scoring' &&
+          renderIdeaPanelWithOptionalFullscreen(
+            isScoringPanelFullscreen,
+            (
+        <div
+            ref={ideaScoringPanelRef}
+            id="panel-scoring"
+            style={
+              isScoringPanelFullscreen
+                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                : ideaScoringPanelHeightPx != null
+                  ? { height: ideaScoringPanelHeightPx, maxHeight: ideaScoringPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                  : undefined
+            }
+            className={cn(
+              'scroll-mt-24',
+              IDEA_SUMMARY_LIQUID_GLASS_SHELL,
+              isScoringPanelFullscreen
+                ? 'fixed inset-x-0 top-12 bottom-0 z-[60] rounded-none border-0 bg-background'
+                : 'rounded-2xl',
+            )}
           >
+            <div className="flex h-full min-h-0 w-full flex-col">
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+                  isScoringPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                )}
+              >
+                <div className="shrink-0 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Gauge className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                      <h2 className="text-lg font-semibold text-foreground">AI Evaluation &amp; Scoring</h2>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {showScoringFrameworkDraft && !isScoringRefreshing ? (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-200 bg-amber-50 text-[10px] font-semibold text-amber-800"
+                        >
+                          Pending evidence
+                        </Badge>
+                      ) : typeof confidence.scoring === 'number' ? (
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] font-semibold', confidenceClass(confidence.scoring))}
+                        >
+                          Confidence {confidence.scoring}%
+                        </Badge>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-pressed={isScoringPanelFullscreen}
+                        aria-label={isScoringPanelFullscreen ? 'Exit scoring fullscreen' : 'Expand scoring to fullscreen'}
+                        title={isScoringPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                        onClick={() => setIsScoringPanelFullscreen((prev) => !prev)}
+                        className={cn(
+                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          enterpriseControlFocusClass,
+                          isScoringPanelFullscreen &&
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                        )}
+                      >
+                        {isScoringPanelFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+                    Feasibility and priority scoring with AI explanation.
+                  </p>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="space-y-4">
               {isScoringRefreshing && (
-                <div className="flex items-center gap-3 rounded-2xl border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-sky-50 px-4 py-2.5 text-sm text-violet-900 shadow-[0_8px_24px_-18px_rgba(139,92,246,0.35)]">
-                  <RefreshCcw className="h-4 w-4 animate-spin text-violet-600" />
+                <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_AGENTS_BAR, 'flex items-center gap-3 text-sm text-slate-900')}>
+                  <RefreshCcw className="h-4 w-4 animate-spin text-slate-600" />
                   <span className="flex flex-col leading-tight">
                     <span className="text-[13px] font-semibold tracking-tight text-slate-900">
                       Tectona Assistant is analyzing scoring evidence
@@ -8521,33 +10303,39 @@ export function IdeaDetailPage() {
                 </div>
               )}
 
+              {showScoringFrameworkDraft && !isScoringRefreshing ? (
+                <ScoringFrameworkSection
+                  ideaTitle={idea.title}
+                  scoreData={scoreData}
+                  totalScore={totalScore}
+                  hasNumericScoring={hasNumericScoring}
+                  priorityLabel={priorityLabel}
+                />
+              ) : null}
+
               {scoringMissing && !scoringGenerationError && !isScoringRefreshing && (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
-                  <p className="font-semibold text-slate-900">{runtimeScoringAnalysis.summary_title || 'Scoring data is not ready yet'}</p>
-                  <p className="mt-1.5 leading-6">
-                    {runtimeScoringAnalysis.executive_brief || 'Panel ini tidak menampilkan fallback. Analisa AI baru akan muncul setelah data scoring Idea & Backlog benar-benar tersedia.'}
-                  </p>
-                  {!hasNumericScoring ? (
-                    <p className="mt-2 text-xs text-amber-700">
-                      Dimensi skor backlog saat ini masih 0 / kosong — tidak ada angka yang dikarang.
-                    </p>
-                  ) : null}
-                  {runtimeScoringAnalysis.missing_fields.length > 0 && (
-                    <p className="mt-2 text-xs text-slate-500">
-                      Missing fields: {runtimeScoringAnalysis.missing_fields.join(', ')}
-                    </p>
-                  )}
-                </div>
+                <ScoringDraftReadinessCard
+                  title={runtimeScoringAnalysis.summary_title || 'Scoring evidence is not sufficient yet'}
+                  executiveBrief={
+                    runtimeScoringAnalysis.executive_brief
+                    || 'Complete intake evidence below so AI can produce an honest scoring assessment without inventing numbers.'
+                  }
+                  missingFields={runtimeScoringAnalysis.missing_fields}
+                  evidenceItems={scoringEvidenceItems}
+                  readinessPercent={scoringReadinessPercent}
+                  onNavigateToPanel={navigateToPanel}
+                  onOpenBacklog={openIdeaBacklogForScoring}
+                />
               )}
 
               {!scoringGenerationError && scoringLoaded && (
                 <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.55fr_0.95fr]">
-                  <Card className="border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.98))] shadow-[0_20px_50px_-38px_rgba(15,23,42,0.3)]">
-                    <CardContent className="p-3.5 space-y-3">
-                      <div className="flex flex-col gap-2.5 border-b border-slate-200/80 pb-2.5 lg:flex-row lg:items-start lg:justify-between">
+                  <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                    <CardContent className="relative z-10 space-y-3 p-3.5">
+                      <div className="flex flex-col gap-2.5 border-b border-white/45 pb-2.5 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            <Sparkles className="h-3.5 w-3.5 text-violet-600" />
+                            <Sparkles className="h-3.5 w-3.5 text-slate-600" />
                             Enterprise Scoring Signal
                           </div>
                           <h3 className="mt-1.5 text-base font-semibold text-slate-950">
@@ -8582,7 +10370,7 @@ export function IdeaDetailPage() {
                       </div>
 
                       <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
-                        <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Overall Score</p>
                           <div className="mt-2.5 flex items-end gap-2">
                             <p className="text-3xl font-semibold leading-none text-slate-950">
@@ -8608,7 +10396,7 @@ export function IdeaDetailPage() {
                           </p>
                         </div>
 
-                        <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Primary Strength</p>
                           <div className="mt-2.5 flex items-center gap-2 text-slate-950">
                             <TrendingUp className="h-4 w-4 text-sky-700" />
@@ -8621,7 +10409,7 @@ export function IdeaDetailPage() {
                           </p>
                         </div>
 
-                        <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Execution Posture</p>
                           <div className="mt-2.5 flex items-center gap-2 text-slate-950">
                             <Gauge className="h-4 w-4 text-violet-700" />
@@ -8636,13 +10424,13 @@ export function IdeaDetailPage() {
                       </div>
 
                       <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[1.3fr_0.7fr]">
-                        <div className="rounded-[24px] border border-slate-200/80 bg-[radial-gradient(circle_at_top_left,rgba(95,125,224,0.14),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'rounded-[24px] p-3.5')}>
                           <div className="mb-2 flex items-center justify-between gap-3">
                             <div>
                               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Scoring Composition</p>
                               <h4 className="mt-1 text-sm font-semibold text-slate-950">Raw score dimensions from Idea &amp; Backlog</h4>
                             </div>
-                            <Badge variant="outline" className="border-slate-200 bg-white text-[10px] font-semibold text-slate-600">
+                            <Badge variant="outline" className="border-white/70 bg-white/55 text-[10px] font-semibold text-slate-600 backdrop-blur-md">
                               Backlog Source
                             </Badge>
                           </div>
@@ -8650,16 +10438,31 @@ export function IdeaDetailPage() {
                             <ResponsiveContainer width="100%" height="100%">
                               <BarChart data={scoreData} margin={{ top: 8, right: 6, left: -16, bottom: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                                <XAxis
+                                  dataKey="label"
+                                  tick={({ x, y, payload }) => {
+                                    const row = scoreData.find((item) => item.label === payload.value)
+                                    return (
+                                      <text x={x} y={y} dy={12} textAnchor="middle" fontSize={11} fill={row?.fill ?? '#64748b'}>
+                                        {payload.value}
+                                      </text>
+                                    )
+                                  }}
+                                  axisLine={false}
+                                  tickLine={false}
+                                />
                                 <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
                                 <RechartsTooltip
                                   cursor={{ fill: 'rgba(148,163,184,0.08)' }}
                                   contentStyle={{ borderRadius: 16, border: '1px solid #e2e8f0', boxShadow: '0 18px 40px -28px rgba(15,23,42,0.45)' }}
-                                  formatter={(value) => [`${value}/10`, 'Score']}
+                                  formatter={(value, _name, props) => {
+                                    const row = props.payload as ScoringDimensionRow | undefined
+                                    return [`${value}/10`, row?.label ?? 'Score']
+                                  }}
                                 />
                                 <Bar dataKey="score" radius={[10, 10, 0, 0]} barSize={42}>
                                   {scoreData.map((item) => (
-                                    <Cell key={item.label} fill={item.fill} />
+                                    <Cell key={item.label} fill={scoringBarFill(item, hasNumericScoring)} />
                                   ))}
                                 </Bar>
                               </BarChart>
@@ -8672,32 +10475,45 @@ export function IdeaDetailPage() {
                             label: item.label,
                             value: `${item.score}/10`,
                             detail: item.detail,
-                          }))).slice(0, 4).map((item) => (
-                            <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-3">
+                          }))).slice(0, 4).map((item) => {
+                            const theme = scoreData.find((row) => row.label === item.label)
+                            return (
+                            <div
+                              key={item.label}
+                              className={cn(
+                                IDEA_SUMMARY_LIQUID_GLASS_TILE,
+                                'rounded-2xl border p-3',
+                                theme?.borderClass ?? 'border-white/60',
+                              )}
+                            >
                               <div className="flex items-start justify-between gap-3">
                                 <div>
-                                  <p className="text-[13px] font-semibold text-slate-900">{item.label}</p>
+                                  <p className={cn('text-[13px] font-semibold', theme?.textClass ?? 'text-slate-900')}>{item.label}</p>
                                   <p className="mt-1 text-[11px] leading-4 text-slate-500">{item.detail}</p>
                                 </div>
-                                <div className="rounded-xl bg-slate-950 px-2.5 py-1 text-xs font-semibold text-white shadow-sm">
+                                <div
+                                  className="rounded-xl px-2.5 py-1 text-xs font-semibold text-white shadow-sm"
+                                  style={{ backgroundColor: theme?.fill ?? '#334155' }}
+                                >
                                   {item.value}
                                 </div>
                               </div>
                             </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       </div>
                     </CardContent>
                   </Card>
 
-                  <Card className="border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.98))] shadow-[0_20px_50px_-36px_rgba(15,23,42,0.4)]">
-                    <CardContent className="p-3.5 space-y-2.5">
-                      <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
+                  <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                    <CardContent className="relative z-10 space-y-2.5 p-3.5">
+                      <div className="flex items-center justify-between border-b border-white/45 pb-2.5">
                         <div>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Board Recommendation</p>
                           <h3 className="mt-1 text-sm font-semibold text-slate-950">Enterprise investment signal</h3>
                         </div>
-                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-right">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'rounded-xl px-3 py-1.5 text-right')}>
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Priority</p>
                           <p className="text-sm font-semibold text-slate-900">
                             {runtimeScoringAnalysis.priority || priorityLabel}
@@ -8705,7 +10521,7 @@ export function IdeaDetailPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-slate-200 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.16),transparent_58%),linear-gradient(180deg,rgba(255,255,255,1),rgba(248,250,252,0.98))] p-3.5">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'rounded-[24px] p-3.5')}>
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Scoring Posture</p>
@@ -8723,7 +10539,7 @@ export function IdeaDetailPage() {
                       </div>
 
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Primary Strength</p>
                           <p className="mt-1.5 text-sm font-semibold text-slate-950">
                             {runtimeScoringAnalysis.primary_strength}
@@ -8732,7 +10548,7 @@ export function IdeaDetailPage() {
                             {runtimeScoringAnalysis.primary_strength_detail}
                           </p>
                         </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Main Watchpoint</p>
                           <p className="mt-1.5 text-sm font-semibold text-slate-950">
                             {runtimeScoringAnalysis.main_watchpoint}
@@ -8744,8 +10560,8 @@ export function IdeaDetailPage() {
                       </div>
 
                       <div className="space-y-2">
-                        <div className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'flex gap-3 p-3')}>
+                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50/80 text-emerald-700 backdrop-blur-md">
                             <TrendingUp className="h-4 w-4" />
                           </div>
                           <div>
@@ -8758,8 +10574,8 @@ export function IdeaDetailPage() {
                           </div>
                         </div>
 
-                        <div className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'flex gap-3 p-3')}>
+                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-50/80 text-amber-700 backdrop-blur-md">
                             <TriangleAlert className="h-4 w-4" />
                           </div>
                           <div>
@@ -8773,8 +10589,8 @@ export function IdeaDetailPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-slate-50 shadow-inner">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">AI Commentary</p>
+                      <div className="rounded-2xl border border-white/10 bg-slate-950/90 px-4 py-3 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">AI Commentary</p>
                         <p className="mt-2 text-xs leading-5 text-slate-200">
                           {runtimeScoringAnalysis.commentary}
                         </p>
@@ -8784,54 +10600,118 @@ export function IdeaDetailPage() {
                 </div>
               )}
             </div>
-          </CollapsiblePanel>
-        </div>
-        )}
+                </div>
+              </div>
+            </div>
+          </div>
+            ),
+          )}
 
-        {activePanel === 'impact' && (
-        <div id="panel-impact" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="impact"
-            title="Analisis Dampak AI"
-            description="Penilaian dampak multi dimensi dengan indikator positif dan area kontrol."
-            isOpen={collapsed.impact}
-            onToggle={togglePanel}
-            confidence={confidence.impact}
+        {activePanel === 'impact' &&
+          renderIdeaPanelWithOptionalFullscreen(
+            isImpactPanelFullscreen,
+            (
+        <div
+            ref={ideaImpactPanelRef}
+            id="panel-impact"
+            style={
+              isImpactPanelFullscreen
+                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                : ideaImpactPanelHeightPx != null
+                  ? { height: ideaImpactPanelHeightPx, maxHeight: ideaImpactPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                  : undefined
+            }
+            className={cn(
+              'scroll-mt-24',
+              IDEA_SUMMARY_LIQUID_GLASS_SHELL,
+              isImpactPanelFullscreen
+                ? 'fixed inset-x-0 top-12 bottom-0 z-[60] rounded-none border-0 bg-background'
+                : 'rounded-2xl',
+            )}
           >
+            <div className="flex h-full min-h-0 w-full flex-col">
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+                  isImpactPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                )}
+              >
+                <div className="shrink-0 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Target className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                      <h2 className="text-lg font-semibold text-foreground">AI Impact Analysis</h2>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {typeof confidence.impact === 'number' ? (
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] font-semibold', confidenceClass(confidence.impact))}
+                        >
+                          Confidence {confidence.impact}%
+                        </Badge>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-pressed={isImpactPanelFullscreen}
+                        aria-label={isImpactPanelFullscreen ? 'Exit impact fullscreen' : 'Expand impact to fullscreen'}
+                        title={isImpactPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                        onClick={() => setIsImpactPanelFullscreen((prev) => !prev)}
+                        className={cn(
+                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          enterpriseControlFocusClass,
+                          isImpactPanelFullscreen &&
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                        )}
+                      >
+                        {isImpactPanelFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+                    Multi-dimensional impact assessment with positive indicators and control areas.
+                  </p>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="space-y-3">
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.52fr_0.88fr]">
-                <Card className="glass-card relative overflow-hidden border-white/50 bg-white/35 shadow-[0_30px_80px_-46px_rgba(15,23,42,0.4)] backdrop-blur-2xl">
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.85),transparent_26%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.22),transparent_28%),radial-gradient(circle_at_50%_120%,rgba(59,130,246,0.16),transparent_45%)]" />
+                <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_30%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.38),transparent_34%)]" />
                   <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-white/80" />
-                  <div className="relative z-10 border-b border-white/45 bg-[linear-gradient(180deg,rgba(255,255,255,0.36),rgba(255,255,255,0.18))] px-4 py-4 backdrop-blur-xl">
+                  <div className="relative z-10 border-b border-white/45 bg-white/20 px-4 py-4 backdrop-blur-xl">
                     <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
                       <div className="max-w-3xl">
                         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                          <Sparkles className="h-3.5 w-3.5 text-cyan-700" />
+                          <Sparkles className="h-3.5 w-3.5 text-slate-600" />
                           Executive Impact Canvas
                         </div>
-                        <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-950">Nilai transformasi multi finance dengan guardrail yang terukur</h3>
+                        <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-950">Multi finance transformation value with measurable guardrails</h3>
                         <p className="mt-1.5 text-sm leading-5 text-slate-600">
-                          Proposal ini bernilai tinggi untuk operasi multi finance karena meningkatkan ketepatan waktu intervensi, mengurangi antrean kritikal, dan memperkuat visibilitas layanan, dengan syarat adopsi proses dan governance model dijaga disiplin.
+                          This proposal delivers high value for multi finance operations by improving intervention timing, reducing critical case backlogs, and strengthening service visibility, provided process adoption and the governance model are kept disciplined.
                         </p>
                       </div>
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[400px]">
-                        <div className="rounded-2xl border border-white/70 bg-white/45 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_12px_28px_-20px_rgba(15,23,42,0.35)] backdrop-blur-xl">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'px-3 py-2.5')}>
                           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Reach</p>
                           <p className="mt-1.5 text-xl font-semibold text-slate-950">5</p>
                           <p className="text-[11px] text-slate-500">domains</p>
                         </div>
-                        <div className="rounded-2xl border border-white/70 bg-white/45 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_12px_28px_-20px_rgba(15,23,42,0.35)] backdrop-blur-xl">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'px-3 py-2.5')}>
                           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Bias</p>
                           <p className="mt-1.5 text-sm font-semibold text-emerald-700">Upside-led</p>
                           <p className="text-[11px] text-slate-500">value posture</p>
                         </div>
-                        <div className="rounded-2xl border border-white/70 bg-white/45 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_12px_28px_-20px_rgba(15,23,42,0.35)] backdrop-blur-xl">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'px-3 py-2.5')}>
                           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Watch</p>
                           <p className="mt-1.5 text-sm font-semibold text-amber-700">Adoption</p>
                           <p className="text-[11px] text-slate-500">operating fit</p>
                         </div>
-                        <div className="rounded-2xl border border-white/70 bg-white/45 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_12px_28px_-20px_rgba(15,23,42,0.35)] backdrop-blur-xl">
+                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'px-3 py-2.5')}>
                           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Board View</p>
                           <p className="mt-1.5 text-sm font-semibold text-sky-700">Sponsor</p>
                           <p className="text-[11px] text-slate-500">with controls</p>
@@ -8842,26 +10722,26 @@ export function IdeaDetailPage() {
 
                   <CardContent className="relative z-10 p-4 space-y-3">
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-[1.15fr_0.85fr]">
-                      <div className="rounded-[26px] border border-white/60 bg-[radial-gradient(circle_at_top_left,rgba(125,211,252,0.18),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.56),rgba(255,255,255,0.28))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_20px_40px_-30px_rgba(15,23,42,0.24)] backdrop-blur-xl">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'rounded-[26px] p-3.5')}>
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Investment Narrative</p>
                             <h4 className="mt-1 text-base font-semibold text-slate-950">The strongest value comes from timing, not just automation</h4>
                           </div>
-                          <Badge variant="outline" className="border-cyan-200/80 bg-white/55 text-[10px] font-semibold text-cyan-700 backdrop-blur-md">
+                          <Badge variant="outline" className="border-white/70 bg-white/55 text-[10px] font-semibold text-slate-700 backdrop-blur-md">
                             Multi-domain signal
                           </Badge>
                         </div>
                         <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                          <div className="rounded-2xl border border-white/65 bg-white/45 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] backdrop-blur-lg">
+                          <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'p-3')}>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Strategic value</p>
                             <div className="mt-1.5 flex items-center gap-2">
                               <TrendingUp className="h-4 w-4 text-emerald-700" />
                               <p className="text-sm font-semibold text-slate-950">Predictive control</p>
                             </div>
-                            <p className="mt-1.5 text-[12px] leading-5 text-slate-500">Memajukan respons eskalasi lebih awal dalam siklus approval.</p>
+                            <p className="mt-1.5 text-[12px] leading-5 text-slate-500">Brings escalation response earlier in the approval cycle.</p>
                           </div>
-                          <div className="rounded-2xl border border-white/65 bg-white/45 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] backdrop-blur-lg">
+                          <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'p-3')}>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Operating effect</p>
                             <div className="mt-1.5 flex items-center gap-2">
                               <Cpu className="h-4 w-4 text-indigo-700" />
@@ -8869,7 +10749,7 @@ export function IdeaDetailPage() {
                             </div>
                             <p className="mt-1.5 text-[12px] leading-5 text-slate-500">Creates room for action before escalation pressure builds.</p>
                           </div>
-                          <div className="rounded-2xl border border-white/65 bg-white/45 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] backdrop-blur-lg">
+                          <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'p-3')}>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Governance focus</p>
                             <div className="mt-1.5 flex items-center gap-2">
                               <TriangleAlert className="h-4 w-4 text-amber-700" />
@@ -8880,10 +10760,10 @@ export function IdeaDetailPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-[26px] border border-slate-200/80 bg-slate-950 p-3.5 text-slate-50 shadow-[0_22px_50px_-34px_rgba(15,23,42,0.55)]">
+                      <div className="rounded-[26px] border border-white/10 bg-slate-950/90 p-3.5 text-slate-50 shadow-[0_22px_50px_-34px_rgba(15,23,42,0.55)] backdrop-blur-md">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/75">Board Signal</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">Board Signal</p>
                             <h4 className="mt-1 text-base font-semibold text-white">Advance with controlled rollout</h4>
                           </div>
                           <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-cyan-200">
@@ -8916,71 +10796,61 @@ export function IdeaDetailPage() {
                           icon: Briefcase,
                           title: 'Business impact',
                           lens: 'Steering multi finance',
-                          positive: 'Meningkatkan prediktabilitas SLA approval',
+                          positive: 'Improves approval SLA predictability',
                           negative: 'Requires change adoption',
                           signal: 'High upside',
                           accent: '#0ea5e9',
-                          backgroundImage:
-                            'radial-gradient(circle at top left, rgba(14, 165, 233, 0.12), transparent 42%), linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98))',
                         },
                         {
                           icon: Cpu,
                           title: 'Operational impact',
                           lens: 'Process control',
                           positive: 'Earlier intervention capability',
-                          negative: 'Beban workflow governance baru',
+                          negative: 'New governance workflow overhead',
                           signal: 'Medium effort',
                           accent: '#6366f1',
-                          backgroundImage:
-                            'radial-gradient(circle at top left, rgba(99, 102, 241, 0.12), transparent 42%), linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98))',
                         },
                         {
                           icon: UserRound,
                           title: 'Customer impact',
                           lens: 'Experience continuity',
-                          positive: 'Mengurangi keterlambatan pada proses lanjutan',
+                          positive: 'Reduces delays in downstream processes',
                           negative: 'Initial model calibration period',
                           signal: 'Visible benefit',
                           accent: '#10b981',
-                          backgroundImage:
-                            'radial-gradient(circle at top left, rgba(16, 185, 129, 0.12), transparent 42%), linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98))',
                         },
                         {
                           icon: DollarSign,
                           title: 'Financial impact',
                           lens: 'Cost resilience',
-                          positive: 'Menurunkan varians proses dan biaya rework',
+                          positive: 'Reduces process variance and rework cost',
                           negative: 'Upfront implementation spend',
                           signal: 'ROI case',
                           accent: '#f59e0b',
-                          backgroundImage:
-                            'radial-gradient(circle at top left, rgba(245, 158, 11, 0.12), transparent 42%), linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98))',
                         },
                         {
                           icon: TriangleAlert,
                           title: 'Risk impact',
-                          lens: 'Kesiapan governance',
+                          lens: 'Governance readiness',
                           positive: 'Risk exposure becomes visible sooner',
-                          negative: 'Drift model perlu monitoring rutin',
+                          negative: 'Model drift needs routine monitoring',
                           signal: 'Managed exposure',
                           accent: '#f43f5e',
-                          backgroundImage:
-                            'radial-gradient(circle at top left, rgba(244, 63, 94, 0.12), transparent 42%), linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,252,0.98))',
                         },
                       ].map((item, index) => (
                         <Card
                           key={item.title}
                           className={cn(
-                            'relative overflow-hidden border-slate-200/80 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.32)]',
-                            index === 4 && 'md:col-span-2 xl:col-span-2'
+                            IDEA_SUMMARY_LIQUID_GLASS_CARD,
+                            'relative overflow-hidden',
+                            index === 4 && 'md:col-span-2 xl:col-span-2',
                           )}
-                          style={{ backgroundImage: item.backgroundImage }}
                         >
                           <div className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: item.accent }} />
-                          <CardContent className="p-3.5 pl-4.5">
+                          <CardContent className="relative z-10 p-3.5 pl-4.5">
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3">
-                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/90 bg-white/90 shadow-sm" style={{ color: item.accent }}>
+                                <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex h-11 w-11 items-center justify-center rounded-2xl')} style={{ color: item.accent }}>
                                   <item.icon className="h-5 w-5" />
                                 </div>
                                 <div>
@@ -8988,17 +10858,17 @@ export function IdeaDetailPage() {
                                   <h4 className="mt-1 text-base font-semibold text-slate-950">{item.title}</h4>
                                 </div>
                               </div>
-                              <Badge variant="outline" className="border-white/90 bg-white/85 text-[10px] font-semibold text-slate-700 shadow-sm">
+                              <Badge variant="outline" className="border-white/70 bg-white/55 text-[10px] font-semibold text-slate-700 backdrop-blur-md">
                                 {item.signal}
                               </Badge>
                             </div>
 
                             <div className={cn('mt-3 space-y-2.5', index === 4 && 'xl:grid xl:grid-cols-2 xl:gap-3 xl:space-y-0')}>
-                              <div className="rounded-2xl border border-emerald-200/80 bg-white/88 p-3">
+                              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'border-emerald-200/80 p-3')}>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Value unlock</p>
                                 <p className="mt-1 text-sm leading-5 text-slate-900">{item.positive}</p>
                               </div>
-                              <div className="rounded-2xl border border-rose-200/80 bg-white/88 p-3">
+                              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'border-rose-200/80 p-3')}>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-700">Control condition</p>
                                 <p className="mt-1 text-sm leading-5 text-slate-900">{item.negative}</p>
                               </div>
@@ -9010,140 +10880,297 @@ export function IdeaDetailPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="overflow-hidden border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(15,23,42,0.94))] text-slate-50 shadow-[0_30px_70px_-40px_rgba(15,23,42,0.6)]">
-                  <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.16),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] px-4 py-4">
+                <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_30%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.38),transparent_34%)]" />
+                  <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-white/80" />
+                  <div className="relative z-10 border-b border-white/45 bg-white/20 px-4 py-4 backdrop-blur-xl">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-200/70">Impact Recommendation</p>
-                        <h3 className="mt-1 text-xl font-semibold tracking-tight text-white">Executive action frame</h3>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Impact Recommendation</p>
+                        <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">Executive action frame</h3>
                       </div>
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-cyan-200 shadow-sm">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex h-11 w-11 items-center justify-center rounded-2xl text-slate-700')}>
                         <Target className="h-5 w-5" />
                       </div>
                     </div>
                   </div>
 
-                  <CardContent className="p-4 space-y-3">
-                    <div className="rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-200/75">Decision stance</p>
-                        <p className="mt-1.5 text-[24px] font-semibold leading-tight text-white">Dorong sebagai kapabilitas AI berbasis kontrol operasional</p>
-                      <p className="mt-2.5 text-sm leading-5 text-slate-300">
-                        Business case kuat, namun hasil optimal datang jika adopsi perubahan, desain ownership, dan kualitas kalibrasi diperlakukan sebagai kontrol delivery yang didanai.
+                  <CardContent className="relative z-10 space-y-3 p-4">
+                    <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'rounded-[26px] p-3.5')}>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Decision stance</p>
+                      <p className="mt-1.5 text-[24px] font-semibold leading-tight text-slate-950">
+                        Advance as an AI capability grounded in operational control
+                      </p>
+                      <p className="mt-2.5 text-sm leading-5 text-slate-600">
+                        The business case is strong, but the best outcome depends on treating change adoption, ownership design, and calibration quality as funded delivery controls.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Best-case outcome</p>
-                        <p className="mt-2 text-base font-semibold text-white">Earlier intervention, lower variance</p>
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Best-case outcome</p>
+                        <p className="mt-2 text-base font-semibold text-slate-950">Earlier intervention, lower variance</p>
                       </div>
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Critical control</p>
-                        <p className="mt-2 text-base font-semibold text-white">Governance adopsi dan drift model</p>
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Critical control</p>
+                        <p className="mt-2 text-base font-semibold text-slate-950">Adoption governance and model drift</p>
                       </div>
                     </div>
 
                     <div className="space-y-2.5">
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                         <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/12 text-emerald-300">
+                          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50/90 text-emerald-700 backdrop-blur-md">
                             <TrendingUp className="h-4.5 w-4.5" />
                           </div>
                           <div>
-                            <p className="text-sm font-semibold text-white">Impact is strongest where timing matters most</p>
-                            <p className="mt-1 text-sm leading-5 text-slate-300">Model memberi nilai dengan menampilkan sinyal risiko keterlambatan sebelum kasus menjadi eskalasi kritikal.</p>
+                            <p className="text-sm font-semibold text-slate-950">Impact is strongest where timing matters most</p>
+                            <p className="mt-1 text-sm leading-5 text-slate-600">
+                              The model creates value by surfacing delay risk signals before a case turns into a critical escalation.
+                            </p>
                           </div>
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                         <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/12 text-amber-300">
+                          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50/90 text-amber-700 backdrop-blur-md">
                             <TriangleAlert className="h-4.5 w-4.5" />
                           </div>
                           <div>
-                            <p className="text-sm font-semibold text-white">Change enablement should be funded from the start</p>
-                            <p className="mt-1 text-sm leading-5 text-slate-300">Without clear operating ownership, workflow load can offset part of the projected upside.</p>
+                            <p className="text-sm font-semibold text-slate-950">Change enablement should be funded from the start</p>
+                            <p className="mt-1 text-sm leading-5 text-slate-600">
+                              Without clear operating ownership, workflow load can offset part of the projected upside.
+                            </p>
                           </div>
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                         <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/12 text-sky-300">
+                          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-50/90 text-sky-700 backdrop-blur-md">
                             <Sparkles className="h-4.5 w-4.5" />
                           </div>
                           <div>
-                            <p className="text-sm font-semibold text-white">Recommended next step</p>
-                            <p className="mt-1 text-sm leading-5 text-slate-300">Posisikan sebagai penguatan governance bertahap, bukan sekadar deployment fitur AI.</p>
+                            <p className="text-sm font-semibold text-slate-950">Recommended next step</p>
+                            <p className="mt-1 text-sm leading-5 text-slate-600">
+                              Position this as a phased governance strengthening effort, not just an AI feature deployment.
+                            </p>
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/8 px-4 py-3.5">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200/80">AI Commentary</p>
-                      <p className="mt-2 text-sm leading-5 text-slate-200">
-                        Penilaian AI menunjukkan proposal ini memiliki manfaat lintas fungsi yang tinggi dengan downside terkelola, selama model operasi menetapkan kualitas adopsi dan kalibrasi sebagai kontrol eksekutif yang eksplisit.
+                    <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'rounded-[26px] p-3.5')}>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">AI Commentary</p>
+                      <p className="mt-2 text-sm leading-5 text-slate-600">
+                        The AI assessment indicates this proposal has high cross-functional benefit with managed downside, as long as the operating model sets adoption quality and calibration as explicit executive controls.
                       </p>
                     </div>
                   </CardContent>
                 </Card>
               </div>
             </div>
-          </CollapsiblePanel>
-        </div>
-        )}
+                </div>
+              </div>
+            </div>
+          </div>
+            ),
+          )}
 
         {activePanel === 'integration' && (
         <div id="panel-integration" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="integration"
-            title="AI Integration Recommendation"
-            description="System and data integration recommendations for execution readiness."
-            isOpen={collapsed.integration}
-            onToggle={togglePanel}
-            confidence={confidence.integration}
+          <div
+            ref={ideaIntegrationPanelRef}
+            style={
+              isIntegrationPanelFullscreen
+                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                : ideaIntegrationPanelHeightPx != null
+                  ? { height: ideaIntegrationPanelHeightPx, maxHeight: ideaIntegrationPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                  : undefined
+            }
+            className={cn('min-h-0', isIntegrationPanelFullscreen && 'fixed inset-x-0 top-12 bottom-0 z-50')}
           >
-            <div className="rounded-2xl border border-border/40 bg-white/80 p-3">
-              <div className="h-[620px] rounded-[22px] border border-slate-200/80 overflow-hidden bg-[radial-gradient(circle_at_1px_1px,rgba(148,163,184,0.22)_1px,transparent_1px),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.96))] [background-size:22px_22px]">
-                <ReactFlow
-                  nodes={integrationArchitecture.nodes}
-                  edges={integrationArchitecture.edges}
-                  nodeTypes={archimateNodeTypes}
-                  fitView
-                  fitViewOptions={{ padding: 0.08, minZoom: 0.7 }}
-                  nodesDraggable={false}
-                  nodesConnectable={false}
-                  elementsSelectable={false}
-                  panOnDrag
-                  zoomOnScroll
-                  zoomOnPinch
-                  minZoom={0.55}
-                  maxZoom={1.4}
-                  proOptions={{ hideAttribution: true }}
-                  defaultEdgeOptions={{ type: 'smoothstep' }}
-                >
-                  <MiniMap
-                    zoomable
-                    pannable
-                    nodeColor={(node) => {
-                      if (node.type === 'archimateBoundary') return '#e2e8f0'
-                      if (node.id === 'legend' || node.id === 'canvas-notes') return '#f8fafc'
-                      const data = node.data as Partial<ArchimateElementNodeData>
-                      if (data.layer === 'business') return '#f9c78f'
-                      if (data.layer === 'technology') return '#c4f0cb'
-                      return '#bfe0ff'
-                    }}
-                    maskColor="rgba(15, 23, 42, 0.08)"
-                    className="!bg-white/95 !border !border-slate-200"
-                  />
-                  <Controls showInteractive={false} />
-                  <Background color="#d7dee8" gap={22} />
-                </ReactFlow>
+            <div
+              className={cn(
+                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+                isIntegrationPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
+              )}
+            >
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+                  isIntegrationPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                )}
+              >
+                <div className="shrink-0 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <GitBranch className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                      <h2 className="text-lg font-semibold text-foreground">AI Integration Recommendation</h2>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {integrationLoaded && typeof confidence.integration === 'number' ? (
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] font-semibold', confidenceClass(confidence.integration))}
+                        >
+                          Confidence {confidence.integration}%
+                        </Badge>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-pressed={isIntegrationPanelFullscreen}
+                        aria-label={
+                          isIntegrationPanelFullscreen
+                            ? 'Exit integration fullscreen'
+                            : 'Expand integration to fullscreen'
+                        }
+                        title={isIntegrationPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                        onClick={() => setIsIntegrationPanelFullscreen((prev) => !prev)}
+                        className={cn(
+                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          enterpriseControlFocusClass,
+                          isIntegrationPanelFullscreen &&
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                        )}
+                      >
+                        {isIntegrationPanelFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+                    Integration architecture recommendation with ArchiMate canvas and PlantUML source.
+                  </p>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-hidden">
+            <EditableIntegrationArchitectureCanvas
+              ideaId={idea.id}
+              bootstrapKey={integrationBootstrapKey}
+              bootstrapRecord={integrationBootstrapRecord}
+              isGenerating={isIntegrationRefreshing}
+              fillHeight
+              hideStudioHeader
+              toolbarExtra={
+                <>
+                  {integrationMissing && !integrationGenerationError && !isIntegrationRefreshing ? (
+                    <button
+                      type="button"
+                      className={cn(enterpriseCyanGradientActionButtonClass(), 'min-w-0 flex-1 justify-center')}
+                      onClick={() => {
+                        setRegenerating((prev) => ({ ...prev, integration: true }))
+                        void loadRuntimeIntegration(idea, { forceRefresh: true }).finally(() => {
+                          setRegenerating((prev) => ({ ...prev, integration: false }))
+                        })
+                      }}
+                    >
+                      <Sparkles
+                        className="h-4 w-4 transition-transform duration-200 group-hover:scale-110"
+                        strokeWidth={2.5}
+                      />
+                      Generate integrasi AI
+                    </button>
+                  ) : integrationLoaded && !integrationGenerationError ? (
+                    <button
+                      type="button"
+                      disabled={isIntegrationRefreshing}
+                      className={cn(
+                        enterpriseSecondaryButtonClass(),
+                        'inline-flex min-w-0 flex-1 items-center justify-center gap-2 disabled:pointer-events-none disabled:opacity-50',
+                      )}
+                      onClick={() => regeneratePanel('integration')}
+                    >
+                      <RefreshCcw
+                        className={cn('h-4 w-4', isIntegrationRefreshing && 'animate-spin')}
+                        strokeWidth={2.5}
+                      />
+                      Regenerate
+                    </button>
+                  ) : null}
+                </>
+              }
+              studioOverlay={
+                <>
+                  {runtimeIntegrationAnalysis.status === 'insufficient_data' &&
+                  integrationLoaded &&
+                  !isIntegrationRefreshing ? (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-800">
+                        Evidence kurang
+                      </Badge>
+                    </div>
+                  ) : null}
+
+                  {isIntegrationRefreshing && (
+                    <div className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
+                      <RefreshCcw className="h-3.5 w-3.5 animate-spin text-sky-600" />
+                      <span>Tectona Assistant menyusun rekomendasi integrasi…</span>
+                    </div>
+                  )}
+
+                  {integrationGenerationError && !isIntegrationRefreshing && (
+                    <div
+                      role="alert"
+                      className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-900"
+                    >
+                      <span className="font-semibold text-rose-800">Analisis integrasi gagal — </span>
+                      {integrationGenerationError}
+                    </div>
+                  )}
+
+                  {integrationLoaded && !integrationGenerationError && (
+                    <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-50"
+                        onClick={() => setIntegrationBriefExpanded((prev) => !prev)}
+                      >
+                        <ChevronDown
+                          className={cn(
+                            'h-4 w-4 shrink-0 text-slate-500 transition-transform',
+                            integrationBriefExpanded && 'rotate-180',
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800">
+                          {runtimeIntegrationAnalysis.summaryTitle}
+                        </span>
+                      </button>
+                      {integrationBriefExpanded && (
+                        <div className="max-h-32 space-y-2 overflow-y-auto border-t border-border/30 px-3 py-2 text-xs text-slate-600">
+                          <p className="leading-5">{runtimeIntegrationAnalysis.executiveBrief}</p>
+                          {runtimeIntegrationAnalysis.integrationPatterns.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {runtimeIntegrationAnalysis.integrationPatterns.map((pattern) => (
+                                <Badge key={pattern} variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-800">
+                                  {pattern}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                          {runtimeIntegrationAnalysis.missingEvidence.length > 0 && (
+                            <ul className="list-disc pl-4 text-amber-900">
+                              {runtimeIntegrationAnalysis.missingEvidence.map((item) => (
+                                <li key={item}>{item}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              }
+            />
+                </div>
               </div>
             </div>
-          </CollapsiblePanel>
+          </div>
         </div>
         )}
 
@@ -9162,9 +11189,9 @@ export function IdeaDetailPage() {
                 <Card className="border-border/40 bg-white/85">
                   <CardContent className="pt-4 space-y-4">
                     <div>
-                      <p className="text-xs font-semibold text-slate-600 mb-1">Diagram proses dari brainstorming</p>
+                      <p className="text-xs font-semibold text-slate-600 mb-1">Process diagram from brainstorming</p>
                       <p className="text-[11px] text-slate-500">
-                        Sumber: diagram AS-IS / TO-BE yang disepakati saat Create Idea, tersimpan di deskripsi ide.
+                        Source: the AS-IS / TO-BE diagram agreed during Create Idea, saved in the idea description.
                       </p>
                     </div>
                     {brainstormProcessDiagrams.map((diagram) => (
@@ -9182,7 +11209,7 @@ export function IdeaDetailPage() {
                   <CardContent className="pt-4">
                     <p className="text-xs font-semibold text-slate-600 mb-3">Business architecture diagram preview</p>
                     <p className="text-[11px] text-slate-500 mb-3">
-                      Belum ada diagram AS-IS/TO-BE di deskripsi ide. Menampilkan alur ringkas dari section BRD
+                      No AS-IS/TO-BE diagram yet in the idea description. Showing a summarized flow from the BRD section
                       (Problem statement, Objectives, Functional requirements, Dependencies).
                     </p>
 
@@ -9257,146 +11284,1158 @@ export function IdeaDetailPage() {
 
         {activePanel === 'costBenefit' && (
         <div id="panel-costBenefit" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="costBenefit"
-            title="AI Cost & Benefit Analysis"
-            description="Numeric model when finance evidence exists; otherwise honest narrative / percentage points."
-            isOpen={collapsed.costBenefit}
-            onToggle={togglePanel}
-            confidence={confidence.costBenefit}
+          <div
+            ref={ideaCostBenefitPanelRef}
+            style={
+              isCostBenefitPanelFullscreen
+                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                : ideaCostBenefitPanelHeightPx != null
+                  ? { height: ideaCostBenefitPanelHeightPx, maxHeight: ideaCostBenefitPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                  : undefined
+            }
+            className={cn('min-h-0', isCostBenefitPanelFullscreen && 'fixed inset-x-0 top-12 bottom-0 z-50')}
           >
-            <div className="space-y-3">
-              {benefitError ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                  {benefitError}
-                </div>
-              ) : null}
-
-              {!benefitAnalysis && !benefitError ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  Belum ada hasil cost–benefit. Gunakan Regenerate Cost Benefit.
-                </div>
-              ) : null}
-
-              {benefitAnalysis ? (
-                <>
-                  <p className="text-sm text-slate-700">{benefitAnalysis.executive_summary}</p>
-                  {(benefitAnalysis.narrative_points?.length ?? 0) > 0 ? (
-                    <Card className="border-amber-200/70 bg-amber-50/50">
-                      <CardContent className="pt-4">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-800">
-                          Narasi / persentase (tanpa angka keuangan absolut)
-                        </p>
-                        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                          {benefitAnalysis.narrative_points?.map((point) => (
-                            <li key={point}>{point}</li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  ) : null}
-
-                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                    <Card className="border-border/40 bg-white/80 lg:col-span-2">
-                      <CardContent className="pt-4 h-[240px]">
-                        {costBenefitChartData.length > 0 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={costBenefitChartData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                              <RechartsTooltip />
-                              <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                                {costBenefitChartData.map((item) => (
-                                  <Cell key={item.name} fill={item.fill} />
-                                ))}
-                              </Bar>
-                            </BarChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          <p className="text-sm text-slate-500">Tidak ada metrik numerik yang bisa ditampilkan secara jujur.</p>
+            <div
+              className={cn(
+                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+                isCostBenefitPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
+              )}
+            >
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+                  isCostBenefitPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                )}
+              >
+                <div className="shrink-0 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <DollarSign className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                      <h2 className="text-lg font-semibold text-foreground">AI Cost &amp; Benefit Analysis</h2>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {typeof confidence.costBenefit === 'number' ? (
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] font-semibold', confidenceClass(confidence.costBenefit))}
+                        >
+                          Confidence {confidence.costBenefit}%
+                        </Badge>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-pressed={isCostBenefitPanelFullscreen}
+                        aria-label={
+                          isCostBenefitPanelFullscreen
+                            ? 'Exit cost benefit fullscreen'
+                            : 'Expand cost benefit to fullscreen'
+                        }
+                        title={isCostBenefitPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                        onClick={() => setIsCostBenefitPanelFullscreen((prev) => !prev)}
+                        className={cn(
+                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          enterpriseControlFocusClass,
+                          isCostBenefitPanelFullscreen &&
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
                         )}
-                      </CardContent>
-                    </Card>
-                    <Card className="border-border/40 bg-white/80">
-                      <CardContent className="pt-4 space-y-2 text-sm">
-                        {benefitAnalysis.presentation_mode === 'narrative' ? (
-                          <>
-                            <p className="rounded-lg border border-border/40 bg-white px-3 py-2 text-slate-600">
-                              Mode: narasi / % (asumsi default atau tanpa SoR keuangan)
-                            </p>
-                            {benefitAnalysis.roi_percentage > 0 ? (
-                              <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">
-                                <span className="font-semibold">ROI model (hipotesis):</span> {benefitAnalysis.roi_percentage.toFixed(0)}%
-                              </p>
-                            ) : null}
-                            {benefitAnalysis.payback_period_months > 0 && benefitAnalysis.payback_period_months < 1e9 ? (
-                              <p className="rounded-lg border border-border/40 bg-white px-3 py-2">
-                                <span className="text-slate-500">Payback model:</span> {benefitAnalysis.payback_period_months.toFixed(0)} months
-                              </p>
-                            ) : null}
-                          </>
+                      >
+                        {isCostBenefitPanelFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
                         ) : (
-                          <>
-                            <p className="rounded-lg border border-border/40 bg-white px-3 py-2">
-                              <span className="text-slate-500">Estimated cost:</span> ${(benefitAnalysis.total_cost_5year / 1000).toFixed(0)}K
-                            </p>
-                            <p className="rounded-lg border border-border/40 bg-white px-3 py-2">
-                              <span className="text-slate-500">Expected benefit:</span> ${(benefitAnalysis.total_benefit_5year / 1000).toFixed(0)}K
-                            </p>
-                            <p className="rounded-lg border border-border/40 bg-white px-3 py-2">
-                              <span className="text-slate-500">Payback period:</span> {benefitAnalysis.payback_period_months.toFixed(0)} months
-                            </p>
-                            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">
-                              <span className="font-semibold">ROI:</span> {benefitAnalysis.roi_percentage.toFixed(0)}%
-                            </p>
-                          </>
+                          <Maximize2 className="h-3.5 w-3.5" aria-hidden />
                         )}
-                      </CardContent>
-                    </Card>
+                      </button>
+                    </div>
                   </div>
-                </>
-              ) : null}
+                  <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+                    Numeric model when finance evidence exists; otherwise honest narrative / percentage points.
+                  </p>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  <div className="space-y-3">
+                    {benefitError ? (
+                      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                        {benefitError}
+                      </div>
+                    ) : null}
+
+                    {!benefitAnalysis && !benefitError ? (
+                      <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                        <CardContent className="relative z-10 px-4 py-8 text-center">
+                          <DollarSign className="mx-auto h-10 w-10 text-slate-400" aria-hidden />
+                          <p className="mt-3 text-sm font-semibold text-slate-900">No cost-benefit results yet</p>
+                          <p className="mt-1 text-sm text-slate-600">
+                            Open this panel after intake or regenerate from Action &amp; Control.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    {benefitAnalysis ? (
+                      <>
+                        <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_30%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.38),transparent_34%)]" />
+                          <CardContent className="relative z-10 space-y-4 p-4">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                              <div className="min-w-0 flex-1 space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      'border-white/70 bg-white/55 text-[10px] font-semibold backdrop-blur-md',
+                                      costBenefitIsNarrativeOnly
+                                        ? 'text-amber-800'
+                                        : 'text-emerald-800',
+                                    )}
+                                  >
+                                    {costBenefitIsNarrativeOnly
+                                      ? 'Narrative / % mode'
+                                      : 'Numeric finance model'}
+                                  </Badge>
+                                  {typeof confidence.costBenefit === 'number' ? (
+                                    <Badge
+                                      variant="outline"
+                                      className={cn(
+                                        'border-white/70 bg-white/55 text-[10px] font-semibold backdrop-blur-md',
+                                        confidenceClass(confidence.costBenefit),
+                                      )}
+                                    >
+                                      Confidence {confidence.costBenefit}%
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <h3 className="text-base font-semibold text-slate-950">Executive cost–benefit frame</h3>
+                                <p className="text-sm leading-6 text-slate-700">{benefitAnalysis.executive_summary}</p>
+                              </div>
+                              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'w-full shrink-0 px-4 py-3 lg:max-w-[220px]')}>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Decision stance</p>
+                                <p className="mt-1.5 text-sm font-semibold leading-5 text-slate-950">
+                                  {costBenefitIsNarrativeOnly
+                                    ? 'Proceed with qualitative business case until finance evidence is complete.'
+                                    : 'Proceed with quantified ROI review and funded control gates.'}
+                                </p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        {costBenefitIsNarrativeOnly ? (
+                          <CostBenefitEvidenceSection
+                            evidenceItems={costBenefitEvidenceItems}
+                            readinessPercent={costBenefitEvidenceReadinessPercent}
+                            onNavigateToPanel={navigateToPanel}
+                            onOpenBacklog={openIdeaBacklogForScoring}
+                          />
+                        ) : null}
+
+                        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.45fr_0.85fr]">
+                          <div className="space-y-3">
+                            <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                              <CardContent className="relative z-10 space-y-3 p-4">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div>
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                      {costBenefitIsNarrativeOnly ? 'Scoring proxy chart' : 'Financial breakdown'}
+                                    </p>
+                                    <p className="mt-1 text-sm text-slate-600">
+                                      {costBenefitIsNarrativeOnly
+                                        ? 'Relative dimensions only — bukan model keuangan absolut.'
+                                        : 'Estimated cost and benefit composition (USD thousands).'}
+                                    </p>
+                                  </div>
+                                  {!hasNumericScoring && costBenefitIsNarrativeOnly ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 shrink-0 rounded-full border-violet-200 bg-white/70 text-[11px] font-semibold text-violet-700"
+                                      onClick={() => navigateToPanel('scoring')}
+                                    >
+                                      Open Scoring
+                                    </Button>
+                                  ) : null}
+                                </div>
+                                <div className="h-[240px]">
+                                  {costBenefitChartData.length > 0 && (hasNumericScoring || !costBenefitIsNarrativeOnly) ? (
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <BarChart data={costBenefitChartData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                        <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                                        <YAxis
+                                          tick={{ fontSize: 11, fill: '#64748b' }}
+                                          axisLine={false}
+                                          tickLine={false}
+                                          domain={costBenefitIsNarrativeOnly ? [0, 100] : undefined}
+                                        />
+                                        <RechartsTooltip
+                                          formatter={(value: number, _name, item) => {
+                                            const payload = item?.payload as { score?: number | null }
+                                            if (costBenefitIsNarrativeOnly && typeof payload?.score === 'number') {
+                                              return [`${payload.score}/10`, 'Score']
+                                            }
+                                            return [`${value}K`, costBenefitIsNarrativeOnly ? 'Proxy' : 'USD thousands']
+                                          }}
+                                        />
+                                        <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                                          {costBenefitChartData.map((item) => (
+                                            <Cell key={item.name} fill={item.fill} />
+                                          ))}
+                                        </Bar>
+                                      </BarChart>
+                                    </ResponsiveContainer>
+                                  ) : (
+                                    <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'flex h-full flex-col items-center justify-center gap-2 px-4 text-center')}>
+                                      <Gauge className="h-8 w-8 text-slate-400" aria-hidden />
+                                      <p className="text-sm font-semibold text-slate-900">Skor dimensi belum tersedia</p>
+                                      <p className="text-sm text-slate-600">
+                                        Lengkapi Business Value, Effort, Risk, dan ROI di Scoring untuk mengisi proxy chart.
+                                      </p>
+                                      <Button
+                                        type="button"
+                                        variant="link"
+                                        className="h-auto px-0 text-[11px] font-semibold text-violet-700"
+                                        onClick={() => navigateToPanel('scoring')}
+                                      >
+                                        Buka Scoring
+                                      </Button>
+                                    </div>
+                                  )}
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                              <CardContent className="relative z-10 p-4">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="min-w-0">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Value–effort posture</p>
+                                    <h4 className="mt-1 text-base font-semibold text-slate-950">{costBenefitValueEffortPosture.label}</h4>
+                                    <p className="mt-1 text-sm leading-5 text-slate-600">{costBenefitValueEffortPosture.description}</p>
+                                  </div>
+                                  <div
+                                    className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'shrink-0 px-4 py-3 text-center sm:min-w-[160px]')}
+                                    style={{ borderColor: `${costBenefitValueEffortPosture.accent}33` }}
+                                  >
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Quadrant</p>
+                                    <p
+                                      className="mt-1 text-sm font-semibold"
+                                      style={{ color: costBenefitValueEffortPosture.accent }}
+                                    >
+                                      {costBenefitValueEffortPosture.quadrant}
+                                    </p>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                              <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                                <CardContent className="relative z-10 space-y-3 p-4">
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-700">Cost drivers</p>
+                                  <ul className="space-y-2">
+                                    {costBenefitQualitativeLevers.costDrivers.map((driver) => (
+                                      <li
+                                        key={driver}
+                                        className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'border-rose-200/70 px-3 py-2.5 text-sm leading-5 text-slate-800')}
+                                      >
+                                        {driver}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </CardContent>
+                              </Card>
+                              <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                                <CardContent className="relative z-10 space-y-3 p-4">
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Benefit levers</p>
+                                  <ul className="space-y-2">
+                                    {costBenefitQualitativeLevers.benefitLevers.map((lever) => (
+                                      <li
+                                        key={lever}
+                                        className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'border-emerald-200/70 px-3 py-2.5 text-sm leading-5 text-slate-800')}
+                                      >
+                                        {lever}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </CardContent>
+                              </Card>
+                            </div>
+                          </div>
+
+                          <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                            <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-white/80" />
+                            <CardContent className="relative z-10 space-y-3 p-4">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Finance signals</p>
+                              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Presentation mode</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-950">
+                                  {costBenefitIsNarrativeOnly ? 'Narrative / %' : 'Numeric model'}
+                                </p>
+                                <p className="mt-1 text-[11px] leading-4 text-slate-600">
+                                  {costBenefitIsNarrativeOnly
+                                    ? 'Default assumptions or no financial system of record.'
+                                    : 'Absolute figures available for executive review.'}
+                                </p>
+                              </div>
+                              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Evidence readiness</p>
+                                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">
+                                  {costBenefitEvidenceReadinessPercent}%
+                                </p>
+                                <p className="mt-1 text-[11px] leading-4 text-slate-600">{costBenefitUpgradeHint}</p>
+                              </div>
+                              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">ROI signal</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-950">
+                                  {benefitAnalysis.roi_percentage > 0
+                                    ? `${benefitAnalysis.roi_percentage.toFixed(0)}% ${costBenefitIsNarrativeOnly ? '(hipotesis)' : ''}`
+                                    : 'Menunggu evidence'}
+                                </p>
+                              </div>
+                              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Payback signal</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-950">
+                                  {benefitAnalysis.payback_period_months > 0 &&
+                                  benefitAnalysis.payback_period_months < 1e9
+                                    ? `${benefitAnalysis.payback_period_months.toFixed(0)} months`
+                                    : 'Menunggu evidence'}
+                                </p>
+                              </div>
+                              {!costBenefitIsNarrativeOnly ? (
+                                <>
+                                  <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Estimated cost (5y)</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-950">
+                                      ${(benefitAnalysis.total_cost_5year / 1000).toFixed(0)}K
+                                    </p>
+                                  </div>
+                                  <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Expected benefit (5y)</p>
+                                    <p className="mt-1 text-sm font-semibold text-emerald-800">
+                                      ${(benefitAnalysis.total_benefit_5year / 1000).toFixed(0)}K
+                                    </p>
+                                  </div>
+                                </>
+                              ) : null}
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                        {costBenefitScenarioBands.length > 0 ? (
+                          <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                            <CardContent className="relative z-10 space-y-3 p-4">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Scenario bands</p>
+                              <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                                {costBenefitScenarioBands.map((scenario) => (
+                                  <div key={scenario.name} className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+                                    <p className="text-sm font-semibold text-slate-950">{scenario.name}</p>
+                                    <p className="mt-1 text-xs font-semibold text-indigo-700">{scenario.roiLabel}</p>
+                                    {scenario.description ? (
+                                      <p className="mt-2 text-sm leading-5 text-slate-600">{scenario.description}</p>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ) : null}
+
+                        {(benefitAnalysis.narrative_points?.length ?? 0) > 0 && costBenefitIsNarrativeOnly ? (
+                          <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                            <CardContent className="relative z-10 space-y-3 p-4">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-800">
+                                Narrative guardrails (no absolute financial figures)
+                              </p>
+                              <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                                {benefitAnalysis.narrative_points?.map((point) => (
+                                  <li
+                                    key={point}
+                                    className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'border-amber-200/70 px-3 py-2.5 text-sm leading-5 text-slate-700')}
+                                  >
+                                    {point}
+                                  </li>
+                                ))}
+                              </ul>
+                            </CardContent>
+                          </Card>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
             </div>
-          </CollapsiblePanel>
+          </div>
         </div>
         )}
 
         {activePanel === 'conversion' && (
         <div id="panel-conversion" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="conversion"
-            title="Konversi Ide ke Eksekusi"
-            description="Timeline Sprint → Epic → Task → Sub-task untuk handoff delivery."
-            isOpen={collapsed.conversion}
-            onToggle={togglePanel}
-            confidence={confidence.conversion}
+          <div
+            ref={ideaConversionPanelRef}
+            style={
+              isConversionPanelFullscreen
+                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                : ideaConversionPanelHeightPx != null
+                  ? { height: ideaConversionPanelHeightPx, maxHeight: ideaConversionPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                  : undefined
+            }
+            className={cn('min-h-0', isConversionPanelFullscreen && 'fixed inset-x-0 top-12 bottom-0 z-50')}
           >
-            <div className="space-y-3">
-              {conversionError ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                  {conversionError}
-                </div>
-              ) : null}
-              {conversionTimeline?.summary ? (
-                <p className="text-sm text-slate-700">{conversionTimeline.summary}</p>
-              ) : null}
-              {(conversionTimeline?.warnings?.length ?? 0) > 0 ? (
-                <p className="text-xs text-amber-700">
-                  Catatan: {conversionTimeline?.warnings.join(', ')}
-                </p>
-              ) : null}
-              {conversionTimeline?.sprints?.length ? (
-                <IdeaConversionTimeline sprints={conversionTimeline.sprints} />
-              ) : (
-                !conversionError && (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                    Belum ada timeline konversi. Gunakan Regenerate Conversion.
-                  </div>
-                )
+            <div
+              className={cn(
+                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+                isConversionPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
               )}
+            >
+              <div className="flex h-full min-h-0 w-full flex-col">
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+                  isConversionPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                )}
+              >
+                <div className="shrink-0 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Layers className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                      <h2 className="text-lg font-semibold text-foreground">Idea to Execution Conversion</h2>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {typeof confidence.conversion === 'number' ? (
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] font-semibold', confidenceClass(confidence.conversion))}
+                        >
+                          Confidence {confidence.conversion}%
+                        </Badge>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-pressed={isConversionPanelFullscreen}
+                        aria-label={
+                          isConversionPanelFullscreen ? 'Exit conversion fullscreen' : 'Expand conversion to fullscreen'
+                        }
+                        title={isConversionPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                        onClick={() => setIsConversionPanelFullscreen((prev) => !prev)}
+                        className={cn(
+                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          enterpriseControlFocusClass,
+                          isConversionPanelFullscreen &&
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                        )}
+                      >
+                        {isConversionPanelFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                    <p className="max-w-xl text-[11px] leading-snug text-muted-foreground">
+                      Sprint → Epic → Task → Sub-task timeline for delivery handoff. Drag bars or edit inline;
+                      use ← → or scroll the timeline to move between periods.
+                    </p>
+                    {conversionTimeline?.sprints?.length ? (
+                      <IdeaConversionGanttToolbar
+                        sprints={conversionTimeline.sprints}
+                        projectName={idea.title}
+                        zoomLevel={conversionZoomLevel}
+                        onZoomLevelChange={setConversionZoomLevel}
+                        onTimelineNavigate={(direction) =>
+                          scrollConversionGanttChart(
+                            conversionGanttHostRef.current,
+                            direction,
+                            conversionZoomLevel,
+                          )
+                        }
+                      />
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+                  {conversionError ? (
+                    <div className="shrink-0 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                      {conversionError}
+                    </div>
+                  ) : null}
+                  {conversionTimeline?.sprints?.length ? (
+                    <IdeaConversionTimeline
+                      sprints={conversionTimeline.sprints}
+                      projectName={idea.title}
+                      zoomLevel={conversionZoomLevel}
+                      onChartHostReady={(host) => {
+                        conversionGanttHostRef.current = host
+                      }}
+                    />
+                  ) : (
+                    !conversionError && (
+                      <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        No conversion timeline yet.
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+              </div>
             </div>
-          </CollapsiblePanel>
+          </div>
+        </div>
+        )}
+
+        {activePanel === 'document' && (
+        <div id="panel-document" className="scroll-mt-24">
+          <div
+            ref={ideaDocsPanelRef}
+            style={
+              isIdeaDocsPanelFullscreen
+                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                : ideaDocsPanelHeightPx != null
+                  ? { height: ideaDocsPanelHeightPx, maxHeight: ideaDocsPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                  : undefined
+            }
+            className={cn('min-h-0', isIdeaDocsPanelFullscreen && 'fixed inset-x-0 top-12 bottom-0 z-50')}
+          >
+            <div
+              className={cn(
+                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
+                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+                isIdeaDocsPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
+              )}
+            >
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
+                  isIdeaDocsPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                )}
+              >
+              <div className="shrink-0 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileText className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                    <h2 className="text-lg font-semibold text-foreground">Idea Docs</h2>
+                  </div>
+                  <button
+                    type="button"
+                    aria-pressed={isIdeaDocsPanelFullscreen}
+                    aria-label={isIdeaDocsPanelFullscreen ? 'Exit docs fullscreen' : 'Expand docs to fullscreen'}
+                    title={isIdeaDocsPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                    onClick={() => setIsIdeaDocsPanelFullscreen((prev) => !prev)}
+                    className={cn(
+                      'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                      enterpriseControlFocusClass,
+                      isIdeaDocsPanelFullscreen &&
+                        'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                    )}
+                  >
+                    {isIdeaDocsPanelFullscreen ? (
+                      <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                    ) : (
+                      <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                  </button>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="max-w-2xl flex-1 text-[11px] leading-snug text-muted-foreground">
+                    Upload supporting documents or diagrams to auto-generate a knowledge base entry, or
+                    pick a Document & Knowledge Management template to draft a new document for this idea.
+                  </p>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    {ideaDocCurrentFolder ? (
+                      <>
+                        <button
+                          type="button"
+                          className={enterpriseIndigoGradientActionButtonClass()}
+                          title="Generate a document from a DKM master template"
+                          disabled={ideaDocTemplatesLoading || ideaDocGenerateBusy}
+                          onClick={openIdeaDocGenerateDialog}
+                        >
+                          {ideaDocGenerateBusy ? (
+                            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                          ) : (
+                            <Sparkles className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                          )}
+                          Generate from template
+                        </button>
+                        <button
+                          type="button"
+                          className={enterpriseCyanGradientActionButtonClass()}
+                          disabled={ideaDocFolderCreateBusy}
+                          onClick={() => void handleIdeaDocCreateFolder()}
+                          title="Create a subfolder to organize documents"
+                        >
+                          {ideaDocFolderCreateBusy ? (
+                            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                          ) : (
+                            <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                          )}
+                          New folder
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+                {!isIdeaDocAtProjectRoot && ideaDocFolderStack.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1 text-sm">
+                    <button
+                      type="button"
+                      className="inline-flex items-center rounded-md px-1.5 py-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                      title="Back to parent folder"
+                      onClick={goToIdeaDocParentFolder}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    {ideaDocFolderStack.map((folder, index) => (
+                      <span key={folder.id} className="flex items-center gap-1">
+                        {index > 0 ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" /> : null}
+                        <button
+                          type="button"
+                          className={cn(
+                            'rounded-md px-2 py-1 font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                            index === ideaDocFolderStack.length - 1 && 'text-foreground',
+                          )}
+                          onClick={() => navigateIdeaDocFolderIndex(index)}
+                        >
+                          {folder.name}
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {ideaDocsTotalCount > 0 ? (
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-end">
+                    <DocumentRepositoryPaginationControls
+                      page={ideaDocsPage}
+                      pageSize={ideaDocsPageSize}
+                      totalCount={ideaDocsTotalCount}
+                      loading={ideaDocsLoading}
+                      onPageChange={setIdeaDocsPage}
+                      onPageSizeChange={(nextSize) => {
+                        setIdeaDocsPageSize(nextSize)
+                        setIdeaDocsPage(1)
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+                <div
+                  className={cn(
+                    'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl',
+                    showIdeaDocEmptyState && 'border border-border/40 bg-muted/10',
+                  )}
+                >
+                  {(ideaDocTemplatesLoading || ideaDocsLoading || ideaDocFolderInitBusy) &&
+                  ideaRepositoryItems.length === 0 &&
+                  ideaDocSubfolders.length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Loading documents…
+                    </div>
+                  ) : showIdeaDocEmptyState ? (
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6 py-10">
+                      <div className="flex w-full max-w-[19.2rem] flex-col items-center gap-4 text-center">
+                        <img
+                          src="/images/project-templates-section/document.png"
+                          alt=""
+                          className="h-auto w-full object-contain object-center"
+                          loading="lazy"
+                        />
+                        <div className="space-y-1">
+                          <h3 className="text-base font-semibold text-foreground">No documents yet</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Upload a supporting document or generate one from a DKM master template.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                      {ideaDocSubfolders.length > 0 ? (
+                        <div className="shrink-0 border-b border-border/40 px-3 py-2">
+                          <div className="space-y-1">
+                            {ideaDocSubfolders.map((folder) => (
+                              <button
+                                key={folder.id}
+                                type="button"
+                                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-muted/40"
+                                title={`Open ${folder.name}`}
+                                onClick={() => openIdeaDocSubfolder(folder)}
+                              >
+                                <Folder className="h-4 w-4 shrink-0 text-sky-600" aria-hidden />
+                                <span className="min-w-0 flex-1 truncate font-medium text-foreground">{folder.name}</span>
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  {folder.document_count} docs · {folder.children_count} subfolders
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {ideaRepositoryItems.length > 0 ? (
+                        <DocumentRepositoryTableView
+                          items={ideaDocsPaginatedItems}
+                          loading={ideaDocsLoading}
+                          emptyMessage={
+                            isIdeaDocAtProjectRoot
+                              ? 'No documents in this idea folder yet.'
+                              : 'No documents in this folder.'
+                          }
+                          isKbGenerated={(item) => ideaDocKbGeneratedIds.has(item.id)}
+                          onDocumentClick={(item) => {
+                            setIdeaDocEditId(item.id)
+                            setIdeaDocEditTitle(item.name)
+                          }}
+                          onRowContextMenu={(event, item) => openIdeaDocContextMenu(event, item)}
+                        />
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+
+                {supportingDocuments.length > 0 ? (
+                  <ul className="shrink-0 space-y-2">
+                    {supportingDocuments.map((item) => (
+                      <li
+                        key={item}
+                        className="flex items-start gap-2 rounded-xl border border-border/50 bg-background/80 px-3 py-2.5 text-sm text-foreground"
+                      >
+                        <Files className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 break-words">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
+            </div>
+          </div>
+
+          {ideaDocGenerateOpen && typeof document !== 'undefined'
+            ? createPortal(
+                <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+                  <button
+                    type="button"
+                    className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                    aria-label="Close generate dialog"
+                    disabled={ideaDocGenerateBusy}
+                    onClick={() => {
+                      if (!ideaDocGenerateBusy) setIdeaDocGenerateOpen(false)
+                    }}
+                  />
+
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="idea-doc-generate-title"
+                    className="relative z-[1401] w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+                  >
+                    <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                      <div className="flex items-start gap-4">
+                        <div className="mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
+                          <Sparkles className="h-5 w-5" aria-hidden />
+                        </div>
+                        <div className="min-w-0 space-y-1">
+                          <h3
+                            id="idea-doc-generate-title"
+                            className="text-base font-semibold tracking-tight text-foreground"
+                          >
+                            Generate document from template
+                          </h3>
+                          <p className="text-sm leading-relaxed text-muted-foreground">
+                            Agent fills placeholders from this idea, saves to Document repository, then opens
+                            it in the document editor.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 px-6 py-5">
+                      <div className="space-y-2">
+                        <Label
+                          htmlFor="idea-doc-template"
+                          className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                        >
+                          Template
+                        </Label>
+                        <Select
+                          id="idea-doc-template"
+                          className="rounded-xl"
+                          value={ideaDocGenerateTemplateId}
+                          disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading}
+                          onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
+                        >
+                          <option value="" disabled>
+                            {ideaDocTemplatesLoading ? 'Loading templates…' : 'Select template…'}
+                          </option>
+                          {ideaDocTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name}
+                            </option>
+                          ))}
+                        </Select>
+                        {selectedIdeaDocGenerateTemplate ? (
+                          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5">
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background text-blue-700 ring-1 ring-border">
+                              <FileText className="h-3.5 w-3.5" aria-hidden />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-foreground">
+                                {selectedIdeaDocGenerateTemplate.name}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
+                                {' · '}
+                                v{selectedIdeaDocGenerateTemplate.version}
+                                {selectedIdeaDocGenerateTemplate.category_code
+                                  ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
+                                  : ''}
+                              </p>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <Label
+                            htmlFor="idea-doc-source"
+                            className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                          >
+                            Source context
+                          </Label>
+                          <span className="text-[11px] tabular-nums text-muted-foreground">
+                            {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars
+                          </span>
+                        </div>
+                        <Textarea
+                          id="idea-doc-source"
+                          rows={9}
+                          className="min-h-[180px] resize-none rounded-xl border-border/80 bg-muted/20 px-3.5 py-3 text-sm leading-relaxed shadow-none"
+                          value={ideaDocGenerateSource}
+                          disabled={ideaDocGenerateBusy}
+                          onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
+                          placeholder="Idea description / requirements used to fill the template"
+                        />
+                      </div>
+
+                      {ideaDocGenerateBusy ? (
+                        <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                            Agent progress
+                          </p>
+                          <ul className="space-y-1.5">
+                            {IDEA_DOC_GENERATE_STEPS.map((step, index) => {
+                              const isDone = index < ideaDocGenerateStepIndex
+                              const isRunning = index === ideaDocGenerateStepIndex
+                              return (
+                                <li key={step.key} className="flex items-center gap-2.5 text-sm">
+                                  {isDone ? (
+                                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                                  ) : isRunning ? (
+                                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600" aria-hidden />
+                                  ) : (
+                                    <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" aria-hidden />
+                                  )}
+                                  <span
+                                    className={cn(
+                                      isDone && 'text-foreground',
+                                      isRunning && 'font-medium text-foreground',
+                                      !isDone && !isRunning && 'text-muted-foreground',
+                                    )}
+                                  >
+                                    {step.label}
+                                  </span>
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        </div>
+                      ) : (
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          Enterprise note: generated files are saved to Document repository and can be downloaded
+                          after the editor opens.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                        disabled={ideaDocGenerateBusy}
+                        onClick={() => setIdeaDocGenerateOpen(false)}
+                      >
+                        <X className="h-4 w-4 shrink-0" aria-hidden />
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                        disabled={ideaDocGenerateBusy || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim()}
+                        onClick={() => { void handleIdeaDocGenerate() }}
+                      >
+                        {ideaDocGenerateBusy ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        ) : (
+                          <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                        )}
+                        {ideaDocGenerateBusy ? 'Generating…' : 'Generate & open'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>,
+                document.body,
+              )
+            : null}
+
+          <DocumentOnlyOfficeEditor
+            open={Boolean(ideaDocEditId)}
+            documentId={ideaDocEditId}
+            documentTitle={ideaDocEditTitle}
+            onClose={() => {
+              setIdeaDocEditId(null)
+              setIdeaDocEditTitle(null)
+            }}
+          />
+
+          {ideaDocContextMenu ? (
+            <ContextMenu
+              open
+              x={ideaDocContextMenu.x}
+              y={ideaDocContextMenu.y}
+              onClose={() => setIdeaDocContextMenu(null)}
+            >
+              <ContextMenuItem
+                onSelect={() => {
+                  const { item } = ideaDocContextMenu
+                  setIdeaDocContextMenu(null)
+                  setIdeaDocEditId(item.id)
+                  setIdeaDocEditTitle(item.name)
+                }}
+              >
+                <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
+                Open document
+              </ContextMenuItem>
+              <ContextMenuItem
+                className={cn(ideaDocDownloadBusyId === ideaDocContextMenu.item.id && 'pointer-events-none opacity-50')}
+                onSelect={() => {
+                  const { item } = ideaDocContextMenu
+                  setIdeaDocContextMenu(null)
+                  void handleIdeaDocDownload(item)
+                }}
+              >
+                {ideaDocDownloadBusyId === ideaDocContextMenu.item.id ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                ) : (
+                  <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+                Download
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  const { item } = ideaDocContextMenu
+                  setIdeaDocContextMenu(null)
+                  setIdeaDocRenameTarget(item)
+                  setIdeaDocRenameValue(item.name)
+                }}
+              >
+                <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
+                Rename
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={cn(
+                  'text-blue-700 hover:bg-blue-50',
+                  ideaDocKbBusyId === ideaDocContextMenu.item.id && 'pointer-events-none opacity-50',
+                )}
+                onSelect={() => {
+                  const { item } = ideaDocContextMenu
+                  setIdeaDocContextMenu(null)
+                  void handleIdeaDocRegenerateKb(item)
+                }}
+              >
+                {ideaDocKbBusyId === ideaDocContextMenu.item.id ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 shrink-0" />
+                )}
+                {ideaDocKbGeneratedIds.has(ideaDocContextMenu.item.id) ? 'Regenerate KB' : 'Generate KB'}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className="text-rose-600 hover:bg-rose-50"
+                onSelect={() => {
+                  const { item } = ideaDocContextMenu
+                  setIdeaDocContextMenu(null)
+                  setIdeaDocDeleteTarget(item)
+                }}
+              >
+                <Trash2 className="h-4 w-4 shrink-0" />
+                Delete
+              </ContextMenuItem>
+            </ContextMenu>
+          ) : null}
+
+          <Dialog
+            open={Boolean(ideaDocRenameTarget)}
+            onOpenChange={(open) => {
+              if (!open) setIdeaDocRenameTarget(null)
+            }}
+          >
+            <DialogContent className="max-w-md overflow-hidden rounded-2xl p-0">
+              <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                <div className="flex items-start gap-4">
+                  <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
+                    <PencilLine className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="space-y-1">
+                    <DialogTitle className="text-base font-semibold tracking-tight text-foreground">
+                      Rename document
+                    </DialogTitle>
+                    <DialogDescription>Choose a new title for this document.</DialogDescription>
+                  </div>
+                </div>
+              </div>
+              <div className="px-6 py-5">
+                <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                  <Label
+                    htmlFor="idea-doc-rename-input"
+                    className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                  >
+                    Title
+                  </Label>
+                  <Input
+                    id="idea-doc-rename-input"
+                    className="mt-1.5"
+                    value={ideaDocRenameValue}
+                    disabled={ideaDocRenameBusy}
+                    onChange={(event) => setIdeaDocRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void handleIdeaDocRenameConfirm()
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                  disabled={ideaDocRenameBusy}
+                  onClick={() => setIdeaDocRenameTarget(null)}
+                >
+                  <X className="h-4 w-4 shrink-0" aria-hidden />
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                  disabled={ideaDocRenameBusy || !ideaDocRenameValue.trim()}
+                  onClick={() => { void handleIdeaDocRenameConfirm() }}
+                >
+                  {ideaDocRenameBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PencilLine className="h-4 w-4" />}
+                  {ideaDocRenameBusy ? 'Saving…' : 'Save'}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {ideaDocDeleteTarget && typeof document !== 'undefined'
+            ? createPortal(
+                <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+                  <button
+                    type="button"
+                    className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                    aria-label="Close delete confirmation"
+                    disabled={ideaDocDeleteBusy}
+                    onClick={() => {
+                      if (!ideaDocDeleteBusy) setIdeaDocDeleteTarget(null)
+                    }}
+                  />
+
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="idea-doc-delete-dialog-title"
+                    className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+                  >
+                    <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                      <div className="flex items-start gap-4">
+                        <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/12 text-red-700 ring-1 ring-red-500/25">
+                          <Trash2 className="h-5 w-5" aria-hidden />
+                        </div>
+                        <div className="space-y-1">
+                          <h3
+                            id="idea-doc-delete-dialog-title"
+                            className="text-base font-semibold tracking-tight text-foreground"
+                          >
+                            Delete document
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            This action permanently removes the document and cannot be undone.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 px-6 py-5">
+                      <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                          Document
+                        </p>
+                        <p className="mt-1 break-words text-sm font-semibold text-foreground">
+                          {ideaDocDeleteTarget.name}
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Enterprise note: deleting this file removes it from Idea Docs and Document repository
+                        access for this idea.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                        disabled={ideaDocDeleteBusy}
+                        onClick={() => setIdeaDocDeleteTarget(null)}
+                      >
+                        <X className="h-4 w-4 shrink-0" aria-hidden />
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        className={cn(
+                          registerServicePrimaryButtonClass(),
+                          'min-w-0 basis-0 flex-1 justify-center gap-2 bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500',
+                        )}
+                        disabled={ideaDocDeleteBusy}
+                        onClick={() => { void handleIdeaDocDeleteConfirm() }}
+                      >
+                        {ideaDocDeleteBusy ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        ) : (
+                          <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                        )}
+                        {ideaDocDeleteBusy ? 'Deleting…' : 'Delete document'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>,
+                document.body,
+              )
+            : null}
         </div>
         )}
       </div>
@@ -9458,134 +12497,8 @@ export function IdeaDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <Dialog open={manageBrdTemplatesOpen} onOpenChange={setManageBrdTemplatesOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Manage Template BRD</DialogTitle>
-            <DialogDescription>Buat, edit, atau hapus template BRD untuk canvas.</DialogDescription>
-          </DialogHeader>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-[1.1fr_1.4fr]">
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-slate-900">Templates</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setEditingTemplate({
-                      id: newTemplateId(),
-                      name: 'New template',
-                      header: '',
-                      body: '',
-                    })
-                  }
-                >
-                  + New
-                </Button>
-              </div>
-              <div className="mt-3 space-y-2">
-                {brdTemplates.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-900">{t.name}</p>
-                      <p className="truncate text-[11px] text-slate-500">{t.header || '(no header)'}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => setEditingTemplate(t)}>
-                        Edit
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-rose-600 hover:text-rose-700"
-                        onClick={() => {
-                          setBrdTemplates((prev) => prev.filter((x) => x.id !== t.id))
-                          if (brdSelectedTemplateId === t.id) setBrdSelectedTemplateId('blank')
-                          if (editingTemplate?.id === t.id) setEditingTemplate(null)
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <p className="text-sm font-semibold text-slate-900">Editor</p>
-              {!editingTemplate ? (
-                <p className="mt-3 text-sm text-slate-500">Pilih template lalu klik Edit, atau klik + New.</p>
-              ) : (
-                <div className="mt-3 space-y-3">
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-slate-600">Nama template</p>
-                    <Input value={editingTemplate.name} onChange={(e) => setEditingTemplate((p) => (p ? { ...p, name: e.target.value } : p))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-slate-600">Header</p>
-                    <Input
-                      value={editingTemplate.header}
-                      onChange={(e) => setEditingTemplate((p) => (p ? { ...p, header: e.target.value } : p))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-slate-600">Body (plain text)</p>
-                    <Textarea
-                      value={editingTemplate.body}
-                      onChange={(e) => setEditingTemplate((p) => (p ? { ...p, body: e.target.value } : p))}
-                      className="min-h-[260px]"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        const t = editingTemplate
-                        setBrdTemplates((prev) => {
-                          const idx = prev.findIndex((x) => x.id === t.id)
-                          if (idx === -1) return [...prev, t]
-                          const next = [...prev]
-                          next[idx] = t
-                          return next
-                        })
-                        setEditingTemplate(null)
-                      }}
-                    >
-                      Save
-                    </Button>
-                    <Button type="button" variant="outline" onClick={() => setEditingTemplate(null)}>
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        // Preview/apply into canvas immediately.
-                        applyBrdTemplateById(editingTemplate.id)
-                        setManageBrdTemplatesOpen(false)
-                      }}
-                    >
-                      Apply to Canvas
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setManageBrdTemplatesOpen(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       </div>
     </>
   )
 }
+

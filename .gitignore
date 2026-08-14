@@ -28,6 +28,7 @@ build
 .env
 .env.*
 !.env.example
+!.env.dev
 .env.local
 .env.development.local
 .env.test.local

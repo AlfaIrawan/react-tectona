@@ -5,6 +5,7 @@ import {
   ADIRA_FINANCE_WORKSPACE_KEY,
   buildAdiraApplicationCatalogKbContentHtml,
   buildAdiraApplicationKbContentHtml,
+  isAdiraFinanceWorkspaceId,
 } from './adiraApplicationGlossary'
 
 describe('adiraApplicationGlossary', () => {
@@ -22,12 +23,10 @@ describe('adiraApplicationGlossary', () => {
     }
   })
 
-  it('builds per-application profile html', () => {
+  it('builds per-application glossary html', () => {
     const html = buildAdiraApplicationKbContentHtml(ADIRA_APPLICATIONS[0])
-    expect(html).toContain('<h2>Profil Aplikasi</h2>')
+    expect(html).toContain('<h2>Definisi</h2>')
     expect(html).toContain('OneIn')
-    expect(html).toContain('Category')
-    expect(html).not.toContain('Kode')
     expect(html).toContain('Adira Finance')
   })
 
@@ -44,7 +43,15 @@ describe('adiraApplicationGlossary', () => {
     ])
   })
 
-  it('uses Adira Finance workspace key for glossary scope', () => {
-    expect(ADIRA_FINANCE_WORKSPACE_KEY).toBe('AW-G6UC')
+  it('uses Adira Finance workspace UUID for glossary scope', () => {
+    expect(ADIRA_FINANCE_WORKSPACE_KEY).toBe('00000000-0000-0000-0001-000000000100')
+  })
+
+  it('detects Adira Finance workspace ids and legacy aliases', () => {
+    expect(isAdiraFinanceWorkspaceId('00000000-0000-0000-0001-000000000100')).toBe(true)
+    expect(isAdiraFinanceWorkspaceId('adira-finance-ws')).toBe(true)
+    expect(isAdiraFinanceWorkspaceId('AW-G6UC')).toBe(true)
+    expect(isAdiraFinanceWorkspaceId('other-ws')).toBe(false)
+    expect(isAdiraFinanceWorkspaceId(null)).toBe(false)
   })
 })

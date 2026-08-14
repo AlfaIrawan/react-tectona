@@ -20,16 +20,26 @@ export function useWorkOfflineStatus(): WorkOfflineStatus {
     const stopRealtime = initWorkItemsRealtime()
     const stopNotifications = initWorkSyncNotifications()
     const unsubscribe = subscribeWorkOfflineStatus((next) => {
-      setStatus((current) => ({
-        ...current,
-        isOnline: next.isOnline,
-        pendingCount: next.pendingCount,
-        conflictCount: next.conflictCount,
-        lastSyncedAt: next.lastSyncedAt,
-      }))
+      setStatus((current) => {
+        if (
+          current.isOnline === next.isOnline
+          && current.pendingCount === next.pendingCount
+          && current.conflictCount === next.conflictCount
+          && current.lastSyncedAt === next.lastSyncedAt
+        ) {
+          return current
+        }
+        return {
+          ...current,
+          isOnline: next.isOnline,
+          pendingCount: next.pendingCount,
+          conflictCount: next.conflictCount,
+          lastSyncedAt: next.lastSyncedAt,
+        }
+      })
     })
     const unsubscribeRealtime = subscribeWorkItemsRealtimeConnected((realtimeConnected) => {
-      setStatus((current) => ({ ...current, realtimeConnected }))
+      setStatus((current) => (current.realtimeConnected === realtimeConnected ? current : { ...current, realtimeConnected }))
     })
     return () => {
       unsubscribe()

@@ -101,7 +101,7 @@ export function AssistantChoiceGroup({
     <div
       className={listClass}
       role={resolvedMode === 'single' ? 'radiogroup' : 'group'}
-      aria-label={resolvedMode === 'single' ? 'Pilih satu opsi' : 'Pilih satu atau lebih opsi'}
+      aria-label={resolvedMode === 'single' ? 'Select one option' : 'Select one or more options'}
     >
       <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
         {options.map((label, idx) => {

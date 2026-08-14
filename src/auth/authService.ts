@@ -1,16 +1,38 @@
 import {
+  exchangeAuthorizationCode,
   fetchUserInfo,
   loginWithPassword,
   normalizeLoginEmail,
   refreshAccessToken,
+  checkSessionStatus,
+  revokeServerSession,
   roleFromEmail,
+  bootstrapSsoSession,
+  OidcTokenExchangeError,
+  type OidcLoginOptions,
 } from '@/lib/api/identityApi'
-import { emitSessionActive, emitSessionExpired } from '@/auth/sessionEvents'
+import { enrollPasskey, authenticateWithPasskey } from '@/lib/api/webauthnApi'
+import {
+  isSessionConflictError,
+  isSessionRevokedError,
+  isRemoteSessionRevocationError,
+  shouldPromptSessionConflict,
+} from '@/lib/sessionConflict'
+import {
+  emitSessionActive,
+  emitSessionCleared,
+  emitSessionExpired,
+  emitSessionTokenRefreshed,
+} from '@/auth/sessionEvents'
+import { clearStoredUserWorkspaceContext } from '@/lib/storedUserWorkspaceContext'
+import { clearCorporateOnboardingSession } from '@/lib/corporateOnboardingSession'
+import { invalidateSubjectMembershipsCache } from '@/lib/wacMembershipCache'
 import { upsertWorkspacePresenceWithToken, sendOfflinePresenceBeacon } from '@/lib/api/collaborationContextApi'
 import { TECTONA_CHAT_WORKSPACE_ID } from '@/lib/api/tectonaAgentRuntimeApi'
 import { useCollaborationPresenceStore } from '@/stores/collaboration-presence-store'
 import { useMyPresenceStore } from '@/stores/my-presence-store'
 import { useVoiceRecordRequestStore } from '@/stores/voice-record-request-store'
+import { clearSensitiveRuntimeCaches } from '@/lib/pwa/initPwa'
 
 /** Default Tectona accounts (identity-lite bootstrap). */
 export const DEFAULT_ACCOUNTS = [
@@ -25,66 +47,6 @@ export const DEFAULT_ACCOUNTS = [
     password: 'AdminPass1!',
     name: 'Administrator',
     role: 'admin',
-  },
-  {
-    email: 'ricky.gunawan@tectona.local',
-    password: 'RickyPass1!',
-    name: 'Ricky Gunawan',
-    role: 'portfolio_head',
-  },
-  {
-    email: 'teguh.putera@tectona.local',
-    password: 'TeguhPass1!',
-    name: 'Teguh Supriyatna Putera',
-    role: 'planning_governance_head',
-  },
-  {
-    email: 'brian.reynaldo@tectona.local',
-    password: 'BrianPass1!',
-    name: 'Brian Reynaldo',
-    role: 'portfolio_head',
-  },
-  {
-    email: 'wahyu.satria@tectona.local',
-    password: 'WahyuPass1!',
-    name: 'Wahyu Satria Pamungkas',
-    role: 'portfolio_officer',
-  },
-  {
-    email: 'henry.halim@tectona.local',
-    password: 'HenryPass1!',
-    name: 'Henry Halim',
-    role: 'business_partner_head',
-  },
-  {
-    email: 'stella.mathilda@tectona.local',
-    password: 'StellaPass1!',
-    name: 'Stella Mathilda',
-    role: 'brm_head',
-  },
-  {
-    email: 'tri.untari@tectona.local',
-    password: 'TriPass1!',
-    name: 'Tri Untari',
-    role: 'brm_head',
-  },
-  {
-    email: 'puspa.arundini@tectona.local',
-    password: 'PuspaPass1!',
-    name: 'Puspa Arundini',
-    role: 'business_analyst',
-  },
-  {
-    email: 'dorkas.mahulae@tectona.local',
-    password: 'DorkasPass1!',
-    name: 'Dorkas Mahulae',
-    role: 'business_analyst',
-  },
-  {
-    email: 'ferli.kumolontang@tectona.local',
-    password: 'FerliPass1!',
-    name: 'Ferli Kumolontang',
-    role: 'business_analyst',
   },
 ] as const
 
@@ -108,6 +70,31 @@ const SESSION_KEY = 'tectona_session'
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
 
 let refreshInFlight: Promise<Session | null> | null = null
+/** Suppress session-expired redirects while the user is intentionally signing out. */
+let intentionalSignOutPending = false
+
+function markIntentionalSignOut(): void {
+  intentionalSignOutPending = true
+}
+
+function resetIntentionalSignOut(): void {
+  intentionalSignOutPending = false
+}
+
+/** Call when login page loads after an intentional sign-out (clears suppress flag). */
+export function acknowledgeIntentionalSignOut(): void {
+  resetIntentionalSignOut()
+}
+
+/** Whether session-expired events should redirect the user to login. */
+export function shouldPropagateSessionExpired(): boolean {
+  return !intentionalSignOutPending
+}
+
+export function notifySessionExpiredIfNeeded(detail?: { reason?: string }): void {
+  if (!shouldPropagateSessionExpired()) return
+  emitSessionExpired(detail)
+}
 
 function readStoredSession(): Session | null {
   try {
@@ -179,20 +166,66 @@ function buildSessionFromUserinfo(
   }
 }
 
+/**
+ * Silent cross-app SSO. When there is no local session, try to bootstrap one from the
+ * shared identity-lite SSO cookie (set when the user signed in on a sibling first-party
+ * SPA, e.g. Tectona ↔ Platanus). No-op and returns null on any failure, so the normal
+ * interactive login still applies.
+ */
+export async function attemptSilentSso(): Promise<Session | null> {
+  const existing = getSession()
+  if (existing) return existing
+  try {
+    const tokenResponse = await bootstrapSsoSession()
+    if (!tokenResponse?.access_token) return null
+    const userinfo = await fetchUserInfo(tokenResponse.access_token)
+    const session = buildSessionFromUserinfo(userinfo, userinfo.email ?? '', tokenResponse)
+    persistSession(session)
+    emitSessionActive()
+    return session
+  } catch {
+    return null
+  }
+}
+
+/** Enrol a passkey for the currently signed-in user (call while authenticated). */
+export async function registerPasskey(label?: string): Promise<void> {
+  const session = getSession()
+  if (!session?.token) throw new Error('not_authenticated')
+  await enrollPasskey(session.token, label)
+}
+
+/** Sign in with a passkey (usernameless / discoverable) and persist the session. */
+export async function loginWithPasskey(): Promise<Session> {
+  const tokenResponse = await authenticateWithPasskey()
+  const userinfo = await fetchUserInfo(tokenResponse.access_token)
+  const session = buildSessionFromUserinfo(userinfo, userinfo.email ?? '', tokenResponse)
+  persistSession(session)
+  emitSessionActive()
+  return session
+}
+
 async function performRefresh(session: Session): Promise<Session | null> {
   if (!session.refreshToken) {
-    logout()
-    emitSessionExpired({ reason: 'no_refresh_token' })
+    clearSession()
+    if (shouldPropagateSessionExpired()) {
+      notifySessionExpiredIfNeeded({ reason: 'no_refresh_token' })
+    }
     return null
   }
   try {
     const tokenResponse = await refreshAccessToken(session.refreshToken)
     const updated = applyTokenResponse(session, tokenResponse)
     persistSession(updated)
+    emitSessionTokenRefreshed()
     return updated
-  } catch {
-    logout()
-    emitSessionExpired({ reason: 'refresh_failed' })
+  } catch (err) {
+    clearSession()
+    if (shouldPropagateSessionExpired()) {
+      notifySessionExpiredIfNeeded({
+        reason: isRemoteSessionRevocationError(err) ? 'session_revoked_elsewhere' : 'refresh_failed',
+      })
+    }
     return null
   }
 }
@@ -212,8 +245,10 @@ export async function ensureFreshSession(options?: { force?: boolean }): Promise
 
   if (!session.refreshToken) {
     if (isAccessTokenExpired(session)) {
-      logout()
-      emitSessionExpired({ reason: 'expired' })
+      clearSession()
+      if (shouldPropagateSessionExpired()) {
+        notifySessionExpiredIfNeeded({ reason: 'expired' })
+      }
       return null
     }
     return session
@@ -227,12 +262,15 @@ export async function ensureFreshSession(options?: { force?: boolean }): Promise
   return refreshInFlight
 }
 
-export async function login(email: string, password: string): Promise<Session> {
-  const normalizedEmail = normalizeLoginEmail(email)
-  const tokenResponse = await loginWithPassword(normalizedEmail, password)
+async function completeLogin(
+  normalizedEmail: string,
+  tokenResponse: { access_token: string; expires_in: number; refresh_token?: string },
+): Promise<Session> {
   const userinfo = await fetchUserInfo(tokenResponse.access_token)
   const session = buildSessionFromUserinfo(userinfo, normalizedEmail, tokenResponse)
   persistSession(session)
+  clearStoredUserWorkspaceContext()
+  resetIntentionalSignOut()
   void import('@/lib/chat/chatContactDirectory')
     .then(({ publishCollaborationPresenceWithToken }) =>
       publishCollaborationPresenceWithToken(session.token, 'online'),
@@ -243,10 +281,89 @@ export async function login(email: string, password: string): Promise<Session> {
   return session
 }
 
-async function publishOfflinePresence(session: Session | null): Promise<void> {
+function resolveLoginSessionPolicy(
+  normalizedEmail: string,
+  opts?: OidcLoginOptions,
+): OidcLoginOptions | undefined {
+  if (opts?.sessionPolicy === 'replace') {
+    return { sessionPolicy: 'replace' }
+  }
+  const stored = readStoredSession()
+  if (stored && normalizeLoginEmail(stored.user.email) !== normalizedEmail) {
+    return { sessionPolicy: 'replace' }
+  }
+  return opts
+}
+
+/** Retry with session_policy=replace when the server session is stale on this browser. */
+async function exchangeLoginTokens(
+  fetchTokens: (opts?: OidcLoginOptions) => Promise<{
+    access_token: string
+    expires_in: number
+    refresh_token?: string
+  }>,
+  opts?: OidcLoginOptions,
+) {
+  try {
+    return await fetchTokens(opts)
+  } catch (err) {
+    if (
+      isSessionConflictError(err)
+      && opts?.sessionPolicy !== 'replace'
+      && !shouldPromptSessionConflict(err.activeSession)
+    ) {
+      return await fetchTokens({ sessionPolicy: 'replace' })
+    }
+    throw err
+  }
+}
+
+export async function login(email: string, password: string, opts?: OidcLoginOptions): Promise<Session> {
+  const normalizedEmail = normalizeLoginEmail(email)
+  const stored = readStoredSession()
+  if (
+    stored &&
+    normalizeLoginEmail(stored.user.email) !== normalizedEmail
+  ) {
+    clearLocalSession(stored)
+  }
+  const loginOpts = resolveLoginSessionPolicy(normalizedEmail, opts)
+  const tokenResponse = await exchangeLoginTokens(
+    (policy) => loginWithPassword(normalizedEmail, password, policy),
+    loginOpts,
+  )
+  return completeLogin(normalizedEmail, tokenResponse)
+}
+
+export async function loginWithAuthorizationCode(
+  code: string,
+  redirectUri: string,
+  codeVerifier: string,
+  opts?: OidcLoginOptions,
+): Promise<Session> {
+  const loginOpts =
+    opts?.sessionPolicy === 'replace' ? { sessionPolicy: 'replace' as const } : opts
+  const tokenResponse = await exchangeLoginTokens(
+    (policy) =>
+      exchangeAuthorizationCode({ code, redirectUri, codeVerifier }, policy),
+    loginOpts,
+  )
+  const userinfo = await fetchUserInfo(tokenResponse.access_token)
+  const email = userinfo.email ?? 'user@tectona.local'
+  return completeLogin(email, tokenResponse)
+}
+
+async function publishOfflinePresence(
+  session: Session | null,
+  options?: { allowRefresh?: boolean },
+): Promise<void> {
   if (!session) return
   let token = session.token
-  if (session.refreshToken && isAccessTokenExpired(session)) {
+  if (
+    options?.allowRefresh !== false &&
+    session.refreshToken &&
+    isAccessTokenExpired(session)
+  ) {
     try {
       const refreshed = await refreshAccessToken(session.refreshToken)
       token = refreshed.access_token
@@ -258,26 +375,55 @@ async function publishOfflinePresence(session: Session | null): Promise<void> {
   await upsertWorkspacePresenceWithToken(token, TECTONA_CHAT_WORKSPACE_ID, 'offline')
 }
 
-export function logout(): void {
-  const session = readStoredSession()
+function clearLocalSession(session: Session | null): void {
+  refreshInFlight = null
+  invalidateSubjectMembershipsCache()
+  void clearSensitiveRuntimeCaches()
   localStorage.removeItem(SESSION_KEY)
   useCollaborationPresenceStore.getState().clear()
   useVoiceRecordRequestStore.getState().clear()
   useMyPresenceStore.getState().setStatus('offline')
-  void publishOfflinePresence(session).catch(() => undefined)
+  clearStoredUserWorkspaceContext()
+  if (session?.user.id) clearCorporateOnboardingSession(session.user.id)
+  emitSessionCleared()
+}
+
+/** Clears local session without revoking server tokens (session expiry, auth errors). */
+export function clearSession(): void {
+  clearLocalSession(readStoredSession())
+}
+
+/** Intentional sign-out: clear local state first, then revoke server sessions. */
+export function logout(): void {
+  markIntentionalSignOut()
+  const session = readStoredSession()
+  const refreshToken = session?.refreshToken
+  const accessToken = session?.token
+  clearLocalSession(session)
+  void publishOfflinePresence(session, { allowRefresh: false }).catch(() => undefined)
+  if (refreshToken || accessToken) {
+    void revokeServerSession(refreshToken, accessToken).catch(() => undefined)
+  }
 }
 
 /** Await offline publish before navigation (explicit Sign out). */
 export async function logoutAsync(): Promise<void> {
+  markIntentionalSignOut()
   const session = readStoredSession()
-  localStorage.removeItem(SESSION_KEY)
-  useCollaborationPresenceStore.getState().clear()
-  useVoiceRecordRequestStore.getState().clear()
-  useMyPresenceStore.getState().setStatus('offline')
+  const refreshToken = session?.refreshToken
+  const accessToken = session?.token
+  clearLocalSession(session)
   try {
-    await publishOfflinePresence(session)
+    await publishOfflinePresence(session, { allowRefresh: false })
   } catch {
     // ignore
+  }
+  try {
+    if (refreshToken || accessToken) {
+      await revokeServerSession(refreshToken, accessToken)
+    }
+  } catch {
+    // ignore revoke failures during sign-out
   }
 }
 
@@ -296,7 +442,7 @@ export function getSession(): Session | null {
   const session = readStoredSession()
   if (!session) return null
   if (isAccessTokenExpired(session) && !session.refreshToken) {
-    logout()
+    clearSession()
     return null
   }
   return session
@@ -313,6 +459,57 @@ export async function isAuthenticatedAsync(): Promise<boolean> {
 
 export function requireAuth(): Session | null {
   return getSession()
+}
+
+function invalidateServerSession(reason: string): false {
+  clearSession()
+  if (shouldPropagateSessionExpired()) {
+    notifySessionExpiredIfNeeded({ reason })
+  }
+  return false
+}
+
+export async function validateActiveServerSession(): Promise<boolean> {
+  const session = readStoredSession()
+  if (!session?.token) return false
+  try {
+    await checkSessionStatus(session.token)
+    return true
+  } catch (err) {
+    if (isSessionRevokedError(err)) {
+      return invalidateServerSession('session_revoked_elsewhere')
+    }
+    if (err instanceof OidcTokenExchangeError && err.httpStatus === 401) {
+      return invalidateServerSession('unauthorized')
+    }
+    // Transient/network errors — keep local session; apiFetch will retry on the next call.
+    return true
+  }
+}
+
+let lastServerSessionCheckAt = 0
+const SERVER_SESSION_CHECK_THROTTLE_MS = 4_000
+
+/**
+ * Lightweight server session check — throttled for API calls; use `{ force: true }` on focus/poll.
+ */
+export async function validateActiveServerSessionIfDue(options?: { force?: boolean }): Promise<boolean> {
+  const session = readStoredSession()
+  if (!session?.token) return false
+
+  const now = Date.now()
+  if (!options?.force && now - lastServerSessionCheckAt < SERVER_SESSION_CHECK_THROTTLE_MS) {
+    return true
+  }
+  lastServerSessionCheckAt = now
+  return validateActiveServerSession()
+}
+
+/** Refresh tokens and verify the server session is still active (remote sign-out detection). */
+export async function maintainActiveSession(options?: { forceStatusCheck?: boolean }): Promise<void> {
+  const session = await ensureFreshSession()
+  if (!session) return
+  await validateActiveServerSessionIfDue({ force: options?.forceStatusCheck === true })
 }
 
 export function getDevelopmentAccounts() {

@@ -1,13 +1,17 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { createPortal } from 'react-dom'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
+import { useTenantContext } from '@/auth/TenantContext'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   DndContext,
-  DragOverlay,
   pointerWithin,
+  closestCenter,
   PointerSensor,
   useSensor,
   useSensors,
+  type CollisionDetection,
+  type DragOverEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import { useProjectStore, useFolderStore } from '@/modules/projects'
 import { useDisplayOrderStore } from '@/modules/projects/store/displayOrderStore'
@@ -15,8 +19,9 @@ import { arrayMove } from '@dnd-kit/sortable'
 import { EmptyState } from '../components/EmptyState'
 import { CreateProjectFlow } from '@/modules/projects'
 import { CreateFolderModal } from '../components/CreateFolderModal'
-import { ShareFolderModal } from '../components/ShareFolderModal'
+import { AddFolderMembersDrawer } from '../components/AddFolderMembersDrawer'
 import { DeleteFolderConfirmModal } from '../components/DeleteFolderConfirmModal'
+import { FolderNotesDrawer } from '../components/FolderNotesDrawer'
 import { DeleteProjectsConfirmModal } from '../components/DeleteProjectsConfirmModal'
 import { RenameFolderModal } from '../components/RenameFolderModal'
 import { SelectionActionBar } from '../components/SelectionActionBar'
@@ -30,7 +35,10 @@ import {
 } from '../components/FiltersBar'
 import { FoldersSection } from '../components/FoldersSection'
 import { ProjectsSection } from '../components/ProjectsSection'
+import { ProjectsFoldersListTable } from '../components/ProjectsFoldersListTable'
 import { FolderView } from '../components/FolderView'
+import { ProjectDragLayer } from '../components/ProjectDragLayer'
+import { PlatformDataLoadingState } from '@/components/loading'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
   EnterpriseViewControlButton,
@@ -44,12 +52,70 @@ import { useSettingsPanelStore } from '@/stores/settings-panel-store'
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu'
 import { Tooltip } from '@/components/ui/tooltip'
 import { notifyEvent } from '@/lib/api/notificationApi'
-import { FolderPlus, Plus, ListTodo, StickyNote, Filter, EyeOff, LayoutGrid, List, Folder as FolderIcon } from 'lucide-react'
+import { FolderPlus, Plus, ListTodo, StickyNote, Filter, EyeOff, LayoutGrid, List, Folder as FolderIcon, ClipboardPaste } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Folder, Project } from '@/modules/projects'
-import { ProjectsErrorBoundary } from '../components/ProjectsErrorBoundary'
+import { applyOrderedGridSelection, type GridSelectionModifiers } from '../lib/gridSelection'
+import { copyFolderToClipboard, isEditableKeyboardTarget, canMoveFolderToTarget } from '../lib/folderActions'
+import { hasFolderClipboard } from '../lib/folderClipboard'
+import { buildFolderAncestorChain, filterFoldersByParent, resolveChildFolderCount } from '../lib/folderHierarchy'
+
+function isNestDropId(id: string) {
+  return id.startsWith('folder-nest-')
+}
+
+function isProjectDropId(id: string) {
+  return id.startsWith('folder-drop-')
+}
+
+function parseNestDropId(id: string) {
+  return id.replace('folder-nest-', '')
+}
+
+function parseProjectDropId(id: string) {
+  return id.replace('folder-drop-', '')
+}
+
+function createFolderDropCollisionDetection(folders: Folder[]): CollisionDetection {
+  return (args) => {
+    const activeId = String(args.active.id)
+
+    if (activeId.startsWith('project-')) {
+      const collisions = pointerWithin(args)
+      const dropHits = collisions.filter((collision) => isProjectDropId(String(collision.id)))
+      if (dropHits.length > 0) return dropHits
+      return collisions
+    }
+
+    if (activeId.startsWith('folder-')) {
+      const sourceId = activeId.replace('folder-', '')
+      const pointerCollisions = pointerWithin(args)
+      const nestHits = pointerCollisions.filter((collision) => {
+        const id = String(collision.id)
+        if (!isNestDropId(id)) return false
+        const targetId = parseNestDropId(id)
+        return (
+          sourceId !== targetId &&
+          canMoveFolderToTarget(sourceId, targetId, folders)
+        )
+      })
+      if (nestHits.length > 0) return nestHits
+
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((container) => {
+          const id = String(container.id)
+          return !isProjectDropId(id) && !isNestDropId(id)
+        }),
+      })
+    }
+
+    return pointerWithin(args)
+  }
+}
 
 export function ProjectListPage() {
+  const { workspaceId, loading: tenantLoading } = useTenantContext()
   const {
     projects,
     searchProjects,
@@ -63,19 +129,22 @@ export function ProjectListPage() {
     deleteProjects,
     getProjectsByFolder,
   } = useProjectStore()
-  const { folders, getFolder, fetchFolders, addFolder } = useFolderStore()
+  const { folders, getFolder, fetchFolders, addFolder, pasteFolderFromClipboard, moveFolderToParent } = useFolderStore()
   const {
     rootProjectOrder,
     folderOrder,
+    folderOrderByParent,
     projectOrderByFolder,
     getOrderedIds,
     setRootProjectOrder,
     setFolderOrder,
+    setFolderOrderForParent,
     setProjectOrderForFolder,
   } = useDisplayOrderStore()
   const { addToast } = useToast()
   const openTodoPanel = useSettingsPanelStore((s) => s.openTodoPanel)
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   // View state
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
@@ -95,20 +164,35 @@ export function ProjectListPage() {
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set())
   const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const lastFolderAnchorRef = useRef<string | null>(null)
+  const lastProjectAnchorRef = useRef<string | null>(null)
 
   // Modal state
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false)
   const [createProjectFolderId, setCreateProjectFolderId] = useState<string | null>(null)
   const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
   const [shareFolder, setShareFolder] = useState<Folder | null>(null)
-  const [deleteFolderData, setDeleteFolderData] = useState<{ folder: Folder; count: number } | null>(null)
+  const [deleteFolderData, setDeleteFolderData] = useState<{
+    folders: Folder[]
+    totalProjectCount: number
+  } | null>(null)
   const [renameFolder, setRenameFolder] = useState<Folder | null>(null)
+  const [folderNotesTarget, setFolderNotesTarget] = useState<Folder | null>(null)
+  const [folderNotesAutoCompose, setFolderNotesAutoCompose] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([])
   const [isDeletingProjects, setIsDeletingProjects] = useState(false)
 
   // Drag state
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
+  const [dropTargetFolderName, setDropTargetFolderName] = useState<string | null>(null)
+  const [dragPointer, setDragPointer] = useState<{ x: number; y: number } | null>(null)
+
+  const folderDropCollisionDetection = useMemo(
+    () => createFolderDropCollisionDetection(folders),
+    [folders],
+  )
 
   // Context menu when right-clicking on empty area (not on folder/project card)
   const [backgroundContextMenu, setBackgroundContextMenu] = useState<{ x: number; y: number } | null>(null)
@@ -123,9 +207,25 @@ export function ProjectListPage() {
   }, [activeId, projects])
 
   // Check if drag is active and get dragged project IDs
-  const isDragActive = activeId !== null && activeId.startsWith('project-')
+  const isProjectDragActive = activeId !== null && activeId.startsWith('project-')
+  const isAnyItemDragActive = isProjectDragActive || (activeId !== null && activeId.startsWith('folder-'))
+
+  useEffect(() => {
+    if (!isAnyItemDragActive) {
+      setDragPointer(null)
+      setDropTargetFolderId(null)
+      setDropTargetFolderName(null)
+      return
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      setDragPointer({ x: event.clientX, y: event.clientY })
+    }
+    window.addEventListener('pointermove', onPointerMove)
+    return () => window.removeEventListener('pointermove', onPointerMove)
+  }, [isAnyItemDragActive])
+
   const draggedProjectIds = useMemo(() => {
-    if (!isDragActive) return new Set<string>()
+    if (!isProjectDragActive) return new Set<string>()
     const draggedProjectId = activeId?.replace('project-', '') || ''
     
     // If we have multiple selection AND the dragged project is part of it, return all selected
@@ -135,7 +235,7 @@ export function ProjectListPage() {
     
     // Single drag - only the dragged project
     return new Set([draggedProjectId])
-  }, [isDragActive, activeId, selectedProjectIds])
+  }, [isProjectDragActive, activeId, selectedProjectIds])
 
   // Get dragged projects count and list (if multiple selection)
   const draggedProjectsData = useMemo(() => {
@@ -175,15 +275,47 @@ export function ProjectListPage() {
   )
 
   useEffect(() => {
+    if (tenantLoading) return
     fetchProjects()
-    fetchFolders() // Fetch folders on mount
+    fetchFolders()
+  }, [fetchProjects, fetchFolders, tenantLoading, workspaceId])
+
+  useEffect(() => {
+    const onTenantChanged = () => {
+      fetchProjects()
+      fetchFolders()
+    }
+    window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+    return () => window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
   }, [fetchProjects, fetchFolders])
+
+  useEffect(() => {
+    if (!currentFolderId) return
+    void fetchFolders(undefined, currentFolderId)
+  }, [currentFolderId, fetchFolders])
+
+  useEffect(() => {
+    const folderParam = searchParams.get('folder')
+    if (folderParam) {
+      if (getFolder(folderParam)) {
+        setCurrentFolderId(folderParam)
+      } else if (folders.length > 0) {
+        setCurrentFolderId(null)
+        setSearchParams({}, { replace: true })
+      }
+      return
+    }
+    setCurrentFolderId(null)
+  }, [searchParams, folders, getFolder])
 
   // Keyboard shortcut: Esc to exit selection mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isSelectionMode) {
         setSelectedProjectIds(new Set())
+        setSelectedFolderIds(new Set())
+        lastFolderAnchorRef.current = null
+        lastProjectAnchorRef.current = null
         setIsSelectionMode(false)
       }
     }
@@ -201,22 +333,34 @@ export function ProjectListPage() {
     return getProjectsByFolder(folderId).length
   }, [getProjectsByFolder])
 
-  // Filter folders with search
+  const getChildFolderCount = useCallback(
+    (folderId: string) => {
+      const folder = getFolder(folderId)
+      return folder
+        ? resolveChildFolderCount(folder, folders)
+        : filterFoldersByParent(folders, folderId).length
+    },
+    [folders, getFolder],
+  )
+
+  const currentParentId = currentFolderId ?? null
+
+  // Filter folders for the current level (root or inside a folder)
   const filteredFolders = useMemo(() => {
     if (!folders || folders.length === 0) return []
-    let filtered = folders
+    let filtered = filterFoldersByParent(folders, currentParentId)
 
     if (searchQuery) {
       const lowerQuery = searchQuery.toLowerCase()
       filtered = filtered.filter(
         (folder) =>
           folder.name.toLowerCase().includes(lowerQuery) ||
-          folder.description?.toLowerCase().includes(lowerQuery)
+          folder.description?.toLowerCase().includes(lowerQuery),
       )
     }
 
     return filtered
-  }, [folders, searchQuery])
+  }, [folders, currentParentId, searchQuery])
 
   // Filter projects with search and status
   const filteredProjects = useMemo(() => {
@@ -262,10 +406,12 @@ export function ProjectListPage() {
     () => getOrderedIds(filteredProjects.map((p) => p.id), rootProjectOrder),
     [filteredProjects, rootProjectOrder, getOrderedIds]
   )
-  const orderedFolderIds = useMemo(
-    () => getOrderedIds(filteredFolders.map((f) => f.id), folderOrder),
-    [filteredFolders, folderOrder, getOrderedIds]
-  )
+  const folderOrderParentKey = currentParentId ?? '__root__'
+  const orderedFolderIds = useMemo(() => {
+    const ids = filteredFolders.map((f) => f.id)
+    const savedOrder = folderOrderByParent[folderOrderParentKey] ?? folderOrder
+    return getOrderedIds(ids, savedOrder)
+  }, [filteredFolders, folderOrder, folderOrderByParent, folderOrderParentKey, getOrderedIds])
 
   // Sync selection dengan daftar project di view saat ini: hapus dari selection project yang sudah tidak ada di view (mis. setelah di-move ke folder lain)
   const currentViewProjectIds = useMemo(() => {
@@ -282,41 +428,59 @@ export function ProjectListPage() {
     if (stillSelected.length === 0) setIsSelectionMode(false)
   }, [currentViewProjectIds, selectedProjectIds])
 
-  // Selection handlers: hanya satu tipe saja (folder saja ATAU project saja).
-  // Tanpa Shift = single selection (hanya card yang diklik). Dengan Shift = multi-select (tambah/kurang dari selection).
-  const handleSelectProject = useCallback((projectId: string, selected: boolean, shiftKey?: boolean) => {
-    if (selected) {
-      setSelectedFolderIds(new Set()) // clear folder agar hanya project yang terpilih
-    }
-    if (shiftKey) {
-      // Multi-select: toggle project ini di selection
+  // Selection handlers: plain click = single; Ctrl/Cmd = toggle; Shift = range in display order.
+  const handleSelectProject = useCallback(
+    (projectId: string, modifiers: GridSelectionModifiers) => {
+      setSelectedFolderIds(new Set())
+      lastFolderAnchorRef.current = null
+      const orderedIds = currentFolderId
+        ? getOrderedIds(filteredFolderProjects.map((p) => p.id), projectOrderByFolder[currentFolderId] ?? [])
+        : orderedRootProjectIds
+
       setSelectedProjectIds((prev) => {
-        const next = new Set(prev)
-        if (selected) next.add(projectId)
-        else next.delete(projectId)
-        setIsSelectionMode(next.size > 0)
-        return next
+        const result = applyOrderedGridSelection(
+          projectId,
+          orderedIds,
+          prev,
+          lastProjectAnchorRef.current,
+          modifiers,
+        )
+        lastProjectAnchorRef.current = result.anchorId
+        setIsSelectionMode(result.isSelectionMode)
+        return result.next
       })
-    } else {
-      // Single selection: tanpa Shift hanya card yang diklik yang terpilih (atau clear jika diklik lagi)
-      if (selected) {
-        setSelectedProjectIds(new Set([projectId]))
-        setIsSelectionMode(true)
-      } else {
-        setSelectedProjectIds((prev) => {
-          const next = new Set(prev)
-          next.delete(projectId)
-          setIsSelectionMode(next.size > 0)
-          return next
-        })
-      }
-    }
-  }, [])
+    },
+    [
+      currentFolderId,
+      filteredFolderProjects,
+      projectOrderByFolder,
+      orderedRootProjectIds,
+      getOrderedIds,
+    ],
+  )
 
   const handleClearSelection = useCallback(() => {
     setSelectedProjectIds(new Set())
     setSelectedFolderIds(new Set())
+    lastFolderAnchorRef.current = null
+    lastProjectAnchorRef.current = null
     setIsSelectionMode(false)
+  }, [])
+
+  const handleSelectFoldersBulk = useCallback((folderIds: string[]) => {
+    setSelectedProjectIds(new Set())
+    lastProjectAnchorRef.current = null
+    setSelectedFolderIds(new Set(folderIds))
+    lastFolderAnchorRef.current = folderIds[0] ?? null
+    setIsSelectionMode(folderIds.length > 0)
+  }, [])
+
+  const handleSelectProjectsBulk = useCallback((projectIds: string[]) => {
+    setSelectedFolderIds(new Set())
+    lastFolderAnchorRef.current = null
+    setSelectedProjectIds(new Set(projectIds))
+    lastProjectAnchorRef.current = projectIds[0] ?? null
+    setIsSelectionMode(projectIds.length > 0)
   }, [])
 
   const selectedArchivedCount = useMemo(() => {
@@ -325,21 +489,25 @@ export function ProjectListPage() {
     ).length
   }, [selectedProjectIds, projects])
 
-  const handleSelectFolder = useCallback((folderId: string, selected: boolean) => {
-    if (selected) {
-      setSelectedProjectIds(new Set()) // clear project agar hanya folder yang terpilih
-    }
-    setSelectedFolderIds((prev) => {
-      const next = new Set(prev)
-      if (selected) {
-        next.add(folderId)
-      } else {
-        next.delete(folderId)
-      }
-      setIsSelectionMode(next.size > 0)
-      return next
-    })
-  }, [])
+  const handleSelectFolder = useCallback(
+    (folderId: string, modifiers: GridSelectionModifiers) => {
+      setSelectedProjectIds(new Set())
+      lastProjectAnchorRef.current = null
+      setSelectedFolderIds((prev) => {
+        const result = applyOrderedGridSelection(
+          folderId,
+          orderedFolderIds,
+          prev,
+          lastFolderAnchorRef.current,
+          modifiers,
+        )
+        lastFolderAnchorRef.current = result.anchorId
+        setIsSelectionMode(result.isSelectionMode)
+        return result.next
+      })
+    },
+    [orderedFolderIds],
+  )
 
   const handleMoveSelectedToFolder = useCallback(
     async (folderId: string | null) => {
@@ -488,15 +656,28 @@ export function ProjectListPage() {
   )
 
   // Drag handlers
-  const handleDragStart = (event: { active: { id: string | number } }) => {
+  const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as string)
+    const activator = event.activatorEvent
+    if (activator && 'clientX' in activator && 'clientY' in activator) {
+      setDragPointer({
+        x: (activator as PointerEvent).clientX,
+        y: (activator as PointerEvent).clientY,
+      })
+    }
+  }
+
+  const clearDragState = () => {
+    setActiveId(null)
+    setDropTargetFolderId(null)
+    setDropTargetFolderName(null)
   }
 
   const handleDragEnd = async (event: { active: { id: string | number }; over: { id: string | number } | null }) => {
     const { active, over } = event
 
     if (!over) {
-      setActiveId(null)
+      clearDragState()
       return
     }
 
@@ -504,6 +685,26 @@ export function ProjectListPage() {
     const overId = over.id as string
 
     try {
+      // Folder dropped into another folder (center nest zone)
+      if (activeId.startsWith('folder-') && isNestDropId(overId)) {
+        const sourceId = activeId.replace('folder-', '')
+        const targetId = parseNestDropId(overId)
+        if (
+          sourceId !== targetId &&
+          canMoveFolderToTarget(sourceId, targetId, folders)
+        ) {
+          await moveFolderToParent(sourceId, targetId)
+          const targetName = getFolder(targetId)?.name ?? 'folder'
+          addToast({
+            title: 'Folder dipindahkan',
+            description: `Dipindahkan ke "${targetName}".`,
+            variant: 'success',
+          })
+        }
+        clearDragState()
+        return
+      }
+
       // Reorder projects (drop project on another project)
       if (activeId.startsWith('project-') && overId.startsWith('project-')) {
         const projectIdActive = activeId.replace('project-', '')
@@ -539,31 +740,39 @@ export function ProjectListPage() {
             })
           }
         }
-        setActiveId(null)
+        clearDragState()
         return
       }
 
-      // Reorder folders (drop folder on another folder)
-      if (activeId.startsWith('folder-') && overId.startsWith('folder-')) {
-        const oldIndex = orderedFolderIds.indexOf(activeId.replace('folder-', ''))
-        const newIndex = orderedFolderIds.indexOf(overId.replace('folder-', ''))
+      // Reorder folders (sortable — folder-{id}, not nest/drop zones)
+      if (
+        activeId.startsWith('folder-') &&
+        overId.startsWith('folder-') &&
+        !isNestDropId(overId) &&
+        !isProjectDropId(overId)
+      ) {
+        const siblingIds = filteredFolders.map((f) => f.id)
+        const savedOrder = folderOrderByParent[folderOrderParentKey] ?? folderOrder
+        const orderedIds = getOrderedIds(siblingIds, savedOrder)
+        const oldIndex = orderedIds.indexOf(activeId.replace('folder-', ''))
+        const newIndex = orderedIds.indexOf(overId.replace('folder-', ''))
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-          const next = arrayMove(orderedFolderIds, oldIndex, newIndex)
-          setFolderOrder(next)
+          const next = arrayMove(orderedIds, oldIndex, newIndex)
+          setFolderOrderForParent(currentParentId, next)
           addToast({
             title: 'Urutan diubah',
             description: 'Posisi folder telah diperbarui.',
             variant: 'success',
           })
         }
-        setActiveId(null)
+        clearDragState()
         return
       }
 
-      // Handle project dropped on folder
-      if (activeId.startsWith('project-') && overId.startsWith('folder-')) {
+      // Project dropped on folder
+      if (activeId.startsWith('project-') && isProjectDropId(overId)) {
         const projectId = activeId.replace('project-', '')
-        const folderId = overId.replace('folder-', '')
+        const folderId = parseProjectDropId(overId)
         await moveProjectToFolder(projectId, folderId)
         addToast({
           title: 'Project dipindahkan',
@@ -575,6 +784,8 @@ export function ProjectListPage() {
           title: 'Project dipindahkan',
           body: 'Project telah dipindahkan ke folder.',
         })
+        clearDragState()
+        return
       }
 
       // Handle project dropped on "all-projects" zone (from board view or folder view)
@@ -591,6 +802,8 @@ export function ProjectListPage() {
           title: 'Project dipindahkan',
           body: 'Project telah dipindahkan ke All Projects.',
         })
+        clearDragState()
+        return
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to move project'
@@ -601,11 +814,46 @@ export function ProjectListPage() {
       })
     }
 
-    setActiveId(null)
+    clearDragState()
   }
 
-  const handleDragOver = (_event: { active: { id: string | number }; over: { id: string | number } | null }) => {
-    // Visual feedback is handled by droppable components
+  const handleDragOver = (event: DragOverEvent) => {
+    const draggingId = String(event.active.id)
+    const overId = event.over?.id ? String(event.over.id) : null
+
+    if (!overId) {
+      setDropTargetFolderId(null)
+      setDropTargetFolderName(null)
+      return
+    }
+
+    if (draggingId.startsWith('project-') && isProjectDropId(overId)) {
+      const folderId = parseProjectDropId(overId)
+      const folder = getFolder(folderId)
+      setDropTargetFolderId(folderId)
+      setDropTargetFolderName(folder?.name ?? null)
+      return
+    }
+
+    if (draggingId.startsWith('folder-') && isNestDropId(overId)) {
+      const sourceId = draggingId.replace('folder-', '')
+      const folderId = parseNestDropId(overId)
+      if (
+        sourceId === folderId ||
+        !canMoveFolderToTarget(sourceId, folderId, folders)
+      ) {
+        setDropTargetFolderId(null)
+        setDropTargetFolderName(null)
+        return
+      }
+      const folder = getFolder(folderId)
+      setDropTargetFolderId(folderId)
+      setDropTargetFolderName(folder?.name ?? null)
+      return
+    }
+
+    setDropTargetFolderId(null)
+    setDropTargetFolderName(null)
   }
 
   // Klik di luar card/folder → clear selection bila ada yang terpilih
@@ -658,15 +906,100 @@ export function ProjectListPage() {
   const handleOpenFolder = (folderId: string) => {
     setCurrentFolderId(folderId)
     handleClearSelection()
+    setSearchParams({ folder: folderId }, { replace: true })
   }
 
   const handleBackToRoot = () => {
     setCurrentFolderId(null)
     handleClearSelection()
+    setSearchParams({}, { replace: true })
   }
 
+  const handleNavigateBack = useCallback(() => {
+    if (!currentFolderId) return
+    const folder = getFolder(currentFolderId)
+    const parentId = folder?.parentId ?? null
+    if (parentId) {
+      handleOpenFolder(parentId)
+      return
+    }
+    handleBackToRoot()
+  }, [currentFolderId, getFolder])
+
+  const handleCopySelectedFolder = useCallback(() => {
+    if (selectedFolderIds.size === 0) return false
+    const folderId = lastFolderAnchorRef.current ?? Array.from(selectedFolderIds)[0]
+    const folder = folderId ? getFolder(folderId) : undefined
+    if (!folder) return false
+    copyFolderToClipboard(folder)
+    addToast({
+      title: 'Folder disalin',
+      description: `"${folder.name}" siap untuk Paste (Ctrl+V).`,
+      variant: 'success',
+    })
+    return true
+  }, [selectedFolderIds, getFolder, addToast])
+
+  const handlePasteFolderToBackground = useCallback(async () => {
+    if (!hasFolderClipboard()) {
+      addToast({
+        title: 'Clipboard kosong',
+        description: 'Copy folder terlebih dahulu (Ctrl+C).',
+        variant: 'default',
+      })
+      return false
+    }
+    const targetParentId = currentFolderId
+    try {
+      const created = await pasteFolderFromClipboard(targetParentId)
+      addToast({
+        title: 'Folder ditempel',
+        description: `"${created.name}" dibuat.`,
+        variant: 'success',
+      })
+      notifyEvent({
+        type_code: 'folder',
+        title: 'Folder ditempel',
+        body: `"${created.name}" dibuat.`,
+      })
+      return true
+    } catch (e) {
+      addToast({
+        title: 'Error',
+        description: e instanceof Error ? e.message : 'Gagal menempel folder',
+        variant: 'error',
+      })
+      return false
+    }
+  }, [addToast, currentFolderId, pasteFolderFromClipboard])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (isEditableKeyboardTarget(e.target)) return
+
+      const key = e.key.toLowerCase()
+      if (key === 'c') {
+        if (selectedFolderIds.size === 0) return
+        e.preventDefault()
+        handleCopySelectedFolder()
+        return
+      }
+      if (key === 'v') {
+        if (!hasFolderClipboard()) return
+        e.preventDefault()
+        void handlePasteFolderToBackground()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [selectedFolderIds, handleCopySelectedFolder, handlePasteFolderToBackground])
+
   const handleCreateFolderWithDefaultName = useCallback(async () => {
-    const usedNumbers = folders
+    const parentId = currentFolderId ?? null
+    const siblings = folders.filter((folder) => (folder.parentId ?? null) === parentId)
+    const usedNumbers = siblings
       .filter((f) => /^Untitled \d+$/.test(f.name))
       .map((f) => parseInt(f.name.replace('Untitled ', ''), 10))
     const nextNum = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : 1
@@ -674,33 +1007,59 @@ export function ProjectListPage() {
     try {
       await addFolder({
         name: defaultName,
-        parentId: null,
+        parentId,
         ownerId: '00000000-0000-0000-0000-000000000001',
       })
       addToast({
-        title: 'Folder dibuat',
-        description: `"${defaultName}" telah dibuat. Bisa rename via klik kanan.`,
+        title: 'Folder created',
+        description: `"${defaultName}" has been created. Rename via right-click.`,
         variant: 'success',
       })
       notifyEvent({
         type_code: 'folder',
-        title: 'Folder dibuat',
-        body: `"${defaultName}" telah dibuat. Bisa rename via klik kanan.`,
+        title: 'Folder created',
+        body: `"${defaultName}" has been created. Rename via right-click.`,
       })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Gagal membuat folder'
+      const msg = err instanceof Error ? err.message : 'Failed to create folder'
       addToast({ title: 'Error', description: msg, variant: 'error' })
     }
-  }, [folders, addFolder, addToast])
+  }, [folders, addFolder, addToast, currentFolderId])
 
   const handleShareFolder = (folder: Folder) => {
     setShareFolder(folder)
   }
 
+  const handleOpenFolderNotes = useCallback(
+    (folder: Folder, options?: { autoFocusComposer?: boolean }) => {
+      setFolderNotesTarget(folder)
+      setFolderNotesAutoCompose(options?.autoFocusComposer ?? false)
+    },
+    [],
+  )
+
+  const handleCloseFolderNotes = useCallback(() => {
+    setFolderNotesTarget(null)
+    setFolderNotesAutoCompose(false)
+  }, [])
+
   const handleDeleteFolder = (folder: Folder) => {
     const count = getProjectsByFolder(folder.id).length
-    setDeleteFolderData({ folder, count })
+    setDeleteFolderData({ folders: [folder], totalProjectCount: count })
   }
+
+  const handleDeleteSelectedFolders = useCallback(() => {
+    if (selectedFolderIds.size === 0) return
+    const foldersToDelete = Array.from(selectedFolderIds)
+      .map((id) => getFolder(id))
+      .filter((folder): folder is Folder => folder != null)
+    if (foldersToDelete.length === 0) return
+    const totalProjectCount = foldersToDelete.reduce(
+      (sum, folder) => sum + getProjectsByFolder(folder.id).length,
+      0,
+    )
+    setDeleteFolderData({ folders: foldersToDelete, totalProjectCount })
+  }, [selectedFolderIds, getFolder, getProjectsByFolder])
 
   const deleteProjectsConfirmModal = (
     <DeleteProjectsConfirmModal
@@ -719,9 +1078,12 @@ export function ProjectListPage() {
       handleBackToRoot()
       return null
     }
+    const folderAncestors = buildFolderAncestorChain(folder.id, getFolder)
+    const childFolders = filteredFolders
+    const orderedChildFolderIds = orderedFolderIds
     const orderedFolderProjectIds = getOrderedIds(
       filteredFolderProjects.map((p) => p.id),
-      projectOrderByFolder[folder.id] ?? []
+      projectOrderByFolder[folder.id] ?? [],
     )
     const folderProjectsAll = folderProjects
     const folderActiveCount = folderProjectsAll.filter((p) => p.status === 'active').length
@@ -730,7 +1092,7 @@ export function ProjectListPage() {
     return (
       <DndContext
         sensors={sensors}
-        collisionDetection={pointerWithin}
+        collisionDetection={folderDropCollisionDetection}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
@@ -738,9 +1100,28 @@ export function ProjectListPage() {
         <div onClick={handleContentAreaClick} onContextMenu={handleContentAreaContextMenu} className="min-h-[200px]">
           <FolderView
             folder={folder}
-            onBack={handleBackToRoot}
+            folderAncestors={folderAncestors}
+            childFolders={childFolders}
+            orderedChildFolderIds={orderedChildFolderIds}
+            getChildFolderCount={getChildFolderCount}
+            onBack={handleNavigateBack}
+            onOpenFolder={handleOpenFolder}
+            onCreateFolder={handleCreateFolderWithDefaultName}
             onShare={handleShareFolder}
+            onShareFolder={handleShareFolder}
+            onDeleteFolder={handleDeleteFolder}
             onRename={(f) => setRenameFolder(f)}
+            onRenameFolder={(f) => setRenameFolder(f)}
+            onAddProjectToFolder={(targetFolder) => {
+              setCreateProjectFolderId(targetFolder.id)
+              setIsCreateProjectModalOpen(true)
+            }}
+            onOpenFolderNotes={() => handleOpenFolderNotes(folder)}
+            onOpenChildFolderNotes={handleOpenFolderNotes}
+            selectedFolderIds={selectedFolderIds}
+            onSelectFolder={handleSelectFolder}
+            multiSelectActiveFolders={selectedFolderIds.size > 1}
+            onDeleteSelectedFolders={handleDeleteSelectedFolders}
             selectedProjectIds={selectedProjectIds}
             onSelectProject={handleSelectProject}
             onMoveSelectedToFolder={handleMoveSelectedToFolder}
@@ -751,7 +1132,8 @@ export function ProjectListPage() {
             archivedSelectedCount={selectedArchivedCount}
             sortOrder={sortOrder}
             onSortOrderChange={setSortOrder}
-            isDragActive={isDragActive}
+            isDragActive={isProjectDragActive}
+            dropTargetFolderId={dropTargetFolderId}
             draggedProjectIds={draggedProjectIds}
             orderedProjectIds={orderedFolderProjectIds}
             onCreateProject={() => {
@@ -775,11 +1157,8 @@ export function ProjectListPage() {
                 <SelectionActionBar
                   inline
                   selectedProjectCount={selectedProjectIds.size}
-                  selectedFolderCount={0}
-                  onClear={handleClearSelection}
+                  selectedFolderCount={selectedFolderIds.size}
                   onMoveToFolder={handleMoveSelectedToFolder}
-                  archivedSelectedCount={selectedArchivedCount}
-                  onDeleteSelected={handleDeleteSelected}
                 />
               ) : undefined
             }
@@ -796,7 +1175,17 @@ export function ProjectListPage() {
               <FolderPlus className="w-4 h-4 mr-2" />
               New Folder
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => { setCreateProjectFolderId(null); setIsCreateProjectModalOpen(true); setBackgroundContextMenu(null); }}>
+            <ContextMenuItem
+              className={cn(!hasFolderClipboard() && 'opacity-50')}
+              onClick={() => {
+                void handlePasteFolderToBackground()
+                setBackgroundContextMenu(null)
+              }}
+            >
+              <ClipboardPaste className="w-4 h-4 mr-2" />
+              Paste
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => { setCreateProjectFolderId(folder.id); setIsCreateProjectModalOpen(true); setBackgroundContextMenu(null); }}>
               <Plus className="w-4 h-4 mr-2" />
               Create Project
             </ContextMenuItem>
@@ -810,99 +1199,13 @@ export function ProjectListPage() {
             </ContextMenuItem>
           </ContextMenu>
         )}
-        {createPortal(
-          <DragOverlay>
-            {draggedProject && draggedProjectsData.count > 0 ? (
-              <div className="relative">
-                <div style={{ transform: 'rotate(2deg)' }}>
-                {/* Stacked cards effect for multiple selection */}
-                {draggedProjectsData.count > 1 ? (
-                  <div className="relative" style={{ width: '320px', minHeight: '140px', paddingBottom: `${Math.min(draggedProjectsData.projects.length - 1, 2) * 20}px` }}>
-                    {/* Background cards (stacked effect) - show cards behind main card */}
-                    {draggedProjectsData.projects.length > 1 && draggedProjectsData.projects.slice(1, Math.min(3, draggedProjectsData.projects.length)).map((project, index) => (
-                      <div
-                        key={project.id}
-                        className="glass-card rounded-xl p-3 absolute"
-                        style={{
-                          top: `${(index + 1) * 20}px`,
-                          left: `${(index + 1) * 20}px`,
-                          width: '280px',
-                          transform: `scale(${1 - (index + 1) * 0.12})`,
-                          zIndex: 15 - (index + 1),
-                          border: '2px solid rgba(59, 130, 246, 0.6)',
-                          background: 'rgba(255, 255, 255, 0.98)',
-                          boxShadow: '0 15px 35px rgba(0, 0, 0, 0.25)',
-                          opacity: 0.85 - (index * 0.1),
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded bg-primary/40 flex-shrink-0" />
-                          <span className="text-sm font-semibold text-foreground truncate">
-                            {project.name}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                    {/* Main card - always show first project from selection */}
-                    <div 
-                      className="glass-card rounded-xl p-4 scale-110 shadow-2xl border-2 border-primary relative"
-                      style={{
-                        boxShadow: '0 25px 70px rgba(0, 0, 0, 0.35), 0 0 0 4px rgba(59, 130, 246, 0.4)',
-                        zIndex: 20,
-                        background: 'rgba(255, 255, 255, 1)',
-                      }}
-                    >
-                      {/* Badge showing count */}
-                      <div className="absolute -top-3 -right-3 w-9 h-9 rounded-full bg-primary border-3 border-white flex items-center justify-center shadow-xl z-30">
-                        <span className="text-base font-bold text-white">{draggedProjectsData.count}</span>
-                      </div>
-                      <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                        <div className="p-1.5 rounded-lg bg-primary/10 flex-shrink-0">
-                          <div className="w-4 h-4 bg-primary/20 rounded" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-base font-bold text-foreground mb-1">
-                            {draggedProjectsData.count} projects
-                          </h3>
-                          <p className="text-xs text-muted-foreground font-medium">
-                            {draggedProjectsData.projects[0]?.name || draggedProject.name}
-                            {draggedProjectsData.count > 1 && ` + ${draggedProjectsData.count - 1} more`}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* Single card */
-                  <div 
-                    className="glass-card rounded-xl p-4 opacity-95 scale-105 shadow-2xl border-2 border-primary/30"
-                    style={{
-                      boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(59, 130, 246, 0.3)',
-                    }}
-                  >
-                    <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                      <div className="p-1.5 rounded-lg bg-primary/10 flex-shrink-0">
-                        <div className="w-4 h-4 bg-primary/20 rounded" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-foreground mb-1 truncate">
-                          {draggedProject.name}
-                        </h3>
-                        {draggedProject.description && (
-                          <p className="text-xs text-muted-foreground line-clamp-2">
-                            {draggedProject.description}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : null}
-          </DragOverlay>,
-          document.body
-        )}
+        <ProjectDragLayer
+          activeId={activeId}
+          project={draggedProject}
+          projectCount={draggedProjectsData.count}
+          overFolderName={dropTargetFolderName}
+          pointer={dragPointer}
+        />
 
         {/* Modals — harus ada di folder view agar Create Project berfungsi */}
         <CreateProjectFlow
@@ -919,18 +1222,23 @@ export function ProjectListPage() {
           onOpenChange={setIsCreateFolderModalOpen}
         />
         {shareFolder && (
-          <ShareFolderModal
+          <AddFolderMembersDrawer
             open={!!shareFolder}
             onOpenChange={(open) => !open && setShareFolder(null)}
             folder={shareFolder}
+            onFolderUpdated={(updated) => {
+              setShareFolder(updated)
+              void fetchFolders(undefined, currentFolderId)
+            }}
           />
         )}
         {deleteFolderData && (
           <DeleteFolderConfirmModal
             open={!!deleteFolderData}
             onOpenChange={(open) => !open && setDeleteFolderData(null)}
-            folder={deleteFolderData.folder}
-            projectCount={deleteFolderData.count}
+            folders={deleteFolderData.folders}
+            totalProjectCount={deleteFolderData.totalProjectCount}
+            onDeleted={handleClearSelection}
           />
         )}
         {renameFolder && (
@@ -940,6 +1248,14 @@ export function ProjectListPage() {
             folder={renameFolder}
           />
         )}
+        <FolderNotesDrawer
+          open={!!folderNotesTarget}
+          folder={folderNotesTarget}
+          onOpenChange={(open) => {
+            if (!open) handleCloseFolderNotes()
+          }}
+          autoFocusComposer={folderNotesAutoCompose}
+        />
         {deleteProjectsConfirmModal}
       </DndContext>
     )
@@ -957,10 +1273,9 @@ export function ProjectListPage() {
   const showSortInProjects = typeFilterTags.has('projects')
 
   return (
-    <ProjectsErrorBoundary>
       <DndContext
         sensors={sensors}
-        collisionDetection={pointerWithin}
+        collisionDetection={folderDropCollisionDetection}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
@@ -972,7 +1287,7 @@ export function ProjectListPage() {
         {/* Header */}
         <PageHeader
           title="Projects"
-          description="Projects are workspaces for managing AI training pipelines, experiments, and models. Create folders, organize projects, and track status from a single place."
+          description="Manage project delivery, folders, and execution status from one place."
           right={
             <EnterpriseViewControlRail className="flex-nowrap shrink-0">
               <Tooltip content={showFoldersSectionVisible ? 'Hide Folders section' : 'Show Folders section'} side="bottom">
@@ -1034,7 +1349,7 @@ export function ProjectListPage() {
             totalProjects={projects.length}
             activeProjects={activeProjects.length}
             archivedProjects={archivedProjects.length}
-            totalFolders={folders.length}
+            totalFolders={filteredFolders.length}
             onCreateFolder={handleCreateFolderWithDefaultName}
             onCreateProject={() => {
               setCreateProjectFolderId(null)
@@ -1046,10 +1361,7 @@ export function ProjectListPage() {
                   inline
                   selectedProjectCount={selectedProjectIds.size}
                   selectedFolderCount={selectedFolderIds.size}
-                  onClear={handleClearSelection}
                   onMoveToFolder={handleMoveSelectedToFolder}
-                  archivedSelectedCount={selectedArchivedCount}
-                  onDeleteSelected={handleDeleteSelected}
                 />
               ) : null
             }
@@ -1059,9 +1371,10 @@ export function ProjectListPage() {
 
         {/* Loading/Error States */}
         {projectsLoading ? (
-          <div className="glass-card rounded-2xl p-12 text-center text-muted-foreground">
-            Loading projects…
-          </div>
+          <PlatformDataLoadingState
+            title="Loading project data"
+            description="Retrieving projects and folders from the service."
+          />
         ) : projectsError ? (
           <div className="glass-card rounded-2xl p-12 text-center">
             <p className="text-destructive mb-4">{projectsError}</p>
@@ -1071,11 +1384,62 @@ export function ProjectListPage() {
           </div>
         ) : (
           <div className="space-y-8">
+            {layout === 'list' ? (
+              <>
+                {(showFoldersSection && showFoldersSectionVisible) || showProjectsSection ? (
+                  <ProjectsFoldersListTable
+                    folders={filteredFolders}
+                    projects={filteredProjects}
+                    getProjectCount={getProjectCount}
+                    getChildFolderCount={getChildFolderCount}
+                    sortOrder={sortOrder}
+                    onSortOrderChange={setSortOrder}
+                    showSortControl={showSortInFolders || showSortInProjects}
+                    showFolders={showFoldersSection && showFoldersSectionVisible}
+                    showProjects={showProjectsSection}
+                    selectedFolderIds={selectedFolderIds}
+                    selectedProjectIds={selectedProjectIds}
+                    onSelectFolder={handleSelectFolder}
+                    onSelectProject={handleSelectProject}
+                    onOpenFolder={handleOpenFolder}
+                    onClearSelection={handleClearSelection}
+                    onSelectFoldersBulk={handleSelectFoldersBulk}
+                    onSelectProjectsBulk={handleSelectProjectsBulk}
+                    isDragActive={isProjectDragActive}
+                    draggedProjectIds={draggedProjectIds}
+                    orderedFolderIds={orderedFolderIds}
+                    orderedProjectIds={orderedRootProjectIds}
+                    onShareFolder={handleShareFolder}
+                    onDeleteFolder={handleDeleteFolder}
+                    onRenameFolder={(folder) => setRenameFolder(folder)}
+                    onAddProject={(folder) => {
+                      setCreateProjectFolderId(folder.id)
+                      setIsCreateProjectModalOpen(true)
+                    }}
+                    onOpenFolderNotes={handleOpenFolderNotes}
+                    multiSelectActive={selectedFolderIds.size > 1}
+                    onDeleteSelectedFolders={handleDeleteSelectedFolders}
+                    onAddTodo={openTodoPanel}
+                  />
+                ) : null}
+
+                {!showFoldersSection && !showProjectsSection && (
+                  <div className="glass-card rounded-2xl p-12">
+                    <EmptyState
+                      title="No items found"
+                      description="Try adjusting your search or filter criteria."
+                    />
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
             {/* Folders Section */}
             {showFoldersSection && showFoldersSectionVisible && Array.isArray(filteredFolders) && (
               <FoldersSection
                 folders={filteredFolders}
                 getProjectCount={getProjectCount}
+                getChildFolderCount={getChildFolderCount}
                 onOpenFolder={handleOpenFolder}
                 onShareFolder={handleShareFolder}
                 onDeleteFolder={handleDeleteFolder}
@@ -1090,7 +1454,12 @@ export function ProjectListPage() {
                   setCreateProjectFolderId(folder.id)
                   setIsCreateProjectModalOpen(true)
                 }}
+                onOpenFolderNotes={handleOpenFolderNotes}
                 layout={layout}
+                multiSelectActive={selectedFolderIds.size > 1}
+                onDeleteSelected={handleDeleteSelectedFolders}
+                isProjectDragActive={isProjectDragActive}
+                dropTargetFolderId={dropTargetFolderId}
               />
             )}
 
@@ -1109,7 +1478,7 @@ export function ProjectListPage() {
                   setCreateProjectFolderId(null)
                   setIsCreateProjectModalOpen(true)
                 }}
-                isDragActive={isDragActive}
+                isDragActive={isProjectDragActive}
                 draggedProjectIds={draggedProjectIds}
                 orderedProjectIds={orderedRootProjectIds}
                 layout={layout}
@@ -1130,6 +1499,8 @@ export function ProjectListPage() {
                 />
               </div>
             )}
+              </>
+            )}
           </div>
         )}
 
@@ -1148,18 +1519,23 @@ export function ProjectListPage() {
           onOpenChange={setIsCreateFolderModalOpen}
         />
         {shareFolder && (
-          <ShareFolderModal
+          <AddFolderMembersDrawer
             open={!!shareFolder}
             onOpenChange={(open) => !open && setShareFolder(null)}
             folder={shareFolder}
+            onFolderUpdated={(updated) => {
+              setShareFolder(updated)
+              void fetchFolders(undefined, currentFolderId)
+            }}
           />
         )}
         {deleteFolderData && (
           <DeleteFolderConfirmModal
             open={!!deleteFolderData}
             onOpenChange={(open) => !open && setDeleteFolderData(null)}
-            folder={deleteFolderData.folder}
-            projectCount={deleteFolderData.count}
+            folders={deleteFolderData.folders}
+            totalProjectCount={deleteFolderData.totalProjectCount}
+            onDeleted={handleClearSelection}
           />
         )}
         {renameFolder && (
@@ -1169,6 +1545,14 @@ export function ProjectListPage() {
             folder={renameFolder}
           />
         )}
+        <FolderNotesDrawer
+          open={!!folderNotesTarget}
+          folder={folderNotesTarget}
+          onOpenChange={(open) => {
+            if (!open) handleCloseFolderNotes()
+          }}
+          autoFocusComposer={folderNotesAutoCompose}
+        />
         {deleteProjectsConfirmModal}
 
         {panelContextMenu && (
@@ -1200,6 +1584,16 @@ export function ProjectListPage() {
               <FolderPlus className="w-4 h-4 mr-2" />
               New Folder
             </ContextMenuItem>
+            <ContextMenuItem
+              className={cn(!hasFolderClipboard() && 'opacity-50')}
+              onClick={() => {
+                void handlePasteFolderToBackground()
+                setBackgroundContextMenu(null)
+              }}
+            >
+              <ClipboardPaste className="w-4 h-4 mr-2" />
+              Paste
+            </ContextMenuItem>
             <ContextMenuItem onClick={() => { setCreateProjectFolderId(null); setIsCreateProjectModalOpen(true); setBackgroundContextMenu(null); }}>
               <Plus className="w-4 h-4 mr-2" />
               Create Project
@@ -1215,101 +1609,14 @@ export function ProjectListPage() {
           </ContextMenu>
         )}
 
-        {createPortal(
-          <DragOverlay>
-            {draggedProject && draggedProjectsData.count > 0 ? (
-              <div className="relative">
-                <div style={{ transform: 'rotate(2deg)' }}>
-                {/* Stacked cards effect for multiple selection */}
-                {draggedProjectsData.count > 1 ? (
-                  <div className="relative" style={{ width: '320px', minHeight: '140px', paddingBottom: `${Math.min(draggedProjectsData.projects.length - 1, 2) * 20}px` }}>
-                    {/* Background cards (stacked effect) - show cards behind main card */}
-                    {draggedProjectsData.projects.length > 1 && draggedProjectsData.projects.slice(1, Math.min(3, draggedProjectsData.projects.length)).map((project, index) => (
-                      <div
-                        key={project.id}
-                        className="glass-card rounded-xl p-3 absolute"
-                        style={{
-                          top: `${(index + 1) * 20}px`,
-                          left: `${(index + 1) * 20}px`,
-                          width: '280px',
-                          transform: `scale(${1 - (index + 1) * 0.12})`,
-                          zIndex: 15 - (index + 1),
-                          border: '2px solid rgba(59, 130, 246, 0.6)',
-                          background: 'rgba(255, 255, 255, 0.98)',
-                          boxShadow: '0 15px 35px rgba(0, 0, 0, 0.25)',
-                          opacity: 0.85 - (index * 0.1),
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded bg-primary/40 flex-shrink-0" />
-                          <span className="text-sm font-semibold text-foreground truncate">
-                            {project.name}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                    {/* Main card - always show first project from selection */}
-                    <div 
-                      className="glass-card rounded-xl p-4 scale-110 shadow-2xl border-2 border-primary relative"
-                      style={{
-                        boxShadow: '0 25px 70px rgba(0, 0, 0, 0.35), 0 0 0 4px rgba(59, 130, 246, 0.4)',
-                        zIndex: 20,
-                        background: 'rgba(255, 255, 255, 1)',
-                      }}
-                    >
-                      {/* Badge showing count */}
-                      <div className="absolute -top-3 -right-3 w-9 h-9 rounded-full bg-primary border-3 border-white flex items-center justify-center shadow-xl z-30">
-                        <span className="text-base font-bold text-white">{draggedProjectsData.count}</span>
-                      </div>
-                      <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                        <div className="p-1.5 rounded-lg bg-primary/10 flex-shrink-0">
-                          <div className="w-4 h-4 bg-primary/20 rounded" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-base font-bold text-foreground mb-1">
-                            {draggedProjectsData.count} projects
-                          </h3>
-                          <p className="text-xs text-muted-foreground font-medium">
-                            {draggedProjectsData.projects[0]?.name || draggedProject.name}
-                            {draggedProjectsData.count > 1 && ` + ${draggedProjectsData.count - 1} more`}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* Single card */
-                  <div 
-                    className="glass-card rounded-xl p-4 opacity-95 scale-105 shadow-2xl border-2 border-primary/30"
-                    style={{
-                      boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(59, 130, 246, 0.3)',
-                    }}
-                  >
-                    <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                      <div className="p-1.5 rounded-lg bg-primary/10 flex-shrink-0">
-                        <div className="w-4 h-4 bg-primary/20 rounded" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-foreground mb-1 truncate">
-                          {draggedProject.name}
-                        </h3>
-                        {draggedProject.description && (
-                          <p className="text-xs text-muted-foreground line-clamp-2">
-                            {draggedProject.description}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : null}
-          </DragOverlay>,
-          document.body
-        )}
+        <ProjectDragLayer
+          activeId={activeId}
+          project={draggedProject}
+          projectCount={draggedProjectsData.count}
+          overFolderName={dropTargetFolderName}
+          pointer={dragPointer}
+        />
         </div>
       </DndContext>
-    </ProjectsErrorBoundary>
   )
 }

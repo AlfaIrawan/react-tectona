@@ -12,6 +12,8 @@ export const TECTONA_CHAT_WORKSPACE_ID = 'react-tectona'
 
 /** Greet is LLM-only on backend — allow enough time for GCP/Ollama. */
 const GREET_LLM_TIMEOUT_MS = 18_000
+/** Sidebar Gen AI chat — Ollama gemma4:31b on dev can exceed 60s (cold start + long context). */
+const SIDEBAR_CHAT_TIMEOUT_MS = 180_000
 const GENAI_SESSION_FETCH_TIMEOUT_MS = 5000
 
 const BASE_URL = serviceApiBase(
@@ -253,6 +255,45 @@ export interface AnalyzeIdeaScoringResponse {
   correlation_id: string
 }
 
+export interface AnalyzeIdeaIntegrationRequest {
+  idea_id: string
+  context: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  idea: {
+    id: string
+    title: string
+    description?: string | null
+    business_objective?: string | null
+    scope_summary?: string | null
+    risk_summary?: string | null
+    status: string
+    tags: string[]
+  }
+}
+
+export interface RecommendedIntegrationSystem {
+  name: string
+  role: string
+  source: 'kb' | 'inferred' | ''
+  integration_pattern: string
+}
+
+export interface AnalyzeIdeaIntegrationResponse {
+  status: 'ok' | 'insufficient_data'
+  summary_title: string
+  executive_brief: string
+  plantuml_source: string
+  integration_patterns: string[]
+  recommended_systems: RecommendedIntegrationSystem[]
+  missing_evidence: string[]
+  confidence_score: number
+  warnings: string[]
+  correlation_id: string
+}
+
 export interface GenerateBenefitAnalysisRequest {
   idea_id: string
   title: string
@@ -420,6 +461,23 @@ export interface IdeaDraftEvidenceSummary {
   rationale: string
 }
 
+export type IdeaDraftChecklistItemStatus = 'pending' | 'asked' | 'answered' | 'skipped'
+
+export interface IdeaDraftChecklistItem {
+  id: string
+  prompt: string
+  required?: boolean
+  status?: IdeaDraftChecklistItemStatus
+}
+
+export interface IdeaDraftEvidenceProgress {
+  total: number
+  answered: number
+  required_total: number
+  required_answered: number
+  items: IdeaDraftChecklistItem[]
+}
+
 export interface IdeaDraftBrainstormMessage {
   role: 'user' | 'assistant'
   text: string
@@ -429,6 +487,10 @@ export interface IdeaDraftBrainstormResponse {
   messages: IdeaDraftBrainstormMessage[]
   ready_to_continue: boolean
   remaining_gaps: string[]
+  intake_checklist?: IdeaDraftChecklistItem[]
+  evidence_progress?: IdeaDraftEvidenceProgress
+  confidence_percent?: number
+  offer_generate_anyway?: boolean
 }
 
 export interface RestoreIdeaDraftBrainstormRequest {
@@ -467,6 +529,10 @@ export interface IdeaDraftJobStatusResponse {
   brainstorm_messages: IdeaDraftBrainstormMessage[]
   brainstorm_ready?: boolean
   brainstorm_remaining_gaps?: string[]
+  intake_checklist?: IdeaDraftChecklistItem[]
+  evidence_progress?: IdeaDraftEvidenceProgress
+  confidence_percent?: number
+  offer_generate_anyway?: boolean
   correlation_id: string
 }
 
@@ -527,6 +593,8 @@ export interface RuntimeChatRequest {
     ui?: RuntimeChatUiContext | null
     user_attachments?: RuntimeChatAttachment[]
     assistant_attachments?: RuntimeChatAttachment[]
+    document_id?: string | null
+    document_title?: string | null
   }
   options?: {
     mode?: 'deterministic_first' | 'llm_first'
@@ -569,6 +637,14 @@ export interface RuntimeChatEvidence {
   details?: Record<string, unknown> | null
 }
 
+export interface RuntimePendingDocumentEdit {
+  document_id: string
+  section_title: string
+  location: { table_index: number; row_index: number }
+  original_text: string
+  proposed_text: string
+}
+
 export interface RuntimeChatResponse {
   answer: string
   confidence_score: number
@@ -583,6 +659,7 @@ export interface RuntimeChatResponse {
   handoff_available?: boolean
   handoff_from_session_id?: string | null
   context_usage?: ContextUsageReport | null
+  pending_document_edit?: RuntimePendingDocumentEdit | null
 }
 
 export type TectonaProposedAction = {
@@ -594,6 +671,7 @@ export type TectonaProposedAction = {
     | 'workspace.governance.apply'
     | 'workspace.member.add'
     | 'idea.content.inject'
+    | 'document.apply_chat_edit'
   summary: string
   payload: Record<string, unknown>
   risk_level?: 'low' | 'medium' | 'high'
@@ -834,7 +912,7 @@ export async function fetchRoleLlmPrecheck(): Promise<RoleLlmPrecheckResponse> {
 }
 
 export async function generateIdeaBrd(payload: RuntimeBrdRequest): Promise<RuntimeBrdResponse> {
-  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/generate-idea-brd`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/generate-brd`, {
     method: 'POST',
     body: JSON.stringify(payload),
   }, 90000)
@@ -896,6 +974,7 @@ export interface GenerateRepositoryKbRequest {
   detected_memo_metadata?: RepositoryKbDetectedMemoMetadata
   detected_attachment_entries?: RepositoryKbDetectedAttachmentEntry[]
   allowed_categories?: Array<{ value: string; label: string }>
+  dkm_template_id?: string | null
   options?: { allow_llm?: boolean }
 }
 
@@ -1022,6 +1101,37 @@ export async function extractRepositoryPdfText(
   }
 }
 
+export interface DescribeImageResponse {
+  text: string
+}
+
+/**
+ * Vision-LLM description of an uploaded image (diagram/screenshot/photo) for KB ingestion —
+ * transcribes visible text and describes diagrams/UI/architecture in structured prose.
+ */
+export async function describeImageViaVision(
+  file: File,
+  timeoutMs: number = 120_000,
+): Promise<DescribeImageResponse> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const headers = new Headers(tectonaServiceHeaders())
+    headers.delete('Content-Type')
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE_URL}/v1/agent/describe-image`, {
+      method: 'POST',
+      headers,
+      body: form,
+      signal: controller.signal,
+    })
+    return handleResponse<DescribeImageResponse>(res)
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 export async function generateRepositoryKbFromDocument(
   payload: GenerateRepositoryKbRequest,
   timeoutMs: number = 120_000,
@@ -1037,6 +1147,179 @@ export async function generateRepositoryKbFromDocument(
   return handleResponse<GenerateRepositoryKbResponse>(res)
 }
 
+export interface FillDkmTemplatePayload {
+  fills?: Record<string, string>
+  sections?: Record<string, string>
+  summary?: string
+}
+
+export interface FillDkmTemplateRequest {
+  template_id: string
+  source_text?: string
+  instructions?: string
+  context?: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  options?: { allow_llm?: boolean }
+}
+
+export interface FillDkmTemplateResponse {
+  payload: FillDkmTemplatePayload
+  template_name?: string
+  template_code?: string
+  agent_schema?: Record<string, unknown>
+  /** Per-placeholder/section facts extracted from the source text before the actual fill call. */
+  plan?: Record<string, string>
+  warnings: string[]
+  correlation_id: string
+  used_repair?: boolean
+  /** Base64-encoded PNGs of any LLM-authored PlantUML diagrams, keyed by placeholder key. */
+  rendered_diagrams?: Record<string, string>
+}
+
+export async function fillDkmTemplate(
+  payload: FillDkmTemplateRequest,
+  timeoutMs: number = 120_000,
+): Promise<FillDkmTemplateResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/fill-template`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  )
+  return handleResponse<FillDkmTemplateResponse>(res)
+}
+
+export interface TemplateSchemaPlaceholderRecommendation {
+  key: string
+  label?: string
+  type?: string
+  required?: boolean
+  source?: string
+  confidence?: number
+  reason?: string
+  /** Table cell this placeholder maps to (table_index/row_index) — enables precise write-back. */
+  location?: { table_index: number; row_index: number } | null
+  /** Literal instructional/prompt text from the source cell (e.g. "Provide the project name…"). */
+  instruction?: string | null
+}
+
+export interface TemplateSchemaSectionRecommendation {
+  id: string
+  heading?: string
+  kind?: string
+  min_paragraphs?: number
+  source?: string
+  confidence?: number
+  reason?: string
+}
+
+export interface AnalyzeDkmTemplateSchemaRequest {
+  template_id: string
+  document_text?: string
+  toc_entries?: string[]
+  context?: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  options?: { allow_llm?: boolean }
+}
+
+export interface AnalyzeDkmTemplateSchemaResponse {
+  document_kind: string
+  document_kind_confidence: number
+  document_kind_reason: string
+  template_format: 'formatted' | 'unformatted' | 'mixed' | string
+  summary: string
+  placeholders: TemplateSchemaPlaceholderRecommendation[]
+  sections: TemplateSchemaSectionRecommendation[]
+  heuristics?: Record<string, unknown>
+  warnings: string[]
+  correlation_id: string
+  used_repair?: boolean
+}
+
+export async function analyzeDkmTemplateSchema(
+  payload: AnalyzeDkmTemplateSchemaRequest,
+  timeoutMs: number = 120_000,
+): Promise<AnalyzeDkmTemplateSchemaResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/analyze-template-schema`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  )
+  return handleResponse<AnalyzeDkmTemplateSchemaResponse>(res)
+}
+
+export interface KbRelationSuggestionEntryInput {
+  id: string
+  title?: string
+  category?: string
+  workspace_id?: string | null
+  /** Short plain-text excerpt (HTML already stripped by the caller). */
+  excerpt?: string
+}
+
+export interface KbRelationSuggestionExistingRelationInput {
+  source_entry_id: string
+  target_entry_id: string
+  predicate?: string
+}
+
+export interface SuggestKbRelationsRequest {
+  context?: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  entries: KbRelationSuggestionEntryInput[]
+  existing_relations?: KbRelationSuggestionExistingRelationInput[]
+  predicates?: string[]
+  options?: { allow_llm?: boolean }
+}
+
+export interface KbRelationSuggestion {
+  source_entry_id: string
+  target_entry_id: string
+  predicate: string
+  reason: string
+  confidence: number
+}
+
+export interface SuggestKbRelationsResponse {
+  suggestions: KbRelationSuggestion[]
+  scanned_entry_count: number
+  warnings: string[]
+  correlation_id: string
+  used_repair?: boolean
+}
+
+/** AI scan of a Knowledge Base graph's nodes + existing relations, proposing additional relations
+ * between topically-related entries that aren't yet linked. Pure analysis — the caller decides
+ * which suggestions to actually create via the KB relations API. */
+export async function suggestKbRelations(
+  payload: SuggestKbRelationsRequest,
+  timeoutMs: number = 120_000,
+): Promise<SuggestKbRelationsResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/suggest-kb-relations`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  )
+  return handleResponse<SuggestKbRelationsResponse>(res)
+}
+
 export async function analyzeIdeaScoring(
   payload: AnalyzeIdeaScoringRequest,
   timeoutMs: number = 150_000,
@@ -1050,6 +1333,21 @@ export async function analyzeIdeaScoring(
     timeoutMs,
   )
   return handleResponse<AnalyzeIdeaScoringResponse>(res)
+}
+
+export async function analyzeIdeaIntegration(
+  payload: AnalyzeIdeaIntegrationRequest,
+  timeoutMs: number = 150_000,
+): Promise<AnalyzeIdeaIntegrationResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/analyze-idea-integration`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  )
+  return handleResponse<AnalyzeIdeaIntegrationResponse>(res)
 }
 
 export async function generateBenefitAnalysis(
@@ -1278,7 +1576,7 @@ export async function sendTectonaAgentRuntimeMessage(
       method: 'POST',
       body: JSON.stringify(merged),
     },
-    60_000,
+    SIDEBAR_CHAT_TIMEOUT_MS,
   )
 
   if (!res.ok) {

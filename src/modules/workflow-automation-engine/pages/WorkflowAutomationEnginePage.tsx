@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -163,11 +163,11 @@ const AI_INSIGHTS: Array<{ text: string; level: InsightLevel }> = [
 ]
 
 const PANELS: Array<{ id: PanelId; label: string; icon: React.ComponentType<{ className?: string }>; badge: string; desc: string }> = [
-  { id: 'overview', label: 'Execution Overview', icon: Sparkles, badge: 'Command', desc: 'Ringkasan health, throughput, dan KPI workflow.' },
-  { id: 'catalog', label: 'Workflow Catalog', icon: Workflow, badge: 'Core', desc: 'Direktori workflow dengan filter dan aksi cepat.' },
-  { id: 'builder', label: 'Workflow Builder', icon: GitBranch, badge: 'Design', desc: 'Visual node, sequencing, dan validasi flow.' },
-  { id: 'automation', label: 'Automation Rules', icon: Bot, badge: 'Rules', desc: 'Trigger, condition, action, dan kontrol status.' },
-  { id: 'monitoring', label: 'Runtime Monitoring', icon: Activity, badge: 'Runtime', desc: 'Eksekusi, antrian, dan insiden operasional.' },
+  { id: 'overview', label: 'Execution Overview', icon: Sparkles, badge: 'Command', desc: 'Health, throughput, and KPI summary for workflows.' },
+  { id: 'catalog', label: 'Workflow Catalog', icon: Workflow, badge: 'Core', desc: 'Workflow directory with filters and quick actions.' },
+  { id: 'builder', label: 'Workflow Builder', icon: GitBranch, badge: 'Design', desc: 'Visual nodes, sequencing, and flow validation.' },
+  { id: 'automation', label: 'Automation Rules', icon: Bot, badge: 'Rules', desc: 'Trigger, condition, action, and status control.' },
+  { id: 'monitoring', label: 'Runtime Monitoring', icon: Activity, badge: 'Runtime', desc: 'Execution, queues, and operational incidents.' },
 ]
 
 const PANEL_GROUPS: Array<{ group: string; items: typeof PANELS }> = [
@@ -435,7 +435,6 @@ export function WorkflowAutomationEnginePage() {
   // Match Document & Knowledge Management: 260px panel width without forcing compact nav content.
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
 
-  const [isLoading, setIsLoading] = useState(true)
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
   const [search, setSearch] = useState('')
@@ -446,13 +445,7 @@ export function WorkflowAutomationEnginePage() {
   const [mainPanelViewportHeightPx, setMainPanelViewportHeightPx] = useState<number | null>(null)
   const isOverviewSectionActive = activePanel === 'overview'
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 650)
-    return () => window.clearTimeout(timer)
-  }, [])
-
   useLayoutEffect(() => {
-    if (isLoading) return
     if (!isOverviewSectionActive) {
       setMainPanelViewportHeightPx(null)
       return
@@ -484,10 +477,9 @@ export function WorkflowAutomationEnginePage() {
       window.removeEventListener('resize', compute)
       ro.disconnect()
     }
-  }, [isLoading, isOverviewSectionActive, isWorkspaceCollapsed, showFiltersPanel, sidebarFixed])
+  }, [isOverviewSectionActive, isWorkspaceCollapsed, showFiltersPanel, sidebarFixed])
 
   useLayoutEffect(() => {
-    if (isLoading) return
     if (navDocked) {
       setNavPanelHeightPx(null)
       return
@@ -530,7 +522,6 @@ export function WorkflowAutomationEnginePage() {
       ro.disconnect()
     }
   }, [
-    isLoading,
     isOverviewSectionActive,
     isWorkspaceCollapsed,
     mainPanelViewportHeightPx,
@@ -558,15 +549,6 @@ export function WorkflowAutomationEnginePage() {
     return { total: overviewWorkflows.length, active, paused, needsApproval, avgSuccess, executions }
   }, [overviewWorkflows])
 
-  if (isLoading) {
-    return (
-      <div className="space-y-5">
-        <Breadcrumb items={[{ label: 'Workflow & Automation Engine' }]} />
-        <div className="h-64 animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-0 space-y-6 pb-0">
       <div className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant))}>
@@ -574,7 +556,7 @@ export function WorkflowAutomationEnginePage() {
 
         <PageHeader
           title="Workflow & Automation Engine"
-          description="Design workflow, approvals, trigger, dan automation dengan pola UI yang konsisten terhadap Task & Work Management"
+          description="Design workflows, approvals, triggers, and automation with a UI pattern consistent with Task & Work Management"
           right={
             <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/75 p-1.5 shadow-sm">
               <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition hover:bg-white hover:text-slate-900" title="Export workflow snapshot">
@@ -803,7 +785,7 @@ export function WorkflowAutomationEnginePage() {
           {activePanel === 'overview' ? (
             <Panel
               title="Workflow Execution Overview Panel"
-              description="Ringkasan KPI eksekusi workflow dan tren success/failure harian."
+              description="Workflow execution KPI summary and daily success/failure trend."
               headerIcon={<BarChart3 className="h-5 w-5" />}
               panelRef={activeMainPanelRef}
               style={isOverviewSectionActive ? workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx) : undefined}
@@ -816,7 +798,7 @@ export function WorkflowAutomationEnginePage() {
                   icon={Workflow}
                   tone="sky"
                   title="Workflow Catalog Snapshot"
-                  description="Daftar workflow aktif dan status eksekusi terbaru."
+                  description="List of active workflows and their latest execution status."
                   footer={<button type="button" className="text-xs font-semibold text-sky-600 hover:text-sky-700">View All Workflows →</button>}
                 >
                   <div className="-mx-1 overflow-x-auto">
@@ -849,7 +831,7 @@ export function WorkflowAutomationEnginePage() {
                   icon={TrendingUp}
                   tone="cyan"
                   title="Execution Trend"
-                  description="Tren eksekusi dari waktu ke waktu."
+                  description="Execution trend over time."
                   footer={
                     <div className="grid grid-cols-3 gap-2">
                       <CardMetric label="Success Rate" value="91%" tone="emerald" />
@@ -885,7 +867,7 @@ export function WorkflowAutomationEnginePage() {
                   icon={ShieldCheck}
                   tone="emerald"
                   title="Success vs Failure Rate"
-                  description="Perbandingan success, failure, dan retry rate."
+                  description="Comparison of success, failure, and retry rate."
                   headerRight={
                     <div className="text-right">
                       <div className="text-[10px] uppercase tracking-wide text-slate-400">Workflow Reliability</div>
@@ -957,7 +939,7 @@ export function WorkflowAutomationEnginePage() {
                   icon={Clock3}
                   tone="amber"
                   title="Approval SLA"
-                  description="SLA kepatuhan untuk approval workflow."
+                  description="SLA compliance for approval workflows."
                   footer={
                     <div className="grid grid-cols-3 gap-2">
                       <CardMetric label="Average Approval Time" value="1h 32m" />
@@ -986,7 +968,7 @@ export function WorkflowAutomationEnginePage() {
                   icon={Layers3}
                   tone="indigo"
                   title="Execution Queue Depth"
-                  description="Kedalaman antrean eksekusi workflow dalam sistem."
+                  description="Depth of the workflow execution queue in the system."
                   headerRight={
                     <Badge className="rounded-full border border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">Queue Health · Healthy</Badge>
                   }
@@ -1100,7 +1082,7 @@ export function WorkflowAutomationEnginePage() {
                   tone="violet"
                   className="xl:col-span-2"
                   title="AI Workflow Insight"
-                  description="Insight cerdas dan rekomendasi dari TECTONA AI."
+                  description="Smart insights and recommendations from TECTONA AI."
                   headerRight={
                     <div className="text-right">
                       <div className="text-[10px] uppercase tracking-wide text-slate-400">Confidence Score</div>
@@ -1140,7 +1122,7 @@ export function WorkflowAutomationEnginePage() {
           ) : null}
 
           {activePanel === 'catalog' ? (
-            <Panel title="Workflow & Automation Directory Panel" description="Daftar workflow dengan status, trigger, success rate, dan aksi cepat operasional.">
+            <Panel title="Workflow & Automation Directory Panel" description="List of workflows with status, trigger, success rate, and quick operational actions.">
               <div className="overflow-hidden rounded-2xl border border-slate-200">
                 <table className="w-full text-xs">
                   <thead className="bg-slate-50/95 text-slate-600">
@@ -1170,13 +1152,13 @@ export function WorkflowAutomationEnginePage() {
           ) : null}
 
           {activePanel === 'builder' ? (
-            <Panel title="Workflow Builder Panel" description="Desain visual flow dan urutan node untuk eksekusi automation engine.">
+            <Panel title="Workflow Builder Panel" description="Visual flow design and node sequencing for automation engine execution.">
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
                 {['Start Trigger', 'Approval Gate', 'Condition Rule', 'Action Dispatch', 'End State'].map((node, index) => (
                   <div key={node} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Node {index + 1}</div>
                     <div className="mt-2 text-sm font-semibold text-slate-900">{node}</div>
-                    <div className="mt-1 text-xs text-slate-600">Konfigurasi tahap workflow untuk orkestrasi proses bisnis.</div>
+                    <div className="mt-1 text-xs text-slate-600">Workflow stage configuration for business process orchestration.</div>
                   </div>
                 ))}
               </div>
@@ -1184,7 +1166,7 @@ export function WorkflowAutomationEnginePage() {
           ) : null}
 
           {activePanel === 'automation' ? (
-            <Panel title="Rule-Based Automation Panel" description="Kontrol trigger-condition-action dan status rule untuk workflow runtime.">
+            <Panel title="Rule-Based Automation Panel" description="Trigger-condition-action control and rule status for workflow runtime.">
               <div className="space-y-3">
                 {[
                   'Overrun alert with owner reassignment',
@@ -1196,7 +1178,7 @@ export function WorkflowAutomationEnginePage() {
                       <div className="text-sm font-semibold text-slate-900">{rule}</div>
                       <Badge className="rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700">Enabled</Badge>
                     </div>
-                    <div className="mt-1 text-xs text-slate-600">Trigger - Condition - Action flow dengan observability dan failover policy.</div>
+                    <div className="mt-1 text-xs text-slate-600">Trigger - Condition - Action flow with observability and failover policy.</div>
                   </div>
                 ))}
               </div>
@@ -1204,11 +1186,11 @@ export function WorkflowAutomationEnginePage() {
           ) : null}
 
           {activePanel === 'monitoring' ? (
-            <Panel title="Automation Monitoring & Execution Log Panel" description="Monitoring eksekusi, insiden runtime, dan health automasi lintas workflow.">
+            <Panel title="Automation Monitoring & Execution Log Panel" description="Execution monitoring, runtime incidents, and automation health across workflows.">
               <Card className="border-emerald-200 bg-emerald-50/80 rounded-2xl">
                 <CardContent className="flex items-center gap-2 py-3 text-xs text-emerald-800">
                   <CheckCircle2 className="h-4 w-4" />
-                  Runtime monitoring aktif. Semua metrik workflow berhasil dimuat dan sinkron.
+                  Runtime monitoring active. All workflow metrics loaded successfully and are in sync.
                 </CardContent>
               </Card>
             </Panel>

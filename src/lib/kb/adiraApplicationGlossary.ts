@@ -8,8 +8,52 @@ import { kbRichHtmlNeedsTableRepair } from './kbRichTableHtml'
 
 export const ADIRA_APPLICATION_CATALOG_TITLE = 'Katalog Aplikasi Adira Finance'
 export const ADIRA_GLOSSARY_SOURCE_SYSTEM = 'adira-application-glossary'
-/** Workspace key for Adira Finance glossary entries (maps to "Adira Finance WS" in directory). */
-export const ADIRA_FINANCE_WORKSPACE_KEY = 'AW-G6UC'
+/** Workspace key for Adira Finance glossary entries (canonical workspace-org UUID). */
+export const ADIRA_FINANCE_WORKSPACE_KEY = '00000000-0000-0000-0001-000000000100'
+export const ADIRA_FINANCE_WORKSPACE_SLUG = 'adira-finance-ws'
+
+const ADIRA_FINANCE_WORKSPACE_ALIASES = new Set([
+  ADIRA_FINANCE_WORKSPACE_KEY.toLowerCase(),
+  ADIRA_FINANCE_WORKSPACE_SLUG,
+  'aw-g6uc',
+  'afw-11at',
+  'adira',
+  'adira finance ws',
+])
+
+/** True when the active tenant workspace is Adira Finance WS (UUID, slug, or legacy alias). */
+export function isAdiraFinanceWorkspaceId(workspaceId: string | null | undefined): boolean {
+  const normalized = (workspaceId ?? '').trim().toLowerCase()
+  if (!normalized) return false
+  return ADIRA_FINANCE_WORKSPACE_ALIASES.has(normalized)
+}
+
+export type AdiraWorkspaceLookup = {
+  id?: string | null
+  workspaceId?: string | null
+  workspace_key?: string | null
+  slug?: string | null
+  name?: string | null
+  workspaceName?: string | null
+}
+
+/** Match Adira Finance WS by id alias or workspace-org slug/name (multi-workspace header). */
+export function isAdiraFinanceWorkspaceRef(
+  workspaceId: string | null | undefined,
+  catalog?: ReadonlyArray<AdiraWorkspaceLookup>,
+): boolean {
+  if (isAdiraFinanceWorkspaceId(workspaceId)) return true
+  const id = (workspaceId ?? '').trim()
+  if (!id || !catalog?.length) return false
+  const entry = catalog.find((item) => {
+    const candidateId = (item.id ?? item.workspaceId ?? '').trim()
+    return candidateId === id
+  })
+  if (!entry) return false
+  const key = (entry.workspace_key ?? entry.slug ?? '').trim().toLowerCase()
+  const name = (entry.name ?? entry.workspaceName ?? '').trim().toLowerCase()
+  return ADIRA_FINANCE_WORKSPACE_ALIASES.has(key) || ADIRA_FINANCE_WORKSPACE_ALIASES.has(name)
+}
 
 export type AdiraApplicationDefinition = {
   slug: string

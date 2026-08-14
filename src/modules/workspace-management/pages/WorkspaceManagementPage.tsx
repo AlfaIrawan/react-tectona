@@ -1,11 +1,14 @@
 import {
   Fragment,
+  memo,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  startTransition,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -43,6 +46,7 @@ import {
   ClipboardCheck,
   ChevronLeft,
   ChevronRight,
+  CornerDownRight,
   Download,
   Edit,
   Eye,
@@ -53,6 +57,7 @@ import {
   GripVertical,
   Columns2,
   LayoutGrid,
+  KeyRound,
   Layers,
   Loader2,
   PanelLeft,
@@ -69,6 +74,7 @@ import {
   UnfoldHorizontal,
   UserPlus,
   Users,
+  LogIn,
   Workflow,
   Zap,
   FlaskConical,
@@ -122,11 +128,18 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EnterpriseInfoCallout } from '@/components/layout/EnterpriseInfoCallout'
+import { EnterpriseActionConfirmModal } from '@/components/enterprise/EnterpriseActionConfirmModal'
 import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/EnterpriseDeleteConfirmModal'
 import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
-import { EditWorkspaceMembershipDrawer } from '@/modules/workspace-management/components/EditWorkspaceMembershipDrawer'
 import { InviteWorkspaceMemberDrawer } from '@/modules/workspace-management/components/InviteWorkspaceMemberDrawer'
+import { WorkspacePanelSlot } from '@/modules/workspace-management/components/WorkspacePanelSlot'
+import {
+  WorkspaceManagementGuideDrawer,
+  type WorkspaceGuideActionId,
+} from '@/modules/workspace-management/components/WorkspaceManagementGuide'
+import { useWorkspaceManagementGuideStore } from '@/stores/workspace-management-guide-store'
+import { EditWorkspaceMembershipDrawer } from '@/modules/workspace-management/components/EditWorkspaceMembershipDrawer'
 import { buildWorkspaceChatDataSummary } from '@/modules/workspace-management/lib/buildWorkspaceChatDataSummary'
 import { deleteWorkspaceOrgKbMirror, syncWorkspaceOrgEntryToKb } from '@/lib/kb/workspaceOrgKbSync'
 import { Input } from '@/components/ui/input'
@@ -139,20 +152,50 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components
 import { notifyEvent } from '@/lib/api/notificationApi'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { useWorkspaceManagementAuthorization } from '@/auth/useAuthorization'
+import { useTenantContextOptional } from '@/auth/TenantContext'
+import { getSession } from '@/auth/authService'
+import { isAllWorkspacesSelection, readActiveWorkspaceScope, isFullAccessibleWorkspaceSelection } from '@/lib/tenantWorkspaceScope'
+import { membershipGrantsOrganizationWorkspaceSwitcherAccess, readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
+import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
+import {
+  collectWorkspaceIdsOwnedBySubject,
+  directoryAccessBadgeLabel,
+  directoryPendingApprovalBadgeLabel,
+  isWorkspaceDirectoryManagedRole,
+  resolveDirectoryAccessBadges,
+  resolveDirectoryAccessBadgesForViewer,
+  resolveMemberParticipationBadges,
+  resolveWorkspaceCreatorSubjectIds,
+  type DirectoryAccessBadge,
+  type WorkspaceOwnershipRef,
+} from '@/lib/workspaceOwnershipVisibility'
+import { useRequestJoinWorkspaceStore } from '@/stores/request-join-workspace-store'
 import {
   createWorkspaceOrgOrganization,
   createWorkspaceOrgWorkspace,
   createWorkspaceOrgWorkspaceType,
   deleteWorkspaceOrgWorkspace,
   deleteWorkspaceOrgWorkspaceType,
+  purgeOwnedWorkspacesForIdentity,
   fetchAllWorkspaceOrgWorkspaces,
+  fetchIdentityWorkspaceOrgMemberships,
+  fetchWorkspaceOrgWorkspaceById,
   fetchWorkspaceOrgOrganizations,
   fetchWorkspaceOrgWorkspaceTypes,
   patchWorkspaceOrgOrganization,
   patchWorkspaceOrgWorkspace,
   patchWorkspaceOrgWorkspaceType,
+  linkPersonalWorkspaceToOrgTree,
+  unlinkPersonalWorkspaceFromOrgTree,
+  resolveOrganizationByEmail,
+  type VerifiedDomainEntry,
   type WorkspaceOrgWorkspaceDto,
 } from '@/lib/api/workspaceOrgApi'
+import {
+  initWorkspaceDirectoryRealtime,
+  setWorkspaceDirectoryRealtimeRefreshHandler,
+  subscribeWorkspaceDirectoryRealtimeConnected,
+} from '@/lib/workspaceDirectoryRealtime'
 import type { GovernanceCatalogSnapshot } from '@/lib/api/governanceConfigurationApi'
 import {
   createApprovalPolicy,
@@ -181,23 +224,58 @@ import {
 } from '@/lib/api/workspaceGovernanceApi'
 import {
   activateIdentityUser,
+  deleteIdentityUser,
   fetchIdentityUsers,
   provisionIdentityUser,
   type IdentityUserDto,
 } from '@/lib/api/identityAdminApi'
 import {
   createWorkspaceMembership,
+  decideAccessRequest,
   deleteWorkspaceMembership,
+  fetchOnboardingStatus,
+  fetchSubjectMemberships,
+  fetchWorkspaceAccessRequests,
   fetchWorkspaceMembers,
+  invalidateWorkspaceMembersCache,
   patchWorkspaceMembership,
   TECTONA_WAC_APP_ID,
   uiRoleToWacRoleCode,
   wacRoleCodeToUiRole,
+  type AccessRequestDto,
+  type OnboardingStatusCode,
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { validateMembershipDeliveryContext } from '@/lib/participationScopeRules'
 import type { EmployeeDirectoryEntry } from '@/modules/workspace-management/components/InviteWorkspaceMemberDrawer'
-import { getSession } from '@/auth/authService'
+import {
+  grantOrgWorkspaceWacMembership,
+  ORG_WAC_MEMBER_PARTICIPATION_SCOPE,
+  resolveOrganizationHomeWorkspace,
+  resolveWorkspaceRowOrgWacMemberGrantTarget,
+  type OrgWacMemberGrantTarget,
+} from '@/modules/workspace-management/lib/grantOrgWorkspaceWacMember'
+import {
+  grantParentWorkspaceAccess,
+  resolveMemberParentAccessTarget,
+  resolveParentWorkspaceRecord,
+  subjectIdsMissingParentMembership,
+  type ParentGrantMemberHint,
+  type ParentWorkspaceAccessTarget,
+} from '@/modules/workspace-management/lib/grantParentWorkspaceAccess'
+import {
+  clearDirectoryJoinApprovalPendingMetadata,
+  completeApprovedDirectoryJoinRequest,
+  joinWorkspaceToOrganization,
+  resolveJoinOrganizationMenuTarget,
+  type JoinOrganizationMenuTarget,
+} from '@/modules/workspace-management/lib/joinPersonalWorkspaceToOrganization'
+import {
+  approveAccessRequestDescription,
+  pendingAccessRequestDisplay,
+  resolveAccessRequestJoinWorkspace,
+  resolveAccessRequestReviewOrgWorkspaceId,
+} from '@/modules/workspace-management/lib/accessRequestWorkspaceDisplay'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { APP_MAIN_BODY_SELECTOR, useAppMainBodyWidth } from '@/lib/useAppMainBodyWidth'
@@ -217,8 +295,25 @@ import {
   workspaceNavInnerClass,
   workspaceNavMenuScrollClass,
   workspaceOuterGridClass,
-  WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX,
+  computeWorkspaceMainPanelViewportHeightPx,
 } from '@/lib/workspaceNavLayout'
+import {
+  buildDirectoryTreeParentById,
+  isNestedOrgPersonalScope,
+  isPersonalWorkspaceMetadata,
+  isNestedOrgPersonalTenantActiveWorkspace,
+  resolveOrgHomeWorkspaceId,
+  resolvePersonalOrgScopeFromMetadata,
+  resolveDirectoryVisibilityParentId,
+  shouldHideSiblingPersonalFromPersonalTenantDirectory,
+  shouldHideOperationalFromPersonalTenantDirectory,
+  shouldHideStandalonePersonalFromOrgDirectory,
+  toDirectoryTreeWorkspace,
+  workspaceDirectoryTypeLabel,
+  type PersonalOrgScope,
+  type DirectoryTreeBuildOptions,
+} from '@/lib/workspacePersonalOrgScope'
+import { isCorporateOrganizationForPicker } from '@/lib/workspaceOrganizationPicker'
 
 /** Organizational & execution boundary classification — not member/project counts. */
 type WorkspaceClassification = string
@@ -245,6 +340,8 @@ type ComplianceStatus = 'Compliant' | 'Needs Review' | 'Non-Compliant' | 'Unconf
 type GovernanceConfigurationStatus = 'Governed' | 'Partial' | 'Unconfigured' | 'Non-Compliant'
 type GovernancePolicyStatus = 'Governed' | 'Draft Policy' | 'Non-Compliant' | 'Deprecated'
 type MemberRole = 'Admin' | 'Manager' | 'Member' | 'Viewer'
+
+type MemberParticipationSource = 'wac' | 'creator'
 type WorkspacePanel = 'overview' | 'directory' | 'governance' | 'members' | 'assets' | 'activity'
 
 type DirectoryTableSortKey = 'name' | 'type' | 'owner' | 'lifecycle' | 'governanceStatus'
@@ -298,9 +395,26 @@ type WorkspaceRecord = {
   owner: string
   businessOwner?: string
   technicalOwner?: string
+  ownerIdentityRef?: string | null
+  createdByIdentityRef?: string | null
+  /** workspace-org audit created_by (identity ref). */
+  createdBy?: string | null
   primaryOrganizationId: string
   primaryOrganizationLabel: string
   relatedOrganizationIds: string[]
+  /** Soft hierarchy — child workspace points at parent (metadata.parent_workspace_id). */
+  parentWorkspaceId: string | null
+  /** Operational workspaces: org-home provisioning anchor (not active tenant at create). */
+  provisionedUnderWorkspaceId?: string | null
+  /** Personal workspaces: standalone (private) vs nested under org home in Directory. */
+  personalOrgScope: PersonalOrgScope | null
+  /** Corporate onboarding — not nested under org home until admin approval. */
+  adminApprovalPending?: boolean
+  /** Operational: approved into org directory (WAC assign / org join). */
+  orgDirectoryJoined?: boolean
+  isPersonalWorkspace: boolean
+  version: number
+  metadata?: Record<string, unknown> | null
   members: number
   projects: number
   status: WorkspaceStatus
@@ -422,6 +536,7 @@ type MemberRecord = {
   participationEndDate: string
   lastActivity: string
   version: number
+  participationSource?: MemberParticipationSource
 }
 
 type ParticipationDurationUi = 'Permanent' | 'Temporary' | ''
@@ -487,25 +602,6 @@ const WORKSPACE_KPI_CARD_ORDER_STORAGE_KEY = 'tectona.workspace-management.kpiCa
 const WORKSPACE_KPI_CAROUSEL_BODY_MAX_PX = 700
 /** Di atas ini: grid KPI penuh; di bawah: carousel (2/slide antara 700–1000, 1/slide di bawah 700). */
 const WORKSPACE_KPI_GRID_BODY_MIN_PX = 1000
-/** Padding bawah saat menghitung tinggi panel utama (Overview & Directory) dari viewport. */
-const WORKSPACE_MAIN_PANEL_VIEWPORT_BOTTOM_PAD_PX = 66
-/** Tambahan tinggi pasangan panel Enterprise Navigation + Control Tower / Directory. */
-const WORKSPACE_PANEL_PAIR_EXTRA_HEIGHT_PX = 15
-
-function computeWorkspaceMainPanelViewportHeightPx(panelTopPx: number): number {
-  const viewportH = window.innerHeight
-  const stickyTopPx = 48
-  const effectiveTop = Math.max(panelTopPx, stickyTopPx)
-  const raw = Math.floor(viewportH - effectiveTop - WORKSPACE_MAIN_PANEL_VIEWPORT_BOTTOM_PAD_PX)
-  return Math.max(240, raw) + WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX + WORKSPACE_PANEL_PAIR_EXTRA_HEIGHT_PX
-}
-
-/** Samakan batas bawah Enterprise Navigation dengan panel konten utama (Control Tower, Directory, …). */
-function measureEnterpriseNavHeightFromMainPanel(navEl: HTMLElement, mainPanelEl: HTMLElement): number {
-  const navTop = navEl.getBoundingClientRect().top
-  const mainBottom = mainPanelEl.getBoundingClientRect().bottom
-  return Math.max(220, Math.floor(mainBottom - navTop))
-}
 
 function workspaceHealthBand(w: WorkspaceRecord): WorkspaceHealthBand {
   if (w.status === 'Archived' || w.governance.complianceStatus === 'Non-Compliant') return 'Critical'
@@ -525,7 +621,8 @@ type WorkspacePurposeBucket = 'Strategic' | 'Operational' | 'Innovation' | 'Gove
 function workspacePurposeBucket(type: WorkspaceClassification): WorkspacePurposeBucket {
   if (type === 'Governance') return 'Governance'
   if (type === 'Program') return 'Strategic'
-  if (type === 'Department' || type === 'Team') return 'Operational'
+  if (type === 'Department' || type === 'Team' || type === 'Division' || type === 'Personal') return 'Operational'
+  if (type === 'Organization' || type === 'Directorate') return 'Strategic'
   return 'Innovation'
 }
 
@@ -536,7 +633,7 @@ function workspaceRiskFlags(w: WorkspaceRecord): {
   governance: boolean
 } {
   return {
-    noOwner: w.owner.trim().length === 0,
+    noOwner: isMissingDirectoryOwner(w.owner),
     lowActivity: w.members < 15,
     overloaded: w.projects > WORKSPACE_LOAD_OVERLOAD_PROJECTS,
     governance: w.governance.configurationStatus !== 'Governed',
@@ -763,8 +860,7 @@ function workspaceOwnerNameTagClass(name: string): string {
 }
 
 function WorkspaceDirectoryOwnerCell({ owner }: { owner: string }) {
-  const normalized = owner.trim()
-  if (!normalized || normalized === '—') {
+  if (isMissingDirectoryOwner(owner)) {
     return <span className="text-sm text-muted-foreground">—</span>
   }
   return (
@@ -818,7 +914,158 @@ function mapWacMembershipToMemberRecord(
     participationEndDate: row.participation_end_date?.trim() || '',
     lastActivity: '—',
     version: row.version,
+    participationSource: 'wac',
   }
+}
+
+function resolveWorkspaceAdminApprovalPending(input: {
+  rawPending: boolean
+  isPersonalWorkspace: boolean
+  personalOrgScope: PersonalOrgScope | null
+  parentWorkspaceId: string | null
+}): boolean {
+  if (!input.rawPending) return false
+  // Stale metadata after approve + org-tree link: workspace is active in directory.
+  if (
+    input.isPersonalWorkspace
+    && input.personalOrgScope === 'organization_tree'
+    && Boolean(input.parentWorkspaceId?.trim())
+  ) {
+    return false
+  }
+  return true
+}
+
+function workspaceShowsPendingAdminApproval(
+  workspace: WorkspaceRecord,
+  sessionOnboardingStatus: OnboardingStatusCode | null,
+  viewerSubjectId: string | null | undefined,
+): boolean {
+  const ownerId =
+    workspace.ownerIdentityRef?.trim()
+    || workspace.createdByIdentityRef?.trim()
+    || workspace.createdBy?.trim()
+  const viewerId = viewerSubjectId?.trim()
+  const isOwner = Boolean(ownerId && viewerId && ownerId === viewerId)
+
+  if (sessionOnboardingStatus === 'join_pending' && isOwner) return true
+
+  if (!workspace.adminApprovalPending) return false
+
+  // Stale workspace-org metadata after reject: owner onboarding is no longer join_pending.
+  if (isOwner && sessionOnboardingStatus != null && sessionOnboardingStatus !== 'join_pending') {
+    return false
+  }
+
+  return true
+}
+
+function pendingAccessRequestAvatarClass(subjectId: string): string {
+  const palettes = [
+    'bg-gradient-to-br from-indigo-500/20 via-violet-500/15 to-fuchsia-500/10 text-indigo-900 ring-indigo-300/45 dark:text-indigo-100',
+    'bg-gradient-to-br from-sky-500/20 via-blue-500/15 to-cyan-500/10 text-sky-900 ring-sky-300/45 dark:text-sky-100',
+    'bg-gradient-to-br from-emerald-500/20 via-teal-500/15 to-cyan-500/10 text-emerald-900 ring-emerald-300/45 dark:text-emerald-100',
+    'bg-gradient-to-br from-amber-500/20 via-orange-500/15 to-rose-500/10 text-amber-950 ring-amber-300/45 dark:text-amber-100',
+  ]
+  let hash = 0
+  for (let i = 0; i < subjectId.length; i += 1) {
+    hash = (hash + subjectId.charCodeAt(i)) % palettes.length
+  }
+  return palettes[hash] ?? palettes[0]
+}
+
+function memberParticipationBadgeClass(badge: DirectoryAccessBadge): string {
+  if (badge === 'creator') {
+    return 'border-amber-300/70 bg-amber-50/80 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200'
+  }
+  return 'border-sky-300/70 bg-sky-50/80 text-sky-800 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-200'
+}
+
+function workspaceRecordToOwnershipRef(workspace: WorkspaceRecord): WorkspaceOwnershipRef {
+  return {
+    id: workspace.id,
+    owner: workspace.owner,
+    businessOwner: workspace.businessOwner,
+    technicalOwner: workspace.technicalOwner,
+    ownerIdentityRef: workspace.ownerIdentityRef,
+    createdByIdentityRef: workspace.createdByIdentityRef,
+    createdBy: workspace.createdBy,
+  }
+}
+
+function augmentMemberRecordsWithCreatorParticipation(
+  rows: MemberRecord[],
+  workspaces: WorkspaceRecord[],
+  identityUsers: IdentityUserDto[],
+): MemberRecord[] {
+  const existing = new Set(rows.map((row) => `${row.subjectId}\0${row.workspaceId}`))
+  const subjectsWithWacMembership = new Set(rows.map((row) => row.subjectId))
+  const userById = new Map(identityUsers.map((user) => [user.id, user]))
+  const augmented = [...rows]
+
+  for (const workspace of workspaces) {
+    const ownershipRef = {
+      id: workspace.id,
+      metadata: {
+        tectona_owner: workspace.owner,
+        tectona_business_owner: workspace.businessOwner,
+        tectona_technical_owner: workspace.technicalOwner,
+        tectona_owner_identity_ref: workspace.ownerIdentityRef,
+        tectona_created_by_identity_ref: workspace.createdByIdentityRef,
+      },
+      owner: workspace.owner,
+      businessOwner: workspace.businessOwner,
+      technicalOwner: workspace.technicalOwner,
+      ownerIdentityRef: workspace.ownerIdentityRef,
+      createdByIdentityRef: workspace.createdByIdentityRef,
+      createdBy: workspace.createdBy,
+    }
+
+    for (const subjectId of resolveWorkspaceCreatorSubjectIds(ownershipRef, identityUsers)) {
+      if (!userById.has(subjectId)) continue
+      // Creator-only rows are for Directory visibility — not standalone Members rows.
+      if (!subjectsWithWacMembership.has(subjectId)) continue
+
+      const key = `${subjectId}\0${workspace.id}`
+      if (existing.has(key)) continue
+
+      // WAC membership already covers this person on this workspace — no synthetic creator row.
+      const hasWacMembership = rows.some(
+        (row) => row.workspaceId === workspace.id && row.subjectId === subjectId,
+      )
+      if (hasWacMembership) continue
+
+      existing.add(key)
+
+      const user = userById.get(subjectId)
+      const name =
+        user?.display_name?.trim()
+        || user?.email?.trim()
+        || workspace.owner
+        || `User ${subjectId.slice(0, 8)}`
+
+      augmented.push({
+        id: `creator:${workspace.id}:${subjectId}`,
+        subjectId,
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        name,
+        role: 'Admin',
+        team: '—',
+        scope: 'Workspace creator',
+        scopeCode: 'creator',
+        operationalTeamCode: '',
+        participationDuration: 'Permanent',
+        participationStartDate: '',
+        participationEndDate: '',
+        lastActivity: '—',
+        version: 0,
+        participationSource: 'creator',
+      })
+    }
+  }
+
+  return augmented
 }
 
 type MemberMembershipRef = {
@@ -826,6 +1073,7 @@ type MemberMembershipRef = {
   workspaceId: string
   workspaceName: string
   role: MemberRole
+  team: string
   scope: string
   scopeCode: string
   operationalTeamCode: string
@@ -834,6 +1082,7 @@ type MemberMembershipRef = {
   participationEndDate: string
   lastActivity: string
   version: number
+  participationSource?: MemberParticipationSource
 }
 
 /** One row per person in the members table (aggregated across workspace memberships). */
@@ -858,12 +1107,21 @@ function aggregateWorkspaceMembers(rows: MemberRecord[]): AggregatedMemberRecord
     if (!agg) {
       agg = { subjectId: row.subjectId, name: row.name, team: row.team, memberships: [] }
       bySubject.set(row.subjectId, agg)
+    } else if (agg.name !== row.name && row.name.trim()) {
+      agg.name = row.name
     }
+    const duplicateMembership = agg.memberships.some(
+      (membership) =>
+        membership.workspaceId === row.workspaceId
+        && membership.participationSource === (row.participationSource ?? 'wac'),
+    )
+    if (duplicateMembership) continue
     agg.memberships.push({
       membershipId: row.id,
       workspaceId: row.workspaceId,
       workspaceName: row.workspaceName,
       role: row.role,
+      team: row.team,
       scope: row.scope,
       scopeCode: row.scopeCode,
       operationalTeamCode: row.operationalTeamCode,
@@ -872,6 +1130,7 @@ function aggregateWorkspaceMembers(rows: MemberRecord[]): AggregatedMemberRecord
       participationEndDate: row.participationEndDate,
       lastActivity: row.lastActivity,
       version: row.version,
+      participationSource: row.participationSource ?? 'wac',
     })
   }
   for (const agg of bySubject.values()) {
@@ -993,12 +1252,15 @@ function workspaceOwnershipSourceReadonlyLabel(mode: WorkspaceOwnershipIdentityM
 function filterWorkspaceOwnershipPeople(rows: MemberRecord[], query: string): MemberRecord[] {
   const t = query.trim().toLowerCase()
   if (!t) return rows
-  return rows.filter(
-    (m) =>
-      m.name.toLowerCase().includes(t)
-      || m.team.toLowerCase().includes(t)
-      || m.role.toLowerCase().includes(t)
-  )
+  return rows.filter((m) => {
+    if (m.name.toLowerCase().includes(t)) return true
+    // Prefer email / job line in scope — not generic team labels like "Identity-Lite directory"
+    // (those contain letters such as "r" and wrongly match short queries).
+    if (m.scope.toLowerCase().includes(t)) return true
+    const team = m.team.toLowerCase()
+    if (!team || team.includes('directory')) return false
+    return team.includes(t)
+  })
 }
 
 /** Minimum length before free-typed search text is committed as the selected person name. */
@@ -1152,7 +1414,15 @@ function ownershipTargetLabel(target: WorkspaceOwnershipPersonTarget): string {
   return 'Technical owner'
 }
 
-type OrganizationDirectoryNode = { id: string; code?: string; label: string; parentId: string | null; version?: number; metadata?: Record<string, unknown> }
+type OrganizationDirectoryNode = {
+  id: string
+  code?: string
+  label: string
+  parentId: string | null
+  version?: number
+  metadata?: Record<string, unknown>
+  verifiedDomains?: VerifiedDomainEntry[]
+}
 
 /** Default org hierarchy for Primary / Related organization (New Workspace drawer). */
 const DEFAULT_ORGANIZATION_DIRECTORY_NODES: OrganizationDirectoryNode[] = [
@@ -1166,6 +1436,543 @@ const DEFAULT_ORGANIZATION_DIRECTORY_NODES: OrganizationDirectoryNode[] = [
 
 function cloneDefaultOrganizationNodes(): OrganizationDirectoryNode[] {
   return DEFAULT_ORGANIZATION_DIRECTORY_NODES.map((n) => ({ ...n }))
+}
+
+const EMAIL_DOMAIN_VALUE_RE =
+  /^(?=.{1,253}$)(?!-)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
+const LOCAL_REALM_VALUE_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62})$/i
+
+function normalizeVerifiedDomainEntries(raw: unknown): VerifiedDomainEntry[] {
+  if (!Array.isArray(raw)) return []
+  const out: VerifiedDomainEntry[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    let value = ''
+    let category: VerifiedDomainEntry['category'] = 'email'
+    let verified = true
+    if (typeof item === 'string') {
+      value = item.trim().toLowerCase()
+    } else if (item && typeof item === 'object') {
+      const row = item as Record<string, unknown>
+      value = String(row.value ?? '').trim().toLowerCase()
+      category = String(row.category ?? 'email').trim().toLowerCase() === 'local' ? 'local' : 'email'
+      if ('verified' in row) verified = Boolean(row.verified)
+    }
+    if (!value) continue
+    if (seen.has(value)) continue
+    seen.add(value)
+    out.push({ value, category, verified })
+  }
+  return out
+}
+
+function verifiedDomainsForOrganization(
+  nodes: OrganizationDirectoryNode[],
+  organizationId: string | null | undefined,
+): VerifiedDomainEntry[] {
+  if (!organizationId) return []
+  const node = nodes.find((n) => n.id === organizationId)
+  return normalizeVerifiedDomainEntries(node?.verifiedDomains ?? [])
+}
+
+function validateOrganizationDomains(domains: VerifiedDomainEntry[]): string | null {
+  const seen = new Set<string>()
+  for (const entry of domains) {
+    const value = entry.value.trim().toLowerCase()
+    if (!value) return 'Domain value cannot be empty.'
+    if (value.includes('@')) {
+      return 'Use hostname or local realm only — do not include @ or a full email address.'
+    }
+    if (seen.has(value)) return `Duplicate domain value: ${value}`
+    seen.add(value)
+    if (entry.category === 'email') {
+      if (!EMAIL_DOMAIN_VALUE_RE.test(value)) return `Invalid email domain: ${value}`
+    } else if (!LOCAL_REALM_VALUE_RE.test(value)) {
+      return `Invalid local realm: ${value}`
+    }
+  }
+  return null
+}
+
+type DomainAvailabilityState = {
+  status: 'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'duplicate' | 'same_org'
+  message?: string
+}
+
+function emailProbeForDomainEntry(entry: VerifiedDomainEntry): string | null {
+  const value = entry.value.trim().toLowerCase()
+  if (!value) return null
+  if (entry.category === 'email') {
+    if (!EMAIL_DOMAIN_VALUE_RE.test(value)) return null
+    return `domain-check@${value}`
+  }
+  if (!LOCAL_REALM_VALUE_RE.test(value)) return null
+  return `domain-check@${value}`
+}
+
+function countUsersForDomainEntry(users: IdentityUserDto[], entry: VerifiedDomainEntry): number {
+  const value = entry.value.trim().toLowerCase()
+  if (!value) return 0
+  const suffix = `@${value}`
+  return users.filter((user) => user.email.trim().toLowerCase().endsWith(suffix)).length
+}
+
+function findDomainConflictInOrganizationNodes(
+  nodes: OrganizationDirectoryNode[],
+  value: string,
+  category: VerifiedDomainEntry['category'],
+  excludeOrgId: string | null | undefined,
+): OrganizationDirectoryNode | null {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  for (const node of nodes) {
+    if (excludeOrgId && node.id === excludeOrgId) continue
+    for (const domain of normalizeVerifiedDomainEntries(node.verifiedDomains)) {
+      if (domain.value === normalized && domain.category === category) return node
+    }
+  }
+  return null
+}
+
+async function resolveDomainAvailabilityState(
+  entry: VerifiedDomainEntry,
+  primaryOrganizationId: string | null | undefined,
+  organizationNodes: OrganizationDirectoryNode[],
+  siblingDomains: VerifiedDomainEntry[],
+  rowIndex: number,
+): Promise<DomainAvailabilityState> {
+  const value = entry.value.trim().toLowerCase()
+  if (!value) return { status: 'idle' }
+
+  const duplicateInForm = siblingDomains.some(
+    (row, index) => index !== rowIndex && row.value.trim().toLowerCase() === value,
+  )
+  if (duplicateInForm) {
+    return { status: 'duplicate', message: 'Duplicate domain in this list.' }
+  }
+
+  const formatError = validateOrganizationDomains([entry])
+  if (formatError) return { status: 'invalid', message: formatError }
+
+  const localConflict = findDomainConflictInOrganizationNodes(
+    organizationNodes,
+    value,
+    entry.category,
+    primaryOrganizationId,
+  )
+  if (localConflict) {
+    return {
+      status: 'taken',
+      message: `Already used by organization “${localConflict.label}”.`,
+    }
+  }
+
+  const probe = emailProbeForDomainEntry(entry)
+  if (!probe) return { status: 'invalid', message: 'Invalid domain format.' }
+
+  try {
+    const resolved = await resolveOrganizationByEmail(probe)
+    if (resolved.matched && resolved.organization_id) {
+      if (primaryOrganizationId && resolved.organization_id === primaryOrganizationId) {
+        return {
+          status: 'same_org',
+          message: 'Already registered on this primary organization.',
+        }
+      }
+      const ownerName = resolved.organization_name ?? resolved.organization_id
+      return {
+        status: 'taken',
+        message: `Not available — used by “${ownerName}”.`,
+      }
+    }
+    return { status: 'available', message: 'Available for this organization.' }
+  } catch {
+    return { status: 'available', message: 'Available (server verification unavailable).' }
+  }
+}
+
+function domainAvailabilityMessageClass(status: DomainAvailabilityState['status']): string {
+  if (status === 'available' || status === 'same_org') return 'text-emerald-700 dark:text-emerald-300'
+  if (status === 'checking' || status === 'idle') return 'text-muted-foreground'
+  return 'text-rose-700 dark:text-rose-300'
+}
+
+function domainAvailabilityShortLabel(status: DomainAvailabilityState['status']): string {
+  switch (status) {
+    case 'same_org':
+      return 'Registered'
+    case 'available':
+      return 'Available'
+    case 'taken':
+      return 'Unavailable'
+    case 'duplicate':
+      return 'Duplicate'
+    case 'invalid':
+      return 'Invalid'
+    case 'checking':
+      return 'Checking'
+    default:
+      return '—'
+  }
+}
+
+function DomainAvailabilityBadge({
+  availability,
+}: {
+  availability?: DomainAvailabilityState
+}) {
+  if (!availability || availability.status === 'idle') {
+    return <span className="text-xs text-muted-foreground">—</span>
+  }
+
+  const label = domainAvailabilityShortLabel(availability.status)
+  const title = availability.message ?? label
+
+  if (availability.status === 'checking') {
+    return (
+      <span
+        title={title}
+        className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+      >
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+        {label}
+      </span>
+    )
+  }
+
+  const tone =
+    availability.status === 'available' || availability.status === 'same_org'
+      ? 'border-emerald-200/80 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200'
+      : 'border-rose-200/80 bg-rose-50 text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-200'
+
+  return (
+    <span
+      title={title}
+      className={cn(
+        'inline-flex max-w-[11rem] truncate rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+        tone,
+      )}
+    >
+      {label}
+    </span>
+  )
+}
+
+function OrganizationDomainMappingField({
+  domains,
+  onChange,
+  disabled = false,
+  idPrefix = 'org-domain',
+  primaryOrganizationId = null,
+  organizationNodes = [],
+  identityUsers = [],
+}: {
+  domains: VerifiedDomainEntry[]
+  onChange: (next: VerifiedDomainEntry[]) => void
+  disabled?: boolean
+  idPrefix?: string
+  primaryOrganizationId?: string | null
+  organizationNodes?: OrganizationDirectoryNode[]
+  identityUsers?: IdentityUserDto[]
+}) {
+  const [availabilityByIndex, setAvailabilityByIndex] = useState<Record<number, DomainAvailabilityState>>({})
+  const [pendingDelete, setPendingDelete] = useState<{
+    index: number
+    entry: VerifiedDomainEntry
+    userCount: number
+  } | null>(null)
+  const availabilityRequestByIndexRef = useRef<Record<number, number>>({})
+  const debounceTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+
+  const scheduleAvailabilityCheck = useCallback(
+    (index: number, entry: VerifiedDomainEntry, delayMs = 420) => {
+      if (debounceTimersRef.current[index]) {
+        clearTimeout(debounceTimersRef.current[index])
+      }
+      debounceTimersRef.current[index] = setTimeout(() => {
+        const requestId = (availabilityRequestByIndexRef.current[index] ?? 0) + 1
+        availabilityRequestByIndexRef.current[index] = requestId
+        setAvailabilityByIndex((prev) => ({
+          ...prev,
+          [index]: { status: 'checking', message: 'Checking availability…' },
+        }))
+        void resolveDomainAvailabilityState(
+          entry,
+          primaryOrganizationId,
+          organizationNodes,
+          domains,
+          index,
+        ).then((result) => {
+          if (requestId !== availabilityRequestByIndexRef.current[index]) return
+          setAvailabilityByIndex((prev) => ({ ...prev, [index]: result }))
+        })
+      }, delayMs)
+    },
+    [domains, organizationNodes, primaryOrganizationId],
+  )
+
+  useEffect(() => {
+    return () => {
+      for (const timer of Object.values(debounceTimersRef.current)) {
+        clearTimeout(timer)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    for (let index = 0; index < domains.length; index += 1) {
+      const entry = domains[index]
+      if (!entry.value.trim()) {
+        setAvailabilityByIndex((prev) => {
+          if (!prev[index]) return prev
+          const next = { ...prev }
+          delete next[index]
+          return next
+        })
+        continue
+      }
+      scheduleAvailabilityCheck(index, entry, 280)
+    }
+  }, [domains, organizationNodes, primaryOrganizationId, scheduleAvailabilityCheck])
+
+  const updateRow = (index: number, patch: Partial<VerifiedDomainEntry>) => {
+    onChange(
+      domains.map((row, i) =>
+        i === index
+          ? {
+              ...row,
+              ...patch,
+            }
+          : row,
+      ),
+    )
+  }
+
+  const requestRemoveRow = (index: number) => {
+    const entry = domains[index]
+    if (!entry) return
+    const userCount = countUsersForDomainEntry(identityUsers, entry)
+    setPendingDelete({ index, entry, userCount })
+  }
+
+  const confirmRemoveRow = () => {
+    if (!pendingDelete) return
+    onChange(domains.filter((_, i) => i !== pendingDelete.index))
+    setAvailabilityByIndex((prev) => {
+      const next: Record<number, DomainAvailabilityState> = {}
+      for (const [key, value] of Object.entries(prev)) {
+        const idx = Number(key)
+        if (idx === pendingDelete.index) continue
+        next[idx > pendingDelete.index ? idx - 1 : idx] = value
+      }
+      return next
+    })
+    setPendingDelete(null)
+  }
+
+  return (
+    <>
+      <div className="md:col-span-2 overflow-hidden rounded-xl border border-border/70 bg-card/50 shadow-sm">
+        <div className="flex items-start justify-between gap-3 border-b border-border/60 bg-muted/15 px-4 py-3">
+        <div className="min-w-0">
+            <h4 className="text-sm font-semibold tracking-tight text-foreground">Domain mapping</h4>
+            <p className="mt-0.5 max-w-2xl text-[11px] leading-relaxed text-muted-foreground">
+              Verified domains for corporate join and local account routing. Email domains enable
+              automatic workspace matching; local realms support non-email identities.
+          </p>
+        </div>
+        {!disabled ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+              className="h-8 shrink-0 gap-1.5 border-border/70 bg-background px-2.5 text-xs font-medium shadow-sm"
+            onClick={() =>
+              onChange([...domains, { value: '', category: 'email', verified: true }])
+            }
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+              Add domain
+          </Button>
+        ) : null}
+      </div>
+
+      {domains.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-dashed border-border/70 bg-muted/20">
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" aria-hidden />
+            </div>
+            <p className="text-sm font-medium text-foreground">No domains configured</p>
+            <p className="max-w-md text-xs text-muted-foreground">
+              Add at least one email domain to enable automatic organization join by corporate email.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border/60 bg-muted/10 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  <th className="px-4 py-2.5 text-left font-semibold">Domain / realm</th>
+                  <th className="w-[8.5rem] px-3 py-2.5 text-left font-semibold">Type</th>
+                  <th className="w-[7.5rem] px-3 py-2.5 text-left font-semibold">Status</th>
+                  <th className="w-[5.5rem] px-3 py-2.5 text-right font-semibold">Accounts</th>
+                  {!disabled ? <th className="w-12 px-2 py-2.5"><span className="sr-only">Actions</span></th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {domains.map((row, index) => {
+                  const availability = availabilityByIndex[index]
+                  const registeredCount = countUsersForDomainEntry(identityUsers, row)
+                  const hasError =
+                    availability?.status === 'taken'
+                    || availability?.status === 'duplicate'
+                    || availability?.status === 'invalid'
+                  return (
+                    <tr
+                      key={`${idPrefix}-${index}`}
+                      className="border-b border-border/40 last:border-b-0 hover:bg-muted/10"
+                    >
+                      <td className="px-4 py-2 align-middle">
+              <Input
+                id={`${idPrefix}-value-${index}`}
+                value={row.value}
+                disabled={disabled}
+                onChange={(e) => updateRow(index, { value: e.target.value })}
+                          onBlur={() => {
+                            if (!row.value.trim()) return
+                            scheduleAvailabilityCheck(index, row, 0)
+                          }}
+                placeholder={row.category === 'local' ? 'e.g. local' : 'e.g. adira.co.id'}
+                          className={cn(
+                            'h-8 w-full min-w-[10rem] border-border/60 bg-background text-sm shadow-none',
+                            hasError && 'border-rose-500/60 focus-visible:ring-rose-500/30',
+                          )}
+                autoComplete="off"
+                spellCheck={false}
+                          aria-invalid={hasError}
+                        />
+                        {availability?.message && hasError ? (
+                          <p className={cn('mt-1 text-[10px] leading-snug', domainAvailabilityMessageClass(availability.status))}>
+                            {availability.message}
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+              <Select
+                id={`${idPrefix}-category-${index}`}
+                value={row.category}
+                disabled={disabled}
+                onChange={(e) =>
+                  updateRow(index, {
+                    category: e.target.value === 'local' ? 'local' : 'email',
+                  })
+                }
+                          className="h-8 w-full border-border/60 bg-background text-xs shadow-none"
+              >
+                <option value="email">Email domain</option>
+                <option value="local">Local realm</option>
+              </Select>
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        <DomainAvailabilityBadge availability={availability} />
+                      </td>
+                      <td className="px-3 py-2 align-middle text-right">
+                        <span className="inline-flex items-center justify-end gap-1 tabular-nums text-xs font-semibold text-foreground">
+                          <Users className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                          {registeredCount}
+                        </span>
+                      </td>
+              {!disabled ? (
+                        <td className="px-2 py-2 align-middle">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600"
+                  aria-label={`Remove domain ${row.value || index + 1}`}
+                            onClick={() => requestRemoveRow(index)}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                </Button>
+                        </td>
+              ) : null}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+        </div>
+      )}
+
+        {domains.length > 0 && identityUsers.length >= 500 ? (
+          <div className="border-t border-border/50 bg-muted/10 px-4 py-2 text-[10px] text-muted-foreground">
+            Account counts reflect the identity directory loaded in this session (up to 500 users).
+    </div>
+        ) : null}
+      </div>
+
+      <EnterpriseDeleteConfirmModal
+        open={pendingDelete != null}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmRemoveRow}
+        title="Remove domain mapping?"
+        description={
+          pendingDelete?.userCount
+            ? `${pendingDelete.userCount} identity account(s) are still registered with this domain. Removing the mapping does not delete accounts, but automatic join for this domain will no longer apply.`
+            : 'No identity accounts were found for this domain. The domain will be removed from the mapping list.'
+        }
+        entityLabel="Domain"
+        entityValue={pendingDelete?.entry.value ?? '—'}
+        impactSummary={
+          pendingDelete ? (
+            <>
+              <div className="font-medium text-foreground">Summary</div>
+              <div className="mt-1">
+                Type:
+                {' '}
+                {pendingDelete.entry.category === 'local' ? 'Local realm' : 'Email domain'}
+              </div>
+              <div>
+                Registered accounts:
+                {' '}
+                <span className="font-semibold tabular-nums">{pendingDelete.userCount}</span>
+              </div>
+              {pendingDelete.userCount > 0 ? (
+                <div className="mt-1 text-amber-800 dark:text-amber-200">
+                  Ensure those accounts are moved to another domain before removing this mapping in production.
+                </div>
+              ) : null}
+            </>
+          ) : null
+        }
+        confirmLabel="Remove domain"
+        confirmBusyLabel="Removing…"
+        dialogTitleId="org-domain-delete-dialog-title"
+      />
+    </>
+  )
+}
+
+function OrganizationDomainChips({ domains }: { domains: VerifiedDomainEntry[] }) {
+  if (domains.length === 0) {
+    return <p className="mt-1 text-sm text-muted-foreground">None</p>
+  }
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {domains.map((d) => (
+        <Badge
+          key={`${d.category}:${d.value}`}
+          variant="outline"
+          className="px-2 py-0.5 text-[10px] font-medium"
+        >
+          {d.value}
+          <span className="ml-1 text-muted-foreground">
+            · {d.category === 'local' ? 'local' : 'email'}
+          </span>
+        </Badge>
+      ))}
+    </div>
+  )
 }
 
 /** Sentinel for "root-level" parent in Manage Primary Organization (native select value). */
@@ -1203,6 +2010,430 @@ function orgNodesDepthFirst(nodes: OrganizationDirectoryNode[]): { id: string; l
   }
   walk(null, 0)
   return out
+}
+
+function directoryTreeBuildOptions(
+  membershipWorkspaceIds: ReadonlyArray<string> | ReadonlySet<string>,
+  ownedWorkspaceIds: ReadonlyArray<string> | ReadonlySet<string>,
+): DirectoryTreeBuildOptions {
+  return {
+    wacMembershipWorkspaceIds:
+      membershipWorkspaceIds instanceof Set
+        ? membershipWorkspaceIds
+        : new Set(membershipWorkspaceIds),
+    ownedWorkspaceIds:
+      ownedWorkspaceIds instanceof Set ? ownedWorkspaceIds : new Set(ownedWorkspaceIds),
+  }
+}
+
+/** Depth-first flatten for Workspace Directory tree (parentWorkspaceId). */
+function workspaceDirectoryDepthFirst(
+  workspaces: WorkspaceRecord[],
+  treeOptions?: DirectoryTreeBuildOptions,
+): { workspace: WorkspaceRecord; depth: number }[] {
+  const parentById = buildDirectoryTreeParentById(
+    workspaces.map(toDirectoryTreeWorkspaceFromRecord),
+    treeOptions,
+  )
+  const byId = new Map(workspaces.map((w) => [w.id, w]))
+  const children = new Map<string | null, WorkspaceRecord[]>()
+  for (const w of workspaces) {
+    const treeParent = parentById.get(w.id) ?? null
+    const parentId = treeParent && byId.has(treeParent) ? treeParent : null
+    const list = children.get(parentId) ?? []
+    list.push(w)
+    children.set(parentId, list)
+  }
+  for (const list of children.values()) {
+    list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+  }
+  const out: { workspace: WorkspaceRecord; depth: number }[] = []
+  const walk = (pid: string | null, depth: number) => {
+    const childList = children.get(pid) ?? []
+    const sorted =
+      pid === null
+        ? [...childList].sort((a, b) => {
+            const aIsOrg = a.type === 'Organization' && !a.isPersonalWorkspace ? 0 : 1
+            const bIsOrg = b.type === 'Organization' && !b.isPersonalWorkspace ? 0 : 1
+            if (aIsOrg !== bIsOrg) return aIsOrg - bIsOrg
+            return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          })
+        : childList
+    for (const w of sorted) {
+      out.push({ workspace: w, depth })
+      walk(w.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+  return out
+}
+
+/**
+ * Visibility closure for Directory: membership seeds + ancestors + descendants
+ * via soft hierarchy (parentWorkspaceId). Does not include unrelated top-level tenants.
+ */
+function expandWorkspaceVisibilityClosure(
+  seedWorkspaceIds: Iterable<string>,
+  workspaces: WorkspaceRecord[],
+  treeOptions?: DirectoryTreeBuildOptions,
+): Set<string> {
+  const parentById = buildDirectoryTreeParentById(
+    workspaces.map(toDirectoryTreeWorkspaceFromRecord),
+    treeOptions,
+  )
+  const byId = new Map(workspaces.map((w) => [w.id, w]))
+  const treeRows = workspaces.map(toDirectoryTreeWorkspaceFromRecord)
+  const children = new Map<string, string[]>()
+  for (const w of workspaces) {
+    const treeRow = treeRows.find((row) => row.id === w.id)!
+    const treeParent = resolveDirectoryVisibilityParentId(treeRow, parentById)
+    const parentId = treeParent && byId.has(treeParent) ? treeParent : null
+    if (!parentId) continue
+    const list = children.get(parentId) ?? []
+    list.push(w.id)
+    children.set(parentId, list)
+  }
+
+  const visible = new Set<string>()
+  for (const seed of seedWorkspaceIds) {
+    if (!byId.has(seed)) continue
+    visible.add(seed)
+    let cursor: string | null = seed
+    const guard = new Set<string>()
+    while (cursor) {
+      if (guard.has(cursor)) break
+      guard.add(cursor)
+      const treeRow = treeRows.find((row) => row.id === cursor)
+      const parentId =
+        treeRow ? resolveDirectoryVisibilityParentId(treeRow, parentById) : parentById.get(cursor) ?? null
+      if (!parentId || !byId.has(parentId)) break
+      visible.add(parentId)
+      cursor = parentId
+    }
+    const queue = [...(children.get(seed) ?? [])]
+    while (queue.length > 0) {
+      const childId = queue.shift()!
+      if (visible.has(childId)) continue
+      visible.add(childId)
+      queue.push(...(children.get(childId) ?? []))
+    }
+  }
+  return visible
+}
+
+function toDirectoryTreeWorkspaceFromRecord(workspace: WorkspaceRecord) {
+  return toDirectoryTreeWorkspace({
+    id: workspace.id,
+    type: workspace.type,
+    isPersonalWorkspace: workspace.isPersonalWorkspace,
+    personalOrgScope: workspace.personalOrgScope,
+    parentWorkspaceId: workspace.parentWorkspaceId,
+    provisionedUnderWorkspaceId: workspace.provisionedUnderWorkspaceId,
+    primaryOrganizationId: workspace.primaryOrganizationId,
+    adminApprovalPending: workspace.adminApprovalPending,
+    orgDirectoryJoined: workspace.orgDirectoryJoined,
+    ownerIdentityRef: workspace.ownerIdentityRef,
+  })
+}
+
+/** Operational workspace visible to creator in personal tenant but hidden from org directory until join. */
+function isCreatorOnlyOperationalWithoutWac(
+  workspace: WorkspaceRecord,
+  _membershipWorkspaceIds: ReadonlySet<string>,
+  ownedWorkspaceIds: ReadonlySet<string>,
+): boolean {
+  if (workspace.isPersonalWorkspace) return false
+  if (workspace.type === 'Organization') return false
+  if (!ownedWorkspaceIds.has(workspace.id)) return false
+  return workspace.orgDirectoryJoined !== true
+}
+
+function findActiveWorkspaceRecord(
+  workspaces: WorkspaceRecord[],
+  activeWorkspaceId: string | null | undefined,
+): WorkspaceRecord | undefined {
+  if (!activeWorkspaceId) return undefined
+  return workspaces.find((w) => w.id === activeWorkspaceId)
+}
+
+/** Standalone personal only — nested org personal shares org directory scope with parent. */
+function isStandalonePersonalManagementScope(
+  workspaces: WorkspaceRecord[],
+  activeWorkspaceId: string | null | undefined,
+  isPersonalTenant: boolean,
+): boolean {
+  if (!isPersonalTenant || !activeWorkspaceId) return false
+  const active = findActiveWorkspaceRecord(workspaces, activeWorkspaceId)
+  if (!active?.isPersonalWorkspace) return false
+  return active.personalOrgScope !== 'organization_tree' && !active.parentWorkspaceId
+}
+
+/** WM scope anchor — nested personal under org expands from parent org workspace. */
+function resolveManagementScopeAnchorIds(
+  workspaces: WorkspaceRecord[],
+  activeWorkspaceId: string | null | undefined,
+): string[] {
+  if (!activeWorkspaceId) return []
+  const active = findActiveWorkspaceRecord(workspaces, activeWorkspaceId)
+  if (!active) return [activeWorkspaceId]
+  if (
+    active.isPersonalWorkspace
+    && active.personalOrgScope === 'organization_tree'
+    && active.parentWorkspaceId
+  ) {
+    return [active.parentWorkspaceId, activeWorkspaceId]
+  }
+  return [activeWorkspaceId]
+}
+
+/**
+ * Catalog rows visible in Workspace Management for the active tenant.
+ * Standalone personal = active workspace only.
+ * Nested org personal tenant = org home + active user's personal row only.
+ * Organization tenant = admin full catalog, creator/owner workspaces, or WAC membership tree.
+ */
+function selectWorkspacesForManagementView(
+  workspaces: WorkspaceRecord[],
+  opts: {
+    isPersonalTenant: boolean
+    activeWorkspaceId: string | null | undefined
+    selectedWorkspaceIds?: string[]
+    canViewAllActivityAudit: boolean
+    isPlatformAdmin: boolean
+    myMembershipWorkspaceIds: string[]
+    myMembershipWorkspaceIdsLoaded: boolean
+    myManagedWorkspaceIds: string[]
+    /** Creator/owner workspaces — always kept visible even when tenant scope narrows the tree. */
+    myOwnedWorkspaceIds: string[]
+  },
+): WorkspaceRecord[] {
+  const treeOptions = directoryTreeBuildOptions(
+    opts.myMembershipWorkspaceIds,
+    opts.myOwnedWorkspaceIds,
+  )
+  const scope = readActiveWorkspaceScope()
+  const scopeSelectedIds =
+    scope.mode === 'all'
+      ? (scope.workspaceIds?.length
+          ? scope.workspaceIds
+          : opts.selectedWorkspaceIds?.length
+            ? opts.selectedWorkspaceIds
+            : readAccessibleWorkspaceIds() ?? [])
+      : []
+
+  const accessibleIds = readAccessibleWorkspaceIds()
+  const isFullMultiSelect =
+    scope.mode === 'all'
+    && scopeSelectedIds.length > 0
+    && isFullAccessibleWorkspaceSelection(scopeSelectedIds, accessibleIds)
+
+  // Root/admin (or any user) checked every workspace in the switcher — show all selected rows + directory tree.
+  if (isFullMultiSelect) {
+    const allowed = expandWorkspaceVisibilityClosure(scopeSelectedIds, workspaces, treeOptions)
+    for (const id of scopeSelectedIds) allowed.add(id)
+    if (
+      isStandalonePersonalManagementScope(workspaces, opts.activeWorkspaceId, opts.isPersonalTenant)
+      && opts.activeWorkspaceId
+    ) {
+      return workspaces.filter((w) => w.id === opts.activeWorkspaceId)
+    }
+    return workspaces.filter((w) => allowed.has(w.id))
+  }
+
+  const standalonePersonalScope = isStandalonePersonalManagementScope(
+    workspaces,
+    opts.activeWorkspaceId,
+    opts.isPersonalTenant,
+  )
+
+  const seedIds = new Set<string>([
+    ...opts.myMembershipWorkspaceIds,
+    ...opts.myManagedWorkspaceIds,
+    ...scopeSelectedIds,
+  ])
+  if (opts.isPersonalTenant && opts.activeWorkspaceId) {
+    seedIds.add(opts.activeWorkspaceId)
+    const active = findActiveWorkspaceRecord(workspaces, opts.activeWorkspaceId)
+    const nestedOrgPersonalTenant = Boolean(
+      active?.isPersonalWorkspace
+      && isNestedOrgPersonalScope(active.personalOrgScope, active.parentWorkspaceId),
+    )
+    // Ancestor walk from active row already includes org home — do not seed parent (expands all siblings).
+    if (active?.parentWorkspaceId && !nestedOrgPersonalTenant) {
+      seedIds.add(active.parentWorkspaceId)
+    }
+  }
+
+  let visible: WorkspaceRecord[]
+  if (opts.canViewAllActivityAudit || opts.isPlatformAdmin) {
+    visible = workspaces
+  } else if (!opts.myMembershipWorkspaceIdsLoaded && seedIds.size === 0) {
+    visible = []
+  } else if (seedIds.size === 0) {
+    visible = []
+  } else {
+    const visibleIds = expandWorkspaceVisibilityClosure(seedIds, workspaces, treeOptions)
+    visible = workspaces.filter((w) => visibleIds.has(w.id))
+  }
+
+  if (standalonePersonalScope && opts.activeWorkspaceId) {
+    visible = visible.filter((w) => w.id === opts.activeWorkspaceId)
+  } else {
+    visible = visible.filter(
+      (w) =>
+        !shouldHideStandalonePersonalFromOrgDirectory({
+          isPersonalTenant: standalonePersonalScope,
+          isPersonalWorkspace: w.isPersonalWorkspace,
+          personalOrgScope: w.personalOrgScope,
+        }),
+    )
+  }
+
+  const activePersonalTenant = findActiveWorkspaceRecord(workspaces, opts.activeWorkspaceId)
+
+  if (scope.mode === 'single') {
+    const anchorIds = resolveManagementScopeAnchorIds(workspaces, scope.workspaceId)
+    const allowed = expandSelectedWorkspaceScopeForManagement(
+      anchorIds.length > 0 ? anchorIds : [scope.workspaceId],
+      workspaces,
+      visible,
+      treeOptions,
+    )
+    visible = visible.filter((w) => allowed.has(w.id))
+  } else if (scope.mode === 'all' && scopeSelectedIds.length) {
+    const allowed = expandSelectedWorkspaceScopeForManagement(
+      scopeSelectedIds,
+      workspaces,
+      visible,
+      treeOptions,
+    )
+    visible = visible.filter((w) => allowed.has(w.id))
+  }
+
+  // Creator-owned operational workspaces stay in personal tenant until WAC join / org approval.
+  if (
+    opts.myOwnedWorkspaceIds.length > 0
+    && opts.isPersonalTenant
+    && !opts.canViewAllActivityAudit
+    && !opts.isPlatformAdmin
+  ) {
+    const ownedIdSet = new Set(opts.myOwnedWorkspaceIds)
+    const merged = new Map(visible.map((w) => [w.id, w]))
+    for (const w of workspaces) {
+      if (ownedIdSet.has(w.id)) merged.set(w.id, w)
+    }
+    visible = [...merged.values()]
+  }
+
+  if (!opts.isPersonalTenant && !opts.canViewAllActivityAudit && !opts.isPlatformAdmin) {
+    const membershipIds = new Set(opts.myMembershipWorkspaceIds)
+    const ownedIds = new Set(opts.myOwnedWorkspaceIds)
+    visible = visible.filter(
+      (w) => !isCreatorOnlyOperationalWithoutWac(w, membershipIds, ownedIds),
+    )
+  }
+
+  if (
+    activePersonalTenant
+    && isNestedOrgPersonalTenantActiveWorkspace({
+      isPersonalTenant: opts.isPersonalTenant,
+      activeWorkspaceId: opts.activeWorkspaceId,
+      isPersonalWorkspace: activePersonalTenant.isPersonalWorkspace,
+      personalOrgScope: activePersonalTenant.personalOrgScope,
+      parentWorkspaceId: activePersonalTenant.parentWorkspaceId,
+    })
+    && !opts.canViewAllActivityAudit
+    && !opts.isPlatformAdmin
+  ) {
+    const membershipIds = new Set(opts.myMembershipWorkspaceIds)
+    const ownedIds = new Set(opts.myOwnedWorkspaceIds)
+    visible = visible.filter(
+      (w) =>
+        !shouldHideSiblingPersonalFromPersonalTenantDirectory(w, activePersonalTenant)
+        && !shouldHideOperationalFromPersonalTenantDirectory(w, membershipIds, ownedIds),
+    )
+  }
+
+  return visible
+}
+
+/**
+ * WAC GET …/members requires platform admin, WAC read role, active membership on the
+ * workspace, or owner/admin on its parent workspace — align client fetches to avoid 403 noise.
+ */
+function filterWorkspacesEligibleForWacMemberListing(
+  workspaces: WorkspaceRecord[],
+  opts: {
+    canViewAllActivityAudit: boolean
+    isPlatformAdmin: boolean
+    membershipWorkspaceIds: ReadonlySet<string>
+    adminMembershipWorkspaceIds: ReadonlySet<string>
+  },
+): WorkspaceRecord[] {
+  if (opts.canViewAllActivityAudit || opts.isPlatformAdmin) {
+    return workspaces
+  }
+  if (opts.membershipWorkspaceIds.size === 0 && opts.adminMembershipWorkspaceIds.size === 0) {
+    return []
+  }
+  return workspaces.filter((workspace) => {
+    if (opts.membershipWorkspaceIds.has(workspace.id)) return true
+    const parentId = workspace.parentWorkspaceId?.trim()
+    return Boolean(parentId && opts.adminMembershipWorkspaceIds.has(parentId))
+  })
+}
+
+const DIRECTORY_PENDING_WORKSPACE_TTL_MS = 90_000
+
+/** Keep optimistic / not-yet-indexed rows until the server list catches up. */
+function mergeDirectoryWorkspaceRecords(
+  serverRows: WorkspaceRecord[],
+  previousRows: WorkspaceRecord[],
+  pendingLocalIds: ReadonlySet<string>,
+): WorkspaceRecord[] {
+  const serverIds = new Set(serverRows.map((w) => w.id))
+  const localOnly = previousRows.filter((w) => !serverIds.has(w.id) && pendingLocalIds.has(w.id))
+  if (localOnly.length === 0) return serverRows
+  return [...serverRows, ...localOnly]
+}
+
+/**
+ * Multi-select WM scope: selected personal workspaces stay explicit; any selected
+ * organization workspace pulls the full org catalog the user already sees in single-tenant WM.
+ */
+function expandSelectedWorkspaceScopeForManagement(
+  selectedWorkspaceIds: string[],
+  workspaces: WorkspaceRecord[],
+  membershipVisible: WorkspaceRecord[],
+  treeOptions?: DirectoryTreeBuildOptions,
+): Set<string> {
+  const byId = new Map(workspaces.map((w) => [w.id, w]))
+  const allowed = expandWorkspaceVisibilityClosure(selectedWorkspaceIds, workspaces, treeOptions)
+
+  const selectedOrgIds = new Set<string>()
+  for (const id of selectedWorkspaceIds) {
+    const ws = byId.get(id)
+    if (!ws) continue
+    if (ws.primaryOrganizationId) selectedOrgIds.add(ws.primaryOrganizationId)
+  }
+
+  if (selectedOrgIds.size > 0) {
+    const membershipVisibleIds = new Set(membershipVisible.map((w) => w.id))
+    for (const w of workspaces) {
+      if (w.isPersonalWorkspace) continue
+      if (!selectedOrgIds.has(w.primaryOrganizationId)) continue
+      if (membershipVisibleIds.has(w.id)) {
+        allowed.add(w.id)
+      }
+    }
+  }
+
+  for (const id of selectedWorkspaceIds) {
+    const ws = byId.get(id)
+    if (ws?.isPersonalWorkspace) allowed.add(id)
+  }
+
+  return allowed
 }
 
 function collectOrganizationSubtreeIds(rootId: string, nodes: OrganizationDirectoryNode[]): Set<string> {
@@ -1519,8 +2750,12 @@ const ALL_GOVERNANCE_CONFIGURATION_STATUSES: GovernanceConfigurationStatus[] = [
   'Non-Compliant',
 ]
 const ALL_WORKSPACE_CLASSIFICATIONS: WorkspaceClassification[] = [
+  'Organization',
+  'Directorate',
+  'Division',
   'Department',
   'Team',
+  'Personal',
   'Program',
   'Initiative',
   'Product',
@@ -1553,9 +2788,66 @@ const DEFAULT_DIRECTORY_GOVERNANCE: WorkspaceRecord['governance'] = {
 const UUID_ORG_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+/** Accept standard hyphenated UUIDs from PostgreSQL / Workspace Org without strict RFC variant checks. */
+const LOOSE_UUID_ORG_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isKnownWorkspaceOrgOrganizationId(
+  organizationId: string,
+  organizationNodes: OrganizationDirectoryNode[],
+): boolean {
+  const trimmed = organizationId.trim()
+  if (!trimmed) return false
+  if (organizationNodes.some((node) => node.id === trimmed)) return true
+  return LOOSE_UUID_ORG_ID_RE.test(trimmed) || UUID_ORG_ID_RE.test(trimmed)
+}
+
 function parseWorkspaceOrgMetadataClassification(raw: unknown): WorkspaceClassification {
   if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim()
   return 'Department'
+}
+
+function ownerDisplayNameFromWorkspaceName(name: string): string {
+  const trimmed = name.trim()
+  if (/^\s*$/.test(trimmed)) return ''
+  return trimmed.replace(/\s+WS\s*$/i, '').trim() || trimmed
+}
+
+function isMissingDirectoryOwner(owner: string): boolean {
+  const normalized = owner.replace(/\uFFFD/g, '').trim()
+  return (
+    normalized.length === 0
+    || normalized === '—'
+    || normalized === '–'
+    || normalized === '…'
+    || normalized === '...'
+    || normalized === '-'
+  )
+}
+
+function resolveDirectoryOwnerDisplay(input: {
+  tectonaOwner?: string | null
+  businessOwner?: string | null
+  technicalOwner?: string | null
+  workspaceName?: string
+  isPersonalWorkspace?: boolean
+}): string {
+  // Directory Owner column mirrors Business owner from Edit Workspace when set.
+  const candidates = [
+    input.businessOwner,
+    input.tectonaOwner,
+    input.technicalOwner,
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && !isMissingDirectoryOwner(candidate)) {
+      return candidate.trim()
+    }
+  }
+  if (input.isPersonalWorkspace && input.workspaceName) {
+    const fromName = ownerDisplayNameFromWorkspaceName(input.workspaceName)
+    if (fromName && !isMissingDirectoryOwner(fromName)) return fromName
+  }
+  return '—'
 }
 
 function parseWorkspaceOrgMetadataLifecycle(raw: unknown): WorkspaceLifecycleStage {
@@ -1665,11 +2957,45 @@ function mapWorkspaceOrgWorkspaceDtoToRecord(ws: WorkspaceOrgWorkspaceDto): Work
     ? integrationsRaw.filter((x): x is string => typeof x === 'string')
     : []
 
-  const owner = typeof meta.tectona_owner === 'string' ? meta.tectona_owner : '…'
+  const ownerRaw = typeof meta.tectona_owner === 'string' ? meta.tectona_owner : ''
+  const classificationRaw = meta.tectona_workspace_classification
+  const isPersonalWorkspace = isPersonalWorkspaceMetadata(
+    meta,
+    ws.tenant_mode,
+    typeof classificationRaw === 'string' ? classificationRaw : null,
+  )
+  const rawParentWorkspaceId =
+    typeof meta.parent_workspace_id === 'string' && meta.parent_workspace_id.trim()
+      ? meta.parent_workspace_id.trim()
+      : null
+  const personalOrgScope = resolvePersonalOrgScopeFromMetadata(meta, {
+    tenantMode: ws.tenant_mode,
+    parentWorkspaceId: rawParentWorkspaceId,
+  })
+  const type = (() => {
+    if (typeof classificationRaw === 'string' && classificationRaw.trim().length > 0) {
+      return classificationRaw.trim()
+    }
+    if (isPersonalWorkspace) return 'Personal'
+    return 'Department'
+  })()
+  const parentWorkspaceId = rawParentWorkspaceId
+  const provisionedUnderWorkspaceId =
+    typeof meta.tectona_provisioned_under_workspace_id === 'string'
+    && meta.tectona_provisioned_under_workspace_id.trim()
+      ? meta.tectona_provisioned_under_workspace_id.trim()
+      : null
   const businessOwner =
     typeof meta.tectona_business_owner === 'string' ? meta.tectona_business_owner : undefined
   const technicalOwner =
     typeof meta.tectona_technical_owner === 'string' ? meta.tectona_technical_owner : undefined
+  const owner = resolveDirectoryOwnerDisplay({
+    tectonaOwner: ownerRaw,
+    businessOwner,
+    technicalOwner,
+    workspaceName: ws.name,
+    isPersonalWorkspace,
+  })
 
   const members =
     typeof meta.tectona_members_count === 'number' && !Number.isNaN(meta.tectona_members_count)
@@ -1693,13 +3019,36 @@ function mapWorkspaceOrgWorkspaceDtoToRecord(ws: WorkspaceOrgWorkspaceDto): Work
     id: ws.id,
     name: ws.name,
     code: ws.workspace_key.toUpperCase(),
-    type: parseWorkspaceOrgMetadataClassification(meta.tectona_workspace_classification),
+    type,
     owner,
     businessOwner,
     technicalOwner,
+    ownerIdentityRef:
+      typeof meta.tectona_owner_identity_ref === 'string' && meta.tectona_owner_identity_ref.trim()
+        ? meta.tectona_owner_identity_ref.trim()
+        : null,
+    createdByIdentityRef:
+      typeof meta.tectona_created_by_identity_ref === 'string'
+      && meta.tectona_created_by_identity_ref.trim()
+        ? meta.tectona_created_by_identity_ref.trim()
+        : null,
+    createdBy: typeof ws.created_by === 'string' && ws.created_by.trim() ? ws.created_by.trim() : null,
     primaryOrganizationId: ws.organization_id,
     primaryOrganizationLabel: ws.organization_name,
     relatedOrganizationIds,
+    parentWorkspaceId,
+    provisionedUnderWorkspaceId,
+    personalOrgScope,
+    adminApprovalPending: resolveWorkspaceAdminApprovalPending({
+      rawPending: meta.tectona_admin_approval_pending === true,
+      isPersonalWorkspace,
+      personalOrgScope,
+      parentWorkspaceId,
+    }),
+    orgDirectoryJoined: meta.tectona_org_directory_joined === true,
+    isPersonalWorkspace,
+    version: typeof ws.version === 'number' && Number.isFinite(ws.version) ? ws.version : 1,
+    metadata: meta,
     members,
     projects,
     status,
@@ -1710,6 +3059,26 @@ function mapWorkspaceOrgWorkspaceDtoToRecord(ws: WorkspaceOrgWorkspaceDto): Work
     integrations,
     assets,
   }
+}
+
+/** Operational workspaces join the org directory tree only after explicit WAC assign (not bootstrap create). */
+async function markOperationalWorkspaceOrgDirectoryJoined(workspaceId: string): Promise<void> {
+  const allRows = await fetchAllWorkspaceOrgWorkspaces()
+  const rawDto = allRows.find((row) => row.id === workspaceId)
+  if (!rawDto) return
+  const meta =
+    rawDto.metadata && typeof rawDto.metadata === 'object'
+      ? { ...(rawDto.metadata as Record<string, unknown>) }
+      : {}
+  const classification =
+    typeof meta.tectona_workspace_classification === 'string'
+      ? meta.tectona_workspace_classification.trim()
+      : ''
+  if (classification === 'Personal' || rawDto.tenant_mode === 'personal') return
+  if (classification === 'Organization') return
+  if (meta.tectona_org_directory_joined === true) return
+  meta.tectona_org_directory_joined = true
+  await patchWorkspaceOrgWorkspace(workspaceId, { metadata: meta, version: rawDto.version })
 }
 
 function lifecycleStageToWorkspaceOrgStatusCode(
@@ -2319,6 +3688,27 @@ function workspaceClassificationTagChrome(t: WorkspaceClassification, active: bo
       'border-sky-400/25 bg-gradient-to-r from-sky-500/15 to-indigo-500/15 text-sky-950 ring-sky-500/20 dark:text-sky-100'
     )
   }
+  if (t === 'Personal') {
+    return cn(
+      base,
+      on,
+      'border-indigo-400/25 bg-gradient-to-r from-indigo-500/15 to-violet-500/15 text-indigo-950 ring-indigo-500/20 dark:text-indigo-100'
+    )
+  }
+  if (t === 'Organization' || t === 'Directorate') {
+    return cn(
+      base,
+      on,
+      'border-slate-400/30 bg-gradient-to-r from-slate-500/15 to-slate-600/10 text-slate-950 ring-slate-500/20 dark:text-slate-100'
+    )
+  }
+  if (t === 'Division') {
+    return cn(
+      base,
+      on,
+      'border-blue-400/25 bg-gradient-to-r from-blue-500/15 to-sky-500/15 text-blue-950 ring-blue-500/20 dark:text-blue-100'
+    )
+  }
   if (t === 'Team') {
     return cn(
       base,
@@ -2458,12 +3848,11 @@ function WorkspaceMainPanel({
       ref={panelRef}
       style={style}
       className={cn(
-        'glass-card flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-[0_16px_44px_rgba(15,23,42,0.10)] ring-1 ring-slate-900/[0.04] transition-all',
-        highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80',
+        'liquid-glass-enterprise-panel flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-2xl border transition-all',
         className
       )}
     >
-      <div className="flex h-full min-h-0 w-full flex-col">
+      <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
       <div className="shrink-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -2481,7 +3870,7 @@ function WorkspaceMainPanel({
               ) : null}
       </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
         </div>
       </div>
     </section>
@@ -2528,7 +3917,7 @@ function IntelligenceChartPanel({
   children: ReactNode
 }) {
   return (
-    <Card style={style} className={cn('relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl p-5 shadow-[0_12px_34px_rgba(15,23,42,0.08)]', palette.cardBg, palette.cardBorder)}>
+    <Card style={style} className={cn('relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl p-5 shadow-[0_12px_34px_rgba(15,23,42,0.08)]', palette.cardBg, palette.cardBorder)}>
       <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-[2px] rounded-t-2xl bg-gradient-to-r opacity-85', accent)} />
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -2597,8 +3986,10 @@ function KpiSparklineGradientStops({ color }: { color: string }) {
   )
 }
 
-function KpiSparkline({ data, color }: { data: number[]; color: string }) {
-  if (data.length === 0) {
+const KpiSparkline = memo(function KpiSparkline({ data, color }: { data: number[]; color: string }) {
+  const hasTrend = data.length > 0 && data.some((value) => value !== 0)
+
+  if (!hasTrend) {
     return (
       <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-background/40 px-2 text-[10px] font-medium text-muted-foreground/80">
         Historical trend unavailable
@@ -2606,50 +3997,38 @@ function KpiSparkline({ data, color }: { data: number[]; color: string }) {
     )
   }
 
-  const chartData = data.map((value, index) => ({ idx: index, sparkValue: value }))
-  const yDomain = sparklineYDomain(data)
-  const isFlat = Math.min(...data) === Math.max(...data)
-  const gradId = `tectona-workspace-kpi-${color.replace('#', '')}`
+  const width = 120
+  const height = 40
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+  const points = data
+    .map((value, index) => {
+      const x = data.length <= 1 ? width / 2 : (index / (data.length - 1)) * width
+      const y = height - ((value - min) / range) * (height - 4) - 2
+      return `${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
 
   return (
-    <MeasuredResponsiveContainer>
-      <AreaChart data={chartData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
-        {!isFlat && (
-        <defs>
-            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <KpiSparklineGradientStops color={color} />
-          </linearGradient>
-        </defs>
-        )}
-        <YAxis hide domain={yDomain} allowDataOverflow />
-        {isFlat ? (
-          <Line
-            type="monotone"
-            dataKey="sparkValue"
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="h-full w-full min-h-[40px] rounded-lg bg-background/30"
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <polyline
+        fill="none"
             stroke={color}
-            strokeWidth={1.5}
-            strokeOpacity={isFlat && data[0] === 0 ? 0.42 : 0.72}
-            strokeLinecap="round"
-            dot={false}
-            isAnimationActive={false}
-          />
-        ) : (
-        <Area
-          type="monotone"
-          dataKey="sparkValue"
-          stroke={color}
-            strokeWidth={1.5}
+        strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
-            fill={`url(#${gradId})`}
-            baseValue={yDomain[0]}
-          isAnimationActive={false}
+        points={points}
+        opacity={min === max && min === 0 ? 0.42 : 0.85}
         />
-        )}
-      </AreaChart>
-    </MeasuredResponsiveContainer>
+    </svg>
   )
-}
+})
 
 function WorkspaceKpiCard({
   label,
@@ -2737,7 +4116,7 @@ function WorkspaceKpiSortableCard({
     <div
       ref={setNodeRef}
       style={style}
-      className="h-full"
+      className="h-full min-w-0"
       onContextMenu={onContextMenu}
       {...attributes}
       {...listeners}
@@ -2816,7 +4195,7 @@ function WorkspaceKpiCardsCarousel({
           bestIndex = index
         }
       })
-      setActiveIndex(bestIndex)
+      setActiveIndex((prev) => (prev === bestIndex ? prev : bestIndex))
     }
 
     el.addEventListener('scroll', onScroll, { passive: true })
@@ -3020,6 +4399,7 @@ function WorkspaceEnterpriseNavFloatRail({
                     <button
                       type="button"
                       onClick={() => onSelect(panel.id)}
+                      data-tour-target={`wm-nav-${panel.id}`}
                       className={cn(
                         'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors duration-200',
                         active
@@ -3037,6 +4417,7 @@ function WorkspaceEnterpriseNavFloatRail({
                     type="button"
                     onClick={() => onSelect(panel.id)}
                     title={panel.label}
+                    data-tour-target={`wm-nav-${panel.id}`}
                     className={cn(
                       'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors duration-200',
                       active
@@ -3077,6 +4458,14 @@ function IntelligenceDonut({
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const total = data.reduce((sum, d) => sum + d.value, 0)
   const donutIdBase = useMemo(() => centerLabel.toLowerCase().replace(/\s+/g, '-'), [centerLabel])
+
+  if (total === 0) {
+    return (
+      <div className="flex h-56 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
+        No workspace data in the current scope yet.
+      </div>
+    )
+  }
 
   const renderPctLabel = ({
     cx, cy, midAngle, innerRadius, outerRadius, percent,
@@ -3190,12 +4579,13 @@ function IntelligenceDonut({
                 label={renderPctLabel}
                 stroke="white"
                 strokeWidth={isVivid ? 2.5 : 1.5}
-                onMouseEnter={(_, index) => setActiveIndex(index)}
-                onMouseLeave={() => setActiveIndex(null)}
+                onMouseEnter={(_, index) => setActiveIndex((prev) => (prev === index ? prev : index))}
+                onMouseLeave={() => setActiveIndex((prev) => (prev === null ? prev : null))}
                 onClick={(_, index) => {
                   const name = data[index]?.name
                   if (name) onSliceClick?.(name)
                 }}
+                isAnimationActive={false}
                 style={{ outline: 'none' }}
               >
                 {data.map((entry, index) => {
@@ -3283,8 +4673,8 @@ function IntelligenceDonut({
                       : 'border-slate-200/90 bg-white/80 hover:border-slate-300 hover:bg-white'
                 )}
                 style={isVivid && (isActive || rowSelected) ? { borderLeftColor: sc, borderLeftWidth: 3 } : undefined}
-                onMouseEnter={() => setActiveIndex(idx)}
-                onMouseLeave={() => setActiveIndex(null)}
+                onMouseEnter={() => setActiveIndex((prev) => (prev === idx ? prev : idx))}
+                onMouseLeave={() => setActiveIndex((prev) => (prev === null ? prev : null))}
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5">
@@ -3358,6 +4748,14 @@ function WorkspaceHealthExecutiveDonut({
     Critical: [26, 25, 23, 22, 21, 20],
   }
 
+  if (total === 0) {
+    return (
+      <div className="flex h-60 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
+        No workspace health data in the current scope yet.
+      </div>
+    )
+  }
+
   return (
     <>
       <style>{`
@@ -3417,15 +4815,13 @@ function WorkspaceHealthExecutiveDonut({
               dataKey="value"
               stroke="#ffffff"
               strokeWidth={3}
-              onMouseEnter={(_, index) => setActiveIndex(index)}
-              onMouseLeave={() => setActiveIndex(null)}
+              onMouseEnter={(_, index) => setActiveIndex((prev) => (prev === index ? prev : index))}
+              onMouseLeave={() => setActiveIndex((prev) => (prev === null ? prev : null))}
               onClick={(_, index) => {
                 const name = data[index]?.name
                 if (name) onBandClick?.(name)
               }}
-              isAnimationActive
-              animationDuration={800}
-              animationEasing="ease-out"
+              isAnimationActive={false}
             >
               {data.map((entry, index) => {
                 const gradientId =
@@ -3504,8 +4900,8 @@ function WorkspaceHealthExecutiveDonut({
                     }
                   : undefined
               }
-              onMouseEnter={() => setActiveIndex(idx)}
-              onMouseLeave={() => setActiveIndex(null)}
+              onMouseEnter={() => setActiveIndex((prev) => (prev === idx ? prev : idx))}
+              onMouseLeave={() => setActiveIndex((prev) => (prev === null ? prev : null))}
               className={cn(
                 onBandClick ? 'cursor-pointer' : '',
                 'group flex items-center justify-between rounded-xl border px-3 py-2.5 transition-all duration-200',
@@ -3628,6 +5024,7 @@ type NewWorkspaceFormState = {
   description: string
   primaryOrganizationId: string
   relatedOrganizationIds: string[]
+  verifiedDomains: VerifiedDomainEntry[]
   workspaceType: '' | WorkspaceClassification
   owner: string
   businessOwner: string
@@ -3660,6 +5057,7 @@ const INITIAL_NEW_WORKSPACE_FORM: NewWorkspaceFormState = {
   description: '',
   primaryOrganizationId: '',
   relatedOrganizationIds: [],
+  verifiedDomains: [],
   workspaceType: '',
   owner: '',
   businessOwner: '',
@@ -3748,10 +5146,12 @@ function buildNewWorkspaceWizardStepSummaries(
   const primaryLabel = organizationNodes.find((n) => n.id === form.primaryOrganizationId)?.label?.trim()
   if (primaryLabel) {
     const rel = form.relatedOrganizationIds.length
+    const domainCount = form.verifiedDomains.filter((d) => d.value.trim()).length
+    const domainSuffix = domainCount > 0 ? ` · ${domainCount} domain${domainCount === 1 ? '' : 's'}` : ''
     out[2] =
       rel > 0
-        ? truncateWizardStepSummary(`${primaryLabel} (+${rel} related)`, 38)
-        : truncateWizardStepSummary(primaryLabel, 38)
+        ? truncateWizardStepSummary(`${primaryLabel} (+${rel} related)${domainSuffix}`, 42)
+        : truncateWizardStepSummary(`${primaryLabel}${domainSuffix}`, 42)
   }
 
   const typeLabel =
@@ -3796,6 +5196,18 @@ function workspaceCodePrefixFromName(name: string): string {
   return compact.length >= 2 ? compact : 'WS'
 }
 
+/** Stable 4-char suffix from workspace name (same name → same suffix for a given attempt). */
+function workspaceCodeSuffixFromName(name: string, attempt = 0): string {
+  const input = `${name.trim().toLowerCase()}#${attempt}`
+  let hash = 2166136261
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  const base36 = (hash >>> 0).toString(36).toUpperCase()
+  return base36.slice(0, 4).padEnd(4, '0')
+}
+
 /** Unique directory code derived from name (never empty when `name` is non-empty). */
 function generateWorkspaceCode(name: string, takenLower: Set<string>): string {
   const trimmed = name.trim()
@@ -3803,20 +5215,20 @@ function generateWorkspaceCode(name: string, takenLower: Set<string>): string {
   let prefix = workspaceCodePrefixFromName(trimmed)
   if (prefix.length < 2) prefix = 'WS'
   const sanitize = (s: string) => s.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 48)
-  for (let i = 0; i < 80; i += 1) {
-    const rand = Math.random().toString(36).slice(2, 6).toUpperCase()
-    const candidate = sanitize(`${prefix}-${rand}`)
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const suffix = workspaceCodeSuffixFromName(trimmed, attempt)
+    const candidate = sanitize(`${prefix}-${suffix}`)
     if (candidate && !takenLower.has(candidate.toLowerCase())) return candidate
   }
-  const fallback = sanitize(`${prefix}-${Date.now().toString(36).toUpperCase().slice(-8)}`)
-  if (!takenLower.has(fallback.toLowerCase())) return fallback
-  return sanitize(`${prefix}-${performance.now().toString(36).toUpperCase().replace(/\./g, '')}`)
+  const fallback = sanitize(`${prefix}-${workspaceCodeSuffixFromName(trimmed, 9999)}`)
+  return fallback || sanitize(`${prefix}-WS01`)
 }
 
 type NewWorkspaceWizardField =
   | 'name'
   | 'code'
   | 'primaryOrganization'
+  | 'verifiedDomains'
   | 'workspaceType'
   | 'owner'
   | 'businessOwner'
@@ -3831,7 +5243,7 @@ function validateNewWorkspaceWizardStep(
   step: number,
   form: NewWorkspaceFormState,
   allWorkspaces: WorkspaceRecord[],
-  options?: { requireOrganizationUuid?: boolean }
+  options?: { requireOrganizationUuid?: boolean; organizationNodes?: OrganizationDirectoryNode[] },
 ): WizardStepValidation {
   if (step === 1) {
     const name = form.name.trim()
@@ -3846,11 +5258,34 @@ function validateNewWorkspaceWizardStep(
         highlights: { primaryOrganization: true },
       }
     }
-    if (options?.requireOrganizationUuid && !UUID_ORG_ID_RE.test(form.primaryOrganizationId.trim())) {
+    if (
+      options?.requireOrganizationUuid
+      && !isKnownWorkspaceOrgOrganizationId(form.primaryOrganizationId, options?.organizationNodes ?? [])
+    ) {
       return {
         ok: false,
-        error: 'Primary organization must come from Workspace Org (reload page when the service is running).',
+        error: 'Select a primary organization from the Workspace Org directory (open Manage to refresh the list).',
         highlights: { primaryOrganization: true },
+      }
+    }
+    const domainRows = form.verifiedDomains.filter((d) => d.value.trim())
+    const domainError = validateOrganizationDomains(domainRows)
+    if (domainError) {
+      return { ok: false, error: domainError, highlights: { verifiedDomains: true } }
+    }
+    for (const row of domainRows) {
+      const conflict = findDomainConflictInOrganizationNodes(
+        options?.organizationNodes ?? [],
+        row.value,
+        row.category,
+        form.primaryOrganizationId,
+      )
+      if (conflict) {
+        return {
+          ok: false,
+          error: `Domain “${row.value.trim()}” is already used by organization “${conflict.label}”.`,
+          highlights: { verifiedDomains: true },
+        }
       }
     }
     return { ok: true }
@@ -4033,9 +5468,39 @@ function governanceMatrixSearchBlob(
     .toLowerCase()
 }
 
+function WorkspaceManagementPageSkeleton({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn(
+        'glass-card flex min-h-[280px] animate-pulse items-center justify-center rounded-2xl border border-border/60 bg-muted/20',
+        className,
+      )}
+    >
+      <div className="flex flex-col items-center gap-3 px-6 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
+        <p className="text-sm text-muted-foreground">Loading workspace data…</p>
+      </div>
+    </div>
+  )
+}
+
 export function WorkspaceManagementPage() {
   const { addToast } = useToast()
   const navigate = useNavigate()
+  const tenant = useTenantContextOptional()
+  const isPersonalTenant =
+    tenant?.tenantMode === 'personal'
+    && Boolean(tenant.workspaceId)
+    && !isAllWorkspacesSelection(tenant.workspaceId)
+  const isMultiWorkspaceScope =
+    isAllWorkspacesSelection(tenant?.workspaceId)
+    && (tenant?.selectedWorkspaceIds?.length ?? 0) > 0
+  const tenantSelectedWorkspaceIdsKey = useMemo(() => {
+    const ids = tenant?.selectedWorkspaceIds
+    if (!ids?.length) return ''
+    return ids.join('\0')
+  }, [tenant?.selectedWorkspaceIds?.join('\0') ?? ''])
+  const openRequestJoinWorkspace = useRequestJoinWorkspaceStore((s) => s.openPanel)
   const wmAuth = useWorkspaceManagementAuthorization()
   const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)
   const sidebarMini = usePreferencesStore((s) => s.preferences.sidebarMini ?? true)
@@ -4043,8 +5508,8 @@ export function WorkspaceManagementPage() {
   const enterpriseNavTitlesOnly = usePreferencesStore((s) => s.preferences.enterpriseNavTitlesOnly ?? false)
   const enterpriseNavSimpleList = usePreferencesStore((s) => s.preferences.enterpriseNavSimpleList ?? false)
   const enterpriseNavCompact = enterpriseNavTitlesOnly || enterpriseNavSimpleList
-  /** Theme Settings → Fixed Sidebar ON = `preferences.sidebarFixed === true`. */
-  const fixedSidebarUiOn = sidebarFixed
+  // Theme Settings switch is inverted: UI "Fixed Sidebar ON" = store sidebarFixed === false.
+  const fixedSidebarUiOn = !sidebarFixed
   const enterpriseNavUltra = fixedSidebarUiOn && sidebarMini && enterpriseNavTitlesOnly && enterpriseNavSimpleList
   const enterpriseNavWidthVariant = enterpriseNavUltra ? 'ultra' : enterpriseNavCompact ? 'compact' : 'default'
   // Match Document & Knowledge Management Enterprise Navigation: 260px panel width.
@@ -4075,6 +5540,57 @@ export function WorkspaceManagementPage() {
   const [workspaceMainPanelViewportHeightPx, setWorkspaceMainPanelViewportHeightPx] = useState<number | null>(null)
 
   const [activePanel, setActivePanel] = useState<WorkspacePanel>('overview')
+  const deferredActivePanel = useDeferredValue(activePanel)
+  const [visitedPanels, setVisitedPanels] = useState<Set<WorkspacePanel>>(() => new Set(['overview']))
+
+  useEffect(() => {
+    setVisitedPanels((prev) => {
+      if (prev.has(deferredActivePanel)) return prev
+      const next = new Set(prev)
+      next.add(deferredActivePanel)
+      return next
+    })
+  }, [deferredActivePanel])
+
+  /** Paint shell first; defer heavy fetches + chart mount until after first frames. */
+  const [wmShellReady, setWmShellReady] = useState(false)
+  const [wmDeferredReady, setWmDeferredReady] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    let idleHandle: number | ReturnType<typeof setTimeout> | undefined
+
+    const raf = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (cancelled) return
+        startTransition(() => setWmShellReady(true))
+        if (typeof window.requestIdleCallback === 'function') {
+          idleHandle = window.requestIdleCallback(
+            () => {
+              if (!cancelled) startTransition(() => setWmDeferredReady(true))
+            },
+            { timeout: 1500 },
+          )
+        } else {
+          idleHandle = window.setTimeout(() => {
+            if (!cancelled) startTransition(() => setWmDeferredReady(true))
+          }, 600)
+        }
+      })
+    })
+
+    return () => {
+      cancelled = true
+      window.cancelAnimationFrame(raf)
+      if (idleHandle != null) {
+        if (typeof window.cancelIdleCallback === 'function') {
+          window.cancelIdleCallback(idleHandle as number)
+        } else {
+          window.clearTimeout(idleHandle as ReturnType<typeof setTimeout>)
+        }
+      }
+    }
+  }, [])
   // Assistant deep-link params (?view=/?ws=) consumed once to open a panel/detail drawer.
   const [uiSearchParams, setUiSearchParams] = useSearchParams()
   const [pendingDetailOpen, setPendingDetailOpen] = useState<{
@@ -4182,6 +5698,12 @@ export function WorkspaceManagementPage() {
   const [assetsTypeFilterTags, setAssetsTypeFilterTags] = useState<Set<AssetRecord['type']>>(() => new Set())
   const [assetsOwnerFilterTags, setAssetsOwnerFilterTags] = useState<Set<string>>(() => new Set())
   const [directoryWorkspaces, setDirectoryWorkspaces] = useState<WorkspaceRecord[]>(() => [])
+  const pendingDirectoryWorkspaceIdsRef = useRef<Map<string, number>>(new Map())
+  /** Workspace IDs from WAC memberships of the signed-in subject (Directory visibility seed). */
+  const [myMembershipWorkspaceIds, setMyMembershipWorkspaceIds] = useState<string[]>([])
+  const [myAdminMembershipWorkspaceIds, setMyAdminMembershipWorkspaceIds] = useState<string[]>([])
+  const [myMembershipWorkspaceIdsLoaded, setMyMembershipWorkspaceIdsLoaded] = useState(false)
+  const [myOrgDirectoryWorkspaceIds, setMyOrgDirectoryWorkspaceIds] = useState<string[]>([])
   const [governanceCatalog, setGovernanceCatalog] = useState<GovernanceCatalogSnapshot | null>(null)
   const [governanceAssignments, setGovernanceAssignments] = useState<WorkspaceGovernanceAssignmentDto[]>([])
   const [workspaceOrgBackendConnected, setWorkspaceOrgBackendConnected] = useState(false)
@@ -4189,9 +5711,180 @@ export function WorkspaceManagementPage() {
   const [wacBackendConnected, setWacBackendConnected] = useState(false)
   const [workspaceMembers, setWorkspaceMembers] = useState<MemberRecord[]>([])
   const [membersLoading, setMembersLoading] = useState(false)
+  /** Subject ids the user collapsed in the Members tree (default = expanded). */
+  const [membersTreeCollapsedIds, setMembersTreeCollapsedIds] = useState<Set<string>>(() => new Set())
   const [identityUsers, setIdentityUsers] = useState<IdentityUserDto[]>([])
   const [workspaceMemberCounts, setWorkspaceMemberCounts] = useState<Record<string, number>>({})
-  const allWorkspacesForList = useMemo(() => directoryWorkspaces, [directoryWorkspaces])
+  const [sessionOnboardingStatus, setSessionOnboardingStatus] = useState<OnboardingStatusCode | null>(null)
+
+  const currentSessionUser = getSession()?.user ?? null
+  const currentSessionUserRole = (currentSessionUser?.role ?? '').trim().toLowerCase()
+  const currentSessionUserRoles = (currentSessionUser?.roles ?? []).map((role) => role.trim().toLowerCase())
+  const canViewAllActivityAudit =
+    currentSessionUserRole === 'root'
+    || currentSessionUserRole === 'admin'
+    || currentSessionUserRole === 'administrator'
+    || currentSessionUserRoles.some((role) => role === 'tectona_root' || role === 'tectona_admin' || role === 'root' || role === 'admin' || role === 'administrator')
+
+  const myOwnedWorkspaceIds = useMemo(() => {
+    if (!currentSessionUser?.id) return []
+    return collectWorkspaceIdsOwnedBySubject(
+      directoryWorkspaces.map((workspace) => ({
+        id: workspace.id,
+        metadata: {
+          tectona_owner: workspace.owner,
+          tectona_business_owner: workspace.businessOwner,
+          tectona_technical_owner: workspace.technicalOwner,
+          tectona_owner_identity_ref: workspace.ownerIdentityRef,
+          tectona_created_by_identity_ref: workspace.createdByIdentityRef,
+        },
+        owner: workspace.owner,
+        businessOwner: workspace.businessOwner,
+        technicalOwner: workspace.technicalOwner,
+        ownerIdentityRef: workspace.ownerIdentityRef,
+        createdByIdentityRef: workspace.createdByIdentityRef,
+        createdBy: workspace.createdBy,
+        tenantMode: workspace.type === 'Personal' ? 'personal' : 'organization',
+      })),
+      {
+        id: currentSessionUser.id,
+        name: currentSessionUser.name,
+        email: currentSessionUser.email,
+      },
+    )
+  }, [currentSessionUser, directoryWorkspaces])
+
+  const myManagedWorkspaceIds = useMemo(
+    () => [...new Set([...myOrgDirectoryWorkspaceIds, ...myOwnedWorkspaceIds])],
+    [myOrgDirectoryWorkspaceIds, myOwnedWorkspaceIds],
+  )
+
+  const myWacMembershipWorkspaceIdSet = useMemo(
+    () => new Set(myMembershipWorkspaceIds),
+    [myMembershipWorkspaceIds],
+  )
+
+  const myAdminMembershipWorkspaceIdSet = useMemo(
+    () => new Set(myAdminMembershipWorkspaceIds),
+    [myAdminMembershipWorkspaceIds],
+  )
+
+  const directoryAccessSubject = useMemo(
+    () =>
+      currentSessionUser?.id
+        ? {
+            id: currentSessionUser.id,
+            name: currentSessionUser.name,
+            email: currentSessionUser.email,
+          }
+        : null,
+    [currentSessionUser],
+  )
+
+  const allWorkspacesForList = useMemo(() => {
+    return selectWorkspacesForManagementView(directoryWorkspaces, {
+      isPersonalTenant,
+      activeWorkspaceId: tenant?.workspaceId,
+      selectedWorkspaceIds: tenant?.selectedWorkspaceIds,
+      canViewAllActivityAudit,
+      isPlatformAdmin: wmAuth.isPlatformAdmin,
+      myMembershipWorkspaceIds,
+      myMembershipWorkspaceIdsLoaded,
+      myManagedWorkspaceIds,
+      myOwnedWorkspaceIds,
+    })
+  }, [
+    directoryWorkspaces,
+    isPersonalTenant,
+    tenant?.workspaceId,
+    tenantSelectedWorkspaceIdsKey,
+    canViewAllActivityAudit,
+    wmAuth.isPlatformAdmin,
+    myMembershipWorkspaceIds,
+    myMembershipWorkspaceIdsLoaded,
+    myManagedWorkspaceIds,
+    myOwnedWorkspaceIds,
+  ])
+
+  /** Full directory catalog for access-request join resolution (not tenant-filtered list view). */
+  const accessRequestWorkspaceCatalog = useMemo(
+    () =>
+      directoryWorkspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        isPersonalWorkspace: workspace.isPersonalWorkspace,
+        type: workspace.type,
+        version: workspace.version,
+        metadata: workspace.metadata ?? null,
+      })),
+    [directoryWorkspaces],
+  )
+
+  const directoryOrgHomeIdByWorkspaceId = useMemo(() => {
+    const catalog = allWorkspacesForList.map((workspace) => ({
+      id: workspace.id,
+      type: workspace.type,
+      isPersonalWorkspace: workspace.isPersonalWorkspace,
+      parentWorkspaceId: workspace.parentWorkspaceId,
+    }))
+    const out = new Map<string, string | null>()
+    for (const workspace of allWorkspacesForList) {
+      if (workspace.isPersonalWorkspace) {
+        const orgHome = resolveOrganizationHomeWorkspace(
+          {
+            id: workspace.id,
+            type: workspace.type,
+            isPersonalWorkspace: workspace.isPersonalWorkspace,
+            parentWorkspaceId: workspace.parentWorkspaceId,
+          },
+          catalog,
+        )
+        out.set(workspace.id, orgHome?.id ?? workspace.parentWorkspaceId)
+        continue
+      }
+      if (workspace.type === 'Organization' && !workspace.isPersonalWorkspace) {
+        out.set(workspace.id, workspace.id)
+        continue
+      }
+      out.set(workspace.id, null)
+    }
+    return out
+  }, [allWorkspacesForList])
+
+  const directoryMembershipBadgeRows = useMemo(
+    () =>
+      workspaceMembers.map((row) => ({
+        subjectId: row.subjectId,
+        workspaceId: row.workspaceId,
+        scopeCode: row.scopeCode,
+      })),
+    [workspaceMembers],
+  )
+
+  const workspacesEligibleForMemberListing = useMemo(
+    () =>
+      filterWorkspacesEligibleForWacMemberListing(allWorkspacesForList, {
+        canViewAllActivityAudit,
+        isPlatformAdmin: wmAuth.isPlatformAdmin,
+        membershipWorkspaceIds: myWacMembershipWorkspaceIdSet,
+        adminMembershipWorkspaceIds: myAdminMembershipWorkspaceIdSet,
+      }),
+    [
+      allWorkspacesForList,
+      canViewAllActivityAudit,
+      wmAuth.isPlatformAdmin,
+      myWacMembershipWorkspaceIdSet,
+      myAdminMembershipWorkspaceIdSet,
+    ],
+  )
+
+  /** Org workspace create — allowed on org tenant, or personal tenant when user manages org portfolio. */
+  const canCreateOrgWorkspace = useMemo(() => {
+    if (!wmAuth.canMutate) return false
+    if (!isPersonalTenant) return true
+    return allWorkspacesForList.some((workspace) => workspace.type !== 'Personal')
+  }, [wmAuth.canMutate, isPersonalTenant, allWorkspacesForList])
+
   const assetsCatalogRecords = useMemo(
     () => buildAssetsFromGovernanceCatalog(governanceCatalog),
     [governanceCatalog]
@@ -4232,6 +5925,7 @@ export function WorkspaceManagementPage() {
       allWorkspacesForList.map((w) => ({
         id: w.id,
         name: w.name,
+        type: w.type,
         governance: {
           configurationStatus: w.governance.configurationStatus,
           complianceStatus: w.governance.complianceStatus,
@@ -4272,21 +5966,20 @@ export function WorkspaceManagementPage() {
     if (wmAuth.canAccessPanel(activePanel)) return
     const fallback = workspacePanels.find((panel) => wmAuth.canAccessPanel(panel.id))
     if (fallback) setActivePanel(fallback.id)
-  }, [wmAuth.loading, activePanel, wmAuth.isPlatformAdmin, wmAuth.canViewOverview, wmAuth.canViewDirectory, wmAuth.canViewGovernance, wmAuth.canManageWorkspace])
+  }, [
+    wmAuth.loading,
+    activePanel,
+    wmAuth.isPlatformAdmin,
+    wmAuth.canViewOverview,
+    wmAuth.canViewDirectory,
+    wmAuth.canViewGovernance,
+    wmAuth.canManageWorkspace,
+  ])
 
   const knownPeopleNames = useMemo(
     () => new Set(workspaceMembers.map((m) => m.name.trim().toLowerCase())),
     [workspaceMembers]
   )
-
-  const currentSessionUser = getSession()?.user ?? null
-  const currentSessionUserRole = (currentSessionUser?.role ?? '').trim().toLowerCase()
-  const currentSessionUserRoles = (currentSessionUser?.roles ?? []).map((role) => role.trim().toLowerCase())
-  const canViewAllActivityAudit =
-    currentSessionUserRole === 'root'
-    || currentSessionUserRole === 'admin'
-    || currentSessionUserRole === 'administrator'
-    || currentSessionUserRoles.some((role) => role === 'tectona_root' || role === 'tectona_admin' || role === 'root' || role === 'admin' || role === 'administrator')
 
   const currentUserActivityKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -4320,7 +6013,10 @@ export function WorkspaceManagementPage() {
     [workspaceOrgBackendConnected, organizationNodes]
   )
 
-  const wizardValidationOptions = useMemo(() => ({ requireOrganizationUuid: true }), [])
+  const wizardValidationOptions = useMemo(
+    () => ({ requireOrganizationUuid: hasWorkspaceOrgOrganizations, organizationNodes }),
+    [hasWorkspaceOrgOrganizations, organizationNodes],
+  )
   const directoryOwnerOptionsList = useMemo(
     () =>
       [...new Set(allWorkspacesForList.map((w) => w.owner))].sort((a, b) =>
@@ -4342,17 +6038,9 @@ export function WorkspaceManagementPage() {
     [governanceAssignments]
   )
 
-  const hasWorkspaceActivityData = useMemo(
-    () => workspaceActivityFeed.length > 0,
-    [workspaceActivityFeed]
-  )
-
-  const isActivityFallbackMode = !canViewAllActivityAudit && myActivityStream.length === 0 && hasWorkspaceActivityData
-
+  // Non-elevated users only ever see their own activity — never fall back to Root/others.
   const activitySourceRows = useMemo(
-    () => (canViewAllActivityAudit
-      ? workspaceActivityFeed
-      : (myActivityStream.length > 0 ? myActivityStream : workspaceActivityFeed)),
+    () => (canViewAllActivityAudit ? workspaceActivityFeed : myActivityStream),
     [canViewAllActivityAudit, myActivityStream, workspaceActivityFeed]
   )
 
@@ -4376,36 +6064,14 @@ export function WorkspaceManagementPage() {
     return filteredActivityRows.slice(start, start + activityPageSize)
   }, [filteredActivityRows, activityPage, activityPageSize])
 
-  const refreshWorkspaceOrgLists = useCallback(async () => {
+  const refreshWorkspaceActivityFeed = useCallback(async () => {
     try {
-      const [workspaceRows, orgList, typeListResult] = await Promise.all([
-        fetchAllWorkspaceOrgWorkspaces(),
-        fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200 }),
-        fetchWorkspaceOrgWorkspaceTypes().catch(() => null),
-      ])
-      const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
-      let merged: WorkspaceRecord[] = mapped
-      try {
-        const [cats, assigns] = await Promise.all([
-          fetchGovernanceCatalogSnapshot(),
-          fetchWorkspaceGovernanceAssignments(),
-        ])
-        setGovernanceCatalog(cats)
-        setGovernanceAssignments(assigns.items ?? [])
-        try {
-          const sessionUser = getSession()?.user ?? null
-          const sessionUserRole = (sessionUser?.role ?? '').trim().toLowerCase()
-          const sessionUserRoles = (sessionUser?.roles ?? []).map((role) => role.trim().toLowerCase())
-          const elevatedActivityAccess =
-            sessionUserRole === 'root'
-            || sessionUserRole === 'admin'
-            || sessionUserRole === 'administrator'
-            || sessionUserRoles.some((role) => role === 'tectona_root' || role === 'tectona_admin' || role === 'root' || role === 'admin' || role === 'administrator')
-
-          if (elevatedActivityAccess) {
+      if (canViewAllActivityAudit) {
             const activities = await fetchWorkspaceActivity(200)
             setWorkspaceActivityFeed((activities.items ?? []).map(mapBackendActivityToRecord))
-          } else {
+        return
+      }
+
           const actorCandidates = (() => {
             if (!currentSessionUser) return [] as string[]
             const emailPrefix = currentSessionUser.email.split('@')[0]?.trim() || ''
@@ -4417,9 +6083,13 @@ export function WorkspaceManagementPage() {
             ].map((v) => v?.trim()).filter((v): v is string => Boolean(v)))]
           })()
 
-          if (actorCandidates.length > 0) {
+      if (actorCandidates.length === 0) {
+        setWorkspaceActivityFeed([])
+        return
+      }
+
             const actorFeeds = await Promise.all(
-              actorCandidates.map((actor) => fetchWorkspaceActivity(80, actor).catch(() => ({ items: [] as WorkspaceActivityEventDto[] })))
+        actorCandidates.map((actor) => fetchWorkspaceActivity(80, actor).catch(() => ({ items: [] as WorkspaceActivityEventDto[] }))),
             )
             const merged = new Map<string, WorkspaceActivityEventDto>()
             for (const feed of actorFeeds) {
@@ -4432,20 +6102,54 @@ export function WorkspaceManagementPage() {
               const bt = new Date(b.timestamp).getTime()
               return bt - at
             })
-            if (ordered.length > 0) {
-              setWorkspaceActivityFeed(ordered.map(mapBackendActivityToRecord))
-            } else {
-              const activities = await fetchWorkspaceActivity(80)
-              setWorkspaceActivityFeed((activities.items ?? []).map(mapBackendActivityToRecord))
+      setWorkspaceActivityFeed(ordered.length > 0 ? ordered.map(mapBackendActivityToRecord) : [])
+    } catch {
+      setWorkspaceActivityFeed([])
+    }
+  }, [canViewAllActivityAudit, currentSessionUser])
+
+  const refreshWorkspaceOrgLists = useCallback(async () => {
+    try {
+      const [workspaceRows, orgList, typeListResult] = await Promise.all([
+        fetchAllWorkspaceOrgWorkspaces(),
+        fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200, organization_type: 'organization', status_code: 'active' }).catch(
+          async () => {
+            // Older workspace-org builds may not accept organization_type yet.
+            try {
+              return await fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200, status_code: 'active' })
+            } catch {
+              try {
+                return await fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200 })
+              } catch {
+                return { items: [], total: 0 }
+              }
             }
-          } else {
-            const activities = await fetchWorkspaceActivity(80)
-            setWorkspaceActivityFeed((activities.items ?? []).map(mapBackendActivityToRecord))
+          },
+        ),
+        fetchWorkspaceOrgWorkspaceTypes().catch(() => null),
+      ])
+      const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
+      let merged: WorkspaceRecord[] = mapped
+      try {
+        const [cats, assigns] = await Promise.all([
+          fetchGovernanceCatalogSnapshot(),
+          fetchWorkspaceGovernanceAssignments(),
+        ])
+        setGovernanceCatalog((prev) => {
+          if (prev === cats) return prev
+          if (prev != null && cats != null && JSON.stringify(prev) === JSON.stringify(cats)) return prev
+          return cats
+        })
+        setGovernanceAssignments((prev) => {
+          const next = assigns.items ?? []
+          if (
+            prev.length === next.length
+            && prev.every((row, index) => row.workspace_id === next[index]?.workspace_id && row.version === next[index]?.version)
+          ) {
+            return prev
           }
-          }
-        } catch {
-          setWorkspaceActivityFeed([])
-        }
+          return next
+        })
         const byId = new Map((assigns.items ?? []).map((a) => [a.workspace_id, a]))
         merged = mapped.map((rec) => applyManagedGovernanceToRecord(rec, byId.get(rec.id), cats))
       } catch {
@@ -4454,8 +6158,30 @@ export function WorkspaceManagementPage() {
         setWorkspaceActivityFeed([])
       }
       setWorkspaceOrgBackendConnected(true)
-      setDirectoryWorkspaces(merged)
-      const orgNodes = [...orgList.items]
+      setDirectoryWorkspaces((prev) => {
+        const now = Date.now()
+        const pendingMap = pendingDirectoryWorkspaceIdsRef.current
+        for (const [id, createdAt] of pendingMap) {
+          if (now - createdAt > DIRECTORY_PENDING_WORKSPACE_TTL_MS) pendingMap.delete(id)
+        }
+        const pendingIds = new Set(pendingMap.keys())
+        for (const row of merged) {
+          pendingMap.delete(row.id)
+        }
+        const combined = mergeDirectoryWorkspaceRecords(merged, prev, pendingIds)
+        if (
+          prev.length === combined.length
+          && prev.every((row, index) => {
+            const next = combined[index]
+            return next && row.id === next.id && row.code === next.code && row.name === next.name
+          })
+        ) {
+          return prev
+        }
+        return combined
+      })
+      const orgNodes = [...(orgList.items ?? [])]
+        .filter((o) => isCorporateOrganizationForPicker(o))
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
         .map((o) => ({
           id: o.id,
@@ -4464,8 +6190,20 @@ export function WorkspaceManagementPage() {
           parentId: (typeof o.metadata?.parent_org_id === 'string' ? o.metadata.parent_org_id : null),
           version: o.version,
           metadata: o.metadata,
+          verifiedDomains: normalizeVerifiedDomainEntries(o.verified_domains),
         }))
-      setOrganizationNodes(orgNodes)
+      setOrganizationNodes((prev) => {
+        if (
+          prev.length === orgNodes.length
+          && prev.every((row, index) => {
+            const next = orgNodes[index]
+            return next && row.id === next.id && row.label === next.label && row.parentId === next.parentId
+          })
+        ) {
+          return prev
+        }
+        return orgNodes
+      })
       if (typeListResult) {
         setWorkspaceTypeOptions(
           typeListResult.items
@@ -4488,9 +6226,35 @@ export function WorkspaceManagementPage() {
     }
   }, [])
 
+  const applyWorkspaceMemberCounts = useCallback((counts: Record<string, number>) => {
+    setWorkspaceMemberCounts((prev) => {
+      const prevKeys = Object.keys(prev)
+      const nextKeys = Object.keys(counts)
+      if (
+        prevKeys.length === nextKeys.length
+        && nextKeys.every((key) => prev[key] === counts[key])
+      ) {
+        return prev
+      }
+      return counts
+    })
+  }, [])
+
+  const applyWorkspaceMembers = useCallback((members: MemberRecord[]) => {
+    setWorkspaceMembers((prev) => {
+      if (
+        prev.length === members.length
+        && prev.every((row, index) => row.id === members[index]?.id && row.version === members[index]?.version)
+      ) {
+        return prev
+      }
+      return members
+    })
+  }, [])
+
   const refreshWorkspaceMemberCounts = useCallback(async (workspaceIds: string[]) => {
     if (workspaceIds.length === 0) {
-      setWorkspaceMemberCounts({})
+      applyWorkspaceMemberCounts({})
       return
     }
     try {
@@ -4504,21 +6268,22 @@ export function WorkspaceManagementPage() {
           }
         })
       )
-      setWorkspaceMemberCounts(Object.fromEntries(pairs))
+      applyWorkspaceMemberCounts(Object.fromEntries(pairs))
       setWacBackendConnected(true)
     } catch {
       setWacBackendConnected(false)
     }
-  }, [])
+  }, [applyWorkspaceMemberCounts])
 
-  const refreshAllWorkspaceMembers = useCallback(async () => {
-    const workspaces = allWorkspacesForList
+  const refreshAllWorkspaceMembers = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true
+    const workspaces = workspacesEligibleForMemberListing
     if (workspaces.length === 0) {
-      setWorkspaceMembers([])
-      setWorkspaceMemberCounts({})
+      applyWorkspaceMembers([])
+      applyWorkspaceMemberCounts({})
       return
     }
-    setMembersLoading(true)
+    if (!silent) setMembersLoading(true)
     try {
       const userBySubject = new Map(identityUsers.map((u) => [u.id, u]))
       const results = await Promise.all(
@@ -4539,76 +6304,549 @@ export function WorkspaceManagementPage() {
           merged.push(mapWacMembershipToMemberRecord(row, userBySubject, { id: workspace.id, name: workspace.name }))
         }
       }
-      setWorkspaceMembers(merged)
-      setWorkspaceMemberCounts(counts)
+      applyWorkspaceMembers(merged)
+      applyWorkspaceMemberCounts(counts)
       setWacBackendConnected(true)
     } catch (e) {
       setWacBackendConnected(false)
-      setWorkspaceMembers([])
+      if (!silent) {
+      applyWorkspaceMembers([])
       const msg = e instanceof Error ? e.message : 'Could not load workspace members.'
       addToast({ variant: 'error', title: 'Workspace members unavailable', description: msg })
+      }
     } finally {
-      setMembersLoading(false)
+      if (!silent) setMembersLoading(false)
     }
-  }, [allWorkspacesForList, identityUsers, addToast])
+  }, [workspacesEligibleForMemberListing, identityUsers, addToast, applyWorkspaceMembers, applyWorkspaceMemberCounts])
 
   useEffect(() => {
-    void refreshWorkspaceOrgLists()
-  }, [refreshWorkspaceOrgLists])
+    if (!isMultiWorkspaceScope) return
+    if (
+      !myMembershipWorkspaceIdsLoaded
+      && !wmAuth.isPlatformAdmin
+      && !canViewAllActivityAudit
+    ) {
+      return
+    }
+    void refreshAllWorkspaceMembers({ silent: true })
+  }, [
+    isMultiWorkspaceScope,
+    tenantSelectedWorkspaceIdsKey,
+    refreshAllWorkspaceMembers,
+    myMembershipWorkspaceIdsLoaded,
+    wmAuth.isPlatformAdmin,
+    canViewAllActivityAudit,
+  ])
 
-  // The assistant chat mutates workspaces via executeTectonaAgentAction, which dispatches
-  // `tectona:workspace-created` / `tectona:workspace-updated` / `tectona:workspace-deleted` /
-  // `tectona:governance-updated`. Refetch so the directory and governance status update here immediately.
+  /**
+   * Fresh fetch for Members table (avoids stale React state after WebSocket events).
+   * Reloads workspaces + identity first, then memberships from those results.
+   */
+  const liveMembersPanelScopeRef = useRef({
+    isPersonalTenant,
+    activeWorkspaceId: tenant?.workspaceId ?? null,
+    selectedWorkspaceIds: tenant?.selectedWorkspaceIds ?? [],
+    canViewAllActivityAudit,
+    isPlatformAdmin: wmAuth.isPlatformAdmin,
+    myMembershipWorkspaceIds,
+    myMembershipWorkspaceIdsLoaded,
+    myAdminMembershipWorkspaceIds,
+    myManagedWorkspaceIds,
+    myOwnedWorkspaceIds,
+  })
+  liveMembersPanelScopeRef.current = {
+    isPersonalTenant,
+    activeWorkspaceId: tenant?.workspaceId ?? null,
+    selectedWorkspaceIds: tenant?.selectedWorkspaceIds ?? [],
+    canViewAllActivityAudit,
+    isPlatformAdmin: wmAuth.isPlatformAdmin,
+    myMembershipWorkspaceIds,
+    myMembershipWorkspaceIdsLoaded,
+    myAdminMembershipWorkspaceIds,
+    myManagedWorkspaceIds,
+    myOwnedWorkspaceIds,
+  }
+
+  const refreshLiveMembersPanel = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true
+    const scope = liveMembersPanelScopeRef.current
+    if (!silent) setMembersLoading(true)
+    try {
+      const [workspaceRows, identityRes] = await Promise.all([
+        fetchAllWorkspaceOrgWorkspaces(),
+        fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] })),
+      ])
+      const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
+      setDirectoryWorkspaces((prev) => {
+        // Prefer keeping governance overlays from previous merge when ids match.
+        const prevById = new Map(prev.map((w) => [w.id, w]))
+        const mergedFromServer = mapped.map((rec) => {
+          const existing = prevById.get(rec.id)
+          return existing
+            ? {
+                ...rec,
+                governanceConfigurationStatus: existing.governanceConfigurationStatus,
+                complianceStatus: existing.complianceStatus,
+              }
+            : rec
+        })
+        const now = Date.now()
+        const pendingMap = pendingDirectoryWorkspaceIdsRef.current
+        for (const [id, createdAt] of pendingMap) {
+          if (now - createdAt > DIRECTORY_PENDING_WORKSPACE_TTL_MS) pendingMap.delete(id)
+        }
+        const pendingIds = new Set(pendingMap.keys())
+        for (const row of mapped) {
+          pendingMap.delete(row.id)
+        }
+        const next = mergeDirectoryWorkspaceRecords(mergedFromServer, prev, pendingIds)
+        if (
+          next.length === prev.length
+          && next.every((row, index) => {
+            const prior = prev[index]
+            return prior?.id === row.id && prior.code === row.code && prior.name === row.name
+          })
+        ) {
+          return prev
+        }
+        return next
+      })
+      const users = identityRes.items ?? []
+      setIdentityUsers((prev) => {
+        if (
+          prev.length === users.length
+          && prev.every((user, index) => user.id === users[index]?.id)
+        ) {
+          return prev
+        }
+        return users
+      })
+      setWorkspaceOrgBackendConnected(true)
+
+      // Same visibility as Directory / KPI — never load org-wide members into personal view.
+      const scopedWorkspaces = filterWorkspacesEligibleForWacMemberListing(
+        selectWorkspacesForManagementView(mapped, {
+          isPersonalTenant: scope.isPersonalTenant,
+          activeWorkspaceId: scope.activeWorkspaceId,
+          selectedWorkspaceIds: scope.selectedWorkspaceIds,
+          canViewAllActivityAudit: scope.canViewAllActivityAudit,
+          isPlatformAdmin: scope.isPlatformAdmin,
+          myMembershipWorkspaceIds: scope.myMembershipWorkspaceIds,
+          myMembershipWorkspaceIdsLoaded: scope.myMembershipWorkspaceIdsLoaded,
+          myManagedWorkspaceIds: scope.myManagedWorkspaceIds,
+          myOwnedWorkspaceIds: scope.myOwnedWorkspaceIds,
+        }),
+        {
+          canViewAllActivityAudit: scope.canViewAllActivityAudit,
+          isPlatformAdmin: scope.isPlatformAdmin,
+          membershipWorkspaceIds: new Set(scope.myMembershipWorkspaceIds),
+          adminMembershipWorkspaceIds: new Set(scope.myAdminMembershipWorkspaceIds),
+        },
+      )
+
+      if (scopedWorkspaces.length === 0) {
+        applyWorkspaceMembers([])
+        applyWorkspaceMemberCounts({})
+        return
+      }
+
+      const userBySubject = new Map(users.map((u) => [u.id, u]))
+      const results = await Promise.all(
+        scopedWorkspaces.map(async (w) => {
+          try {
+            const res = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, w.id)
+            return { workspace: w, items: res.items, total: res.total }
+          } catch {
+            return { workspace: w, items: [] as WacMembershipDto[], total: 0 }
+          }
+        })
+      )
+      const counts: Record<string, number> = {}
+      const merged: MemberRecord[] = []
+      for (const { workspace, items, total } of results) {
+        counts[workspace.id] = total
+        for (const row of items) {
+          merged.push(mapWacMembershipToMemberRecord(row, userBySubject, { id: workspace.id, name: workspace.name }))
+        }
+      }
+      applyWorkspaceMembers(merged)
+      applyWorkspaceMemberCounts(counts)
+      setWacBackendConnected(true)
+    } catch (e) {
+      setWacBackendConnected(false)
+      if (!silent) {
+        const msg = e instanceof Error ? e.message : 'Could not refresh workspace members.'
+        addToast({ variant: 'error', title: 'Workspace members unavailable', description: msg })
+      }
+    } finally {
+      if (!silent) setMembersLoading(false)
+    }
+  }, [addToast, applyWorkspaceMembers, applyWorkspaceMemberCounts])
+
+  const refreshWorkspaceOrgListsRef = useRef(refreshWorkspaceOrgLists)
+  refreshWorkspaceOrgListsRef.current = refreshWorkspaceOrgLists
+  const refreshWorkspaceActivityFeedRef = useRef(refreshWorkspaceActivityFeed)
+  refreshWorkspaceActivityFeedRef.current = refreshWorkspaceActivityFeed
+  const refreshLiveMembersPanelRef = useRef(refreshLiveMembersPanel)
+  refreshLiveMembersPanelRef.current = refreshLiveMembersPanel
+
+  useEffect(() => {
+    if (!wmShellReady) return
+    void refreshWorkspaceOrgListsRef.current()
+  }, [wmShellReady])
+
+  useEffect(() => {
+    if (!wmDeferredReady) return
+    void refreshWorkspaceActivityFeedRef.current()
+  }, [wmDeferredReady])
+
+  const refreshIdentityUserDirectory = useCallback(async () => {
+    try {
+      const res = await fetchIdentityUsers({ limit: 500 })
+      setIdentityUsers(res.items ?? [])
+      return res.items ?? []
+    } catch {
+      setIdentityUsers([])
+      return [] as IdentityUserDto[]
+    }
+  }, [])
+
+  const refreshMyOrgDirectoryWorkspaceIds = useCallback(async () => {
+    const subjectId = getSession()?.user?.id?.trim()
+    if (!subjectId) {
+      setMyOrgDirectoryWorkspaceIds([])
+      return
+    }
+    try {
+      const rows = await fetchIdentityWorkspaceOrgMemberships(subjectId)
+      const ids = [
+        ...new Set(
+          rows
+            .filter((row) => isWorkspaceDirectoryManagedRole(row.role_code))
+            .map((row) => row.workspace_id.trim())
+            .filter(Boolean),
+        ),
+      ]
+      setMyOrgDirectoryWorkspaceIds(ids)
+    } catch {
+      setMyOrgDirectoryWorkspaceIds([])
+    }
+  }, [])
+
+  const refreshMyMembershipWorkspaceIds = useCallback(async () => {
+    const subjectId = getSession()?.user?.id?.trim()
+    if (!subjectId) {
+      setMyMembershipWorkspaceIds([])
+      setMyAdminMembershipWorkspaceIds([])
+      setMyMembershipWorkspaceIdsLoaded(true)
+      return
+    }
+    try {
+      const res = await fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly: true })
+      const items = res.items ?? []
+      const ids = [
+        ...new Set(
+          items
+            .filter((row) =>
+              membershipGrantsOrganizationWorkspaceSwitcherAccess(row.participation_scope_code),
+            )
+            .map((row) => String(row.workspace_id || '').trim())
+            .filter(Boolean),
+        ),
+      ]
+      const adminIds = [
+        ...new Set(
+          items
+            .filter((row) => isWorkspaceDirectoryManagedRole(row.role_code))
+            .map((row) => String(row.workspace_id || '').trim())
+            .filter(Boolean),
+        ),
+      ]
+      setMyMembershipWorkspaceIds(ids)
+      setMyAdminMembershipWorkspaceIds(adminIds)
+      setWacBackendConnected(true)
+    } catch {
+      // Keep last known seeds on transient WAC errors so Directory does not blank out.
+      setWacBackendConnected(false)
+    } finally {
+      setMyMembershipWorkspaceIdsLoaded(true)
+    }
+  }, [])
+
+  /** Keep directory, identity people, and members lists fresh without a manual reload. */
+  const refreshLiveDirectoryData = useCallback(async () => {
+    await Promise.all([
+      refreshWorkspaceOrgLists(),
+      refreshIdentityUserDirectory(),
+      refreshMyMembershipWorkspaceIds(),
+      refreshMyOrgDirectoryWorkspaceIds(),
+    ])
+  }, [
+    refreshWorkspaceOrgLists,
+    refreshIdentityUserDirectory,
+    refreshMyMembershipWorkspaceIds,
+    refreshMyOrgDirectoryWorkspaceIds,
+  ])
+
+  const refreshLiveDirectoryDataRef = useRef(refreshLiveDirectoryData)
+  refreshLiveDirectoryDataRef.current = refreshLiveDirectoryData
+  const refreshIdentityUserDirectoryRef = useRef(refreshIdentityUserDirectory)
+  refreshIdentityUserDirectoryRef.current = refreshIdentityUserDirectory
+  const refreshMyMembershipWorkspaceIdsRef = useRef(refreshMyMembershipWorkspaceIds)
+  refreshMyMembershipWorkspaceIdsRef.current = refreshMyMembershipWorkspaceIds
+  const refreshMyOrgDirectoryWorkspaceIdsRef = useRef(refreshMyOrgDirectoryWorkspaceIds)
+  refreshMyOrgDirectoryWorkspaceIdsRef.current = refreshMyOrgDirectoryWorkspaceIds
+
+  const deferredActivePanelRef = useRef(deferredActivePanel)
+  deferredActivePanelRef.current = deferredActivePanel
+
+  useEffect(() => {
+    if (!wmShellReady) return
+    const onTenantChanged = () => {
+      void refreshLiveDirectoryDataRef.current()
+      if (deferredActivePanelRef.current === 'members') {
+        void refreshLiveMembersPanelRef.current({ silent: true })
+      }
+    }
+    window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+    return () => window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+  }, [wmShellReady])
+
+  useEffect(() => {
+    if (!wmShellReady) return
+    void refreshMyMembershipWorkspaceIds()
+    void refreshMyOrgDirectoryWorkspaceIds()
+  }, [wmShellReady, refreshMyMembershipWorkspaceIds, refreshMyOrgDirectoryWorkspaceIds])
+
+  useEffect(() => {
+    if (!wmDeferredReady) return
+    const subjectId = currentSessionUser?.id?.trim()
+    if (!subjectId) {
+      setSessionOnboardingStatus(null)
+      return
+    }
+    let cancelled = false
+    void fetchOnboardingStatus(TECTONA_WAC_APP_ID, subjectId)
+      .then((row) => {
+        if (!cancelled) setSessionOnboardingStatus(row.onboarding_status)
+      })
+      .catch(() => {
+        if (!cancelled) setSessionOnboardingStatus(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [wmDeferredReady, currentSessionUser?.id])
+
+  /** Notify other listeners (KB mirror, sibling panels) that directory/identity data changed. */
+  const emitWorkspaceDirectoryMutation = useCallback((eventName:
+    | 'tectona:workspace-created'
+    | 'tectona:workspace-updated'
+    | 'tectona:workspace-deleted'
+    | 'tectona:identity-updated'
+    | 'tectona:governance-updated'
+  ) => {
+    if (typeof window === 'undefined') return
+    window.dispatchEvent(new CustomEvent(eventName))
+  }, [])
+
+  const staleJoinApprovalCleanupRef = useRef(new Set<string>())
+
+  useEffect(() => {
+    const subjectId = currentSessionUser?.id?.trim()
+    if (!subjectId || sessionOnboardingStatus == null || sessionOnboardingStatus === 'join_pending') {
+      return
+    }
+
+    const staleRows = allWorkspacesForList.filter((row) => {
+      if (!row.adminApprovalPending || staleJoinApprovalCleanupRef.current.has(row.id)) return false
+      const ownerId =
+        row.ownerIdentityRef?.trim()
+        || row.createdByIdentityRef?.trim()
+        || row.createdBy?.trim()
+      return ownerId === subjectId
+    })
+    if (staleRows.length === 0) return
+
+    void (async () => {
+      for (const row of staleRows) {
+        staleJoinApprovalCleanupRef.current.add(row.id)
+        try {
+          await clearDirectoryJoinApprovalPendingMetadata(
+            {
+              id: row.id,
+              version: row.version,
+              metadata: row.metadata ?? null,
+            },
+            subjectId,
+          )
+        } catch {
+          staleJoinApprovalCleanupRef.current.delete(row.id)
+        }
+      }
+      await refreshLiveDirectoryData()
+      emitWorkspaceDirectoryMutation('tectona:workspace-updated')
+    })()
+  }, [
+    allWorkspacesForList,
+    currentSessionUser?.id,
+    emitWorkspaceDirectoryMutation,
+    refreshLiveDirectoryData,
+    sessionOnboardingStatus,
+  ])
+
+  const [workspaceDirectoryWsLive, setWorkspaceDirectoryWsLive] = useState(false)
+
+  // Keep WebSocket lifetime independent of refresh callback identity (avoids accept/close storms).
+  useEffect(() => {
+    if (!wmDeferredReady) return
+    const stopRealtime = initWorkspaceDirectoryRealtime()
+    const unsubConnected = subscribeWorkspaceDirectoryRealtimeConnected(setWorkspaceDirectoryWsLive)
+    return () => {
+      unsubConnected()
+      stopRealtime()
+    }
+  }, [wmDeferredReady])
+
+  useEffect(() => {
+    setWorkspaceDirectoryRealtimeRefreshHandler(async () => {
+      await refreshLiveDirectoryDataRef.current()
+      await refreshLiveMembersPanelRef.current({ silent: true })
+    })
+    return () => setWorkspaceDirectoryRealtimeRefreshHandler(null)
+  }, [])
+
+  useEffect(() => {
+    if (!wmDeferredReady) return
+    void refreshIdentityUserDirectoryRef.current()
+  }, [wmDeferredReady])
+
+  // Auto-refresh when returning to the tab / window (e.g. after creating a user in another flow).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      void refreshLiveMembersPanelRef.current({ silent: true })
+    }
+    const onFocus = () => {
+      void refreshLiveMembersPanelRef.current({ silent: true })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [])
+
+  // Defer live pulls until after the panel paint (keeps section clicks responsive).
+  useEffect(() => {
+    if (deferredActivePanel !== 'members') return
+    const timer = window.setTimeout(() => {
+      void refreshLiveMembersPanelRef.current()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [deferredActivePanel])
+
+  // Platform / audit viewers: load membership rows for directory participation badges.
+  useEffect(() => {
+    if (deferredActivePanel !== 'directory') return
+    if (!wmAuth.isPlatformAdmin && !canViewAllActivityAudit) return
+    if (workspaceMembers.length > 0) return
+    const timer = window.setTimeout(() => {
+      void refreshAllWorkspaceMembers({ silent: true })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [
+    deferredActivePanel,
+    wmAuth.isPlatformAdmin,
+    canViewAllActivityAudit,
+    workspaceMembers.length,
+    refreshAllWorkspaceMembers,
+  ])
+
+  // Poll fallback while Directory / Members are open (faster when WS is down).
+  // Always silent — poll must not flash the Loading state.
+  useEffect(() => {
+    if (deferredActivePanel !== 'directory' && deferredActivePanel !== 'members') return
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return
+      if (deferredActivePanel === 'members') {
+        void refreshLiveMembersPanelRef.current({ silent: true })
+      } else {
+        void refreshLiveDirectoryDataRef.current()
+      }
+    }
+    const startTimer = window.setTimeout(tick, 0)
+    const intervalMs = workspaceDirectoryWsLive ? 12_000 : 4_000
+    const timer = window.setInterval(tick, intervalMs)
+    return () => {
+      window.clearTimeout(startTimer)
+      window.clearInterval(timer)
+    }
+  }, [deferredActivePanel, workspaceDirectoryWsLive])
+
+  useEffect(() => {
+    if (deferredActivePanel !== 'activity') return
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return
+      void refreshWorkspaceOrgListsRef.current()
+    }
+    const startTimer = window.setTimeout(tick, 0)
+    const timer = window.setInterval(tick, 15000)
+    return () => {
+      window.clearTimeout(startTimer)
+      window.clearInterval(timer)
+    }
+  }, [deferredActivePanel])
+
+  // Custom events from agent / other modules
   useEffect(() => {
     const onMutated = () => {
-      void refreshWorkspaceOrgLists()
+      void refreshLiveDirectoryDataRef.current()
+      void refreshLiveMembersPanelRef.current({ silent: true })
     }
     window.addEventListener('tectona:workspace-created', onMutated)
     window.addEventListener('tectona:workspace-updated', onMutated)
     window.addEventListener('tectona:workspace-deleted', onMutated)
     window.addEventListener('tectona:governance-updated', onMutated)
+    window.addEventListener('tectona:identity-updated', onMutated)
     return () => {
       window.removeEventListener('tectona:workspace-created', onMutated)
       window.removeEventListener('tectona:workspace-updated', onMutated)
       window.removeEventListener('tectona:workspace-deleted', onMutated)
       window.removeEventListener('tectona:governance-updated', onMutated)
-    }
-  }, [refreshWorkspaceOrgLists])
-
-  useEffect(() => {
-    if (activePanel !== 'activity') return
-    const timer = window.setInterval(() => {
-      void refreshWorkspaceOrgLists()
-    }, 15000)
-    return () => window.clearInterval(timer)
-  }, [activePanel, refreshWorkspaceOrgLists])
-
-  const refreshIdentityUserDirectory = useCallback(async () => {
-    try {
-      const res = await fetchIdentityUsers({ limit: 300 })
-      setIdentityUsers(res.items ?? [])
-    } catch {
-      setIdentityUsers([])
+      window.removeEventListener('tectona:identity-updated', onMutated)
     }
   }, [])
 
-  useEffect(() => {
-    void refreshIdentityUserDirectory()
-  }, [refreshIdentityUserDirectory])
+  const workspaceListIdsKey = useMemo(
+    () => workspacesEligibleForMemberListing.map((w) => w.id).sort().join('\0'),
+    [workspacesEligibleForMemberListing],
+  )
 
   useEffect(() => {
-    if (!workspaceOrgBackendConnected || allWorkspacesForList.length === 0) return
-    void refreshWorkspaceMemberCounts(allWorkspacesForList.map((w) => w.id))
-  }, [workspaceOrgBackendConnected, allWorkspacesForList, refreshWorkspaceMemberCounts])
+    if (!workspaceOrgBackendConnected || workspaceListIdsKey.length === 0) return
+    if (
+      !myMembershipWorkspaceIdsLoaded
+      && !wmAuth.isPlatformAdmin
+      && !canViewAllActivityAudit
+    ) {
+      return
+    }
+    void refreshWorkspaceMemberCounts(workspaceListIdsKey.split('\0'))
+  }, [
+    workspaceOrgBackendConnected,
+    workspaceListIdsKey,
+    refreshWorkspaceMemberCounts,
+    myMembershipWorkspaceIdsLoaded,
+    wmAuth.isPlatformAdmin,
+    canViewAllActivityAudit,
+  ])
 
-  useEffect(() => {
-    if (activePanel !== 'members') return
-    void refreshAllWorkspaceMembers()
-  }, [activePanel, refreshAllWorkspaceMembers])
-
+  // Secondary membership remap when identity directory arrives — silent to avoid double loading flash.
   useEffect(() => {
     if (activePanel !== 'members' || identityUsers.length === 0) return
-    void refreshAllWorkspaceMembers()
+    void refreshAllWorkspaceMembers({ silent: true })
   }, [identityUsers, activePanel, refreshAllWorkspaceMembers])
 
   const [newWorkspaceDrawerOpen, setNewWorkspaceDrawerOpen] = useState(false)
@@ -4620,6 +6858,7 @@ export function WorkspaceManagementPage() {
     Partial<Record<NewWorkspaceWizardField, boolean>>
   >({})
   const [wizardReviewAcknowledged, setWizardReviewAcknowledged] = useState(false)
+  const lastAutoCodeNameRef = useRef('')
   const [ownershipOverlay, setOwnershipOverlay] = useState<NewWorkspaceOwnershipOverlay | null>(null)
   const [ownershipOverlayQuery, setOwnershipOverlayQuery] = useState('')
   const [inviteContactEmail, setInviteContactEmail] = useState('')
@@ -4646,6 +6885,8 @@ export function WorkspaceManagementPage() {
 
   // â”€â”€ Row context-menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null)
+  const [grantingParentAccessKey, setGrantingParentAccessKey] = useState<string | null>(null)
+  const [joiningOrganizationKey, setJoiningOrganizationKey] = useState<string | null>(null)
   const [confirmDeleteGovernanceOpen, setConfirmDeleteGovernanceOpen] = useState(false)
   const [confirmDeleteGovernanceTarget, setConfirmDeleteGovernanceTarget] = useState<WorkspaceRecord | null>(null)
   const [isDeletingGovernance, setIsDeletingGovernance] = useState(false)
@@ -4809,14 +7050,18 @@ export function WorkspaceManagementPage() {
   const selectWorkspacePanel = useCallback(
     (panel: WorkspacePanel) => {
       if (panel === activePanel) return
-      closeAllWorkspaceManagementOverlays()
+      startTransition(() => {
       setActivePanel(panel)
+      })
     },
-    [activePanel, closeAllWorkspaceManagementOverlays]
+    [activePanel],
   )
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
     closeAllWorkspaceManagementOverlays()
+    }, 0)
+    return () => window.clearTimeout(timer)
     // Hanya saat pindah section; jangan ikut perubahan callback/drawer state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePanel])
@@ -4884,23 +7129,23 @@ export function WorkspaceManagementPage() {
     if (!assignGovernanceWorkspace || !assignGovernanceForm || assignGovernanceSubmitting) return
     const f = assignGovernanceForm
     if (!f.governanceTemplateId.trim()) {
-      setAssignGovernanceError('Pilih model tata kelola (governance template) terlebih dahulu.')
+      setAssignGovernanceError('Select a governance model (governance template) first.')
       return
     }
     if (!f.workflowPolicyId.trim()) {
-      setAssignGovernanceError('Kebijakan workflow belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      setAssignGovernanceError('Workflow policy is not set — choose an enterprise operating model or use Governance Override (admin).')
       return
     }
     if (!f.slaPolicyId.trim()) {
-      setAssignGovernanceError('Kebijakan SLA belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      setAssignGovernanceError('SLA policy is not set — choose an enterprise operating model or use Governance Override (admin).')
       return
     }
     if (!f.namingConventionId.trim()) {
-      setAssignGovernanceError('Konvensi penamaan belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      setAssignGovernanceError('Naming convention is not set — choose an enterprise operating model or use Governance Override (admin).')
       return
     }
     if (!f.approvalPolicyId.trim()) {
-      setAssignGovernanceError('Kebijakan persetujuan belum terisi — pilih model operasi enterprise atau gunakan Governance Override (admin).')
+      setAssignGovernanceError('Approval policy is not set — choose an enterprise operating model or use Governance Override (admin).')
       return
     }
     if (
@@ -4910,7 +7155,7 @@ export function WorkspaceManagementPage() {
       if (!assignGovernanceOverrideReason.trim()) {
         setAssignGovernanceOverrideOpen(true)
         setAssignGovernanceError(
-          'Governance override: pilihan policy berbeda dari model operasi terpilih. Buka bagian “Governance Override”, isi alasan audit, lalu Apply.'
+          'Governance override: the selected policies differ from the chosen operating model. Open the "Governance Override" section, enter an audit reason, then Apply.'
         )
         return
       }
@@ -5295,17 +7540,81 @@ export function WorkspaceManagementPage() {
     if (!confirmRemoveMemberTarget || isRemovingMember) return
     setIsRemovingMember(true)
     const session = getSession()
+    const actorId = session?.user?.id
+    const wacRefs = confirmRemoveMemberTarget.memberships.filter(
+      (ref) => ref.participationSource !== 'creator',
+    )
+    const removedMembershipIds = new Set(wacRefs.map((ref) => ref.membershipId))
+    const removedSubjectId = confirmRemoveMemberTarget.subjectId
+    const removedMemberName = confirmRemoveMemberTarget.name
     try {
-      for (const ref of confirmRemoveMemberTarget.memberships) {
-        await deleteWorkspaceMembership(TECTONA_WAC_APP_ID, ref.membershipId, {
-          actorId: session?.user?.id,
+      if (actorId && removedSubjectId === actorId) {
+        addToast({
+          variant: 'error',
+          title: 'Cannot remove yourself',
+          description: 'Use account settings or ask another administrator to remove your access.',
         })
+        return
       }
-      await refreshAllWorkspaceMembers()
+      if (wacRefs.length === 0) {
+        addToast({
+          variant: 'default',
+          title: 'Nothing to revoke',
+          description: 'This person has no WAC memberships to remove (Creator-only participation is not a membership).',
+        })
+        setConfirmRemoveMemberOpen(false)
+        setConfirmRemoveMemberTarget(null)
+        return
+      }
+      let revokedCount = 0
+      for (const ref of wacRefs) {
+        try {
+        await deleteWorkspaceMembership(TECTONA_WAC_APP_ID, ref.membershipId, {
+            actorId,
+          })
+          revokedCount += 1
+        } catch (membershipErr) {
+          const message = membershipErr instanceof Error ? membershipErr.message : String(membershipErr)
+          if (!/forbidden|403|admin forbidden/i.test(message)) {
+            throw membershipErr
+          }
+        }
+      }
+      let purgedWorkspaceCount = 0
+      try {
+        const purgeResult = await purgeOwnedWorkspacesForIdentity(removedSubjectId, { actorId })
+        purgedWorkspaceCount = purgeResult.purged_count ?? 0
+      } catch (purgeErr) {
+        const message = purgeErr instanceof Error ? purgeErr.message : String(purgeErr)
+        if (!/not found|404/i.test(message)) {
+          throw purgeErr
+        }
+      }
+      let identityDeleted = false
+      try {
+        await deleteIdentityUser(removedSubjectId, { actorId })
+        identityDeleted = true
+        setIdentityUsers((prev) => prev.filter((user) => user.id !== removedSubjectId))
+      } catch (identityErr) {
+        const message = identityErr instanceof Error ? identityErr.message : String(identityErr)
+        const notFound = /not found|404/i.test(message)
+        if (!notFound) {
+          throw identityErr
+        }
+      }
+      setWorkspaceMembers((prev) => {
+        const next = prev.filter((row) => !removedMembershipIds.has(row.id))
+        const stillHasWac = next.some((row) => row.subjectId === removedSubjectId)
+        return stillHasWac ? next : next.filter((row) => row.subjectId !== removedSubjectId)
+      })
+      await refreshLiveMembersPanel({ silent: true })
+      emitWorkspaceDirectoryMutation('tectona:identity-updated')
       addToast({
         variant: 'success',
         title: 'Member removed',
-        description: `${confirmRemoveMemberTarget.name} was removed from ${confirmRemoveMemberTarget.memberships.length} workspace membership(s).`,
+        description: identityDeleted
+          ? `${removedMemberName} was removed from ${revokedCount} workspace membership(s), ${purgedWorkspaceCount} owned workspace(s) deleted, and their Tectona account was removed. They can Sign up again with the same email and workspace address.`
+          : `${removedMemberName} was removed from ${revokedCount} workspace membership(s)${purgedWorkspaceCount > 0 ? ` and ${purgedWorkspaceCount} owned workspace(s) deleted` : ''}.`,
       })
       setConfirmRemoveMemberOpen(false)
       setConfirmRemoveMemberTarget(null)
@@ -5584,8 +7893,8 @@ export function WorkspaceManagementPage() {
       activity: 'Activity',
     }
     const filters: string[] = []
-    if (searchQuery.trim()) filters.push(`pencarian: "${searchQuery.trim()}"`)
-    if (focusedLoadWorkspaceCode) filters.push(`fokus load chart: ${focusedLoadWorkspaceCode}`)
+    if (searchQuery.trim()) filters.push(`search: "${searchQuery.trim()}"`)
+    if (focusedLoadWorkspaceCode) filters.push(`load chart focus: ${focusedLoadWorkspaceCode}`)
     return {
       view_label: panelLabels[activePanel] ?? activePanel,
       entity_type: editWorkspaceTarget ? 'workspace' : null,
@@ -5594,7 +7903,7 @@ export function WorkspaceManagementPage() {
       workspace_code: editWorkspaceTarget?.code ?? null,
       workspace_name: editWorkspaceTarget?.name ?? null,
       filters_summary: filters.length > 0 ? filters.join('; ') : null,
-      notes: editWorkspaceDrawerOpen ? ['drawer edit workspace terbuka'] : undefined,
+      notes: editWorkspaceDrawerOpen ? ['edit workspace drawer open'] : undefined,
     }
   }, [
     activePanel,
@@ -5615,12 +7924,26 @@ export function WorkspaceManagementPage() {
     technicalOwnerQuery: string
     ownershipIdentityMode: WorkspaceOwnershipIdentityMode
     primaryOrganizationId: string
+    verifiedDomains: VerifiedDomainEntry[]
     lifecycleStage: WorkspaceLifecycleStage
   } | null>(null)
   const [editWorkspaceError, setEditWorkspaceError] = useState<string | null>(null)
   const [isSubmittingEditWorkspace, setIsSubmittingEditWorkspace] = useState(false)
+  const [workspacePendingAccessRequests, setWorkspacePendingAccessRequests] = useState<AccessRequestDto[]>([])
+  const [workspacePendingAccessLoading, setWorkspacePendingAccessLoading] = useState(false)
+  const [workspacePendingAccessError, setWorkspacePendingAccessError] = useState<string | null>(null)
+  const [decidingAccessRequestId, setDecidingAccessRequestId] = useState<string | null>(null)
+  const [approveAccessDialogRequest, setApproveAccessDialogRequest] = useState<AccessRequestDto | null>(null)
+  const [accessRequestWorkspaceNameOverrides, setAccessRequestWorkspaceNameOverrides] = useState<
+    Record<string, string>
+  >({})
+  const [linkPersonalOrgHomeId, setLinkPersonalOrgHomeId] = useState('')
+  const [linkingPersonalToOrgTree, setLinkingPersonalToOrgTree] = useState(false)
+  const [unlinkPersonalFromOrgTreeOpen, setUnlinkPersonalFromOrgTreeOpen] = useState(false)
+  const [unlinkingPersonalFromOrgTree, setUnlinkingPersonalFromOrgTree] = useState(false)
   /** Nilai owner sebelum mode pencarian; dipulihkan saat Esc membatalkan perubahan. */
-  const editOwnershipRevertRef = useRef<{ business: string | null; technical: string | null }>({
+  const editOwnershipRevertRef = useRef<{ owner: string | null; business: string | null; technical: string | null }>({
+    owner: null,
     business: null,
     technical: null,
   })
@@ -5628,16 +7951,18 @@ export function WorkspaceManagementPage() {
   /** Tab/ArrowDown ke listbox: jangan jalankan onBlur revert/commit pada field pencarian. */
   const ownershipPickerSkipBlurCommitRef = useRef(false)
 
-  const cancelEditWorkspaceOwnershipSearch = useCallback((target: 'business' | 'technical') => {
+  const cancelEditWorkspaceOwnershipSearch = useCallback((target: 'owner' | 'business' | 'technical') => {
     const revert = editOwnershipRevertRef.current[target]
     suppressEditOwnershipBlurCommitRef.current = true
     setEditWorkspaceForm((f) => {
       if (!f) return f
       if (revert === null) {
+        if (target === 'owner') return { ...f, ownerQuery: '' }
         return target === 'business'
           ? { ...f, businessOwnerQuery: '' }
           : { ...f, technicalOwnerQuery: '' }
       }
+      if (target === 'owner') return { ...f, owner: revert, ownerQuery: revert }
       if (target === 'business') {
         return { ...f, businessOwner: revert, businessOwnerQuery: revert }
       }
@@ -5646,9 +7971,13 @@ export function WorkspaceManagementPage() {
     editOwnershipRevertRef.current[target] = null
   }, [])
 
-  const beginEditWorkspaceOwnershipSearch = useCallback((target: 'business' | 'technical') => {
+  const beginEditWorkspaceOwnershipSearch = useCallback((target: 'owner' | 'business' | 'technical') => {
     setEditWorkspaceForm((f) => {
       if (!f) return f
+      if (target === 'owner') {
+        editOwnershipRevertRef.current.owner = f.owner
+        return { ...f, owner: '', ownerQuery: '' }
+      }
       if (target === 'business') {
         editOwnershipRevertRef.current.business = f.businessOwner
         return { ...f, businessOwner: '', businessOwnerQuery: '' }
@@ -5658,24 +7987,140 @@ export function WorkspaceManagementPage() {
     })
   }, [])
 
-  const clearEditWorkspaceOwnershipRevert = useCallback((target: 'business' | 'technical') => {
+  const clearEditWorkspaceOwnershipRevert = useCallback((target: 'owner' | 'business' | 'technical') => {
     editOwnershipRevertRef.current[target] = null
   }, [])
 
   const openEditWorkspaceOwnershipSearchFocus = useCallback(
-    (target: 'business' | 'technical', currentOwner: string) => {
+    (target: 'owner' | 'business' | 'technical', currentOwner: string) => {
       if (editOwnershipRevertRef.current[target] === null) {
         editOwnershipRevertRef.current[target] = currentOwner
       }
+      void refreshIdentityUserDirectory()
     },
-    []
+    [refreshIdentityUserDirectory]
   )
+
+  const organizationHomeWorkspaceOptions = useMemo(
+    () =>
+      directoryWorkspaces.filter(
+        (workspace) => workspace.type === 'Organization' && !workspace.parentWorkspaceId,
+      ),
+    [directoryWorkspaces],
+  )
+
+  const canLinkEditWorkspaceToOrgTree = useMemo(() => {
+    if (!editWorkspaceTarget?.isPersonalWorkspace) return false
+    if (editWorkspaceTarget.personalOrgScope !== 'standalone') return false
+    if (!currentSessionUser?.id) return false
+    if (editWorkspaceTarget.ownerIdentityRef === currentSessionUser.id) return true
+    return isPersonalTenant && tenant?.workspaceId === editWorkspaceTarget.id
+  }, [editWorkspaceTarget, currentSessionUser?.id, isPersonalTenant, tenant?.workspaceId])
+
+  const canUnlinkEditWorkspaceFromOrgTree = useMemo(() => {
+    if (!editWorkspaceTarget?.isPersonalWorkspace) return false
+    if (editWorkspaceTarget.personalOrgScope !== 'organization_tree') return false
+    if (!currentSessionUser?.id) return false
+    if (editWorkspaceTarget.ownerIdentityRef === currentSessionUser.id) return true
+    return isPersonalTenant && tenant?.workspaceId === editWorkspaceTarget.id
+  }, [editWorkspaceTarget, currentSessionUser?.id, isPersonalTenant, tenant?.workspaceId])
+
+  const submitUnlinkPersonalWorkspaceFromOrgTree = useCallback(async () => {
+    if (!editWorkspaceTarget || unlinkingPersonalFromOrgTree) return
+    const session = getSession()
+    const actorId = session?.user?.id
+    if (!actorId) {
+      addToast({
+        variant: 'error',
+        title: 'Sign in required',
+        description: 'You must be signed in to leave the organization tree.',
+      })
+      return
+    }
+    setUnlinkingPersonalFromOrgTree(true)
+    try {
+      const updated = await unlinkPersonalWorkspaceFromOrgTree(
+        editWorkspaceTarget.id,
+        { identity_ref: actorId },
+        { actorId },
+      )
+      const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(updated)
+      setEditWorkspaceTarget(mapped)
+      setDirectoryWorkspaces((prev) => prev.map((row) => (row.id === mapped.id ? mapped : row)))
+      addToast({
+        variant: 'success',
+        title: 'Left organization tree',
+        description: `${mapped.name} is now a standalone personal workspace in Directory.`,
+      })
+      setUnlinkPersonalFromOrgTreeOpen(false)
+      await refreshWorkspaceOrgLists()
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Could not leave organization tree',
+        description: err instanceof Error ? err.message : 'Please try again.',
+      })
+    } finally {
+      setUnlinkingPersonalFromOrgTree(false)
+    }
+  }, [addToast, editWorkspaceTarget, refreshWorkspaceOrgLists, unlinkingPersonalFromOrgTree])
+
+  const submitLinkPersonalWorkspaceToOrgTree = useCallback(async () => {
+    if (!editWorkspaceTarget || !linkPersonalOrgHomeId.trim() || linkingPersonalToOrgTree) return
+    const session = getSession()
+    const actorId = session?.user?.id
+    if (!actorId) {
+      addToast({
+        variant: 'error',
+        title: 'Sign in required',
+        description: 'You must be signed in to link your personal workspace to an organization.',
+      })
+      return
+    }
+    setLinkingPersonalToOrgTree(true)
+    try {
+      const updated = await linkPersonalWorkspaceToOrgTree(
+        linkPersonalOrgHomeId.trim(),
+        {
+          identity_ref: actorId,
+          personal_workspace_id: editWorkspaceTarget.id,
+        },
+        { actorId },
+      )
+      const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(updated)
+      setEditWorkspaceTarget(mapped)
+      setDirectoryWorkspaces((prev) => prev.map((row) => (row.id === mapped.id ? mapped : row)))
+      addToast({
+        variant: 'success',
+        title: 'Joined organization tree',
+        description: `${mapped.name} now appears under the organization home in Directory.`,
+      })
+      setLinkPersonalOrgHomeId('')
+      await refreshWorkspaceOrgLists()
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Could not join organization',
+        description: err instanceof Error ? err.message : 'Please try again.',
+      })
+    } finally {
+      setLinkingPersonalToOrgTree(false)
+    }
+  }, [
+    addToast,
+    editWorkspaceTarget,
+    linkPersonalOrgHomeId,
+    linkingPersonalToOrgTree,
+    refreshWorkspaceOrgLists,
+  ])
 
   const openEditWorkspaceDrawer = (workspace: WorkspaceRecord, options?: { readOnly?: boolean }) => {
     closeAllWorkspaceManagementOverlays()
     setEditWorkspaceTarget(workspace)
     setEditWorkspaceReadOnly(options?.readOnly ?? false)
-    const ownerInit = workspace.owner.includes('\uFFFD') ? '' : workspace.owner
+    const ownerInit = isMissingDirectoryOwner(workspace.owner) || workspace.owner.includes('\uFFFD')
+      ? (workspace.businessOwner?.trim() || workspace.technicalOwner?.trim() || '')
+      : workspace.owner.trim()
     const bizInit = workspace.businessOwner ?? ''
     const techInit = workspace.technicalOwner ?? ''
     setEditWorkspaceForm({
@@ -5690,12 +8135,18 @@ export function WorkspaceManagementPage() {
       technicalOwnerQuery: techInit,
       ownershipIdentityMode: 'local',
       primaryOrganizationId: workspace.primaryOrganizationId,
+      verifiedDomains: verifiedDomainsForOrganization(organizationNodes, workspace.primaryOrganizationId),
       lifecycleStage: workspace.lifecycle,
     })
     setEditWorkspaceError(null)
-    editOwnershipRevertRef.current = { business: null, technical: null }
+    setLinkPersonalOrgHomeId('')
+    setLinkingPersonalToOrgTree(false)
+    setUnlinkPersonalFromOrgTreeOpen(false)
+    setUnlinkingPersonalFromOrgTree(false)
+    editOwnershipRevertRef.current = { owner: null, business: null, technical: null }
     suppressEditOwnershipBlurCommitRef.current = false
     setEditWorkspaceDrawerOpen(true)
+    void refreshLiveDirectoryData()
   }
 
   const closeEditWorkspaceDrawer = () => {
@@ -5704,10 +8155,628 @@ export function WorkspaceManagementPage() {
     setEditWorkspaceTarget(null)
     setEditWorkspaceForm(null)
     setEditWorkspaceError(null)
-    editOwnershipRevertRef.current = { business: null, technical: null }
+    setWorkspacePendingAccessRequests([])
+    setWorkspacePendingAccessError(null)
+    setWorkspacePendingAccessLoading(false)
+    setDecidingAccessRequestId(null)
+    setLinkPersonalOrgHomeId('')
+    setLinkingPersonalToOrgTree(false)
+    setUnlinkPersonalFromOrgTreeOpen(false)
+    setUnlinkingPersonalFromOrgTree(false)
+    editOwnershipRevertRef.current = { owner: null, business: null, technical: null }
     suppressEditOwnershipBlurCommitRef.current = false
     ownershipPickerSkipBlurCommitRef.current = false
   }
+
+  const reloadWorkspacePendingAccessRequests = useCallback(async (workspaceId: string) => {
+    const canReviewPendingAccess =
+      wmAuth.isPlatformAdmin || myAdminMembershipWorkspaceIdSet.has(workspaceId)
+    if (!canReviewPendingAccess) {
+      setWorkspacePendingAccessRequests([])
+      setWorkspacePendingAccessError(
+        'You need workspace admin access on this workspace to review pending join requests.',
+      )
+      setWorkspacePendingAccessLoading(false)
+      return
+    }
+    setWorkspacePendingAccessLoading(true)
+    setWorkspacePendingAccessError(null)
+    try {
+      const res = await fetchWorkspaceAccessRequests(TECTONA_WAC_APP_ID, workspaceId, {
+        status_code: 'pending',
+      })
+      setWorkspacePendingAccessRequests(res.items ?? [])
+    } catch (err) {
+      setWorkspacePendingAccessRequests([])
+      setWorkspacePendingAccessError(
+        err instanceof Error ? err.message : 'Could not load pending access requests.',
+      )
+    } finally {
+      setWorkspacePendingAccessLoading(false)
+    }
+  }, [myAdminMembershipWorkspaceIdSet, wmAuth.isPlatformAdmin])
+
+  const hydrateAccessRequestWorkspaceNames = useCallback(
+    async (requests: ReadonlyArray<AccessRequestDto>) => {
+      const missingIds = new Set<string>()
+      for (const req of requests) {
+        const join = resolveAccessRequestJoinWorkspace(req, accessRequestWorkspaceCatalog)
+        if (join && join.workspaceName === join.workspaceId) {
+          missingIds.add(join.workspaceId)
+        }
+      }
+      if (missingIds.size === 0) return
+
+      const resolved = await Promise.all(
+        [...missingIds].map(async (workspaceId) => {
+          try {
+            const dto = await fetchWorkspaceOrgWorkspaceById(workspaceId)
+            const name = dto.name?.trim()
+            return name ? ([workspaceId, name] as const) : null
+          } catch {
+            return null
+          }
+        }),
+      )
+
+      const entries = resolved.filter((row): row is readonly [string, string] => row != null)
+      if (entries.length === 0) return
+
+      setAccessRequestWorkspaceNameOverrides((prev) => {
+        const next = { ...prev }
+        for (const [id, name] of entries) next[id] = name
+        return next
+      })
+    },
+    [accessRequestWorkspaceCatalog],
+  )
+
+  useEffect(() => {
+    if (!editWorkspaceDrawerOpen) return
+    const requests = [
+      ...workspacePendingAccessRequests,
+      ...(approveAccessDialogRequest ? [approveAccessDialogRequest] : []),
+    ]
+    if (requests.length === 0) return
+    void hydrateAccessRequestWorkspaceNames(requests)
+  }, [
+    approveAccessDialogRequest,
+    editWorkspaceDrawerOpen,
+    hydrateAccessRequestWorkspaceNames,
+    workspacePendingAccessRequests,
+  ])
+
+  useEffect(() => {
+    if (!editWorkspaceDrawerOpen || !editWorkspaceTarget?.id) return
+    void reloadWorkspacePendingAccessRequests(editWorkspaceTarget.id)
+  }, [editWorkspaceDrawerOpen, editWorkspaceTarget?.id, reloadWorkspacePendingAccessRequests])
+
+  const handleGrantParentWorkspaceAccess = useCallback(
+    async (target: ParentWorkspaceAccessTarget) => {
+      const actorId = getSession()?.user?.id
+      if (!actorId) {
+        addToast({
+          variant: 'error',
+          title: 'Sign in required',
+          description: 'You must be signed in to grant parent workspace access.',
+        })
+        return
+      }
+      const memberHints: Record<string, ParentGrantMemberHint> = {}
+      for (const subjectId of target.subjectIds) {
+        const row = workspaceMembers.find(
+          (member) => member.subjectId === subjectId && member.workspaceId === target.childWorkspaceId,
+        )
+        if (!row) continue
+        memberHints[subjectId] = {
+          roleCode: uiRoleToWacRoleCode(row.role),
+          participationScopeCode: row.scopeCode || undefined,
+          operationalTeamCode: row.operationalTeamCode || undefined,
+          participationDurationCode: participationDurationUiToCode(row.participationDuration) ?? undefined,
+        }
+      }
+      const progressKey = `${target.parentWorkspaceId}:${target.subjectIds.join(',')}`
+      setGrantingParentAccessKey(progressKey)
+      try {
+        const granted = await grantParentWorkspaceAccess(target, { actorId, memberHints })
+        addToast({
+          variant: 'success',
+          title: 'Parent workspace access granted',
+          description: `${granted} member(s) can now access ${target.parentWorkspaceName}.`,
+        })
+        await refreshLiveMembersPanel({ silent: true })
+        void refreshWorkspaceOrgLists()
+      } catch (err) {
+        addToast({
+          variant: 'error',
+          title: 'Could not grant parent access',
+          description: err instanceof Error ? err.message : 'Please try again.',
+        })
+      } finally {
+        setGrantingParentAccessKey(null)
+        setRowContextMenu(null)
+      }
+    },
+    [addToast, refreshLiveMembersPanel, refreshWorkspaceOrgLists, workspaceMembers],
+  )
+
+  const directoryParentAccessTarget = useMemo((): ParentWorkspaceAccessTarget | null => {
+    if (!rowContextMenu || rowContextMenu.variant !== 'directory') return null
+    const parent = resolveParentWorkspaceRecord(rowContextMenu.workspace, allWorkspacesForList)
+    if (!parent) return null
+    const subjectIds = subjectIdsMissingParentMembership(
+      rowContextMenu.workspace.id,
+      parent.id,
+      workspaceMembers,
+    )
+    if (subjectIds.length === 0) return null
+    return {
+      childWorkspaceId: rowContextMenu.workspace.id,
+      childWorkspaceName: rowContextMenu.workspace.name,
+      parentWorkspaceId: parent.id,
+      parentWorkspaceName: parent.name,
+      subjectIds,
+    }
+  }, [allWorkspacesForList, rowContextMenu, workspaceMembers])
+
+  const directoryOrgWacMemberGrantTarget = useMemo((): OrgWacMemberGrantTarget | null => {
+    if (!rowContextMenu || rowContextMenu.variant !== 'directory') return null
+    const memberRefs = workspaceMembers.map((member) => ({
+      subjectId: member.subjectId,
+      workspaceId: member.workspaceId,
+      scopeCode: member.scopeCode,
+      id: member.id,
+      version: member.version,
+      roleCode: uiRoleToWacRoleCode(member.role),
+    }))
+    const catalog = allWorkspacesForList.map((workspace) => ({
+      id: workspace.id,
+      name: workspace.name,
+      type: workspace.type,
+      isPersonalWorkspace: workspace.isPersonalWorkspace,
+      parentWorkspaceId: workspace.parentWorkspaceId,
+      personalOrgScope: workspace.personalOrgScope,
+      ownerIdentityRef: workspace.ownerIdentityRef,
+      createdByIdentityRef: workspace.createdByIdentityRef,
+    }))
+    const activeWorkspace = rowContextMenu.workspace
+    const workspaceRef = catalog.find((row) => row.id === activeWorkspace.id) ?? {
+      id: activeWorkspace.id,
+      name: activeWorkspace.name,
+      type: activeWorkspace.type,
+      isPersonalWorkspace: activeWorkspace.isPersonalWorkspace,
+      parentWorkspaceId: activeWorkspace.parentWorkspaceId,
+      personalOrgScope: activeWorkspace.personalOrgScope,
+      ownerIdentityRef: activeWorkspace.ownerIdentityRef,
+      createdByIdentityRef: activeWorkspace.createdByIdentityRef,
+    }
+    return resolveWorkspaceRowOrgWacMemberGrantTarget(workspaceRef, catalog, memberRefs)
+  }, [allWorkspacesForList, rowContextMenu, workspaceMembers])
+
+  const handleGrantOrgWorkspaceWacMembership = useCallback(
+    async (target: OrgWacMemberGrantTarget) => {
+      const actorId = getSession()?.user?.id
+      if (!actorId) {
+        addToast({
+          variant: 'error',
+          title: 'Sign in required',
+          description: 'You must be signed in to grant WAC member access.',
+        })
+        return
+      }
+      const memberHints: Record<string, ParentGrantMemberHint> = {}
+      for (const subjectId of target.subjectIds) {
+        const row = workspaceMembers.find((member) => member.subjectId === subjectId)
+        if (!row) continue
+        memberHints[subjectId] = {
+          roleCode: uiRoleToWacRoleCode(row.role),
+          operationalTeamCode: row.operationalTeamCode || undefined,
+          participationDurationCode: participationDurationUiToCode(row.participationDuration) ?? undefined,
+        }
+      }
+      const progressKey = `org-wac:${target.orgWorkspaceId}:${target.subjectIds.join(',')}`
+      setGrantingParentAccessKey(progressKey)
+      try {
+        const granted = await grantOrgWorkspaceWacMembership(target, {
+          actorId,
+          catalog: allWorkspacesForList,
+          members: workspaceMembers.map((member) => ({
+            subjectId: member.subjectId,
+            workspaceId: member.workspaceId,
+            scopeCode: member.scopeCode,
+            id: member.id,
+            version: member.version,
+            roleCode: uiRoleToWacRoleCode(member.role),
+          })),
+          memberHints,
+        })
+        addToast({
+          variant: 'success',
+          title: 'WAC member access granted',
+          description: target.sourceWorkspaceName
+            ? `${target.sourceWorkspaceName} can now access ${target.orgWorkspaceName}.`
+            : `${granted} organization member(s) can now access ${target.orgWorkspaceName}.`,
+        })
+        invalidateWorkspaceMembersCache(target.orgWorkspaceId)
+        setWorkspaceMembers((prev) => {
+          let next = prev
+          for (const subjectId of target.subjectIds) {
+            const existingIdx = next.findIndex(
+              (row) => row.subjectId === subjectId && row.workspaceId === target.orgWorkspaceId,
+            )
+            if (existingIdx >= 0) {
+              if (next === prev) next = [...prev]
+              next[existingIdx] = {
+                ...next[existingIdx],
+                scopeCode: ORG_WAC_MEMBER_PARTICIPATION_SCOPE,
+                scope: 'All',
+              }
+              continue
+            }
+            const user = identityUsers.find((entry) => entry.id === subjectId)
+            const name =
+              user?.display_name?.trim() || user?.email?.trim() || `User ${subjectId.slice(0, 8)}`
+            if (next === prev) next = [...prev]
+            next.push({
+              id: `optimistic-${target.orgWorkspaceId}-${subjectId}`,
+              subjectId,
+              workspaceId: target.orgWorkspaceId,
+              workspaceName: target.orgWorkspaceName,
+              name,
+              role: 'Member',
+              team: '—',
+              scope: 'All',
+              scopeCode: ORG_WAC_MEMBER_PARTICIPATION_SCOPE,
+              operationalTeamCode: '',
+              participationDuration: 'Permanent',
+              participationStartDate: '',
+              participationEndDate: '',
+              lastActivity: '—',
+              version: 1,
+              participationSource: 'wac',
+            })
+          }
+          return next
+        })
+        await refreshLiveDirectoryData()
+        await refreshLiveMembersPanel({ silent: true })
+        await refreshMyMembershipWorkspaceIds()
+        emitWorkspaceDirectoryMutation('tectona:workspace-updated')
+        emitWorkspaceDirectoryMutation('tectona:identity-updated')
+      } catch (err) {
+        addToast({
+          variant: 'error',
+          title: 'Could not grant WAC member access',
+          description: err instanceof Error ? err.message : 'Please try again.',
+        })
+      } finally {
+        setGrantingParentAccessKey(null)
+        setRowContextMenu(null)
+      }
+    },
+    [
+      addToast,
+      allWorkspacesForList,
+      identityUsers,
+      refreshLiveDirectoryData,
+      refreshLiveMembersPanel,
+      refreshMyMembershipWorkspaceIds,
+      workspaceMembers,
+    ],
+  )
+
+  const preferredOrgWorkspaceIdForJoin = useMemo(() => {
+    if (!isPersonalTenant && tenant?.workspaceId) {
+      const active = allWorkspacesForList.find((workspace) => workspace.id === tenant.workspaceId)
+      if (active?.type === 'Organization' && !active.isPersonalWorkspace) return active.id
+    }
+    return null
+  }, [allWorkspacesForList, isPersonalTenant, tenant?.workspaceId])
+
+  const directoryJoinOrganizationTarget = useMemo((): JoinOrganizationMenuTarget | null => {
+    if (!rowContextMenu || rowContextMenu.variant !== 'directory') return null
+    const workspace = rowContextMenu.workspace
+    const subjectId = directoryAccessSubject?.id ?? currentSessionUser?.id ?? null
+    const catalog = allWorkspacesForList.map((row) => ({
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      isPersonalWorkspace: row.isPersonalWorkspace,
+      parentWorkspaceId: row.parentWorkspaceId,
+      primaryOrganizationId: row.primaryOrganizationId,
+    }))
+    return resolveJoinOrganizationMenuTarget({
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        version: workspace.version,
+        metadata: workspace.metadata,
+        type: workspace.type,
+        isPersonalWorkspace: workspace.isPersonalWorkspace,
+        personalOrgScope: workspace.personalOrgScope,
+        primaryOrganizationId: workspace.primaryOrganizationId,
+        orgDirectoryJoined: workspace.orgDirectoryJoined,
+        adminApprovalPending: workspace.adminApprovalPending,
+        ownerIdentityRef: workspace.ownerIdentityRef,
+        createdByIdentityRef: workspace.createdByIdentityRef,
+      },
+      subjectId,
+      catalog,
+      membershipRows: directoryMembershipBadgeRows,
+      ownedWorkspaceIds: myOwnedWorkspaceIds,
+      preferredOrgWorkspaceId: preferredOrgWorkspaceIdForJoin,
+    })
+  }, [
+    allWorkspacesForList,
+    currentSessionUser?.id,
+    directoryAccessSubject?.id,
+    directoryMembershipBadgeRows,
+    myOwnedWorkspaceIds,
+    preferredOrgWorkspaceIdForJoin,
+    rowContextMenu,
+  ])
+
+  const handleJoinWorkspaceToOrganization = useCallback(
+    async (target: JoinOrganizationMenuTarget) => {
+      const subjectId = getSession()?.user?.id?.trim()
+      if (!subjectId) {
+        addToast({
+          variant: 'error',
+          title: 'Sign in required',
+          description: 'You must be signed in to join a workspace to the organization.',
+        })
+        return
+      }
+      const progressKey = `${target.kind}:${target.workspaceId}:${target.orgWorkspaceId}`
+      setJoiningOrganizationKey(progressKey)
+      try {
+        const mode = await joinWorkspaceToOrganization(target, {
+          subjectId,
+          membershipRows: directoryMembershipBadgeRows,
+        })
+        if (mode === 'direct') {
+          addToast({
+            variant: 'success',
+            title: 'Joined organization',
+            description: `${target.workspaceName} is now listed under ${target.orgWorkspaceName}.`,
+          })
+        } else {
+          addToast({
+            variant: 'success',
+            title: 'Join request submitted',
+            description: `An organization admin will review your request to join ${target.orgWorkspaceName}.`,
+          })
+          setDirectoryWorkspaces((prev) =>
+            prev.map((row) =>
+              row.id === target.workspaceId ? { ...row, adminApprovalPending: true } : row,
+            ),
+          )
+        }
+        await refreshLiveDirectoryData()
+        await refreshLiveMembersPanel({ silent: true })
+        emitWorkspaceDirectoryMutation('tectona:workspace-updated')
+      } catch (err) {
+        addToast({
+          variant: 'error',
+          title: 'Could not join organization',
+          description: err instanceof Error ? err.message : 'Please try again.',
+        })
+      } finally {
+        setJoiningOrganizationKey(null)
+        setRowContextMenu(null)
+      }
+    },
+    [
+      addToast,
+      directoryMembershipBadgeRows,
+      refreshLiveDirectoryData,
+      refreshLiveMembersPanel,
+    ],
+  )
+
+  const memberParentAccessTarget = useMemo((): ParentWorkspaceAccessTarget | null => {
+    if (!rowContextMenu || rowContextMenu.variant !== 'members') return null
+    const base = resolveMemberParentAccessTarget(
+      rowContextMenu.member,
+      allWorkspacesForList,
+      workspaceMembers,
+    )
+    if (!base) return null
+    return { ...base, subjectIds: [rowContextMenu.member.subjectId] }
+  }, [allWorkspacesForList, rowContextMenu, workspaceMembers])
+
+  const decideWorkspaceAccessRequest = useCallback(
+    async (
+      request: AccessRequestDto,
+      decision: 'approve' | 'reject',
+    ) => {
+      const session = getSession()
+      const reviewerId = session?.user?.id
+      if (!reviewerId) {
+        addToast({
+          variant: 'error',
+          title: 'Sign in required',
+          description: 'You must be signed in to approve or reject access requests.',
+        })
+        return
+      }
+      setDecidingAccessRequestId(request.id)
+      try {
+        await decideAccessRequest(
+          TECTONA_WAC_APP_ID,
+          request.id,
+          {
+            decision,
+            reviewer_subject_id: reviewerId,
+            grant_role_code: request.requested_role_code ?? 'member',
+            // Org directory join only — no org workspace WAC until explicitly assigned.
+            ...(decision === 'approve'
+              ? { grant_access_tier: 'organization_member' as const }
+              : {}),
+          },
+          { actorId: reviewerId },
+        )
+        if (decision === 'approve') {
+          const joinWorkspace = resolveAccessRequestJoinWorkspace(
+            request,
+            accessRequestWorkspaceCatalog,
+            accessRequestWorkspaceNameOverrides,
+          )
+          const orgWorkspaceId =
+            editWorkspaceTarget?.id?.trim()
+            || resolveAccessRequestReviewOrgWorkspaceId(request)
+          if (joinWorkspace && orgWorkspaceId) {
+            try {
+              let catalogRow = directoryWorkspaces.find((row) => row.id === joinWorkspace.workspaceId)
+              if (!catalogRow) {
+                try {
+                  const fetched = await fetchWorkspaceOrgWorkspaceById(joinWorkspace.workspaceId)
+                  catalogRow = mapWorkspaceOrgWorkspaceDtoToRecord(fetched)
+                } catch {
+                  // Patch may still succeed with default version below.
+                }
+              }
+              const joinKind =
+                joinWorkspace.kind === 'operational' ? 'operational' : 'personal'
+              const linked = await completeApprovedDirectoryJoinRequest({
+                kind: joinKind,
+                workspaceId: joinWorkspace.workspaceId,
+                workspaceVersion: catalogRow?.version ?? 1,
+                workspaceMetadata: catalogRow?.metadata ?? null,
+                orgWorkspaceId,
+                subjectId: request.subject_id,
+                actorId: reviewerId,
+              })
+              if (joinKind === 'personal' && linked) {
+                const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(
+                  linked as Parameters<typeof mapWorkspaceOrgWorkspaceDtoToRecord>[0],
+                )
+                setDirectoryWorkspaces((prev) => {
+                  const normalized: WorkspaceRecord = {
+                    ...mapped,
+                    adminApprovalPending: false,
+                    personalOrgScope: mapped.personalOrgScope ?? 'organization_tree',
+                  }
+                  const exists = prev.some((row) => row.id === normalized.id)
+                  if (!exists) return [normalized, ...prev]
+                  return prev.map((row) => (row.id === normalized.id ? { ...row, ...normalized } : row))
+                })
+              } else if (joinKind === 'operational') {
+                const patchedDto = linked as WorkspaceOrgWorkspaceDto | null
+                const mapped = patchedDto
+                  ? mapWorkspaceOrgWorkspaceDtoToRecord(patchedDto)
+                  : null
+                const normalized: WorkspaceRecord = mapped
+                  ? {
+                      ...mapped,
+                      orgDirectoryJoined: true,
+                      adminApprovalPending: false,
+                      provisionedUnderWorkspaceId:
+                        orgWorkspaceId || mapped.provisionedUnderWorkspaceId || null,
+                    }
+                  : catalogRow
+                    ? {
+                        ...catalogRow,
+                        orgDirectoryJoined: true,
+                        adminApprovalPending: false,
+                        provisionedUnderWorkspaceId: orgWorkspaceId || catalogRow.provisionedUnderWorkspaceId || null,
+                      }
+                    : null
+                if (normalized) {
+                  setDirectoryWorkspaces((prev) => {
+                    const exists = prev.some((row) => row.id === normalized.id)
+                    if (!exists) return [normalized, ...prev]
+                    return prev.map((row) => (row.id === normalized.id ? { ...row, ...normalized } : row))
+                  })
+                }
+              }
+            } catch {
+              // WAC backend may also complete tree link on corporate onboarding approve.
+            }
+          }
+        } else {
+          const joinWorkspace = resolveAccessRequestJoinWorkspace(
+            request,
+            accessRequestWorkspaceCatalog,
+            accessRequestWorkspaceNameOverrides,
+          )
+          if (joinWorkspace) {
+            const catalogRow = directoryWorkspaces.find((row) => row.id === joinWorkspace.workspaceId)
+            if (catalogRow) {
+              try {
+                await clearDirectoryJoinApprovalPendingMetadata(
+                  {
+                    id: catalogRow.id,
+                    version: catalogRow.version,
+                    metadata: catalogRow.metadata ?? null,
+                  },
+                  reviewerId,
+                )
+              } catch {
+                // Metadata may already be cleared server-side.
+              }
+              setDirectoryWorkspaces((prev) =>
+                prev.map((row) =>
+                  row.id === catalogRow.id ? { ...row, adminApprovalPending: false } : row,
+                ),
+              )
+            }
+          }
+        }
+        addToast({
+          variant: 'success',
+          title: decision === 'approve' ? 'Access approved' : 'Access rejected',
+          description:
+            decision === 'approve'
+              ? (() => {
+                  const joinWorkspace = resolveAccessRequestJoinWorkspace(
+                    request,
+                    accessRequestWorkspaceCatalog,
+                    accessRequestWorkspaceNameOverrides,
+                  )
+                  if (joinWorkspace) {
+                    return `${joinWorkspace.workspaceName} linked into the organization directory tree.`
+                  }
+                  return 'Workspace access granted and linked into the organization tree.'
+                })()
+              : 'The access request was rejected.',
+        })
+        if (editWorkspaceTarget?.id) {
+          await reloadWorkspacePendingAccessRequests(editWorkspaceTarget.id)
+        }
+        await refreshLiveDirectoryData()
+        void refreshLiveMembersPanel({ silent: true })
+        emitWorkspaceDirectoryMutation('tectona:workspace-updated')
+        if (decision === 'approve') {
+          emitWorkspaceDirectoryMutation('tectona:identity-updated')
+          window.setTimeout(() => {
+            void refreshLiveDirectoryDataRef.current()
+            void refreshLiveMembersPanelRef.current({ silent: true })
+          }, 600)
+        }
+      } catch (err) {
+        addToast({
+          variant: 'error',
+          title: 'Could not update request',
+          description: err instanceof Error ? err.message : 'Please try again.',
+        })
+      } finally {
+        setDecidingAccessRequestId(null)
+        setApproveAccessDialogRequest(null)
+      }
+    },
+    [
+      addToast,
+      accessRequestWorkspaceCatalog,
+      accessRequestWorkspaceNameOverrides,
+      directoryWorkspaces,
+      editWorkspaceTarget?.id,
+      reloadWorkspacePendingAccessRequests,
+      refreshLiveDirectoryData,
+      refreshLiveMembersPanel,
+      emitWorkspaceDirectoryMutation,
+    ],
+  )
 
   // A right-side drawer covers a docked chat, so tell the layout to FLOAT the chat while one
   // is open and revert to docked when all close (and on unmount, so it never sticks floating).
@@ -5735,7 +8804,8 @@ export function WorkspaceManagementPage() {
           e.preventDefault()
           e.stopPropagation()
           const inputId = ownershipPickerInputIdForListbox(active.closest('[role="listbox"]')?.id)
-          if (inputId === 'edit-ws-biz-owner') cancelEditWorkspaceOwnershipSearch('business')
+          if (inputId === 'edit-ws-owner') cancelEditWorkspaceOwnershipSearch('owner')
+          else if (inputId === 'edit-ws-biz-owner') cancelEditWorkspaceOwnershipSearch('business')
           else if (inputId === 'edit-ws-tech-owner') cancelEditWorkspaceOwnershipSearch('technical')
           if (inputId) focusOwnershipPickerOption(inputId)
           return
@@ -5745,7 +8815,9 @@ export function WorkspaceManagementPage() {
       if (focusedField) {
         e.preventDefault()
         e.stopPropagation()
-        if (focusedField.id === 'edit-ws-biz-owner') {
+        if (focusedField.id === 'edit-ws-owner') {
+          cancelEditWorkspaceOwnershipSearch('owner')
+        } else if (focusedField.id === 'edit-ws-biz-owner') {
           cancelEditWorkspaceOwnershipSearch('business')
         } else if (focusedField.id === 'edit-ws-tech-owner') {
           cancelEditWorkspaceOwnershipSearch('technical')
@@ -5763,17 +8835,35 @@ export function WorkspaceManagementPage() {
 
   const submitEditWorkspace = async () => {
     if (!editWorkspaceTarget || !editWorkspaceForm || isSubmittingEditWorkspace) return
-    const { name, workspaceType, owner, businessOwner, technicalOwner, ownershipIdentityMode, primaryOrganizationId, lifecycleStage } = editWorkspaceForm
+    const {
+      name,
+      workspaceType,
+      owner,
+      businessOwner,
+      technicalOwner,
+      ownershipIdentityMode,
+      primaryOrganizationId,
+      verifiedDomains,
+      lifecycleStage,
+    } = editWorkspaceForm
     if (!name.trim()) { setEditWorkspaceError('Workspace name is required.'); return }
     if (!workspaceType) { setEditWorkspaceError('Workspace type is required.'); return }
-    if (!owner.trim()) { setEditWorkspaceError('Owner is required.'); return }
+    const effectiveOwner =
+      businessOwner.trim()
+      || (!isMissingDirectoryOwner(owner) ? owner.trim() : '')
+      || technicalOwner.trim()
+    if (!effectiveOwner) {
+      setEditWorkspaceError('Owner is required. Set Business owner (shown in Directory).')
+      return
+    }
     if (!primaryOrganizationId) { setEditWorkspaceError('Primary organization is required.'); return }
+    const domainRows = verifiedDomains.filter((d) => d.value.trim())
+    const domainError = validateOrganizationDomains(domainRows)
+    if (domainError) { setEditWorkspaceError(domainError); return }
 
     setEditWorkspaceError(null)
     setIsSubmittingEditWorkspace(true)
     try {
-      // Build updated metadata from existing workspace DTO — we patch tectona_* keys
-      const existingMeta = {} as Record<string, unknown>
       // Fetch current version from directoryWorkspaces
       const current = directoryWorkspaces.find((w) => w.id === editWorkspaceTarget.id)
       if (!current) throw new Error('Workspace not found locally — please refresh.')
@@ -5787,12 +8877,16 @@ export function WorkspaceManagementPage() {
       const updatedMeta: Record<string, unknown> = {
         ...(rawDto.metadata ?? {}),
         tectona_workspace_classification: workspaceType,
-        tectona_owner: owner.trim(),
+        // Directory Owner column: Business owner wins, then the standalone Owner field, then Technical owner.
+        tectona_owner: effectiveOwner,
         tectona_lifecycle_stage: lifecycleStage,
         tectona_ownership_identity_mode: ownershipIdentityMode,
+        tectona_last_updated: new Date().toISOString(),
       }
       if (businessOwner.trim()) updatedMeta.tectona_business_owner = businessOwner.trim()
+      else delete updatedMeta.tectona_business_owner
       if (technicalOwner.trim()) updatedMeta.tectona_technical_owner = technicalOwner.trim()
+      else delete updatedMeta.tectona_technical_owner
 
       const patched = await patchWorkspaceOrgWorkspace(editWorkspaceTarget.id, {
         name: name.trim(),
@@ -5804,6 +8898,18 @@ export function WorkspaceManagementPage() {
       if (primaryOrganizationId !== editWorkspaceTarget.primaryOrganizationId) {
         // organization_id change is not directly supported by patch — handled via metadata note
         // (backend WorkspacePatch does not expose organization_id; keep as-is)
+      }
+
+      const primaryOrg = organizationNodes.find((n) => n.id === primaryOrganizationId)
+      if (primaryOrg) {
+        await patchWorkspaceOrgOrganization(primaryOrganizationId, {
+          verified_domains: domainRows.map((d) => ({
+            value: d.value.trim().toLowerCase(),
+            category: d.category,
+            verified: d.verified !== false,
+          })),
+          version: primaryOrg.version ?? 1,
+        })
       }
 
       const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(patched)
@@ -5818,11 +8924,14 @@ export function WorkspaceManagementPage() {
           // Do not fail workspace update if activity ingestion is unavailable.
         }
       }
+      // Optimistic update first so Directory Owner column flips immediately.
       setDirectoryWorkspaces((prev) => prev.map((w) => (w.id === mapped.id ? mapped : w)))
-      await refreshWorkspaceOrgLists()
-      void syncWorkspaceOrgEntryToKb(patched)
       closeEditWorkspaceDrawer()
       addToast({ variant: 'success', title: 'Workspace updated', description: `${mapped.name} has been updated.` })
+      // Refresh in background — do not block / overwrite with a race before UI paints.
+      void refreshWorkspaceOrgLists()
+      emitWorkspaceDirectoryMutation('tectona:workspace-updated')
+      void syncWorkspaceOrgEntryToKb(patched)
     } catch (err) {
       setEditWorkspaceError(err instanceof Error ? err.message : 'Failed to update workspace.')
     } finally {
@@ -5857,15 +8966,16 @@ export function WorkspaceManagementPage() {
   }, [activePanel])
 
   useEffect(() => {
-    if (activePanel === 'overview') {
+    if (deferredActivePanel === 'overview') {
       setDirectoryChartFocus(null)
       setOverviewChartSelection(null)
       setFocusedLoadWorkspaceCode(null)
     }
-  }, [activePanel])
+  }, [deferredActivePanel])
 
   useLayoutEffect(() => {
-    // Fixed Sidebar ON: tinggi nav = batas bawah panel utama (Overview Control Tower, Directory, …).
+    if (!wmShellReady) return
+    // Fixed Sidebar ON: tinggi nav tetap dari anchor atas panel nav (tidak ikut tinggi panel konten aktif).
     if (navDocked || enterpriseNavFloatRail || !showEnterpriseNavPanel) {
       setNavPanelHeightPx(null)
       return
@@ -5874,22 +8984,8 @@ export function WorkspaceManagementPage() {
     const compute = () => {
       const navEl = navPanelRef.current
       if (!navEl) return
-
-      const mainPanelEl =
-        activePanel === 'overview'
-          ? overviewMainPanelRef.current
-          : activePanel === 'directory'
-            ? directoryPanelRef.current
-            : activePanel === 'governance'
-              ? governancePanelRef.current
-              : null
-
-      if (mainPanelEl) {
-        setNavPanelHeightPx(measureEnterpriseNavHeightFromMainPanel(navEl, mainPanelEl))
-      return
-    }
-
-      setNavPanelHeightPx(computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top))
+      const next = computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top)
+      setNavPanelHeightPx((prev) => (prev === next ? prev : next))
     }
 
     compute()
@@ -5905,9 +9001,6 @@ export function WorkspaceManagementPage() {
     window.addEventListener('load', onLoad, { once: true })
     const ro = new ResizeObserver(() => compute())
     if (navPanelRef.current) ro.observe(navPanelRef.current)
-    if (overviewMainPanelRef.current) ro.observe(overviewMainPanelRef.current)
-    if (directoryPanelRef.current) ro.observe(directoryPanelRef.current)
-    if (governancePanelRef.current) ro.observe(governancePanelRef.current)
     if (kpiSectionRef.current) ro.observe(kpiSectionRef.current)
     if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
 
@@ -5927,9 +9020,8 @@ export function WorkspaceManagementPage() {
     isWorkspaceCollapsed,
     showFiltersPanel,
     showKpiCards,
-    activePanel,
     showKpiCarousel,
-    workspaceMainPanelViewportHeightPx,
+    wmShellReady,
   ])
 
   const [directoryPanelMaxHeightPx, setDirectoryPanelMaxHeightPx] = useState<number | null>(null)
@@ -6274,23 +9366,23 @@ export function WorkspaceManagementPage() {
   }, [activePanel, navDocked, showFiltersPanel, showKpiCards, enterpriseNavLayoutVariant, isWorkspaceCollapsed])
 
   useLayoutEffect(() => {
-    // Overview, Directory & Governance Matrix: tinggi panel sama — batas viewport dari atas panel.
-    if (activePanel !== 'overview' && activePanel !== 'directory' && activePanel !== 'governance' && activePanel !== 'activity') {
+    // Overview, Directory, Governance, Members & Activity: tinggi panel dari anchor nav (stabil antar menu).
+    if (
+      activePanel !== 'overview'
+      && activePanel !== 'directory'
+      && activePanel !== 'governance'
+      && activePanel !== 'members'
+      && activePanel !== 'activity'
+    ) {
       setWorkspaceMainPanelViewportHeightPx(null)
       return
     }
 
     const compute = () => {
-      const el =
-        activePanel === 'overview'
-          ? overviewMainPanelRef.current
-          : activePanel === 'directory'
-            ? directoryPanelRef.current
-            : activePanel === 'governance'
-              ? governancePanelRef.current
-              : activityPanelRef.current
-      if (!el) return
-      setWorkspaceMainPanelViewportHeightPx(computeWorkspaceMainPanelViewportHeightPx(el.getBoundingClientRect().top))
+      const navEl = navPanelRef.current
+      if (!navEl) return
+      const next = computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top)
+      setWorkspaceMainPanelViewportHeightPx((prev) => (prev === next ? prev : next))
     }
 
     compute()
@@ -6304,10 +9396,7 @@ export function WorkspaceManagementPage() {
     const onLoad = () => compute()
     window.addEventListener('load', onLoad, { once: true })
     const ro = new ResizeObserver(() => compute())
-    if (overviewMainPanelRef.current) ro.observe(overviewMainPanelRef.current)
-    if (directoryPanelRef.current) ro.observe(directoryPanelRef.current)
-    if (governancePanelRef.current) ro.observe(governancePanelRef.current)
-    if (activityPanelRef.current) ro.observe(activityPanelRef.current)
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
     if (kpiSectionRef.current) ro.observe(kpiSectionRef.current)
     if (workspaceMainFiltersRef.current) ro.observe(workspaceMainFiltersRef.current)
     const mainBody = document.querySelector(APP_MAIN_BODY_SELECTOR)
@@ -6336,6 +9425,12 @@ export function WorkspaceManagementPage() {
     enterpriseNavFloatRail,
     showEnterpriseNavPanel,
   ])
+
+  const workspaceCatalogViewportHeightPx = useMemo(() => {
+    if (workspaceMainPanelViewportHeightPx == null) return null
+    if (supportsSearchAndFilter && showFiltersPanel) return null
+    return workspaceMainPanelViewportHeightPx
+  }, [workspaceMainPanelViewportHeightPx, supportsSearchAndFilter, showFiltersPanel])
 
   const normalizedStatusFilterTags = useMemo(() => {
     const next = new Set<WorkspaceStatus>()
@@ -6563,7 +9658,7 @@ export function WorkspaceManagementPage() {
 
   const workspaceChatDataSummary = useMemo(() => {
     if (!workspaceOrgBackendConnected) {
-      return 'Backend workspace-org belum terhubung — angka portfolio workspace belum tersedia di layar ini.'
+      return 'The workspace-org backend is not connected — workspace portfolio figures are not yet available on this screen.'
     }
     const total = allWorkspacesForList.length
     const parts: string[] = [`total workspace=${total}`]
@@ -6813,20 +9908,27 @@ export function WorkspaceManagementPage() {
   const directoryTotalPages = Math.max(1, Math.ceil(sortedFilteredWorkspaces.length / directoryPageSize))
 
   const directoryFlatRows = useMemo(() => {
-    const rows = [...sortedFilteredWorkspaces]
-    if (!directoryGroupBy) {
-      return rows.map((workspace) => ({ workspace, groupLabel: null as string | null }))
+    if (directoryGroupBy) {
+      const grouped = [...sortedFilteredWorkspaces].sort((a, b) => {
+        const ga = workspaceDirectoryGroupLabel(a, directoryGroupBy)
+        const gb = workspaceDirectoryGroupLabel(b, directoryGroupBy)
+        return ga.localeCompare(gb, undefined, { sensitivity: 'base' })
+      })
+      return grouped.map((workspace) => ({
+        workspace,
+        groupLabel: workspaceDirectoryGroupLabel(workspace, directoryGroupBy),
+        depth: 0,
+      }))
     }
-    const grouped = [...rows].sort((a, b) => {
-      const ga = workspaceDirectoryGroupLabel(a, directoryGroupBy)
-      const gb = workspaceDirectoryGroupLabel(b, directoryGroupBy)
-      return ga.localeCompare(gb, undefined, { sensitivity: 'base' })
-    })
-    return grouped.map((workspace) => ({
+    return workspaceDirectoryDepthFirst(
+      sortedFilteredWorkspaces,
+      directoryTreeBuildOptions(myMembershipWorkspaceIds, myOwnedWorkspaceIds),
+    ).map(({ workspace, depth }) => ({
       workspace,
-      groupLabel: workspaceDirectoryGroupLabel(workspace, directoryGroupBy),
+      groupLabel: null as string | null,
+      depth,
     }))
-  }, [sortedFilteredWorkspaces, directoryGroupBy])
+  }, [sortedFilteredWorkspaces, directoryGroupBy, myMembershipWorkspaceIds, myOwnedWorkspaceIds])
 
   const directoryTableRows = useMemo(() => {
     const start = (directoryPage - 1) * directoryPageSize
@@ -7223,10 +10325,14 @@ export function WorkspaceManagementPage() {
 
   const isAllMemberRolesSelected = normalizedMembersRoleFilter.size === ALL_MEMBER_ROLES.length
 
-  const aggregatedWorkspaceMembers = useMemo(
-    () => aggregateWorkspaceMembers(workspaceMembers),
-    [workspaceMembers]
-  )
+  const aggregatedWorkspaceMembers = useMemo(() => {
+    const visibleWorkspaceIds = new Set(allWorkspacesForList.map((w) => w.id))
+    const scoped = workspaceMembers.filter((m) => visibleWorkspaceIds.has(m.workspaceId))
+    const augmented = augmentMemberRecordsWithCreatorParticipation(scoped, allWorkspacesForList, identityUsers)
+    return aggregateWorkspaceMembers(augmented).filter((person) =>
+      person.memberships.some((membership) => membership.participationSource !== 'creator'),
+    )
+  }, [workspaceMembers, allWorkspacesForList, identityUsers])
 
   const memberRoleCounts = useMemo(() => {
     const m = new Map<MemberRole, number>()
@@ -7320,6 +10426,23 @@ export function WorkspaceManagementPage() {
     return filteredSortedMembers.slice(start, start + membersPageSize)
   }, [filteredSortedMembers, membersPage, membersPageSize])
 
+  const toggleMembersTreeNode = useCallback((subjectId: string) => {
+    setMembersTreeCollapsedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(subjectId)) next.delete(subjectId)
+      else next.add(subjectId)
+      return next
+    })
+  }, [])
+
+  const expandAllMembersTree = useCallback(() => {
+    setMembersTreeCollapsedIds(new Set())
+  }, [])
+
+  const collapseAllMembersTree = useCallback(() => {
+    setMembersTreeCollapsedIds(new Set(filteredSortedMembers.map((m) => m.subjectId)))
+  }, [filteredSortedMembers])
+
   const toggleMembersSort = (key: MemberSortKey) => {
     setMembersSort((prev) => {
       if (!prev || prev.key !== key) return { key, dir: 'asc' }
@@ -7329,6 +10452,7 @@ export function WorkspaceManagementPage() {
   }
 
   const resetNewWorkspaceForm = () => {
+    lastAutoCodeNameRef.current = ''
     setNewWorkspaceForm({ ...INITIAL_NEW_WORKSPACE_FORM })
     setNewWorkspaceFormError(null)
     setWizardFieldHighlights({})
@@ -7336,6 +10460,7 @@ export function WorkspaceManagementPage() {
   }
 
   const openNewWorkspaceDrawer = () => {
+    if (!canCreateOrgWorkspace) return
     closeAllWorkspaceManagementOverlays()
     resetNewWorkspaceForm()
     setNewWorkspaceWizardStep(1)
@@ -7369,6 +10494,143 @@ export function WorkspaceManagementPage() {
     setNewWorkspaceDrawerOpen(false)
   }
 
+  const prepareWorkspaceGuideTour = useCallback(
+    (action: WorkspaceGuideActionId) => {
+      setShowFiltersPanel(true)
+      switch (action) {
+        case 'add-new-workspace':
+        case 'view-workspace-details':
+        case 'rename-workspace':
+        case 'edit-workspace':
+        case 'delete-workspace':
+          selectWorkspacePanel('directory')
+          break
+        case 'assign-governance':
+          selectWorkspacePanel('governance')
+          break
+        case 'add-member':
+          selectWorkspacePanel('members')
+          break
+        case 'link-projects':
+          selectWorkspacePanel('activity')
+          break
+        default:
+          break
+      }
+    },
+    [selectWorkspacePanel],
+  )
+
+  const openNewWorkspaceWizardForGuide = useCallback(() => {
+    if (!canCreateOrgWorkspace) return
+    setShowFiltersPanel(true)
+    closeWorkspaceManagementOverlays({ newWorkspaceDrawer: true })
+    resetNewWorkspaceForm()
+    setNewWorkspaceWizardStep(1)
+    setWizardReviewAcknowledged(false)
+    void refreshWorkspaceOrgLists()
+    setNewWorkspaceDrawerOpen(true)
+  }, [canCreateOrgWorkspace, refreshWorkspaceOrgLists])
+
+  const closeNewWorkspaceWizardForGuide = useCallback(() => {
+    closeNewWorkspaceDrawer()
+  }, [])
+
+  const showNewWorkspaceWizardStepForGuide = useCallback((step: number) => {
+    const clamped = Math.min(Math.max(step, 1), NEW_WORKSPACE_WIZARD_STEP_TOTAL)
+    if (clamped < NEW_WORKSPACE_WIZARD_STEP_TOTAL) setWizardReviewAcknowledged(false)
+    setNewWorkspaceWizardStep(clamped)
+  }, [])
+
+  const handleGuideAddNewWorkspace = useCallback(() => {
+    selectWorkspacePanel('directory')
+    openNewWorkspaceDrawer()
+  }, [selectWorkspacePanel])
+
+  const handleGuideWorkspaceAction = useCallback(
+    (action: WorkspaceGuideActionId, workspacePick: { id: string; name: string; code: string }) => {
+      const workspace = allWorkspacesForList.find((w) => w.id === workspacePick.id)
+      if (!workspace) {
+        addToast({
+          variant: 'default',
+          title: 'Workspace not found',
+          description: 'Refresh the directory and try again.',
+        })
+        return
+      }
+
+      switch (action) {
+        case 'view-workspace-details':
+          openWorkspaceDetail(workspace)
+          break
+        case 'assign-governance':
+          openAssignGovernanceDialog(workspace, { workspacePicker: 'locked' })
+          break
+        case 'add-member':
+          openInviteMemberDrawer(workspace)
+          break
+        case 'link-projects':
+          openProjectsForWorkspace(workspace)
+          break
+        case 'rename-workspace':
+          selectWorkspacePanel('directory')
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => startInlineRename(workspace))
+          })
+          break
+        case 'edit-workspace':
+          openEditWorkspaceDrawer(workspace)
+          break
+        case 'delete-workspace':
+          openDeleteWorkspaceDialog(workspace)
+          break
+        default:
+          break
+      }
+    },
+    [
+      addToast,
+      allWorkspacesForList,
+      openInviteMemberDrawer,
+      selectWorkspacePanel,
+    ],
+  )
+
+  const guideWorkspaceOptions = useMemo(
+    () => allWorkspacesForList.map((w) => ({ id: w.id, name: w.name, code: w.code })),
+    [allWorkspacesForList],
+  )
+
+  const registerGuideBridge = useWorkspaceManagementGuideStore((s) => s.registerBridge)
+  const unregisterGuideBridge = useWorkspaceManagementGuideStore((s) => s.unregisterBridge)
+
+  useEffect(() => {
+    registerGuideBridge({
+      workspaces: guideWorkspaceOptions,
+      canCreateWorkspace: canCreateOrgWorkspace,
+      canMutate: wmAuth.canMutate,
+      onAddNewWorkspace: handleGuideAddNewWorkspace,
+      onWorkspaceAction: handleGuideWorkspaceAction,
+      prepareTour: prepareWorkspaceGuideTour,
+      openNewWorkspaceWizardForGuide,
+      closeNewWorkspaceWizardForGuide,
+      showNewWorkspaceWizardStepForGuide,
+    })
+    return () => unregisterGuideBridge()
+  }, [
+    registerGuideBridge,
+    unregisterGuideBridge,
+    guideWorkspaceOptions,
+    canCreateOrgWorkspace,
+    wmAuth.canMutate,
+    handleGuideAddNewWorkspace,
+    handleGuideWorkspaceAction,
+    prepareWorkspaceGuideTour,
+    openNewWorkspaceWizardForGuide,
+    closeNewWorkspaceWizardForGuide,
+    showNewWorkspaceWizardStepForGuide,
+  ])
+
   useEffect(() => {
     if (!newWorkspaceDrawerOpen) return
 
@@ -7400,23 +10662,49 @@ export function WorkspaceManagementPage() {
 
   useEffect(() => {
     if (!newWorkspaceDrawerOpen) return
+    const selectedId = newWorkspaceForm.primaryOrganizationId.trim()
+    if (!selectedId || organizationNodes.length === 0) return
+    if (organizationNodes.some((node) => node.id === selectedId)) return
+    setNewWorkspaceForm((prev) => ({
+      ...prev,
+      primaryOrganizationId: '',
+      relatedOrganizationIds: prev.relatedOrganizationIds.filter((id) => organizationNodes.some((n) => n.id === id)),
+      verifiedDomains: [],
+    }))
+    setWizardFieldHighlights((h) => ({ ...h, primaryOrganization: true }))
+    setNewWorkspaceFormError('The previously selected organization is no longer in the directory. Please select again.')
+  }, [newWorkspaceDrawerOpen, newWorkspaceForm.primaryOrganizationId, organizationNodes])
+
+  useEffect(() => {
+    if (!newWorkspaceDrawerOpen) {
+      lastAutoCodeNameRef.current = ''
+      return
+    }
     if (newWorkspaceWizardStep !== 1) return
-    const rawName = newWorkspaceForm.name
-    if (!rawName.trim()) {
+    const trimmedName = newWorkspaceForm.name.trim()
+    if (!trimmedName) {
+      lastAutoCodeNameRef.current = ''
       setNewWorkspaceForm((prev) => (prev.code === '' ? prev : { ...prev, code: '' }))
       return
     }
-    const handle = window.setTimeout(() => {
+
       const taken = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
-      const nextCode = generateWorkspaceCode(rawName.trim(), taken)
+    const currentCode = newWorkspaceForm.code.trim().toLowerCase()
+    const nameUnchanged = trimmedName === lastAutoCodeNameRef.current
+    if (nameUnchanged && currentCode && !taken.has(currentCode)) return
+
+    const handle = window.setTimeout(() => {
+      const nextCode = generateWorkspaceCode(trimmedName, taken)
+      lastAutoCodeNameRef.current = trimmedName
       setNewWorkspaceForm((prev) => (prev.code === nextCode ? prev : { ...prev, code: nextCode }))
     }, 320)
     return () => window.clearTimeout(handle)
   }, [
     newWorkspaceForm.name,
+    newWorkspaceForm.code,
     newWorkspaceWizardStep,
-    allWorkspacesForList,
     newWorkspaceDrawerOpen,
+    allWorkspacesForList,
   ])
 
   const tryGoToWizardStep = (targetStep: number) => {
@@ -7461,9 +10749,12 @@ export function WorkspaceManagementPage() {
     if (newWorkspaceWizardStep < NEW_WORKSPACE_WIZARD_STEP_TOTAL) {
       if (newWorkspaceWizardStep === 1) {
         const name = newWorkspaceForm.name.trim()
+        if (name && !newWorkspaceForm.code.trim()) {
         const taken = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
         const code = generateWorkspaceCode(name, taken)
+          lastAutoCodeNameRef.current = name
         setNewWorkspaceForm((prev) => ({ ...prev, code }))
+        }
       }
       setNewWorkspaceWizardStep((prev) => prev + 1)
     }
@@ -7497,7 +10788,12 @@ export function WorkspaceManagementPage() {
   )
 
   const workspaceOwnershipAllPeople = useMemo(() => {
-    const people: MemberRecord[] = identityUsers.map((u) => {
+    const people: MemberRecord[] = identityUsers
+      .filter((u) => {
+        const status = (u.status_code || 'active').toLowerCase()
+        return status === 'active' || status === 'invited'
+      })
+      .map((u) => {
       const jobTitle = u.job_title?.trim() ?? ''
       const orgUnit = u.organizational_unit?.trim() ?? ''
       return {
@@ -7601,32 +10897,41 @@ export function WorkspaceManagementPage() {
   }, [])
 
   const finishEditWorkspaceOwnershipBlur = useCallback(
-    (target: 'business' | 'technical') => {
+    (target: 'owner' | 'business' | 'technical') => {
       if (suppressEditOwnershipBlurCommitRef.current) {
         suppressEditOwnershipBlurCommitRef.current = false
         return
       }
       setEditWorkspaceForm((f) => {
         if (!f) return f
-        const query = target === 'business' ? f.businessOwnerQuery : f.technicalOwnerQuery
-        const ownerSet = target === 'business' ? f.businessOwner.trim() : f.technicalOwner.trim()
+        const query = target === 'owner' ? f.ownerQuery : target === 'business' ? f.businessOwnerQuery : f.technicalOwnerQuery
+        const ownerSet = target === 'owner' ? f.owner.trim() : target === 'business' ? f.businessOwner.trim() : f.technicalOwner.trim()
         if (ownerSet) return f
 
         const matched = ownershipNameFromDirectoryExactMatch(query, workspaceOwnershipAllPeople)
         if (matched) {
           editOwnershipRevertRef.current[target] = null
+          if (target === 'owner') return { ...f, owner: matched, ownerQuery: matched }
           return target === 'business'
-            ? { ...f, businessOwner: matched, businessOwnerQuery: matched }
+            ? {
+                ...f,
+                businessOwner: matched,
+                businessOwnerQuery: matched,
+                owner: matched,
+                ownerQuery: matched,
+              }
             : { ...f, technicalOwner: matched, technicalOwnerQuery: matched }
         }
 
         const revert = editOwnershipRevertRef.current[target]
         editOwnershipRevertRef.current[target] = null
         if (revert === null) {
+          if (target === 'owner') return { ...f, ownerQuery: '' }
           return target === 'business'
             ? { ...f, businessOwnerQuery: '' }
             : { ...f, technicalOwnerQuery: '' }
         }
+        if (target === 'owner') return { ...f, owner: revert, ownerQuery: revert }
         return target === 'business'
           ? { ...f, businessOwner: revert, businessOwnerQuery: revert }
           : { ...f, technicalOwner: revert, technicalOwnerQuery: revert }
@@ -7857,7 +11162,7 @@ export function WorkspaceManagementPage() {
     }
     const parentId = newOrgParentId === ORG_PARENT_ROOT_SENTINEL ? null : newOrgParentId
     if (!workspaceOrgBackendConnected) {
-      setNewOrgError('Workspace Org backend belum terhubung. Jalankan service lalu coba lagi.')
+      setNewOrgError('Workspace Org backend is not connected. Start the service and try again.')
       return
     }
     if (parentId !== null) {
@@ -7891,6 +11196,13 @@ export function WorkspaceManagementPage() {
             description: null,
             status_code: 'active',
             metadata: { tectona_source: 'wizard' },
+            verified_domains: newWorkspaceForm.verifiedDomains
+              .filter((d) => d.value.trim())
+              .map((d) => ({
+                value: d.value.trim().toLowerCase(),
+                category: d.category,
+                verified: d.verified !== false,
+              })),
           },
           { actorId: session?.user?.id, idempotencyKey }
         )
@@ -7907,7 +11219,7 @@ export function WorkspaceManagementPage() {
           || /409\b/.test(raw)
 
         const msg = isDuplicate
-          ? 'Duplikasi: organisasi ini (atau kode organisasi) sudah ada. Coba nama lain atau ulangi.'
+          ? 'Duplicate: this organization (or organization code) already exists. Try a different name or retry.'
           : raw
 
         setNewOrgError(msg)
@@ -7980,8 +11292,24 @@ export function WorkspaceManagementPage() {
     }
   }
 
-  const deleteOrganization = (id: string) => {
+  const deleteOrganization = async (id: string) => {
     const rm = collectOrganizationSubtreeIds(id, organizationNodes)
+    const linkedWorkspaces = directoryWorkspaces.filter((w) => rm.has(w.primaryOrganizationId))
+    if (linkedWorkspaces.length > 0) {
+      const names = linkedWorkspaces.slice(0, 3).map((w) => w.name).join(', ')
+      const suffix = linkedWorkspaces.length > 3 ? ` (+${linkedWorkspaces.length - 3} lainnya)` : ''
+      addToast({
+        variant: 'warning',
+        title: 'Organisasi masih dipakai workspace',
+        description: `${names}${suffix} masih memakai organisasi ini sebagai Primary organization. Ubah primary org workspace tersebut dulu, lalu hapus lagi.`,
+      })
+      return
+    }
+
+    const toArchive = organizationNodes.filter((n) => rm.has(n.id))
+    if (toArchive.length === 0) return
+
+    if (!workspaceOrgBackendConnected) {
     setOrganizationNodes((prev) => prev.filter((n) => !rm.has(n.id)))
     setNewWorkspaceForm((f) => ({
       ...f,
@@ -7989,6 +11317,47 @@ export function WorkspaceManagementPage() {
       relatedOrganizationIds: f.relatedOrganizationIds.filter((x) => !rm.has(x)),
     }))
     if (editingOrgId && rm.has(editingOrgId)) cancelEditOrganization()
+      addToast({
+        variant: 'default',
+        title: 'Organisasi dihapus (lokal)',
+        description: 'Perubahan hanya di browser — backend tidak terhubung.',
+      })
+      return
+    }
+
+    const session = getSession()
+    try {
+      await Promise.all(
+        toArchive.map((node) =>
+          patchWorkspaceOrgOrganization(
+            node.id,
+            { status_code: 'archived', version: node.version ?? 1 },
+            { actorId: session?.user?.id },
+          ),
+        ),
+      )
+      setOrganizationNodes((prev) => prev.filter((n) => !rm.has(n.id)))
+      setNewWorkspaceForm((f) => ({
+        ...f,
+        primaryOrganizationId: rm.has(f.primaryOrganizationId) ? '' : f.primaryOrganizationId,
+        relatedOrganizationIds: f.relatedOrganizationIds.filter((x) => !rm.has(x)),
+      }))
+      if (editingOrgId && rm.has(editingOrgId)) cancelEditOrganization()
+      addToast({
+        variant: 'success',
+        title: 'Organisasi dihapus',
+        description: `${toArchive.length} entri organisasi diarsipkan dari direktori.`,
+      })
+      emitWorkspaceDirectoryMutation('tectona:workspace-updated')
+      void refreshWorkspaceOrgLists()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not archive organization.'
+      addToast({
+        variant: 'error',
+        title: 'Gagal menghapus organisasi',
+        description: msg,
+      })
+    }
   }
 
   const submitNewWorkspace = () => {
@@ -8012,6 +11381,13 @@ export function WorkspaceManagementPage() {
       else if (!f.workspaceType) jump = 3
       else if (!f.owner.trim()) jump = 4
       setNewWorkspaceWizardStep(jump)
+      return
+    }
+    const domainRows = newWorkspaceForm.verifiedDomains.filter((d) => d.value.trim())
+    const domainError = validateOrganizationDomains(domainRows)
+    if (domainError) {
+      setNewWorkspaceFormError(domainError)
+      setNewWorkspaceWizardStep(2)
       return
     }
     setWizardFieldHighlights({})
@@ -8062,18 +11438,18 @@ export function WorkspaceManagementPage() {
 
     if (!workspaceOrgBackendConnected) {
       const msg =
-        'Layanan workspace directory tidak tersedia. Jalankan backend workspace-org (mis. port 8424) dan coba lagi.'
+        'The workspace directory service is unavailable. Start the workspace-org backend (e.g. port 8424) and try again.'
       setNewWorkspaceFormError(msg)
-      addToast({ variant: 'error', title: 'Tidak dapat membuat workspace', description: msg })
+      addToast({ variant: 'error', title: 'Unable to create workspace', description: msg })
       setIsSubmittingNewWorkspace(false)
       return
     }
 
     if (!hasWorkspaceOrgOrganizations) {
       const msg =
-        'Daftar organization dari Workspace Org belum termuat. Tunggu beberapa detik lalu klik "Coba lagi", atau reload halaman.'
+        'The organization list from Workspace Org has not loaded yet. Wait a few seconds and click "Try again", or reload the page.'
       setNewWorkspaceFormError(msg)
-      addToast({ variant: 'error', title: 'Organization directory belum siap', description: msg })
+      addToast({ variant: 'error', title: 'Organization directory not ready', description: msg })
       setIsSubmittingNewWorkspace(false)
       return
     }
@@ -8116,6 +11492,35 @@ export function WorkspaceManagementPage() {
         if (newWorkspaceForm.technicalOwner.trim()) {
           metadata.tectona_technical_owner = technicalOwnerName
         }
+        if (session?.user?.id) {
+          metadata.tectona_owner_identity_ref = session.user.id
+          metadata.tectona_created_by_identity_ref = session.user.id
+        }
+
+        const orgId = newWorkspaceForm.primaryOrganizationId.trim()
+        const workspaceClassification = newWorkspaceForm.workspaceType.trim()
+        const isPersonalClassification = workspaceClassification === 'Personal'
+        if (isPersonalClassification) {
+          metadata.onboarding = 'personal_p0'
+          metadata.tectona_personal_org_scope = 'standalone'
+        } else {
+          const orgHomeId = resolveOrgHomeWorkspaceId(
+            directoryWorkspaces.map((workspace) => ({
+              id: workspace.id,
+              primaryOrganizationId: workspace.primaryOrganizationId,
+              type: workspace.type,
+              isPersonalWorkspace: workspace.isPersonalWorkspace,
+              parentWorkspaceId: workspace.parentWorkspaceId,
+            })),
+            orgId,
+          )
+          if (orgHomeId) {
+            metadata.tectona_provisioned_under_workspace_id = orgHomeId
+          }
+          if (tenant?.workspaceId && !isAllWorkspacesSelection(tenant.workspaceId)) {
+            metadata.tectona_provisioned_from_tenant_workspace_id = tenant.workspaceId
+          }
+        }
 
         const idempotencyKey =
           typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -8134,10 +11539,74 @@ export function WorkspaceManagementPage() {
           { actorId: session?.user?.id, idempotencyKey }
         )
 
-        await refreshWorkspaceOrgLists()
+        const primaryOrg = organizationNodes.find((n) => n.id === orgId)
+        if (primaryOrg) {
+          await patchWorkspaceOrgOrganization(orgId, {
+            verified_domains: domainRows.map((d) => ({
+              value: d.value.trim().toLowerCase(),
+              category: d.category,
+              verified: d.verified !== false,
+            })),
+            version: primaryOrg.version ?? 1,
+          })
+        }
+
         const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(created)
-        void syncWorkspaceOrgEntryToKb(created)
+        // Organization home: nest the creator's personal workspace under this tree node.
+        if (
+          mapped.type === 'Organization'
+          && session?.user?.id
+        ) {
+          try {
+            await linkPersonalWorkspaceToOrgTree(
+              created.id,
+              { identity_ref: session.user.id },
+              { actorId: session.user.id },
+            )
+          } catch {
+            // Personal workspace may not exist yet — Directory still shows the org home.
+          }
+        }
+
+        if (session?.user?.id) {
+          try {
+            await createWorkspaceMembership(
+              TECTONA_WAC_APP_ID,
+              created.id,
+              {
+                subject_id: session.user.id,
+                role_code: 'admin',
+                status_code: 'active',
+                participation_scope_code: 'all',
+                operational_team_codes: [],
+              },
+              {
+                actorId: session.user.id,
+                idempotencyKey:
+                  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                    ? crypto.randomUUID()
+                    : `idem-membership-${created.id}`,
+              },
+            )
+          } catch {
+            // Directory still lists owned workspaces via tectona_owner_identity_ref.
+          }
+        }
+
+        // Paint Directory immediately; background refresh must not drop the optimistic row.
+        pendingDirectoryWorkspaceIdsRef.current.set(mapped.id, Date.now())
+        setDirectoryWorkspaces((prev) => (prev.some((w) => w.id === mapped.id) ? prev : [mapped, ...prev]))
+        setMyMembershipWorkspaceIds((prev) => (
+          prev.includes(mapped.id) ? prev : [...prev, mapped.id]
+        ))
+        setMyAdminMembershipWorkspaceIds((prev) => (
+          prev.includes(mapped.id) ? prev : [...prev, mapped.id]
+        ))
+        setMyMembershipWorkspaceIdsLoaded(true)
         finalizeSuccess(mapped.id, mapped.code, mapped.owner)
+        emitWorkspaceDirectoryMutation('tectona:workspace-created')
+        void refreshLiveDirectoryData()
+        void syncWorkspaceOrgEntryToKb(created)
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Could not create workspace.'
         setNewWorkspaceFormError(msg)
@@ -8211,11 +11680,11 @@ export function WorkspaceManagementPage() {
 
   const metrics = useMemo(() => {
     const list = allWorkspacesForList
-    const countedFromWac = Object.values(workspaceMemberCounts).reduce((sum, n) => sum + n, 0)
-    const totalMembers =
-      countedFromWac > 0
-        ? countedFromWac
-        : list.reduce((sum, workspace) => sum + (workspaceMemberCounts[workspace.id] ?? workspace.members), 0)
+    // Only count members for workspaces in the current tenant view (not leftover global counts).
+    const totalMembers = list.reduce(
+      (sum, workspace) => sum + (workspaceMemberCounts[workspace.id] ?? workspace.members),
+      0,
+    )
     const totalProjects = list.reduce((sum, workspace) => sum + workspace.projects, 0)
     const activeCount = list.filter((workspace) => workspace.status === 'Active').length
     const atRiskCount = list.filter((workspace) => workspace.status === 'At Risk').length
@@ -8251,10 +11720,11 @@ export function WorkspaceManagementPage() {
       const createdDay = toUtcDayEpoch(workspace.createdDate)
       if (createdDay == null || createdDay > endDay) continue
 
+      const memberCount = workspaceMemberCounts[workspace.id] ?? workspace.members
       const startIndex = createdDay <= startDay ? 0 : Math.floor((createdDay - startDay) / DAY_MS)
       for (let idx = startIndex; idx < 30; idx += 1) {
         total[idx] += 1
-        members[idx] += workspace.members
+        members[idx] += memberCount
         projects[idx] += workspace.projects
         if (workspace.status === 'Active') active[idx] += 1
         if (workspace.status === 'At Risk') risk[idx] += 1
@@ -8262,7 +11732,7 @@ export function WorkspaceManagementPage() {
     }
 
     return { total, active, risk, members, projects }
-  }, [allWorkspacesForList])
+  }, [allWorkspacesForList, workspaceMemberCounts])
 
   const kpiCardMap = useMemo(() => {
     const totalWorkspacesCard = {
@@ -8968,15 +12438,28 @@ export function WorkspaceManagementPage() {
   }, [primaryOrgManageOpen])
 
   return (
-    <div className="min-h-0 space-y-6 pb-0">
+    <div className="min-h-0 min-w-0 max-w-full space-y-6 pb-0">
+      {/* Docked inset once on this wrapper (Task pattern); main uses workspaceMainColumnClass(false). */}
       <div
         data-chat-evidence-root
-        className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked && showEnterpriseNavPanel, showEnterpriseNavPanel && isWorkspaceCollapsed, enterpriseNavLayoutVariant))}>
+        className={cn(
+          'min-w-0 max-w-full space-y-6',
+          workspaceDockedContentInsetClass(
+            navDocked && showEnterpriseNavPanel,
+            showEnterpriseNavPanel && isWorkspaceCollapsed,
+            enterpriseNavLayoutVariant
+          )
+        )}
+      >
       <Breadcrumb items={[{ label: 'Workspace Management' }]} />
 
       <PageHeader
         title="Workspace Management"
-        description="Workspace lifecycle, governance posture, membership and participation, and portfolio visibility—operational control for delivery boundaries, not platform authorization."
+        description={
+          isPersonalTenant
+            ? 'Manage your personal workspace—membership, participation, and activity for this workspace only. Organization portfolio control stays on the organization tenant.'
+            : 'Workspace lifecycle, governance posture, membership and participation, and portfolio visibility—operational control for delivery boundaries, not platform authorization.'
+        }
         right={(
           <div className="flex flex-wrap items-center gap-3">
             {/* KPI toggle + Export + Filter pill — enterprise chrome */}
@@ -9038,10 +12521,12 @@ export function WorkspaceManagementPage() {
       />
 
       {showKpiCards ? (
+        wmShellReady ? (
         <section
           ref={kpiSectionRef}
           data-chat-evidence-region="workspace-kpi-strip"
-          className={cn('space-y-2', showKpiCarousel && 'w-full min-w-0')}>
+          className={cn('min-w-0 max-w-full space-y-2', showKpiCarousel && 'w-full')}
+        >
           {showKpiCarousel ? (
             <WorkspaceKpiCardsCarousel
               cardOrder={kpiCardOrder}
@@ -9056,7 +12541,7 @@ export function WorkspaceManagementPage() {
             onDragEnd={handleKpiDragEnd}
           >
             <SortableContext items={kpiCardOrder} strategy={rectSortingStrategy}>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
                 {kpiCardOrder.map((key) => {
                   const card = kpiCardMap[key]
                   return (
@@ -9081,17 +12566,23 @@ export function WorkspaceManagementPage() {
           </DndContext>
           )}
         </section>
+        ) : (
+          <section className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {Array.from({ length: 5 }, (_, index) => (
+              <div key={index} className="h-24 animate-pulse rounded-2xl bg-muted/40" />
+            ))}
+          </section>
+        )
       ) : null}
 
       <section
         className={cn(
+          'min-w-0 max-w-full',
           showEnterpriseNavPanel
             ? enterpriseNavFloatRail
               ? 'relative w-full min-w-0'
               : workspaceOuterGridClass(sidebarFixed, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
             : 'relative w-full min-w-0',
-          // Match grid row height: main column stretches to nav bottom (aside stays self-start from layout helper).
-          showEnterpriseNavPanel && !enterpriseNavFloatRail && sidebarFixed && 'items-stretch',
           showEnterpriseNavPanel && (navDocked || enterpriseNavFloatRail) ? 'relative' : undefined
         )}
       >
@@ -9104,10 +12595,7 @@ export function WorkspaceManagementPage() {
           />
         ) : (
         <aside
-          className={cn(
-            workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant),
-            sidebarFixed && !enterpriseNavFloatRail && 'self-stretch'
-          )}
+          className={workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)}
           aria-label="Workspace enterprise navigation"
         >
           <div
@@ -9116,11 +12604,15 @@ export function WorkspaceManagementPage() {
               workspaceNavInnerClass(navDocked, sidebarFixed, isWorkspaceCollapsed),
               // Match Document & Knowledge Management panel corner radius (rounded-2xl, not rounded-[28px]).
               'rounded-2xl xl:rounded-r-2xl',
-              !navDocked && 'h-full min-h-0 overflow-hidden'
+              !navDocked && 'min-h-0 overflow-hidden'
             )}
             style={
               !navDocked && navPanelHeightPx
-                ? { height: navPanelHeightPx, maxHeight: navPanelHeightPx, minHeight: navPanelHeightPx }
+                ? {
+                    height: navPanelHeightPx,
+                    maxHeight: navPanelHeightPx,
+                    minHeight: navPanelHeightPx,
+                  }
                 : undefined
             }
           >
@@ -9151,8 +12643,22 @@ export function WorkspaceManagementPage() {
 
               {!isWorkspaceCollapsed && !enterpriseNavSimpleList ? (
                 <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200/80 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_38%),linear-gradient(160deg,rgba(15,23,42,0.96),rgba(30,41,59,0.94))] p-4 text-white shadow-[0_18px_44px_rgba(15,23,42,0.24)]">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-100/80">Workspace Control Tower</div>
-                  <div className="mt-1.5 text-sm font-semibold leading-snug">Design governance, workspace membership, and operational visibility</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-100/80">
+                    {isPersonalTenant
+                      ? 'My Workspace'
+                      : isMultiWorkspaceScope
+                        ? 'Combined workspace view'
+                        : 'Workspace Control Tower'}
+                  </div>
+                  <div className="mt-1.5 text-sm font-semibold leading-snug">
+                    {isPersonalTenant
+                      ? 'Manage your personal workspace, membership, and activity—separate from organization control.'
+                      : isMultiWorkspaceScope
+                        ? !workspaceOrgInitialFetchDone
+                          ? 'Directory, members, and activity across your selection.'
+                          : `Directory, members, and activity across ${allWorkspacesForList.length} workspace${allWorkspacesForList.length === 1 ? '' : 's'} from your selection.`
+                        : 'Design governance, workspace membership, and operational visibility'}
+                  </div>
               </div>
             ) : null}
             </div>
@@ -9163,6 +12669,7 @@ export function WorkspaceManagementPage() {
                   items={floatNavPanels}
                   activeId={activePanel}
                   onSelect={selectWorkspacePanel}
+                  tourTargetPrefix="wm-nav-"
                 />
               </div>
             ) : (
@@ -9182,6 +12689,7 @@ export function WorkspaceManagementPage() {
                         key={panel.id}
                         type="button"
                         onClick={() => selectWorkspacePanel(panel.id)}
+                        data-tour-target={`wm-nav-${panel.id}`}
                         className={cn(
                           'group relative flex w-full overflow-hidden border text-left transition-all duration-200',
                             enterpriseNavCompact
@@ -9270,22 +12778,18 @@ export function WorkspaceManagementPage() {
 
         <main
           className={cn(
-            'flex min-h-0 min-w-0 w-full flex-col self-stretch',
+            'flex min-h-0 min-w-0 w-full max-w-full flex-col self-stretch',
+            // Parent wrapper already has docked inset — false avoids double padding.
             showEnterpriseNavPanel
-              ? workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
-              : 'space-y-4'
+              ? workspaceMainColumnClass(false, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
+              : 'min-w-0 w-full max-w-full space-y-4'
           )}
         >
           {supportsSearchAndFilter && showFiltersPanel ? (
             <div
               ref={workspaceMainFiltersRef}
-              className={cn(
-                'glass-card mb-0 shrink-0 space-y-3 rounded-2xl p-4',
-                'border border-white/40 dark:border-white/10',
-                'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
-                'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
-                'bg-gradient-to-br from-white/70 via-background/75 to-slate-50/70 dark:from-slate-900/45 dark:via-background/40 dark:to-slate-950/20'
-              )}
+              data-tour-target="wm-filters-panel"
+              className="liquid-glass-enterprise-panel mb-0 shrink-0 space-y-3 rounded-2xl border p-4"
             >
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -9320,13 +12824,33 @@ export function WorkspaceManagementPage() {
                   )}
                 >
                 {wmAuth.canMutate && activePanel === 'members' ? (
+                  <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                       onClick={() => openInviteMemberDrawer()}
+                      data-tour-target="wm-invite-member-btn"
                       className={enterpriseIndigoGradientActionButtonClass()}
                   >
                     <UserPlus className="h-4 w-4" strokeWidth={2.5} />
                     Invite Member
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRequestJoinWorkspace()}
+                      className={enterpriseIndigoGradientActionButtonClass()}
+                    >
+                      <LogIn className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                      Request to Join Workspace
+                    </button>
+                  </div>
+                ) : activePanel === 'members' ? (
+                  <button
+                    type="button"
+                    onClick={() => openRequestJoinWorkspace()}
+                    className={enterpriseIndigoGradientActionButtonClass()}
+                  >
+                    <LogIn className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                    Request to Join Workspace
                   </button>
                 ) : wmAuth.canMutate && activePanel === 'governance' ? (
                   <button
@@ -9342,6 +12866,7 @@ export function WorkspaceManagementPage() {
                       }
                       openAssignGovernanceDialog(target, { workspacePicker: 'dropdown' })
                     }}
+                      data-tour-target="wm-assign-governance-btn"
                       className={cn(
                         enterpriseCyanGradientActionButtonClass(),
                         narrowMainBody && 'shrink-0'
@@ -9350,10 +12875,11 @@ export function WorkspaceManagementPage() {
                     <Settings2 className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
                     Assign Governance
                   </button>
-                ) : wmAuth.canMutate && activePanel === 'directory' ? (
+                ) : canCreateOrgWorkspace && activePanel === 'directory' ? (
                   <button
                     type="button"
                     onClick={openNewWorkspaceDrawer}
+                      data-tour-target="wm-new-workspace-btn"
                       className={cn(
                         enterpriseCyanGradientActionButtonClass(),
                         showKpiCarousel && 'shrink-0'
@@ -9628,8 +13154,14 @@ export function WorkspaceManagementPage() {
             </div>
           ) : null}
 
-          {activePanel === 'overview' ? (
-            (() => {
+          <WorkspacePanelSlot
+            panelId="overview"
+            activePanel={deferredActivePanel}
+            visitedPanels={visitedPanels}
+          >
+            {!wmShellReady ? (
+              <WorkspaceManagementPageSkeleton className="min-h-[420px]" />
+            ) : (() => {
               const pal = WORKSPACE_OVERVIEW_PALETTES[overviewPalette]
               const healthyPct = governanceHealthDistribution.find((d) => d.name === 'Healthy')?.pct ?? '-'
               const overloadLoadCount = workspaceLoadDistributionData.filter(
@@ -9664,8 +13196,7 @@ export function WorkspaceManagementPage() {
                   highlight
                   headerIcon={<BarChart3 className="h-5 w-5" />}
                         className={cn(
-                    'flex min-h-0 w-full flex-col',
-                    showKpiCarousel && 'max-w-none',
+                    'flex min-h-0 w-full min-w-0 max-w-none flex-col',
                     workspaceMainPanelViewportHeightPx != null && 'overflow-hidden'
                   )}
                   right={undefined}
@@ -9675,7 +13206,7 @@ export function WorkspaceManagementPage() {
                     className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   >
                     {/* ROW 1: Health + Lifecycle */}
-                    <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                       <IntelligenceChartPanel
                         title="Workspace Health Distribution"
                         description="Healthy vs at-risk vs critical posture from status and compliance signals."
@@ -9722,7 +13253,7 @@ export function WorkspaceManagementPage() {
                     </div>
 
                     {/* ROW 2: Composition + Load */}
-                    <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                       <IntelligenceChartPanel
                         title="Workspace Composition"
                         description="Purpose mix (Strategic / Operational / Innovation / Governance) derived from workspace classification."
@@ -9797,6 +13328,13 @@ export function WorkspaceManagementPage() {
                                   <div className="h-full rounded-full"
                                     style={{ width: `${Math.min(100, Math.round((val / (maxLoadProjects + 8)) * 100))}%`, background: `linear-gradient(90deg, ${barColor}, ${barColor}bb)`, boxShadow: `0 0 6px ${barColor}55` }} />
                                 </div>
+                              </div>
+                            )
+                          }
+                          if (workspaceLoadDistributionData.length === 0) {
+                            return (
+                              <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
+                                No workspace load data in the current scope yet.
                               </div>
                             )
                           }
@@ -9875,9 +13413,7 @@ export function WorkspaceManagementPage() {
                                     dataKey="tasks"
                                     name="Linked projects"
                                     shape={<ThreeDBar />}
-                                    isAnimationActive
-                                    animationDuration={750}
-                                    animationEasing="ease-out"
+                                    isAnimationActive={false}
                                     onClick={(_, index) => {
                                       const row = workspaceLoadDistributionData[index as number]
                                       if (!row) return
@@ -9927,7 +13463,7 @@ export function WorkspaceManagementPage() {
                     </div>
 
                     {/* ROW 3: Ownership + Risk */}
-                    <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                       <IntelligenceChartPanel
                         title="Workspace Ownership Distribution"
                         description="Count of workspaces per accountable owner — surfaces concentration risk."
@@ -9939,6 +13475,11 @@ export function WorkspaceManagementPage() {
                         style={chartEnterStyle(4)}
                       >
                         <div className="h-64 min-h-[220px] w-full">
+                          {ownershipDistributionData.length === 0 ? (
+                            <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
+                              No ownership data in the current scope yet.
+                            </div>
+                          ) : (
                           <MeasuredResponsiveContainer>
                             <BarChart
                               data={ownershipDistributionData}
@@ -9965,6 +13506,7 @@ export function WorkspaceManagementPage() {
                                     name="Workspaces"
                                     radius={[0, 6, 6, 0]}
                                     fill={pal.normalBar}
+                                    isAnimationActive={false}
                                     onClick={(_, index) => {
                                       const row = ownershipDistributionData[index as number]
                                       if (!row) return
@@ -9982,6 +13524,7 @@ export function WorkspaceManagementPage() {
                               </Bar>
                             </BarChart>
                           </MeasuredResponsiveContainer>
+                          )}
                         </div>
                       </IntelligenceChartPanel>
 
@@ -9996,6 +13539,11 @@ export function WorkspaceManagementPage() {
                         style={chartEnterStyle(5)}
                       >
                         <div className="h-64 min-h-[220px] w-full">
+                          {allWorkspacesForList.length === 0 ? (
+                            <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
+                              No risk exposure data in the current scope yet.
+                            </div>
+                          ) : (
                           <MeasuredResponsiveContainer>
                             <BarChart data={riskExposureStackRow} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }} barSize={36}>
                               <XAxis type="number" hide />
@@ -10008,6 +13556,7 @@ export function WorkspaceManagementPage() {
                                 name="No owner"
                                 stackId="risk"
                                 fill="#64748b"
+                                isAnimationActive={false}
                                 onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'noOwner' })}
                               />
                               <Bar
@@ -10015,6 +13564,7 @@ export function WorkspaceManagementPage() {
                                 name="Low engagement"
                                 stackId="risk"
                                 fill="#38bdf8"
+                                isAnimationActive={false}
                                 onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'lowActivity' })}
                               />
                               <Bar
@@ -10022,6 +13572,7 @@ export function WorkspaceManagementPage() {
                                 name="Overloaded"
                                 stackId="risk"
                                 fill="#f59e0b"
+                                isAnimationActive={false}
                                 onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'overloaded' })}
                               />
                               <Bar
@@ -10029,10 +13580,12 @@ export function WorkspaceManagementPage() {
                                 name="Governance gap"
                                 stackId="risk"
                                 fill="#e11d48"
+                                isAnimationActive={false}
                                 onClick={() => navigateDirectoryWithChartFocus({ kind: 'risk', flag: 'governance' })}
                               />
                             </BarChart>
                           </MeasuredResponsiveContainer>
+                          )}
                         </div>
                           <p className="mt-2 text-[10px] text-slate-500">
                             Click a segment to open the directory with that risk lens. Thresholds: low engagement = &lt;15 members; overload = &gt;{WORKSPACE_LOAD_OVERLOAD_PROJECTS} linked projects.
@@ -10042,18 +13595,20 @@ export function WorkspaceManagementPage() {
                   </div>
                 </WorkspaceMainPanel>
               )
-            })()
-          ) : null}
+            })()}
+          </WorkspacePanelSlot>
 
-          {activePanel === 'directory' ? (
+          <WorkspacePanelSlot
+            panelId="directory"
+            activePanel={deferredActivePanel}
+            visitedPanels={visitedPanels}
+          >
             <div
               ref={directoryPanelRef}
-              className={cn(
-                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
-              )}
+              data-tour-target="wm-directory-panel"
+              className="liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border"
               style={workspaceCatalogPanelHeightStyle(
-                workspaceMainPanelViewportHeightPx,
+                workspaceCatalogViewportHeightPx,
                 directoryPanelAlignedHeightPx,
                 directoryPanelMaxHeightPx
               )}
@@ -10071,8 +13626,8 @@ export function WorkspaceManagementPage() {
                           Master table for lifecycle-managed workspaces across enterprise delivery.
                         </p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
-                        <div className="relative">
+                      <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide lg:gap-3">
+                        <div className="relative shrink-0">
                           <div className="inline-flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">Group by</span>
                             <button
@@ -10187,7 +13742,7 @@ export function WorkspaceManagementPage() {
                           role="switch"
                           aria-checked={showDirectorySelection}
                           onClick={() => setShowDirectorySelection((prev) => !prev)}
-                          className="group inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-2 py-1 shadow-sm transition hover:bg-muted/40"
+                          className="group inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-background/80 px-2 py-1 shadow-sm transition hover:bg-muted/40"
                           title="Show/Hide selection checkboxes"
                         >
                           <span className="text-[11px] font-medium text-muted-foreground">Select</span>
@@ -10205,7 +13760,7 @@ export function WorkspaceManagementPage() {
                             />
                           </span>
                         </button>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="shrink-0 text-xs text-muted-foreground">
                           Showing{' '}
                           <span className="font-semibold text-foreground">
                             {sortedFilteredWorkspaces.length === 0
@@ -10218,18 +13773,18 @@ export function WorkspaceManagementPage() {
                           </span>{' '}
                           of <span className="font-semibold text-foreground">{sortedFilteredWorkspaces.length}</span>
                         </p>
-                        <span className="text-xs text-muted-foreground">Rows:</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">Rows:</span>
                         <Select
                           value={String(directoryPageSize)}
                           onChange={(e) => setDirectoryPageSize(parseInt(e.target.value, 10))}
-                          className="h-10 w-[84px] text-sm"
+                          className="h-10 w-[84px] shrink-0 text-sm"
                         >
                           <option value="5">5</option>
                           <option value="10">10</option>
                           <option value="15">15</option>
                           <option value="25">25</option>
                         </Select>
-                        <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                        <div className="flex h-10 shrink-0 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
                           <button
                             type="button"
                             className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
@@ -10250,7 +13805,7 @@ export function WorkspaceManagementPage() {
                             Next
                           </button>
                         </div>
-                        <div className="relative">
+                        <div className="relative shrink-0">
                           <button
                             type="button"
                             ref={directoryColumnsTriggerRef}
@@ -10426,8 +13981,8 @@ export function WorkspaceManagementPage() {
                       <div className="flex w-full flex-col items-center justify-center px-6">
                         {!workspaceOrgInitialFetchDone ? (
                           <PlatformServiceLoadingPanel
-                            title="Memuat workspace directory"
-                            description="Menghubungkan ke layanan workspace-org dan menyinkronkan daftar workspace Anda."
+                            title="Loading workspace directory"
+                            description="Syncing your workspaces from the workspace-org service."
                           />
                         ) : allWorkspacesForList.length === 0 && !workspaceOrgBackendConnected ? (
                           <div
@@ -10444,11 +13999,11 @@ export function WorkspaceManagementPage() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-semibold text-foreground">
-                                  Directory tidak dapat dimuat
+                                  Directory could not be loaded
                                 </p>
                                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                  Koneksi ke workspace directory service terputus atau backend belum berjalan. Pastikan
-                                  layanan workspace-org aktif agar data enterprise Anda tampil di sini.
+                                  The connection to the workspace directory service was lost, or the backend is not running. Make sure
+                                  the workspace-org service is active so your enterprise data appears here.
                                 </p>
                                 <div className="mt-3 rounded-md border border-amber-200/30 bg-white/40 px-3 py-2 dark:bg-white/[0.02]">
                                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
@@ -10466,7 +14021,7 @@ export function WorkspaceManagementPage() {
                                   )}
                                   onClick={() => void refreshWorkspaceOrgLists()}
                                 >
-                                  Coba lagi
+                                  Try again
                                 </Button>
                               </div>
                             </div>
@@ -10482,10 +14037,10 @@ export function WorkspaceManagementPage() {
                               <Building2 className="h-9 w-9 text-emerald-700 dark:text-emerald-400" aria-hidden />
                             </div>
                             <p className="mt-6 text-lg font-semibold tracking-tight text-foreground">
-                              Directory siap, belum ada workspace
+                              Directory ready, no workspaces yet
                             </p>
                             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                              Buat workspace pertama untuk mengisi master catalog lifecycle-managed enterprise Anda.
+                              Create your first workspace to populate your lifecycle-managed enterprise master catalog.
                             </p>
                           </div>
                         ) : (
@@ -10499,21 +14054,22 @@ export function WorkspaceManagementPage() {
                               <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
                             </div>
                             <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
-                              Tidak ada baris yang cocok
+                              No matching rows
                             </p>
                             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                              Sesuaikan filter pencarian, status, tipe, owner
-                              {showKpiCarousel ? ', atau governance status (filter kolom)' : ''} untuk melihat
-                              kembali daftar workspace.
+                              Adjust the search, status, type, or owner filters
+                              {showKpiCarousel ? ', or governance status (column filter)' : ''} to bring
+                              the workspace list back into view.
                             </p>
                           </div>
                         )}
                       </div>
                     ) : (
+                      <DndContext sensors={directoryColumnDndSensors} onDragEnd={handleDirectoryColumnDragEnd}>
                       <table
                         ref={directoryTableRef}
                         className={cn(
-                          'border-separate border-spacing-x-2 border-spacing-y-0 text-xs select-none',
+                          'border-collapse text-xs select-none',
                           hasAnyDirectoryCustomColumnWidth || directoryColumnResizingKey
                             ? 'table-fixed w-full'
                             : 'w-full'
@@ -10531,6 +14087,8 @@ export function WorkspaceManagementPage() {
                               <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
                                 <input
                                   type="checkbox"
+                                  id="directory-select-all"
+                                  name="directory-select-all"
                                   checked={
                                     directorySelectedIds.length > 0
                                     && directorySelectedIds.length === directoryTableRows.length
@@ -10546,18 +14104,17 @@ export function WorkspaceManagementPage() {
                                 />
                               </th>
                             ) : null}
-                            <DndContext sensors={directoryColumnDndSensors} onDragEnd={handleDirectoryColumnDragEnd}>
                               <SortableContext items={directoryVisibleColumnOrder} strategy={rectSortingStrategy}>
                                 {directoryVisibleColumnOrder.map((key) => {
                                   return <SortableDirectoryHeaderCell key={key} columnKey={key} />
                                 })}
                               </SortableContext>
-                            </DndContext>
                           </tr>
                         </thead>
                         <tbody>
                           {directoryTableRows.map((row, rowIndex) => {
                             const workspace = row.workspace
+                            const rowDepth = row.depth ?? 0
                             const rowGroupLabel = row.groupLabel
                             const previousGroupLabel = directoryTableRows[rowIndex - 1]?.groupLabel ?? null
                             const showGroupHeader =
@@ -10644,6 +14201,8 @@ export function WorkspaceManagementPage() {
                                 >
                                   <input
                                     type="checkbox"
+                                    id={`directory-select-${workspace.id}`}
+                                    name={`directory-select-${workspace.id}`}
                                     checked={directorySelectedIds.includes(workspace.id)}
                                     onChange={() => toggleDirectoryRowSelection(workspace.id)}
                                     aria-label={`Select ${workspace.name}`}
@@ -10658,9 +14217,14 @@ export function WorkspaceManagementPage() {
                                   return (
                                     <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
                                 {inlineRenameId === workspace.id ? (
-                                  <div className="min-w-0 flex flex-col gap-0.5">
+                                  <div
+                                    className="min-w-0 flex flex-col gap-0.5"
+                                    style={rowDepth > 0 ? { paddingLeft: rowDepth * 18 } : undefined}
+                                  >
                                     <input
                                       autoFocus
+                                      id={`directory-inline-rename-${workspace.id}`}
+                                      name={`directory-inline-rename-${workspace.id}`}
                                       value={inlineRenameValue}
                                       disabled={inlineRenameSubmitting}
                                       onChange={(e) => setInlineRenameValue(normalizeTitleCaseInput(e.target.value))}
@@ -10675,9 +14239,82 @@ export function WorkspaceManagementPage() {
                                     <div className="text-[10px] text-muted-foreground/60">Enter to save | Esc to cancel</div>
                                   </div>
                                 ) : (
-                                  <div className="min-w-0">
-                                    <div className="font-semibold text-foreground">{workspace.name}</div>
-                                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
+                                  <div
+                                    className="flex min-w-0 items-start gap-1.5"
+                                    style={rowDepth > 0 ? { paddingLeft: rowDepth * 18 } : undefined}
+                                  >
+                                    {rowDepth > 0 ? (
+                                      <span
+                                        className="mt-1 inline-flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/70"
+                                        aria-hidden
+                                      >
+                                        <CornerDownRight className="h-3.5 w-3.5" />
+                                      </span>
+                                    ) : null}
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="font-semibold text-foreground">{workspace.name}</span>
+                                        {workspaceShowsPendingAdminApproval(
+                                          workspace,
+                                          sessionOnboardingStatus,
+                                          directoryAccessSubject?.id,
+                                        ) ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-violet-300/70 bg-violet-50/80 px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-200"
+                                          >
+                                            {directoryPendingApprovalBadgeLabel()}
+                                          </Badge>
+                                        ) : null}
+                                        {directoryAccessSubject
+                                          ? resolveDirectoryAccessBadgesForViewer(
+                                              workspace.id,
+                                              {
+                                                id: workspace.id,
+                                                owner: workspace.owner,
+                                                businessOwner: workspace.businessOwner,
+                                                technicalOwner: workspace.technicalOwner,
+                                                ownerIdentityRef: workspace.ownerIdentityRef,
+                                                createdByIdentityRef: workspace.createdByIdentityRef,
+                                                createdBy: workspace.createdBy,
+                                              },
+                                              directoryAccessSubject,
+                                              myWacMembershipWorkspaceIdSet,
+                                              {
+                                                suppressWacMember: workspaceShowsPendingAdminApproval(
+                                                  workspace,
+                                                  sessionOnboardingStatus,
+                                                  directoryAccessSubject.id,
+                                                ),
+                                                suppressCreator:
+                                                  !isPersonalTenant && !workspace.isPersonalWorkspace,
+                                                useOwnerPerspective:
+                                                  wmAuth.isPlatformAdmin || canViewAllActivityAudit,
+                                                identityUsers,
+                                                membershipRows: directoryMembershipBadgeRows,
+                                                orgHomeWorkspaceId:
+                                                  directoryOrgHomeIdByWorkspaceId.get(workspace.id) ?? null,
+                                                workspaceMemberCount:
+                                                  workspaceMemberCounts[workspace.id] ?? workspace.members,
+                                              },
+                                            ).map((badge) => (
+                                              <Badge
+                                                key={`${workspace.id}-${badge}`}
+                                                variant="outline"
+                                                className={cn(
+                                                  'px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide',
+                                                  badge === 'wac_member'
+                                                    ? 'border-sky-300/70 bg-sky-50/80 text-sky-800 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-200'
+                                                    : 'border-amber-300/70 bg-amber-50/80 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200',
+                                                )}
+                                              >
+                                                {directoryAccessBadgeLabel(badge)}
+                                              </Badge>
+                                            ))
+                                          : null}
+                                      </div>
+                                      <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
+                                    </div>
                                   </div>
                                 )}
                               </td>
@@ -10688,7 +14325,12 @@ export function WorkspaceManagementPage() {
                                   return (
                                     <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
                                 <Badge variant="outline" className="px-2 py-0.5 text-[10px] font-medium">
-                                  {workspace.type}
+                                  {workspaceDirectoryTypeLabel({
+                                    type: workspace.type,
+                                    isPersonalWorkspace: workspace.isPersonalWorkspace,
+                                    personalOrgScope: workspace.personalOrgScope,
+                                    primaryOrganizationLabel: workspace.primaryOrganizationLabel,
+                                  })}
                                 </Badge>
                               </td>
                                   )
@@ -10736,12 +14378,13 @@ export function WorkspaceManagementPage() {
                           })}
                         </tbody>
                       </table>
+                      </DndContext>
                     )}
                   </div>
                 </div>
               </div>
             </div>
-          ) : null}
+          </WorkspacePanelSlot>
 
           {/* Row context menu — portal-based, always rendered */}
           <ContextMenu
@@ -10782,6 +14425,20 @@ export function WorkspaceManagementPage() {
                   <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   View Workspace Details
                 </ContextMenuItem>
+                {wmAuth.canMutate && memberParentAccessTarget ? (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      disabled={grantingParentAccessKey !== null}
+                      onSelect={() => {
+                        void handleGrantParentWorkspaceAccess(memberParentAccessTarget)
+                      }}
+                    >
+                      <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Grant Parent Access ({memberParentAccessTarget.parentWorkspaceName})
+                    </ContextMenuItem>
+                  </>
+                ) : null}
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   onSelect={() => {
@@ -10824,6 +14481,8 @@ export function WorkspaceManagementPage() {
                   <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   Edit Membership
                 </ContextMenuItem>
+                {wmAuth.canMutate ? (
+                  <>
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   className="text-rose-600 focus:text-rose-600"
@@ -10835,6 +14494,8 @@ export function WorkspaceManagementPage() {
                   <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
                   Remove Member
                 </ContextMenuItem>
+                  </>
+                ) : null}
               </>
             ) : rowContextMenu?.variant === 'governance' ? (
               <>
@@ -10849,6 +14510,8 @@ export function WorkspaceManagementPage() {
                   <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   View Governance Details
                 </ContextMenuItem>
+                {canCreateOrgWorkspace ? (
+                  <>
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   onSelect={() => {
@@ -10869,6 +14532,8 @@ export function WorkspaceManagementPage() {
                   <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   Assign Governance
                 </ContextMenuItem>
+                  </>
+                ) : null}
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   onSelect={() => {
@@ -10978,6 +14643,8 @@ export function WorkspaceManagementPage() {
                   <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   View Workspace Details
                 </ContextMenuItem>
+                {canCreateOrgWorkspace ? (
+                  <>
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   onSelect={() => {
@@ -10998,6 +14665,52 @@ export function WorkspaceManagementPage() {
                   <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   Assign Governance
                 </ContextMenuItem>
+                  </>
+                ) : null}
+                {directoryJoinOrganizationTarget ? (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      disabled={joiningOrganizationKey !== null}
+                      onSelect={() => {
+                        void handleJoinWorkspaceToOrganization(directoryJoinOrganizationTarget)
+                      }}
+                    >
+                      <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      {directoryJoinOrganizationTarget.mode === 'direct'
+                        ? `Join to ${directoryJoinOrganizationTarget.orgWorkspaceName}`
+                        : `Request join to ${directoryJoinOrganizationTarget.orgWorkspaceName}`}
+                    </ContextMenuItem>
+                  </>
+                ) : null}
+                {wmAuth.canMutate && directoryOrgWacMemberGrantTarget ? (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      disabled={grantingParentAccessKey !== null}
+                      onSelect={() => {
+                        void handleGrantOrgWorkspaceWacMembership(directoryOrgWacMemberGrantTarget)
+                      }}
+                    >
+                      <ShieldCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Grant WAC Member
+                    </ContextMenuItem>
+                  </>
+                ) : null}
+                {wmAuth.canMutate && directoryParentAccessTarget ? (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      disabled={grantingParentAccessKey !== null}
+                      onSelect={() => {
+                        void handleGrantParentWorkspaceAccess(directoryParentAccessTarget)
+                      }}
+                    >
+                      <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Grant Parent Access ({directoryParentAccessTarget.parentWorkspaceName})
+                    </ContextMenuItem>
+                  </>
+                ) : null}
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   onSelect={() => {
@@ -11254,15 +14967,17 @@ export function WorkspaceManagementPage() {
             dialogTitleId="directory-column-width-dialog-title"
           />
 
-          {activePanel === 'governance' ? (
+          <WorkspacePanelSlot
+            panelId="governance"
+            activePanel={deferredActivePanel}
+            visitedPanels={visitedPanels}
+          >
             <div
               ref={governancePanelRef}
-              className={cn(
-                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
-              )}
+              data-tour-target="wm-governance-panel"
+              className="liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border"
               style={workspaceCatalogPanelHeightStyle(
-                workspaceMainPanelViewportHeightPx,
+                workspaceCatalogViewportHeightPx,
                 governancePanelAlignedHeightPx,
                 governancePanelMaxHeightPx
               )}
@@ -11342,8 +15057,8 @@ export function WorkspaceManagementPage() {
                       <div className="flex w-full flex-col items-center justify-center px-6">
                         {!workspaceOrgInitialFetchDone ? (
                           <PlatformServiceLoadingPanel
-                            title="Memuat governance matrix"
-                            description="Menghubungkan ke layanan workspace-org dan workspace-governance."
+                            title="Loading governance matrix"
+                            description="Connecting to workspace-org and workspace-governance."
                           />
                         ) : allWorkspacesForList.length === 0 && !workspaceOrgBackendConnected ? (
                           <div
@@ -11360,10 +15075,10 @@ export function WorkspaceManagementPage() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-semibold text-foreground">
-                                  Governance matrix tidak dapat dimuat
+                                  Governance matrix could not be loaded
                                 </p>
                                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                  workspace-org service diperlukan. Pastikan layanan aktif.
+                                  The workspace-org service is required. Make sure the service is active.
                                 </p>
                                 <div className="mt-3 rounded-md border border-amber-200/30 bg-white/40 px-3 py-2 dark:bg-white/[0.02]">
                                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
@@ -11381,7 +15096,7 @@ export function WorkspaceManagementPage() {
                                   )}
                                   onClick={() => void refreshWorkspaceOrgLists()}
                                 >
-                                  Coba lagi
+                                  Try again
                                 </Button>
                               </div>
                             </div>
@@ -11397,10 +15112,10 @@ export function WorkspaceManagementPage() {
                               <ShieldCheck className="h-9 w-9 text-violet-700 dark:text-violet-400" aria-hidden />
                             </div>
                             <p className="mt-6 text-lg font-semibold tracking-tight text-foreground">
-                              Governance matrix siap, belum ada workspace
+                              Governance matrix ready, no workspaces yet
                             </p>
                             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                              Buat workspace pertama untuk mengisi governance matrix lifecycle-managed enterprise Anda.
+                              Create your first workspace to populate your lifecycle-managed enterprise governance matrix.
                             </p>
                           </div>
                         ) : (
@@ -11414,10 +15129,10 @@ export function WorkspaceManagementPage() {
                               <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
                             </div>
                             <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
-                              Tidak ada baris yang cocok
+                              No matching rows
                             </p>
                             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                              Sesuaikan filter panel, filter kolom tabel (operating model, compliance, audit, owner), atau kata kunci pencarian.
+                              Adjust the panel filters, table column filters (operating model, compliance, audit, owner), or search keywords.
                             </p>
                           </div>
                         )}
@@ -11817,7 +15532,12 @@ export function WorkspaceManagementPage() {
                                   <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
                                     <div className="mt-1.5 flex flex-wrap gap-1">
                                       <Badge variant="outline" className="rounded-md border-border px-1.5 py-0 text-[10px] font-medium">
-                                        {workspace.type}
+                                        {workspaceDirectoryTypeLabel({
+                                          type: workspace.type,
+                                          isPersonalWorkspace: workspace.isPersonalWorkspace,
+                                          personalOrgScope: workspace.personalOrgScope,
+                                          primaryOrganizationLabel: workspace.primaryOrganizationLabel,
+                                        })}
                                       </Badge>
                                       <Badge
                                         className={cn(
@@ -11945,19 +15665,23 @@ export function WorkspaceManagementPage() {
                 </div>
               </div>
             </div>
-          ) : null}
+          </WorkspacePanelSlot>
 
-          {activePanel === 'members' ? (
+          <WorkspacePanelSlot
+            panelId="members"
+            activePanel={deferredActivePanel}
+            visitedPanels={visitedPanels}
+          >
             <>
               <div
                 ref={membersPanelRef}
-                className={cn(
-                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
-                  'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+                data-tour-target="wm-members-panel"
+                className="liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border"
+                style={workspaceCatalogPanelHeightStyle(
+                  workspaceCatalogViewportHeightPx,
+                  membersPanelAlignedHeightPx,
+                  membersPanelMaxHeightPx
                 )}
-                style={
-                  workspaceCatalogPanelHeightStyle(null, membersPanelAlignedHeightPx, membersPanelMaxHeightPx)
-                }
               >
                 <div className="flex h-full min-h-0 w-full flex-col">
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
@@ -11967,9 +15691,31 @@ export function WorkspaceManagementPage() {
                           <div className="flex items-center gap-2">
                             <Users className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                             <h2 className="text-lg font-semibold text-foreground">Workspace Members</h2>
+                            <span
+                              className={cn(
+                                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                                workspaceDirectoryWsLive
+                                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                  : 'bg-muted text-muted-foreground'
+                              )}
+                              title={
+                                workspaceDirectoryWsLive
+                                  ? 'Connected — table updates when memberships change'
+                                  : 'Reconnecting… fallback poll keeps the table fresh'
+                              }
+                            >
+                              <span
+                                className={cn(
+                                  'h-1.5 w-1.5 rounded-full',
+                                  workspaceDirectoryWsLive ? 'bg-emerald-500' : 'bg-muted-foreground/60'
+                                )}
+                                aria-hidden
+                              />
+                              {workspaceDirectoryWsLive ? 'Live' : 'Syncing'}
+                            </span>
                           </div>
                           <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
-                            One row per person across workspaces — each line under Workspace lists a membership for that member.
+                            Tree per person: expand a member to see every workspace membership and role.
                           </p>
                           {membersLoading ? (
                             <p className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -11979,6 +15725,22 @@ export function WorkspaceManagementPage() {
                           ) : null}
                         </div>
                         <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
+                          <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                            <button
+                              type="button"
+                              className="rounded-md px-2 text-[11px] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                              onClick={expandAllMembersTree}
+                            >
+                              Expand all
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-md px-2 text-[11px] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                              onClick={collapseAllMembersTree}
+                            >
+                              Collapse all
+                            </button>
+                          </div>
                           <p className="text-xs text-muted-foreground">
                             Showing{' '}
                             <span className="font-semibold text-foreground">
@@ -11991,6 +15753,8 @@ export function WorkspaceManagementPage() {
                               {Math.min(filteredSortedMembers.length, membersPage * membersPageSize)}
                             </span>{' '}
                             of <span className="font-semibold text-foreground">{filteredSortedMembers.length}</span>
+                            {' '}
+                            <span className="text-muted-foreground/80">people</span>
                           </p>
                           <span className="text-xs text-muted-foreground">Rows:</span>
                           <Select
@@ -12110,13 +15874,11 @@ export function WorkspaceManagementPage() {
                           <tbody>
                             {membersTableRows.map((member) => {
                               const roles = aggregatedMemberRoles(member)
-                              const roleLabel =
-                                roles.length === 1 ? roles[0]! : aggregatedMemberPrimaryRole(member)
-                              const roleBadgeTitle =
-                                roles.length > 1 ? `Roles: ${roles.join(', ')}` : undefined
+                              const workspaceCount = member.memberships.length
+                              const expanded = !membersTreeCollapsedIds.has(member.subjectId)
                               return (
+                                <Fragment key={member.subjectId}>
                               <tr
-                                key={member.subjectId}
                                 className={cn(
                                   'cursor-pointer border-b border-border/20 transition-colors',
                                   memberDetailTarget?.subjectId === member.subjectId ||
@@ -12149,52 +15911,148 @@ export function WorkspaceManagementPage() {
                                 }}
                               >
                                 <td className="px-3 py-3">
-                                  <div className="flex items-center gap-2.5">
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                          aria-expanded={expanded}
+                                          aria-label={expanded ? `Collapse ${member.name}` : `Expand ${member.name}`}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            toggleMembersTreeNode(member.subjectId)
+                                          }}
+                                        >
+                                          {expanded ? (
+                                            <ChevronDown className="h-4 w-4" aria-hidden />
+                                          ) : (
+                                            <ChevronRight className="h-4 w-4" aria-hidden />
+                                          )}
+                                        </button>
                                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/10 text-xs font-bold text-indigo-700 ring-1 ring-indigo-500/20 dark:text-indigo-300">
                                       {member.name.split(' ').map((n) => n[0] ?? '').slice(0, 2).join('')}
                                     </div>
-                                    <span className="font-semibold text-foreground">{member.name}</span>
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-foreground">{member.name}</p>
+                                          <p className="text-[10px] text-muted-foreground tabular-nums">
+                                            {workspaceCount} workspace{workspaceCount === 1 ? '' : 's'}
+                                          </p>
+                                        </div>
                                   </div>
                                 </td>
-                                <td className="px-3 py-3 align-top">
-                                  {member.memberships.length === 1 ? (
-                                    <span className="font-medium text-foreground">
-                                      {member.memberships[0]!.workspaceName}
+                                    <td className="px-3 py-3 align-middle">
+                                      <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
+                                        {workspaceCount} workspace{workspaceCount === 1 ? '' : 's'}
                                     </span>
-                                  ) : (
-                                    <ul className="space-y-1">
-                                      {member.memberships.map((ref) => (
-                                        <li
-                                          key={ref.workspaceId}
-                                          className="flex items-start gap-2 font-medium text-foreground"
-                                        >
-                                          <span
-                                            className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400 dark:bg-slate-500"
-                                            aria-hidden
-                                          />
-                                          <span>{ref.workspaceName}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
                                 </td>
                                 <td className="px-3 py-3">
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        {roles.map((role) => (
                                   <Badge
-                                    className={cn('rounded-full border px-2.5 py-1 text-xs', roleStyles[roleLabel])}
-                                    title={roleBadgeTitle}
+                                            key={`${member.subjectId}-${role}`}
+                                            className={cn('rounded-full border px-2 py-0.5 text-[10px]', roleStyles[role])}
                                   >
-                                    {roles.length > 1 ? `${roleLabel} · ${roles.length} roles` : roleLabel}
+                                            {role}
                                   </Badge>
+                                        ))}
+                                      </div>
                                 </td>
-                                <td className="px-3 py-3 text-muted-foreground">{member.team}</td>
                                 <td className="px-3 py-3 text-muted-foreground">
-                                  {aggregatedMemberScopeLabel(member)}
+                                      {expanded ? '—' : member.team}
+                                    </td>
+                                    <td className="px-3 py-3 text-muted-foreground">
+                                      {expanded ? '—' : aggregatedMemberScopeLabel(member)}
                                 </td>
                                 <td className="px-3 py-3 text-muted-foreground tabular-nums">
-                                  {member.memberships[0]?.lastActivity ?? '—'}
+                                      {expanded ? '—' : (member.memberships[0]?.lastActivity ?? '—')}
                                 </td>
                               </tr>
-                            )})}
+                                  {expanded
+                                    ? member.memberships.map((ref, idx) => (
+                                        <tr
+                                          key={ref.membershipId}
+                                          className={cn(
+                                            'border-b border-border/15 bg-muted/15 dark:bg-white/[0.02]',
+                                            'hover:bg-muted/25 dark:hover:bg-white/[0.04]'
+                                          )}
+                                          onClick={(e) => {
+                                            const target = e.target as HTMLElement
+                                            if (target.closest('button') || target.closest('a')) return
+                                            openMemberDetailDrawer(member)
+                                          }}
+                                          onContextMenu={(e) => {
+                                            e.preventDefault()
+                                            setRowContextMenu({
+                                              x: e.clientX,
+                                              y: e.clientY,
+                                              member,
+                                              variant: 'members',
+                                            })
+                                          }}
+                                        >
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex items-center gap-2 pl-9">
+                                              <span
+                                                className={cn(
+                                                  'h-4 w-4 shrink-0 border-l border-b border-border/60',
+                                                  idx === member.memberships.length - 1 ? 'rounded-bl-sm' : ''
+                                                )}
+                                                aria-hidden
+                                              />
+                                              <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                                Membership
+                                              </span>
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <span className="font-medium text-foreground">{ref.workspaceName}</span>
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              <Badge
+                                                className={cn(
+                                                  'rounded-full border px-2.5 py-1 text-xs',
+                                                  roleStyles[ref.role]
+                                                )}
+                                              >
+                                                {ref.role}
+                                              </Badge>
+                                              {(() => {
+                                                const workspace = allWorkspacesForList.find((w) => w.id === ref.workspaceId)
+                                                const badges = workspace
+                                                  ? resolveMemberParticipationBadges(
+                                                      workspaceRecordToOwnershipRef(workspace),
+                                                      { id: member.subjectId, name: member.name },
+                                                      ref.participationSource,
+                                                    )
+                                                  : ref.participationSource === 'creator'
+                                                    ? (['creator'] as DirectoryAccessBadge[])
+                                                    : (['wac_member'] as DirectoryAccessBadge[])
+                                                return badges.map((badge) => (
+                                                  <Badge
+                                                    key={`${ref.membershipId}-${badge}`}
+                                                    variant="outline"
+                                                    className={cn(
+                                                      'px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide',
+                                                      memberParticipationBadgeClass(badge),
+                                                    )}
+                                                  >
+                                                    {directoryAccessBadgeLabel(badge)}
+                                                  </Badge>
+                                                ))
+                                              })()}
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2.5 text-muted-foreground">{ref.team || '—'}</td>
+                                          <td className="px-3 py-2.5 text-muted-foreground">{ref.scope || '—'}</td>
+                                          <td className="px-3 py-2.5 text-muted-foreground tabular-nums">
+                                            {ref.lastActivity || '—'}
+                                          </td>
+                                        </tr>
+                                      ))
+                                    : null}
+                                </Fragment>
+                              )
+                            })}
                           </tbody>
                         </table>
                       )}
@@ -12203,15 +16061,16 @@ export function WorkspaceManagementPage() {
                 </div>
               </div>
             </>
-          ) : null}
+          </WorkspacePanelSlot>
 
-          {activePanel === 'assets' ? (
+          <WorkspacePanelSlot
+            panelId="assets"
+            activePanel={deferredActivePanel}
+            visitedPanels={visitedPanels}
+          >
             <div
               ref={assetsPanelRef}
-              className={cn(
-                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
-              )}
+              className="liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border"
               style={workspaceCatalogPanelHeightStyle(null, assetsPanelAlignedHeightPx, assetsPanelMaxHeightPx)}
             >
               <div className="flex h-full min-h-0 w-full flex-col">
@@ -12288,10 +16147,10 @@ export function WorkspaceManagementPage() {
                             <Filter className="h-7 w-7 text-muted-foreground" aria-hidden />
                           </div>
                           <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
-                            Tidak ada baris yang cocok
+                            No matching rows
                           </p>
                           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                            Sesuaikan pencarian, filter tipe, atau owner untuk menampilkan kembali daftar asset.
+                            Adjust the search, type filter, or owner to bring the asset list back into view.
                           </p>
                         </div>
                       </div>
@@ -12513,17 +16372,19 @@ export function WorkspaceManagementPage() {
                   </div>
                 </div>
               </div>
-          ) : null}
+          </WorkspacePanelSlot>
 
-          {activePanel === 'activity' ? (
+          <WorkspacePanelSlot
+            panelId="activity"
+            activePanel={deferredActivePanel}
+            visitedPanels={visitedPanels}
+          >
             <div
               ref={activityPanelRef}
-              className={cn(
-                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
-              )}
+              data-tour-target="wm-activity-panel"
+              className="liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border"
               style={workspaceCatalogPanelHeightStyle(
-                workspaceMainPanelViewportHeightPx,
+                workspaceCatalogViewportHeightPx,
                 activityPanelAlignedHeightPx,
                 activityPanelMaxHeightPx
               )}
@@ -12596,11 +16457,6 @@ export function WorkspaceManagementPage() {
                     </div>
                   </div>
               </div>
-                    {isActivityFallbackMode ? (
-                      <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-700">
-                        No personal activity found yet. Showing latest workspace activity from backend.
-                      </div>
-          ) : null}
                   </div>
 
                   <div className="scrollbar-hide min-h-0 w-full min-w-0 flex-1 overflow-hidden rounded-xl">
@@ -12616,10 +16472,14 @@ export function WorkspaceManagementPage() {
                             <ClipboardList className="h-7 w-7 text-muted-foreground" aria-hidden />
                       </div>
                           <p className="mt-5 text-lg font-semibold tracking-tight text-foreground">
-                            Tidak ada aktivitas yang cocok
+                            {canViewAllActivityAudit
+                              ? 'No matching activity'
+                              : 'No personal activity yet'}
                           </p>
                           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                            Coba ubah kata kunci pencarian atau lakukan aksi workspace baru untuk mengisi activity feed.
+                            {canViewAllActivityAudit
+                              ? 'Try changing the search keywords, or perform a new workspace action to populate the activity feed.'
+                              : 'Only your own activity is shown here. Perform an action in a workspace to populate the feed.'}
                           </p>
                       </div>
                     </div>
@@ -12703,10 +16563,12 @@ export function WorkspaceManagementPage() {
                 </div>
               </div>
             </div>
-          ) : null}
+          </WorkspacePanelSlot>
         </main>
       </section>
       </div>
+
+      <WorkspaceManagementGuideDrawer />
 
       <InviteWorkspaceMemberDrawer
         open={inviteWorkspaceMemberOpen}
@@ -12763,8 +16625,8 @@ export function WorkspaceManagementPage() {
                 if (provisioned.temporary_password) {
                   addToast({
                     variant: 'success',
-                    title: 'Akun identity dibuat',
-                    description: `Password sementara untuk ${provisioned.email}: ${provisioned.temporary_password}`,
+                    title: 'Identity account created',
+                    description: `Temporary password for ${provisioned.email}: ${provisioned.temporary_password}`,
                   })
                 }
               }
@@ -12797,15 +16659,50 @@ export function WorkspaceManagementPage() {
                         : `idem-${Date.now().toString(36)}-${workspaceId}`,
                   }
                 )
+
+                const invitedOperational =
+                  inviteWorkspaceOptions.find((w) => w.id === workspaceId)
+                  ?? allWorkspacesForList.find((w) => w.id === workspaceId)
+                if (
+                  invitedOperational
+                  && !invitedOperational.isPersonalWorkspace
+                  && invitedOperational.type !== 'Organization'
+                ) {
+                  try {
+                    await markOperationalWorkspaceOrgDirectoryJoined(workspaceId)
+                  } catch {
+                    // Membership is authoritative; directory metadata is best-effort.
+                  }
+                }
+
+                // Organization home: also nest invitee's personal workspace under this tree node
+                // (Member Organization + Member Workspace Organization together).
+                const invitedWs =
+                  inviteWorkspaceOptions.find((w) => w.id === workspaceId)
+                  ?? allWorkspacesForList.find((w) => w.id === workspaceId)
+                const isOrgWorkspace =
+                  (invitedWs && 'type' in invitedWs && invitedWs.type === 'Organization')
+                  || allWorkspacesForList.find((w) => w.id === workspaceId)?.type === 'Organization'
+                if (isOrgWorkspace && subjectId) {
+                  try {
+                    await linkPersonalWorkspaceToOrgTree(
+                      workspaceId,
+                      { identity_ref: subjectId },
+                      { actorId: session?.user?.id },
+                    )
+                  } catch {
+                    // Personal workspace may not exist yet (email invite before first login).
+                  }
+                }
               }
 
               if (activatedNewUser && payload.inviteByEmail?.email) {
                 await activateIdentityUser(payload.inviteByEmail.email)
               }
 
-              await refreshAllWorkspaceMembers()
-              const identityRes = await fetchIdentityUsers({ limit: 300 })
-              setIdentityUsers(identityRes.items)
+              await refreshLiveMembersPanel()
+              void refreshWorkspaceOrgLists()
+              emitWorkspaceDirectoryMutation('tectona:identity-updated')
               closeInviteMemberDrawer()
               const workspaceLabel =
                 payload.workspaceNames.length > 0
@@ -12835,7 +16732,9 @@ export function WorkspaceManagementPage() {
                 subjectId: editMembershipTarget.subjectId,
                 name: editMembershipTarget.name,
                 team: editMembershipTarget.team,
-                memberships: editMembershipTarget.memberships.map((ref) => ({
+                memberships: editMembershipTarget.memberships
+                  .filter((ref) => ref.participationSource !== 'creator')
+                  .map((ref) => ({
                   membershipId: ref.membershipId,
                   workspaceId: ref.workspaceId,
                   workspaceName: ref.workspaceName,
@@ -12872,13 +16771,14 @@ export function WorkspaceManagementPage() {
                 },
                 { actorId: session?.user?.id }
               )
-              await refreshAllWorkspaceMembers()
+              await refreshLiveMembersPanel()
               closeEditMembershipDrawer()
               addToast({
                 variant: 'success',
                 title: 'Membership updated',
                 description: `${editMembershipTarget?.name ?? 'Member'} — ${payload.workspaceName}: participation profile updated.`,
               })
+              emitWorkspaceDirectoryMutation('tectona:identity-updated')
             } catch (e) {
               addToast({
                 variant: 'error',
@@ -12949,12 +16849,18 @@ export function WorkspaceManagementPage() {
                   {/* Section 1 — Workspace context (stacked field pattern like KB drawer) */}
                 <section className="space-y-3">
                   <div className="space-y-1.5">
+                    {assignGovernanceWorkspacePickerMode === 'dropdown' ? (
                     <Label
-                      htmlFor={assignGovernanceWorkspacePickerMode === 'dropdown' ? 'gov-workspace-switch' : undefined}
+                      htmlFor="gov-workspace-switch"
                       className="text-xs font-medium text-muted-foreground"
                     >
                       Workspace
                     </Label>
+                    ) : (
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Workspace
+                    </span>
+                    )}
                     {assignGovernanceWorkspacePickerMode === 'dropdown' ? (
                     <Select
                       id="gov-workspace-switch"
@@ -13543,9 +17449,35 @@ export function WorkspaceManagementPage() {
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span className="font-semibold text-foreground">{ref.workspaceName}</span>
+                          <div className="flex flex-wrap items-center gap-1.5">
                           <Badge className={cn('rounded-full border px-2 py-0.5 text-[10px]', roleStyles[ref.role])}>
                             {ref.role}
                           </Badge>
+                            {(() => {
+                              const workspace = allWorkspacesForList.find((w) => w.id === ref.workspaceId)
+                              const badges = workspace
+                                ? resolveMemberParticipationBadges(
+                                    workspaceRecordToOwnershipRef(workspace),
+                                    { id: member.subjectId, name: member.name },
+                                    ref.participationSource,
+                                  )
+                                : ref.participationSource === 'creator'
+                                  ? (['creator'] as DirectoryAccessBadge[])
+                                  : (['wac_member'] as DirectoryAccessBadge[])
+                              return badges.map((badge) => (
+                                <Badge
+                                  key={`${ref.membershipId}-${badge}`}
+                                  variant="outline"
+                                  className={cn(
+                                    'px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide',
+                                    memberParticipationBadgeClass(badge),
+                                  )}
+                                >
+                                  {directoryAccessBadgeLabel(badge)}
+                                </Badge>
+                              ))
+                            })()}
+                          </div>
                         </div>
                         <div className="mt-1.5 grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                           <span>Scope: {ref.scope || '—'}</span>
@@ -13557,23 +17489,13 @@ export function WorkspaceManagementPage() {
                 </div>
               </div>
 
+              {wmAuth.canMutate ? (
               <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
                 <div className="flex w-full items-stretch gap-3">
                   <Button
                     type="button"
                     variant="outline"
-                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
-                    onClick={closeMemberDetailDrawer}
-                  >
-                    <X className="h-4 w-4 shrink-0" aria-hidden />
-                    Close
-                  </Button>
-                  {wmAuth.canMutate ? (
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                      className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 flex-1 justify-center gap-2')}
                         onClick={() => {
                           closeMemberDetailDrawer()
                           openEditMembershipDrawer(member)
@@ -13584,17 +17506,22 @@ export function WorkspaceManagementPage() {
                       </Button>
                       <Button
                         type="button"
-                        variant="default"
-                        className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2 text-rose-700 hover:text-rose-800')}
-                        onClick={() => openRemoveMemberDialog(member)}
+                    variant="outline"
+                    className={cn(
+                      enterpriseSecondaryButtonClass(),
+                      'min-w-0 flex-1 justify-center gap-2 border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/50 dark:hover:bg-rose-950/40',
+                    )}
+                    onClick={() => {
+                      closeMemberDetailDrawer()
+                      openRemoveMemberDialog(member)
+                    }}
                       >
                         <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
-                        Remove
+                    Remove Member
                       </Button>
-                    </>
-                  ) : null}
                 </div>
               </div>
+              ) : null}
             </>
           )
         })()}
@@ -13888,7 +17815,7 @@ export function WorkspaceManagementPage() {
           {complianceDialogLoading ? (
             <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-              Memuat skor dari workspace-governance service…
+              Loading score from workspace-governance service…
             </div>
           ) : complianceDialogData ? (
             <div className="space-y-3 text-sm">
@@ -13912,7 +17839,7 @@ export function WorkspaceManagementPage() {
           ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => closeComplianceDialog()}>
-              Tutup
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -13923,7 +17850,7 @@ export function WorkspaceManagementPage() {
           <DialogHeader>
             <DialogTitle>Apply governance template</DialogTitle>
             <DialogDescription>
-              Menerapkan default policy IDs dari template yang dipilih (hanya referensi catalog).
+              Applies the default policy IDs from the selected template (catalog reference only).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -13937,7 +17864,7 @@ export function WorkspaceManagementPage() {
               disabled={applyTemplateSubmitting}
               className="h-10 w-full"
             >
-              <option value="">Pilih template</option>
+              <option value="">Select template</option>
               {(governanceCatalog?.templates ?? []).map((t) => (
                 <option key={t.id} value={t.id} disabled={t.status !== 'published'}>
                   {t.name} ({t.code}){t.status !== 'published' ? ' — non-published' : ''}
@@ -14059,7 +17986,12 @@ export function WorkspaceManagementPage() {
                 <div>
                   <p className="text-[11px] text-muted-foreground">Type</p>
                   <Badge variant="outline" className="mt-1 px-2 py-0.5 text-[10px] font-medium">
-                    {editWorkspaceTarget.type}
+                    {workspaceDirectoryTypeLabel({
+                      type: editWorkspaceTarget.type,
+                      isPersonalWorkspace: editWorkspaceTarget.isPersonalWorkspace,
+                      personalOrgScope: editWorkspaceTarget.personalOrgScope,
+                      primaryOrganizationLabel: editWorkspaceTarget.primaryOrganizationLabel,
+                    })}
                   </Badge>
                 </div>
                 <div>
@@ -14096,6 +18028,15 @@ export function WorkspaceManagementPage() {
                     <WorkspaceDirectoryOwnerCell owner={editWorkspaceTarget.technicalOwner ?? ''} />
                   </div>
                 </div>
+                <div className="md:col-span-2">
+                  <p className="text-[11px] text-muted-foreground">Organization domains</p>
+                  <OrganizationDomainChips
+                    domains={verifiedDomainsForOrganization(
+                      organizationNodes,
+                      editWorkspaceTarget.primaryOrganizationId,
+                    )}
+                  />
+                </div>
                 <div>
                   <p className="text-[11px] text-muted-foreground">Members</p>
                   <p className="mt-1 text-foreground">{editWorkspaceTarget.members}</p>
@@ -14103,6 +18044,249 @@ export function WorkspaceManagementPage() {
                 <div>
                   <p className="text-[11px] text-muted-foreground">Projects</p>
                   <p className="mt-1 text-foreground">{editWorkspaceTarget.projects}</p>
+                </div>
+              </div>
+
+              {canLinkEditWorkspaceToOrgTree ? (
+                <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
+                  <p className="text-sm font-medium text-foreground">Join organization tree</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Nest this personal workspace under an organization home so it appears in the corporate Directory.
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    <Label htmlFor="link-personal-org-home" className="text-xs text-muted-foreground">
+                      Organization home workspace
+                    </Label>
+                    <Select
+                      id="link-personal-org-home"
+                      value={linkPersonalOrgHomeId}
+                      onChange={(e) => setLinkPersonalOrgHomeId(e.target.value)}
+                      className="h-10 w-full"
+                      disabled={linkingPersonalToOrgTree}
+                    >
+                      <option value="">Select organization home</option>
+                      {organizationHomeWorkspaceOptions.map((workspace) => (
+                        <option key={workspace.id} value={workspace.id}>
+                          {workspace.name} ({workspace.primaryOrganizationLabel})
+                        </option>
+                      ))}
+                    </Select>
+                    <Button
+                      type="button"
+                      className={cn(registerServicePrimaryButtonClass(), 'h-9 w-full gap-2')}
+                      disabled={linkingPersonalToOrgTree || !linkPersonalOrgHomeId.trim()}
+                      onClick={() => void submitLinkPersonalWorkspaceToOrgTree()}
+                    >
+                      {linkingPersonalToOrgTree ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      ) : (
+                        <Building2 className="h-4 w-4 shrink-0" aria-hidden />
+                      )}
+                      {linkingPersonalToOrgTree ? 'Joining…' : 'Join organization tree'}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {canUnlinkEditWorkspaceFromOrgTree ? (
+                <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+                  <p className="text-sm font-medium text-foreground">Organization tree membership</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    This personal workspace is nested under{' '}
+                    {editWorkspaceTarget.parentWorkspaceId
+                      ? (allWorkspacesForList.find((w) => w.id === editWorkspaceTarget.parentWorkspaceId)?.name
+                        ?? 'the organization home')
+                      : 'the organization home'}
+                    . Leaving the tree keeps your workspace but hides it from the corporate hierarchy.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 h-9 w-full gap-2 border-amber-300/60 text-amber-900 hover:bg-amber-50 dark:text-amber-200 dark:hover:bg-amber-950/40"
+                    disabled={unlinkingPersonalFromOrgTree}
+                    onClick={() => setUnlinkPersonalFromOrgTreeOpen(true)}
+                  >
+                    {unlinkingPersonalFromOrgTree ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : (
+                      <ArrowLeftToLine className="h-4 w-4 shrink-0" aria-hidden />
+                    )}
+                    Leave organization tree
+                  </Button>
+                </div>
+              ) : null}
+
+              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50/95 via-background to-indigo-50/25 shadow-[0_10px_40px_rgba(15,23,42,0.07)] dark:border-slate-700/60 dark:from-slate-950/50 dark:via-background dark:to-indigo-950/20">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 bg-white/70 px-4 py-3.5 backdrop-blur-sm dark:border-slate-700/50 dark:bg-slate-900/45">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/15 via-violet-500/10 to-fuchsia-500/5 ring-1 ring-indigo-300/35 shadow-sm dark:ring-indigo-600/30">
+                      <UserPlus className="h-[18px] w-[18px] text-indigo-600 dark:text-indigo-300" aria-hidden />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold tracking-tight text-foreground">Pending approval</p>
+                        {workspacePendingAccessRequests.length > 0 ? (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-300/60 bg-amber-50/90 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/40 dark:text-amber-200"
+                          >
+                            {workspacePendingAccessRequests.length} waiting
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                        Review access before users enter this workspace.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      enterpriseSecondaryButtonClass(),
+                      'h-9 shrink-0 gap-1.5 px-3 text-xs shadow-none hover:shadow-sm',
+                    )}
+                    disabled={workspacePendingAccessLoading}
+                    onClick={() => void reloadWorkspacePendingAccessRequests(editWorkspaceTarget.id)}
+                  >
+                    <RotateCcw
+                      className={cn('h-3.5 w-3.5', workspacePendingAccessLoading && 'animate-spin')}
+                      aria-hidden
+                    />
+                    Refresh
+                  </Button>
+                </div>
+
+                <div className="space-y-3 p-4">
+                {workspacePendingAccessError ? (
+                    <div className="rounded-xl border border-rose-400/30 bg-gradient-to-r from-rose-500/10 to-rose-500/5 px-3.5 py-2.5 text-xs text-rose-800 dark:text-rose-200">
+                    {workspacePendingAccessError}
+                  </div>
+                ) : null}
+
+                {workspacePendingAccessLoading && workspacePendingAccessRequests.length === 0 ? (
+                    <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300/70 bg-white/50 px-4 py-8 text-xs text-muted-foreground dark:border-slate-600/60 dark:bg-slate-900/30">
+                      <Loader2 className="h-4 w-4 animate-spin text-indigo-500" aria-hidden />
+                    Loading pending requests…
+                  </div>
+                ) : workspacePendingAccessRequests.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300/70 bg-white/40 px-4 py-8 text-center dark:border-slate-600/60 dark:bg-slate-900/25">
+                      <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 ring-1 ring-slate-200/80 dark:bg-slate-800 dark:ring-slate-700">
+                        <ShieldCheck className="h-5 w-5 text-slate-500 dark:text-slate-400" aria-hidden />
+                      </div>
+                      <p className="text-sm font-medium text-foreground">All clear</p>
+                      <p className="mt-0.5 max-w-[240px] text-[11px] text-muted-foreground">
+                        No one is waiting for access right now.
+                      </p>
+                  </div>
+                ) : (
+                    <ul className="space-y-3">
+                    {workspacePendingAccessRequests.map((req) => {
+                      const identity = identityUsers.find((u) => u.id === req.subject_id)
+                      const displayName = identity?.display_name?.trim() || req.subject_id
+                      const email = identity?.email?.trim()
+                      const deciding = decidingAccessRequestId === req.id
+                        const requestDisplay = pendingAccessRequestDisplay(
+                          req,
+                          accessRequestWorkspaceCatalog,
+                          accessRequestWorkspaceNameOverrides,
+                        )
+                        const primaryName = displayName.includes('(')
+                          ? displayName.split('(')[0].trim()
+                          : displayName.trim()
+                      return (
+                        <li
+                          key={req.id}
+                            className="group relative overflow-hidden rounded-xl border border-slate-200/80 bg-white/85 p-4 shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:border-indigo-200/70 hover:shadow-[0_8px_24px_rgba(79,70,229,0.10)] dark:border-slate-700/60 dark:bg-slate-900/55 dark:hover:border-indigo-700/40"
+                          >
+                            <div
+                              className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-indigo-400 via-violet-500 to-fuchsia-500 opacity-80"
+                              aria-hidden
+                            />
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="flex min-w-0 items-start gap-3 pl-1">
+                                <div
+                                  className={cn(
+                                    'flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1 shadow-sm',
+                                    pendingAccessRequestAvatarClass(req.subject_id),
+                                  )}
+                                  aria-hidden
+                                >
+                                  {initialsFromDisplayName(primaryName)}
+                                </div>
+                                <div className="min-w-0 pt-0.5">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="truncate text-sm font-semibold tracking-tight text-foreground">
+                                      {displayName}
+                                    </p>
+                                    <Badge
+                                      variant="outline"
+                                      className="border-violet-300/55 bg-violet-50/80 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider text-violet-800 dark:border-violet-700/50 dark:bg-violet-950/40 dark:text-violet-200"
+                                    >
+                                      Pending
+                                    </Badge>
+                                  </div>
+                              {email ? (
+                                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{email}</p>
+                              ) : (
+                                    <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                                  {req.subject_id}
+                                </p>
+                              )}
+                                  <p className="mt-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                                    {requestDisplay.joinWorkspace
+                                      ? `${requestDisplay.joinWorkspace.workspaceName} · ${requestDisplay.joinWorkspace.kindLabel}`
+                                      : requestDisplay.detail}
+                                  </p>
+                                  {requestDisplay.note ? (
+                                    <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                                      {requestDisplay.note}
+                                </p>
+                              ) : null}
+                            </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2 pl-12 sm:pl-0">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                  className={cn(
+                                    enterpriseSecondaryButtonClass(),
+                                    'h-9 min-w-[5.5rem] gap-1.5 px-3 text-xs shadow-none',
+                                  )}
+                                disabled={deciding}
+                                onClick={() => void decideWorkspaceAccessRequest(req, 'reject')}
+                              >
+                                <X className="h-3.5 w-3.5" aria-hidden />
+                                Reject
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                  className={cn(
+                                    enterpriseIndigoGradientActionButtonClass(),
+                                    'h-9 min-w-[5.75rem] gap-1.5 px-3 text-xs',
+                                  )}
+                                disabled={deciding}
+                                onClick={() => {
+                                  setApproveAccessDialogRequest(req)
+                                }}
+                              >
+                                {deciding ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                                ) : (
+                                  <Check className="h-3.5 w-3.5" aria-hidden />
+                                )}
+                                Approve
+                              </Button>
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
                 </div>
               </div>
             </div>
@@ -14160,7 +18344,18 @@ export function WorkspaceManagementPage() {
                   <Select
                     id="edit-ws-org"
                     value={editWorkspaceForm.primaryOrganizationId}
-                    onChange={(e) => setEditWorkspaceForm((f) => f ? { ...f, primaryOrganizationId: e.target.value } : f)}
+                    onChange={(e) => {
+                      const id = e.target.value
+                      setEditWorkspaceForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              primaryOrganizationId: id,
+                              verifiedDomains: verifiedDomainsForOrganization(organizationNodes, id),
+                            }
+                          : f,
+                      )
+                    }}
                     className="h-10 w-full"
                   >
                     <option value="">Select organization (tree)</option>
@@ -14172,11 +18367,175 @@ export function WorkspaceManagementPage() {
                   </Select>
                 </div>
 
+                {/* Workspace type */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="edit-ws-type" className="text-xs text-muted-foreground">
+                      Workspace type <span className="text-red-500">*</span>
+                    </Label>
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      onClick={openWorkspaceTypeManage}
+                    >
+                      Manage
+                    </button>
+                  </div>
+                  <Select
+                    id="edit-ws-type"
+                    value={editWorkspaceForm.workspaceType}
+                    onChange={(e) =>
+                      setEditWorkspaceForm((f) =>
+                        f ? { ...f, workspaceType: e.target.value as WorkspaceClassification | '' } : f,
+                      )
+                    }
+                    className="h-10 w-full"
+                  >
+                    <option value="">Select workspace type</option>
+                    {workspaceTypeOptions.map((t) => (
+                      <option key={t.typeCode} value={t.typeCode}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                {/* Owner */}
+                <div className="space-y-2 md:col-span-2">
+                  {editWorkspaceForm.owner.trim() ? (
+                    <span className="text-xs font-medium leading-none">Owner</span>
+                  ) : (
+                    <Label htmlFor="edit-ws-owner" className="text-xs">
+                      Owner
+                    </Label>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    Shown in the Directory Owner column when no Business owner is set.
+                  </p>
+                  {editWorkspaceForm.owner.trim() ? (
+                    <WorkspaceOwnershipPersonChip
+                      displayName={editWorkspaceForm.owner}
+                      verified={knownPeopleNames.has(editWorkspaceForm.owner.trim().toLowerCase())}
+                      unverifiedShortLabel="Unverified \u00b7 verify later"
+                      onChange={() => beginEditWorkspaceOwnershipSearch('owner')}
+                    />
+                  ) : (
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                      <Input
+                        id="edit-ws-owner"
+                        value={editWorkspaceForm.ownerQuery}
+                        onChange={(e) => {
+                          setEditWorkspaceForm((f) => (f ? { ...f, ownerQuery: e.target.value } : f))
+                        }}
+                        onFocus={() => openEditWorkspaceOwnershipSearchFocus('owner', editWorkspaceForm.owner)}
+                        onBlur={(e) => {
+                          if (shouldSkipOwnershipPickerInputBlur(e.relatedTarget)) return
+                          window.setTimeout(() => finishEditWorkspaceOwnershipBlur('owner'), 0)
+                        }}
+                        onKeyDown={(e) => {
+                          handleOwnershipPickerInputKeyDown(e, {
+                            listOpen: ownershipPickerDropdownOpen(
+                              !!editWorkspaceForm.owner.trim(),
+                              editWorkspaceForm.ownerQuery,
+                              filteredEditOwnerPeople.length
+                            ),
+                            firstOptionId: `edit-ws-owner-opt-${filteredEditOwnerPeople[0]?.id ?? ''}`,
+                            onBeforeFocusList: markOwnershipPickerFocusMovingToList,
+                            onEnter: () => {
+                              const manual = ownershipNameFromManualSearch(editWorkspaceForm.ownerQuery)
+                              if (!manual) return
+                              clearEditWorkspaceOwnershipRevert('owner')
+                              setEditWorkspaceForm((f) => (f ? { ...f, owner: manual, ownerQuery: manual } : f))
+                            },
+                          })
+                        }}
+                        aria-autocomplete="list"
+                        aria-controls={
+                          ownershipPickerDropdownOpen(
+                            !!editWorkspaceForm.owner.trim(),
+                            editWorkspaceForm.ownerQuery,
+                            filteredEditOwnerPeople.length
+                          )
+                            ? 'edit-ws-owner-listbox'
+                            : undefined
+                        }
+                        aria-expanded={ownershipPickerDropdownOpen(
+                          !!editWorkspaceForm.owner.trim(),
+                          editWorkspaceForm.ownerQuery,
+                          filteredEditOwnerPeople.length
+                        )}
+                        placeholder={
+                          editWorkspaceForm.ownershipIdentityMode === 'external'
+                            ? 'Search enterprise IAM users\u2026'
+                            : 'Search Identity-Lite directory by name, team, or role\u2026'
+                        }
+                        className="h-10 text-sm pl-9"
+                      />
+                    </div>
+                  )}
+                  {!editWorkspaceForm.owner.trim() && editWorkspaceForm.ownerQuery.trim().length > 0 ? (
+                    <div
+                      id="edit-ws-owner-listbox"
+                      role="listbox"
+                      {...{ [OWNERSHIP_PICKER_LIST_ATTR]: '' }}
+                      className="max-h-32 overflow-y-auto rounded-lg border border-border/70 bg-background/90"
+                    >
+                      {filteredEditOwnerPeople.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">No people match your search.</div>
+                      ) : (
+                        filteredEditOwnerPeople.map((member, memberIndex) => {
+                          const optionId = `edit-ws-owner-opt-${member.id}`
+                          const optionIds = filteredEditOwnerPeople.map((m) => `edit-ws-owner-opt-${m.id}`)
+                          const selectMember = () => {
+                            clearEditWorkspaceOwnershipRevert('owner')
+                            setEditWorkspaceForm((f) =>
+                              f ? { ...f, owner: member.name, ownerQuery: member.name } : f
+                            )
+                          }
+                          return (
+                            <button
+                              key={`edit-owner-${member.id}`}
+                              id={optionId}
+                              type="button"
+                              role="option"
+                              tabIndex={0}
+                              className={cn('flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-muted/40 focus:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50', editWorkspaceForm.owner === member.name && 'bg-muted/50 text-foreground')}
+                              onMouseDown={retainFocusForOwnershipPicker}
+                              onKeyDown={(e) =>
+                                handleOwnershipPickerOptionKeyDown(e, {
+                                  inputId: 'edit-ws-owner',
+                                  optionIds,
+                                  index: memberIndex,
+                                  onSelect: selectMember,
+                                })
+                              }
+                              onClick={selectMember}
+                            >
+                              <span className="truncate">{member.name}<span className="text-muted-foreground"> \u2014 {member.role} \u2014 {member.team}</span></span>
+                              {editWorkspaceForm.owner === member.name ? <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden /> : null}
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
                 {/* Business owner */}
                 <div className="space-y-2 md:col-span-2">
+                  {editWorkspaceForm.businessOwner.trim() ? (
+                    <span className="text-xs font-medium leading-none">
+                      Business owner <span className="text-red-500">*</span>
+                    </span>
+                  ) : (
                   <Label htmlFor="edit-ws-biz-owner" className="text-xs">
-                    Business owner <span className="text-muted-foreground/50 font-normal">(optional)</span>
+                    Business owner <span className="text-red-500">*</span>
                   </Label>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    This name appears in the Directory Owner column.
+                  </p>
                   {editWorkspaceForm.businessOwner.trim() ? (
                     <WorkspaceOwnershipPersonChip
                       displayName={editWorkspaceForm.businessOwner}
@@ -14212,7 +18571,15 @@ export function WorkspaceManagementPage() {
                               if (!manual) return
                               clearEditWorkspaceOwnershipRevert('business')
                               setEditWorkspaceForm((f) =>
-                                f ? { ...f, businessOwner: manual, businessOwnerQuery: manual } : f
+                                f
+                                  ? {
+                                      ...f,
+                                      businessOwner: manual,
+                                      businessOwnerQuery: manual,
+                                      owner: manual,
+                                      ownerQuery: manual,
+                                    }
+                                  : f
                               )
                             },
                           })
@@ -14258,7 +18625,15 @@ export function WorkspaceManagementPage() {
                           const selectMember = () => {
                             clearEditWorkspaceOwnershipRevert('business')
                             setEditWorkspaceForm((f) =>
-                              f ? { ...f, businessOwner: member.name, businessOwnerQuery: member.name } : f
+                              f
+                                ? {
+                                    ...f,
+                                    businessOwner: member.name,
+                                    businessOwnerQuery: member.name,
+                                    owner: member.name,
+                                    ownerQuery: member.name,
+                                  }
+                                : f
                             )
                           }
                           return (
@@ -14292,9 +18667,15 @@ export function WorkspaceManagementPage() {
 
                 {/* Technical owner (optional) */}
                 <div className="w-full min-w-0 space-y-2 md:col-span-2">
+                  {editWorkspaceForm.technicalOwner.trim() ? (
+                    <span className="text-xs font-medium leading-none">
+                      Technical owner <span className="text-muted-foreground/50 font-normal">(optional)</span>
+                    </span>
+                  ) : (
                   <Label htmlFor="edit-ws-tech-owner" className="text-xs">
                     Technical owner <span className="text-muted-foreground/50 font-normal">(optional)</span>
                   </Label>
+                  )}
                   {editWorkspaceForm.technicalOwner.trim() ? (
                     <WorkspaceOwnershipPersonChip
                       displayName={editWorkspaceForm.technicalOwner}
@@ -14408,6 +18789,17 @@ export function WorkspaceManagementPage() {
                   ) : null}
                 </div>
 
+                <OrganizationDomainMappingField
+                  idPrefix="edit-ws-domain"
+                  domains={editWorkspaceForm.verifiedDomains}
+                  primaryOrganizationId={editWorkspaceForm.primaryOrganizationId}
+                  organizationNodes={organizationNodes}
+                  identityUsers={identityUsers}
+                  onChange={(next) =>
+                    setEditWorkspaceForm((f) => (f ? { ...f, verifiedDomains: next } : f))
+                  }
+                />
+
 
               </div>
 
@@ -14455,6 +18847,7 @@ export function WorkspaceManagementPage() {
           'fixed bottom-0 left-0 right-0 top-0 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity',
           newWorkspaceDrawerOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
+        data-tour-target="wm-new-workspace-drawer-backdrop"
         style={{ margin: 0, padding: 0, width: '100vw', height: '100vh', top: 0, left: 0 }}
         onClick={closeNewWorkspaceDrawer}
         aria-hidden={!newWorkspaceDrawerOpen}
@@ -14467,6 +18860,7 @@ export function WorkspaceManagementPage() {
           'fixed right-0 top-0 z-[1100] flex h-screen w-[min(900px,98vw)] max-w-[98vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
           newWorkspaceDrawerOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
+        data-tour-target="wm-new-workspace-drawer"
         style={{
           boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
           margin: 0,
@@ -14507,6 +18901,7 @@ export function WorkspaceManagementPage() {
               <nav
                 className="shrink-0 border-b border-border bg-gradient-to-b from-muted/35 via-background to-background px-2 py-3 sm:px-4 md:px-5 md:py-4"
                 aria-label="Workspace creation progress"
+                data-tour-target="wm-new-workspace-wizard-progress"
               >
                 <div className="scrollbar-hide flex w-full min-w-0 items-start justify-center gap-0 overflow-x-auto pb-1 pt-0.5">
                   {NEW_WORKSPACE_WIZARD_STEPS.map((st, idx) => {
@@ -14589,6 +18984,7 @@ export function WorkspaceManagementPage() {
               <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5 md:py-5">
                 <div
                   key={newWorkspaceWizardStep}
+                  data-tour-target="wm-new-workspace-wizard-content"
                   className="scrollbar-hide min-h-0 flex-1 overflow-y-auto pb-2 transition-opacity duration-300 ease-out md:pl-5"
                 >
                   {newWorkspaceWizardStep === 1 ? (
@@ -14618,7 +19014,7 @@ export function WorkspaceManagementPage() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs text-muted-foreground">Workspace code</Label>
+                          <span className="text-xs font-medium text-muted-foreground">Workspace code</span>
                           <div
                             className="flex min-h-[2.5rem] items-center rounded-md border border-border/80 bg-muted/25 px-3 py-2 font-mono text-sm font-semibold tracking-tight text-foreground"
                             aria-live="polite"
@@ -14674,6 +19070,7 @@ export function WorkspaceManagementPage() {
                               ...prev,
                               primaryOrganizationId: id,
                               relatedOrganizationIds: prev.relatedOrganizationIds.filter((x) => x !== id),
+                              verifiedDomains: verifiedDomainsForOrganization(organizationNodes, id),
                             }))
                             setWizardFieldHighlights((h) => ({ ...h, primaryOrganization: false }))
                           }}
@@ -14693,9 +19090,9 @@ export function WorkspaceManagementPage() {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label className="text-xs text-muted-foreground">
+                        <span className="text-xs font-medium text-muted-foreground">
                           Related organizations <span className="font-normal text-muted-foreground/50">(optional)</span>
-                        </Label>
+                        </span>
                         <div className="max-h-44 space-y-2 overflow-y-auto rounded-md border border-border/80 bg-background/80 p-3">
                           {orgSelectRows
                             .filter((row) => row.id !== newWorkspaceForm.primaryOrganizationId)
@@ -14708,6 +19105,8 @@ export function WorkspaceManagementPage() {
                                 >
                                   <input
                                     type="checkbox"
+                                    id={`new-ws-related-org-${row.id}`}
+                                    name={`new-ws-related-org-${row.id}`}
                                     className="h-3.5 w-3.5 rounded border-border"
                                     checked={checked}
                                     onChange={() => {
@@ -14725,6 +19124,23 @@ export function WorkspaceManagementPage() {
                               )
                             })}
                         </div>
+                      </div>
+                      <div
+                        className={cn(
+                          wizardFieldHighlights.verifiedDomains && 'rounded-lg ring-2 ring-destructive/35',
+                        )}
+                      >
+                      <OrganizationDomainMappingField
+                        idPrefix="new-ws-domain"
+                        domains={newWorkspaceForm.verifiedDomains}
+                          primaryOrganizationId={newWorkspaceForm.primaryOrganizationId}
+                          organizationNodes={organizationNodes}
+                          identityUsers={identityUsers}
+                          onChange={(next) => {
+                          setNewWorkspaceForm((prev) => ({ ...prev, verifiedDomains: next }))
+                            setWizardFieldHighlights((h) => ({ ...h, verifiedDomains: false }))
+                          }}
+                      />
                       </div>
                     </NewWorkspaceActiveStepShell>
                   ) : null}
@@ -14781,9 +19197,9 @@ export function WorkspaceManagementPage() {
                     >
                       <div className="space-y-5">
                         <div className="space-y-1.5">
-                          <Label className="text-xs text-muted-foreground">
+                          <span className="text-xs font-medium text-muted-foreground">
                             Identity mode <span className="text-red-500">*</span>
-                          </Label>
+                          </span>
                           <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Identity mode">
                             {WORKSPACE_OWNERSHIP_IDENTITY_MODE_OPTIONS.map((mode) => (
                               <button
@@ -14824,9 +19240,15 @@ export function WorkspaceManagementPage() {
                         <div className="space-y-5 border-t border-border/50 pt-5">
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between gap-2">
+                            {newWorkspaceForm.owner.trim() ? (
+                              <span className="text-xs font-medium text-muted-foreground">
+                                Owner <span className="text-red-500">*</span>
+                              </span>
+                            ) : (
                             <Label htmlFor="ws-owner-person" className="text-xs text-muted-foreground">
                               Owner <span className="text-red-500">*</span>
                             </Label>
+                            )}
                             <button
                               type="button"
                               className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -14863,6 +19285,9 @@ export function WorkspaceManagementPage() {
                                     ownershipOwnerSearchQuery: e.target.value,
                                 }))
                                 setWizardFieldHighlights((h) => ({ ...h, owner: false }))
+                              }}
+                              onFocus={() => {
+                                void refreshIdentityUserDirectory()
                               }}
                                 onBlur={(e) => {
                                   if (shouldSkipOwnershipPickerInputBlur(e.relatedTarget)) return
@@ -14996,9 +19421,15 @@ export function WorkspaceManagementPage() {
 
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between gap-2">
+                            {newWorkspaceForm.businessOwner.trim() ? (
+                              <span className="text-xs font-medium text-muted-foreground">
+                                Business owner <span className="font-normal text-muted-foreground/70">(optional)</span>
+                              </span>
+                            ) : (
                             <Label htmlFor="ws-business-owner" className="text-xs text-muted-foreground">
                               Business owner <span className="font-normal text-muted-foreground/70">(optional)</span>
                             </Label>
+                            )}
                             <button
                               type="button"
                               className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -15176,9 +19607,15 @@ export function WorkspaceManagementPage() {
 
                         <div className="w-full min-w-0 space-y-1.5">
                           <div className="flex items-center justify-between gap-2">
+                            {newWorkspaceForm.technicalOwner.trim() ? (
+                              <span className="text-xs font-medium text-muted-foreground">
+                                Technical owner <span className="font-normal text-muted-foreground/70">(optional)</span>
+                              </span>
+                            ) : (
                             <Label htmlFor="ws-technical-owner" className="text-xs text-muted-foreground">
                               Technical owner <span className="font-normal text-muted-foreground/70">(optional)</span>
                             </Label>
+                            )}
                             <button
                               type="button"
                               className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -15371,16 +19808,18 @@ export function WorkspaceManagementPage() {
                           {newWorkspaceForm.ownershipShowAdvanced ? (
                             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                               <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Ownership Source</Label>
+                                <Label htmlFor="ws-ownership-source" className="text-xs text-muted-foreground">Ownership Source</Label>
                                 <Input
+                                  id="ws-ownership-source"
                                   value={workspaceOwnershipSourceReadonlyLabel(newWorkspaceForm.ownershipIdentityMode)}
                                   readOnly
                                   className="h-10 text-sm"
                                 />
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Identity Provider</Label>
+                                <Label htmlFor="ws-identity-provider" className="text-xs text-muted-foreground">Identity Provider</Label>
                                 <Input
+                                  id="ws-identity-provider"
                                   value={
                                     newWorkspaceForm.ownershipIdentityMode === 'local'
                                       ? 'identity-lite-service'
@@ -15397,8 +19836,9 @@ export function WorkspaceManagementPage() {
                                 />
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">External workspace ref</Label>
+                                <Label htmlFor="ws-external-workspace-ref" className="text-xs text-muted-foreground">External workspace ref</Label>
                                 <Input
+                                  id="ws-external-workspace-ref"
                                   value={
                                     newWorkspaceForm.primaryOrganizationId
                                       ? `org:${newWorkspaceForm.primaryOrganizationId}`
@@ -15409,8 +19849,9 @@ export function WorkspaceManagementPage() {
                                 />
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">External primary owner ref</Label>
+                                <Label htmlFor="ws-external-primary-owner-ref" className="text-xs text-muted-foreground">External primary owner ref</Label>
                                 <Input
+                                  id="ws-external-primary-owner-ref"
                                   value={
                                     newWorkspaceForm.ownershipIdentityMode !== 'local' && newWorkspaceForm.owner.trim()
                                       ? `urn:ws-owner:${encodeURIComponent(newWorkspaceForm.owner.trim())}`
@@ -15421,8 +19862,9 @@ export function WorkspaceManagementPage() {
                                 />
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Ownership Status</Label>
+                                <Label htmlFor="ws-ownership-status" className="text-xs text-muted-foreground">Ownership Status</Label>
                                 <Select
+                                  id="ws-ownership-status"
                                   value={newWorkspaceForm.ownershipSyncStatus}
                                   onChange={(e) =>
                                     setNewWorkspaceForm((prev) => ({
@@ -15440,8 +19882,9 @@ export function WorkspaceManagementPage() {
                                 </Select>
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Last synced (ISO)</Label>
+                                <Label htmlFor="ws-ownership-last-synced" className="text-xs text-muted-foreground">Last synced (ISO)</Label>
                                 <Input
+                                  id="ws-ownership-last-synced"
                                   value={newWorkspaceForm.ownershipLastSyncedAt}
                                   onChange={(e) =>
                                     setNewWorkspaceForm((prev) => ({
@@ -15521,6 +19964,20 @@ export function WorkspaceManagementPage() {
                             </dd>
                           </div>
                           <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Org domains
+                            </dt>
+                            <dd className="text-foreground">
+                              {newWorkspaceForm.verifiedDomains.filter((d) => d.value.trim()).length === 0 ? (
+                                <span className="text-muted-foreground">None</span>
+                              ) : (
+                                <OrganizationDomainChips
+                                  domains={newWorkspaceForm.verifiedDomains.filter((d) => d.value.trim())}
+                                />
+                              )}
+                            </dd>
+                          </div>
+                          <div className="grid gap-1 px-4 py-3 sm:grid-cols-[140px_1fr] sm:items-baseline">
                             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Type</dt>
                             <dd className="text-foreground">{newWorkspaceForm.workspaceType || '…'}</dd>
                           </div>
@@ -15563,6 +20020,8 @@ export function WorkspaceManagementPage() {
                           <label className="mt-3 flex cursor-pointer items-start gap-3 text-sm leading-snug text-foreground">
                             <input
                               type="checkbox"
+                              id="new-ws-review-ack"
+                              name="new-ws-review-ack"
                               className="mt-0.5 h-4 w-4 shrink-0 rounded border-border"
                               checked={wizardReviewAcknowledged}
                               onChange={(e) => {
@@ -15675,8 +20134,9 @@ export function WorkspaceManagementPage() {
               {ownershipOverlay.type === 'invite' ? (
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Role</Label>
+                    <Label htmlFor="ws-invite-role-overlay" className="text-xs text-muted-foreground">Role</Label>
                     <Select
+                      id="ws-invite-role-overlay"
                       value={inviteContactTargetRole}
                       onChange={(e) => setInviteContactTargetRole(e.target.value as 'business' | 'technical')}
                       className="h-10 w-full text-sm"
@@ -16045,7 +20505,7 @@ export function WorkspaceManagementPage() {
                               setConfirmDeletePrimaryOrgOpen(true)
                               return
                             }
-                            deleteOrganization(node.id)
+                            void deleteOrganization(node.id)
                           }}
                           className="rounded-lg p-2 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600"
                           aria-label={`Delete ${row.label}`}
@@ -16309,7 +20769,7 @@ export function WorkspaceManagementPage() {
               )}
               onClick={() => {
                 if (!confirmDeletePrimaryOrgTargetId) return
-                deleteOrganization(confirmDeletePrimaryOrgTargetId)
+                void deleteOrganization(confirmDeletePrimaryOrgTargetId)
                 setConfirmDeletePrimaryOrgOpen(false)
                 setConfirmDeletePrimaryOrgTargetId(null)
               }}
@@ -16327,7 +20787,7 @@ export function WorkspaceManagementPage() {
         onConfirm={() => void submitRemoveMember()}
         busy={isRemovingMember}
         title="Remove Member"
-        description="This revokes all workspace memberships for this person in Tectona. The identity record is not deleted."
+        description="This revokes all workspace memberships for this person in Tectona, permanently deletes workspaces they own (including personal workspace slug), and deletes their identity account."
         entityLabel="Member"
         entityValue={confirmRemoveMemberTarget?.name ?? '—'}
         impactSummary={
@@ -16343,10 +20803,98 @@ export function WorkspaceManagementPage() {
             ))}
           </>
         }
-        enterpriseNote="Enterprise note: platform roles in Security & Access Control are managed separately from workspace membership."
-        confirmLabel="Remove member"
+        enterpriseNote="Enterprise note: this also soft-deletes the identity-lite user and revokes sign-in tokens. Platform roles in Security & Access Control are managed separately."
+        confirmLabel="Remove member & delete account"
         confirmBusyLabel="Removing..."
         dialogTitleId="remove-member-dialog-title"
+      />
+
+      <EnterpriseActionConfirmModal
+        open={approveAccessDialogRequest != null}
+        onClose={() => {
+          if (!decidingAccessRequestId) setApproveAccessDialogRequest(null)
+        }}
+        onConfirm={() => {
+          if (!approveAccessDialogRequest) return
+          void decideWorkspaceAccessRequest(approveAccessDialogRequest, 'approve')
+        }}
+        busy={decidingAccessRequestId != null}
+        title="Approve access request"
+        description={
+          approveAccessDialogRequest
+            ? approveAccessRequestDescription(
+                resolveAccessRequestJoinWorkspace(
+                  approveAccessDialogRequest,
+                  accessRequestWorkspaceCatalog,
+                  accessRequestWorkspaceNameOverrides,
+                ),
+                editWorkspaceTarget?.name,
+              )
+            : 'Grant workspace access under the organization workspace.'
+        }
+        entityLabel="Request from"
+        entityValue={
+          approveAccessDialogRequest
+            ? identityUsers.find((u) => u.id === approveAccessDialogRequest.subject_id)?.display_name?.trim()
+              || approveAccessDialogRequest.subject_id
+            : '—'
+        }
+        bodyContent={
+          approveAccessDialogRequest ? (
+            <div className="space-y-2 text-xs text-muted-foreground">
+              {(() => {
+                const identity = identityUsers.find((u) => u.id === approveAccessDialogRequest.subject_id)
+                const email = identity?.email?.trim()
+                const requestDisplay = pendingAccessRequestDisplay(
+                  approveAccessDialogRequest,
+                  accessRequestWorkspaceCatalog,
+                  accessRequestWorkspaceNameOverrides,
+                )
+                return (
+                  <>
+                    {email ? <div>{email}</div> : null}
+                    {requestDisplay.joinWorkspace ? (
+                      <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900/40">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          Workspace to join
+              </div>
+                        <div className="mt-0.5 text-sm font-semibold text-foreground">
+                          {requestDisplay.joinWorkspace.workspaceName}
+              </div>
+                        <div className="mt-0.5 text-[11px]">{requestDisplay.joinWorkspace.kindLabel}</div>
+                      </div>
+                    ) : (
+                      <div>{requestDisplay.detail}</div>
+                    )}
+                    {requestDisplay.note ? <div>{requestDisplay.note}</div> : null}
+                  </>
+                )
+              })()}
+            </div>
+          ) : null
+        }
+        enterpriseNote={
+          approveAccessDialogRequest
+            ? (() => {
+                const joinWorkspace = resolveAccessRequestJoinWorkspace(
+                  approveAccessDialogRequest,
+                  accessRequestWorkspaceCatalog,
+                  accessRequestWorkspaceNameOverrides,
+                )
+                if (joinWorkspace?.kind === 'operational') {
+                  return `Enterprise note: approval links ${joinWorkspace.workspaceName} into the organization directory tree.`
+                }
+                if (joinWorkspace) {
+                  return `Enterprise note: approval grants workspace membership and nests ${joinWorkspace.workspaceName} in the organization directory tree.`
+                }
+                return 'Enterprise note: approval grants workspace membership and nests the workspace in the organization directory tree.'
+              })()
+            : 'Enterprise note: approval grants workspace membership and nests the workspace in the organization directory tree.'
+        }
+        confirmLabel="Approve access"
+        confirmBusyLabel="Approving..."
+        dialogTitleId="grant-access-type-dialog-title"
+        icon={UserPlus}
       />
 
       <EnterpriseDeleteConfirmModal
@@ -16372,6 +20920,28 @@ export function WorkspaceManagementPage() {
       />
 
       <EnterpriseDeleteConfirmModal
+        open={unlinkPersonalFromOrgTreeOpen}
+        onClose={() => !unlinkingPersonalFromOrgTree && setUnlinkPersonalFromOrgTreeOpen(false)}
+        onConfirm={() => void submitUnlinkPersonalWorkspaceFromOrgTree()}
+        busy={unlinkingPersonalFromOrgTree}
+        title="Leave organization tree"
+        description="Your personal workspace will become standalone and no longer appear nested under the organization home in Directory."
+        entityLabel="Personal workspace"
+        entityValue={editWorkspaceTarget?.name ?? '—'}
+        impactSummary={
+          <>
+            <div className="font-medium text-foreground">What changes</div>
+            <div className="mt-1">Scope: Personal · Standalone</div>
+            <div>Organization membership via WAC is not removed.</div>
+          </>
+        }
+        enterpriseNote="Enterprise note: this only affects directory tree nesting, not workspace access or project data."
+        confirmLabel="Leave organization tree"
+        confirmBusyLabel="Leaving..."
+        dialogTitleId="unlink-org-tree-dialog-title"
+      />
+
+      <EnterpriseDeleteConfirmModal
         open={confirmDeleteWorkspaceOpen}
         onClose={closeDeleteWorkspaceDialog}
         onConfirm={() => void submitDeleteWorkspace()}
@@ -16393,19 +20963,21 @@ export function WorkspaceManagementPage() {
                 <div className="rounded-xl border border-amber-300/70 bg-amber-50/80 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
                   <div className="font-semibold">Extra confirmation required</div>
                   <p className="mt-1 leading-relaxed">
-                    Workspace ini terhubung dengan banyak project ({confirmDeleteWorkspaceTarget?.projects ?? 0}).
-                    Pastikan tidak ada dependensi aktif sebelum melanjutkan.
+                    This workspace is linked to many projects ({confirmDeleteWorkspaceTarget?.projects ?? 0}).
+                    Make sure there are no active dependencies before continuing.
                   </p>
                   <label className="mt-2 inline-flex items-start gap-2">
                     <input
                       type="checkbox"
+                      id="confirm-delete-workspace-high-impact-ack"
+                      name="confirm-delete-workspace-high-impact-ack"
                       className="mt-0.5"
                       checked={confirmDeleteWorkspaceHighImpactAck}
                       onChange={(e) => setConfirmDeleteWorkspaceHighImpactAck(e.target.checked)}
                       disabled={isDeletingWorkspace}
                     />
                 <span className="text-[11px] font-medium">
-                  Saya sudah cek dependensi project dan tetap ingin menghapus workspace ini.
+                  I have checked the project dependencies and still want to delete this workspace.
                 </span>
                   </label>
                 </div>

@@ -2,6 +2,12 @@ import { create } from 'zustand'
 
 /** Rich page snapshot published by active route (tab, entity, filters). */
 export type TectonaPageContextSnapshot = {
+  /** Override the module/page label derived from the URL — for surfaces that aren't a real
+   * route change (e.g. the OnlyOffice document editor opens as a full-screen overlay on top of
+   * whatever page was already active, so the URL alone can't tell the chat "you're now editing
+   * this specific document" instead of "you're on the Idea Detail page"). */
+  module_label?: string | null
+  page_title?: string | null
   view_label?: string | null
   entity_type?: string | null
   entity_id?: string | null

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { getSession } from '@/auth/authService'
 import { isWorkspaceMembershipGateEnabled } from '@/lib/appAccessGate'
 import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
-import { fetchSubjectMemberships, TECTONA_WAC_APP_ID } from '@/lib/api/workspaceAccessControlApi'
+import {
+  fetchSubjectMembershipsCached,
+  peekCachedSubjectMemberships,
+} from '@/lib/wacMembershipCache'
 
 export type AppAccessGateState = {
   loading: boolean
@@ -34,8 +37,14 @@ export function useAppAccessGate(): AppAccessGateState {
     [session?.user.role, session?.user.id],
   )
 
-  const [loading, setLoading] = useState(gateEnabled && !isPlatformAdmin && Boolean(subjectId))
-  const [activeMembershipCount, setActiveMembershipCount] = useState(0)
+  const cachedMemberships = subjectId ? peekCachedSubjectMemberships(subjectId) : null
+
+  const [loading, setLoading] = useState(
+    gateEnabled && !isPlatformAdmin && Boolean(subjectId) && !cachedMemberships,
+  )
+  const [activeMembershipCount, setActiveMembershipCount] = useState(
+    cachedMemberships?.total ?? 0,
+  )
 
   useEffect(() => {
     if (!gateEnabled || isPlatformAdmin || !subjectId) {
@@ -45,9 +54,10 @@ export function useAppAccessGate(): AppAccessGateState {
     }
 
     let cancelled = false
-    setLoading(true)
+    const warm = peekCachedSubjectMemberships(subjectId)
+    if (!warm) setLoading(true)
 
-    void fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly: true })
+    void fetchSubjectMembershipsCached(subjectId, { activeOnly: true })
       .then((res) => {
         if (!cancelled) {
           setActiveMembershipCount(res.total)

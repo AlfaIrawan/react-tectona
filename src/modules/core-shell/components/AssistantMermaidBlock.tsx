@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
+import { buildFlowchartFallbackSvg } from '@/lib/chat/mermaidFallbackSvg'
 import { cn } from '@/lib/utils'
 
 type AssistantMermaidBlockProps = {
@@ -34,9 +35,42 @@ const MERMAID_INIT = {
   },
 }
 
+type MermaidApi = {
+  initialize: (config: typeof MERMAID_INIT) => void
+  render: (id: string, text: string) => Promise<{ svg: string }>
+}
+
+let mermaidModulePromise: Promise<MermaidApi> | null = null
+let mermaidInitialized = false
+let mermaidRenderSeq = 0
+
+async function getMermaid(): Promise<MermaidApi> {
+  if (!mermaidModulePromise) {
+    mermaidModulePromise = import('mermaid').then((mod) => mod.default as MermaidApi)
+  }
+  const mermaid = await mermaidModulePromise
+  if (!mermaidInitialized) {
+    mermaid.initialize(MERMAID_INIT)
+    mermaidInitialized = true
+  }
+  return mermaid
+}
+
+function cleanMermaidFence(source: string): string {
+  return source
+    .replace(/^\s*```(?:mermaid)?\s*/i, '')
+    .replace(/\s*```[\s\S]*$/i, '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r\n/g, '\n')
+    .trim()
+}
+
 /** Quote flowchart node/edge labels so spaces and & / <> do not break Mermaid. */
 function sanitizeMermaidSource(source: string): string {
-  let text = source.trim()
+  let text = cleanMermaidFence(source)
+  // Common LLM typo: `-->|label|> Next` instead of `-->|label| Next`
+  text = text.replace(/(\|[^\n|]+)\|>(\s*[A-Za-z])/g, '$1|$2')
+
   text = text.replace(/([A-Za-z][\w-]*)\[(?!["\[])([^\]]+)\]/g, (_m, id: string, label: string) => {
     return `${id}["${label.replace(/"/g, "'")}"]`
   })
@@ -50,6 +84,15 @@ function sanitizeMermaidSource(source: string): string {
     return `${left}"${label.replace(/"/g, "'")}"${right}`
   })
   return text
+}
+
+function removeStaleMermaidDom(renderId: string) {
+  if (typeof document === 'undefined') return
+  document.getElementById(renderId)?.remove()
+  document.getElementById(`d${renderId}`)?.remove()
+  document.querySelectorAll(`body > #${CSS.escape(renderId)}, body > [id="${renderId}"]`).forEach((el) => {
+    el.remove()
+  })
 }
 
 function measureSvgNaturalSize(svg: SVGSVGElement): { width: number; height: number } {
@@ -100,8 +143,8 @@ function MermaidToolbar({ onCopy, onFullscreen }: MermaidToolbarProps) {
         size="icon"
         className="h-7 w-7 text-[#54656f] hover:text-[#111b21] dark:text-[#aebac1] dark:hover:text-[#e9edef]"
         onClick={onCopy}
-        title="Salin kode diagram"
-        aria-label="Salin kode diagram"
+        title="Copy diagram code"
+        aria-label="Copy diagram code"
       >
         <Copy className="h-3.5 w-3.5" />
       </Button>
@@ -111,8 +154,8 @@ function MermaidToolbar({ onCopy, onFullscreen }: MermaidToolbarProps) {
         size="icon"
         className="h-7 w-7 text-[#54656f] hover:text-[#111b21] dark:text-[#aebac1] dark:hover:text-[#e9edef]"
         onClick={onFullscreen}
-        title="Layar penuh"
-        aria-label="Layar penuh"
+        title="Fullscreen"
+        aria-label="Fullscreen"
       >
         <Maximize2 className="h-3.5 w-3.5" />
       </Button>
@@ -127,7 +170,6 @@ type MermaidFullscreenModalProps = {
 }
 
 function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenModalProps) {
-  const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(1)
 
@@ -151,8 +193,8 @@ function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenM
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(source)
     pushGlobalToast({
-      title: ok ? 'Diagram disalin' : 'Gagal menyalin',
-      description: ok ? 'Kode Mermaid ada di clipboard.' : 'Coba lagi dari browser yang mendukung clipboard.',
+      title: ok ? 'Diagram copied' : 'Copy failed',
+      description: ok ? 'Mermaid code is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
       variant: ok ? 'success' : 'error',
     })
   }
@@ -168,26 +210,26 @@ function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenM
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Diagram layar penuh"
+        aria-label="Fullscreen diagram"
       >
         <div className="flex items-center justify-end gap-0.5 border-b border-[#d1d7db]/80 px-2 py-1.5 dark:border-[#3b4a54]">
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.min(3, z + 0.15))} title="Perbesar">
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.min(3, z + 0.15))} title="Zoom in">
             <ZoomIn className="h-4 w-4" />
           </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.max(0.35, z - 0.15))} title="Perkecil">
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.max(0.35, z - 0.15))} title="Zoom out">
             <ZoomOut className="h-4 w-4" />
           </Button>
           <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom(1)} title="Reset zoom">
             <RotateCcw className="h-4 w-4" />
           </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void handleCopy()} title="Salin">
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void handleCopy()} title="Copy">
             <Copy className="h-4 w-4" />
           </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={onClose} title="Tutup">
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={onClose} title="Close">
             <X className="h-4 w-4" />
           </Button>
         </div>
-        <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
+        <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
           <div
             ref={canvasRef}
             className="mx-auto inline-block min-w-min origin-top [&_svg]:max-w-none"
@@ -200,43 +242,98 @@ function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenM
   )
 }
 
+async function renderMermaidSvg(source: string, reactId: string): Promise<{ svg: string; viaFallback: boolean }> {
+  const safeSource = sanitizeMermaidSource(source)
+  if (!safeSource) {
+    throw new Error('Diagram is empty')
+  }
+
+  try {
+    const mermaid = await getMermaid()
+    let lastError: unknown = null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      mermaidRenderSeq += 1
+      const renderId = `mermaid-${reactId}-${mermaidRenderSeq}-${attempt}`
+      removeStaleMermaidDom(renderId)
+      try {
+        const { svg } = await mermaid.render(renderId, safeSource)
+        removeStaleMermaidDom(renderId)
+        if (!svg?.trim()) throw new Error('SVG is empty')
+        return { svg, viaFallback: false }
+      } catch (err) {
+        lastError = err
+        removeStaleMermaidDom(renderId)
+        const message = err instanceof Error ? err.message : String(err)
+        if (/already exists|duplicate|GetBBox|null/i.test(message) && attempt < 2) {
+          await new Promise((resolve) => window.setTimeout(resolve, 40 * (attempt + 1)))
+          continue
+        }
+        break
+      }
+    }
+    if (lastError) {
+      // Prefer drawable fallback over surfacing parse errors as code.
+      const fallback = buildFlowchartFallbackSvg(safeSource) ?? buildFlowchartFallbackSvg(source)
+      if (fallback) return { svg: fallback, viaFallback: true }
+      throw lastError
+    }
+  } catch {
+    const fallback = buildFlowchartFallbackSvg(safeSource) ?? buildFlowchartFallbackSvg(source)
+    if (fallback) return { svg: fallback, viaFallback: true }
+  }
+
+  const fallback = buildFlowchartFallbackSvg(safeSource) ?? buildFlowchartFallbackSvg(source)
+  if (fallback) return { svg: fallback, viaFallback: true }
+  throw new Error('Diagram could not be rendered')
+}
+
 export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const reactId = useId().replace(/:/g, '')
-  const [error, setError] = useState<string | null>(null)
   const [svgHtml, setSvgHtml] = useState<string | null>(null)
+  const [viaFallback, setViaFallback] = useState(false)
   const [previewHeight, setPreviewHeight] = useState<number>(180)
   const [fullscreenOpen, setFullscreenOpen] = useState(false)
+  const [retryTick, setRetryTick] = useState(0)
+  const [isRendering, setIsRendering] = useState(false)
+  const [hardError, setHardError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-
-    ;(async () => {
-      try {
-        const mermaid = (await import('mermaid')).default
-        mermaid.initialize(MERMAID_INIT)
-        // Strip accidental fence markers / trailing prose that break parse.
-        const cleaned = source
-          .replace(/^\s*```(?:mermaid)?\s*/i, '')
-          .replace(/\s*```[\s\S]*$/i, '')
-          .trim()
-        const safeSource = sanitizeMermaidSource(cleaned)
-        const { svg } = await mermaid.render(`mermaid-${reactId}`, safeSource)
-        if (cancelled) return
-        setSvgHtml(svg)
-        setError(null)
-      } catch (err) {
-        if (!cancelled) {
-          setSvgHtml(null)
-          setError(err instanceof Error ? err.message : 'Diagram tidak dapat ditampilkan')
+    // Debounce while assistant text is still streaming incomplete fences.
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setIsRendering(true)
+        try {
+          const result = await renderMermaidSvg(source, reactId)
+          if (cancelled) return
+          setSvgHtml(result.svg)
+          setViaFallback(result.viaFallback)
+          setHardError(null)
+        } catch (err) {
+          if (!cancelled) {
+            // Last resort: still try fallback once more on raw source.
+            const fallback = buildFlowchartFallbackSvg(source)
+            if (fallback) {
+              setSvgHtml(fallback)
+              setViaFallback(true)
+              setHardError(null)
+            } else {
+              setSvgHtml(null)
+              setHardError(err instanceof Error ? err.message : 'Diagram could not be rendered')
+            }
+          }
+        } finally {
+          if (!cancelled) setIsRendering(false)
         }
-      }
-    })()
+      })()
+    }, 80)
 
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
-  }, [reactId, source])
+  }, [reactId, source, retryTick])
 
   useEffect(() => {
     if (!svgHtml || !containerRef.current) return
@@ -248,29 +345,47 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
     const hostWidth = containerRef.current.clientWidth || 480
     const widthScale = hostWidth / natural.width
     const scaledHeight = Math.ceil(natural.height * Math.min(1, widthScale))
-    // Fit full diagram height — avoid a capped box that forces a vertical scrollbar.
     setPreviewHeight(Math.max(160, scaledHeight + 24))
   }, [svgHtml])
 
   const handleCopy = useCallback(async () => {
     const ok = await copyTextToClipboard(source.trim())
     pushGlobalToast({
-      title: ok ? 'Diagram disalin' : 'Gagal menyalin',
-      description: ok ? 'Kode Mermaid ada di clipboard.' : 'Coba lagi dari browser yang mendukung clipboard.',
+      title: ok ? 'Diagram copied' : 'Copy failed',
+      description: ok ? 'Mermaid code is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
       variant: ok ? 'success' : 'error',
     })
   }, [source])
 
-  if (error) {
+  // Only if both Mermaid and SVG fallback fail (rare non-flowchart diagrams).
+  if (hardError && !svgHtml) {
     return (
-      <pre
+      <div
         className={cn(
-          'my-2 overflow-x-auto rounded-md border border-amber-200/80 bg-amber-50/80 p-2 text-xs dark:border-amber-900/50 dark:bg-amber-950/30',
+          'my-2 overflow-hidden rounded-md border border-slate-200 bg-white dark:border-[#3b4a54] dark:bg-[#111b21]',
           className,
         )}
       >
-        {source}
-      </pre>
+        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-2 py-1.5 dark:border-[#3b4a54]">
+          <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+            Diagram not ready yet{isRendering ? '…' : ''}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-[11px]"
+            disabled={isRendering}
+            onClick={() => setRetryTick((n) => n + 1)}
+          >
+            <RotateCcw className={cn('mr-1 h-3 w-3', isRendering && 'animate-spin')} />
+            Retry
+          </Button>
+        </div>
+        <div className="flex min-h-[120px] items-center justify-center p-4 text-center text-xs text-slate-500">
+          Rebuilding the diagram image…
+        </div>
+      </div>
     )
   }
 
@@ -285,14 +400,21 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
         {svgHtml ? (
           <MermaidToolbar onCopy={() => void handleCopy()} onFullscreen={() => setFullscreenOpen(true)} />
         ) : null}
+        {viaFallback && svgHtml ? (
+          <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-[#202c33]/90 dark:text-slate-300">
+            Preview diagram
+          </p>
+        ) : null}
         <div
           ref={containerRef}
           className={cn(
             'overflow-x-auto overflow-y-hidden p-3 [&_svg]:mx-auto [&_svg]:block',
             '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+            !svgHtml && 'min-h-[120px] animate-pulse bg-slate-50/80 dark:bg-slate-900/40',
           )}
           style={{ height: previewHeight }}
-          aria-label="Diagram atau chart"
+          aria-label="Diagram or chart"
+          aria-busy={!svgHtml}
         />
       </div>
       {fullscreenOpen && svgHtml ? (

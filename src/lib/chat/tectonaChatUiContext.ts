@@ -118,6 +118,8 @@ function mergePageSnapshot(
   const notes = [...(base.extra_notes ?? []), ...(page.notes ?? [])].filter(Boolean).slice(0, 6)
   return {
     ...base,
+    module_label: page.module_label ?? base.module_label,
+    page_title: page.page_title ?? base.page_title,
     view_label: page.view_label ?? base.view_label,
     entity_type: page.entity_type ?? base.entity_type,
     entity_id: page.entity_id ?? base.entity_id,

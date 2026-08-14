@@ -11,19 +11,21 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ProjectCard } from './ProjectCard'
 import { fetchTodos, TECTONA_TODO_APP_ID, TODO_ENTITY_TYPE } from '@/lib/api/todoApi'
-import { EmptyState } from './EmptyState'
+import { getSession } from '@/auth/authService'
 import { DropZone } from './DropZone'
 import { useDroppable } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import type { Project } from '@/modules/projects'
+import { extractPlainTextFromHtml } from '@/lib/richHtmlEditor'
 import type { SortOrder } from './FiltersBar'
+import type { GridSelectionModifiers } from '../lib/gridSelection'
 import type { LayoutMode } from './FoldersSection'
 
 interface ProjectsSectionProps {
   projects: Project[]
-  onSelectProject: (projectId: string, selected: boolean, shiftKey?: boolean) => void
+  onSelectProject: (projectId: string, modifiers: GridSelectionModifiers) => void
   selectedProjectIds: Set<string>
   showCheckbox: boolean
   sortOrder: SortOrder
@@ -73,7 +75,13 @@ export function ProjectsSection({
   const [projectTodoTitles, setProjectTodoTitles] = useState<Map<string, string>>(new Map())
 
   const loadProjectIdsWithTodos = useCallback(() => {
-    fetchTodos({ app_id: TECTONA_TODO_APP_ID, page_size: 100 })
+    const userId = getSession()?.user.id
+    if (!userId) {
+      setProjectIdsWithTodos(new Set())
+      setProjectTodoTitles(new Map())
+      return
+    }
+    fetchTodos({ app_id: TECTONA_TODO_APP_ID, owned_by: userId, page_size: 100 })
       .then((res) => {
         const ids = new Set<string>()
         const titlesByProject = new Map<string, string[]>()
@@ -107,9 +115,11 @@ export function ProjectsSection({
     const onTodosChanged = () => loadProjectIdsWithTodos()
     window.addEventListener('focus', onFocus)
     window.addEventListener('sequoia-todos-changed', onTodosChanged)
+    window.addEventListener('tectona-todos-changed', onTodosChanged)
     return () => {
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('sequoia-todos-changed', onTodosChanged)
+      window.removeEventListener('tectona-todos-changed', onTodosChanged)
     }
   }, [loadProjectIdsWithTodos])
 
@@ -140,6 +150,8 @@ export function ProjectsSection({
     () => sortedProjects.map((p) => `project-${p.id}`),
     [sortedProjects]
   )
+
+  if (!sortedProjects || sortedProjects.length === 0) return null
 
   return (
     <div className="space-y-4">
@@ -174,15 +186,7 @@ export function ProjectsSection({
       {showDropZone && <AllProjectsDropZone />}
 
       {/* Projects Grid / List (table-style when list) */}
-      {!sortedProjects || sortedProjects.length === 0 ? (
-        <div className="glass-card rounded-xl p-8">
-          <EmptyState
-            title="No projects found"
-            description="Try adjusting your search or filter criteria."
-            imageSrc="/images/project.png"
-          />
-        </div>
-      ) : layout === 'list' ? (
+      {layout === 'list' ? (
         <div className="glass-card rounded-xl border border-border/50 overflow-hidden">
           {/* Table-style list: header row (columns match row: [checkbox?] grip, Name, Description, Date, Status) */}
           <div
@@ -272,7 +276,7 @@ function SortableProjectRow({
 }: {
   project: Project
   isSelected: boolean
-  onSelect: (projectId: string, selected: boolean, shiftKey?: boolean) => void
+  onSelect: (projectId: string, modifiers: GridSelectionModifiers) => void
   showCheckbox: boolean
   onDoubleClick: () => void
   isDragActive: boolean
@@ -309,7 +313,11 @@ function SortableProjectRow({
       }}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('input[type="checkbox"]')) return
-        onSelect(project.id, !isSelected, e.shiftKey)
+        onSelect(project.id, {
+          ctrlKey: e.ctrlKey,
+          shiftKey: e.shiftKey,
+          metaKey: e.metaKey,
+        })
       }}
       onDoubleClick={(e) => {
         if ((e.target as HTMLElement).closest('input[type="checkbox"]')) return
@@ -323,7 +331,9 @@ function SortableProjectRow({
           <input
             type="checkbox"
             checked={isSelected}
-            onChange={(e) => onSelect(project.id, e.target.checked)}
+            onChange={() =>
+              onSelect(project.id, { ctrlKey: true, shiftKey: false, metaKey: false })
+            }
             className="rounded border-input"
           />
         </div>
@@ -333,7 +343,7 @@ function SortableProjectRow({
       </div>
       <div className="font-medium text-foreground truncate min-w-0">{project.name}</div>
       <div className="text-muted-foreground truncate min-w-0">
-        {project.description || '—'}
+        {(project.description && extractPlainTextFromHtml(project.description).trim()) || project.description || '—'}
       </div>
       <div className="text-muted-foreground text-xs shrink-0">
         {formatDateModified(project.updatedAt)}
@@ -374,7 +384,7 @@ function SortableProjectCard({
   hasTodos?: boolean
   todoListTooltip?: string
   isSelected: boolean
-  onSelect: (projectId: string, selected: boolean, shiftKey?: boolean) => void
+  onSelect: (projectId: string, modifiers: GridSelectionModifiers) => void
   showCheckbox: boolean
   onDoubleClick: () => void
   isDragActive: boolean

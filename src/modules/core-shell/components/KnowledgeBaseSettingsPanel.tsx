@@ -17,22 +17,22 @@ export function KnowledgeBaseSettingsPanel() {
   const { addToast } = useToast()
   const [config, setConfig] = useState<KbUiConfig>(() => readKbConfig())
   const [healthState, setHealthState] = useState<HealthState>('idle')
-  const [healthMessage, setHealthMessage] = useState('Belum ada pengecekan koneksi.')
+  const [healthMessage, setHealthMessage] = useState('No connection check yet.')
 
   const normalizedBaseUrl = useMemo(() => config.baseUrl.trim().replace(/\/+$/, ''), [config.baseUrl])
 
   async function handleTestConnection() {
     if (!normalizedBaseUrl) {
       addToast({
-        title: 'Base URL belum diisi',
-        description: 'Isi URL Knowledge Base terlebih dahulu.',
+        title: 'Base URL is empty',
+        description: 'Enter the Knowledge Base URL first.',
         variant: 'error',
       })
       return
     }
 
     setHealthState('checking')
-    setHealthMessage('Mengecek koneksi ke layanan Knowledge Base...')
+    setHealthMessage('Checking connection to the Knowledge Base service...')
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), config.timeoutSeconds * 1000)
@@ -47,25 +47,25 @@ export function KnowledgeBaseSettingsPanel() {
         setHealthState('healthy')
         setHealthMessage(`KB service reachable (${response.status}).`)
         addToast({
-          title: 'Koneksi KB berhasil',
-          description: `Health endpoint merespons ${response.status}.`,
+          title: 'KB connection succeeded',
+          description: `Health endpoint responded ${response.status}.`,
           variant: 'success',
         })
       } else {
         setHealthState('unhealthy')
-        setHealthMessage(`KB service merespons status ${response.status}.`)
+        setHealthMessage(`KB service responded with status ${response.status}.`)
         addToast({
-          title: 'Koneksi KB gagal',
-          description: `Endpoint health mengembalikan status ${response.status}.`,
+          title: 'KB connection failed',
+          description: `Health endpoint returned status ${response.status}.`,
           variant: 'error',
         })
       }
     } catch {
       setHealthState('unhealthy')
-      setHealthMessage('Tidak dapat menjangkau endpoint /health Knowledge Base.')
+      setHealthMessage('Unable to reach the Knowledge Base /health endpoint.')
       addToast({
-        title: 'Koneksi KB gagal',
-        description: 'Periksa base URL, CORS, dan status service KB.',
+        title: 'KB connection failed',
+        description: 'Check the base URL, CORS, and the KB service status.',
         variant: 'error',
       })
     } finally {
@@ -83,14 +83,14 @@ export function KnowledgeBaseSettingsPanel() {
         })
       )
       addToast({
-        title: 'Konfigurasi KB disimpan',
-        description: 'Pengaturan tersimpan di browser ini.',
+        title: 'KB configuration saved',
+        description: 'Settings saved in this browser.',
         variant: 'success',
       })
     } catch {
       addToast({
-        title: 'Gagal menyimpan konfigurasi',
-        description: 'Penyimpanan lokal browser tidak tersedia.',
+        title: 'Failed to save configuration',
+        description: 'Local browser storage is unavailable.',
         variant: 'error',
       })
     }
@@ -102,12 +102,12 @@ export function KnowledgeBaseSettingsPanel() {
         <div>
           <h3 className="text-sm font-semibold text-foreground">Knowledge Base service</h3>
           <p className="mt-1 text-xs text-muted-foreground max-w-2xl">
-            Kelola endpoint dan perilaku koneksi untuk Tectona Knowledge Base service (validasi UI; runtime backend tetap dari environment). Untuk
-            menambah atau mengubah isi entri KB (judul, kategori, teks konteks LLM), buka{' '}
+            Manage the endpoint and connection behavior for the Tectona Knowledge Base service (UI validation only; the backend runtime still reads from the environment). To
+            add or edit KB entry content (title, category, LLM context text), open{' '}
             <Link to="/document-knowledge-management" className="font-medium text-primary underline-offset-4 hover:underline">
               Document &amp; Knowledge Management
             </Link>{' '}
-            pada kartu Knowledge Base Integration.
+            on the Knowledge Base Integration card.
           </p>
         </div>
         <Button type="button" className="gap-2 shrink-0" onClick={handleSave}>
@@ -124,7 +124,7 @@ export function KnowledgeBaseSettingsPanel() {
               Runtime connection settings
             </CardTitle>
             <CardDescription>
-              Pengaturan ini dipakai untuk validasi di UI. Runtime service tetap membaca konfigurasi dari environment backend.
+              These settings are used for UI validation only. The runtime service still reads its configuration from the backend environment.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -133,7 +133,7 @@ export function KnowledgeBaseSettingsPanel() {
                 <Label htmlFor="kb-enabled" className="text-sm font-medium">
                   Enable Knowledge Base integration
                 </Label>
-                <p className="text-xs text-muted-foreground">Nonaktifkan jika ingin menjalankan ringkasan tanpa enrichment KB.</p>
+                <p className="text-xs text-muted-foreground">Disable this to run summaries without KB enrichment.</p>
               </div>
               <Switch
                 id="kb-enabled"
@@ -209,23 +209,23 @@ export function KnowledgeBaseSettingsPanel() {
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <div className="rounded-md border border-dashed p-3">
               <p className="font-medium text-foreground">Current runtime source of truth</p>
-              <p>Service runtime tetap menggunakan env backend pada startup.</p>
+              <p>The service runtime still uses the backend env on startup.</p>
             </div>
             <div className="rounded-md border border-dashed p-3">
               <p className="font-medium text-foreground">Recommended target</p>
-              <p>http://localhost:8415 untuk python-tectona-knowledge-base-service-fastapi.</p>
+              <p>http://localhost:8415 for python-tectona-knowledge-base-service-fastapi.</p>
             </div>
             <div className="rounded-md border border-dashed p-3">
               <p className="font-medium text-foreground">Operational guardrail</p>
-              <p>Aktifkan kembali KB sesudah service health stabil untuk menghindari fallback berulang.</p>
+              <p>Re-enable KB once the service health is stable to avoid repeated fallbacks.</p>
             </div>
             <div className="flex items-center gap-2 text-xs text-foreground">
               <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Validation di UI tidak menyimpan kredensial sensitif.</span>
+              <span>UI validation does not store sensitive credentials.</span>
             </div>
             <div className="flex items-center gap-2 text-xs text-foreground">
               <BadgeCheck className="h-3.5 w-3.5" />
-              <span>Gunakan Save KB configuration untuk persist ke browser lokal.</span>
+              <span>Use Save KB configuration to persist to local browser storage.</span>
             </div>
           </CardContent>
         </Card>

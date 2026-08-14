@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const inlineInputClass =
@@ -9,14 +10,178 @@ const inlineSelectClass =
   'w-full min-w-0 max-w-full rounded-md border border-border/70 bg-background px-2 py-1 text-xs font-medium text-foreground shadow-sm outline-none ring-0 focus-visible:ring-0'
 
 const inlineTriggerClass =
-  'w-full min-w-0 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/40 outline-none ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-60'
+  'w-full min-w-0 rounded-md px-1 py-0.5 transition-colors hover:bg-muted/40 outline-none ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-60'
 
 export function toDirectoryDateInputValue(raw: string): string {
   if (!raw?.trim()) return ''
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
   const parsed = new Date(raw)
   if (Number.isNaN(parsed.getTime())) return ''
-  return parsed.toISOString().slice(0, 10)
+  return localDateInputValue(parsed)
+}
+
+function localDateInputValue(date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseLocalDateInput(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+  const [year, month, day] = value.split('-').map(Number)
+  const parsed = new Date(year, month - 1, day)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function isSameLocalDay(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  )
+}
+
+type CalendarDayCell = {
+  date: Date
+  inMonth: boolean
+}
+
+function buildCalendarWeeks(viewDate: Date): CalendarDayCell[][] {
+  const year = viewDate.getFullYear()
+  const month = viewDate.getMonth()
+  const firstOfMonth = new Date(year, month, 1)
+  const start = new Date(year, month, 1 - firstOfMonth.getDay())
+  const weeks: CalendarDayCell[][] = []
+
+  for (let weekIndex = 0; weekIndex < 6; weekIndex += 1) {
+    const week: CalendarDayCell[] = []
+    for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+      const date = new Date(start)
+      date.setDate(start.getDate() + weekIndex * 7 + dayIndex)
+      week.push({ date, inMonth: date.getMonth() === month })
+    }
+    weeks.push(week)
+  }
+
+  return weeks
+}
+
+const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'] as const
+
+type DirectoryInlineDatePickerPanelProps = {
+  value: string
+  onSelect: (isoDate: string) => void
+  onClear: () => void
+}
+
+function DirectoryInlineDatePickerPanel({ value, onSelect, onClear }: DirectoryInlineDatePickerPanelProps) {
+  const selectedDate = parseLocalDateInput(toDirectoryDateInputValue(value))
+  const today = useMemo(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  }, [])
+  const [viewDate, setViewDate] = useState(() => selectedDate ?? today)
+
+  const weeks = useMemo(() => buildCalendarWeeks(viewDate), [viewDate])
+  const monthLabel = viewDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+
+  const shiftMonth = (delta: number) => {
+    setViewDate((previous) => new Date(previous.getFullYear(), previous.getMonth() + delta, 1))
+  }
+
+  return (
+    <div className="w-[280px] select-none">
+      <div className="flex items-center justify-between border-b border-border/60 px-3 py-2.5">
+        <p className="text-sm font-semibold text-foreground">{monthLabel}</p>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+            aria-label="Previous month"
+            onClick={() => shiftMonth(-1)}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+            aria-label="Next month"
+            onClick={() => shiftMonth(1)}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+      </div>
+
+      <div className="px-3 pt-3">
+        <div className="mb-2 grid grid-cols-7 gap-1">
+          {WEEKDAY_LABELS.map((label) => (
+            <div
+              key={label}
+              className="flex h-7 items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-1 pb-3">
+          {weeks.map((week, weekIndex) => (
+            <div key={weekIndex} className="grid grid-cols-7 gap-1">
+              {week.map(({ date, inMonth }) => {
+                const isSelected = selectedDate ? isSameLocalDay(date, selectedDate) : false
+                const isToday = isSameLocalDay(date, today)
+                const isoDate = localDateInputValue(date)
+
+                return (
+                  <button
+                    key={isoDate}
+                    type="button"
+                    aria-label={date.toLocaleDateString(undefined, {
+                      weekday: 'long',
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                    aria-pressed={isSelected}
+                    className={cn(
+                      'mx-auto flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition',
+                      !inMonth && 'text-muted-foreground/45 hover:bg-muted/50',
+                      inMonth && !isSelected && 'text-foreground hover:bg-muted/70',
+                      isToday && !isSelected && 'font-semibold text-primary ring-1 ring-primary/30',
+                      isSelected &&
+                        'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground',
+                    )}
+                    onClick={() => onSelect(isoDate)}
+                  >
+                    {date.getDate()}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-border/60 px-3 py-2">
+        <button
+          type="button"
+          className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+          onClick={onClear}
+        >
+          Clear
+        </button>
+        <button
+          type="button"
+          className="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
+          onClick={() => onSelect(localDateInputValue(today))}
+        >
+          Today
+        </button>
+      </div>
+    </div>
+  )
 }
 
 type DirectoryInlineTextCellProps = {
@@ -101,7 +266,7 @@ export function DirectoryInlineTextCell({
       disabled={disabled}
       aria-label={`${ariaLabel} — click to edit`}
       title={`${trimmedValue || placeholder} — click to edit`}
-      className={cn(inlineTriggerClass, className)}
+      className={cn(inlineTriggerClass, 'text-left', className)}
       onClick={(event) => {
         event.stopPropagation()
         if (!disabled) setEditing(true)
@@ -338,6 +503,8 @@ type DirectoryInlineDateCellProps = {
   disabled?: boolean
   ariaLabel: string
   className?: string
+  /** Optional closed-state label (e.g. DD-MM-YYYY) while `value` stays ISO for the date input. */
+  display?: ReactNode
 }
 
 export function DirectoryInlineDateCell({
@@ -346,65 +513,130 @@ export function DirectoryInlineDateCell({
   disabled = false,
   ariaLabel,
   className,
+  display,
 }: DirectoryInlineDateCellProps) {
   const [editing, setEditing] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [menuAnchor, setMenuAnchor] = useState<{ left: number; top: number } | null>(null)
   const inputValue = toDirectoryDateInputValue(value)
+
+  const openPicker = () => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const panelWidth = 280
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - panelWidth - 8)
+    const top = rect.bottom + 6
+    setMenuAnchor({ left, top })
+    setEditing(true)
+  }
+
+  const updateMenuAnchor = () => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const panelWidth = 280
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - panelWidth - 8)
+    setMenuAnchor({ left, top: rect.bottom + 6 })
+  }
 
   useEffect(() => {
     if (!editing) return
-    inputRef.current?.focus()
+
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (triggerRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setEditing(false)
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setEditing(false)
+    }
+
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [editing])
+
+  useLayoutEffect(() => {
+    if (!editing) return
+
+    updateMenuAnchor()
+
+    const onScroll = (event: Event) => {
+      const target = event.target as Node | null
+      if (target && panelRef.current?.contains(target)) return
+      updateMenuAnchor()
+    }
+
+    const onResize = () => updateMenuAnchor()
+
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onResize)
+    }
   }, [editing])
 
   const commit = async (next: string) => {
     setEditing(false)
-    if (!next || next === inputValue) return
+    if (next === inputValue) return
     await onCommit(next)
   }
 
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        type="date"
-        data-directory-inline-cell
-        defaultValue={inputValue}
-        aria-label={ariaLabel}
-        className={cn(inlineInputClass, 'tabular-nums', className)}
-        onClick={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-        onChange={(event) => {
-          void commit(event.currentTarget.value)
-        }}
-        onBlur={(event) => {
-          void commit(event.currentTarget.value)
-        }}
-        onKeyDown={(event) => {
-          event.stopPropagation()
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            setEditing(false)
-          }
-        }}
-      />
-    )
-  }
-
   return (
-    <button
-      type="button"
-      data-directory-inline-cell
-      disabled={disabled}
-      aria-label={`${ariaLabel} — click to edit`}
-      title={`${value || 'No date'} — click to edit`}
-      className={cn(inlineTriggerClass, 'tabular-nums text-foreground', className)}
-      onClick={(event) => {
-        event.stopPropagation()
-        if (!disabled) setEditing(true)
-      }}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      {value || <span className="text-[11px] text-muted-foreground">—</span>}
-    </button>
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        data-directory-inline-cell
+        disabled={disabled}
+        aria-label={`${ariaLabel} — click to edit`}
+        aria-expanded={editing}
+        title={`${value || 'No date'} — click to edit`}
+        className={cn(inlineTriggerClass, 'tabular-nums text-foreground', className)}
+        onClick={(event) => {
+          event.stopPropagation()
+          if (disabled) return
+          if (editing) setEditing(false)
+          else openPicker()
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {display ?? (value || <span className="text-[11px] text-muted-foreground">—</span>)}
+      </button>
+      {editing && menuAnchor && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={panelRef}
+              data-directory-inline-cell
+              className="fixed z-[1200] overflow-hidden rounded-xl border border-border/80 bg-popover shadow-[0_16px_40px_rgba(15,23,42,0.14)] dark:shadow-[0_16px_40px_rgba(0,0,0,0.45)]"
+              style={{
+                left: menuAnchor.left,
+                top: menuAnchor.top,
+              }}
+              role="dialog"
+              aria-label={ariaLabel}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <DirectoryInlineDatePickerPanel
+                value={value}
+                onSelect={(isoDate) => {
+                  void commit(isoDate)
+                }}
+                onClear={() => {
+                  void commit('')
+                }}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   )
 }

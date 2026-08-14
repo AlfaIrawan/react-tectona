@@ -221,14 +221,14 @@ export function CreateProjectModal({
 
       onOpenChange(false)
       addToast({
-        title: 'Project berhasil dibuat',
-        description: `Project "${newProject.name}" telah dibuat.`,
+        title: 'Project created successfully',
+        description: `Project "${newProject.name}" has been created.`,
         variant: 'success',
       })
       notifyEvent({
         type_code: 'project',
-        title: 'Project berhasil dibuat',
-        body: `Project "${newProject.name}" telah dibuat.`,
+        title: 'Project created successfully',
+        body: `Project "${newProject.name}" has been created.`,
       })
       if (onProjectCreated) onProjectCreated(newProject.id)
       if (autoNavigate) navigate(`/projects/${newProject.id}`)
@@ -376,7 +376,7 @@ export function CreateProjectModal({
               })}
             </div>
             <p className="text-xs text-muted-foreground">
-              Pilih icon untuk project card (opsional)
+              Choose an icon for the project card (optional)
             </p>
           </div>
 
@@ -403,7 +403,7 @@ export function CreateProjectModal({
               })}
             </div>
             <p className="text-xs text-muted-foreground">
-              Pilih warna border untuk project card (opsional)
+              Choose a border color for the project card (optional)
             </p>
           </div>
 

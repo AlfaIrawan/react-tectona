@@ -262,3 +262,95 @@ export function buildProjectMetricsFromWorkItems(
     aiInsights,
   }
 }
+
+export type ProjectAssistantAdvice = {
+  title: string
+  tone: 'positive' | 'watch' | 'alert'
+  body: string
+}
+
+export function buildProjectAssistantBrief(
+  items: WorkItemApiModel[],
+  projectName: string,
+  options?: { template?: ProjectTemplate; anchorDate?: string },
+): { summary: string; advice: ProjectAssistantAdvice[] } {
+  const metrics = buildProjectMetricsFromWorkItems(items, options)
+  const total = items.length
+
+  if (total === 0) {
+    return {
+      summary: `${projectName} has no scheduled work items yet. Use Board or Calendar to seed the delivery track and unlock flow analytics.`,
+      advice: [
+        {
+          title: 'Getting started',
+          tone: 'watch',
+          body: 'Create or import work items aligned with your template workflow before the next planning checkpoint.',
+        },
+        {
+          title: 'Next best action',
+          tone: 'positive',
+          body: 'Open Board to define the first sprint scope, then align dates on Timeline.',
+        },
+      ],
+    }
+  }
+
+  const doneCount = metrics.executiveKpis.find((kpi) => kpi.label === 'Completed')?.value ?? '0'
+  const inProgressCount = metrics.executiveKpis.find((kpi) => kpi.label === 'In Progress')?.value ?? '0'
+  const reviewCount = metrics.executiveKpis.find((kpi) => kpi.label === 'In Review')?.value ?? '0'
+  const deliveryInsight = metrics.aiInsights[0]
+  const wipInsight = metrics.aiInsights.find((insight) => insight.title === 'WIP Recommendation')
+  const bottleneck = metrics.bottlenecks[0]
+  const topRisk = metrics.risks[0]
+  const nextMilestone = metrics.milestones.find((entry) => entry.status !== 'done')
+  const templateLabel = options?.template?.name ?? 'delivery'
+
+  const summary = [
+    `${projectName} (${templateLabel}) tracks ${total} work items — ${doneCount} completed, ${inProgressCount} in progress, ${reviewCount} in review.`,
+    deliveryInsight?.body ?? 'Flow metrics are updating from live board data.',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const advice: ProjectAssistantAdvice[] = []
+
+  if (bottleneck && bottleneck.count > 0) {
+    advice.push({
+      title: 'Focus this week',
+      tone: bottleneck.count >= 5 ? 'alert' : 'watch',
+      body: `Clear ${bottleneck.count} item${bottleneck.count === 1 ? '' : 's'} waiting in ${bottleneck.stage} before pulling new work into In Progress.`,
+    })
+  }
+
+  if (topRisk) {
+    advice.push({
+      title: 'Risk to watch',
+      tone: topRisk.severity === 'High' ? 'alert' : 'watch',
+      body: `${topRisk.title} — coordinate with ${topRisk.owner}.`,
+    })
+  } else if (wipInsight) {
+    advice.push({
+      title: 'Flow posture',
+      tone: wipInsight.tone === 'positive' ? 'positive' : 'watch',
+      body: wipInsight.body,
+    })
+  }
+
+  if (nextMilestone) {
+    advice.push({
+      title: 'Upcoming milestone',
+      tone: nextMilestone.status === 'active' ? 'watch' : 'positive',
+      body: `${nextMilestone.name} targets ${nextMilestone.date}. Confirm owners and dependencies on Timeline.`,
+    })
+  }
+
+  if (advice.length === 0) {
+    advice.push({
+      title: 'Next best action',
+      tone: 'positive',
+      body: 'Review Board WIP limits and align the next sprint scope on Timeline.',
+    })
+  }
+
+  return { summary, advice: advice.slice(0, 2) }
+}

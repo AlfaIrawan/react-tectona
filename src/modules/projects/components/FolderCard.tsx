@@ -1,45 +1,65 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { Pencil, StickyNote, MessageSquare, ListTodo, Palette, UserPlus, FolderPlus } from 'lucide-react'
+import { ListTodo, StickyNote } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import styles from './FolderCard.module.css'
-import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { ContextMenu } from '@/components/ui/context-menu'
 import { useToast } from '@/components/ui/toast'
 import { useFolderStore } from '@/modules/projects'
 import { notifyEvent } from '@/lib/api/notificationApi'
 import { createTodo, TECTONA_TODO_APP_ID, buildTodoEntityLinks } from '@/lib/api/todoApi'
+import { getSession } from '@/auth/authService'
+import type { GridSelectionModifiers } from '../lib/gridSelection'
+import { FolderContextMenuContent } from './FolderContextMenuContent'
+import { buildFolderCardThemeVariables } from '../lib/folderColorPalette'
+import { formatFolderContentsLabel } from '../lib/folderHierarchy'
 
 export interface FolderCardProps {
   id: string
   name: string
   projectCount: number
+  childFolderCount?: number
   /** Folder has todos (title starts with "Todo for {name}") */
   hasTodos?: boolean
   /** Newline-joined todo titles for tooltip */
   todoListTooltip?: string
+  /** Newline-joined note titles for tooltip */
+  notesTooltip?: string
+  noteCount?: number
   parentId?: string | null
+  borderColor?: string
   isShared?: boolean
   isSelected?: boolean
+  /** True when a project is dragged over this folder (not folder reorder). */
+  isProjectDropOver?: boolean
   isDragOver?: boolean
   onClick?: () => void
   onOpen?: () => void
   onShare?: () => void
   onDelete?: () => void
-  onSelect?: (folderId: string, selected: boolean) => void
+  onSelect?: (folderId: string, modifiers: GridSelectionModifiers) => void
   onRenameFolder?: () => void
   onAddProject?: () => void
+  onOpenFolderNotes?: (options?: { autoFocusComposer?: boolean }) => void
+  multiSelectActive?: boolean
+  onDeleteSelected?: () => void
 }
 
 export function FolderCard({
   id,
   name,
   projectCount,
+  childFolderCount = 0,
   hasTodos = false,
   todoListTooltip = '',
+  notesTooltip = '',
+  noteCount = 0,
   parentId = null,
+  borderColor,
   isShared = false,
   isSelected = false,
+  isProjectDropOver = false,
   isDragOver = false,
   onClick,
   onOpen,
@@ -48,6 +68,9 @@ export function FolderCard({
   onSelect,
   onRenameFolder,
   onAddProject,
+  onOpenFolderNotes,
+  multiSelectActive = false,
+  onDeleteSelected,
 }: FolderCardProps) {
   const { addToast } = useToast()
   const { updateFolder, isFolderNameUnique } = useFolderStore()
@@ -70,25 +93,25 @@ export function FolderCard({
       return
     }
     if (trimmed.length < 3) {
-      addToast({ title: 'Nama folder minimal 3 karakter', variant: 'error' })
+      addToast({ title: 'Folder name must be at least 3 characters', variant: 'error' })
       return
     }
     if (trimmed.length > 40) {
-      addToast({ title: 'Nama folder maksimal 40 karakter', variant: 'error' })
+      addToast({ title: 'Folder name must be at most 40 characters', variant: 'error' })
       return
     }
     if (!isFolderNameUnique(trimmed, id, parentId ?? null)) {
-      addToast({ title: 'Nama folder sudah dipakai', variant: 'error' })
+      addToast({ title: 'Folder name already exists', variant: 'error' })
       return
     }
     const scrollX = window.scrollX
     const scrollY = window.scrollY
     try {
       await updateFolder(id, { name: trimmed })
-      addToast({ title: 'Folder diubah', description: `Menjadi "${trimmed}".`, variant: 'success' })
-      notifyEvent({ type_code: 'folder', title: 'Folder diubah', body: `Menjadi "${trimmed}".` })
+      addToast({ title: 'Folder updated', description: `Renamed to "${trimmed}".`, variant: 'success' })
+      notifyEvent({ type_code: 'folder', title: 'Folder updated', body: `Renamed to "${trimmed}".` })
     } catch (e) {
-      addToast({ title: 'Error', description: e instanceof Error ? e.message : 'Gagal mengubah folder', variant: 'error' })
+      addToast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to update folder', variant: 'error' })
     }
     setIsRenaming(false)
     requestAnimationFrame(() => window.scrollTo(scrollX, scrollY))
@@ -107,7 +130,11 @@ export function FolderCard({
   const handleClick = (e: React.MouseEvent) => {
     if (isRenaming) return
     if ((e.target as HTMLElement).closest('[role="menuitem"]')) return
-    onSelect?.(id, !isSelected)
+    onSelect?.(id, {
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+    })
   }
 
   const handleDoubleClick = (e: React.MouseEvent) => {
@@ -124,7 +151,7 @@ export function FolderCard({
     }
   }
 
-  const metaLabel = `${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`
+  const metaLabel = formatFolderContentsLabel(projectCount, childFolderCount)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const closeContextMenu = () => setContextMenu(null)
 
@@ -160,16 +187,27 @@ export function FolderCard({
   }, [addTodoPopover])
 
   const hasProjects = projectCount > 0
+  const hasChildFolders = childFolderCount > 0
+  const themedStyle = borderColor
+    ? (buildFolderCardThemeVariables(borderColor, hasProjects) as CSSProperties)
+    : undefined
+
+  const showProjectDropTarget = isProjectDropOver
 
   return (
+    <div
+      className={cn(styles.folderCardWrapper, showProjectDropTarget && styles.projectDropTargetWrapper)}
+    >
     <div
       className={cn(
         styles.folderCard,
         'folder-card',
+        borderColor && styles.folderCardThemed,
         isSelected && styles.selected,
-        isDragOver && styles.dragOver,
+        showProjectDropTarget && styles.projectDropTarget,
         hasProjects && styles.hasProjects
       )}
+      style={themedStyle}
       role="button"
       tabIndex={0}
       aria-label={`Open folder ${name}`}
@@ -186,7 +224,7 @@ export function FolderCard({
       <div className={cn(styles.folderTab, 'folder-tab')} aria-hidden="true" />
 
       <div className={cn(styles.folderBody, 'folder-body')}>
-        {hasProjects && (
+        {(hasProjects || hasChildFolders) && (
           <div className={styles.folderPapers} aria-hidden="true">
             <span className={styles.paper} />
             <span className={styles.paper} />
@@ -274,6 +312,52 @@ export function FolderCard({
               iconBox
             )
           })()}
+          {noteCount > 0 && onOpenFolderNotes && (() => {
+            const notesIcon = (
+              <button
+                type="button"
+                className="shrink-0 relative flex items-center justify-center w-7 h-7 rounded-lg bg-amber-500/12 text-amber-700 hover:bg-amber-500/20 transition-colors"
+                aria-label={`Folder notes (${noteCount})`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onOpenFolderNotes()
+                }}
+              >
+                <StickyNote className="w-3.5 h-3.5" aria-hidden />
+                <span
+                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-0.5 flex items-center justify-center rounded-full bg-amber-600 text-white text-[9px] font-semibold"
+                  aria-hidden
+                >
+                  {noteCount > 99 ? '99+' : noteCount}
+                </span>
+              </button>
+            )
+            return notesTooltip ? (
+              <Tooltip
+                content={
+                  <>
+                    <div className="text-[13px] font-semibold text-slate-900 dark:text-slate-100">
+                      Notes for {name}
+                    </div>
+                    <div className="border-t border-slate-200/80 dark:border-slate-600/80 mt-2 pt-2" />
+                    <ul className="space-y-1.5 text-[13px] font-normal text-slate-700 dark:text-slate-300 leading-relaxed list-none mt-2">
+                      {notesTooltip.split('\n').filter(Boolean).map((line, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="text-slate-400 dark:text-slate-500 shrink-0">•</span>
+                          <span>{line}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                }
+                side="bottom"
+              >
+                {notesIcon}
+              </Tooltip>
+            ) : (
+              notesIcon
+            )
+          })()}
         </div>
 
         <ContextMenu
@@ -282,70 +366,25 @@ export function FolderCard({
           y={contextMenu?.y ?? 0}
           onClose={closeContextMenu}
         >
-          <ContextMenuItem
-            onClick={() => {
-              open()
-              closeContextMenu()
-            }}
-          >
-            Open
-          </ContextMenuItem>
-          {onRenameFolder && (
-            <ContextMenuItem onClick={() => { closeContextMenu(); setIsRenaming(true); }}>
-              <Pencil className="w-4 h-4 mr-2" />
-              Rename Folder
-            </ContextMenuItem>
-          )}
-          {onAddProject && (
-            <ContextMenuItem onClick={() => { onAddProject(); closeContextMenu(); }}>
-              <FolderPlus className="w-4 h-4 mr-2" />
-              Add Project
-            </ContextMenuItem>
-          )}
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => { addToast({ title: 'Add notes', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
-            <StickyNote className="w-4 h-4 mr-2" />
-            Add notes
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => { addToast({ title: 'Add Comment', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
-            <MessageSquare className="w-4 h-4 mr-2" />
-            Add Comment
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={() => {
+          <FolderContextMenuContent
+            folder={{ id, name, parentId, borderColor, isShared }}
+            multiSelectActive={multiSelectActive}
+            onClose={closeContextMenu}
+            onOpen={open}
+            onRenameFolder={onRenameFolder ? () => setIsRenaming(true) : undefined}
+            onAddProject={onAddProject}
+            onShare={onShare}
+            onDelete={onDelete}
+            onDeleteSelected={onDeleteSelected}
+            onAddTodo={() => {
               const pos = contextMenu ? { x: contextMenu.x, y: contextMenu.y } : { x: 0, y: 0 }
-              closeContextMenu()
               setAddTodoPopover(pos)
             }}
-          >
-            <ListTodo className="w-4 h-4 mr-2" />
-            Add Todo
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => { addToast({ title: 'Change color', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
-            <Palette className="w-4 h-4 mr-2" />
-            Change color
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => { addToast({ title: 'Add member', description: 'Fitur akan segera hadir.', variant: 'default' }); closeContextMenu(); }}>
-            <UserPlus className="w-4 h-4 mr-2" />
-            Add member
-          </ContextMenuItem>
-          {onShare && (
-            <ContextMenuItem onClick={() => { onShare(); closeContextMenu(); }}>
-              Share
-            </ContextMenuItem>
-          )}
-          <ContextMenuSeparator />
-          {onDelete && (
-            <ContextMenuItem
-              className="text-destructive"
-              onClick={() => {
-                onDelete()
-                closeContextMenu()
-              }}
-            >
-              Delete
-            </ContextMenuItem>
-          )}
+            onAddNotes={
+              onOpenFolderNotes ? () => onOpenFolderNotes({ autoFocusComposer: true }) : undefined
+            }
+            pasteTargetParentId={id}
+          />
         </ContextMenu>
 
       {addTodoPopover &&
@@ -371,15 +410,22 @@ export function FolderCard({
                 if (e.key === 'Enter') {
                   e.preventDefault()
                   if (addTodoTitle.trim()) {
+                    const userId = getSession()?.user.id
+                    if (!userId) {
+                      addToast({ title: 'Failed to add todo', description: 'Sesi tidak ditemukan. Silakan login ulang.', variant: 'error' })
+                      return
+                    }
                     setAddTodoSubmitting(true)
                     createTodo({
                       title: addTodoTitle.trim(),
                       app_id: TECTONA_TODO_APP_ID,
+                      owned_by: userId,
                       entity_links: buildTodoEntityLinks(null),
                     })
                       .then(() => {
                         addToast({ title: 'Todo added', variant: 'success' })
                         setAddTodoPopover(null)
+                        window.dispatchEvent(new CustomEvent('tectona-todos-changed'))
                         window.dispatchEvent(new CustomEvent('sequoia-todos-changed'))
                       })
                       .catch((err) => {
@@ -405,15 +451,22 @@ export function FolderCard({
                 disabled={!addTodoTitle.trim() || addTodoSubmitting}
                 onClick={() => {
                   if (!addTodoTitle.trim()) return
+                  const userId = getSession()?.user.id
+                  if (!userId) {
+                    addToast({ title: 'Failed to add todo', description: 'Sesi tidak ditemukan. Silakan login ulang.', variant: 'error' })
+                    return
+                  }
                   setAddTodoSubmitting(true)
                   createTodo({
                     title: addTodoTitle.trim(),
                     app_id: TECTONA_TODO_APP_ID,
+                    owned_by: userId,
                     entity_links: buildTodoEntityLinks(null),
                   })
                     .then(() => {
                       addToast({ title: 'Todo added', variant: 'success' })
                       setAddTodoPopover(null)
+                      window.dispatchEvent(new CustomEvent('tectona-todos-changed'))
                       window.dispatchEvent(new CustomEvent('sequoia-todos-changed'))
                     })
                     .catch((err) => {
@@ -434,18 +487,21 @@ export function FolderCard({
           className={cn(
             styles.folderMeta,
             'folder-meta',
-            projectCount === 0 && styles.folderMetaMuted
+            projectCount === 0 && childFolderCount === 0 && styles.folderMetaMuted
           )}
         >
           {metaLabel}
         </div>
 
-        {isDragOver && (
-          <div className={styles.dragOverOverlay} aria-hidden="true">
-            <div className={styles.dragOverText}>Drop to add</div>
-          </div>
-        )}
       </div>
+    </div>
+
+      {showProjectDropTarget ? (
+        <div className={styles.dropHintBelow} aria-hidden>
+          <span className={styles.dropHintArrow}>→</span>
+          Move to {name}
+        </div>
+      ) : null}
     </div>
   )
 }

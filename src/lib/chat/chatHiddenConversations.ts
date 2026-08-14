@@ -1,6 +1,6 @@
 /**
- * Kontak / channel yang dihapus dari daftar chat (lokal).
- * Mencegah inbox sync dari collaboration-context menampilkan ulang thread yang sama.
+ * Contacts / channels removed from the chat list (local).
+ * Prevents inbox sync from collaboration-context from re-surfacing the same thread.
  */
 
 const HIDDEN_CONTACTS_KEY = 'tectona.chat.hiddenContactIds.v1'

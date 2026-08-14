@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useDeferredValue, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -95,7 +95,6 @@ function CompactWarningMessage({
 }
 
 export function PortfolioGovernanceManagementPage() {
-  const [isLoading, setIsLoading] = useState(true)
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
   const [activePanel, setActivePanel] = useState<
     | 'overview'
@@ -133,11 +132,6 @@ export function PortfolioGovernanceManagementPage() {
   const fixedSidebarUiOn = !sidebarFixed
   const enterpriseNavUltra = fixedSidebarUiOn && sidebarMini && enterpriseNavTitlesOnly && enterpriseNavSimpleList
   const enterpriseNavWidthVariant = enterpriseNavUltra ? 'ultra' : enterpriseNavCompact ? 'compact' : 'default'
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 650)
-    return () => window.clearTimeout(timer)
-  }, [])
 
   type HealthTone = 'On Track' | 'At Risk' | 'Delayed'
   type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical'
@@ -774,11 +768,6 @@ export function PortfolioGovernanceManagementPage() {
 
   useLayoutEffect(() => {
     // Fixed Sidebar ON: samakan batas bawah Enterprise Navigation dengan panel konten utama, seperti Workspace Management.
-    if (isLoading) {
-      setNavPanelHeightPx(null)
-      return
-    }
-
     if (navDocked) {
       setNavPanelHeightPx(null)
       return
@@ -823,7 +812,7 @@ export function PortfolioGovernanceManagementPage() {
       window.clearTimeout(t)
       ro.disconnect()
     }
-  }, [isLoading, navDocked, showFiltersPanel, activePanel, isWorkspaceCollapsed, summary.healthScore])
+  }, [navDocked, showFiltersPanel, activePanel, isWorkspaceCollapsed, summary.healthScore])
 
   function switchPanel(id: (typeof PANELS)[number]['id']) {
     setActivePanel(id)
@@ -866,27 +855,6 @@ export function PortfolioGovernanceManagementPage() {
     if (score >= 90) return 'text-emerald-700'
     if (score >= 75) return 'text-amber-700'
     return 'text-rose-700'
-  }
-
-  function SkeletonBlock() {
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <div key={index} className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-slate-100" />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-          <div className="h-[540px] animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <div className="h-[320px] animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-            <div className="h-[320px] animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-            <div className="h-[340px] animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-            <div className="h-[340px] animate-pulse rounded-3xl border border-slate-200 bg-slate-100" />
-          </div>
-        </div>
-      </div>
-    )
   }
 
   function Panel({
@@ -1138,15 +1106,6 @@ export function PortfolioGovernanceManagementPage() {
     </Card>
   )
 
-  if (isLoading) {
-    return (
-      <div className="space-y-5">
-        <Breadcrumb items={[{ label: 'Execution Portfolio & Delivery Governance' }]} />
-        <SkeletonBlock />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6 pb-8">
       <div className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked, isWorkspaceCollapsed, enterpriseNavWidthVariant))}>
@@ -1344,9 +1303,9 @@ export function PortfolioGovernanceManagementPage() {
           {loadError ? (
             <CompactWarningMessage
               icon={AlertTriangle}
-              title="Governance matrix tidak dapat dimuat"
-              description="Terjadi kesalahan saat memuat data governance matrix. Pastikan semua layanan backend berjalan dengan normal."
-              actionLabel="Coba lagi"
+              title="Governance matrix could not be loaded"
+              description="An error occurred while loading governance matrix data. Make sure all backend services are running normally."
+              actionLabel="Try again"
               onAction={() => setLoadError(null)}
             />
           ) : null}

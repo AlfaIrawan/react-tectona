@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   DndContext,
@@ -33,12 +33,36 @@ import {
   FolderKanban,
   GripVertical,
   Inbox,
+  LayoutGrid,
+  ChevronLeft,
+  ChevronRight,
+  Palette,
+  Pencil,
+  Plus,
   Tag,
+  Trash2,
   UserRound,
   type LucideIcon,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSubmenu,
+} from '@/components/ui/context-menu'
 import type { WorkStatus } from '@/lib/api/workApi'
+import {
+  boardColumnSortableKey,
+  createCustomBoardColumn,
+  customBoardColumnKey,
+  isCustomBoardColumnId,
+  loadKanbanBoardLayout,
+  persistKanbanBoardLayout,
+  resolveBoardColumnIdFromSortable,
+  type KanbanBoardColumnId,
+  type KanbanCustomBoardColumn,
+} from '@/lib/work/kanbanCustomBoardColumns'
 import {
   loadBoardColumnLabels,
   persistBoardColumnLabels,
@@ -47,11 +71,18 @@ import {
   WORK_STATUS_VALUES,
   type BoardColumnLabels,
 } from '@/lib/work/kanbanBoardColumnLabels'
+import {
+  KANBAN_COLUMN_COLOR_OPTIONS,
+  pickRandomKanbanColumnColor,
+  resolveKanbanColumnTheme,
+  type KanbanBoardColumnColors,
+  type KanbanColumnColorPreset,
+  type KanbanColumnTheme,
+} from '@/lib/work/kanbanBoardColumnTheme'
 import { cn } from '@/lib/utils'
 
 const KANBAN_COLUMNS = WORK_STATUS_VALUES
 const KANBAN_COLUMN_DND_PREFIX = 'kanban-column:'
-const KANBAN_BOARD_COLUMN_PREFIX = 'kanban-board-column:'
 
 type Priority = 'Critical' | 'High' | 'Medium' | 'Low'
 
@@ -122,21 +153,120 @@ function buildKanbanProjectOptions(items: DirectoryKanbanItem[]): KanbanProjectO
   return unidentified ? [...identified, unidentified] : identified
 }
 
-function boardColumnSortableId(status: WorkStatus): string {
-  return `${KANBAN_BOARD_COLUMN_PREFIX}${status}`
+function KanbanAddBoardColumnSlot({ onAdd }: { onAdd: (label: string) => void }) {
+  const [isAdding, setIsAdding] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!isAdding) return
+    inputRef.current?.focus()
+  }, [isAdding])
+
+  const commit = (raw: string) => {
+    const label = raw.trim()
+    if (label) onAdd(label)
+    setIsAdding(false)
+  }
+
+  return (
+    <div className="flex min-h-0 w-[13rem] shrink-0 flex-col">
+      {isAdding ? (
+        <div className="flex min-h-[140px] flex-1 flex-col rounded-2xl border border-dashed border-primary/35 bg-background/80 p-3 shadow-sm">
+          <label className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+            New board
+          </label>
+          <input
+            ref={inputRef}
+            type="text"
+            maxLength={48}
+            placeholder="Board name"
+            defaultValue=""
+            aria-label="New board name"
+            className="mt-2 h-8 w-full rounded-md border border-border/70 bg-background px-2 text-sm text-foreground shadow-sm outline-none ring-primary/30 focus-visible:ring-2"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                commit(event.currentTarget.value)
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setIsAdding(false)
+              }
+            }}
+            onBlur={(event) => commit(event.currentTarget.value)}
+          />
+          <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+            Press Enter to create. Cards keep their workflow status until moved to a status column.
+          </p>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsAdding(true)}
+          className={cn(
+            'flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed',
+            'border-border/60 bg-background/40 px-4 py-6 text-muted-foreground transition-colors',
+            'hover:border-primary/35 hover:bg-background/70 hover:text-foreground',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35',
+          )}
+          aria-label="Add new board column"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-muted/70 ring-1 ring-border/50">
+            <Plus className="h-5 w-5" aria-hidden />
+          </span>
+          <span className="text-[11px] font-semibold">Add board</span>
+        </button>
+      )}
+    </div>
+  )
 }
 
-function resolveBoardColumnStatus(sortableId: string): WorkStatus | null {
-  if (!sortableId.startsWith(KANBAN_BOARD_COLUMN_PREFIX)) return null
-  return sortableId.slice(KANBAN_BOARD_COLUMN_PREFIX.length) as WorkStatus
-}
-
-type ColumnOrderState = Record<WorkStatus, string[]>
+type ColumnOrderState = Record<string, string[]>
 
 type DropTargetHint = {
-  status: WorkStatus
+  columnId: KanbanBoardColumnId
   itemId: string | null
   side: 'before' | 'after'
+}
+
+type BoardColumnContextMenuState = {
+  x: number
+  y: number
+  columnId: KanbanBoardColumnId
+}
+
+function resolveKanbanBoardScope(
+  hideProjectChrome: boolean,
+  selectedProjectKey: string | null,
+  visibleItems: DirectoryKanbanItem[],
+): string {
+  if (hideProjectChrome) {
+    const project = visibleItems[0]?.project?.trim()
+    return project ? `project:${project}` : 'project:default'
+  }
+  return selectedProjectKey ? `directory:${selectedProjectKey}` : 'directory:all'
+}
+
+function customColumnKeysFromLayout(customColumns: KanbanCustomBoardColumn[]): string[] {
+  return customColumns.map((column) => customBoardColumnKey(column.id))
+}
+
+function extractCustomColumnItems(
+  columnOrder: ColumnOrderState,
+  customColumnKeys: string[],
+): Record<string, string[]> {
+  return customColumnKeys.reduce<Record<string, string[]>>((acc, key) => {
+    acc[key] = [...(columnOrder[key] ?? [])]
+    return acc
+  }, {})
+}
+
+function collectCustomColumnItemIds(columnOrder: ColumnOrderState, customColumnKeys: string[]): Set<string> {
+  const ids = new Set<string>()
+  for (const key of customColumnKeys) {
+    for (const itemId of columnOrder[key] ?? []) ids.add(itemId)
+  }
+  return ids
 }
 
 const KANBAN_DROP_FADE_MS = 180
@@ -247,33 +377,50 @@ const PRIORITY_CHIP: Record<Priority, string> = {
   Low: 'border-slate-200/80 bg-slate-50/95 text-slate-700 shadow-sm dark:border-slate-700/50 dark:bg-slate-900/50 dark:text-slate-200',
 }
 
-function emptyColumnOrder(): ColumnOrderState {
-  return { Backlog: [], 'To Do': [], 'In Progress': [], 'In Review': [], Done: [] }
+function emptyColumnOrder(customColumnKeys: string[] = []): ColumnOrderState {
+  const order: ColumnOrderState = {}
+  for (const status of KANBAN_COLUMNS) order[status] = []
+  for (const key of customColumnKeys) order[key] = []
+  return order
 }
 
 function syncColumnOrder(
   items: DirectoryKanbanItem[],
-  previous: ColumnOrderState | null
+  previous: ColumnOrderState | null,
+  customColumnKeys: string[],
 ): ColumnOrderState {
-  const idsByStatus = KANBAN_COLUMNS.reduce<Record<WorkStatus, string[]>>((acc, status) => {
-    acc[status] = items.filter((item) => item.status === status).map((item) => item.id)
-    return acc
-  }, emptyColumnOrder())
+  const inCustom = collectCustomColumnItemIds(previous ?? {}, customColumnKeys)
 
-  return KANBAN_COLUMNS.reduce<ColumnOrderState>((acc, status) => {
+  const idsByStatus = KANBAN_COLUMNS.reduce<Record<WorkStatus, string[]>>((acc, status) => {
+    acc[status] = items
+      .filter((item) => item.status === status && !inCustom.has(item.id))
+      .map((item) => item.id)
+    return acc
+  }, {} as Record<WorkStatus, string[]>)
+
+  const order = emptyColumnOrder(customColumnKeys)
+
+  for (const status of KANBAN_COLUMNS) {
     const validIds = new Set(idsByStatus[status])
     const preserved = (previous?.[status] ?? []).filter((id) => validIds.has(id))
     for (const id of idsByStatus[status]) {
       if (!preserved.includes(id)) preserved.push(id)
     }
-    acc[status] = preserved
-    return acc
-  }, emptyColumnOrder())
+    order[status] = preserved
+  }
+
+  for (const key of customColumnKeys) {
+    const validIds = new Set(items.map((item) => item.id))
+    const preserved = (previous?.[key] ?? []).filter((id) => validIds.has(id))
+    order[key] = preserved
+  }
+
+  return order
 }
 
-function findContainerForItemId(itemId: string, order: ColumnOrderState): WorkStatus | null {
-  for (const status of KANBAN_COLUMNS) {
-    if (order[status].includes(itemId)) return status
+function findContainerForItemId(itemId: string, order: ColumnOrderState): KanbanBoardColumnId | null {
+  for (const [columnId, itemIds] of Object.entries(order)) {
+    if (itemIds.includes(itemId)) return columnId as KanbanBoardColumnId
   }
   return null
 }
@@ -281,17 +428,18 @@ function findContainerForItemId(itemId: string, order: ColumnOrderState): WorkSt
 function resolveOverTarget(
   overId: string,
   overData: unknown
-): { status: WorkStatus; itemId: string | null } | null {
+): { columnId: KanbanBoardColumnId; itemId: string | null } | null {
   if (overId.startsWith(KANBAN_COLUMN_DND_PREFIX)) {
     return {
-      status: overId.slice(KANBAN_COLUMN_DND_PREFIX.length) as WorkStatus,
+      columnId: overId.slice(KANBAN_COLUMN_DND_PREFIX.length) as KanbanBoardColumnId,
       itemId: null,
     }
   }
 
-  const data = overData as { status?: WorkStatus; itemId?: string } | undefined
-  if (data?.status && data.itemId) {
-    return { status: data.status, itemId: data.itemId }
+  const data = overData as { columnId?: KanbanBoardColumnId; status?: WorkStatus; itemId?: string } | undefined
+  if (data?.itemId) {
+    const columnId = data.columnId ?? data.status
+    if (columnId) return { columnId, itemId: data.itemId }
   }
 
   return null
@@ -493,6 +641,7 @@ function KanbanInsertIndicator() {
 
 function KanbanSortableCard({
   item,
+  columnId,
   onItemClick,
   isEditingTitle,
   onStartTitleEdit,
@@ -500,6 +649,7 @@ function KanbanSortableCard({
   onCancelTitleEdit,
 }: {
   item: DirectoryKanbanItem
+  columnId: KanbanBoardColumnId
   onItemClick: (id: string) => void
   isEditingTitle: boolean
   onStartTitleEdit: () => void
@@ -508,7 +658,7 @@ function KanbanSortableCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
-    data: { type: 'item', itemId: item.id, status: item.status },
+    data: { type: 'item', itemId: item.id, columnId, status: item.status },
   })
 
   const meta = STATUS_META[item.status]
@@ -560,17 +710,17 @@ function KanbanSortableCard({
 }
 
 function KanbanColumnDropZone({
-  status,
+  columnId,
   children,
   className,
 }: {
-  status: WorkStatus
+  columnId: KanbanBoardColumnId
   children: ReactNode
   className?: string
 }) {
   const { setNodeRef, isOver } = useDroppable({
-    id: `${KANBAN_COLUMN_DND_PREFIX}${status}`,
-    data: { type: 'column', status },
+    id: `${KANBAN_COLUMN_DND_PREFIX}${columnId}`,
+    data: { type: 'column', columnId },
   })
 
   return (
@@ -660,8 +810,10 @@ function BoardColumnHeaderTitle({
 }
 
 function KanbanSortableBoardColumn({
+  columnId,
   status,
-  meta,
+  theme,
+  statusIcon: StatusIcon,
   itemCount,
   displayLabel,
   isCustomLabel,
@@ -669,10 +821,13 @@ function KanbanSortableBoardColumn({
   onStartTitleEdit,
   onCommitTitleEdit,
   onCancelTitleEdit,
+  onHeaderContextMenu,
   children,
 }: {
+  columnId: KanbanBoardColumnId
   status: WorkStatus
-  meta: (typeof STATUS_META)[WorkStatus]
+  theme: KanbanColumnTheme
+  statusIcon: LucideIcon
   itemCount: number
   displayLabel: string
   isCustomLabel: boolean
@@ -680,9 +835,9 @@ function KanbanSortableBoardColumn({
   onStartTitleEdit: () => void
   onCommitTitleEdit: (value: string) => void
   onCancelTitleEdit: () => void
+  onHeaderContextMenu: (event: ReactMouseEvent) => void
   children: ReactNode
 }) {
-  const StatusIcon = meta.icon
   const {
     attributes,
     listeners,
@@ -692,8 +847,8 @@ function KanbanSortableBoardColumn({
     transition,
     isDragging,
   } = useSortable({
-    id: boardColumnSortableId(status),
-    data: { type: 'board-column', status },
+    id: boardColumnSortableKey(columnId),
+    data: { type: 'board-column', columnId, status },
   })
 
   const style = {
@@ -707,12 +862,15 @@ function KanbanSortableBoardColumn({
       style={style}
       className={cn(
         'group/column relative flex min-h-0 min-w-[13rem] flex-1 flex-col overflow-hidden rounded-2xl border shadow-sm',
-        meta.columnShell,
+        theme.columnShell,
         isDragging && 'z-10 opacity-90 ring-2 ring-primary/25'
       )}
     >
-      <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-1', meta.accentBar)} />
-      <div className={cn('flex items-center justify-between gap-2 border-b px-3 py-3', meta.columnHeader)}>
+      <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-1', theme.accentBar)} />
+      <div
+        className={cn('flex items-center justify-between gap-2 border-b px-3 py-3', theme.columnHeader)}
+        onContextMenu={onHeaderContextMenu}
+      >
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
@@ -729,7 +887,7 @@ function KanbanSortableBoardColumn({
           >
             <GripVertical className="h-4 w-4" aria-hidden />
           </button>
-          <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1', meta.iconWrap)}>
+          <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1', theme.iconWrap)}>
             <StatusIcon className="h-3.5 w-3.5" aria-hidden />
           </div>
           <div className="min-w-0">
@@ -744,7 +902,104 @@ function KanbanSortableBoardColumn({
             />
           </div>
         </div>
-        <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ring-1', meta.countPill)}>
+        <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ring-1', theme.countPill)}>
+          {itemCount}
+        </span>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function KanbanSortableCustomBoardColumn({
+  columnId,
+  label,
+  theme,
+  itemCount,
+  isEditingTitle,
+  onStartTitleEdit,
+  onCommitTitleEdit,
+  onCancelTitleEdit,
+  onHeaderContextMenu,
+  children,
+}: {
+  columnId: `custom:${string}`
+  label: string
+  theme: KanbanColumnTheme
+  itemCount: number
+  isEditingTitle: boolean
+  onStartTitleEdit: () => void
+  onCommitTitleEdit: (value: string) => void
+  onCancelTitleEdit: () => void
+  onHeaderContextMenu: (event: ReactMouseEvent) => void
+  children: ReactNode
+}) {
+  const StatusIcon = LayoutGrid
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: boardColumnSortableKey(columnId),
+    data: { type: 'board-column', columnId },
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        'group/column relative flex min-h-0 min-w-[13rem] flex-1 flex-col overflow-hidden rounded-2xl border shadow-sm',
+        theme.columnShell,
+        isDragging && 'z-10 opacity-90 ring-2 ring-primary/25',
+      )}
+    >
+      <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-1', theme.accentBar)} />
+      <div
+        className={cn('flex items-center justify-between gap-2 border-b px-3 py-3', theme.columnHeader)}
+        onContextMenu={onHeaderContextMenu}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            {...attributes}
+            {...listeners}
+            className={cn(
+              'flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground/70 transition-colors',
+              'hover:bg-background/80 hover:text-foreground active:cursor-grabbing',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35',
+            )}
+            aria-label={`Drag ${label} column`}
+            title="Drag to reorder column"
+          >
+            <GripVertical className="h-4 w-4" aria-hidden />
+          </button>
+          <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1', theme.iconWrap)}>
+            <StatusIcon className="h-3.5 w-3.5" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <BoardColumnHeaderTitle
+              status={'Backlog' as WorkStatus}
+              displayLabel={label}
+              isCustomLabel
+              isEditing={isEditingTitle}
+              onStartEdit={onStartTitleEdit}
+              onCommit={onCommitTitleEdit}
+              onCancel={onCancelTitleEdit}
+            />
+          </div>
+        </div>
+        <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ring-1', theme.countPill)}>
           {itemCount}
         </span>
       </div>
@@ -754,47 +1009,49 @@ function KanbanSortableBoardColumn({
 }
 
 function KanbanBoardColumnOverlay({
-  status,
+  columnId,
+  theme,
+  statusIcon: StatusIcon,
   itemCount,
   displayLabel,
   isCustomLabel,
 }: {
-  status: WorkStatus
+  columnId: KanbanBoardColumnId
+  theme: KanbanColumnTheme
+  statusIcon: LucideIcon
   itemCount: number
   displayLabel: string
   isCustomLabel: boolean
 }) {
-  const meta = STATUS_META[status]
-  const StatusIcon = meta.icon
   return (
     <div
       className={cn(
         'pointer-events-none w-[13rem] overflow-hidden rounded-2xl border shadow-[0_24px_60px_-20px_rgba(15,23,42,0.45)]',
-        meta.columnShell
+        theme.columnShell,
       )}
     >
-      <div className={cn('pointer-events-none h-1', meta.accentBar)} />
-      <div className={cn('flex items-center justify-between gap-2 border-b px-3 py-3', meta.columnHeader)}>
+      <div className={cn('pointer-events-none h-1', theme.accentBar)} />
+      <div className={cn('flex items-center justify-between gap-2 border-b px-3 py-3', theme.columnHeader)}>
         <div className="flex min-w-0 items-center gap-2">
           <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-          <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1', meta.iconWrap)}>
+          <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1', theme.iconWrap)}>
             <StatusIcon className="h-3.5 w-3.5" aria-hidden />
           </div>
           <p
             className={cn(
               'truncate text-[11px] font-semibold tracking-[0.1em] text-foreground/90',
-              isCustomLabel ? 'normal-case' : 'uppercase'
+              isCustomLabel || isCustomBoardColumnId(columnId) ? 'normal-case' : 'uppercase',
             )}
           >
             {displayLabel}
           </p>
         </div>
-        <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ring-1', meta.countPill)}>
+        <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ring-1', theme.countPill)}>
           {itemCount}
         </span>
       </div>
-      <div className={cn('px-3 py-4 text-[10px] font-medium text-muted-foreground', meta.columnBody)}>
-        Reordering status columns…
+      <div className={cn('px-3 py-4 text-[10px] font-medium text-muted-foreground', theme.columnBody)}>
+        Reordering columns…
       </div>
     </div>
   )
@@ -911,21 +1168,27 @@ export function DirectoryKanbanView({
   hideProjectChrome = false,
 }: DirectoryKanbanViewProps) {
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
-  const [boardColumnSequence, setBoardColumnSequence] = useState<WorkStatus[]>(() => [...KANBAN_COLUMNS])
+  const [customColumns, setCustomColumns] = useState<KanbanCustomBoardColumn[]>([])
+  const [boardColumnSequence, setBoardColumnSequence] = useState<KanbanBoardColumnId[]>(() => [...KANBAN_COLUMNS])
   const [boardColumnLabels, setBoardColumnLabels] = useState<BoardColumnLabels>(() => loadBoardColumnLabels())
-  const [editingBoardColumnStatus, setEditingBoardColumnStatus] = useState<WorkStatus | null>(null)
+  const [editingBoardColumnId, setEditingBoardColumnId] = useState<KanbanBoardColumnId | null>(null)
   const [editingKanbanItemId, setEditingKanbanItemId] = useState<string | null>(null)
   const [activeItem, setActiveItem] = useState<DirectoryKanbanItem | null>(null)
-  const [activeBoardColumn, setActiveBoardColumn] = useState<WorkStatus | null>(null)
+  const [activeBoardColumn, setActiveBoardColumn] = useState<KanbanBoardColumnId | null>(null)
   const [activeItemWidthPx, setActiveItemWidthPx] = useState(240)
-  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(() => syncColumnOrder(items, null))
+  const customColumnKeys = useMemo(() => customColumnKeysFromLayout(customColumns), [customColumns])
+  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(() =>
+    emptyColumnOrder(customColumnKeysFromLayout([])),
+  )
   const [dropTarget, setDropTarget] = useState<DropTargetHint | null>(null)
   const [pendingStatuses, setPendingStatuses] = useState<Record<string, WorkStatus>>({})
+  const [columnColors, setColumnColors] = useState<KanbanBoardColumnColors>({})
+  const [boardColumnContextMenu, setBoardColumnContextMenu] = useState<BoardColumnContextMenuState | null>(null)
   const clearOverlayTimerRef = useRef<number | null>(null)
-  const dragStartStatusRef = useRef<WorkStatus | null>(null)
+  const dragStartColumnRef = useRef<KanbanBoardColumnId | null>(null)
 
   const commitBoardColumnLabel = useCallback((status: WorkStatus, value: string) => {
-    setEditingBoardColumnStatus(null)
+    setEditingBoardColumnId(null)
     const trimmed = value.trim()
     setBoardColumnLabels((previous) => {
       const next = { ...previous }
@@ -968,6 +1231,167 @@ export function DirectoryKanbanView({
     return items.filter((item) => itemMatchesProjectKey(item, selectedProjectKey))
   }, [hideProjectChrome, items, selectedProjectKey])
 
+  const boardScope = useMemo(
+    () => resolveKanbanBoardScope(hideProjectChrome, selectedProjectKey, visibleItems),
+    [hideProjectChrome, selectedProjectKey, visibleItems],
+  )
+
+  const persistBoardLayout = useCallback(
+    (
+      nextCustomColumns: KanbanCustomBoardColumn[],
+      nextSequence: KanbanBoardColumnId[],
+      nextColumnOrder: ColumnOrderState,
+      nextColumnColors: KanbanBoardColumnColors = columnColors,
+    ) => {
+      const keys = customColumnKeysFromLayout(nextCustomColumns)
+      persistKanbanBoardLayout(boardScope, {
+        customColumns: nextCustomColumns,
+        columnSequence: nextSequence,
+        customColumnItems: extractCustomColumnItems(nextColumnOrder, keys),
+        columnColors: nextColumnColors,
+      })
+    },
+    [boardScope, columnColors],
+  )
+
+  const commitCustomBoardColumnLabel = useCallback(
+    (columnId: `custom:${string}`, value: string) => {
+      setEditingBoardColumnId(null)
+      const trimmed = value.trim()
+      if (!trimmed) return
+      setCustomColumns((previous) => {
+        const rawId = columnId.slice('custom:'.length)
+        const next = previous.map((column) =>
+          column.id === rawId ? { ...column, label: trimmed } : column,
+        )
+        persistBoardLayout(next, boardColumnSequence, columnOrder)
+        return next
+      })
+    },
+    [boardColumnSequence, columnOrder, persistBoardLayout],
+  )
+
+  useEffect(() => {
+    const layout = loadKanbanBoardLayout(boardScope)
+    const keys = customColumnKeysFromLayout(layout.customColumns)
+    setCustomColumns(layout.customColumns)
+    setBoardColumnSequence(layout.columnSequence)
+    setColumnColors(layout.columnColors)
+    setColumnOrder((previous) => {
+      const merged = syncColumnOrder(visibleItems, previous, keys)
+      for (const key of keys) {
+        const saved = layout.customColumnItems[key] ?? []
+        const validIds = new Set(visibleItems.map((item) => item.id))
+        merged[key] = saved.filter((id) => validIds.has(id))
+      }
+      return merged
+    })
+    // Load saved board layout when scope changes — item sync is handled separately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardScope])
+
+  const handleAddBoardColumn = useCallback(
+    (label: string) => {
+      const column = createCustomBoardColumn(label)
+      const columnKey = customBoardColumnKey(column.id)
+      const randomColor = pickRandomKanbanColumnColor(Object.values(columnColors))
+      const nextCustomColumns = [column, ...customColumns]
+      const nextSequence = [columnKey, ...boardColumnSequence]
+      const nextColumnOrder = {
+        ...columnOrder,
+        [columnKey]: columnOrder[columnKey] ?? [],
+      }
+      const nextColors = { ...columnColors, [columnKey]: randomColor }
+      setCustomColumns(nextCustomColumns)
+      setBoardColumnSequence(nextSequence)
+      setColumnOrder(nextColumnOrder)
+      setColumnColors(nextColors)
+      persistBoardLayout(nextCustomColumns, nextSequence, nextColumnOrder, nextColors)
+    },
+    [boardColumnSequence, columnColors, columnOrder, customColumns, persistBoardLayout],
+  )
+
+  const openBoardColumnContextMenu = useCallback((columnId: KanbanBoardColumnId, event: ReactMouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setBoardColumnContextMenu({ x: event.clientX, y: event.clientY, columnId })
+  }, [])
+
+  const handleRenameBoardColumn = useCallback((columnId: KanbanBoardColumnId) => {
+    setEditingKanbanItemId(null)
+    setEditingBoardColumnId(columnId)
+    setBoardColumnContextMenu(null)
+  }, [])
+
+  const handleChangeBoardColumnColor = useCallback(
+    (columnId: KanbanBoardColumnId, preset: KanbanColumnColorPreset) => {
+      setColumnColors((previous) => {
+        const next = { ...previous, [columnId]: preset }
+        persistBoardLayout(customColumns, boardColumnSequence, columnOrder, next)
+        return next
+      })
+      setBoardColumnContextMenu(null)
+    },
+    [boardColumnSequence, columnOrder, customColumns, persistBoardLayout],
+  )
+
+  const handleMoveBoardColumn = useCallback(
+    (columnId: KanbanBoardColumnId, direction: 'left' | 'right') => {
+      setBoardColumnSequence((previous) => {
+        const index = previous.indexOf(columnId)
+        if (index === -1) return previous
+        const newIndex = direction === 'left' ? index - 1 : index + 1
+        if (newIndex < 0 || newIndex >= previous.length) return previous
+        const next = arrayMove(previous, index, newIndex)
+        persistBoardLayout(customColumns, next, columnOrder)
+        return next
+      })
+      setBoardColumnContextMenu(null)
+    },
+    [columnOrder, customColumns, persistBoardLayout],
+  )
+
+  const handleDeleteBoardColumn = useCallback(
+    (columnId: KanbanBoardColumnId) => {
+      if (isCustomBoardColumnId(columnId)) {
+        const itemIds = columnOrder[columnId] ?? []
+        const rawId = columnId.slice('custom:'.length)
+        const nextCustomColumns = customColumns.filter((column) => column.id !== rawId)
+        const nextSequence = boardColumnSequence.filter((id) => id !== columnId)
+        const nextOrder = { ...columnOrder }
+        delete nextOrder[columnId]
+        for (const itemId of itemIds) {
+          const item = visibleItems.find((entry) => entry.id === itemId)
+          if (!item) continue
+          const statusKey = item.status
+          if (!(nextOrder[statusKey] ?? []).includes(itemId)) {
+            nextOrder[statusKey] = [...(nextOrder[statusKey] ?? []), itemId]
+          }
+        }
+        const nextColors = { ...columnColors }
+        delete nextColors[columnId]
+        setCustomColumns(nextCustomColumns)
+        setBoardColumnSequence(nextSequence)
+        setColumnOrder(nextOrder)
+        setColumnColors(nextColors)
+        persistBoardLayout(nextCustomColumns, nextSequence, nextOrder, nextColors)
+      } else {
+        const nextSequence = boardColumnSequence.filter((id) => id !== columnId)
+        setBoardColumnSequence(nextSequence)
+        persistBoardLayout(customColumns, nextSequence, columnOrder)
+      }
+      setBoardColumnContextMenu(null)
+    },
+    [boardColumnSequence, columnColors, columnOrder, customColumns, persistBoardLayout, visibleItems],
+  )
+
+  const contextMenuColumnIndex = boardColumnContextMenu
+    ? boardColumnSequence.indexOf(boardColumnContextMenu.columnId)
+    : -1
+  const canMoveBoardColumnLeft = contextMenuColumnIndex > 0
+  const canMoveBoardColumnRight =
+    contextMenuColumnIndex >= 0 && contextMenuColumnIndex < boardColumnSequence.length - 1
+
   useEffect(() => {
     if (projectOptions.length === 0) {
       setSelectedProjectKey(null)
@@ -989,8 +1413,8 @@ export function DirectoryKanbanView({
 
   useEffect(() => {
     if (activeItem) return
-    setColumnOrder((previous) => syncColumnOrder(visibleItems, previous))
-  }, [activeItem, visibleItems])
+    setColumnOrder((previous) => syncColumnOrder(visibleItems, previous, customColumnKeys))
+  }, [activeItem, customColumnKeys, visibleItems])
 
   useEffect(() => {
     setPendingStatuses((current) => {
@@ -1014,16 +1438,23 @@ export function DirectoryKanbanView({
   )
 
   const boardColumnSortableIds = useMemo(
-    () => boardColumnSequence.map((status) => boardColumnSortableId(status)),
-    [boardColumnSequence]
+    () => boardColumnSequence.map((columnId) => boardColumnSortableKey(columnId)),
+    [boardColumnSequence],
   )
 
   const boardColumnItemCounts = useMemo(() => {
-    return boardColumnSequence.reduce<Record<WorkStatus, number>>((acc, status) => {
-      acc[status] = columnOrder[status].filter((id) => itemsById.has(id)).length
+    return boardColumnSequence.reduce<Record<string, number>>((acc, columnId) => {
+      acc[columnId] = (columnOrder[columnId] ?? []).filter((id) => itemsById.has(id)).length
       return acc
-    }, emptyColumnOrder())
+    }, {})
   }, [boardColumnSequence, columnOrder, itemsById])
+
+  const customColumnLabelById = useMemo(() => {
+    return customColumns.reduce<Record<string, string>>((acc, column) => {
+      acc[column.id] = column.label
+      return acc
+    }, {})
+  }, [customColumns])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -1039,7 +1470,7 @@ export function DirectoryKanbanView({
       dropFadeInPlaceRef.current = false
       setActiveItem(null)
       setActiveItemWidthPx(240)
-      dragStartStatusRef.current = null
+      dragStartColumnRef.current = null
       clearOverlayTimerRef.current = null
     }, delayMs)
   }
@@ -1054,20 +1485,20 @@ export function DirectoryKanbanView({
     setActiveBoardColumn(null)
     setActiveItemWidthPx(240)
     setDropTarget(null)
-    dragStartStatusRef.current = null
+    dragStartColumnRef.current = null
   }
 
   const handleDragStart = (event: DragStartEvent) => {
     const dragType = event.active.data.current?.type
     if (dragType === 'board-column') {
-      setActiveBoardColumn((event.active.data.current?.status as WorkStatus) ?? null)
+      setActiveBoardColumn((event.active.data.current?.columnId as KanbanBoardColumnId) ?? null)
       return
     }
 
     const itemId = String(event.active.id)
     const item = visibleItems.find((entry) => entry.id === itemId) ?? null
     const measuredWidth = event.active.rect.current.initial?.width
-    dragStartStatusRef.current = findContainerForItemId(itemId, columnOrder)
+    dragStartColumnRef.current = findContainerForItemId(itemId, columnOrder)
     setActiveItemWidthPx(measuredWidth && measuredWidth > 0 ? measuredWidth : 240)
     setActiveItem(item)
   }
@@ -1094,51 +1525,54 @@ export function DirectoryKanbanView({
         ? activeTranslated.top + activeTranslated.height / 2
         : null
 
+    const targetColumnId = target.columnId
+    const targetItems = columnOrder[targetColumnId] ?? []
+
     let insertSide: 'before' | 'after' = 'before'
-    let insertIndex = columnOrder[target.status].length
+    let insertIndex = targetItems.length
 
     if (target.itemId && target.itemId !== activeItemId) {
       insertSide = resolveInsertSide(activeCenterY, over.rect.top, over.rect.height)
-      const overIndex = columnOrder[target.status].indexOf(target.itemId)
+      const overIndex = targetItems.indexOf(target.itemId)
       if (overIndex >= 0) {
         insertIndex = insertSide === 'after' ? overIndex + 1 : overIndex
       }
     } else if (target.itemId === activeItemId) {
       setDropTarget({
-        status: target.status,
+        columnId: targetColumnId,
         itemId: target.itemId,
         side: resolveInsertSide(activeCenterY, over.rect.top, over.rect.height),
       })
       return
     } else if (!target.itemId) {
-      insertSide = columnOrder[target.status].length === 0 ? 'before' : 'after'
-      insertIndex = columnOrder[target.status].length
+      insertSide = targetItems.length === 0 ? 'before' : 'after'
+      insertIndex = targetItems.length
     }
 
     setDropTarget({
-      status: target.status,
+      columnId: targetColumnId,
       itemId: target.itemId,
       side: insertSide,
     })
 
     setColumnOrder((previous) => {
-      const sourceItems = [...previous[activeContainer]]
+      const sourceItems = [...(previous[activeContainer] ?? [])]
       const activeIndex = sourceItems.indexOf(activeItemId)
       if (activeIndex === -1) return previous
 
       const destinationItems =
-        activeContainer === target.status
+        activeContainer === targetColumnId
           ? sourceItems
-          : [...previous[target.status].filter((id) => id !== activeItemId)]
+          : [...(previous[targetColumnId] ?? []).filter((id) => id !== activeItemId)]
 
       let nextIndex = insertIndex
-      if (activeContainer === target.status && activeIndex < insertIndex) {
+      if (activeContainer === targetColumnId && activeIndex < insertIndex) {
         nextIndex -= 1
       }
       nextIndex = Math.max(0, Math.min(nextIndex, destinationItems.length))
 
       const nextSourceItems =
-        activeContainer === target.status
+        activeContainer === targetColumnId
           ? destinationItems.filter((id) => id !== activeItemId)
           : sourceItems.filter((id) => id !== activeItemId)
 
@@ -1146,27 +1580,35 @@ export function DirectoryKanbanView({
       nextDestinationItems.splice(nextIndex, 0, activeItemId)
 
       const unchanged =
-        activeContainer === target.status
-          ? nextDestinationItems.length === previous[target.status].length &&
-            nextDestinationItems.every((id, index) => id === previous[target.status][index])
-          : previous[activeContainer].join('|') === nextSourceItems.join('|') &&
-            previous[target.status].join('|') === nextDestinationItems.join('|')
+        activeContainer === targetColumnId
+          ? nextDestinationItems.length === (previous[targetColumnId] ?? []).length &&
+            nextDestinationItems.every((id, index) => id === (previous[targetColumnId] ?? [])[index])
+          : (previous[activeContainer] ?? []).join('|') === nextSourceItems.join('|') &&
+            (previous[targetColumnId] ?? []).join('|') === nextDestinationItems.join('|')
 
       if (unchanged) return previous
 
-      if (activeContainer === target.status) {
-        return { ...previous, [target.status]: nextDestinationItems }
+      if (activeContainer === targetColumnId) {
+        return { ...previous, [targetColumnId]: nextDestinationItems }
       }
 
       return {
         ...previous,
         [activeContainer]: nextSourceItems,
-        [target.status]: nextDestinationItems,
+        [targetColumnId]: nextDestinationItems,
       }
     })
 
-    if (activeContainer !== target.status) {
-      setPendingStatuses((current) => ({ ...current, [activeItemId]: target.status }))
+    if (activeContainer !== targetColumnId) {
+      if (isCustomBoardColumnId(targetColumnId)) {
+        setPendingStatuses((current) => {
+          const next = { ...current }
+          delete next[activeItemId]
+          return next
+        })
+      } else {
+        setPendingStatuses((current) => ({ ...current, [activeItemId]: targetColumnId as WorkStatus }))
+      }
     }
   }
 
@@ -1174,14 +1616,15 @@ export function DirectoryKanbanView({
     const { active, over } = event
 
     if (active.data.current?.type === 'board-column') {
-      const activeStatus = active.data.current.status as WorkStatus
-      const overStatus = over ? resolveBoardColumnStatus(String(over.id)) : null
-      if (overStatus && overStatus !== activeStatus) {
+      const activeColumnId = active.data.current.columnId as KanbanBoardColumnId
+      const overColumnId = over ? resolveBoardColumnIdFromSortable(String(over.id)) : null
+      if (overColumnId && overColumnId !== activeColumnId) {
         setBoardColumnSequence((previous) => {
-          const oldIndex = previous.indexOf(activeStatus)
-          const newIndex = previous.indexOf(overStatus)
+          const oldIndex = previous.indexOf(activeColumnId)
+          const newIndex = previous.indexOf(overColumnId)
           if (oldIndex === -1 || newIndex === -1) return previous
           const next = arrayMove(previous, oldIndex, newIndex)
+          persistBoardLayout(customColumns, next, columnOrder)
           return next
         })
       }
@@ -1191,17 +1634,24 @@ export function DirectoryKanbanView({
 
     const itemId = String(active.id)
     const item = visibleItems.find((entry) => entry.id === itemId)
-    const finalStatus = findContainerForItemId(itemId, columnOrder)
-    const startStatus = dragStartStatusRef.current
+    const finalColumnId = findContainerForItemId(itemId, columnOrder)
+    const startColumnId = dragStartColumnRef.current
+    const movedColumns = Boolean(
+      item && finalColumnId && startColumnId && finalColumnId !== startColumnId,
+    )
     const statusChanged = Boolean(
-      item && finalStatus && startStatus && finalStatus !== startStatus && onStatusChange
+      item &&
+        finalColumnId &&
+        !isCustomBoardColumnId(finalColumnId) &&
+        movedColumns &&
+        onStatusChange,
     )
 
     setDropTarget(null)
 
-    if (!over || !item || !finalStatus) {
+    if (!over || !item || !finalColumnId) {
       dropFadeInPlaceRef.current = false
-      setColumnOrder((previous) => syncColumnOrder(visibleItems, previous))
+      setColumnOrder((previous) => syncColumnOrder(visibleItems, previous, customColumnKeys))
       setPendingStatuses({})
       scheduleOverlayClear(KANBAN_RETURN_DROP_MS)
       return
@@ -1210,12 +1660,16 @@ export function DirectoryKanbanView({
     dropFadeInPlaceRef.current = true
     scheduleOverlayClear(KANBAN_DROP_FADE_MS)
 
-    if (statusChanged && finalStatus) {
+    if (movedColumns) {
+      persistBoardLayout(customColumns, boardColumnSequence, columnOrder)
+    }
+
+    if (statusChanged && finalColumnId && !isCustomBoardColumnId(finalColumnId)) {
       void (async () => {
         try {
-          await onStatusChange?.(itemId, finalStatus)
+          await onStatusChange?.(itemId, finalColumnId as WorkStatus)
         } catch {
-          setColumnOrder((previous) => syncColumnOrder(visibleItems, previous))
+          setColumnOrder((previous) => syncColumnOrder(visibleItems, previous, customColumnKeys))
           setPendingStatuses({})
         }
       })()
@@ -1223,9 +1677,81 @@ export function DirectoryKanbanView({
   }
 
   const handleDragCancel = (_event: DragCancelEvent) => {
-    setColumnOrder((previous) => syncColumnOrder(visibleItems, previous))
+    setColumnOrder((previous) => syncColumnOrder(visibleItems, previous, customColumnKeys))
     setPendingStatuses({})
     resetDragUi()
+  }
+
+  const renderKanbanColumnCards = (
+    columnId: KanbanBoardColumnId,
+    columnItemIds: string[],
+    columnItems: DirectoryKanbanItem[],
+    theme: KanbanColumnTheme,
+    emptyStateIcon: LucideIcon,
+  ) => {
+    const EmptyStateIcon = emptyStateIcon
+    const showEndIndicator =
+      dropTarget?.columnId === columnId &&
+      dropTarget.itemId === null &&
+      dropTarget.side === 'after' &&
+      columnItems.length > 0
+
+    return (
+      <KanbanColumnDropZone
+        columnId={columnId}
+        className={cn(
+          'scrollbar-hide flex min-h-[140px] flex-1 flex-col gap-2.5 overflow-y-auto p-2.5 transition-colors',
+          theme.columnBody,
+        )}
+      >
+        <SortableContext items={columnItemIds} strategy={verticalListSortingStrategy}>
+          {columnItems.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-background/35 px-4 py-8 text-center backdrop-blur-sm">
+              {dropTarget?.columnId === columnId ? (
+                <div className="mb-3 w-full">
+                  <KanbanInsertIndicator />
+                </div>
+              ) : (
+                <div className={cn('mb-2.5 flex h-10 w-10 items-center justify-center rounded-full ring-1', theme.iconWrap)}>
+                  <EmptyStateIcon className="h-4 w-4 opacity-70" aria-hidden />
+                </div>
+              )}
+              <span className="text-[11px] font-medium text-muted-foreground/85">Drop tasks here</span>
+            </div>
+          ) : (
+            <>
+              {columnItems.map((item) => (
+                <Fragment key={item.id}>
+                  {dropTarget?.columnId === columnId &&
+                  dropTarget.itemId === item.id &&
+                  dropTarget.side === 'before' ? (
+                    <KanbanInsertIndicator />
+                  ) : null}
+                  <KanbanSortableCard
+                    item={item}
+                    columnId={columnId}
+                    onItemClick={onItemClick}
+                    isEditingTitle={editingKanbanItemId === item.id}
+                    onStartTitleEdit={() => {
+                      setEditingBoardColumnId(null)
+                      setEditingKanbanItemId(item.id)
+                    }}
+                    onCommitTitleEdit={(value) => void commitKanbanItemTitle(item.id, value)}
+                    onCancelTitleEdit={() => setEditingKanbanItemId(null)}
+                  />
+                  {dropTarget?.columnId === columnId &&
+                  dropTarget.itemId === item.id &&
+                  dropTarget.side === 'after' ? (
+                    <KanbanInsertIndicator />
+                  ) : null}
+                </Fragment>
+              ))}
+              {showEndIndicator ? <KanbanInsertIndicator /> : null}
+            </>
+          )}
+        </SortableContext>
+      </KanbanColumnDropZone>
+    )
   }
 
   return (
@@ -1266,88 +1792,61 @@ export function DirectoryKanbanView({
         >
           <SortableContext items={boardColumnSortableIds} strategy={horizontalListSortingStrategy}>
             <div className="flex h-full min-h-0 w-full min-w-0 flex-1 gap-3 overflow-x-auto pb-1 scrollbar-hide">
-              {boardColumnSequence.map((status) => {
-                const columnItemIds = columnOrder[status]
+              <KanbanAddBoardColumnSlot onAdd={handleAddBoardColumn} />
+              {boardColumnSequence.map((columnId) => {
+                const columnItemIds = columnOrder[columnId] ?? []
                 const columnItems = columnItemIds
                   .map((id) => itemsById.get(id))
                   .filter((item): item is DirectoryKanbanItem => Boolean(item))
-                const meta = STATUS_META[status]
-                const StatusIcon = meta.icon
-                const showEndIndicator =
-                  dropTarget?.status === status &&
-                  dropTarget.itemId === null &&
-                  dropTarget.side === 'after' &&
-                  columnItems.length > 0
+                const theme = resolveKanbanColumnTheme(columnId, columnColors)
+                const onHeaderContextMenu = (event: ReactMouseEvent) => openBoardColumnContextMenu(columnId, event)
 
+                if (isCustomBoardColumnId(columnId)) {
+                  const rawId = columnId.slice('custom:'.length)
+                  const label = customColumnLabelById[rawId] ?? 'New board'
+                  return (
+                    <KanbanSortableCustomBoardColumn
+                      key={columnId}
+                      columnId={columnId}
+                      label={label}
+                      theme={theme}
+                      itemCount={boardColumnItemCounts[columnId] ?? 0}
+                      isEditingTitle={editingBoardColumnId === columnId}
+                      onStartTitleEdit={() => {
+                        setEditingKanbanItemId(null)
+                        setEditingBoardColumnId(columnId)
+                      }}
+                      onCommitTitleEdit={(value) => commitCustomBoardColumnLabel(columnId, value)}
+                      onCancelTitleEdit={() => setEditingBoardColumnId(null)}
+                      onHeaderContextMenu={onHeaderContextMenu}
+                    >
+                      {renderKanbanColumnCards(columnId, columnItemIds, columnItems, theme, LayoutGrid)}
+                    </KanbanSortableCustomBoardColumn>
+                  )
+                }
+
+                const status = columnId as WorkStatus
+                const statusMeta = STATUS_META[status]
                 return (
                   <KanbanSortableBoardColumn
-                    key={status}
+                    key={columnId}
+                    columnId={columnId}
                     status={status}
-                    meta={meta}
-                    itemCount={boardColumnItemCounts[status]}
+                    theme={theme}
+                    statusIcon={statusMeta.icon}
+                    itemCount={boardColumnItemCounts[columnId] ?? 0}
                     displayLabel={resolveWorkStatusDisplayLabel(status, boardColumnLabels)}
                     isCustomLabel={isCustomWorkStatusLabel(status, boardColumnLabels)}
-                    isEditingTitle={editingBoardColumnStatus === status}
+                    isEditingTitle={editingBoardColumnId === columnId}
                     onStartTitleEdit={() => {
                       setEditingKanbanItemId(null)
-                      setEditingBoardColumnStatus(status)
+                      setEditingBoardColumnId(columnId)
                     }}
                     onCommitTitleEdit={(value) => commitBoardColumnLabel(status, value)}
-                    onCancelTitleEdit={() => setEditingBoardColumnStatus(null)}
+                    onCancelTitleEdit={() => setEditingBoardColumnId(null)}
+                    onHeaderContextMenu={onHeaderContextMenu}
                   >
-                    <KanbanColumnDropZone
-                      status={status}
-                      className={cn(
-                        'scrollbar-hide flex min-h-[140px] flex-1 flex-col gap-2.5 overflow-y-auto p-2.5 transition-colors',
-                        meta.columnBody
-                      )}
-                    >
-                      <SortableContext items={columnItemIds} strategy={verticalListSortingStrategy}>
-                        {columnItems.length === 0 ? (
-                          <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-background/35 px-4 py-8 text-center backdrop-blur-sm">
-                            {dropTarget?.status === status ? (
-                              <div className="mb-3 w-full">
-                                <KanbanInsertIndicator />
-                              </div>
-                            ) : (
-                              <div className={cn('mb-2.5 flex h-10 w-10 items-center justify-center rounded-full ring-1', meta.iconWrap)}>
-                                <StatusIcon className="h-4 w-4 opacity-70" aria-hidden />
-                              </div>
-                            )}
-                            <span className="text-[11px] font-medium text-muted-foreground/85">Drop tasks here</span>
-                          </div>
-                        ) : (
-                          <>
-                            {columnItems.map((item) => (
-                              <Fragment key={item.id}>
-                                {dropTarget?.status === status &&
-                                dropTarget.itemId === item.id &&
-                                dropTarget.side === 'before' ? (
-                                  <KanbanInsertIndicator />
-                                ) : null}
-                                <KanbanSortableCard
-                                  item={item}
-                                  onItemClick={onItemClick}
-                                  isEditingTitle={editingKanbanItemId === item.id}
-                                  onStartTitleEdit={() => {
-                                    setEditingBoardColumnStatus(null)
-                                    setEditingKanbanItemId(item.id)
-                                  }}
-                                  onCommitTitleEdit={(value) => void commitKanbanItemTitle(item.id, value)}
-                                  onCancelTitleEdit={() => setEditingKanbanItemId(null)}
-                                />
-                                {dropTarget?.status === status &&
-                                dropTarget.itemId === item.id &&
-                                dropTarget.side === 'after' ? (
-                                  <KanbanInsertIndicator />
-                                ) : null}
-                              </Fragment>
-                            ))}
-                            {showEndIndicator ? <KanbanInsertIndicator /> : null}
-                          </>
-                        )}
-                      </SortableContext>
-                    </KanbanColumnDropZone>
+                    {renderKanbanColumnCards(columnId, columnItemIds, columnItems, theme, statusMeta.icon)}
                   </KanbanSortableBoardColumn>
                 )
               })}
@@ -1364,12 +1863,30 @@ export function DirectoryKanbanView({
                   {activeItem ? (
                     <KanbanDragOverlayCard item={activeItem} widthPx={activeItemWidthPx} />
                   ) : activeBoardColumn ? (
-                    <KanbanBoardColumnOverlay
-                      status={activeBoardColumn}
-                      itemCount={boardColumnItemCounts[activeBoardColumn]}
-                      displayLabel={resolveWorkStatusDisplayLabel(activeBoardColumn, boardColumnLabels)}
-                      isCustomLabel={isCustomWorkStatusLabel(activeBoardColumn, boardColumnLabels)}
-                    />
+                    (() => {
+                      const overlayTheme = resolveKanbanColumnTheme(activeBoardColumn, columnColors)
+                      const overlayIcon = isCustomBoardColumnId(activeBoardColumn)
+                        ? LayoutGrid
+                        : STATUS_META[activeBoardColumn as WorkStatus].icon
+                      return (
+                        <KanbanBoardColumnOverlay
+                          columnId={activeBoardColumn}
+                          theme={overlayTheme}
+                          statusIcon={overlayIcon}
+                          itemCount={boardColumnItemCounts[activeBoardColumn] ?? 0}
+                          displayLabel={
+                            isCustomBoardColumnId(activeBoardColumn)
+                              ? customColumnLabelById[activeBoardColumn.slice('custom:'.length)] ?? 'New board'
+                              : resolveWorkStatusDisplayLabel(activeBoardColumn as WorkStatus, boardColumnLabels)
+                          }
+                          isCustomLabel={
+                            isCustomBoardColumnId(activeBoardColumn)
+                              ? true
+                              : isCustomWorkStatusLabel(activeBoardColumn as WorkStatus, boardColumnLabels)
+                          }
+                        />
+                      )
+                    })()
                   ) : null}
                 </DragOverlay>,
                 document.body
@@ -1393,6 +1910,92 @@ export function DirectoryKanbanView({
               animation: kanban-drag-lift 160ms cubic-bezier(0.2, 0.85, 0.3, 1) forwards;
             }
           `}</style>
+
+          <ContextMenu
+            open={boardColumnContextMenu !== null}
+            x={boardColumnContextMenu?.x ?? 0}
+            y={boardColumnContextMenu?.y ?? 0}
+            onClose={() => setBoardColumnContextMenu(null)}
+          >
+            <ContextMenuItem
+              onSelect={() => {
+                const columnId = boardColumnContextMenu?.columnId
+                if (!columnId) return
+                handleRenameBoardColumn(columnId)
+              }}
+            >
+              <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              Rename
+            </ContextMenuItem>
+            <ContextMenuSubmenu
+              trigger={
+                <>
+                  <Palette className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="flex-1">Change color</span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70" aria-hidden />
+                </>
+              }
+            >
+              {KANBAN_COLUMN_COLOR_OPTIONS.map((option) => {
+                const activeColumnId = boardColumnContextMenu?.columnId
+                const activePreset = activeColumnId
+                  ? columnColors[activeColumnId] ?? resolveKanbanColumnTheme(activeColumnId, columnColors).preset
+                  : null
+                return (
+                  <ContextMenuItem
+                    key={option.preset}
+                    onSelect={() => {
+                      if (!activeColumnId) return
+                      handleChangeBoardColumnColor(activeColumnId, option.preset)
+                    }}
+                  >
+                    <span className={cn('h-3 w-3 shrink-0 rounded-full ring-1 ring-border/50', option.swatch)} aria-hidden />
+                    <span className="flex-1">{option.label}</span>
+                    {activePreset === option.preset ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                    ) : null}
+                  </ContextMenuItem>
+                )
+              })}
+            </ContextMenuSubmenu>
+            <ContextMenuSeparator />
+            {canMoveBoardColumnRight ? (
+              <ContextMenuItem
+                onSelect={() => {
+                  const columnId = boardColumnContextMenu?.columnId
+                  if (!columnId) return
+                  handleMoveBoardColumn(columnId, 'right')
+                }}
+              >
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                Move to right
+              </ContextMenuItem>
+            ) : null}
+            {canMoveBoardColumnLeft ? (
+              <ContextMenuItem
+                onSelect={() => {
+                  const columnId = boardColumnContextMenu?.columnId
+                  if (!columnId) return
+                  handleMoveBoardColumn(columnId, 'left')
+                }}
+              >
+                <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                Move to left
+              </ContextMenuItem>
+            ) : null}
+            {(canMoveBoardColumnLeft || canMoveBoardColumnRight) ? <ContextMenuSeparator /> : null}
+            <ContextMenuItem
+              className="text-destructive hover:text-destructive focus:text-destructive"
+              onSelect={() => {
+                const columnId = boardColumnContextMenu?.columnId
+                if (!columnId) return
+                handleDeleteBoardColumn(columnId)
+              }}
+            >
+              <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+              Delete board
+            </ContextMenuItem>
+          </ContextMenu>
         </DndContext>
       </div>
     </div>

@@ -1,12 +1,13 @@
-import { Loader2 } from 'lucide-react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { PlatformRouteLoadingFallback } from '@/components/loading'
 import { useAppAccessGate } from '@/auth/useAppAccessGate'
+import { isOnboardingEnabled } from '@/lib/onboardingFeature'
 
 const BYPASS_PATHS = new Set(['/no-workspace-access'])
 
 /**
  * After authentication, blocks users without workspace membership (unless platform admin).
- * `/no-workspace-access` is always reachable when authenticated.
+ * When onboarding is enabled, redirects to `/onboarding` instead of dead-end page.
  */
 export function AppAccessGate() {
   const location = useLocation()
@@ -22,15 +23,16 @@ export function AppAccessGate() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background" role="status">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
-        <span className="sr-only">Checking workspace access</span>
-      </div>
+      <PlatformRouteLoadingFallback
+        title="Loading page…"
+        description="Checking workspace access."
+      />
     )
   }
 
   if (!hasAppAccess) {
-    return <Navigate to="/no-workspace-access" replace state={{ from: location.pathname }} />
+    const target = isOnboardingEnabled() ? '/onboarding' : '/no-workspace-access'
+    return <Navigate to={target} replace state={{ from: location.pathname }} />
   }
 
   return <Outlet />

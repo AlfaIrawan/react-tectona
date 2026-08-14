@@ -89,6 +89,8 @@ export interface TodoItem {
   due_date: string | null
   display_order: number
   is_flagged?: boolean
+  assigned_to?: string | null
+  owned_by?: string | null
   created_by: string
   created_date: string
   created_from: string
@@ -113,6 +115,8 @@ export interface TodoCreatePayload {
   app_id?: string
   due_date?: string | null
   display_order?: number
+  owned_by?: string | null
+  assigned_to?: string | null
   entity_links?: TodoEntityLinkItem[] | null
   priority_ids?: string[] | null
 }
@@ -123,6 +127,8 @@ export interface TodoUpdatePayload {
   is_completed?: boolean | null
   due_date?: string | null
   display_order?: number | null
+  owned_by?: string | null
+  assigned_to?: string | null
   entity_links?: TodoEntityLinkItem[] | null
   priority_ids?: string[] | null
   category_ids?: string[] | null
@@ -141,6 +147,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
 export async function fetchTodos(params?: {
   app_id?: string
   is_completed?: boolean
+  owned_by?: string
+  assigned_to?: string
   entity_type_id?: string
   entity_id?: string
   page?: number
@@ -149,6 +157,8 @@ export async function fetchTodos(params?: {
   const url = buildTodoUrl('/v1/todos')
   if (params?.app_id) url.searchParams.set('app_id', params.app_id)
   if (params?.is_completed !== undefined) url.searchParams.set('is_completed', String(params.is_completed))
+  if (params?.owned_by) url.searchParams.set('owned_by', params.owned_by)
+  if (params?.assigned_to) url.searchParams.set('assigned_to', params.assigned_to)
   if (params?.entity_type_id) url.searchParams.set('entity_type_id', params.entity_type_id)
   if (params?.entity_id) url.searchParams.set('entity_id', params.entity_id)
   if (params?.page) url.searchParams.set('page', String(params.page))

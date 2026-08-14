@@ -69,8 +69,10 @@ export function collectWorkItemDescendantIds(rootId: string, items: WorkItemTree
   }
 
   const descendants = new Set<string>()
+  // Guards against a corrupted/cyclic parent chain turning this into an infinite loop.
   const walk = (id: string) => {
     for (const childId of childrenByParent.get(id) ?? []) {
+      if (descendants.has(childId)) continue
       descendants.add(childId)
       walk(childId)
     }
@@ -82,10 +84,13 @@ export function collectWorkItemDescendantIds(rootId: string, items: WorkItemTree
 function computeWorkItemDepth(itemId: string, items: WorkItemTreeNode[]): number {
   const itemMap = new Map(items.map((entry) => [entry.id, entry]))
   const itemIds = new Set(items.map((entry) => entry.id))
+  const visited = new Set<string>()
   let depth = 0
   let current = itemMap.get(itemId)
 
-  while (current) {
+  // `visited` guards against a corrupted/cyclic parent chain looping forever.
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id)
     const parentId = resolveWorkItemParentId(current, itemIds)
     if (!parentId) break
     depth += 1
@@ -107,13 +112,15 @@ function getWorkItemSubtreeHeight(itemId: string, items: WorkItemTreeNode[]): nu
     childrenByParent.set(parentId, siblings)
   }
 
-  const height = (id: string): number => {
+  // `ancestry` guards against a corrupted/cyclic parent chain recursing forever.
+  const height = (id: string, ancestry: Set<string>): number => {
     const children = childrenByParent.get(id) ?? []
-    if (children.length === 0) return 1
-    return 1 + Math.max(...children.map(height))
+    if (children.length === 0 || ancestry.has(id)) return 1
+    const nextAncestry = new Set(ancestry).add(id)
+    return 1 + Math.max(...children.map((childId) => height(childId, nextAncestry)))
   }
 
-  return height(itemId)
+  return height(itemId, new Set())
 }
 
 export function validateWorkItemMoveToRoot(

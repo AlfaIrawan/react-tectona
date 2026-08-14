@@ -1,26 +1,27 @@
 import { pushGlobalToast } from '@/components/ui/toast'
 import { getSession } from '@/auth/authService'
-import { createNotification, TECTONA_APP_ID } from '@/lib/api/notificationApi'
-import { emitNotificationsUpdated } from '@/lib/chat/chatRealtimeEvents'
+import { notifyEvent } from '@/lib/api/notificationApi'
 import { subscribeWorkOfflineStatus, subscribeWorkSyncActivity } from './workOfflineClient'
 import type { WorkSyncActivityEvent, WorkSyncStatus } from './types'
 
 const WORK_SYNC_LINK = '/task-work-management'
 
-let initialized = false
+/** Minimum gap between connectivity toasts — prevents offline/online spam on flaky probes. */
+const CONNECTIVITY_TOAST_COOLDOWN_MS = 90_000
+
+let subscriberCount = 0
+let teardownNotifications: (() => void) | null = null
 let lastOnline: boolean | null = null
 let pendingNotified = false
+let lastConnectivityToastAt = 0
 
 function persistWorkSyncNotification(params: {
   title: string
   body?: string
   metadata?: Record<string, unknown>
 }): void {
-  const session = getSession()
-  if (!session?.user?.id) return
-  void createNotification({
-    app_id: TECTONA_APP_ID,
-    user_id: session.user.id,
+  if (!getSession()?.user?.id) return
+  notifyEvent({
     type_code: 'project',
     title: params.title,
     body: params.body ?? null,
@@ -30,10 +31,7 @@ function persistWorkSyncNotification(params: {
       source: 'work-offline-sync',
       ...params.metadata,
     },
-    created_from: 'tectona-frontend',
   })
-    .then(() => emitNotificationsUpdated())
-    .catch(() => {})
 }
 
 function publishWorkSyncFeedback(params: {
@@ -63,20 +61,27 @@ function handleConnectivityChange(status: WorkSyncStatus): void {
   }
   if (lastOnline === status.isOnline) return
 
+  const now = Date.now()
+  const withinCooldown = now - lastConnectivityToastAt < CONNECTIVITY_TOAST_COOLDOWN_MS
+
   if (status.isOnline) {
-    publishWorkSyncFeedback({
-      variant: 'success',
-      title: 'Back online',
-      description: 'Work service is reachable. Sync will resume automatically.',
-      metadata: { action: 'work_connectivity_online' },
-    })
-  } else {
+    if (!withinCooldown) {
+      publishWorkSyncFeedback({
+        variant: 'success',
+        title: 'Back online',
+        description: 'Work service is reachable. Sync will resume automatically.',
+        metadata: { action: 'work_connectivity_online' },
+      })
+      lastConnectivityToastAt = now
+    }
+  } else if (!withinCooldown) {
     publishWorkSyncFeedback({
       variant: 'warning',
       title: 'You are offline',
       description: 'Edits are saved locally until the work service is back.',
       metadata: { action: 'work_connectivity_offline' },
     })
+    lastConnectivityToastAt = now
   }
 
   lastOnline = status.isOnline
@@ -108,20 +113,27 @@ function handleLocalQueued(event: WorkSyncActivityEvent): void {
 /** Toast + notification panel hooks for connectivity and queued local edits. */
 export function initWorkSyncNotifications(): () => void {
   if (typeof window === 'undefined') return () => undefined
-  if (initialized) return () => undefined
-  initialized = true
 
-  const unsubscribeStatus = subscribeWorkOfflineStatus((status) => {
-    handleConnectivityChange(status)
-    handlePendingChange(status)
-  })
-  const unsubscribeActivity = subscribeWorkSyncActivity(handleLocalQueued)
+  subscriberCount += 1
+  if (subscriberCount === 1) {
+    const unsubscribeStatus = subscribeWorkOfflineStatus((status) => {
+      handleConnectivityChange(status)
+      handlePendingChange(status)
+    })
+    const unsubscribeActivity = subscribeWorkSyncActivity(handleLocalQueued)
+    teardownNotifications = () => {
+      unsubscribeStatus()
+      unsubscribeActivity()
+    }
+  }
 
   return () => {
-    unsubscribeStatus()
-    unsubscribeActivity()
-    initialized = false
+    subscriberCount = Math.max(0, subscriberCount - 1)
+    if (subscriberCount > 0) return
+    teardownNotifications?.()
+    teardownNotifications = null
     lastOnline = null
     pendingNotified = false
+    lastConnectivityToastAt = 0
   }
 }

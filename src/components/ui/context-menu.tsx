@@ -2,6 +2,10 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 
+const DEFAULT_CONTEXT_MENU_Z_INDEX = 100
+
+const ContextMenuLayerContext = React.createContext(DEFAULT_CONTEXT_MENU_Z_INDEX)
+
 interface ContextMenuProps {
   open: boolean
   x: number
@@ -9,11 +13,35 @@ interface ContextMenuProps {
   onClose: () => void
   children: React.ReactNode
   className?: string
+  /** Stack order for menu + submenus. Submenus render at zIndex + 1. */
+  zIndex?: number
 }
 
-export function ContextMenu({ open, x, y, onClose, children, className }: ContextMenuProps) {
+export function ContextMenu({
+  open,
+  x,
+  y,
+  onClose,
+  children,
+  className,
+  zIndex = DEFAULT_CONTEXT_MENU_Z_INDEX,
+}: ContextMenuProps) {
   const ref = React.useRef<HTMLDivElement>(null)
+  const onCloseRef = React.useRef(onClose)
   const [adjusted, setAdjusted] = React.useState<{ x: number; y: number } | null>(null)
+
+  React.useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  const isInsideContextMenu = (target: EventTarget | null) => {
+    if (!(target instanceof Node)) return false
+    const el = target instanceof HTMLElement ? target : target.parentElement
+    if (!el) return false
+    return Boolean(
+      el.closest('[data-context-menu-root]') || el.closest('[data-context-menu-submenu]'),
+    )
+  }
 
   // Reset adjustment when menu closes or position changes
   React.useEffect(() => {
@@ -47,20 +75,19 @@ export function ContextMenu({ open, x, y, onClose, children, className }: Contex
 
   React.useEffect(() => {
     if (!open) return
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (ref.current?.contains(target)) return
-      if ((e.target as HTMLElement).closest?.('[data-context-menu-submenu]')) return
-      onClose()
+
+    const handleDismiss = (event: MouseEvent | PointerEvent) => {
+      if (isInsideContextMenu(event.target)) return
+      onCloseRef.current()
     }
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside)
-    }, 0)
+
+    document.addEventListener('mousedown', handleDismiss, true)
+    document.addEventListener('pointerdown', handleDismiss, true)
     return () => {
-      clearTimeout(timeoutId)
-      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('mousedown', handleDismiss, true)
+      document.removeEventListener('pointerdown', handleDismiss, true)
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
 
@@ -68,18 +95,21 @@ export function ContextMenu({ open, x, y, onClose, children, className }: Contex
   const posY = adjusted?.y ?? y
 
   const menu = (
-    <div
-      ref={ref}
-      className={cn(
-        'fixed w-56 rounded-xl glass-card shadow-2xl z-[100] py-2',
-        'border border-border/50 backdrop-blur-xl',
-        'animate-in fade-in-0 zoom-in-95 duration-150',
-        className
-      )}
-      style={{ left: posX, top: posY }}
-    >
-      {children}
-    </div>
+    <ContextMenuLayerContext.Provider value={zIndex}>
+      <div
+        ref={ref}
+        className={cn(
+          'fixed w-56 rounded-xl glass-card shadow-2xl py-2',
+          'border border-border/50 backdrop-blur-xl',
+          'animate-in fade-in-0 zoom-in-95 duration-150',
+          className
+        )}
+        style={{ left: posX, top: posY, zIndex }}
+        data-context-menu-root
+      >
+        {children}
+      </div>
+    </ContextMenuLayerContext.Provider>
   )
 
   return createPortal(menu, document.body)
@@ -87,10 +117,10 @@ export function ContextMenu({ open, x, y, onClose, children, className }: Contex
 
 const ContextMenuItem = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { onSelect?: () => void }
+  React.HTMLAttributes<HTMLDivElement> & { onSelect?: (event: React.MouseEvent<HTMLDivElement>) => void }
 >(({ className, onClick, onSelect, ...props }, ref) => {
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    onSelect?.()
+    onSelect?.(e)
     onClick?.(e)
   }
 
@@ -133,6 +163,8 @@ interface ContextMenuSubmenuProps {
 }
 
 function ContextMenuSubmenu({ trigger, children, className }: ContextMenuSubmenuProps) {
+  const menuZIndex = React.useContext(ContextMenuLayerContext)
+  const submenuZIndex = menuZIndex + 1
   const triggerRef = React.useRef<HTMLDivElement>(null)
   const [open, setOpen] = React.useState(false)
   const [position, setPosition] = React.useState<{ left: number; top: number } | null>(null)
@@ -147,7 +179,7 @@ function ContextMenuSubmenu({ trigger, children, className }: ContextMenuSubmenu
     const measure = () => {
       if (!triggerRef.current) return
       const rect = triggerRef.current.getBoundingClientRect()
-      const submenuWidth = 136
+      const submenuWidth = submenuRef.current?.offsetWidth ?? 136
       const overlapRight = 8
       const overlapLeft = 36
       let left = rect.right - overlapRight
@@ -159,6 +191,22 @@ function ContextMenuSubmenu({ trigger, children, className }: ContextMenuSubmenu
     const raf = requestAnimationFrame(measure)
     return () => cancelAnimationFrame(raf)
   }, [open])
+
+  React.useEffect(() => {
+    if (!open || !position || !triggerRef.current || !submenuRef.current) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    const submenuWidth = submenuRef.current.offsetWidth
+    const overlapRight = 8
+    const overlapLeft = 36
+    let left = rect.right - overlapRight
+    if (left + submenuWidth > window.innerWidth - 8) {
+      left = rect.left - submenuWidth + overlapLeft
+    }
+    const nextLeft = Math.max(8, left)
+    if (Math.abs(nextLeft - position.left) > 1) {
+      setPosition({ left: nextLeft, top: rect.top })
+    }
+  }, [open, position])
 
   const clearCloseTimeout = () => {
     if (timeoutRef.current) {
@@ -200,11 +248,11 @@ function ContextMenuSubmenu({ trigger, children, className }: ContextMenuSubmenu
           role="menu"
           data-context-menu-submenu
           className={cn(
-            'fixed rounded-xl glass-card shadow-2xl z-[101] py-2 min-w-[8rem]',
+            'fixed rounded-xl glass-card shadow-2xl py-2 min-w-[8rem]',
             'border border-border/50 backdrop-blur-xl',
             'animate-in fade-in-0 zoom-in-95 duration-150'
           )}
-          style={{ left: position.left, top: position.top }}
+          style={{ left: position.left, top: position.top, zIndex: submenuZIndex }}
           onMouseEnter={clearCloseTimeout}
           onMouseLeave={scheduleClose}
         >

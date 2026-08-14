@@ -1,5 +1,7 @@
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import { useMemo, useState } from 'react'
+import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate'
+import { legacyAppPathFromLocation } from '@/lib/workspaceRouting'
 import {
   LayoutDashboard,
   FolderOpen,
@@ -19,6 +21,7 @@ import {
   Lightbulb,
   Settings,
   Grid3x3,
+  Radar,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -28,6 +31,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { useModuleAccess, type ModuleId } from '@/auth/useModuleAccess'
+import { useTenantContextOptional } from '@/auth/TenantContext'
+import { END_USER_GA_MODULE_IDS } from '@/lib/tenantUiProfile'
 
 interface AppLauncherItem {
   icon: React.ComponentType<{ className?: string }>
@@ -37,7 +42,27 @@ interface AppLauncherItem {
   moduleId: ModuleId
 }
 
-const ROWS_PER_COLUMN = 6
+const PLATFORM_ADMIN_LAUNCHER_COLUMNS = 3
+
+function launcherItemButtonClass(opts: {
+  isActive: boolean
+  isLast: boolean
+  isLastColumn: boolean
+  isLastRow: boolean
+  useAdminGrid: boolean
+}): string {
+  return cn(
+    'flex items-start gap-4 transition-all duration-200',
+    'text-left group relative',
+    opts.useAdminGrid ? 'p-5 h-full' : 'p-4 w-full',
+    opts.useAdminGrid
+      ? !opts.isLastRow && 'border-b border-gray-100'
+      : !opts.isLast && 'border-b border-gray-100',
+    opts.useAdminGrid && !opts.isLastColumn && 'border-r border-gray-200/60',
+    'hover:bg-gradient-to-r hover:from-blue-50/50 hover:to-transparent',
+    opts.isActive && 'bg-gradient-to-r from-blue-50 to-transparent',
+  )
+}
 
 // Map existing navigation items to app launcher format
 const existingNavItems: AppLauncherItem[] = [
@@ -113,6 +138,13 @@ const existingNavItems: AppLauncherItem[] = [
     moduleId: 'reporting',
   },
   {
+    icon: Radar,
+    label: 'Traceability & Monitoring',
+    description: 'Cross-entity activity audit trail, entity lineage graph (Idea → Project → Work Item → Document → Approval), and read-only platform health',
+    path: '/traceability-monitoring',
+    moduleId: 'traceability_monitoring',
+  },
+  {
     icon: BookOpenText,
     label: 'Document & Knowledge Management',
     description: 'Controlled documents, templates, notes, reusable content, version lineage, and knowledge assets linked directly to project execution context',
@@ -156,48 +188,57 @@ const existingNavItems: AppLauncherItem[] = [
   },
 ]
 
-const launcherColumns = Array.from({ length: 3 }, (_, index) =>
-  existingNavItems.slice(index * ROWS_PER_COLUMN, (index + 1) * ROWS_PER_COLUMN)
-)
-
 export function AppLauncher() {
-  const navigate = useNavigate()
+  const workspaceNavigate = useWorkspaceNavigate()
   const location = useLocation()
+  const appPath = legacyAppPathFromLocation(location.pathname, location.search, location.hash)
   const [open, setOpen] = useState(false)
   const access = useModuleAccess()
+  const tenant = useTenantContextOptional()
 
   const handleItemClick = (path: string) => {
-    navigate(path)
+    workspaceNavigate(path)
     setOpen(false)
   }
 
   const isItemActive = (path: string) =>
-    location.pathname === path ||
-    (path === '/projects' && location.pathname.startsWith('/projects')) ||
-    (path === '/project-management' && location.pathname.startsWith('/project-management')) ||
-    (path === '/idea-backlog' && (location.pathname.startsWith('/idea-backlog') || location.pathname.startsWith('/roadmap'))) ||
-    (path === '/task-work-management' && location.pathname.startsWith('/task-work-management')) ||
-    (path === '/planning-scheduling' && (location.pathname.startsWith('/planning-scheduling') || location.pathname.startsWith('/risks'))) ||
-    (path === '/workflow-automation-engine' && location.pathname.startsWith('/workflow-automation-engine')) ||
-    (path === '/resource-management' && (location.pathname.startsWith('/resource-management') || location.pathname.startsWith('/resources'))) ||
-    (path === '/portfolio-governance-management' && location.pathname.startsWith('/portfolio-governance-management')) ||
-    (path === '/enterprise-governance-model' && location.pathname.startsWith('/enterprise-governance-model')) ||
-    (path === '/reporting-analytics' && location.pathname.startsWith('/reporting-analytics')) ||
-    (path === '/document-knowledge-management' && location.pathname.startsWith('/document-knowledge-management')) ||
-    (path === '/integration-api-platform' && location.pathname.startsWith('/integration-api-platform')) ||
-    (path === '/security-access-control' && location.pathname.startsWith('/security-access-control')) ||
-    (path === '/ai-project-intelligence' && location.pathname.startsWith('/ai-project-intelligence')) ||
-    (path === '/ai-idea-prioritization-intelligence' && location.pathname.startsWith('/ai-idea-prioritization-intelligence')) ||
+    appPath === path ||
+    (path === '/projects' && appPath.startsWith('/projects')) ||
+    (path === '/project-management' && appPath.startsWith('/project-management')) ||
+    (path === '/idea-backlog' && (appPath.startsWith('/idea-backlog') || appPath.startsWith('/roadmap'))) ||
+    (path === '/task-work-management' && appPath.startsWith('/task-work-management')) ||
+    (path === '/planning-scheduling' && (appPath.startsWith('/planning-scheduling') || appPath.startsWith('/risks'))) ||
+    (path === '/workflow-automation-engine' && appPath.startsWith('/workflow-automation-engine')) ||
+    (path === '/resource-management' && (appPath.startsWith('/resource-management') || appPath.startsWith('/resources'))) ||
+    (path === '/portfolio-governance-management' && appPath.startsWith('/portfolio-governance-management')) ||
+    (path === '/enterprise-governance-model' && appPath.startsWith('/enterprise-governance-model')) ||
+    (path === '/reporting-analytics' && appPath.startsWith('/reporting-analytics')) ||
+    (path === '/traceability-monitoring' && appPath.startsWith('/traceability-monitoring')) ||
+    (path === '/document-knowledge-management' && appPath.startsWith('/document-knowledge-management')) ||
+    (path === '/integration-api-platform' && appPath.startsWith('/integration-api-platform')) ||
+    (path === '/security-access-control' && appPath.startsWith('/security-access-control')) ||
+    (path === '/ai-project-intelligence' && appPath.startsWith('/ai-project-intelligence')) ||
+    (path === '/ai-idea-prioritization-intelligence' && appPath.startsWith('/ai-idea-prioritization-intelligence')) ||
     (path === '/platform-settings-administration' &&
-      (location.pathname.startsWith('/platform-settings-administration') || location.pathname === '/settings'))
+      (appPath.startsWith('/platform-settings-administration') || appPath === '/settings'))
 
-  const visibleColumns = useMemo(() => {
-    const allowedItems = existingNavItems.filter((i) => access.canAccess(i.moduleId))
-    const cols = Array.from({ length: 3 }, (_, index) =>
-      allowedItems.slice(index * ROWS_PER_COLUMN, (index + 1) * ROWS_PER_COLUMN)
-    )
-    return cols
-  }, [access, access.maxWorkspaceRole, access.isPlatformAdmin])
+  const visibleItems = useMemo(() => {
+    // Non–platform-admin end users: fixed GA menu (matches product screenshot).
+    if (!access.isPlatformAdmin) {
+      const byId = new Map(existingNavItems.map((item) => [item.moduleId, item]))
+      return END_USER_GA_MODULE_IDS.map((moduleId) => byId.get(moduleId))
+        .filter((item): item is AppLauncherItem => Boolean(item))
+        .filter((item) => access.canAccess(item.moduleId))
+    }
+    return existingNavItems.filter((i) => access.canAccess(i.moduleId))
+  }, [access.canAccess, access.isPlatformAdmin, tenant?.uiProfile.hiddenModuleIds, tenant?.tenantMode])
+
+  const useAdminGrid = access.isPlatformAdmin
+  const lastRowStartIndex =
+    useAdminGrid && visibleItems.length > PLATFORM_ADMIN_LAUNCHER_COLUMNS
+      ? Math.floor((visibleItems.length - 1) / PLATFORM_ADMIN_LAUNCHER_COLUMNS) *
+        PLATFORM_ADMIN_LAUNCHER_COLUMNS
+      : 0
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -214,10 +255,13 @@ export function AppLauncher() {
       <DropdownMenuContent
         align="end"
         className={cn(
-          'w-[960px] max-w-[calc(100vw-2rem)] p-0 !glass-card app-launcher-content',
+          useAdminGrid
+            ? 'w-[960px] max-w-[calc(100vw-2rem)]'
+            : 'w-[min(420px,calc(100vw-2rem))] max-h-[min(70vh,640px)] overflow-y-auto',
+          'p-0 !glass-card app-launcher-content',
           '!border border-gray-200/80 !shadow-2xl rounded-xl',
           'mt-2 right-0 overflow-hidden',
-          '!backdrop-blur-xl !bg-white'
+          '!backdrop-blur-xl !bg-white',
         )}
         style={{
           backgroundColor: 'rgba(255,255,255,0.98)',
@@ -225,72 +269,69 @@ export function AppLauncher() {
           backdropFilter: 'none',
         }}
       >
-        <div className="grid grid-cols-1 gap-0 md:grid-cols-3">
-          {visibleColumns.map((columnItems, columnIndex) => (
-            <div
-              key={`column-${columnIndex}`}
-              className={cn('flex flex-col', columnIndex < visibleColumns.length - 1 && 'border-r border-gray-200/60')}
-            >
-              {columnItems.map((item, index) => {
-                const Icon = item.icon
-                const isActive = isItemActive(item.path)
+        <div className={cn(useAdminGrid ? 'grid grid-cols-3 gap-0' : 'flex flex-col')}>
+          {visibleItems.map((item, index) => {
+            const Icon = item.icon
+            const isActive = isItemActive(item.path)
+            const isLast = index === visibleItems.length - 1
+            const isLastColumn =
+              useAdminGrid && index % PLATFORM_ADMIN_LAUNCHER_COLUMNS === PLATFORM_ADMIN_LAUNCHER_COLUMNS - 1
+            const isLastRow = useAdminGrid && index >= lastRowStartIndex
 
-                return (
-                  <button
-                    key={`${columnIndex}-${index}-${item.path}`}
-                    onClick={() => handleItemClick(item.path)}
+            return (
+              <button
+                key={item.path}
+                onClick={() => handleItemClick(item.path)}
+                className={launcherItemButtonClass({
+                  isActive,
+                  isLast,
+                  isLastColumn,
+                  isLastRow,
+                  useAdminGrid,
+                })}
+              >
+                {isActive && (
+                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500 rounded-r-full" />
+                )}
+
+                <div
+                  className={cn(
+                    'flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center',
+                    'transition-all duration-200',
+                    'bg-gradient-to-br from-gray-100 to-gray-50',
+                    'border border-gray-200/60',
+                    'group-hover:from-blue-50 group-hover:to-blue-100/50',
+                    'group-hover:border-blue-200/60',
+                    'group-hover:scale-105',
+                    isActive && 'from-blue-100 to-blue-50 border-blue-200',
+                  )}
+                >
+                  <Icon
                     className={cn(
-                      'flex items-start gap-4 p-5 transition-all duration-200',
-                      'text-left group relative',
-                      'border-b border-gray-100 last:border-b-0',
-                      'hover:bg-gradient-to-r hover:from-blue-50/50 hover:to-transparent',
-                      isActive && 'bg-gradient-to-r from-blue-50 to-transparent'
+                      'h-5 w-5 transition-colors duration-200 text-slate-700',
+                      'group-hover:text-blue-600',
+                      isActive && 'text-blue-600',
+                    )}
+                  />
+                </div>
+
+                <div className="flex-1 min-w-0 pt-0.5">
+                  <div
+                    className={cn(
+                      'font-semibold text-sm mb-1 text-slate-900',
+                      'group-hover:text-blue-700 transition-colors duration-200',
+                      isActive && 'text-blue-700',
                     )}
                   >
-                    {isActive && (
-                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500 rounded-r-full" />
-                    )}
-
-                    <div
-                      className={cn(
-                        'flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center',
-                        'transition-all duration-200',
-                        'bg-gradient-to-br from-gray-100 to-gray-50',
-                        'border border-gray-200/60',
-                        'group-hover:from-blue-50 group-hover:to-blue-100/50',
-                        'group-hover:border-blue-200/60',
-                        'group-hover:scale-105',
-                        isActive && 'from-blue-100 to-blue-50 border-blue-200'
-                      )}
-                    >
-                      <Icon
-                        className={cn(
-                          'h-5 w-5 transition-colors duration-200 text-slate-700',
-                          'group-hover:text-blue-600',
-                          isActive && 'text-blue-600'
-                        )}
-                      />
-                    </div>
-
-                    <div className="flex-1 min-w-0 pt-0.5">
-                      <div
-                        className={cn(
-                          'font-semibold text-sm mb-1 text-slate-900',
-                          'group-hover:text-blue-700 transition-colors duration-200',
-                          isActive && 'text-blue-700'
-                        )}
-                      >
-                        {item.label}
-                      </div>
-                      <div className="text-xs text-slate-600 leading-relaxed line-clamp-2">
-                        {item.description}
-                      </div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          ))}
+                    {item.label}
+                  </div>
+                  <div className="text-xs text-slate-600 leading-relaxed line-clamp-2">
+                    {item.description}
+                  </div>
+                </div>
+              </button>
+            )
+          })}
         </div>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -1,3 +1,13 @@
+.folderCardWrapper {
+  position: relative;
+  width: 100%;
+  max-width: 168px;
+}
+
+.projectDropTargetWrapper {
+  z-index: 2;
+}
+
 .folderCard {
   position: relative;
   width: 100% !important;
@@ -7,6 +17,58 @@
   cursor: pointer;
   outline: none;
   user-select: none;
+}
+
+.folderCardThemed .folderBody {
+  border-color: var(--folder-border) !important;
+  background: var(--folder-body-bg) !important;
+}
+
+.folderCardThemed .folderBody::before {
+  background: var(--folder-lip-bg) !important;
+  border-bottom-color: var(--folder-border-soft) !important;
+}
+
+.folderCardThemed .folderTab {
+  border-color: var(--folder-border) !important;
+  background: var(--folder-tab-bg) !important;
+}
+
+.folderCardThemed.hasProjects .folderBody {
+  border-color: var(--folder-border-strong) !important;
+  background: var(--folder-body-bg) !important;
+}
+
+.folderCardThemed.hasProjects .folderTab {
+  border-color: var(--folder-border-strong) !important;
+  background: var(--folder-tab-bg) !important;
+}
+
+.folderCardThemed.selected .folderBody {
+  border-color: var(--folder-border-strong) !important;
+  background: var(--folder-selected-bg) !important;
+}
+
+.folderCardThemed.selected .folderTab {
+  border-color: var(--folder-border-strong) !important;
+}
+
+.folderCardThemed.dragOver .folderBody {
+  border-color: var(--folder-border-strong) !important;
+  background: var(--folder-drag-bg) !important;
+}
+
+.folderCardThemed.dragOver .folderTab {
+  border-color: var(--folder-border) !important;
+}
+
+.folderCardThemed.dragOver .dragOverOverlay {
+  background: var(--folder-drag-overlay) !important;
+}
+
+.folderCardThemed.dragOver .dragOverText {
+  color: var(--folder-drag-text) !important;
+  border-color: var(--folder-border-soft) !important;
 }
 
 /* Folder body */
@@ -159,7 +221,56 @@
 }
 
 
-/* Drag-over state */
+.folderCardThemed.hasProjects.projectDropTarget .folderBody,
+.folderCardThemed.selected.projectDropTarget .folderBody,
+.folderCardThemed.projectDropTarget .folderBody {
+  border-color: #0078d4 !important;
+  border-style: solid !important;
+  border-width: 1px !important;
+  background: #e5f3ff !important;
+  box-shadow: 0 0 0 1px rgba(0, 120, 212, 0.15), 0 8px 18px rgba(0, 120, 212, 0.12) !important;
+}
+
+.folderCardThemed.hasProjects.projectDropTarget .folderTab,
+.folderCardThemed.selected.projectDropTarget .folderTab,
+.folderCardThemed.projectDropTarget .folderTab {
+  border-color: #0078d4 !important;
+  background: #eef6ff !important;
+}
+
+/* Project drop target — Windows Explorer style */
+.projectDropTarget .folderBody {
+  border-style: solid !important;
+  border-width: 1px !important;
+  border-color: #0078d4 !important;
+  background: #e5f3ff !important;
+  box-shadow: 0 0 0 1px rgba(0, 120, 212, 0.15), 0 8px 18px rgba(0, 120, 212, 0.12) !important;
+}
+
+.projectDropTarget .folderTab {
+  border-color: #0078d4 !important;
+  background: #eef6ff !important;
+}
+
+.dropHintBelow {
+  margin-top: 6px;
+  padding: 0 2px;
+  color: #0078d4;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropHintArrow {
+  margin-right: 4px;
+  font-weight: 700;
+}
+
+/* Legacy drag-over (unused for folder reorder) */
 .dragOver .folderBody {
   border-style: dashed !important;
   border-color: rgba(59, 130, 246, 0.75) !important;

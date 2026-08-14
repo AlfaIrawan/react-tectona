@@ -1,0 +1,112 @@
+/* Todo status feedback — keep motion short so scroll position stays usable */
+
+@keyframes todoCompleteFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    transform: scale(1);
+  }
+  35% {
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.22);
+    transform: scale(1.015);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    transform: scale(1);
+  }
+}
+
+@keyframes todoCompleteExit {
+  0% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    max-height: 120px;
+    margin-bottom: 0.5rem;
+  }
+  55% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(12px) scale(0.98);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
+  }
+}
+
+@keyframes todoReopenFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+  40% {
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+@keyframes todoCheckPop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  55% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes todoStrikeIn {
+  from {
+    text-decoration-color: transparent;
+  }
+  to {
+    text-decoration-color: currentColor;
+  }
+}
+
+.rowCompleting {
+  animation: todoCompleteFlash 0.35s ease-out, todoCompleteExit 0.52s ease-in forwards;
+  animation-delay: 0s, 0.18s;
+  pointer-events: none;
+  border-color: rgba(16, 185, 129, 0.45) !important;
+  background-color: rgba(16, 185, 129, 0.08) !important;
+  overflow: hidden;
+}
+
+.rowReopening {
+  animation: todoReopenFlash 0.45s ease-out;
+  border-color: rgba(59, 130, 246, 0.4) !important;
+}
+
+.checkPop {
+  animation: todoCheckPop 0.4s cubic-bezier(0.34, 1.45, 0.64, 1);
+  color: rgb(16, 185, 129);
+}
+
+.titleStrike {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  animation: todoStrikeIn 0.3s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rowCompleting,
+  .rowReopening,
+  .checkPop,
+  .titleStrike {
+    animation: none;
+  }
+
+  .rowCompleting {
+    opacity: 0.55;
+  }
+}

@@ -14,10 +14,10 @@ interface RoadmapHintProps {
 export function RoadmapHint({ variant = 'runs' }: RoadmapHintProps) {
   const hints = {
     runs: {
-      description: 'Training run akan tersedia pada tahap berikutnya.',
+      description: 'Training runs will be available in a future release.',
     },
     connectors: {
-      description: 'Connector akan tersedia untuk dikonfigurasi pada tahap berikutnya.',
+      description: 'Connectors will be available for configuration in a future release.',
     },
   }
 

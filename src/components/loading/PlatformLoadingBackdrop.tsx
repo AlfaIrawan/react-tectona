@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
-/** Shared gradient + grid backdrop (selaras react-tilia RouteLoadingFallback). */
+/** Shared gradient + grid backdrop for full-page route loading (not data loaders). */
 export function PlatformLoadingBackdrop({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div

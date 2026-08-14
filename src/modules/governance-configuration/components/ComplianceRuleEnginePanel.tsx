@@ -6,7 +6,7 @@ export function ComplianceRuleEnginePanel({ rules }: { rules: ComplianceRuleDto[
     <Card className="p-4">
       <h2 className="text-sm font-semibold text-foreground">Compliance Rule Engine</h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        Daftar aturan (read-only) yang dipakai server untuk menghitung skor; tidak ada input bebas di sini.
+        List of rules (read-only) used by the server to calculate the score; there is no free-form input here.
       </p>
       <table className="mt-3 w-full text-xs">
         <thead>

@@ -16,29 +16,49 @@ interface TooltipProps {
 /** Renders tooltip content with consistent SaaS style: title (semibold) + divider + list (normal). */
 function renderDefaultContent(content: string, compact: boolean): React.ReactNode {
   const textClass = compact
-    ? 'text-[11px] font-medium text-slate-600 dark:text-slate-300 leading-snug'
+    ? 'text-[10px] font-normal text-slate-600 dark:text-slate-300 leading-none'
     : 'text-[13px] font-normal text-slate-700 dark:text-slate-300 leading-relaxed'
   const titleClass = compact
-    ? 'text-[11px] font-semibold text-slate-800 dark:text-slate-100'
+    ? 'text-xs font-medium text-slate-800 dark:text-slate-100 leading-snug'
     : 'text-[13px] font-semibold text-slate-900 dark:text-slate-100'
   const lines = content.split('\n').filter(Boolean)
   if (lines.length === 0) return null
   if (lines.length === 1) {
-    return <div className={textClass}>{lines[0]}</div>
+    return (
+      <div
+        className={
+          compact
+            ? 'text-xs font-normal text-slate-700 dark:text-slate-200 leading-snug'
+            : textClass
+        }
+      >
+        {lines[0]}
+      </div>
+    )
   }
   const [title, ...items] = lines
   return (
     <>
       <div className={titleClass}>{title}</div>
-      <div className="border-t border-slate-200/80 dark:border-slate-600/80 mt-2 pt-2" />
-      <ul className={cn('space-y-1.5 leading-relaxed list-none mt-2', compact ? 'text-[11px]' : 'text-[13px]', 'font-normal text-slate-700 dark:text-slate-300')}>
-        {items.map((line, i) => (
-          <li key={i} className="flex items-start gap-2">
-            <span className="text-slate-400 dark:text-slate-500 shrink-0">•</span>
-            <span>{line}</span>
-          </li>
-        ))}
-      </ul>
+      {compact ? (
+        <ul className="mt-1.5 space-y-1 list-none text-xs font-normal leading-snug text-slate-600 dark:text-slate-300">
+          {items.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+      ) : (
+        <>
+          <div className="border-t border-slate-200/80 dark:border-slate-600/80 mt-2 pt-2" />
+          <ul className={cn('space-y-1.5 leading-relaxed list-none mt-2 text-[13px] font-normal text-slate-700 dark:text-slate-300')}>
+            {items.map((line, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <span className="text-slate-400 dark:text-slate-500 shrink-0">•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </>
   )
 }
@@ -47,6 +67,15 @@ function tooltipTransform(side: TooltipProps['side']): string {
   if (side === 'right') return 'translateY(-50%)'
   if (side === 'left') return 'translate(-100%, -50%)'
   return 'translateX(-50%)'
+}
+
+function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.RefCallback<T> {
+  return (value) => {
+    for (const ref of refs) {
+      if (typeof ref === 'function') ref(value)
+      else if (ref != null) (ref as React.RefObject<T | null>).current = value
+    }
+  }
 }
 
 export function Tooltip({
@@ -58,6 +87,9 @@ export function Tooltip({
   className,
 }: TooltipProps) {
   const compact = size === 'compact'
+  const stringLines = typeof content === 'string' ? content.split('\n').filter(Boolean) : []
+  const compactPill =
+    compact && stringLines.length === 1 && stringLines[0].length <= 28
   const [open, setOpen] = React.useState(false)
   const [coords, setCoords] = React.useState({ left: 0, top: 0 })
   const triggerRef = React.useRef<HTMLElement>(null)
@@ -147,14 +179,14 @@ export function Tooltip({
   }, [open, updatePosition])
 
   const child = React.Children.only(children)
-  const childEl = child as React.ReactElement<any>
+  const childEl = child as React.ReactElement<{
+    ref?: React.Ref<HTMLElement>
+    onMouseEnter?: (e: React.MouseEvent) => void
+    onMouseLeave?: (e: React.MouseEvent) => void
+    onClick?: (e: React.MouseEvent) => void
+  }>
   const trigger = React.cloneElement(childEl, {
-    ref: (el: HTMLElement | null) => {
-      triggerRef.current = el
-      const origRef = (childEl as any).ref as React.Ref<unknown> | undefined
-      if (typeof origRef === 'function') origRef(el)
-      else if (origRef) (origRef as React.MutableRefObject<HTMLElement | null>).current = el
-    },
+    ref: mergeRefs(triggerRef, childEl.props.ref),
     onMouseEnter: (e: React.MouseEvent) => {
       handleMouseEnter(e)
       childEl.props.onMouseEnter?.(e)
@@ -182,9 +214,13 @@ export function Tooltip({
             ref={tooltipRef}
             className={cn(
               'fixed z-[9999]',
-              compact ? 'max-w-[200px] px-2 py-1' : 'max-w-[320px] px-4 py-3',
+              compact
+                ? compactPill
+                  ? 'max-w-none px-3 py-1.5'
+                  : 'max-w-[280px] px-3 py-2'
+                : 'max-w-[320px] px-4 py-3',
               'bg-white dark:bg-slate-800',
-              compact ? 'rounded-lg' : 'rounded-[13px]',
+              compact ? (compactPill ? 'rounded-full' : 'rounded-xl') : 'rounded-[13px]',
               compact
                 ? 'shadow-[0_2px_8px_rgba(15,23,42,0.08)] dark:shadow-black/25'
                 : 'shadow-md shadow-black/6 dark:shadow-black/20',
@@ -200,8 +236,8 @@ export function Tooltip({
             onMouseEnter={() => setOpen(true)}
             onMouseLeave={() => setOpen(false)}
           >
-            {/* Minimal arrow pointer */}
-            {side === 'bottom' && (
+            {/* Minimal arrow pointer — hidden for compact icon-rail tooltips */}
+            {!compact && side === 'bottom' && (
               <>
                 <div
                   className="absolute left-1/2 -translate-x-1/2 bottom-full w-0 h-0 border-[6px] border-transparent border-b-slate-200/70 dark:border-b-slate-600/50 border-t-0"
@@ -215,7 +251,7 @@ export function Tooltip({
                 />
               </>
             )}
-            {side === 'top' && (
+            {!compact && side === 'top' && (
               <>
                 <div
                   className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-[6px] border-transparent border-t-slate-200/70 dark:border-t-slate-600/50 border-b-0"

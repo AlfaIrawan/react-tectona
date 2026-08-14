@@ -12,6 +12,7 @@ import {
   Italic,
   List,
   ListOrdered,
+  Loader2,
   Mail,
   MailOpen,
   Palette,
@@ -20,6 +21,7 @@ import {
   ReplyAll,
   Search,
   Send,
+  Settings2,
   ShieldAlert,
   Trash2,
   Underline,
@@ -30,9 +32,21 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
+import {
+  getMailMessageDetail,
+  getMailboxConfig,
+  listMailMessages,
+  markMailMessageRead,
+  moveMailMessage,
+  sendMailMessage,
+  toUiMailboxConfig,
+  type EmailFolder,
+  type MailMessageSummary,
+  type UiMailboxConfig,
+} from '@/lib/api/mailApi'
 import { useEmailPanelStore } from '@/stores/email-panel-store'
-
-type EmailFolder = 'inbox' | 'sent' | 'draft' | 'archived' | 'deleted' | 'junk'
+import { EmailMailboxSetup } from './EmailMailboxSetup'
+import { EmailMailboxEmptyState } from './EmailMailboxEmptyState'
 
 interface ComposeImageAttachment {
   id: string
@@ -50,6 +64,7 @@ interface ComposeFileAttachment {
 
 interface EmailItem {
   id: string
+  uid: string
   from: string
   to?: string
   cc?: string
@@ -63,6 +78,23 @@ interface EmailItem {
   hasCalendar?: boolean
   hasAttachment?: boolean
   hasFlagFollowUp?: boolean
+}
+
+function mapSummaryToEmailItem(msg: MailMessageSummary, folder: EmailFolder): EmailItem {
+  return {
+    id: msg.id,
+    uid: msg.uid,
+    from: msg.from_address,
+    to: msg.to ?? undefined,
+    cc: msg.cc ?? undefined,
+    subject: msg.subject,
+    preview: msg.preview,
+    body: msg.preview,
+    at: msg.at,
+    unread: msg.unread,
+    folder,
+    hasAttachment: msg.has_attachment,
+  }
 }
 
 function isValidEmailAddress(value: string): boolean {
@@ -80,145 +112,23 @@ function areEmailListValuesValid(value: string): boolean {
   return emails.every(isValidEmailAddress)
 }
 
-const INITIAL_EMAILS: EmailItem[] = [
-  {
-    id: 'email-1',
-    from: 'Service Registry Bot',
-    subject: 'Registry sync completed',
-    preview: 'All services were synchronized successfully at 09:15.',
-    body: 'Registry sync completed. Total services: 128, dependencies: 417. No anomaly found.',
-    at: '09:15',
-    unread: true,
-    folder: 'inbox',
-  },
-  {
-    id: 'email-2',
-    from: 'Platform Ops',
-    subject: 'Action required: API Gateway certificate',
-    preview: 'Please renew certificate for gateway edge cluster.',
-    body: 'Please renew the API Gateway certificate before Friday to avoid TLS interruption in production.',
-    at: 'Yesterday',
-    folder: 'inbox',
-  },
-  {
-    id: 'email-3',
-    from: 'You',
-    to: 'dev-team@adira.local',
-    subject: 'Weekly service readiness update',
-    preview: 'Attached readiness summary from Service Catalog & Registry.',
-    body: 'Hi team, attached is the weekly readiness summary from Service Catalog & Registry dashboard.',
-    at: 'Tue',
-    folder: 'sent',
-  },
-  {
-    id: 'email-4',
-    from: 'Architecture Board',
-    subject: 'Review service decomposition proposal',
-    preview: 'Please provide comments before architecture forum.',
-    body: 'Please review and comment the decomposition proposal for the orchestration domain before Thursday.',
-    at: 'Mon',
-    folder: 'inbox',
-  },
-  {
-    id: 'email-5',
-    from: 'You',
-    to: 'ops@adira.local',
-    subject: 'Draft: Incident response plan update',
-    preview: 'Draft saved — not yet sent.',
-    body: 'Hi Ops team, please review the updated incident response plan attached to this message.',
-    at: 'Today',
-    folder: 'draft',
-  },
-  {
-    id: 'email-6',
-    from: 'HR System',
-    subject: 'Leave approval notification (archived)',
-    preview: 'Your leave request was approved and archived.',
-    body: 'Leave approved from 2025-04-01 to 2025-04-05. This message has been archived.',
-    at: 'Mar 28',
-    folder: 'archived',
-  },
-  {
-    id: 'email-7',
-    from: 'Old Vendor',
-    subject: 'Contract renewal reminder (deleted)',
-    preview: 'This message was moved to the deleted folder.',
-    body: 'Contract expires on 2025-06-30. Renewal details enclosed — moved to deleted.',
-    at: 'Mar 20',
-    folder: 'deleted',
-  },
-  {
-    id: 'email-8',
-    from: 'noreply@spam.example',
-    subject: 'You have been selected!',
-    preview: 'Congratulations, claim your prize now.',
-    body: 'Click the link to claim your exclusive prize. Limited time offer.',
-    at: 'Mar 18',
-    folder: 'junk',
-  },
-  {
-    id: 'email-9',
-    from: 'Calendar System',
-    subject: 'Reminder: Architecture Review Meeting — 2pm today',
-    preview: 'Your meeting starts in 30 minutes. Agenda attached.',
-    body: 'This is a reminder for the Architecture Review Meeting scheduled today at 2:00 PM. Please review the agenda before joining.',
-    at: '13:30',
-    unread: true,
-    folder: 'inbox',
-    hasReminder: true,
-    hasCalendar: true,
-  },
-  {
-    id: 'email-10',
-    from: 'Task Manager',
-    subject: 'Reminder: Submit service dependency report by EOD',
-    preview: 'Deadline reminder — action required before 6 PM.',
-    body: 'Please remember to submit the service dependency report by end of day. Failure to do so may delay the release cycle.',
-    at: '10:00',
-    folder: 'inbox',
-    hasReminder: true,
-  },
-  {
-    id: 'email-11',
-    from: 'DevOps Guild',
-    subject: 'Invitation: Platform Engineering Forum — Apr 10',
-    preview: 'You are invited to the Platform Engineering quarterly forum.',
-    body: 'Join us on April 10 at 3 PM for the Platform Engineering quarterly forum. Topics include observability, registry health, and API gateway updates.',
-    at: 'Apr 3',
-    folder: 'inbox',
-    hasCalendar: true,
-  },
-  {
-    id: 'email-12',
-    from: 'Documentation Team',
-    subject: 'Service Registry API Spec v2.4 — attached',
-    preview: 'Updated API specification document is attached for review.',
-    body: 'Please find attached the updated Service Registry API Specification v2.4. Review and provide feedback by Friday.',
-    at: 'Apr 2',
-    folder: 'inbox',
-    hasAttachment: true,
-  },
-  {
-    id: 'email-13',
-    from: 'Product Manager',
-    subject: 'Follow-up: Service onboarding SLA discussion',
-    preview: "Following up on last week's discussion about onboarding SLA targets.",
-    body: "Hi, following up on our discussion from last week regarding the service onboarding SLA targets. Please share your team's input so we can finalize the proposal.",
-    at: 'Apr 1',
-    folder: 'inbox',
-    hasFlagFollowUp: true,
-  },
-]
-
 export function EmailSidebarPanel() {
   const setEmailOpen = useEmailPanelStore((s) => s.setOpen)
   const close = () => setEmailOpen(false)
 
-  const [emails, setEmails] = useState<EmailItem[]>(INITIAL_EMAILS)
+  const [emails, setEmails] = useState<EmailItem[]>([])
   const [folder, setFolder] = useState<EmailFolder>('inbox')
   const [search, setSearch] = useState('')
-  const [selectedId, setSelectedId] = useState<string | null>(INITIAL_EMAILS.find((e) => e.folder === 'inbox')?.id ?? null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [openedEmailId, setOpenedEmailId] = useState<string | null>(null)
+  const [configured, setConfigured] = useState<boolean | null>(null)
+  const [connectedEmail, setConnectedEmail] = useState<string | null>(null)
+  const [showSetup, setShowSetup] = useState(false)
+  const [mailboxDefaults, setMailboxDefaults] = useState<UiMailboxConfig>(() => toUiMailboxConfig(null))
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const [isComposeOpen, setIsComposeOpen] = useState(false)
   const [composeTo, setComposeTo] = useState('')
   const [composeCc, setComposeCc] = useState('')
@@ -234,6 +144,54 @@ export function EmailSidebarPanel() {
   const [contextMenu, setContextMenu] = useState<{ emailId: string; x: number; y: number } | null>(null)
   const composeAttachmentInputRef = useRef<HTMLInputElement | null>(null)
   const composeEditorRef = useRef<HTMLDivElement | null>(null)
+
+  const refreshMailboxConfig = useCallback(async () => {
+    try {
+      const status = await getMailboxConfig()
+      setConfigured(status.configured)
+      setConnectedEmail(status.config?.email?.trim() || null)
+      setMailboxDefaults(toUiMailboxConfig(status.config))
+      setLoadError(null)
+    } catch (e) {
+      setConfigured(false)
+      setConnectedEmail(null)
+      setLoadError(e instanceof Error ? e.message : 'Failed to load mailbox configuration')
+    }
+  }, [])
+
+  const openMailboxSetup = () => setShowSetup(true)
+
+  const closeMailboxSetup = () => {
+    setShowSetup(false)
+    setMailboxDefaults((prev) => ({ ...prev, password: '' }))
+  }
+
+  const refreshMessages = useCallback(async () => {
+    if (!configured) return
+    setLoadingMessages(true)
+    setLoadError(null)
+    try {
+      const response = await listMailMessages(folder)
+      const mapped = response.messages.map((msg) => mapSummaryToEmailItem(msg, folder))
+      setEmails((prev) => {
+        const otherFolders = prev.filter((item) => item.folder !== folder)
+        return [...mapped, ...otherFolders]
+      })
+      setSelectedId((current) => current ?? mapped[0]?.id ?? null)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load emails')
+    } finally {
+      setLoadingMessages(false)
+    }
+  }, [configured, folder])
+
+  useEffect(() => {
+    void refreshMailboxConfig()
+  }, [refreshMailboxConfig])
+
+  useEffect(() => {
+    if (configured) void refreshMessages()
+  }, [configured, folder, refreshMessages])
 
   const getComposeBodyText = (html: string) =>
     html
@@ -399,15 +357,31 @@ export function EmailSidebarPanel() {
     setComposeEditorHtml(quotedBody)
   }
 
-  const markAsRead = (emailId: string) => {
+  const markAsRead = async (emailId: string) => {
+    const target = emails.find((email) => email.id === emailId)
     setEmails((prev) => prev.map((email) => (email.id === emailId ? { ...email, unread: false } : email)))
     setContextMenu(null)
+    if (!target) return
+    try {
+      await markMailMessageRead(target.folder, target.uid)
+    } catch {
+      /* keep optimistic UI */
+    }
   }
 
-  const moveEmailToFolder = (emailId: string, targetFolder: EmailFolder) => {
-    setEmails((prev) => prev.map((email) => (email.id === emailId ? { ...email, folder: targetFolder, unread: false } : email)))
+  const moveEmailToFolder = async (emailId: string, targetFolder: EmailFolder) => {
+    const target = emails.find((email) => email.id === emailId)
+    setEmails((prev) => prev.filter((email) => email.id !== emailId))
     setContextMenu(null)
     if (openedEmailId === emailId) setOpenedEmailId(null)
+    if (!target) return
+    try {
+      await moveMailMessage(target.folder, target.uid, targetFolder)
+      if (targetFolder === folder) void refreshMessages()
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to move email')
+      void refreshMessages()
+    }
   }
 
   const openContextMenu = (event: React.MouseEvent, emailId: string) => {
@@ -519,61 +493,75 @@ export function EmailSidebarPanel() {
     [addComposeImagesFromFiles]
   )
 
-  const handleSendEmail = () => {
+  const handleSendEmail = async () => {
     const to = composeTo.trim()
     const cc = composeCc.trim()
     const subject = composeSubject.trim()
     const bodyText = getComposeBodyText(composeBody)
     const bodyHtml = composeBody.trim()
 
-    if (!isComposeFormValid) return
+    if (!isComposeFormValid || sending) return
 
-    const totalAttachmentCount = composeImageAttachments.length + composeFileAttachments.length
-    const attachmentNote =
-      totalAttachmentCount > 0
-        ? `<br/><br/>[${composeImageAttachments.length} image(s), ${composeFileAttachments.length} file(s) attached - connect mail API for real upload.]`
-        : ''
-    const fullBody = bodyHtml + attachmentNote
-
-    const preview =
-      bodyText.length > 0
-        ? bodyText.slice(0, 80)
-        : totalAttachmentCount > 0
-          ? `📎 ${totalAttachmentCount} attachment${totalAttachmentCount === 1 ? '' : 's'}`
-          : ''
-
-    composeImageAttachments.forEach((a) => {
-      if (a.url.startsWith('blob:')) URL.revokeObjectURL(a.url)
-    })
-
-    const newEmail: EmailItem = {
-      id: `sent-${Date.now()}`,
-      from: 'You',
-      to,
-      cc,
-      subject,
-      preview: preview.slice(0, 80),
-      body: fullBody,
-      at: 'Just now',
-      folder: 'sent',
-      hasAttachment: totalAttachmentCount > 0,
-      hasFlagFollowUp: composeFollowUp,
+    setSending(true)
+    setSendError(null)
+    try {
+      await sendMailMessage({
+        to,
+        cc,
+        subject,
+        body_html: bodyHtml,
+        body_text: bodyText,
+      })
+      composeImageAttachments.forEach((a) => {
+        if (a.url.startsWith('blob:')) URL.revokeObjectURL(a.url)
+      })
+      setComposeTo('')
+      setComposeCc('')
+      setComposeSubject('')
+      setComposeBody('')
+      if (composeEditorRef.current) composeEditorRef.current.innerHTML = ''
+      setComposeFollowUp(false)
+      setComposeImageAttachments([])
+      setComposeFileAttachments([])
+      setIsComposeOpen(false)
+      setFolder('sent')
+      setOpenedEmailId(null)
+      await refreshMessages()
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : 'Failed to send email')
+    } finally {
+      setSending(false)
     }
-
-    setEmails((prev) => [newEmail, ...prev])
-    setComposeTo('')
-    setComposeCc('')
-    setComposeSubject('')
-    setComposeBody('')
-    if (composeEditorRef.current) composeEditorRef.current.innerHTML = ''
-    setComposeFollowUp(false)
-    setComposeImageAttachments([])
-    setComposeFileAttachments([])
-    setIsComposeOpen(false)
-    setFolder('sent')
-    setSelectedId(newEmail.id)
-    setOpenedEmailId(null)
   }
+
+  const openEmailDetail = async (email: EmailItem) => {
+    setSelectedId(email.id)
+    setOpenedEmailId(email.id)
+    if (email.unread) void markAsRead(email.id)
+    try {
+      const detail = await getMailMessageDetail(email.folder, email.uid)
+      setEmails((prev) =>
+        prev.map((item) =>
+          item.id === email.id
+            ? {
+                ...item,
+                body: detail.body,
+                preview: detail.preview,
+                unread: detail.unread,
+                hasAttachment: detail.has_attachment,
+              }
+            : item
+        )
+      )
+    } catch {
+      /* list preview remains */
+    }
+  }
+
+  const panelDescription =
+    configured && connectedEmail
+      ? `Mailbox connected: ${connectedEmail}`
+      : 'Read and send your work email directly from Tectona.'
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-background pl-3">
@@ -584,9 +572,19 @@ export function EmailSidebarPanel() {
             Email
           </h2>
           <p className="max-w-[min(320px,100%)] text-xs leading-snug text-muted-foreground">
-            Service Catalog & Registry mailbox for operational updates, follow-ups, and email communication.
+            {panelDescription}
           </p>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn('mt-0.5 h-8 w-8 shrink-0', showSetup && 'bg-accent text-accent-foreground')}
+          onClick={openMailboxSetup}
+          aria-label="Mailbox settings"
+          title="Mailbox settings"
+        >
+          <Settings2 className="h-4 w-4" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -598,7 +596,45 @@ export function EmailSidebarPanel() {
         </Button>
       </div>
 
+      {configured === null ? (
+        <div className="flex flex-1 items-center justify-center px-3 py-8 text-xs text-muted-foreground">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Loading mailbox…
+        </div>
+      ) : null}
+
+      {showSetup ? (
+        <>
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/70 px-3 py-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1 px-2 text-xs"
+              onClick={closeMailboxSetup}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back
+            </Button>
+            <span className="text-xs font-medium text-foreground">Mailbox settings</span>
+          </div>
+          <EmailMailboxSetup
+            initial={mailboxDefaults}
+            onSaved={() => {
+              closeMailboxSetup()
+              void refreshMailboxConfig().then(() => refreshMessages())
+            }}
+          />
+        </>
+      ) : null}
+
+      {!showSetup && configured === false ? (
+        <EmailMailboxEmptyState onConnect={openMailboxSetup} errorMessage={loadError} />
+      ) : null}
+
+      {configured && !showSetup ? (
       <div className="flex min-h-0 flex-1 flex-col px-0 pb-2 pt-2">
+        {loadError ? <p className="px-3 pb-1 text-xs text-destructive">{loadError}</p> : null}
         <div className="py-2 px-3">
           <div className="border-b border-border/70 pb-2">
             <div className="relative w-full">
@@ -889,9 +925,11 @@ export function EmailSidebarPanel() {
               msOverflowStyle: 'none',
             }}
           />
-          <Button size="sm" className="h-10 gap-1 text-xs" onClick={handleSendEmail} disabled={!isComposeFormValid}>
-            <Send className="h-3.5 w-3.5" /> Send Email
+          <Button size="sm" className="h-10 gap-1 text-xs" onClick={() => void handleSendEmail()} disabled={!isComposeFormValid || sending}>
+            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            Send Email
           </Button>
+          {sendError ? <p className="text-xs text-destructive">{sendError}</p> : null}
           </div>
         ) : (
           <div
@@ -934,7 +972,12 @@ export function EmailSidebarPanel() {
                 className="min-h-0 flex-1 overflow-y-auto px-3 py-1.5 [&::-webkit-scrollbar]:hidden"
                 style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
               >
-                  {filteredEmails.length === 0 ? (
+                  {loadingMessages ? (
+                    <div className="flex items-center justify-center gap-2 px-2 py-6 text-xs text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading…
+                    </div>
+                  ) : filteredEmails.length === 0 ? (
                     <div className="px-2 py-6 text-center text-xs text-muted-foreground">No emails in this folder.</div>
                   ) : (
                     filteredEmails.map((email) => {
@@ -944,10 +987,7 @@ export function EmailSidebarPanel() {
                           key={email.id}
                           onClick={() => setSelectedId(email.id)}
                           onContextMenu={(event) => openContextMenu(event, email.id)}
-                          onDoubleClick={() => {
-                            setSelectedId(email.id)
-                            setOpenedEmailId(email.id)
-                          }}
+                          onDoubleClick={() => void openEmailDetail(email)}
                           className={cn(
                             'mb-2 flex h-24 w-full flex-col justify-start rounded-md border px-2 py-1.5 text-left transition-colors',
                             active
@@ -1031,6 +1071,7 @@ export function EmailSidebarPanel() {
           </ContextMenu>
         ) : null}
       </div>
+      ) : null}
     </div>
   )
 }

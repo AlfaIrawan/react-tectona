@@ -1,8 +1,10 @@
 import type { IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { normalizeUserDisplayName } from '@/lib/userDisplayName'
 import type { WacMembershipDto } from '@/lib/api/workspaceAccessControlApi'
 
 export function identityUserDisplayName(user: IdentityUserDto): string | null {
-  return user.display_name?.trim() || user.email?.trim() || null
+  const raw = user.display_name?.trim() || user.email?.trim() || null
+  return raw ? normalizeUserDisplayName(raw) : null
 }
 
 function sortAssigneeNames(names: Iterable<string>): string[] {

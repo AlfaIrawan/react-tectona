@@ -19,10 +19,13 @@ import {
   Lock,
   BrainCircuit,
   Lightbulb,
+  Radar,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import { useModuleAccess, type ModuleId } from '@/auth/useModuleAccess'
+import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate'
+import { legacyAppPathFromLocation } from '@/lib/workspaceRouting'
 
 interface NavItem {
   icon: React.ComponentType<{ className?: string }>
@@ -48,6 +51,7 @@ const navItems: NavItem[] = [
   { icon: Users, label: 'Resource Management', path: '/resource-management', caption: 'Resource capacity & delivery allocation', moduleId: 'resource' },
   { icon: ShieldCheck, label: 'Execution Portfolio & Delivery Governance', path: '/portfolio-governance-management', moduleId: 'portfolio_governance' },
   { icon: BarChart3, label: 'Reporting & Analytics', path: '/reporting-analytics', moduleId: 'reporting' },
+  { icon: Radar, label: 'Traceability & Monitoring', path: '/traceability-monitoring', caption: 'Activity audit, entity lineage & platform health', moduleId: 'traceability_monitoring' },
   { icon: BookOpenText, label: 'Document & Knowledge Management', path: '/document-knowledge-management', moduleId: 'document_knowledge' },
   { icon: ArrowRightLeft, label: 'Integration & API Platform', path: '/integration-api-platform', moduleId: 'integration_api' },
   { icon: Lock, label: 'Security & Access Control', path: '/security-access-control', caption: 'Operational governance', moduleId: 'security_access' },
@@ -83,7 +87,8 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation()
-  const navigate = useNavigate()
+  const appPath = legacyAppPathFromLocation(location.pathname, location.search, location.hash)
+  const workspaceNavigate = useWorkspaceNavigate()
   const access = useModuleAccess()
 
   return (
@@ -123,54 +128,56 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             const Icon = item.icon
 
             let isActive = false
-            if (item.path === '/enterprise-governance-model' && location.pathname.startsWith('/enterprise-governance-model')) {
+            if (item.path === '/enterprise-governance-model' && appPath.startsWith('/enterprise-governance-model')) {
               isActive = true
             } else if (item.path === '/platform-settings-administration') {
-              isActive = location.pathname.startsWith('/platform-settings-administration') || location.pathname === '/settings'
-            } else if (location.pathname === item.path) {
+              isActive = appPath.startsWith('/platform-settings-administration') || appPath === '/settings'
+            } else if (appPath === item.path) {
               isActive = true
-            } else if (item.path === '/workspace-management' && location.pathname.startsWith('/workspace-management')) {
+            } else if (item.path === '/workspace-management' && appPath.startsWith('/workspace-management')) {
               isActive = true
-            } else if (item.path === '/projects' && location.pathname.startsWith('/projects') && !location.pathname.match(/^\/projects\/[^/]+\//)) {
+            } else if (item.path === '/projects' && appPath.startsWith('/projects') && !appPath.match(/^\/projects\/[^/]+\//)) {
               isActive = true
-            } else if (item.path === '/project-management' && location.pathname.startsWith('/project-management')) {
+            } else if (item.path === '/project-management' && appPath.startsWith('/project-management')) {
               isActive = true
-            } else if (item.path === '/idea-backlog' && (location.pathname.startsWith('/idea-backlog') || location.pathname.startsWith('/roadmap'))) {
+            } else if (item.path === '/idea-backlog' && (appPath.startsWith('/idea-backlog') || appPath.startsWith('/roadmap'))) {
               isActive = true
-            } else if (item.path === '/task-work-management' && location.pathname.startsWith('/task-work-management')) {
+            } else if (item.path === '/task-work-management' && appPath.startsWith('/task-work-management')) {
               isActive = true
             } else if (
               item.path === '/planning-scheduling' &&
-              (location.pathname.startsWith('/planning-scheduling') || location.pathname.startsWith('/risks'))
+              (appPath.startsWith('/planning-scheduling') || appPath.startsWith('/risks'))
             ) {
               isActive = true
-            } else if (item.path === '/workflow-automation-engine' && location.pathname.startsWith('/workflow-automation-engine')) {
+            } else if (item.path === '/workflow-automation-engine' && appPath.startsWith('/workflow-automation-engine')) {
               isActive = true
             } else if (
               item.path === '/resource-management' &&
-              (location.pathname.startsWith('/resource-management') || location.pathname.startsWith('/resources'))
+              (appPath.startsWith('/resource-management') || appPath.startsWith('/resources'))
             ) {
               isActive = true
-            } else if (item.path === '/portfolio-governance-management' && location.pathname.startsWith('/portfolio-governance-management')) {
+            } else if (item.path === '/portfolio-governance-management' && appPath.startsWith('/portfolio-governance-management')) {
               isActive = true
-            } else if (item.path === '/reporting-analytics' && location.pathname.startsWith('/reporting-analytics')) {
+            } else if (item.path === '/reporting-analytics' && appPath.startsWith('/reporting-analytics')) {
               isActive = true
-            } else if (item.path === '/document-knowledge-management' && location.pathname.startsWith('/document-knowledge-management')) {
+            } else if (item.path === '/traceability-monitoring' && appPath.startsWith('/traceability-monitoring')) {
               isActive = true
-            } else if (item.path === '/integration-api-platform' && location.pathname.startsWith('/integration-api-platform')) {
+            } else if (item.path === '/document-knowledge-management' && appPath.startsWith('/document-knowledge-management')) {
               isActive = true
-            } else if (item.path === '/security-access-control' && location.pathname.startsWith('/security-access-control')) {
+            } else if (item.path === '/integration-api-platform' && appPath.startsWith('/integration-api-platform')) {
               isActive = true
-            } else if (item.path === '/ai-project-intelligence' && location.pathname.startsWith('/ai-project-intelligence')) {
+            } else if (item.path === '/security-access-control' && appPath.startsWith('/security-access-control')) {
               isActive = true
-            } else if (item.path === '/ai-idea-prioritization-intelligence' && location.pathname.startsWith('/ai-idea-prioritization-intelligence')) {
+            } else if (item.path === '/ai-project-intelligence' && appPath.startsWith('/ai-project-intelligence')) {
+              isActive = true
+            } else if (item.path === '/ai-idea-prioritization-intelligence' && appPath.startsWith('/ai-idea-prioritization-intelligence')) {
               isActive = true
             }
 
             return (
               <button
                 key={`${item.path}-${item.label}`}
-                onClick={() => navigate(item.path)}
+                onClick={() => workspaceNavigate(item.path)}
                 className={cn(
                   'w-full transition-all',
                   collapsed

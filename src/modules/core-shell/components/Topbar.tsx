@@ -11,6 +11,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { getSession, logoutAsync } from '@/auth/authService'
+import { normalizeUserDisplayName } from '@/lib/userDisplayName'
+import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
 import type { Session } from '@/auth/authService'
 import { PresenceDot } from '@/lib/chat/presenceUi'
 import { onSessionActive } from '@/auth/sessionEvents'
@@ -22,7 +24,10 @@ import { NotificationPanel } from './NotificationPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useChatPanelStore } from '@/stores/chat-panel-store'
 import { useEmailPanelStore } from '@/stores/email-panel-store'
-import { DataConnectivityBadge } from './DataConnectivityBadge'
+import { PlatformHealthBadge } from './PlatformHealthBadge'
+import { WorkspaceSwitcher } from './WorkspaceSwitcher'
+import { useTopbarTenantLabel } from '../hooks/useTopbarTenantLabel'
+import { WorkspaceManagementGuideTopbarButton } from '@/modules/workspace-management/components/WorkspaceManagementGuideTopbarButton'
 
 interface TopbarProps {
   sidebarCollapsed: boolean
@@ -79,15 +84,17 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
     }
   }, [refreshNotificationUnreadCount])
 
-  const environment = import.meta.env.PROD ? 'production' : 'development'
-  const userName = session?.user.name || 'User'
+  const environment =
+    (import.meta.env.VITE_APP_ENV as string | undefined)?.trim().toLowerCase() ||
+    (import.meta.env.PROD ? 'production' : 'development')
+  const userName = normalizeUserDisplayName(session?.user.name || session?.user.email || 'User')
+  const { label: topbarTenantLabel, loading: topbarTenantLabelLoading } = useTopbarTenantLabel()
 
   const handleLogout = () => {
     void logoutAsync().finally(() => {
-      navigate('/login', { replace: true })
+      navigate(buildLoginPathAfterSignOut(), { replace: true })
     })
   }
-
   return (
     <header
       className={cn(
@@ -108,8 +115,11 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
             className="topbar-tenant-sep h-6 w-px flex-shrink-0 bg-slate-300"
             aria-hidden
           />
-          <span className="topbar-tenant-name text-base font-medium text-slate-700 whitespace-nowrap">
-            Adira Dinamika Multifinance
+          <span
+            className="topbar-tenant-name text-base font-medium text-slate-700 whitespace-nowrap max-w-[min(20rem,calc(100vw-24rem))] truncate"
+            title={topbarTenantLabelLoading ? undefined : topbarTenantLabel}
+          >
+            {topbarTenantLabelLoading ? 'Loading…' : topbarTenantLabel}
           </span>
         </div>
 
@@ -130,6 +140,8 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
             />
           </div>
 
+          <WorkspaceSwitcher compact menuAlign="end" />
+
           {/* Environment Indicator - class agar teks tetap gelap di tema topbar gelap */}
           <div className="environment-indicator flex items-center gap-1.5 h-8 px-3 rounded-md bg-white/90 backdrop-blur-sm border border-slate-200/80 shadow-sm">
             <Circle className={cn(
@@ -143,9 +155,11 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
             </span>
           </div>
 
-          <DataConnectivityBadge />
+          <PlatformHealthBadge />
 
-          <Tooltip content="Chat" side="bottom">
+          <WorkspaceManagementGuideTopbarButton />
+
+          <Tooltip content="Chat" side="bottom" size="compact" sideOffset={6}>
             <Button
               variant="ghost"
               size="icon"
@@ -166,7 +180,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
             </Button>
           </Tooltip>
 
-          <Tooltip content="Email" side="bottom">
+          <Tooltip content="Email" side="bottom" size="compact" sideOffset={6}>
             <Button
               variant="ghost"
               size="icon"
@@ -214,7 +228,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
           </DropdownMenu>
 
           {/* Todo List */}
-          <Tooltip content="Todo list" side="bottom">
+          <Tooltip content="Todo list" side="bottom" size="compact" sideOffset={6}>
             <Button
               variant="ghost"
               size="icon"
@@ -227,7 +241,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
           </Tooltip>
 
           {/* Theme Settings */}
-          <Tooltip content="Theme Settings" side="bottom">
+          <Tooltip content="Theme Settings" side="bottom" size="compact" sideOffset={6}>
             <Button
               variant="ghost"
               size="icon"

@@ -76,19 +76,39 @@ Tectona memisahkan dua lapisan:
 | **Login (AuthN)** | identity-lite | Email + password → JWT |
 | **Akses workspace** | workspace-access-control (WAC) | Membership per `workspace_id` |
 
-### Gate masuk aplikasi
+### Gate masuk aplikasi & onboarding P0
 
-Setelah login, user **non-admin** harus punya minimal **satu membership aktif** di WAC (`app_id` Tectona) agar shell aplikasi terbuka. Tanpa membership → halaman **Belum ada akses workspace** (`/no-workspace-access`).
+Setelah login, user **non-admin** tanpa membership aktif diarahkan ke **wizard onboarding** (`/onboarding`), bukan dead-end `/no-workspace-access`.
+
+| Route | Fungsi |
+|-------|--------|
+| `/register` | Daftar akun (identity-lite) |
+| `/login/oauth/callback` | Callback OAuth PKCE setelah Microsoft SSO |
+| `/onboarding` | Wizard: buat workspace personal atau ajukan join by slug |
+| `/onboarding/status` | Status join pending / ditolak |
+| `/t/:slug` | Deep link tenant → set context → shell |
+
+Urutan guard: `ProtectedRoute` → `OnboardingGate` → `AppAccessGate` → `AppLayout`.
+
+Workspace **personal** (`tenant_mode=personal`) menyembunyikan modul **Workspace** di launcher.
 
 | Lingkungan | Gate membership |
 |------------|-----------------|
-| **Development** (`npm run dev`) | **Aktif** (production-like) via `.env.development` |
-| **Production build** | Aktif |
-| Override | `VITE_TECTONA_REQUIRE_WORKSPACE_MEMBERSHIP=false` untuk iterasi cepat tanpa membership |
+| **Development** (`npm run dev`) | **Aktif** (production-like) |
+| Override onboarding | `VITE_TECTONA_ONBOARDING_ENABLED=false` |
+| Override membership | `VITE_TECTONA_REQUIRE_WORKSPACE_MEMBERSHIP=false` |
 
-Platform admin (`root`, `administrator`) bypass gate.
+Platform admin (`root`, `administrator`) bypass onboarding dan membership gate.
 
-### Seed membership dev (WAC)
+### Alur dev manual (P0)
+
+1. Pastikan layanan berjalan: identity-lite `:8430`, WAC `:8421`, workspace-org `:8424`
+2. Jalankan migrasi onboarding di ketiga layanan (lihat prompt backend P0)
+3. `npm run dev` → buka `http://localhost:9411/register`
+4. Daftar → onboarding → buat workspace personal → shell `/projects`
+5. Join flow: slug workspace org → `/onboarding/status` → admin approve di WAC
+
+User tanpa membership (mis. akun baru) → `/onboarding`. User BA (Puspa, Ferli, …) **bisa login** setelah seed WAC.
 
 Saat **WAC** startup (`WORKSPACE_ACCESS_CONTROL_SEED_DEV_MEMBERSHIPS=true`), layanan:
 
@@ -97,7 +117,41 @@ Saat **WAC** startup (`WORKSPACE_ACCESS_CONTROL_SEED_DEV_MEMBERSHIPS=true`), lay
 
 **Restart WAC** setelah pull agar membership ter-seed ke workspace yang sudah ada.
 
-User tanpa membership (mis. akun baru) → `/no-workspace-access`. User BA (Puspa, Ferli, …) **bisa login** setelah seed.
+User tanpa membership (mis. akun baru) → `/onboarding`. User BA (Puspa, Ferli, …) **bisa login** setelah seed WAC.
+
+### Configurable auth providers (password + social SSO)
+
+Frontend and backend are toggled independently:
+
+| Layer | Env | Values |
+|-------|-----|--------|
+| **Frontend (buttons)** | `VITE_AUTH_PROVIDERS` | Comma-separated: `password`, `microsoft`, `google`, `meta` — order = button order |
+| **Backend (federation)** | `IDENTITY_LITE_FEDERATION_*_ENABLED` + credentials | Per provider in identity-lite `.env` |
+
+**Examples (frontend `.env.development`):**
+
+```env
+# Password only (default dev)
+VITE_AUTH_PROVIDERS=password
+
+# Google only + password
+VITE_AUTH_PROVIDERS=password,google
+
+# All social providers
+VITE_AUTH_PROVIDERS=password,microsoft,google,meta
+```
+
+Social buttons are **hidden** when not listed in `VITE_AUTH_PROVIDERS`. Backend returns `503` if a button is shown but federation credentials are missing.
+
+| Provider | Frontend id | Backend env prefix | Redirect URI (identity-lite) |
+|----------|-------------|-------------------|------------------------------|
+| Google | `google` | `IDENTITY_LITE_FEDERATION_GOOGLE_*` | `http://localhost:8430/oauth2/federation/google/callback` |
+| Microsoft | `microsoft` | `IDENTITY_LITE_FEDERATION_MICROSOFT_*` | `http://localhost:8430/oauth2/federation/microsoft/callback` |
+| Meta | `meta` | `IDENTITY_LITE_FEDERATION_META_*` | `http://localhost:8430/oauth2/federation/meta/callback` |
+
+Flow: social button → `/oauth2/authorize?idp=<provider>` + PKCE → IdP login → identity-lite callback → SPA `/login/oauth/callback` → onboarding/shell.
+
+Use **local** identity-lite (`python run.py`) with latest code — Docker image may lag behind federation features.
 
 ### Seed directory dev (workspace-org)
 
@@ -120,6 +174,9 @@ Jalankan migrasi identity `003_add_invited_user_status.sql` sebelum invite-by-em
 
 ## Dokumentasi terkait
 
+- [Tectona — Onboarding & tenant provisioning](../../docs/standards/Tectona-Onboarding-and-Tenant-Provisioning.md) — register/SSO, wizard post-login, personal vs org workspace, slug tenant, join request, org KYC, Microsoft/Google SSO (fase P0–P3)
+- [Tectona — onboarding P0 — frontend binding](../../docs/prompts/Tectona-Onboarding-Frontend-Binding.md) — implementasi UI wizard, OnboardingGate, TenantContext
+- [Tectona — onboarding P0 — shared backend extensions](../../docs/prompts/Tectona-Onboarding-P0-Shared-Backend-Extensions.md) — perluasan identity-lite, workspace-org, WAC
 - [Tectona — Workspace Ownership identity mode](../../docs/standards/Tectona-Workspace-Ownership-Identity-Mode.md) — Identity-Lite vs Enterprise IAM di wizard; bukan Hybrid; pemisahan AuthN/AuthZ di Platform Settings
 - [Tectona — Frontend ↔ Microservice mapping §2.4](../../docs/mappings/Tectona-Frontend-Microservice-Mapping.md#24-new-workspace-wizard--ownership-identity-mode-workspacemanagementpage)
 

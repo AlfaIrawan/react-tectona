@@ -13,8 +13,32 @@ import { serviceApiBase } from './gatewayBase'
 
 const BASE_URL = serviceApiBase('/api/notification-service', import.meta.env.VITE_NOTIFICATION_API_URL)
 
+function notificationWebSocketBaseUrl(): string {
+  const override = (import.meta.env.VITE_NOTIFICATION_API_URL as string | undefined)?.replace(/\/$/, '')
+  if (override) return override
+  return '/api/notification-service'
+}
+
 /** App GUID for Tectona (notification service expects app_id per platform). */
 export const TECTONA_APP_ID = '00000000-0000-0000-0000-000000000941'
+
+/** Dev: WS uses Vite proxy `/api/notification-service` → notification :8700. */
+export function createNotificationWebSocketUrl(options?: { token?: string }): string {
+  const rawBase = notificationWebSocketBaseUrl()
+  const url =
+    rawBase.startsWith('http://') || rawBase.startsWith('https://')
+      ? new URL(rawBase)
+      : new URL(rawBase, window.location.origin)
+
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/v1/notifications/ws/notifications`
+  url.search = ''
+  url.searchParams.set('app_id', TECTONA_APP_ID)
+  if (options?.token) {
+    url.searchParams.set('token', options.token)
+  }
+  return url.toString()
+}
 
 /** Backend notification item (raw from API). */
 export interface NotificationApiBackend {
@@ -77,6 +101,8 @@ function typeCodeToUi(typeCode: string): NotificationApi['type'] {
       return 'success'
     case 'folder':
       return 'info'
+    case 'workspace_access':
+      return 'warning'
     default:
       return 'info'
   }
@@ -201,9 +227,38 @@ export interface CreateNotificationPayload {
 }
 
 /**
+ * Dedupe keys for notifications this tab just created via `notifyEvent` — the caller already
+ * showed its own success toast, so the realtime WebSocket echo of the same notification must
+ * not toast again.
+ *
+ * The key is generated and registered *before* the create request is even sent, not after it
+ * resolves: the WebSocket push can (and does, in practice) reach the client before the HTTP
+ * response of the very request that triggered it, since the backend broadcasts synchronously
+ * inside the request handler while the client's fetch() still has a full round trip left. Keying
+ * off the server-assigned notification id (known only after the response resolves) loses that
+ * race. Keying off a client-generated id present in `metadata` from the start does not.
+ * Entries self-expire; they only need to survive the brief window until the echo arrives.
+ */
+const selfCreatedDedupeKeys = new Set<string>()
+
+function registerSelfCreatedDedupeKey(): string {
+  const key = crypto.randomUUID()
+  selfCreatedDedupeKeys.add(key)
+  window.setTimeout(() => selfCreatedDedupeKeys.delete(key), 10_000)
+  return key
+}
+
+/** True (and consumes the entry) if this notification was just created by `notifyEvent` in this tab. */
+export function consumeSelfCreatedNotification(dedupeKey: string | undefined | null): boolean {
+  if (!dedupeKey || !selfCreatedDedupeKeys.has(dedupeKey)) return false
+  selfCreatedDedupeKeys.delete(dedupeKey)
+  return true
+}
+
+/**
  * Create a notification. Used when e.g. folder/project is created so it appears in the notification panel.
  */
-export async function createNotification(payload: CreateNotificationPayload): Promise<void> {
+export async function createNotification(payload: CreateNotificationPayload): Promise<{ id: string }> {
   const res = await apiFetch(`${BASE_URL}/v1/notifications`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -223,14 +278,17 @@ export async function createNotification(payload: CreateNotificationPayload): Pr
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
   }
+  return res.json()
 }
 
 /**
  * Helper: create a notification for the current user (non-blocking).
  * Call after success toasts so the event also appears in the Notifications panel.
+ * The caller's own toast already covers immediate feedback, so the realtime WebSocket
+ * echo of this same notification is marked to skip its toast (see `consumeSelfCreatedNotification`).
  */
 export function notifyEvent(params: {
-  type_code: 'project' | 'connector' | 'dataset' | 'folder' | 'todo'
+  type_code: 'project' | 'connector' | 'dataset' | 'folder' | 'todo' | 'workspace_access'
   title: string
   body?: string | null
   link_url?: string | null
@@ -238,6 +296,8 @@ export function notifyEvent(params: {
 }): void {
   const session = getSession()
   if (!session?.user?.id) return
+  // Register the dedupe key before the request is sent — see selfCreatedDedupeKeys comment above.
+  const dedupeKey = registerSelfCreatedDedupeKey()
   createNotification({
     app_id: TECTONA_APP_ID,
     user_id: session.user.id,
@@ -245,9 +305,11 @@ export function notifyEvent(params: {
     title: params.title,
     body: params.body ?? null,
     link_url: params.link_url ?? null,
-    metadata: params.metadata ?? null,
+    metadata: { ...params.metadata, __client_dedupe_key: dedupeKey },
     created_from: 'tectona-frontend',
   })
     .then(() => emitNotificationsUpdated())
-    .catch(() => {})
+    .catch(() => {
+      selfCreatedDedupeKeys.delete(dedupeKey)
+    })
 }

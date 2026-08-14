@@ -27,6 +27,7 @@ import {
   TECTONA_WAC_APP_ID,
 } from '@/lib/api/workspaceAccessControlApi'
 import { deleteWorkspaceOrgKbMirror, syncWorkspaceOrgEntryToKb } from '@/lib/kb/workspaceOrgKbSync'
+import { applyDocumentChatEdit } from '@/lib/api/documentKnowledgeApi'
 
 export type TectonaAgentActionCode =
   | 'workspace.create'
@@ -36,6 +37,7 @@ export type TectonaAgentActionCode =
   | 'workspace.member.add'
   | 'idea.content.inject'
   | 'app.navigate'
+  | 'document.apply_chat_edit'
 
 export type TectonaIdeaContentUpdate = {
   target: string
@@ -117,7 +119,7 @@ async function resolveWorkspaceRef(payload: Record<string, unknown>): Promise<Wo
   if (workspaceId) {
     const found = all.find((w) => w.id === workspaceId)
     if (found) return found
-    throw new Error(`Workspace id tidak ditemukan: ${workspaceId}`)
+    throw new Error(`Workspace id not found: ${workspaceId}`)
   }
 
   const key = typeof payload.workspace_key === 'string' ? payload.workspace_key.trim() : ''
@@ -130,7 +132,7 @@ async function resolveWorkspaceRef(payload: Record<string, unknown>): Promise<Wo
     const byName = findWorkspaceByNameFuzzy(all, name)
     if (byName) return byName
   }
-  throw new Error('Workspace tidak ditemukan — sebut nama/kode/id workspace.')
+  throw new Error('Workspace not found — specify the workspace name/code/id.')
 }
 
 /** Mirror of WorkspaceManagementPage.lifecycleStageToWorkspaceOrgStatusCode. */
@@ -152,12 +154,39 @@ function dispatchIdeaUpdated(ideaId: string): void {
   window.dispatchEvent(new CustomEvent('tectona:idea-updated', { detail: { ideaId } }))
 }
 
+function dispatchDocumentEdited(documentId: string, attachmentId: string): void {
+  window.dispatchEvent(
+    new CustomEvent('tectona:document-edited', { detail: { documentId, attachmentId } }),
+  )
+}
+
+async function applyDocumentSectionEdit(payload: Record<string, unknown>): Promise<string> {
+  const documentId = String(payload.document_id ?? '').trim()
+  if (!documentId) throw new Error('document_id is required to apply this edit.')
+
+  const location = payload.location as { table_index?: number; row_index?: number } | undefined
+  if (!location || typeof location.table_index !== 'number' || typeof location.row_index !== 'number') {
+    throw new Error('A precise document location is required to apply this edit.')
+  }
+  const proposedText = String(payload.proposed_text ?? '').trim()
+  if (!proposedText) throw new Error('No proposed content to apply.')
+
+  const result = await applyDocumentChatEdit(documentId, {
+    location: { table_index: location.table_index, row_index: location.row_index },
+    original_text: String(payload.original_text ?? ''),
+    proposed_text: proposedText,
+  })
+  dispatchDocumentEdited(documentId, result.attachment_id)
+  const sectionTitle = String(payload.section_title ?? 'Bagian').trim() || 'Bagian'
+  return `"${sectionTitle}" di dokumen sudah diperbarui.`
+}
+
 async function applyIdeaContentInject(payload: Record<string, unknown>): Promise<string> {
   const ideaId = String(payload.idea_id ?? '').trim()
-  if (!ideaId) throw new Error('idea_id wajib untuk inject konten ide.')
+  if (!ideaId) throw new Error('idea_id is required to inject idea content.')
 
   const updates = Array.isArray(payload.updates) ? (payload.updates as TectonaIdeaContentUpdate[]) : []
-  if (updates.length === 0) throw new Error('Tidak ada field yang akan diperbarui.')
+  if (updates.length === 0) throw new Error('No fields to update.')
 
   let idea = await getIdeaById(ideaId)
   const ideaPatch: Parameters<typeof patchIdea>[1] = { version: idea.version }
@@ -221,30 +250,30 @@ async function applyIdeaContentInject(payload: Record<string, unknown>): Promise
 
   dispatchIdeaUpdated(ideaId)
   const ideaTitle = String(payload.idea_title ?? idea.title ?? ideaId)
-  return `Konten ide "${ideaTitle}" berhasil disimpan ke database.`
+  return `Idea content "${ideaTitle}" was saved to the database successfully.`
 }
 
 /**
  * Build a chat-friendly markdown summary of a workspace's detail (same fields the
  * Workspace Details drawer shows) from the workspace-org record + governance assignment.
- * Used by the assistant's "Jelaskan di chat" option so the explanation is the real detail,
+ * Used by the assistant's "Explain in chat" option so the explanation is the real detail,
  * not a backend stakeholder lookup.
  */
 export async function buildWorkspaceDetailMarkdown(label: string): Promise<string> {
   const q = label.trim().toLowerCase()
-  if (!q) return 'Aku belum tahu workspace mana yang dimaksud.'
+  if (!q) return "I don't know which workspace you mean yet."
   const all = await fetchAllWorkspaceOrgWorkspaces()
   const ws =
     all.find(
       (w) => w.name.toLowerCase() === q || w.workspace_key.toLowerCase() === q || w.id.toLowerCase() === q,
     ) ?? all.find((w) => q.includes(w.name.toLowerCase()) || w.name.toLowerCase().includes(q))
-  if (!ws) return `Aku belum menemukan Workspace "${label}" di direktori workspace.`
+  if (!ws) return `I couldn't find a Workspace "${label}" in the workspace directory.`
 
   const meta = ws.metadata && typeof ws.metadata === 'object' ? (ws.metadata as Record<string, unknown>) : {}
   const str = (k: string) => (typeof meta[k] === 'string' ? (meta[k] as string).trim() : '')
   const num = (k: string) => (typeof meta[k] === 'number' && !Number.isNaN(meta[k]) ? (meta[k] as number) : 0)
 
-  let governance = 'Belum dikonfigurasi (Unconfigured)'
+  let governance = 'Not configured'
   try {
     const assign = await fetchWorkspaceGovernanceAssignmentByWorkspaceId(ws.id)
     if (assign?.governance_template_id) {
@@ -255,27 +284,27 @@ export async function buildWorkspaceDetailMarkdown(label: string): Promise<strin
       } catch {
         /* catalog optional */
       }
-      governance = tplName ? `Dikonfigurasi — template: ${tplName}` : 'Dikonfigurasi'
+      governance = tplName ? `Configured — template: ${tplName}` : 'Configured'
     }
   } catch {
-    /* no assignment yet → keep "Belum dikonfigurasi" */
+    /* no assignment yet → keep "Not configured" */
   }
 
   const lines = [
-    `**Detail Workspace ${ws.name}**`,
+    `**Workspace Detail ${ws.name}**`,
     '',
-    `- **Nama:** ${ws.name}`,
-    `- **Kode:** \`${ws.workspace_key}\``,
+    `- **Name:** ${ws.name}`,
+    `- **Code:** \`${ws.workspace_key}\``,
     `- **Organization:** ${ws.organization_name || '—'}`,
-    `- **Tipe:** ${str('tectona_workspace_classification') || '—'}`,
+    `- **Type:** ${str('tectona_workspace_classification') || '—'}`,
     `- **Lifecycle/Status:** ${str('tectona_lifecycle_stage') || ws.status_code}`,
     `- **Owner:** ${str('tectona_owner') || '—'}`,
     `- **Governance:** ${governance}`,
     `- **Members:** ${num('tectona_members_count')}`,
     `- **Projects:** ${num('tectona_projects_count')}`,
   ]
-  if (ws.description) lines.push(`- **Deskripsi:** ${ws.description}`)
-  lines.push('', 'Mau aku buka langsung di UI biar kelihatan lengkap? Tinggal bilang ya.')
+  if (ws.description) lines.push(`- **Description:** ${ws.description}`)
+  lines.push('', 'Would you like me to open it directly in the UI so you can see everything? Just say yes.')
   return lines.join('\n')
 }
 
@@ -290,11 +319,11 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
       // type (classification), owner. Lifecycle defaults to Active. The form card
       // collects these; we enforce them here so the directory row renders fully.
       const name = String(payload.name ?? '').trim()
-      if (!name) throw new Error('Nama workspace wajib diisi.')
+      if (!name) throw new Error('Workspace name is required.')
       const workspaceType = String(payload.workspace_type ?? payload.classification ?? '').trim()
-      if (!workspaceType) throw new Error('Tipe/klasifikasi workspace wajib dipilih.')
+      if (!workspaceType) throw new Error('Workspace type/classification is required.')
       const owner = String(payload.owner ?? '').trim()
-      if (!owner) throw new Error('Owner workspace wajib diisi.')
+      if (!owner) throw new Error('Workspace owner is required.')
       const lifecycleStage = String(payload.lifecycle_stage ?? '').trim() || 'Active'
 
       // Resolve organization: explicit id if given+valid, else the default active org.
@@ -304,7 +333,7 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
       let org = explicitOrgId ? orgs.items.find((o) => o.id === explicitOrgId) : undefined
       if (!org) org = orgs.items.find((o) => o.status_code === 'active') ?? orgs.items[0]
       if (!org?.id) {
-        throw new Error('Tidak ada organization — buat organization dulu di Workspace Management.')
+        throw new Error('No organization available — create one first in Workspace Management.')
       }
 
       const workspaceKey =
@@ -353,7 +382,7 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
         new CustomEvent('tectona:workspace-created', { detail: { id: created.id } }),
       )
       await syncWorkspaceOrgEntryToKb(created)
-      return `Workspace "${created.name}" dibuat (kode: ${created.workspace_key}, id: ${created.id}).`
+      return `Workspace "${created.name}" created (code: ${created.workspace_key}, id: ${created.id}).`
     }
 
     case 'workspace.update': {
@@ -367,13 +396,13 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
       if (payload.description !== undefined) {
         patch.description = typeof payload.description === 'string' ? payload.description : null
       }
-      if (Object.keys(patch).length <= 1) throw new Error('Tidak ada field update — sebut nama atau deskripsi baru.')
+      if (Object.keys(patch).length <= 1) throw new Error('No fields to update — specify a new name or description.')
       const updated = await patchWorkspaceOrgWorkspace(ws.id, patch, { actorId })
       window.dispatchEvent(
         new CustomEvent('tectona:workspace-updated', { detail: { id: updated.id } }),
       )
       await syncWorkspaceOrgEntryToKb(updated)
-      return `Workspace "${updated.name}" diperbarui (id: ${updated.id}).`
+      return `Workspace "${updated.name}" updated (id: ${updated.id}).`
     }
 
     case 'workspace.delete': {
@@ -382,25 +411,25 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
       const deletedName = ws.name
       await deleteWorkspaceOrgWorkspace(deletedId, { actorId })
       await deleteWorkspaceOrgKbMirror(deletedId)
-      return `Workspace "${deletedName}" dihapus.`
+      return `Workspace "${deletedName}" deleted.`
     }
 
     case 'workspace.governance.apply': {
       const ws = await resolveWorkspaceRef(payload)
       const templateId = String(payload.governance_template_id ?? '').trim()
-      if (!templateId) throw new Error('Template governance wajib dipilih.')
+      if (!templateId) throw new Error('A governance template is required.')
       await postApplyGovernanceTemplate(ws.id, templateId)
       // Refresh the Workspace Directory / Governance Matrix so the new status shows up.
       window.dispatchEvent(
         new CustomEvent('tectona:governance-updated', { detail: { workspaceId: ws.id } }),
       )
-      return `Template governance diterapkan ke workspace "${ws.name}".`
+      return `Governance template applied to workspace "${ws.name}".`
     }
 
     case 'workspace.member.add': {
       const ws = await resolveWorkspaceRef(payload)
       const subjectId = String(payload.subject_id ?? '').trim()
-      if (!subjectId) throw new Error('subject_id wajib — sebut user id atau email yang sudah terdaftar di identity.')
+      if (!subjectId) throw new Error('subject_id is required — specify a user id or email already registered in identity.')
       const roleCode = String(payload.role_code ?? 'member').trim() || 'member'
       const idempotencyKey =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -417,16 +446,19 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
         },
         { actorId, idempotencyKey },
       )
-      return `Member ditambahkan ke workspace "${ws.name}" (role: ${roleCode}).`
+      return `Member added to workspace "${ws.name}" (role: ${roleCode}).`
     }
 
     case 'idea.content.inject':
       return applyIdeaContentInject(payload)
 
+    case 'document.apply_chat_edit':
+      return applyDocumentSectionEdit(payload)
+
     case 'app.navigate': {
       const pathname = String(payload.pathname ?? '').trim()
       if (!pathname.startsWith('/')) {
-        throw new Error('pathname navigasi tidak valid.')
+        throw new Error('Invalid navigation pathname.')
       }
       const search = typeof payload.search === 'string' ? payload.search : ''
       window.dispatchEvent(
@@ -438,11 +470,11 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
         typeof payload.module_label === 'string' && payload.module_label.trim()
           ? payload.module_label.trim()
           : pathname
-      return `Membuka ${label}.`
+      return `Opening ${label}.`
     }
 
     default:
-      throw new Error(`Action tidak didukung: ${action.action_code}`)
+      throw new Error(`Unsupported action: ${action.action_code}`)
   }
 }
 
@@ -456,15 +488,16 @@ export function buildAgentActionState(actions: TectonaProposedAction[]): Tectona
 }
 
 export function actionRiskLabel(level?: string): string {
-  if (level === 'high') return 'Risiko tinggi'
-  if (level === 'low') return 'Risiko rendah'
-  return 'Risiko sedang'
+  if (level === 'high') return 'High risk'
+  if (level === 'low') return 'Low risk'
+  return 'Medium risk'
 }
 
 export function actionCategoryLabel(actionCode: string): string {
-  if (actionCode === 'app.navigate') return 'Navigasi'
-  if (actionCode.startsWith('idea.')) return 'Aksi ide'
-  return 'Aksi workspace'
+  if (actionCode === 'app.navigate') return 'Navigation'
+  if (actionCode.startsWith('idea.')) return 'Idea action'
+  if (actionCode.startsWith('document.')) return 'Document action'
+  return 'Workspace action'
 }
 
 export function formatActionPayloadPreview(action: TectonaProposedAction): Array<{ label: string; value: string }> {
@@ -478,16 +511,16 @@ export function formatActionPayloadPreview(action: TectonaProposedAction): Array
   }
   switch (action.action_code) {
     case 'workspace.create':
-      push('Nama', 'name')
-      push('Kode', 'workspace_key')
+      push('Name', 'name')
+      push('Code', 'workspace_key')
       push('Organization ID', 'organization_id')
-      push('Deskripsi', 'description')
+      push('Description', 'description')
       break
     case 'workspace.update':
       push('Workspace', 'workspace_name')
       push('Workspace ID', 'workspace_id')
-      push('Nama baru', 'name')
-      push('Deskripsi', 'description')
+      push('New name', 'name')
+      push('Description', 'description')
       break
     case 'workspace.delete':
       push('Workspace', 'workspace_name')
@@ -508,13 +541,19 @@ export function formatActionPayloadPreview(action: TectonaProposedAction): Array
       for (const [index, update] of updates.slice(0, 3).entries()) {
         rows.push({ label: `Target ${index + 1}`, value: String(update.target ?? '') })
         rows.push({ label: `Mode ${index + 1}`, value: String(update.mode ?? 'replace') })
-        rows.push({ label: `Isi ${index + 1}`, value: String(update.value ?? '').slice(0, 240) })
+        rows.push({ label: `Content ${index + 1}`, value: String(update.value ?? '').slice(0, 240) })
       }
       break
     }
     case 'app.navigate':
-      push('Halaman', 'module_label')
+      push('Page', 'module_label')
       push('Route', 'pathname')
+      break
+    case 'document.apply_chat_edit':
+      push('Section', 'section_title')
+      if (typeof p.proposed_text === 'string' && p.proposed_text.trim()) {
+        rows.push({ label: 'New content', value: p.proposed_text.slice(0, 240) })
+      }
       break
     default:
       break

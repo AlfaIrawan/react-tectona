@@ -16,6 +16,29 @@ const BASE_URL =
     ? '/api/workspace-access-control'
     : serviceApiBase('/api/workspace-access-control'))
 
+function wacWebSocketBaseUrl(): string {
+  const override = (import.meta.env.VITE_WORKSPACE_ACCESS_CONTROL_API_URL as string | undefined)?.replace(/\/$/, '')
+  if (override) return override
+  return '/api/workspace-access-control'
+}
+
+/** Dev: WS uses Vite proxy `/api/workspace-access-control` → WAC :8421. */
+export function createWacEventsWebSocketUrl(options?: { token?: string }): string {
+  const rawBase = wacWebSocketBaseUrl()
+  const url =
+    rawBase.startsWith('http://') || rawBase.startsWith('https://')
+      ? new URL(rawBase)
+      : new URL(rawBase, window.location.origin)
+
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/v1/ws/events`
+  url.search = ''
+  if (options?.token) {
+    url.searchParams.set('token', options.token)
+  }
+  return url.toString()
+}
+
 export type WacMembershipDto = {
   id: string
   app_id: string
@@ -123,15 +146,52 @@ function mutationHeaders(opts?: {
   return new Headers(tectonaServiceHeaders(extra))
 }
 
+// Multiple callers (member counts, full roster, live panel refresh, polling ticks) request the
+// same workspace's members within milliseconds of each other. Coalesce concurrent requests and
+// cache the result briefly so those calls share one network round trip instead of firing N each.
+const workspaceMembersCache = new Map<
+  string,
+  { promise: Promise<WacMemberListResponse> } | { data: WacMemberListResponse; expiresAt: number }
+>()
+const WORKSPACE_MEMBERS_CACHE_TTL_MS = 2500
+
+export function invalidateWorkspaceMembersCache(workspaceId?: string): void {
+  if (!workspaceId) {
+    workspaceMembersCache.clear()
+    return
+  }
+  const suffix = `:${workspaceId}`
+  for (const key of workspaceMembersCache.keys()) {
+    if (key.endsWith(suffix)) workspaceMembersCache.delete(key)
+  }
+}
+
 export async function fetchWorkspaceMembers(
   appId: string,
   workspaceId: string
 ): Promise<WacMemberListResponse> {
-  const res = await apiFetch(
-    wacUrl(`/v1/apps/${encodeURIComponent(appId)}/workspaces/${encodeURIComponent(workspaceId)}/members`),
-    { headers: tectonaServiceHeaders() }
-  )
-  return handleJson<WacMemberListResponse>(res)
+  const key = `${appId}:${workspaceId}`
+  const cached = workspaceMembersCache.get(key)
+  if (cached) {
+    if ('promise' in cached) return cached.promise
+    if (cached.expiresAt > Date.now()) return cached.data
+  }
+  const promise = (async () => {
+    const res = await apiFetch(
+      wacUrl(`/v1/apps/${encodeURIComponent(appId)}/workspaces/${encodeURIComponent(workspaceId)}/members`),
+      { headers: tectonaServiceHeaders() }
+    )
+    return handleJson<WacMemberListResponse>(res)
+  })()
+  workspaceMembersCache.set(key, { promise })
+  try {
+    const data = await promise
+    workspaceMembersCache.set(key, { data, expiresAt: Date.now() + WORKSPACE_MEMBERS_CACHE_TTL_MS })
+    return data
+  } catch (err) {
+    workspaceMembersCache.delete(key)
+    throw err
+  }
 }
 
 export async function fetchSubjectMemberships(
@@ -429,6 +489,185 @@ export async function revokeDeliveryShare(
     }
     throw new Error(detail || `WAC request failed (${res.status})`)
   }
+}
+
+export type OnboardingStatusCode =
+  | 'none'
+  | 'personal_provisioning'
+  | 'corporate_setup_pending'
+  | 'active'
+  | 'join_pending'
+  | 'email_verify_pending'
+  | 'blocked'
+
+export type OnboardingStatusResponse = {
+  onboarding_status: OnboardingStatusCode
+  active_membership_count: number
+  pending_request_id?: string | null
+  limited_shell_allowed?: boolean
+  active_workspace_id?: string | null
+}
+
+export async function fetchOnboardingStatus(
+  appId: string,
+  subjectId: string,
+): Promise<OnboardingStatusResponse> {
+  const res = await apiFetch(
+    wacUrl(`/v1/apps/${encodeURIComponent(appId)}/subjects/${encodeURIComponent(subjectId)}/onboarding`),
+    { headers: tectonaServiceHeaders() },
+  )
+  if (res.status === 401) {
+    throw new Error('session_expired')
+  }
+  if (res.status >= 500) {
+    throw new Error('Onboarding status is temporarily unavailable. Please try again.')
+  }
+  return handleJson<OnboardingStatusResponse>(res)
+}
+
+export async function confirmEmailVerifiedOnboarding(input: {
+  appId: string
+  workspaceId: string
+  subjectId: string
+}): Promise<WacMembershipDto> {
+  const res = await apiFetch(
+    wacUrl(`/v1/apps/${encodeURIComponent(input.appId)}/onboarding/confirm-email-verified`),
+    {
+      method: 'POST',
+      headers: mutationHeaders({ actorId: input.subjectId }),
+      body: JSON.stringify({
+        workspace_id: input.workspaceId,
+        subject_id: input.subjectId,
+      }),
+    },
+  )
+  return handleJson<WacMembershipDto>(res)
+}
+
+export async function requestCorporateOnboardingAdminApproval(input: {
+  appId: string
+  workspaceId: string
+  orgWorkspaceId?: string | null
+  subjectId: string
+  message?: string
+}): Promise<OnboardingStatusResponse> {
+  const res = await apiFetch(
+    wacUrl(`/v1/apps/${encodeURIComponent(input.appId)}/onboarding/request-admin-approval`),
+    {
+      method: 'POST',
+      headers: mutationHeaders({ actorId: input.subjectId }),
+      body: JSON.stringify({
+        workspace_id: input.workspaceId,
+        org_workspace_id: input.orgWorkspaceId?.trim() || undefined,
+        subject_id: input.subjectId,
+        message: input.message,
+      }),
+    },
+  )
+  return handleJson<OnboardingStatusResponse>(res)
+}
+
+export async function switchCorporateOnboardingToAdminApproval(input: {
+  appId: string
+  workspaceId: string
+  orgWorkspaceId?: string | null
+  subjectId: string
+  message?: string
+}): Promise<OnboardingStatusResponse> {
+  const res = await apiFetch(
+    wacUrl(`/v1/apps/${encodeURIComponent(input.appId)}/onboarding/switch-to-admin-approval`),
+    {
+      method: 'POST',
+      headers: mutationHeaders({ actorId: input.subjectId }),
+      body: JSON.stringify({
+        workspace_id: input.workspaceId,
+        org_workspace_id: input.orgWorkspaceId?.trim() || undefined,
+        subject_id: input.subjectId,
+        message: input.message,
+      }),
+    },
+  )
+  return handleJson<OnboardingStatusResponse>(res)
+}
+
+export type AccessRequestSubmitPayload = {
+  workspace_id?: string
+  workspace_slug?: string
+  message?: string
+}
+
+export type AccessRequestDto = {
+  id: string
+  app_id: string
+  workspace_id: string
+  subject_id: string
+  status_code: 'pending' | 'approved' | 'rejected' | string
+  requested_role_code?: string | null
+  request_message?: string | null
+  version?: number
+  created_date?: string | null
+  /** Legacy alias used by older callers */
+  status?: 'pending' | 'approved' | 'rejected'
+  message?: string | null
+}
+
+export type AccessRequestListResponse = {
+  items: AccessRequestDto[]
+  total: number
+}
+
+export async function submitAccessRequest(
+  appId: string,
+  payload: AccessRequestSubmitPayload,
+  opts?: { actorId?: string; idempotencyKey?: string },
+): Promise<AccessRequestDto> {
+  const res = await apiFetch(wacUrl(`/v1/apps/${encodeURIComponent(appId)}/access-requests`), {
+    method: 'POST',
+    headers: mutationHeaders(opts),
+    body: JSON.stringify(payload),
+  })
+  return handleJson<AccessRequestDto>(res)
+}
+
+export async function fetchWorkspaceAccessRequests(
+  appId: string,
+  workspaceId: string,
+  params?: { status_code?: string },
+): Promise<AccessRequestListResponse> {
+  const q = new URLSearchParams()
+  if (params?.status_code != null) q.set('status_code', params.status_code)
+  const suffix = q.toString() ? `?${q}` : ''
+  const res = await apiFetch(
+    wacUrl(
+      `/v1/apps/${encodeURIComponent(appId)}/workspaces/${encodeURIComponent(workspaceId)}/access-requests${suffix}`,
+    ),
+    { headers: tectonaServiceHeaders() },
+  )
+  return handleJson<AccessRequestListResponse>(res)
+}
+
+export async function decideAccessRequest(
+  appId: string,
+  requestId: string,
+  payload: {
+    decision: 'approve' | 'reject' | string
+    reviewer_subject_id: string
+    comment?: string
+    grant_role_code?: string
+    grant_access_tier?: 'organization_member' | 'workspace_member'
+    grant_participation_scope_code?: string
+  },
+  opts?: { actorId?: string },
+): Promise<AccessRequestDto> {
+  const res = await apiFetch(
+    wacUrl(`/v1/apps/${encodeURIComponent(appId)}/access-requests/${encodeURIComponent(requestId)}/decide`),
+    {
+      method: 'POST',
+      headers: mutationHeaders(opts),
+      body: JSON.stringify(payload),
+    },
+  )
+  return handleJson<AccessRequestDto>(res)
 }
 
 export { defaultParticipationScopeCodeForUiRole as defaultParticipationScopeForUiRole } from '@/lib/workspaceParticipationScopes'

@@ -1,5 +1,6 @@
 /**
- * Chat contact directory — identity-lite users + Tectona Assistant.
+ * Chat contact directory — workspace-scoped members enriched via identity-lite + Tectona Assistant.
+ * Membership SoR: workspace-access-control (not the full identity directory).
  */
 
 import { getSession } from '@/auth/authService'
@@ -11,6 +12,18 @@ import {
   upsertMyWorkspacePresence,
   upsertWorkspacePresenceWithToken,
 } from '@/lib/api/collaborationContextApi'
+import {
+  fetchSubjectMemberships,
+  fetchWorkspaceMembers,
+  TECTONA_WAC_APP_ID,
+  type WacMembershipDto,
+} from '@/lib/api/workspaceAccessControlApi'
+import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
+import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
+import {
+  buildWorkspaceScopeFromTenant,
+  readStoredTenantSelection,
+} from '@/lib/tenantWorkspaceScope'
 import { useCollaborationPresenceStore } from '@/stores/collaboration-presence-store'
 import { useMyPresenceStore } from '@/stores/my-presence-store'
 
@@ -91,6 +104,117 @@ export function sessionUserToChatContact(session: NonNullable<ReturnType<typeof 
     avatarClassName: 'bg-gradient-to-br from-slate-600 to-slate-800 text-white',
     presence: 'online',
   }
+}
+
+export function resolveActiveWorkspaceMembershipRows(rows: WacMembershipDto[]): WacMembershipDto[] {
+  const activeRows = rows.filter((row) => {
+    const status = (row.membership_status ?? row.status_code ?? '').toLowerCase().trim()
+    return status === '' || status === 'active'
+  })
+  return activeRows.length > 0 ? activeRows : rows
+}
+
+/** Workspace IDs whose WAC members may appear in New chat / group pickers. */
+export async function resolveChatDirectoryWorkspaceIds(): Promise<string[]> {
+  const session = getSession()
+  if (!session?.user.id) return []
+
+  const tenant = readStoredTenantSelection()
+  const scope = buildWorkspaceScopeFromTenant(tenant)
+  let workspaceIds: string[] = []
+
+  if (scope.mode === 'single') {
+    workspaceIds = [scope.workspaceId]
+  } else {
+    const selected = scope.workspaceIds?.length ? scope.workspaceIds : readAccessibleWorkspaceIds()
+    if (selected?.length) {
+      workspaceIds = [...selected]
+    } else {
+      const memberships = await fetchSubjectMemberships(TECTONA_WAC_APP_ID, session.user.id, {
+        activeOnly: true,
+      }).catch(() => ({ items: [] as WacMembershipDto[] }))
+      workspaceIds = [
+        ...new Set(
+          (memberships.items ?? [])
+            .map((row) => row.workspace_id)
+            .filter((workspaceId): workspaceId is string => Boolean(workspaceId?.trim())),
+        ),
+      ]
+    }
+  }
+
+  if (tenant?.orgId && workspaceIds.length > 0) {
+    const workspaces = await fetchAllWorkspaceOrgWorkspaces().catch(() => [])
+    const orgWorkspaceIds = new Set(
+      workspaces
+        .filter((workspace) => workspace.organization_id === tenant.orgId)
+        .map((workspace) => workspace.id),
+    )
+    if (orgWorkspaceIds.size > 0) {
+      const scoped = workspaceIds.filter((workspaceId) => orgWorkspaceIds.has(workspaceId))
+      if (scoped.length > 0) workspaceIds = scoped
+    }
+  }
+
+  return workspaceIds
+}
+
+export async function collectChatDirectorySubjectIds(workspaceIds: string[]): Promise<Set<string>> {
+  const subjectIds = new Set<string>()
+  const session = getSession()
+  if (session?.user.id) subjectIds.add(session.user.id)
+  if (workspaceIds.length === 0) return subjectIds
+
+  const settled = await Promise.allSettled(
+    workspaceIds.map((workspaceId) => fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspaceId)),
+  )
+
+  for (const result of settled) {
+    if (result.status !== 'fulfilled') continue
+    for (const row of resolveActiveWorkspaceMembershipRows(result.value.items ?? [])) {
+      if (row.subject_id?.trim()) subjectIds.add(row.subject_id.trim())
+    }
+  }
+
+  return subjectIds
+}
+
+export function buildChatContactsFromWorkspaceMembers(
+  allowedSubjectIds: ReadonlySet<string>,
+  identityUsers: IdentityUserDto[],
+): ChatContact[] {
+  const identityById = new Map(identityUsers.map((user) => [user.id, user]))
+  const enrichedUsers: IdentityUserDto[] = []
+  for (const subjectId of allowedSubjectIds) {
+    const user = identityById.get(subjectId)
+    if (user && isActiveIdentityUser(user)) enrichedUsers.push(user)
+  }
+
+  const contacts = buildChatContactsFromIdentityUsers(enrichedUsers)
+  const presentIds = new Set(contacts.map((contact) => contact.id))
+  const session = getSession()
+  const extras: ChatContact[] = []
+
+  for (const subjectId of allowedSubjectIds) {
+    if (presentIds.has(subjectId)) continue
+    if (session?.user.id === subjectId) continue
+    extras.push({
+      id: subjectId,
+      name: `Member ${subjectId.slice(0, 8)}`,
+      mode: 'team',
+      initials: initialsFromDisplayName(subjectId),
+      avatarClassName: avatarClassForUserId(subjectId),
+    })
+  }
+
+  if (extras.length === 0) return contacts
+
+  const teamUsers = [
+    ...contacts.filter((contact) => contact.mode === 'team' && !contact.isAssistant),
+    ...extras,
+  ].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+
+  return [TECTONA_ASSISTANT_CONTACT, ...teamUsers]
 }
 
 export function buildChatContactsFromIdentityUsers(users: IdentityUserDto[]): ChatContact[] {
@@ -225,7 +349,7 @@ function cacheChatContacts(contacts: ChatContact[]): void {
   cachedContactsById = new Map(contacts.map((c) => [c.id, c]))
 }
 
-/** Kontak People untuk DM — dari directory atau sintetis dari user id. */
+/** People contact for DM — from the directory or synthesized from a user id. */
 export function buildTeamChatContactForUserId(userId: string, contacts: ChatContact[]): ChatContact {
   const found = contacts.find((c) => c.id === userId)
   if (found) return found
@@ -255,8 +379,16 @@ export async function loadChatContactDirectory(
     }
   }
 
-  const res = await fetchIdentityUsers({ limit: 300 })
-  let contacts = buildChatContactsFromIdentityUsers(res.items ?? [])
+  const workspaceIds = await resolveChatDirectoryWorkspaceIds()
+  const allowedSubjectIds = await collectChatDirectorySubjectIds(workspaceIds)
+
+  let identityUsers: IdentityUserDto[] = []
+  if (allowedSubjectIds.size > 0) {
+    const res = await fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] }))
+    identityUsers = (res.items ?? []).filter((user) => allowedSubjectIds.has(user.id))
+  }
+
+  let contacts = buildChatContactsFromWorkspaceMembers(allowedSubjectIds, identityUsers)
 
   try {
     contacts = await mergePresenceIntoContacts(contacts, workspaceId)

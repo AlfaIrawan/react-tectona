@@ -20,6 +20,9 @@ import { EmailSidebarPanel } from './EmailSidebarPanel'
 import { LayoutDebugIndicator, useLayoutDebugMetrics } from './LayoutDebugIndicator'
 import { WorkSyncConflictHost } from './WorkSyncConflictHost'
 import { VoiceRecordRequestPrompt } from './VoiceRecordRequestPrompt'
+import { RequestJoinWorkspaceDrawer } from '@/modules/workspace-management/components/RequestJoinWorkspaceDrawer'
+import { useRequestJoinWorkspaceStore } from '@/stores/request-join-workspace-store'
+import { useToast } from '@/components/ui/toast'
 import { X, ListTodo, Palette, GripHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -52,6 +55,9 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const { panel: settingsPanel, closePanel } = useSettingsPanelStore()
   const { theme } = useThemeStore()
+  const { addToast } = useToast()
+  const requestJoinOpen = useRequestJoinWorkspaceStore((s) => s.open)
+  const closeRequestJoin = useRequestJoinWorkspaceStore((s) => s.closePanel)
   const rawAccent = usePreferencesStore((s) => s.preferences?.accentColor)
   const validAccents = ['gradient', 'deep-cosmic', 'indigo-command', 'frosted-steel', 'blue-granite']
   const accentColor = validAccents.includes(rawAccent as string) ? rawAccent : 'gradient'
@@ -59,12 +65,14 @@ export function AppLayout({ children }: AppLayoutProps) {
   const themeSettingsOpen = settingsPanel === 'theme'
   const todoPanelOpen = settingsPanel === 'todo'
   const activeCommPanel: 'chat' | 'email' | null = emailOpen ? 'email' : chatOpen ? 'chat' : null
+  const isChatCommPanel = activeCommPanel === 'chat'
   const commPanelOpen = activeCommPanel !== null
-  const isIdeaDetailRoute = /^\/idea-backlog\/[^/]+$/.test(location.pathname)
-  // A right-side detail drawer (e.g. Workspace Details) would cover a docked chat, so float
-  // the chat while it's open; it returns to docked when the drawer closes.
+  // A right-side detail panel (Project/Idea menu, Workspace Details drawer, etc.) would cover a
+  // docked chat — float the chat while it's open; it returns to docked when the panel closes.
   const rightDrawerOpen = useRightDrawerStore((s) => s.open)
-  const useFloatingChatPanel = activeCommPanel === 'chat' && (isIdeaDetailRoute || rightDrawerOpen)
+  const rightDrawerWidth = useRightDrawerStore((s) => s.width)
+  const useFloatingChatPanel =
+    activeCommPanel === 'chat' && (rightDrawerOpen || requestJoinOpen)
   const commPanelDockedOpen = commPanelOpen && !useFloatingChatPanel
   const commPanelWidthPct = activeCommPanel === 'email' ? emailWidthPct : chatWidthPct
   const hideCommResizeLine = useUiOverlayStore((s) => s.blockingOverlayCount > 0)
@@ -178,8 +186,8 @@ export function AppLayout({ children }: AppLayoutProps) {
         const panelWidth = panelRect?.width ?? 544
         const panelHeight = panelRect?.height ?? 704
         // When a right-side drawer is open, park the chat to the LEFT of it so it doesn't
-        // cover the drawer (drawers are ~460px wide, right-aligned).
-        const drawerReserve = rightDrawerOpen ? 480 : 0
+        // cover the drawer — reserve exactly as much width as that caller registered.
+        const drawerReserve = rightDrawerOpen ? rightDrawerWidth : 0
         const x = Math.max(8, window.innerWidth - panelWidth - 16 - drawerReserve)
         const y = Math.max(56, window.innerHeight - panelHeight - 16)
         return { x, y }
@@ -189,7 +197,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       if (clamped.x === prev.x && clamped.y === prev.y) return prev
       return clamped
     })
-  }, [useFloatingChatPanel, clampFloatingChatPosition, rightDrawerOpen])
+  }, [useFloatingChatPanel, clampFloatingChatPosition, rightDrawerOpen, rightDrawerWidth])
 
   useEffect(() => {
     if (!useFloatingChatPanel) return
@@ -329,14 +337,17 @@ export function AppLayout({ children }: AppLayoutProps) {
             floatingPanelRef.current = useFloatingChatPanel ? el : floatingPanelRef.current
           }}
           className={cn(
-            'relative flex min-h-0 overflow-hidden bg-card',
+            'relative flex min-h-0 overflow-hidden',
+            isChatCommPanel ? 'liquid-glass-chat-panel' : 'bg-card',
             useFloatingChatPanel
               ? 'fixed z-[1150] rounded-2xl border border-border/80 opacity-100 shadow-2xl ring-1 ring-black/[0.06] dark:ring-white/[0.08]'
               : cn(
                   'shrink-0 rounded-l-2xl',
                   commPanelDockedOpen && 'h-[calc(100vh-3rem)] max-h-[calc(100vh-3rem)] self-start',
                   commPanelDockedOpen &&
-                    'border border-border/70 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.12),-1px_0_0_rgba(15,23,42,0.04)] dark:border-border dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55),inset_1px_0_0_rgba(255,255,255,0.04)] ring-1 ring-black/[0.03] dark:ring-white/[0.06]',
+                    (isChatCommPanel
+                      ? 'border border-white/45 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.14)] dark:border-white/12 dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55)] ring-1 ring-white/20 dark:ring-white/[0.06]'
+                      : 'border border-border/70 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.12),-1px_0_0_rgba(15,23,42,0.04)] dark:border-border dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55),inset_1px_0_0_rgba(255,255,255,0.04)] ring-1 ring-black/[0.03] dark:ring-white/[0.06]'),
                   !commPanelDockedOpen && 'border border-transparent shadow-none ring-0',
                   !commResizing &&
                     'motion-safe:transition-[flex-basis,max-width,opacity] motion-safe:duration-320 motion-safe:ease-[cubic-bezier(0.32,0.72,0,1)]',
@@ -426,7 +437,8 @@ export function AppLayout({ children }: AppLayoutProps) {
           )}
           <aside
             className={cn(
-              'flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card',
+              'flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+              isChatCommPanel ? 'bg-transparent' : 'bg-card',
               useFloatingChatPanel && 'pt-8',
               !commResizing &&
                 'motion-safe:transition-transform motion-safe:duration-280 motion-safe:ease-out',
@@ -504,6 +516,17 @@ export function AppLayout({ children }: AppLayoutProps) {
       </div>
       <WorkSyncConflictHost />
       <VoiceRecordRequestPrompt />
+      <RequestJoinWorkspaceDrawer
+        open={requestJoinOpen}
+        onClose={closeRequestJoin}
+        onSubmitted={(info) => {
+          addToast({
+            variant: 'success',
+            title: 'Join request sent',
+            description: `Your request to join ${info.displayName} is pending admin approval.`,
+          })
+        }}
+      />
     </div>
   )
 }

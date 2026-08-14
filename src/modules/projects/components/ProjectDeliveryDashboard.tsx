@@ -1,5 +1,4 @@
 import { useMemo } from 'react'
-import { Bot } from 'lucide-react'
 import {
   Area,
   AreaChart,
@@ -14,12 +13,12 @@ import {
   PieChart,
   RadialBar,
   RadialBarChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
+import { MeasuredResponsiveContainer } from '@/components/charts/MeasuredResponsiveContainer'
 import { cn } from '@/lib/utils'
 import type { Project } from '../store/projectStore'
 import type { ProjectTemplate } from '../data/projectTemplates'
@@ -41,6 +40,9 @@ const PANEL_CARD =
 const SECTION_LABEL = 'text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400'
 const CHART_TICK = { fontSize: 11, fill: '#64748b', fontWeight: 500 }
 const CHART_GRID = '#eef2f7'
+
+const CHART_FRAME_CLASS = 'h-full w-full min-h-0 min-w-0'
+const DASHBOARD_CHART_HEIGHT_CLASS = 'h-[228px] min-w-0'
 
 const CHART_TOOLTIP_STYLE = {
   contentStyle: {
@@ -105,7 +107,7 @@ function DashboardPanel({
         <p className="text-[13px] font-semibold tracking-tight text-slate-900">{title}</p>
         {subtitle ? <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{subtitle}</p> : null}
       </div>
-      <div className="flex-1 bg-[linear-gradient(180deg,rgba(248,250,252,0.35),rgba(255,255,255,0.95))] p-4">{children}</div>
+      <div className="min-h-0 flex-1 bg-[linear-gradient(180deg,rgba(248,250,252,0.35),rgba(255,255,255,0.95))] p-4">{children}</div>
     </div>
   )
 }
@@ -136,25 +138,6 @@ function KpiToneStyles(tone: 'neutral' | 'positive' | 'info' | 'danger') {
     card: 'border-slate-200/70 bg-[linear-gradient(145deg,rgba(248,250,252,0.95),rgba(255,255,255,0.98))]',
     icon: 'border-slate-200/80 bg-slate-100/80 text-slate-600',
     value: 'text-slate-950',
-  }
-}
-
-function AiInsightStyles(tone: string) {
-  if (tone === 'positive') {
-    return {
-      card: 'border-emerald-200/70 bg-gradient-to-br from-emerald-50/90 to-white',
-      dot: 'bg-emerald-500',
-    }
-  }
-  if (tone === 'alert') {
-    return {
-      card: 'border-amber-200/70 bg-gradient-to-br from-amber-50/90 to-white',
-      dot: 'bg-amber-500',
-    }
-  }
-  return {
-    card: 'border-sky-200/70 bg-gradient-to-br from-sky-50/90 to-white',
-    dot: 'bg-sky-500',
   }
 }
 
@@ -236,8 +219,8 @@ export function ProjectDeliveryDashboard({
       <DashboardSection title="Kanban Flow Analytics" subtitle="Distribution, trend, and constraint signals">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <DashboardPanel title="Workflow Distribution" subtitle="Current item distribution by stage" accent="emerald">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <PieChart>
                 <Pie data={metrics.workflowStages} dataKey="value" nameKey="name" innerRadius={56} outerRadius={82} paddingAngle={3} stroke="#fff" strokeWidth={2}>
                   {metrics.workflowStages.map((entry) => (
@@ -247,13 +230,13 @@ export function ProjectDeliveryDashboard({
                 <Tooltip {...CHART_TOOLTIP_STYLE} />
                 <Legend verticalAlign="bottom" height={40} iconType="circle" wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
               </PieChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
 
         <DashboardPanel title="Flow Trend" subtitle="Stacked weekly movement across workflow" accent="sky">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <AreaChart data={metrics.flowTrend}>
                 <defs>
                   <linearGradient id="flowBacklog" x1="0" y1="0" x2="0" y2="1">
@@ -287,13 +270,13 @@ export function ProjectDeliveryDashboard({
                 <Area type="monotone" dataKey="inReview" stackId="1" stroke={CHART_COLORS.review} fill="url(#flowReview)" strokeWidth={1.5} />
                 <Area type="monotone" dataKey="done" stackId="1" stroke={CHART_COLORS.done} fill="url(#flowDone)" strokeWidth={1.5} />
               </AreaChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
 
         <DashboardPanel title="Bottleneck Analysis" subtitle="Highest queue depth by stage" accent="amber">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <BarChart data={metrics.bottlenecks} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="4 4" stroke={CHART_GRID} horizontal={false} />
                 <XAxis type="number" tick={CHART_TICK} axisLine={false} tickLine={false} />
@@ -305,7 +288,7 @@ export function ProjectDeliveryDashboard({
                   ))}
                 </Bar>
               </BarChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
         </div>
@@ -315,8 +298,8 @@ export function ProjectDeliveryDashboard({
       <DashboardSection title="Delivery Performance" subtitle="Throughput, latency, and aging signals">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <DashboardPanel title="Throughput Trend" subtitle="Completed items per day" accent="indigo">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <LineChart data={metrics.throughputTrend}>
                 <CartesianGrid strokeDasharray="4 4" stroke={CHART_GRID} vertical={false} />
                 <XAxis dataKey="day" tick={CHART_TICK} axisLine={false} tickLine={false} />
@@ -324,13 +307,13 @@ export function ProjectDeliveryDashboard({
                 <Tooltip {...CHART_TOOLTIP_STYLE} />
                 <Line type="monotone" dataKey="items" stroke={CHART_COLORS.accent} strokeWidth={2.5} dot={{ r: 3, fill: CHART_COLORS.accent, strokeWidth: 0 }} activeDot={{ r: 5 }} />
               </LineChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
 
         <DashboardPanel title="Lead Time vs Cycle Time" subtitle="Weekly delivery latency comparison" accent="sky">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <LineChart data={metrics.leadCycle}>
                 <CartesianGrid strokeDasharray="4 4" stroke={CHART_GRID} vertical={false} />
                 <XAxis dataKey="week" tick={CHART_TICK} axisLine={false} tickLine={false} />
@@ -340,13 +323,13 @@ export function ProjectDeliveryDashboard({
                 <Line type="monotone" dataKey="leadTime" name="Lead Time" stroke="#6366f1" strokeWidth={2.25} dot={false} />
                 <Line type="monotone" dataKey="cycleTime" name="Cycle Time" stroke={CHART_COLORS.inProgress} strokeWidth={2.25} dot={false} />
               </LineChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
 
         <DashboardPanel title="Aging Work Items" subtitle="Items by time in active workflow" accent="slate">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <BarChart data={metrics.agingItems}>
                 <CartesianGrid strokeDasharray="4 4" stroke={CHART_GRID} vertical={false} />
                 <XAxis dataKey="bucket" tick={{ ...CHART_TICK, fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -354,7 +337,7 @@ export function ProjectDeliveryDashboard({
                 <Tooltip {...CHART_TOOLTIP_STYLE} />
                 <Bar dataKey="count" fill={CHART_COLORS.accent} radius={[6, 6, 0, 0]} barSize={28} />
               </BarChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
         </div>
@@ -364,8 +347,8 @@ export function ProjectDeliveryDashboard({
       <DashboardSection title="Resource & Team Health" subtitle="Workload balance and capacity posture">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <DashboardPanel title="Team Workload" subtitle="Open items assigned per contributor" accent="indigo">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <BarChart data={metrics.workloadData}>
                 <CartesianGrid strokeDasharray="4 4" stroke={CHART_GRID} vertical={false} />
                 <XAxis dataKey="name" tick={CHART_TICK} axisLine={false} tickLine={false} />
@@ -373,14 +356,14 @@ export function ProjectDeliveryDashboard({
                 <Tooltip {...CHART_TOOLTIP_STYLE} />
                 <Bar dataKey="items" fill="#6366f1" radius={[6, 6, 0, 0]} barSize={32} />
               </BarChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
 
         <DashboardPanel title="Capacity Utilization" subtitle="Team load against available capacity" accent="sky">
           <div className="flex h-[228px] flex-col items-center justify-center">
-            <div className="relative h-[150px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="relative h-[150px] w-full min-w-0">
+              <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
                 <RadialBarChart
                   innerRadius="68%"
                   outerRadius="100%"
@@ -390,7 +373,7 @@ export function ProjectDeliveryDashboard({
                 >
                   <RadialBar dataKey="value" cornerRadius={10} background={{ fill: '#e8eef5' }} />
                 </RadialBarChart>
-              </ResponsiveContainer>
+              </MeasuredResponsiveContainer>
               <div className="pointer-events-none absolute inset-x-0 bottom-6 text-center">
                 <p className="text-3xl font-semibold tracking-tight text-slate-950">{metrics.capacityUtilization}%</p>
               </div>
@@ -400,8 +383,8 @@ export function ProjectDeliveryDashboard({
         </DashboardPanel>
 
         <DashboardPanel title="Assignment Distribution" subtitle="Work mix by function" accent="emerald">
-          <div className="h-[228px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={DASHBOARD_CHART_HEIGHT_CLASS}>
+            <MeasuredResponsiveContainer className={CHART_FRAME_CLASS}>
               <PieChart>
                 <Pie data={metrics.assignmentMix} dataKey="value" nameKey="name" innerRadius={50} outerRadius={76} paddingAngle={3} stroke="#fff" strokeWidth={2}>
                   {metrics.assignmentMix.map((_, index) => (
@@ -411,7 +394,7 @@ export function ProjectDeliveryDashboard({
                 <Tooltip {...CHART_TOOLTIP_STYLE} />
                 <Legend verticalAlign="bottom" height={40} iconType="circle" wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
               </PieChart>
-            </ResponsiveContainer>
+            </MeasuredResponsiveContainer>
           </div>
         </DashboardPanel>
         </div>
@@ -514,40 +497,6 @@ export function ProjectDeliveryDashboard({
         </DashboardPanel>
         </div>
       </DashboardSection>
-
-      {/* ROW 6 */}
-      <div className={cn(PANEL_CARD, 'overflow-hidden')}>
-        <div className="h-[3px] w-full bg-gradient-to-r from-sky-400 via-indigo-400 to-violet-500" aria-hidden="true" />
-        <div className="border-b border-slate-100/90 bg-gradient-to-b from-slate-50/70 to-white px-5 py-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-lg border border-sky-200/70 bg-sky-50/80 p-1.5">
-              <Bot className="h-4 w-4 text-sky-700" />
-            </div>
-            <div>
-              <p className="text-[13px] font-semibold text-slate-900">AI Delivery Insights</p>
-              <p className="text-xs text-slate-500">Advisory signals — not operational source of truth</p>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 bg-[linear-gradient(180deg,rgba(248,250,252,0.4),rgba(255,255,255,0.95))] p-4 md:grid-cols-2 xl:grid-cols-4">
-          {metrics.aiInsights.map((insight) => {
-            const styles = AiInsightStyles(insight.tone)
-            return (
-              <div
-                key={insight.title}
-                className={cn(
-                  'relative overflow-hidden rounded-xl border p-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-transform duration-300 hover:-translate-y-0.5',
-                  styles.card
-                )}
-              >
-                <div className={cn('absolute left-0 top-0 h-full w-1', styles.dot)} aria-hidden="true" />
-                <p className="pl-2 text-xs font-semibold text-slate-900">{insight.title}</p>
-                <p className="mt-2 pl-2 text-xs leading-5 text-slate-600">{insight.body}</p>
-              </div>
-            )
-          })}
-        </div>
-      </div>
     </div>
   )
 }

@@ -13,17 +13,20 @@ type EnterpriseNavIconRailProps<T extends string> = {
   activeId: T
   onSelect: (id: T) => void
   className?: string
-  /** `pill` = wrapper bulat (float rail); `plain` = ikon langsung di panel sidebar. */
+  /** `pill` = round wrapper (float rail); `plain` = icon directly in the sidebar panel. */
   variant?: 'pill' | 'plain'
+  /** When set, each nav button gets `data-tour-target="${prefix}${id}"`. */
+  tourTargetPrefix?: string
 }
 
-/** Icon rail minimize — `plain` untuk sidebar docked; `pill` untuk float rail. */
+/** Icon rail minimize — `plain` for docked sidebar; `pill` for float rail. */
 export function EnterpriseNavIconRail<T extends string>({
   items,
   activeId,
   onSelect,
   className,
   variant = 'plain',
+  tourTargetPrefix,
 }: EnterpriseNavIconRailProps<T>) {
   if (items.length === 0) return null
 
@@ -35,6 +38,7 @@ export function EnterpriseNavIconRail<T extends string>({
         <button
           type="button"
           onClick={() => onSelect(panel.id)}
+          data-tour-target={tourTargetPrefix ? `${tourTargetPrefix}${panel.id}` : undefined}
           className={cn(
             'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors duration-200',
             active

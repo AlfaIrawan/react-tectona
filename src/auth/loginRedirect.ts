@@ -1,4 +1,13 @@
-const DEFAULT_POST_LOGIN_PATH = '/workspace-management'
+const DEFAULT_POST_LOGIN_PATH = '/projects'
+
+export type LoginAuthNotice =
+  | 'session_expired'
+  | 'session_revoked_elsewhere'
+  | 'oauth_signin_retry'
+  | 'account_already_exists'
+  | 'account_not_registered'
+  | 'check_email'
+  | 'email_verified'
 
 /**
  * Resolve a safe in-app path after login. Strips nested /login?next=... chains from redirect loops.
@@ -42,4 +51,47 @@ export function buildLoginSearchParams(options: {
     params.set('reason', options.reason)
   }
   return params
+}
+
+/** Map session-loss event detail → login `reason` query (undefined = no banner). */
+export function resolveLoginAuthNoticeReason(detail?: { reason?: string }): LoginAuthNotice | undefined {
+  if (
+    detail?.reason === 'session_revoked_elsewhere'
+    || detail?.reason === 'session_revoked'
+  ) {
+    return 'session_revoked_elsewhere'
+  }
+  if (
+    detail?.reason === 'expired'
+    || detail?.reason === 'no_refresh_token'
+    || detail?.reason === 'refresh_failed'
+    || detail?.reason === 'unauthorized'
+    || detail?.reason === 'session_expired'
+  ) {
+    return 'session_expired'
+  }
+  return undefined
+}
+
+export function parseLoginAuthNotice(raw: string | null | undefined): LoginAuthNotice | undefined {
+  if (
+    raw === 'session_revoked_elsewhere'
+    || raw === 'session_expired'
+    || raw === 'oauth_signin_retry'
+    || raw === 'account_already_exists'
+    || raw === 'account_not_registered'
+    || raw === 'check_email'
+    || raw === 'email_verified'
+  ) {
+    return raw
+  }
+  return undefined
+}
+
+/** Intentional sign-out — never attach `reason` (no banner on login). */
+export function buildLoginPathAfterSignOut(next?: string | null): string {
+  if (!next?.trim()) return '/login'
+  const params = new URLSearchParams()
+  params.set('next', sanitizePostLoginPath(next))
+  return `/login?${params.toString()}`
 }

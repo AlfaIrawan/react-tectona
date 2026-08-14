@@ -108,7 +108,7 @@ DropdownMenuTrigger.displayName = 'DropdownMenuTrigger'
 const DropdownMenuContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement> & { align?: 'start' | 'end'; side?: 'top' | 'bottom' }
->(({ className, align = 'end', side = 'bottom', ...props }, ref) => {
+>(({ className, align = 'end', side = 'bottom', onCloseAutoFocus: _onCloseAutoFocus, onOpenAutoFocus: _onOpenAutoFocus, ...props }, ref) => {
   const context = React.useContext(DropdownMenuContext)
   const [isAnimating, setIsAnimating] = React.useState(false)
 
@@ -151,13 +151,21 @@ DropdownMenuContent.displayName = 'DropdownMenuContent'
 
 const DropdownMenuItem = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, onClick, ...props }, ref) => {
+  React.HTMLAttributes<HTMLDivElement> & {
+    /** When false, keep the menu open after click (e.g. multi-select lists). */
+    closeOnSelect?: boolean
+    /** Alias for click handlers that should prevent auto-close via preventDefault(). */
+    onSelect?: React.MouseEventHandler<HTMLDivElement>
+  }
+>(({ className, onClick, onSelect, closeOnSelect = true, ...props }, ref) => {
   const context = React.useContext(DropdownMenuContext)
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    context?.setOpen(false)
+    onSelect?.(e)
     onClick?.(e)
+    if (closeOnSelect && !e.defaultPrevented) {
+      context?.setOpen(false)
+    }
   }
 
   return (

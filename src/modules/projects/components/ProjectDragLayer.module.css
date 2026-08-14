@@ -1,0 +1,85 @@
+.ghostFollow {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  transform: translate(-4px, -4px);
+}
+
+.ghost {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  pointer-events: none;
+}
+
+.ghostIconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  background: rgba(0, 120, 212, 0.08);
+  color: #0078d4;
+}
+
+.ghostIcon {
+  width: 20px;
+  height: 20px;
+}
+
+.ghostBadge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid #fff;
+  background: #0078d4;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+.ghostIconWrapFolder {
+  background: rgba(255, 196, 0, 0.18);
+  color: #ca8a04;
+}
+
+.cursorHint {
+  position: fixed;
+  z-index: 9999;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 120, 212, 0.22);
+  background: rgba(255, 255, 255, 0.96);
+  color: #0078d4;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cursorHintArrow {
+  margin-right: 6px;
+  font-weight: 700;
+}

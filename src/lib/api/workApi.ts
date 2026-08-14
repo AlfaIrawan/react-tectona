@@ -130,9 +130,41 @@ export interface WorkItemPatchBody {
   description?: string
   parentId?: string | null
   progress?: number
+  dependencyStatus?: 'Clear' | 'Blocked' | 'At Risk'
   expectedVersion?: number
   syncOrigin?: string
   handoffFieldsToTectona?: string[]
+}
+
+export type WorkDependencyType = 'FS' | 'SS' | 'FF'
+export type WorkDependencyState = 'Clear' | 'Blocked' | 'At Risk'
+
+export interface WorkItemDependencyApiModel {
+  id: string
+  blockingId: string
+  dependentId: string
+  type: WorkDependencyType
+  status: WorkDependencyState
+  delayDays: number
+}
+
+export interface WorkItemDependencyListResponse {
+  items: WorkItemDependencyApiModel[]
+  total: number
+}
+
+export interface WorkItemDependencyCreateBody {
+  blockingId: string
+  dependentId: string
+  type?: WorkDependencyType
+  status?: WorkDependencyState
+  delayDays?: number
+}
+
+export interface WorkItemDependencyPatchBody {
+  type?: WorkDependencyType
+  status?: WorkDependencyState
+  delayDays?: number
 }
 
 export interface IntegrationProfileResponse {
@@ -351,6 +383,171 @@ export async function seedProjectFromTemplate(
     }),
   })
   return parseJson<ProjectTemplateSeedResponse>(response)
+}
+
+export type InboxSourceChannel = 'team' | 'idea' | 'form' | 'system'
+export type ArchiveReason = 'manual' | 'auto' | 'sample'
+
+export interface ProjectInboxRouteApiModel {
+  businessKey: string
+  routedAt: string
+  routedBy: string
+  sourceTeam: string
+  sourceChannel: InboxSourceChannel
+  requestNote?: string | null
+  status: 'pending' | 'declined'
+}
+
+export interface ProjectInboxListResponse {
+  items: ProjectInboxRouteApiModel[]
+  total: number
+}
+
+export interface ProjectArchivedWorkItemApiModel {
+  businessKey: string
+  archivedAt: string
+  archivedBy: string
+  reason: ArchiveReason
+}
+
+export interface ProjectArchivedWorkItemListResponse {
+  items: ProjectArchivedWorkItemApiModel[]
+  total: number
+}
+
+export async function listProjectInboxRoutes(projectId: string): Promise<ProjectInboxListResponse> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/projects/${encodeURIComponent(projectId)}/inbox`,
+    { headers: tectonaServiceHeaders() },
+  )
+  return parseJson<ProjectInboxListResponse>(response)
+}
+
+export async function acceptProjectInboxItem(projectId: string, businessKey: string): Promise<void> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/projects/${encodeURIComponent(projectId)}/inbox/${encodeURIComponent(businessKey)}/accept`,
+    { method: 'POST', headers: tectonaServiceHeaders() },
+  )
+  if (!response.ok && response.status !== 204) {
+    await parseJson(response)
+  }
+}
+
+export async function declineProjectInboxItem(
+  projectId: string,
+  businessKey: string,
+  declinedBy: string,
+): Promise<void> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/projects/${encodeURIComponent(projectId)}/inbox/${encodeURIComponent(businessKey)}/decline`,
+    {
+      method: 'POST',
+      headers: tectonaServiceHeaders(),
+      body: JSON.stringify({ declinedBy }),
+    },
+  )
+  if (!response.ok && response.status !== 204) {
+    await parseJson(response)
+  }
+}
+
+export async function listProjectArchivedWorkItems(
+  projectId: string,
+): Promise<ProjectArchivedWorkItemListResponse> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/projects/${encodeURIComponent(projectId)}/archived-work-items`,
+    { headers: tectonaServiceHeaders() },
+  )
+  return parseJson<ProjectArchivedWorkItemListResponse>(response)
+}
+
+export async function archiveProjectWorkItemApi(input: {
+  projectId: string
+  businessKey: string
+  archivedBy: string
+  reason?: ArchiveReason
+}): Promise<void> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/projects/${encodeURIComponent(input.projectId)}/archived-work-items/${encodeURIComponent(input.businessKey)}`,
+    {
+      method: 'POST',
+      headers: tectonaServiceHeaders(),
+      body: JSON.stringify({
+        archivedBy: input.archivedBy,
+        reason: input.reason ?? 'manual',
+      }),
+    },
+  )
+  if (!response.ok && response.status !== 204) {
+    await parseJson(response)
+  }
+}
+
+export async function restoreProjectArchivedWorkItem(projectId: string, businessKey: string): Promise<void> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/projects/${encodeURIComponent(projectId)}/archived-work-items/${encodeURIComponent(businessKey)}/restore`,
+    { method: 'POST', headers: tectonaServiceHeaders() },
+  )
+  if (!response.ok && response.status !== 204) {
+    await parseJson(response)
+  }
+}
+
+export async function listWorkItemDependencies(params?: {
+  workspace?: string
+}): Promise<WorkItemDependencyListResponse> {
+  const query = new URLSearchParams()
+  if (params?.workspace) query.set('workspace', params.workspace)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const response = await workApiFetch(`${WORK_API_BASE}/api/work/v1/dependencies${suffix}`, {
+    headers: tectonaServiceHeaders(),
+  })
+  if (!response.ok) {
+    await parseJson(response)
+  }
+  return (await response.json()) as WorkItemDependencyListResponse
+}
+
+export async function createWorkItemDependency(
+  body: WorkItemDependencyCreateBody,
+): Promise<WorkItemDependencyApiModel> {
+  const response = await workApiFetch(`${WORK_API_BASE}/api/work/v1/dependencies`, {
+    method: 'POST',
+    headers: { ...tectonaServiceHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await parseJson(response)
+  }
+  return (await response.json()) as WorkItemDependencyApiModel
+}
+
+export async function patchWorkItemDependency(
+  dependencyId: string,
+  body: WorkItemDependencyPatchBody,
+): Promise<WorkItemDependencyApiModel> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/dependencies/${encodeURIComponent(dependencyId)}`,
+    {
+      method: 'PATCH',
+      headers: { ...tectonaServiceHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  )
+  if (!response.ok) {
+    await parseJson(response)
+  }
+  return (await response.json()) as WorkItemDependencyApiModel
+}
+
+export async function deleteWorkItemDependency(dependencyId: string): Promise<void> {
+  const response = await workApiFetch(
+    `${WORK_API_BASE}/api/work/v1/dependencies/${encodeURIComponent(dependencyId)}`,
+    { method: 'DELETE', headers: tectonaServiceHeaders() },
+  )
+  if (!response.ok && response.status !== 204) {
+    await parseJson(response)
+  }
 }
 
 /** Map API model to page WorkItem shape (defaults for UI-only fields). */

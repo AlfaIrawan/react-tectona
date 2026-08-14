@@ -94,14 +94,14 @@ export function CreateFolderModal({ open, onOpenChange }: CreateFolderModalProps
 
       onOpenChange(false)
       addToast({
-        title: 'Folder berhasil dibuat',
-        description: `Folder "${nameTrimmed}" telah dibuat.`,
+        title: 'Folder created successfully',
+        description: `Folder "${nameTrimmed}" has been created.`,
         variant: 'success',
       })
       notifyEvent({
         type_code: 'folder',
-        title: 'Folder berhasil dibuat',
-        body: `Folder "${nameTrimmed}" telah dibuat.`,
+        title: 'Folder created successfully',
+        body: `Folder "${nameTrimmed}" has been created.`,
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to create folder'
@@ -153,7 +153,7 @@ export function CreateFolderModal({ open, onOpenChange }: CreateFolderModalProps
           <div>
             <h2 className="text-xl font-semibold text-foreground">Create New Folder</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Folder untuk mengelompokkan project.
+              A folder for organizing projects.
             </p>
           </div>
           <Button

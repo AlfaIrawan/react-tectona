@@ -41,6 +41,11 @@ const WORK_ITEM_TYPE_ICONS: Record<string, { icon: LucideIcon; className: string
   Bug: { icon: Bug, className: 'text-rose-600' },
 }
 
+export function resolveWorkItemTypeIconMeta(type: string | undefined | null) {
+  const key = type?.trim() ?? ''
+  return WORK_ITEM_TYPE_ICONS[key] ?? { icon: CheckSquare2, className: 'text-slate-500' }
+}
+
 function readGanttRow(row: unknown): DirectoryGanttTaskRow {
   if (!row || typeof row !== 'object') return {}
   return row as DirectoryGanttTaskRow
@@ -92,7 +97,7 @@ export function DirectoryGanttTypeCell({ row }: { row?: unknown }) {
     return <span className="inline-block h-5 w-5 shrink-0" aria-hidden />
   }
 
-  const meta = WORK_ITEM_TYPE_ICONS[type] ?? { icon: CheckSquare2, className: 'text-slate-500' }
+  const meta = resolveWorkItemTypeIconMeta(type)
   const Icon = meta.icon
 
   return (
@@ -145,6 +150,39 @@ export const DIRECTORY_GANTT_GRID_COLUMNS = [
   { id: 'duration', header: 'Duration', width: 90, align: 'center' as const, resize: true as const },
 ]
 
+function formatGanttStartDisplay(value: unknown): string {
+  if (!value) return '—'
+  const date = value instanceof Date ? value : new Date(String(value))
+  if (Number.isNaN(date.getTime())) return '—'
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const year = date.getFullYear()
+  return `${day}-${month}-${year}`
+}
+
+/** Project Timeline grid — native SVAR editors only (stable column alignment). */
+export const TIMELINE_GANTT_GRID_COLUMNS = [
+  { id: 'text', header: 'Task title', width: 280, resize: true as const, editor: 'text' as const },
+  {
+    id: 'start',
+    header: 'Start',
+    width: 110,
+    align: 'center' as const,
+    resize: true as const,
+    editor: 'datepicker' as const,
+    template: formatGanttStartDisplay,
+  },
+  { id: 'duration', header: 'Duration', width: 90, align: 'center' as const, resize: true as const, editor: 'text' as const },
+]
+
+/** @deprecated Prefer TIMELINE_GANTT_GRID_COLUMNS — icon + React inline cells hurt row-drag perf. */
+export const TIMELINE_GANTT_GRID_COLUMNS_WITH_ICONS = [
+  ...GANTT_ICON_COLUMNS.map((col) => ({ ...col, resize: false as const })),
+  { id: 'text', header: 'Task title', width: 240, resize: true as const, editor: 'text' as const },
+  { id: 'start', header: 'Start', width: 110, align: 'center' as const, resize: true as const, editor: 'datepicker' as const },
+  { id: 'duration', header: 'Duration', width: 90, align: 'center' as const, resize: true as const, editor: 'text' as const },
+]
+
 /** Project Timeline — fixed column widths so resize only affects the dragged column. */
 export const PROJECT_TIMELINE_GANTT_COLUMNS = DIRECTORY_GANTT_GRID_COLUMNS
 
@@ -152,6 +190,75 @@ export type GanttSelectionColumnOptions = {
   selectedIds: string[]
   selectableIds: string[]
   onSelectedIdsChange: (ids: string[]) => void
+}
+
+type GanttSelectionColumnRefOptions = {
+  selectedIdsRef: { current: string[] }
+  selectableIdsRef: { current: string[] }
+  onSelectedIdsChangeRef: { current: (ids: string[]) => void }
+}
+
+/** Stable column config — reads selection state from refs so grid columns identity does not change each render. */
+export function buildGanttSelectionColumnWithRefs({
+  selectedIdsRef,
+  selectableIdsRef,
+  onSelectedIdsChangeRef,
+}: GanttSelectionColumnRefOptions) {
+  function GanttSelectionHeaderCell() {
+    const selectedIds = selectedIdsRef.current
+    const selectableIds = selectableIdsRef.current
+    const allSelected =
+      selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id))
+    const someSelected = selectableIds.some((id) => selectedIds.includes(id))
+
+    return (
+      <input
+        type="checkbox"
+        checked={allSelected}
+        ref={(element) => {
+          if (element) element.indeterminate = someSelected && !allSelected
+        }}
+        onChange={() =>
+          onSelectedIdsChangeRef.current(allSelected ? [] : [...selectableIds])
+        }
+        onClick={(event) => event.stopPropagation()}
+        aria-label="Select all rows"
+      />
+    )
+  }
+
+  function GanttSelectionBodyCell({ row }: { row?: unknown }) {
+    const { id: rowId } = readGanttRow(row)
+    const id = rowId != null ? String(rowId) : ''
+    if (!id || isSyntheticGanttSummaryId(id)) {
+      return <span className="inline-block h-5 w-5 shrink-0" aria-hidden />
+    }
+
+    const selectedIds = selectedIdsRef.current
+    const checked = selectedIds.includes(id)
+    return (
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={() =>
+          onSelectedIdsChangeRef.current(
+            checked ? selectedIds.filter((existingId) => existingId !== id) : [...selectedIds, id],
+          )
+        }
+        onClick={(event) => event.stopPropagation()}
+        aria-label={`Select ${readGanttRow(row).text?.trim() || 'row'}`}
+      />
+    )
+  }
+
+  return {
+    id: 'ganttSelect',
+    header: GanttSelectionHeaderCell,
+    width: 36,
+    align: 'center' as const,
+    resize: false as const,
+    cell: GanttSelectionBodyCell,
+  }
 }
 
 export function buildGanttSelectionColumn({

@@ -18,20 +18,40 @@ import {
   type SortOrder,
 } from './FiltersBar'
 import { useProjectStore, useFolderStore } from '@/modules/projects'
+import { extractPlainTextFromHtml } from '@/lib/richHtmlEditor'
 import { useToast } from '@/components/ui/toast'
 import { notifyEvent } from '@/lib/api/notificationApi'
 import type { Folder, Project } from '@/modules/projects'
+import type { GridSelectionModifiers } from '../lib/gridSelection'
 import type { LayoutMode } from './FoldersSection'
+import { FolderNotesPanel } from './FolderNotesPanel'
+import { FoldersSection } from './FoldersSection'
 
 const FOLDER_VIEW_TYPE_FILTER_TAGS = new Set<ProjectTypeFilterTag>(['projects'])
 
 interface FolderViewProps {
   folder: Folder
+  folderAncestors?: Folder[]
+  childFolders?: Folder[]
+  orderedChildFolderIds?: string[]
+  getChildFolderCount?: (folderId: string) => number
   onBack: () => void
+  onOpenFolder?: (folderId: string) => void
+  onCreateFolder?: () => void
   onShare: (folder: Folder) => void
+  onShareFolder?: (folder: Folder) => void
+  onDeleteFolder?: (folder: Folder) => void
   onRename?: (folder: Folder) => void
+  onRenameFolder?: (folder: Folder) => void
+  onAddProjectToFolder?: (folder: Folder) => void
+  onOpenFolderNotes?: () => void
+  onOpenChildFolderNotes?: (folder: Folder, options?: { autoFocusComposer?: boolean }) => void
+  selectedFolderIds?: Set<string>
+  onSelectFolder?: (folderId: string, modifiers: GridSelectionModifiers) => void
+  multiSelectActiveFolders?: boolean
+  onDeleteSelectedFolders?: () => void
   selectedProjectIds: Set<string>
-  onSelectProject: (projectId: string, selected: boolean, shiftKey?: boolean) => void
+  onSelectProject: (projectId: string, modifiers: GridSelectionModifiers) => void
   onMoveSelectedToFolder: (folderId: string | null) => void
   onClearSelection: () => void
   onArchiveSelected?: () => void | Promise<void>
@@ -42,6 +62,7 @@ interface FolderViewProps {
   onSortOrderChange: (order: SortOrder) => void
   /** Sama seperti di luar folder: drag state dan urutan untuk reorder, create project di folder ini */
   isDragActive?: boolean
+  dropTargetFolderId?: string | null
   draggedProjectIds?: Set<string>
   orderedProjectIds?: string[]
   onCreateProject?: () => void
@@ -64,9 +85,25 @@ interface FolderViewProps {
 
 export function FolderView({
   folder,
+  folderAncestors = [],
+  childFolders = [],
+  orderedChildFolderIds = [],
+  getChildFolderCount,
   onBack,
+  onOpenFolder,
+  onCreateFolder,
   onShare,
+  onShareFolder,
+  onDeleteFolder,
   onRename,
+  onRenameFolder,
+  onAddProjectToFolder,
+  onOpenFolderNotes,
+  onOpenChildFolderNotes,
+  selectedFolderIds = new Set(),
+  onSelectFolder,
+  multiSelectActiveFolders = false,
+  onDeleteSelectedFolders,
   selectedProjectIds,
   onSelectProject,
   onMoveSelectedToFolder,
@@ -78,6 +115,7 @@ export function FolderView({
   sortOrder,
   onSortOrderChange,
   isDragActive = false,
+  dropTargetFolderId = null,
   draggedProjectIds,
   orderedProjectIds,
   onCreateProject,
@@ -128,26 +166,26 @@ export function FolderView({
       return
     }
     if (trimmed.length < 3) {
-      addToast({ title: 'Nama folder minimal 3 karakter', variant: 'error' })
+      addToast({ title: 'Folder name must be at least 3 characters', variant: 'error' })
       return
     }
     if (trimmed.length > 40) {
-      addToast({ title: 'Nama folder maksimal 40 karakter', variant: 'error' })
+      addToast({ title: 'Folder name must be at most 40 characters', variant: 'error' })
       return
     }
     if (!isFolderNameUnique(trimmed, folder.id, folder.parentId ?? null)) {
-      addToast({ title: 'Nama folder sudah dipakai', variant: 'error' })
+      addToast({ title: 'Folder name already exists', variant: 'error' })
       return
     }
     try {
       await updateFolder(folder.id, { name: trimmed })
-      addToast({ title: 'Folder diubah', description: `Menjadi "${trimmed}".`, variant: 'success' })
-      notifyEvent({ type_code: 'folder', title: 'Folder diubah', body: `Menjadi "${trimmed}".` })
+      addToast({ title: 'Folder updated', description: `Renamed to "${trimmed}".`, variant: 'success' })
+      notifyEvent({ type_code: 'folder', title: 'Folder updated', body: `Renamed to "${trimmed}".` })
       setIsRenaming(false)
     } catch (e) {
       addToast({
         title: 'Error',
-        description: e instanceof Error ? e.message : 'Gagal mengubah folder',
+        description: e instanceof Error ? e.message : 'Failed to update folder',
         variant: 'error',
       })
     }
@@ -159,18 +197,20 @@ export function FolderView({
   }
 
   const displayName = isRenaming ? renameValue : folder.name
+  const resolveShareFolder = onShareFolder ?? onShare
+  const resolveRenameFolder = onRenameFolder ?? onRename
+  const breadcrumbItems = [
+    { label: 'Projects', href: '/projects' },
+    ...folderAncestors.slice(0, -1).map((ancestor) => ({
+      label: ancestor.name,
+      onClick: onOpenFolder ? () => onOpenFolder(ancestor.id) : undefined,
+    })),
+    { label: displayName },
+  ]
 
   return (
     <div className="space-y-6">
-      {/* Breadcrumb */}
-      <Breadcrumb
-        items={[
-          { label: 'Projects', href: '/projects' },
-          { label: displayName },
-        ]}
-      />
-
-      {/* Header */}
+      <Breadcrumb items={breadcrumbItems} />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={onBack}>
@@ -198,7 +238,9 @@ export function FolderView({
               <h1 className="text-2xl font-bold text-foreground truncate">{folder.name}</h1>
             )}
             {!isRenaming && folder.description && (
-              <p className="text-sm text-muted-foreground mt-1">{folder.description}</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {extractPlainTextFromHtml(folder.description).trim() || folder.description}
+              </p>
             )}
           </div>
         </div>
@@ -240,7 +282,7 @@ export function FolderView({
             <Share2 className="w-4 h-4 mr-2" />
             Share
           </Button>
-          {onRename && (
+          {resolveRenameFolder && (
             <Button
               variant="outline"
               size="sm"
@@ -250,10 +292,45 @@ export function FolderView({
               Rename
             </Button>
           )}
+          {onOpenFolderNotes && (
+            <Button variant="outline" size="sm" onClick={onOpenFolderNotes}>
+              Notes
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Search and Filters — sama seperti halaman root */}
+      <FolderNotesPanel
+        folderId={folder.id}
+        folderName={folder.name}
+      />
+
+      {childFolders.length > 0 && onOpenFolder && onDeleteFolder && resolveShareFolder && getChildFolderCount ? (
+        <FoldersSection
+          folders={childFolders}
+          getProjectCount={(folderId) => getProjectsByFolder(folderId).length}
+          getChildFolderCount={getChildFolderCount}
+          onOpenFolder={onOpenFolder}
+          onShareFolder={resolveShareFolder}
+          onDeleteFolder={onDeleteFolder}
+          sortOrder={sortOrder}
+          onSortOrderChange={onSortOrderChange}
+          showSortControl={true}
+          isDraggingFromFolderView={isDragActive}
+          isProjectDragActive={isDragActive}
+          dropTargetFolderId={dropTargetFolderId}
+          selectedFolderIds={selectedFolderIds}
+          onSelectFolder={onSelectFolder}
+          orderedFolderIds={orderedChildFolderIds}
+          onRenameFolder={resolveRenameFolder}
+          onAddProject={onAddProjectToFolder}
+          onOpenFolderNotes={onOpenChildFolderNotes}
+          layout={layout}
+          multiSelectActive={multiSelectActiveFolders}
+          onDeleteSelected={onDeleteSelectedFolders}
+        />
+      ) : null}
+
       {showFiltersPanel && onSearchChange && onStatusFilterTagsChange && (
         <FiltersBar
           searchQuery={searchQuery}
@@ -267,7 +344,8 @@ export function FolderView({
           totalProjects={totalProjects}
           activeProjects={activeProjects}
           archivedProjects={archivedProjects}
-          totalFolders={0}
+          totalFolders={childFolders.length}
+          onCreateFolder={onCreateFolder}
           onCreateProject={onCreateProject}
           selectionBar={selectionBar}
           folderMode
@@ -299,11 +377,8 @@ export function FolderView({
       {/* Selection Action Bar */}
       <SelectionActionBar
         selectedProjectCount={selectedProjectIds.size}
-        selectedFolderCount={0}
-        onClear={onClearSelection}
+        selectedFolderCount={selectedFolderIds.size}
         onMoveToFolder={onMoveSelectedToFolder}
-        archivedSelectedCount={archivedSelectedCount}
-        onDeleteSelected={onDeleteSelected}
       />
     </div>
   )

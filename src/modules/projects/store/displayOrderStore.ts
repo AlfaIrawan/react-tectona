@@ -6,11 +6,14 @@ interface DisplayOrderState {
   rootProjectOrder: string[]
   /** Urutan ID project per folder. Key = folderId, value = array project IDs. Persisted. */
   projectOrderByFolder: Record<string, string[]>
-  /** Urutan ID folder. Persisted. */
+  /** Urutan ID folder. Legacy — dipakai fallback; prefer folderOrderByParent. */
   folderOrder: string[]
+  /** Urutan folder per parent (`__root__` = level root). */
+  folderOrderByParent: Record<string, string[]>
 
   setRootProjectOrder: (order: string[]) => void
   setFolderOrder: (order: string[]) => void
+  setFolderOrderForParent: (parentId: string | null, order: string[]) => void
   setProjectOrderForFolder: (folderId: string, order: string[]) => void
 
   /** Reorder: pindahkan item dari oldIndex ke newIndex. */
@@ -28,9 +31,16 @@ export const useDisplayOrderStore = create<DisplayOrderState>()(
       rootProjectOrder: [],
       projectOrderByFolder: {},
       folderOrder: [],
+      folderOrderByParent: {},
 
       setRootProjectOrder: (order) => set({ rootProjectOrder: order }),
       setFolderOrder: (order) => set({ folderOrder: order }),
+      setFolderOrderForParent: (parentId, order) => {
+        const key = parentId ?? '__root__'
+        set((s) => ({
+          folderOrderByParent: { ...s.folderOrderByParent, [key]: order },
+        }))
+      },
       setProjectOrderForFolder: (folderId, order) =>
         set((s) => ({
           projectOrderByFolder: { ...s.projectOrderByFolder, [folderId]: order },

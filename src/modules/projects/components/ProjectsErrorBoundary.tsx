@@ -33,7 +33,7 @@ export class ProjectsErrorBoundary extends Component<Props, State> {
             title="Projects page error"
             description={
               this.state.message ??
-              'Terjadi error saat menampilkan halaman Projects. Silakan refresh atau coba lagi.'
+              'An error occurred while displaying the Projects page. Please refresh or try again.'
             }
           />
         </div>

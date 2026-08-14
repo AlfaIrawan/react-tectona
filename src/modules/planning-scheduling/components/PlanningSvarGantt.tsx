@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, startTransition, typ
 import { Gantt, Willow, type IApi, type ILink, type IScaleConfig, type ITask, type TID } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { cn } from '@/lib/utils'
-import { buildGanttSelectionColumn, isSyntheticGanttSummaryId } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
+import { buildGanttSelectionColumnWithRefs, isSyntheticGanttSummaryId } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 import { syncVariableTimelineLayout } from '../lib/planningTimelineColumnLayout'
 import { useTimelineScrollExtension } from '../lib/planningGanttTimelineScroll'
 import {
@@ -43,6 +43,18 @@ export type PlanningGanttItem = {
 function parseIsoDate(value: string): Date {
   const [y, m, d] = value.split('-').map(Number)
   return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1))
+}
+
+/** Reads a `data-row-id`/`data-col-id` attribute set by @svar-ui/react-grid's Cell, undoing
+ * its `setID` string-id prefix (`:` for strings) — mirrors @svar-ui/lib-dom's `locateID`. */
+function locateGanttCellAttr(target: EventTarget | null, attr: string): string | null {
+  let node = target as HTMLElement | null
+  while (node) {
+    const value = node.getAttribute?.(attr)
+    if (value) return value.startsWith(':') ? value.slice(1) : value
+    node = node.parentElement
+  }
+  return null
 }
 
 function durationDays(start: Date, end: Date, isMilestone: boolean): number {
@@ -594,11 +606,13 @@ function appendWorkItemTreeTasks(
       const schedule = resolveSchedule(item)
 
       if (hasChildren) {
+        // Use type "task" (not "summary") so SVAR does not run resetSummaryDates on
+        // every drag frame — that cascade freezes the tab on nested Epic/Feature trees.
         tasks.push({
           id: item.id,
           text: item.title,
           parent,
-          type: 'summary',
+          type: 'task',
           start: schedule.start,
           end: schedule.end,
           duration: durationDays(schedule.start, schedule.end, false),
@@ -606,6 +620,7 @@ function appendWorkItemTreeTasks(
           open: true,
           details: `${item.workspace} · ${item.project}`,
           ...directoryGanttFields(item),
+          ganttIsParent: true,
         })
         walk(childItems, item.id)
         continue
@@ -819,6 +834,14 @@ const GANTT_COMPACT_STYLES = `
     color: #334155 !important;
   }
 
+  /* Task title must clip — never bleed into Start/Duration. */
+  .planning-svar-gantt-host .wx-grid .wx-body .wx-cell[data-col-id="text"],
+  .planning-svar-gantt-host .wx-grid .wx-body .wx-cell[data-col-id="text"] .wx-content,
+  .planning-svar-gantt-host .wx-grid .wx-body .wx-cell[data-col-id="text"] .wx-text {
+    overflow: hidden !important;
+    max-width: 100% !important;
+  }
+
   .planning-svar-gantt-host .wx-table-container .wx-grid .wx-body .wx-cell .wx-text,
   .planning-svar-gantt-host .wx-table-container .wx-grid .wx-body .wx-cell .wx-value,
   .planning-svar-gantt-host .wx-table-container .wx-grid .wx-body .wx-cell .wx-content,
@@ -854,6 +877,11 @@ const GANTT_COMPACT_STYLES = `
   .planning-svar-gantt-host .wx-bar .wx-content,
   .planning-svar-gantt-host .wx-bar .wx-text-out {
     font-size: 10px !important;
+  }
+
+  /* Keep task labels inside the bar — external labels stack awkwardly on dense trees. */
+  .planning-svar-gantt-host .wx-bar.wx-task .wx-text-out {
+    display: none !important;
   }
 
   .planning-svar-gantt-host .wx-bar.wx-summary .wx-content,
@@ -1010,6 +1038,16 @@ const GANTT_COMPACT_STYLES = `
   .planning-svar-gantt-host--row-reorder .wx-reorder-task {
     cursor: grabbing;
   }
+
+  .planning-svar-gantt-host--chart-edit .wx-bar.wx-task,
+  .planning-svar-gantt-host--chart-edit .wx-bar.wx-milestone {
+    cursor: grab;
+  }
+
+  .planning-svar-gantt-host--chart-edit .wx-bar.wx-task:active,
+  .planning-svar-gantt-host--chart-edit .wx-bar.wx-milestone:active {
+    cursor: grabbing;
+  }
 `
 
 const GANTT_TRANSPARENT_SURFACE_STYLES = `
@@ -1081,6 +1119,20 @@ export type PlanningGanttTaskMoveEvent = {
   inProgress?: boolean
 }
 
+export type PlanningGanttTaskScheduleUpdateEvent = {
+  id: string
+  startDate: string
+  endDate: string
+  durationDays: number
+  progress?: number
+}
+
+export type PlanningGanttTaskGridEditEvent = {
+  id: string
+  field: 'title' | 'startDate' | 'durationDays'
+  value: string | number
+}
+
 type PlanningSvarGanttProps = {
   items: PlanningGanttItem[]
   workspaceOrder?: string[]
@@ -1098,12 +1150,24 @@ type PlanningSvarGanttProps = {
   enableRowReorder?: boolean
   /** Called once when a row drag ends; return false to revert the Gantt tree. */
   onTaskMoveCommit?: (event: PlanningGanttTaskMoveEvent) => boolean | void
+  /** Allow drag/move/resize of task bars on the timeline chart. */
+  enableChartEdit?: boolean
+  /** Allow double-click inline edit in the grid (native SVAR editors). */
+  enableGridEdit?: boolean
+  /** Called once when a chart bar edit ends; return false to revert. */
+  onTaskScheduleCommit?: (event: PlanningGanttTaskScheduleUpdateEvent) => boolean | void
+  /** Called when a grid cell edit is committed; return false to revert. */
+  onTaskGridEditCommit?: (event: PlanningGanttTaskGridEditEvent) => boolean | void
   /** Bump to rebuild the Gantt task tree from props (e.g. after rejected move). */
   taskStructureRevision?: number
   /** `transparent` lets parent glass-card background show through (Project Timeline). */
   surface?: 'solid' | 'transparent'
   /** Allow drag-resize on timeline scale header (uniform cellWidth). Default true. */
   timelineScaleResize?: boolean
+  /** Extend timeline when scrolling near chart edges. Disable for bounded readonly views. */
+  enableTimelineScrollExtension?: boolean
+  /** Scroll chart to the task date range once after mount (readonly previews). */
+  scrollToTaskWindowOnMount?: boolean
 }
 
 export function PlanningSvarGantt({
@@ -1119,9 +1183,15 @@ export function PlanningSvarGantt({
   onSelectedIdsChange,
   enableRowReorder = false,
   onTaskMoveCommit,
+  enableChartEdit = false,
+  enableGridEdit = false,
+  onTaskScheduleCommit,
+  onTaskGridEditCommit,
   taskStructureRevision = 0,
   surface = 'solid',
   timelineScaleResize = true,
+  enableTimelineScrollExtension = true,
+  scrollToTaskWindowOnMount = false,
 }: PlanningSvarGanttProps) {
   const { tasks, links } = useMemo(() => {
     if (layout === 'flat') return buildFlatGanttModel(items)
@@ -1129,45 +1199,69 @@ export function PlanningSvarGantt({
     if (layout === 'tree') return buildTreeGanttModel(items)
     return buildSvarGanttModel(items, workspaceOrder)
   }, [items, layout, workspaceOrder])
+  // SVAR's grid dispatches 'update-task' with a FULL copy of the row (every field, not just the
+  // edited one) — see @svar-ui/react-gantt Grid.jsx's 'update-cell' handler, which spreads `{...task}`
+  // and overwrites only the one changed key. Field *presence* on ev.task is therefore useless for
+  // figuring out what the user actually edited; this ref lets us diff against the prior value instead.
+  const tasksRef = useRef(tasks)
+  tasksRef.current = tasks
   const columns =
     columnsOverride ??
     (layout === 'flat' || layout === 'tree' || layout === 'project-tree'
       ? FLAT_GANTT_COLUMNS
       : GANTT_COLUMNS)
 
+  const ganttInnerRef = useRef<HTMLDivElement>(null)
+  const ganttApiRef = useRef<IApi | null>(null)
+  const pendingTaskMoveRef = useRef<PlanningGanttTaskMoveEvent | null>(null)
+  const pendingScheduleUpdateRef = useRef<PlanningGanttTaskScheduleUpdateEvent | null>(null)
+  const rowDragActiveRef = useRef(false)
+  const chartEditActiveRef = useRef(false)
+  const postDropQuietUntilRef = useRef(0)
+  const postDropSyncTimerRef = useRef(0)
+  const visualSyncRafRef = useRef(0)
+  const enableRowReorderRef = useRef(enableRowReorder)
+  const enableChartEditRef = useRef(enableChartEdit)
+  const enableGridEditRef = useRef(enableGridEdit)
+  const onTaskMoveCommitRef = useRef(onTaskMoveCommit)
+  const onTaskScheduleCommitRef = useRef(onTaskScheduleCommit)
+  const onTaskGridEditCommitRef = useRef(onTaskGridEditCommit)
+  const moveDropHandlingRef = useRef(false)
+  const selectedIdsRef = useRef(selectedIds)
+  const onSelectedIdsChangeRef = useRef(onSelectedIdsChange)
+  const selectableTaskIdsRef = useRef<string[]>([])
+  const bindTimelineScrollRef = useRef<(() => void) | null>(null)
+
   const selectableTaskIds = useMemo(
     () => tasks.map((task) => String(task.id)).filter((id) => !isGanttSummaryId(id)),
     [tasks],
   )
 
+  selectedIdsRef.current = selectedIds
+  onSelectedIdsChangeRef.current = onSelectedIdsChange ?? (() => {})
+  selectableTaskIdsRef.current = selectableTaskIds
+
+  const selectionColumn = useMemo(
+    () =>
+      buildGanttSelectionColumnWithRefs({
+        selectedIdsRef,
+        selectableIdsRef: selectableTaskIdsRef,
+        onSelectedIdsChangeRef,
+      }),
+    [],
+  )
+
   const ganttColumns = useMemo(() => {
     if (!multiSelect || !onSelectedIdsChange) return columns
 
-    return [
-      buildGanttSelectionColumn({
-        selectedIds,
-        selectableIds: selectableTaskIds,
-        onSelectedIdsChange,
-      }),
-      ...columns,
-    ]
-  }, [columns, multiSelect, onSelectedIdsChange, selectableTaskIds, selectedIds])
+    return [selectionColumn, ...columns]
+  }, [columns, multiSelect, onSelectedIdsChange, selectionColumn])
   const scales = useMemo(() => scalesForZoom(zoomLevel), [zoomLevel])
   const baseTimelineCellWidth = useMemo(() => cellWidthForZoom(zoomLevel), [zoomLevel])
   const [columnWidthOverridesByZoom, setColumnWidthOverridesByZoom] = useState(
     initialColumnOverridesByZoom,
   )
   const columnWidthOverrides = columnWidthOverridesByZoom[zoomLevel]
-  const ganttInnerRef = useRef<HTMLDivElement>(null)
-  const ganttApiRef = useRef<IApi | null>(null)
-  const pendingTaskMoveRef = useRef<PlanningGanttTaskMoveEvent | null>(null)
-  const rowDragActiveRef = useRef(false)
-  const postDropQuietUntilRef = useRef(0)
-  const postDropSyncTimerRef = useRef(0)
-  const visualSyncRafRef = useRef(0)
-  const enableRowReorderRef = useRef(enableRowReorder)
-  const onTaskMoveCommitRef = useRef(onTaskMoveCommit)
-  const bindTimelineScrollRef = useRef<(() => void) | null>(null)
   const layoutSyncRef = useRef({
     overrides: columnWidthOverrides,
     baseWidth: baseTimelineCellWidth,
@@ -1191,7 +1285,7 @@ export function PlanningSvarGantt({
   }, [])
 
   const scheduleGanttVisualSync = useCallback(() => {
-    if (rowDragActiveRef.current) return
+    if (rowDragActiveRef.current || chartEditActiveRef.current) return
 
     const quietRemaining = postDropQuietUntilRef.current - performance.now()
     if (quietRemaining > 0) {
@@ -1207,7 +1301,7 @@ export function PlanningSvarGantt({
     if (visualSyncRafRef.current) return
     visualSyncRafRef.current = requestAnimationFrame(() => {
       visualSyncRafRef.current = 0
-      if (rowDragActiveRef.current) return
+      if (rowDragActiveRef.current || chartEditActiveRef.current) return
       runGanttVisualSync()
       bindTimelineScrollRef.current?.()
     })
@@ -1239,8 +1333,24 @@ export function PlanningSvarGantt({
   }, [enableRowReorder])
 
   useEffect(() => {
+    enableChartEditRef.current = enableChartEdit
+  }, [enableChartEdit])
+
+  useEffect(() => {
+    enableGridEditRef.current = enableGridEdit
+  }, [enableGridEdit])
+
+  useEffect(() => {
     onTaskMoveCommitRef.current = onTaskMoveCommit
   }, [onTaskMoveCommit])
+
+  useEffect(() => {
+    onTaskScheduleCommitRef.current = onTaskScheduleCommit
+  }, [onTaskScheduleCommit])
+
+  useEffect(() => {
+    onTaskGridEditCommitRef.current = onTaskGridEditCommit
+  }, [onTaskGridEditCommit])
 
   const normalizeMoveEvent = useCallback((ev: {
     id: TID
@@ -1254,45 +1364,201 @@ export function PlanningSvarGantt({
     inProgress: ev.inProgress,
   }), [])
 
+  const normalizeScheduleUpdate = useCallback((ev: {
+    id: TID
+    task: Partial<ITask>
+  }): PlanningGanttTaskScheduleUpdateEvent | null => {
+    const start = ev.task.start
+    const end = ev.task.end ?? ev.task.start
+    if (!start || !end) return null
+
+    const startDate =
+      start instanceof Date
+        ? `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+        : String(start).slice(0, 10)
+    const endDate =
+      end instanceof Date
+        ? `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`
+        : String(end).slice(0, 10)
+    const span = Math.round((end.getTime() - start.getTime()) / 86_400_000)
+
+    return {
+      id: String(ev.id),
+      startDate,
+      endDate,
+      durationDays: span <= 0 ? 0 : Math.max(1, span),
+      progress: ev.task.progress,
+    }
+  }, [])
+
+  const normalizeGridTaskUpdate = useCallback((ev: {
+    id: TID
+    task: Partial<ITask>
+  }): PlanningGanttTaskGridEditEvent | null => {
+    const id = String(ev.id)
+    // ev.task is a full copy of the row with only the edited column changed (see the
+    // tasksRef comment above) — diff against the previous task to find which field it was,
+    // instead of checking presence (every field is always present).
+    const prevTask = tasksRef.current.find((task) => String(task.id) === id)
+
+    const toTime = (value: unknown): number | null => {
+      if (value == null) return null
+      const date = value instanceof Date ? value : new Date(String(value))
+      return Number.isNaN(date.getTime()) ? null : date.getTime()
+    }
+
+    if (ev.task.text != null && String(ev.task.text) !== String(prevTask?.text ?? '')) {
+      return { id, field: 'title', value: String(ev.task.text) }
+    }
+
+    const nextStartTime = toTime(ev.task.start)
+    const prevStartTime = prevTask ? toTime(prevTask.start) : null
+    if (nextStartTime != null && nextStartTime !== prevStartTime) {
+      const start = new Date(nextStartTime)
+      const iso = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+      return { id, field: 'startDate', value: iso }
+    }
+
+    if (ev.task.duration != null) {
+      const duration = Number(ev.task.duration)
+      const prevDuration = prevTask ? Number(prevTask.duration) : NaN
+      if (Number.isFinite(duration) && duration >= 0 && duration !== prevDuration) {
+        return { id, field: 'durationDays', value: Math.round(duration) }
+      }
+    }
+
+    return null
+  }, [])
+
   const handleGanttInit = useCallback(
     (api: IApi) => {
       ganttApiRef.current = api
       pendingTaskMoveRef.current = null
+      pendingScheduleUpdateRef.current = null
+      rowDragActiveRef.current = false
+      chartEditActiveRef.current = false
+      moveDropHandlingRef.current = false
 
+      /**
+       * SVAR move-task semantics (from @svar-ui/gantt-store):
+       * - inProgress === true  → applies the tree move + setState every drag frame
+       * - inProgress === false → ONLY clears $reorder; move already committed
+       *
+       * Returning false on the drop frame blocks $reorder cleanup and freezes the UI.
+       * Never reject drop — validate after and remount if the business rules fail.
+       */
       api.intercept('move-task', (ev) => {
         if (!enableRowReorderRef.current) return false
 
         const payload = normalizeMoveEvent(ev)
-        if (isGanttSummaryId(payload.id) || (payload.target && isGanttSummaryId(payload.target))) {
-          pendingTaskMoveRef.current = null
-          rowDragActiveRef.current = false
-          return false
+
+        if (ev.inProgress !== false) {
+          rowDragActiveRef.current = true
+          pendingTaskMoveRef.current = payload
+          return true
         }
 
-        if (ev.inProgress === false) {
-          rowDragActiveRef.current = false
-          postDropQuietUntilRef.current = performance.now() + 280
-          const pending = pendingTaskMoveRef.current
-          pendingTaskMoveRef.current = null
-          if (pending) {
+        // Drop frame: always allow SVAR to clear $reorder.
+        rowDragActiveRef.current = false
+        postDropQuietUntilRef.current = performance.now() + 1500
+        const dropPayload = pendingTaskMoveRef.current ?? payload
+        pendingTaskMoveRef.current = null
+
+        if (!moveDropHandlingRef.current) {
+          moveDropHandlingRef.current = true
+          queueMicrotask(() => {
+            moveDropHandlingRef.current = false
+            onTaskMoveCommitRef.current?.(dropPayload)
+          })
+        }
+
+        return true
+      })
+
+      api.intercept('update-task', (ev) => {
+        // Drop/commit frame that ends an in-progress chart-bar drag. This MUST be checked
+        // before the general "in-progress" exclusion below: chartEditActiveRef is set true
+        // on the first in-progress frame and included in that exclusion's condition, so if
+        // the reset lived there it would never run — the flag would gate the very branch
+        // meant to clear it, permanently stuck true and silently swallowing every later
+        // update-task event (including unrelated grid edits like the Start-date column).
+        if (chartEditActiveRef.current && enableChartEditRef.current && ev.inProgress === false) {
+          chartEditActiveRef.current = false
+          postDropQuietUntilRef.current = performance.now() + 1200
+          const pending = pendingScheduleUpdateRef.current
+          pendingScheduleUpdateRef.current = null
+          const normalized = pending ?? normalizeScheduleUpdate(ev)
+          if (normalized) {
+            // Always allow store commit; revert via remount if business rules reject.
             queueMicrotask(() => {
-              onTaskMoveCommitRef.current?.(pending)
+              const accepted = onTaskScheduleCommitRef.current?.(normalized) !== false
+              if (!accepted) {
+                // Caller bumps taskStructureRevision on reject.
+              }
             })
           }
           return true
         }
 
-        rowDragActiveRef.current = true
-        pendingTaskMoveRef.current = payload
+        // Never block store maintenance (summary dates, drag previews, move side-effects).
+        if (
+          ev.inProgress === true ||
+          rowDragActiveRef.current ||
+          chartEditActiveRef.current ||
+          isGanttSummaryId(String(ev.id)) ||
+          ev.task?.type === 'summary' ||
+          ev.eventSource === 'move-task' ||
+          ev.eventSource === 'drag-task'
+        ) {
+          if (ev.inProgress === true && enableChartEditRef.current) {
+            chartEditActiveRef.current = true
+            const normalized = normalizeScheduleUpdate(ev)
+            if (normalized) pendingScheduleUpdateRef.current = normalized
+          }
+          return true
+        }
+
+        if (enableGridEditRef.current) {
+          const normalized = normalizeGridTaskUpdate(ev)
+          if (normalized) {
+            postDropQuietUntilRef.current = performance.now() + 400
+            queueMicrotask(() => {
+              onTaskGridEditCommitRef.current?.(normalized)
+            })
+          }
+        }
+
         return true
       })
-
-      api.on('render-data', () => {
-        scheduleGanttVisualSync()
-      })
     },
-    [normalizeMoveEvent, scheduleGanttVisualSync],
+    [normalizeGridTaskUpdate, normalizeMoveEvent, normalizeScheduleUpdate],
   )
+
+  useEffect(() => {
+    const host = ganttInnerRef.current
+    if (!host || !enableGridEdit) return undefined
+
+    // SVAR's own grid never wires click/double-click to open a per-cell editor for columns
+    // that declare one (react-gantt's dblclick handler explicitly skips them; the grid-store
+    // only opens the editor via the F2 hotkey — see @svar-ui/grid-store DataStore.ts's
+    // "hotkey" handler). That leaves editing our Task title / Start / Duration cells
+    // undiscoverable via the conventional double-click. Wire it up directly. 'open-editor' is
+    // an action on the INNER react-grid table API (getTable()), not the outer Gantt api.
+    const onDblClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      // The tree expand/collapse toggle lives inside the same "text" cell — don't hijack it.
+      if (target?.closest('[data-action="toggle-row"]')) return
+      const rowId = locateGanttCellAttr(event.target, 'data-row-id')
+      const columnId = locateGanttCellAttr(event.target, 'data-col-id')
+      if (!rowId || !columnId || isGanttSummaryId(rowId)) return
+      const tableApi = ganttApiRef.current?.getTable()
+      if (!tableApi || tableApi instanceof Promise) return
+      tableApi.exec('open-editor', { id: rowId, column: columnId })
+    }
+
+    host.addEventListener('dblclick', onDblClick)
+    return () => host.removeEventListener('dblclick', onDblClick)
+  }, [enableGridEdit])
 
   useTimelineScaleColumnResize(
     ganttInnerRef,
@@ -1315,21 +1581,73 @@ export function PlanningSvarGantt({
     ganttInnerRef,
     baseGanttWindow,
     zoomLevel,
-    tasks.length > 0,
+    enableTimelineScrollExtension && tasks.length > 0,
     bindTimelineScrollRef,
   )
 
+  const initialScrollDoneRef = useRef(false)
+
+  useEffect(() => {
+    initialScrollDoneRef.current = false
+  }, [tasks, zoomLevel, taskStructureRevision])
+
+  useEffect(() => {
+    if (!scrollToTaskWindowOnMount || tasks.length === 0) return
+    if (initialScrollDoneRef.current) return
+
+    const host = ganttInnerRef.current
+    if (!host) return
+
+    let cancelled = false
+    let attempts = 0
+
+    const applyInitialScroll = () => {
+      if (cancelled || initialScrollDoneRef.current) return
+
+      const chart = host.querySelector<HTMLElement>('.wx-chart')
+      if (!chart || chart.scrollWidth <= chart.clientWidth) {
+        if (attempts < 8) {
+          attempts += 1
+          requestAnimationFrame(applyInitialScroll)
+        }
+        return
+      }
+
+      let minMs = Number.POSITIVE_INFINITY
+      for (const task of tasks) {
+        const rawStart = task.start
+        const start =
+          rawStart instanceof Date
+            ? rawStart
+            : typeof rawStart === 'string' && rawStart.trim()
+              ? parseIsoDate(rawStart)
+              : null
+        if (!start) continue
+        minMs = Math.min(minMs, start.getTime())
+      }
+      if (!Number.isFinite(minMs)) return
+
+      const windowStart = ganttWindow.start.getTime()
+      const windowEnd = ganttWindow.end.getTime()
+      const span = windowEnd - windowStart
+      if (span <= 0) return
+
+      const fraction = Math.max(0, Math.min(1, (minMs - windowStart) / span))
+      chart.scrollLeft = Math.max(0, fraction * chart.scrollWidth - chart.clientWidth * 0.08)
+      initialScrollDoneRef.current = true
+    }
+
+    const raf = requestAnimationFrame(applyInitialScroll)
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+    }
+  }, [ganttWindow.end, ganttWindow.start, scrollToTaskWindowOnMount, tasks])
+
   useEffect(() => {
     scheduleGanttVisualSync()
-  }, [
-    columnWidthOverrides,
-    baseTimelineCellWidth,
-    scheduleGanttVisualSync,
-    tasks.length,
-    zoomLevel,
-    ganttWindow.end.getTime(),
-    ganttWindow.start.getTime(),
-  ])
+  }, [baseTimelineCellWidth, columnWidthOverrides, scheduleGanttVisualSync, zoomLevel])
 
   const todayMarker = useMemo(
     () => todayMarkerForZoom(zoomLevel, ganttWindow),
@@ -1344,6 +1662,8 @@ export function PlanningSvarGantt({
 
   const handleSelectTask = useCallback(
     (ev: { id?: TID }) => {
+      if (rowDragActiveRef.current) return
+
       const id = ev?.id != null ? String(ev.id) : ''
       if (!id || isGanttSummaryId(id)) return
 
@@ -1377,6 +1697,7 @@ export function PlanningSvarGantt({
         zoomLevel === 'Month' && 'planning-svar-gantt-host--zoom-month',
         zoomLevel === 'Day' && 'planning-svar-gantt-host--zoom-day',
         enableRowReorder && 'planning-svar-gantt-host--row-reorder',
+        enableChartEdit && 'planning-svar-gantt-host--chart-edit',
         surface === 'transparent'
           ? 'planning-svar-gantt-host--transparent bg-transparent'
           : 'bg-white',
@@ -1411,6 +1732,7 @@ export function PlanningSvarGantt({
               cellWidth={baseTimelineCellWidth}
               scaleHeight={scaleHeightForZoom(zoomLevel)}
               zoom
+              readonly={!(enableChartEdit || enableGridEdit || enableRowReorder)}
               onSelectTask={handleSelectTask}
             />
           </Willow>

@@ -2,13 +2,25 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { X, CheckCircle2, AlertCircle, AlertTriangle, Bell, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useSettingsPanelStore } from '@/stores/settings-panel-store'
+import { useRightDrawerStore } from '@/stores/right-drawer-store'
+import { useRequestJoinWorkspaceStore } from '@/stores/request-join-workspace-store'
 
-/** Above workspace drawers (z-1100) and most page modals (≤1350). */
-const TOAST_LAYER_Z_INDEX = 'z-[1400]'
+/** Above workspace drawers (z-1100), floating chat (z-1150), and voice prompt (z-1400). */
+const TOAST_LAYER_Z_INDEX = 'z-[1600]'
 
-/** Waktu toast tetap terbaca setelah animasi masuk (ms). */
+/** Matches AppLayout settings drawer widths. */
+const SETTINGS_DRAWER_WIDTH_PX = {
+  todo: 480,
+  theme: 320,
+} as const
+
+/** Gap between toast stack and the drawer edge (px). */
+const TOAST_EDGE_GAP_PX = 24
+
+/** How long the toast stays readable after the enter animation (ms). */
 const TOAST_VISIBLE_MS = 7500
-/** Durasi slide/fade masuk & keluar (ms) - selaras `duration-[320ms]` di bawah. */
+/** Slide/fade in & out duration (ms) - matches `duration-[320ms]` below. */
 const TOAST_MOTION_MS = 320
 
 interface ToastContextType {
@@ -214,7 +226,7 @@ function ToastItem({
             toast.variant === 'info' && 'hover:bg-sky-500/20 text-sky-300 hover:text-sky-200',
             (toast.variant === 'default' || !toast.variant) && 'hover:bg-slate-700/50 text-slate-400 hover:text-slate-200'
           )}
-          aria-label="Tutup notifikasi"
+          aria-label="Close notification"
         >
           <X className="w-5 h-5" />
         </button>
@@ -225,6 +237,23 @@ function ToastItem({
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<Toast[]>([])
+  const settingsPanel = useSettingsPanelStore((s) => s.panel)
+  const rightDrawerOpen = useRightDrawerStore((s) => s.open)
+  const rightDrawerWidth = useRightDrawerStore((s) => s.width)
+  const requestJoinOpen = useRequestJoinWorkspaceStore((s) => s.open)
+
+  const rightOffsetPx = React.useMemo(() => {
+    const settingsWidth =
+      settingsPanel === 'todo'
+        ? SETTINGS_DRAWER_WIDTH_PX.todo
+        : settingsPanel === 'theme'
+          ? SETTINGS_DRAWER_WIDTH_PX.theme
+          : 0
+    const detailWidth = rightDrawerOpen ? rightDrawerWidth : 0
+    const joinWidth = requestJoinOpen ? 420 : 0
+    const reserve = Math.max(settingsWidth, detailWidth, joinWidth, 0)
+    return reserve > 0 ? reserve + TOAST_EDGE_GAP_PX : TOAST_EDGE_GAP_PX
+  }, [settingsPanel, rightDrawerOpen, rightDrawerWidth, requestJoinOpen])
 
   const addToast = React.useCallback((toast: Omit<Toast, 'id'>) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -239,16 +268,17 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     return subscribeGlobalToast(addToast)
   }, [addToast])
 
-  // Ambil toasts yang paling baru (dari belakang array)
+  // Take the most recent toasts (from the end of the array)
   const visibleToasts = toasts.slice(-MAX_VISIBLE_TOASTS)
   const hiddenToastsCount = Math.max(0, toasts.length - MAX_VISIBLE_TOASTS)
 
   const toastStack = (
     <div
       className={cn(
-        'fixed top-20 right-6 flex flex-col gap-3 pointer-events-none',
+        'fixed top-20 flex flex-col gap-3 pointer-events-none transition-[right] duration-300 ease-out',
         TOAST_LAYER_Z_INDEX
       )}
+      style={{ right: rightOffsetPx }}
       aria-live="polite"
       aria-relevant="additions"
     >

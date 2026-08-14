@@ -99,7 +99,7 @@ const PANEL_MENU_ITEMS: PanelMenuItem[] = [
   {
     id: 'overview',
     label: 'Resource Overview',
-    description: 'Command posture untuk alokasi, utilisasi, dan kapasitas tim.',
+    description: 'Command posture for team allocation, utilization, and capacity.',
     icon: Sparkles,
     badge: 'Command',
     group: 'Command Center',
@@ -115,7 +115,7 @@ const PANEL_MENU_ITEMS: PanelMenuItem[] = [
   {
     id: 'capacity',
     label: 'Capacity Planning',
-    description: 'Kontrol kapasitas dan pemerataan beban resource.',
+    description: 'Capacity control and resource load balancing.',
     icon: Target,
     badge: 'Plan',
     group: 'Control Library',
@@ -123,7 +123,7 @@ const PANEL_MENU_ITEMS: PanelMenuItem[] = [
   {
     id: 'insight',
     label: 'Utilization Insight',
-    description: 'Analitik utilisasi untuk deteksi overload/underload.',
+    description: 'Utilization analytics for overload/underload detection.',
     icon: BarChart3,
     badge: 'Insight',
     group: 'Assurance & Traceability',
@@ -1131,7 +1131,7 @@ export function ResourceManagementPage() {
       id: 'high',
       label: 'High Utilization',
       value: `${resources.filter((x) => x.utilization > 90).length}`,
-      subtext: 'Perlu rebalance untuk cegah overcapacity',
+      subtext: 'Needs rebalancing to prevent overcapacity',
       trend: '+1',
       icon: AlertTriangle,
       trendColor: '#f97316',
@@ -1141,7 +1141,7 @@ export function ResourceManagementPage() {
       id: 'available',
       label: 'Available',
       value: `${resources.filter((x) => x.availabilityStatus === 'Available').length}`,
-      subtext: 'Kapasitas siap dialokasikan cepat',
+      subtext: 'Capacity ready for quick allocation',
       trend: '-1',
       icon: CheckCircle2,
       trendColor: '#10b981',
@@ -1151,7 +1151,7 @@ export function ResourceManagementPage() {
       id: 'avg',
       label: 'Avg Utilization',
       value: `${Math.round(resources.reduce((a, b) => a + b.utilization, 0) / resources.length)}%`,
-      subtext: 'Rata-rata utilisasi seluruh resource',
+      subtext: 'Average utilization across all resources',
       trend: '+2.4%',
       icon: Activity,
       trendColor: '#6366f1',
@@ -1161,7 +1161,7 @@ export function ResourceManagementPage() {
       id: 'over',
       label: 'Overallocated',
       value: `${resources.filter((x) => x.allocation > 100).length}`,
-      subtext: 'Resource dengan alokasi melewati 100%',
+      subtext: 'Resources with allocation exceeding 100%',
       trend: '0',
       icon: Target,
       trendColor: '#f59e0b',
@@ -1515,7 +1515,7 @@ export function ResourceManagementPage() {
             <Panel
               id="capacity"
               title="Capacity Planning Panel"
-              description="Ringkasan kapasitas untuk perencanaan alokasi resource."
+              description="Capacity summary for resource allocation planning."
               highlight={activePanel === 'capacity'}
             >
               <div className="space-y-4">
@@ -1541,7 +1541,7 @@ export function ResourceManagementPage() {
             <Panel
               id="insight"
               title="Utilization Insight Panel"
-              description="Insight utilisasi resource untuk deteksi overload dan underload."
+              description="Resource utilization insight for overload and underload detection."
               highlight={activePanel === 'insight'}
             >
               <div className="space-y-4">
