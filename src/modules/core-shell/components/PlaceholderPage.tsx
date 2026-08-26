@@ -15,7 +15,7 @@ export function PlaceholderPage({ title, description, icon: Icon }: PlaceholderP
 
       <PageHeader title={title} description={description} />
 
-      <div className="glass-card rounded-2xl p-6">
+      <div className="liquid-glass-enterprise-panel rounded-2xl p-6">
         {Icon && (
           <div className="mb-4 inline-flex rounded-xl bg-primary/10 p-2.5">
             <Icon className="h-5 w-5 text-primary" />

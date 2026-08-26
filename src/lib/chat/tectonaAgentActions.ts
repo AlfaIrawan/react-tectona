@@ -28,6 +28,8 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { deleteWorkspaceOrgKbMirror, syncWorkspaceOrgEntryToKb } from '@/lib/kb/workspaceOrgKbSync'
 import { applyDocumentChatEdit } from '@/lib/api/documentKnowledgeApi'
+import { getKbEntry, patchKbEntry } from '@/lib/api/tectonaKbApi'
+import { applyIdeaSectionRevisionFromChat } from '@/lib/chat/ideaSectionRevisionFromChat'
 
 export type TectonaAgentActionCode =
   | 'workspace.create'
@@ -36,8 +38,10 @@ export type TectonaAgentActionCode =
   | 'workspace.governance.apply'
   | 'workspace.member.add'
   | 'idea.content.inject'
+  | 'idea.section.revision'
   | 'app.navigate'
   | 'document.apply_chat_edit'
+  | 'knowledge.person_alias.add'
 
 export type TectonaIdeaContentUpdate = {
   target: string
@@ -158,6 +162,57 @@ function dispatchDocumentEdited(documentId: string, attachmentId: string): void 
   window.dispatchEvent(
     new CustomEvent('tectona:document-edited', { detail: { documentId, attachmentId } }),
   )
+}
+
+function normalizeKnowledgeText(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/\s+/g, ' ')
+}
+
+export function addPersonAliasToKbHtml(content: string, alias: string): string {
+  const normalizedAlias = normalizeKnowledgeText(alias)
+  if (!normalizedAlias) throw new Error('Alias is required.')
+
+  const doc = new DOMParser().parseFromString(content, 'text/html')
+  const listItems = Array.from(doc.body.querySelectorAll('li'))
+  const aliasItem = listItems.find((item) => {
+    const label = item.querySelector('strong')?.textContent?.replace(/:\s*$/, '') ?? ''
+    return ['nama panggilan', 'alias'].includes(normalizeKnowledgeText(label))
+  })
+  if (aliasItem) {
+    if (normalizeKnowledgeText(aliasItem.textContent ?? '').includes(normalizedAlias)) {
+      return doc.body.innerHTML
+    }
+    aliasItem.append(doc.createTextNode(`, ${alias}`))
+    return doc.body.innerHTML
+  }
+
+  const nameItem = listItems.find((item) => {
+    const label = item.querySelector('strong')?.textContent?.replace(/:\s*$/, '') ?? ''
+    return normalizeKnowledgeText(label) === 'nama'
+  })
+  if (!nameItem) throw new Error('Canonical person name field was not found in the KB profile.')
+
+  const newItem = doc.createElement('li')
+  const label = doc.createElement('strong')
+  label.textContent = 'Nama Panggilan:'
+  newItem.append(label, doc.createTextNode(` ${alias}`))
+  nameItem.insertAdjacentElement('afterend', newItem)
+  return doc.body.innerHTML
+}
+
+async function applyPersonAliasKnowledge(payload: Record<string, unknown>): Promise<string> {
+  const entryId = String(payload.entry_id ?? '').trim()
+  const alias = String(payload.alias ?? '').trim()
+  if (!entryId) throw new Error('KB entry id is required.')
+  if (!alias) throw new Error('Alias is required.')
+
+  const entry = await getKbEntry(entryId)
+  const content = addPersonAliasToKbHtml(entry.content, alias)
+  if (content !== entry.content) {
+    await patchKbEntry(entryId, { content })
+  }
+  window.dispatchEvent(new CustomEvent('tectona:kb-updated', { detail: { entryId } }))
+  return `Alias "${alias}" tersimpan pada profil "${entry.title}" dan tersedia untuk user lain.`
 }
 
 async function applyDocumentSectionEdit(payload: Record<string, unknown>): Promise<string> {
@@ -452,8 +507,23 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
     case 'idea.content.inject':
       return applyIdeaContentInject(payload)
 
+    case 'idea.section.revision': {
+      const transition = payload.transition === 'reject' ? 'reject' : 'accept'
+      return applyIdeaSectionRevisionFromChat({
+        ideaId: String(payload.idea_id ?? '').trim(),
+        sectionKey: String(payload.section_key ?? '').trim(),
+        content: String(payload.content ?? '').trim(),
+        transition,
+        sourceSessionId: typeof payload.source_session_id === 'string' ? payload.source_session_id : null,
+        isImpactSection: Boolean(payload.is_impact_section),
+      })
+    }
+
     case 'document.apply_chat_edit':
       return applyDocumentSectionEdit(payload)
+
+    case 'knowledge.person_alias.add':
+      return applyPersonAliasKnowledge(payload)
 
     case 'app.navigate': {
       const pathname = String(payload.pathname ?? '').trim()
@@ -497,6 +567,7 @@ export function actionCategoryLabel(actionCode: string): string {
   if (actionCode === 'app.navigate') return 'Navigation'
   if (actionCode.startsWith('idea.')) return 'Idea action'
   if (actionCode.startsWith('document.')) return 'Document action'
+  if (actionCode.startsWith('knowledge.')) return 'Knowledge action'
   return 'Workspace action'
 }
 
@@ -545,6 +616,13 @@ export function formatActionPayloadPreview(action: TectonaProposedAction): Array
       }
       break
     }
+    case 'idea.section.revision':
+      push('Section', 'section_label')
+      push('Action', 'transition')
+      if (typeof p.content === 'string' && p.content.trim()) {
+        rows.push({ label: 'Proposal', value: p.content.slice(0, 240) })
+      }
+      break
     case 'app.navigate':
       push('Page', 'module_label')
       push('Route', 'pathname')
@@ -554,6 +632,10 @@ export function formatActionPayloadPreview(action: TectonaProposedAction): Array
       if (typeof p.proposed_text === 'string' && p.proposed_text.trim()) {
         rows.push({ label: 'New content', value: p.proposed_text.slice(0, 240) })
       }
+      break
+    case 'knowledge.person_alias.add':
+      push('Profil', 'canonical_name')
+      push('Alias baru', 'alias')
       break
     default:
       break

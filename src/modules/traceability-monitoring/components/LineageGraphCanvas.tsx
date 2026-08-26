@@ -102,7 +102,7 @@ function LineageGraphCanvasInner(props: LineageGraphCanvasProps) {
   )
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl border border-border/60 bg-[radial-gradient(circle_at_1px_1px,rgba(148,163,184,0.22)_1px,transparent_1px)] [background-size:22px_22px]">
+    <div className="relative h-full min-h-[320px] w-full min-w-0 overflow-hidden rounded-2xl border border-border/60 bg-[radial-gradient(circle_at_1px_1px,rgba(148,163,184,0.22)_1px,transparent_1px)] [background-size:22px_22px]">
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}

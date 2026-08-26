@@ -1,79 +1,69 @@
-import { Link } from 'lucide-react'
-
-export type AssistantEvidenceItem = {
-  source_service: string
-  endpoint: string
-  key_ref?: string | null
-  details?: Record<string, unknown> | null
-}
+import { BookOpen, ExternalLink, FileText, Globe2 } from 'lucide-react'
+import {
+  evidenceHref,
+  evidenceLabel,
+  evidenceSourceKind,
+  filterCitedEvidence,
+  type AssistantEvidenceItem,
+  type EvidenceSourceKind,
+} from './assistantEvidence'
 
 type AssistantEvidenceFootnotesProps = {
   evidence: AssistantEvidenceItem[]
 }
 
-function evidenceLabel(item: AssistantEvidenceItem): string {
-  const details = item.details ?? {}
-  const title = typeof details.title === 'string' ? details.title.trim() : ''
-  if (title) return title
-  return item.key_ref ?? 'Knowledge Base entry'
-}
-
-function isDocumentRepositoryEvidence(item: AssistantEvidenceItem): boolean {
-  const sourceType =
-    typeof item.details?.source_type === 'string' ? item.details.source_type.trim() : ''
-  return (
-    item.source_service === 'tectona-document-knowledge' ||
-    (item.source_service === 'tectona-knowledge-index' && sourceType === 'document_repository')
-  )
-}
-
-function isKbEvidence(item: AssistantEvidenceItem): boolean {
-  if (!item.key_ref) return false
-  if (isDocumentRepositoryEvidence(item)) return false
-  return (
-    item.source_service === 'tectona-kb' ||
-    item.source_service === 'tectona-knowledge-index'
-  )
-}
-
-function evidenceHref(item: AssistantEvidenceItem): string {
-  const keyRef = encodeURIComponent(item.key_ref ?? '')
-  if (isDocumentRepositoryEvidence(item)) {
-    return `/document-knowledge-management?documentId=${keyRef}`
-  }
-  return `/document-knowledge-management?kbEntry=${keyRef}`
-}
-
-// SOURCES footnotes are disabled in the chat sidebar per product decision (2026-06-24):
-// the backend attaches every KB entry it retrieved per turn (not only the ones the answer
-// actually cites), so the list was noisy/irrelevant (e.g. stakeholder profiles shown for a
-// "buka direktori workspace" navigation reply). Flip this flag to `true` to restore it.
-// Typed as `boolean` (not the literal `false`) so the body below stays reachable for linting.
-const SHOW_CHAT_SOURCES: boolean = false
+const SOURCE_PRESENTATION = {
+  internal: { label: 'Internal KB', Icon: BookOpen },
+  document: { label: 'Document', Icon: FileText },
+  web: { label: 'Web', Icon: Globe2 },
+} satisfies Record<EvidenceSourceKind, { label: string; Icon: typeof BookOpen }>
 
 export function AssistantEvidenceFootnotes({ evidence }: AssistantEvidenceFootnotesProps) {
-  if (!SHOW_CHAT_SOURCES) return null
-
-  const citedEntries = evidence.filter((item) => isKbEvidence(item) || isDocumentRepositoryEvidence(item))
+  const citedEntries = filterCitedEvidence(evidence)
   if (citedEntries.length === 0) return null
 
   return (
-    <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Sources
+    <div className="mt-2 border-t border-border/60 pt-2" aria-label="Evidence sources">
+      <p className="mb-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+        Evidence ({citedEntries.length})
       </p>
-      <ul className="space-y-1">
-        {citedEntries.map((item) => (
-          <li key={`${item.source_service}:${item.key_ref}`} className="text-xs">
-            <Link className="mr-1 inline h-3 w-3 align-text-bottom text-sky-600" aria-hidden />
-            <a
-              href={evidenceHref(item)}
-              className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
-            >
-              {evidenceLabel(item)}
-            </a>
-          </li>
-        ))}
+      <ul className="space-y-1.5">
+        {citedEntries.map((item) => {
+          const kind = evidenceSourceKind(item)
+          const { label, Icon } = SOURCE_PRESENTATION[kind]
+          const href = evidenceHref(item)
+          const content = (
+            <>
+              <Icon className="h-3.5 w-3.5 shrink-0 text-sky-700 dark:text-sky-300" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="mr-1.5 font-medium text-muted-foreground">{label}</span>
+                <span className="break-words text-sky-800 dark:text-sky-200">
+                  {evidenceLabel(item)}
+                </span>
+              </span>
+              {kind === 'web' && href ? (
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+              ) : null}
+            </>
+          )
+
+          return (
+            <li key={`${item.source_service}:${item.key_ref}`} className="text-xs leading-4">
+              {href ? (
+                <a
+                  href={href}
+                  className="flex items-start gap-1.5 underline-offset-2 hover:underline"
+                  target={kind === 'web' ? '_blank' : undefined}
+                  rel={kind === 'web' ? 'noreferrer' : undefined}
+                >
+                  {content}
+                </a>
+              ) : (
+                <div className="flex items-start gap-1.5">{content}</div>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

@@ -295,7 +295,7 @@ export function OAuthCallbackPage() {
   if (error && !conflictOpen) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center p-4">
-        <div className="glass-card w-full max-w-md mx-auto rounded-lg p-8 space-y-4 text-center">
+        <div className="liquid-glass-enterprise-panel w-full max-w-md mx-auto rounded-lg p-8 space-y-4 text-center">
           <p className="text-sm text-destructive">{error}</p>
           <Link to="/login" className="text-sm text-primary hover:underline">
             Back to sign in

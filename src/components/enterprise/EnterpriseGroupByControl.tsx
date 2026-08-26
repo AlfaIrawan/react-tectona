@@ -16,12 +16,14 @@ export interface EnterpriseGroupByControlProps<K extends string> {
   options: readonly EnterpriseGroupByOption<K>[]
   value: K | null
   onChange: (key: K | null) => void
+  disabled?: boolean
 }
 
 export function EnterpriseGroupByControl<K extends string>({
   options,
   value,
   onChange,
+  disabled = false,
 }: EnterpriseGroupByControlProps<K>) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -87,8 +89,11 @@ export function EnterpriseGroupByControl<K extends string>({
           className={cn(
             'inline-flex h-10 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm transition',
             'hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30',
+            disabled && 'cursor-not-allowed opacity-60 hover:bg-background/80',
           )}
+          disabled={disabled}
           onClick={() => {
+            if (disabled) return
             if (open) {
               setOpen(false)
               setSearch('')

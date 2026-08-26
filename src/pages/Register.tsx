@@ -66,7 +66,7 @@ export function RegisterPage() {
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4">
       <div className="w-full max-w-md mx-auto">
-        <div className="glass-card rounded-lg shadow-2xl p-8 space-y-6">
+        <div className="liquid-glass-enterprise-panel rounded-lg p-8 space-y-6">
           <AuthBackToLoginLink />
 
           <div id="register-card-header" className="space-y-2 text-center">

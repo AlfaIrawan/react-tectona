@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import {
   Calendar,
   CalendarDays,
   CalendarRange,
-  ChevronLeft,
-  ChevronRight,
   GanttChartSquare,
   LayoutGrid,
 } from 'lucide-react'
@@ -20,6 +18,35 @@ import {
   type PlanningGanttZoomLevel,
 } from '@/modules/planning-scheduling/components/PlanningSvarGantt'
 import { TIMELINE_GANTT_GRID_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
+
+function computeConversionTimelineWindow(
+  items: PlanningGanttItem[],
+): { start: Date; end: Date } {
+  let minMs = Number.POSITIVE_INFINITY
+
+  for (const item of items) {
+    if (!item.startDate) continue
+    const start = Date.parse(`${item.startDate}T00:00:00Z`)
+    if (Number.isFinite(start)) minMs = Math.min(minMs, start)
+  }
+
+  const now = new Date()
+  const currentYear = now.getUTCFullYear()
+  const rollingStart = new Date(Date.UTC(currentYear, 0, 1))
+  const rollingEnd = new Date(Date.UTC(currentYear + 5, 11, 31))
+
+  if (!Number.isFinite(minMs)) {
+    return {
+      start: rollingStart,
+      end: rollingEnd,
+    }
+  }
+
+  const taskAnchoredStart = new Date(minMs - 14 * 86_400_000)
+  const start = taskAnchoredStart.getTime() < rollingStart.getTime() ? taskAnchoredStart : rollingStart
+
+  return { start, end: rollingEnd }
+}
 
 const GANTT_ZOOM_OPTIONS: {
   level: PlanningGanttZoomLevel
@@ -37,6 +64,7 @@ const toolbarFocusClass =
 
 const CONVERSION_GANTT_SCROLL_STYLES = `
   .idea-conversion-gantt-host .wx-chart {
+    overscroll-behavior-x: none;
     scrollbar-width: thin;
     scrollbar-color: rgba(148, 163, 184, 0.75) rgba(241, 245, 249, 0.65);
   }
@@ -230,7 +258,6 @@ type IdeaConversionGanttToolbarProps = {
   projectName?: string
   zoomLevel: PlanningGanttZoomLevel
   onZoomLevelChange: (level: PlanningGanttZoomLevel) => void
-  onTimelineNavigate?: (direction: 'prev' | 'next') => void
   className?: string
 }
 
@@ -239,7 +266,6 @@ export function IdeaConversionGanttToolbar({
   projectName,
   zoomLevel,
   onZoomLevelChange,
-  onTimelineNavigate,
   className,
 }: IdeaConversionGanttToolbarProps) {
   const itemCount = useMemo(
@@ -254,39 +280,6 @@ export function IdeaConversionGanttToolbar({
         className,
       )}
     >
-      {onTimelineNavigate ? (
-        <div
-          className="inline-flex shrink-0 rounded-lg border border-border/60 bg-muted/20 p-0.5"
-          role="group"
-          aria-label="Timeline navigation"
-        >
-          <button
-            type="button"
-            aria-label="Previous period"
-            title="Previous period"
-            onClick={() => onTimelineNavigate('prev')}
-            className={cn(
-              'inline-flex h-8 w-8 items-center justify-center rounded-md transition hover:text-foreground',
-              toolbarFocusClass,
-            )}
-          >
-            <ChevronLeft className="h-4 w-4" aria-hidden />
-          </button>
-          <button
-            type="button"
-            aria-label="Next period"
-            title="Next period"
-            onClick={() => onTimelineNavigate('next')}
-            className={cn(
-              'inline-flex h-8 w-8 items-center justify-center rounded-md transition hover:text-foreground',
-              toolbarFocusClass,
-            )}
-          >
-            <ChevronRight className="h-4 w-4" aria-hidden />
-          </button>
-        </div>
-      ) : null}
-
       <div
         className="inline-flex shrink-0 rounded-lg border border-border/60 bg-muted/20 p-0.5"
         role="group"
@@ -326,15 +319,15 @@ type IdeaConversionTimelineProps = {
   sprints: IdeaConversionSprint[]
   projectName?: string
   zoomLevel: PlanningGanttZoomLevel
-  onChartHostReady?: (host: HTMLDivElement | null) => void
+  timelineWindowOverride: { start: Date; end: Date }
   className?: string
 }
 
-export function IdeaConversionTimeline({
+export const IdeaConversionTimeline = memo(function IdeaConversionTimeline({
   sprints,
   projectName,
   zoomLevel,
-  onChartHostReady,
+  timelineWindowOverride,
   className,
 }: IdeaConversionTimelineProps) {
   const [selectedId, setSelectedId] = useState('')
@@ -348,11 +341,6 @@ export function IdeaConversionTimeline({
     setGanttItems(mapConversionSprintsToGanttItems(sprints, projectName ?? 'Idea Conversion'))
     setTaskStructureRevision((value) => value + 1)
   }, [projectName, sprints])
-
-  useEffect(() => {
-    onChartHostReady?.(chartHostRef.current)
-    return () => onChartHostReady?.(null)
-  }, [onChartHostReady])
 
   const handleTaskScheduleCommit = useCallback((event: PlanningGanttTaskScheduleUpdateEvent) => {
     setGanttItems((prev) =>
@@ -436,11 +424,52 @@ export function IdeaConversionTimeline({
             onTaskGridEditCommit={handleTaskGridEditCommit}
             taskStructureRevision={taskStructureRevision}
             timelineScaleResize={false}
-            enableTimelineScrollExtension
+            enableTimelineScrollExtension={false}
+            timelineWindowOverride={timelineWindowOverride}
             scrollToTaskWindowOnMount
             surface="solid"
           />
         )}
+      </div>
+    </div>
+  )
+})
+
+type IdeaConversionGanttWorkspaceProps = {
+  sprints: IdeaConversionSprint[]
+  projectName?: string
+  zoomLevel: PlanningGanttZoomLevel
+  onZoomLevelChange: (level: PlanningGanttZoomLevel) => void
+  className?: string
+}
+
+/** Self-contained conversion Gantt: toolbar + timeline share paging state without IdeaDetail re-renders. */
+export function IdeaConversionGanttWorkspace({
+  sprints,
+  projectName,
+  zoomLevel,
+  onZoomLevelChange,
+  className,
+}: IdeaConversionGanttWorkspaceProps) {
+  const ganttItems = useMemo(
+    () => mapConversionSprintsToGanttItems(sprints, projectName ?? 'Idea Conversion'),
+    [projectName, sprints],
+  )
+
+  const timelineWindow = useMemo(
+    () => computeConversionTimelineWindow(ganttItems),
+    [ganttItems],
+  )
+
+  return (
+    <div className={cn('flex min-h-0 flex-1 flex-col gap-3 overflow-hidden', className)}>
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+        <IdeaConversionTimeline
+          sprints={sprints}
+          projectName={projectName}
+          zoomLevel={zoomLevel}
+          timelineWindowOverride={timelineWindow}
+        />
       </div>
     </div>
   )

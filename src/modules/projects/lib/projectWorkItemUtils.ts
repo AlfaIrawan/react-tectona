@@ -49,9 +49,17 @@ export function projectWorkItemBusinessKeyPrefix(projectId: string): string {
 export function filterWorkItemsForProject(
   items: WorkItemApiModel[],
   projectId: string,
+  projectName?: string,
 ): WorkItemApiModel[] {
   const prefix = projectWorkItemBusinessKeyPrefix(projectId)
-  return items.filter((item) => item.id.startsWith(`${prefix}-`))
+  return items.filter(
+    (item) =>
+      item.id.startsWith(`${prefix}-`) ||
+      (projectName &&
+        item.project === projectName &&
+        (item.syncOrigin === 'monday' ||
+          (item.externalLinks ?? []).some((link) => link.provider === 'monday'))),
+  )
 }
 
 export function normalizeWorkStatus(status: string): WorkStatus {

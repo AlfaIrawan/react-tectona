@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Lightbulb, Loader2, Search, X } from 'lucide-react'
+import { Lightbulb, Loader2, Search, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
@@ -22,8 +22,8 @@ const LINKABLE_STATUSES = new Set<BackendIdeaStatus>([
   'converted',
 ])
 
-function isEligibleIdea(idea: IdeaApi, projectId: string, currentLinkedIdeaId?: string | null) {
-  if (idea.id === currentLinkedIdeaId) return false
+function isEligibleIdea(idea: IdeaApi, projectId: string, linkedIdeaIds: Set<string>) {
+  if (linkedIdeaIds.has(idea.id) || idea.project_id === projectId) return false
   if (idea.project_id && idea.project_id !== projectId) return false
   return LINKABLE_STATUSES.has(idea.status_code)
 }
@@ -33,15 +33,17 @@ export function LinkProjectIdeaModal({
   onOpenChange,
   projectId,
   projectName,
-  currentLinkedIdea,
+  currentLinkedIdeas,
   onLinked,
+  onUnlinked,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
   projectName: string
-  currentLinkedIdea: IdeaApi | null
+  currentLinkedIdeas: IdeaApi[]
   onLinked: (idea: IdeaApi) => void
+  onUnlinked: (idea: IdeaApi) => void
 }) {
   const { addToast } = useToast()
   const [ideas, setIdeas] = useState<IdeaApi[]>([])
@@ -96,8 +98,9 @@ export function LinkProjectIdeaModal({
 
   const eligibleIdeas = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
+    const linkedIdeaIds = new Set(currentLinkedIdeas.map((idea) => idea.id))
     return ideas
-      .filter((idea) => isEligibleIdea(idea, projectId, currentLinkedIdea?.id))
+      .filter((idea) => isEligibleIdea(idea, projectId, linkedIdeaIds))
       .filter((idea) => {
         if (!query) return true
         return (
@@ -107,35 +110,49 @@ export function LinkProjectIdeaModal({
         )
       })
       .sort((a, b) => a.title.localeCompare(b.title))
-  }, [currentLinkedIdea?.id, ideas, projectId, searchQuery])
+  }, [currentLinkedIdeas, ideas, projectId, searchQuery])
 
   const handleLink = async (idea: IdeaApi) => {
     setSubmittingId(idea.id)
     try {
-      if (currentLinkedIdea && currentLinkedIdea.id !== idea.id) {
-        await patchIdea(currentLinkedIdea.id, {
-          project_id: null,
-          version: currentLinkedIdea.version,
-        })
-      }
-
       const linked = await patchIdea(idea.id, {
         project_id: projectId,
         status_code: idea.status_code === 'converted' ? undefined : 'converted',
         version: idea.version,
       })
 
+      setIdeas((current) => current.map((item) => (item.id === linked.id ? linked : item)))
       onLinked(linked)
-      onOpenChange(false)
       addToast({
         title: 'Idea linked',
-        description: `"${linked.title}" is now linked to ${projectName}.`,
+        description: `"${linked.title}" is now linked. You can continue adding ideas to ${projectName}.`,
         variant: 'success',
       })
     } catch (error: unknown) {
       addToast({
         title: 'Link failed',
         description: error instanceof Error ? error.message : 'Could not link idea to project.',
+        variant: 'error',
+      })
+    } finally {
+      setSubmittingId(null)
+    }
+  }
+
+  const handleUnlink = async (idea: IdeaApi) => {
+    setSubmittingId(idea.id)
+    try {
+      await patchIdea(idea.id, { project_id: null, version: idea.version })
+      onUnlinked(idea)
+      addToast({
+        title: 'Idea unlinked',
+        description: `"${idea.title}" is no longer linked to ${projectName}.`,
+        variant: 'success',
+      })
+    } catch (error: unknown) {
+      addToast({
+        title: 'Unlink failed',
+        description: error instanceof Error ? error.message : 'Could not unlink idea from project.',
         variant: 'error',
       })
     } finally {
@@ -173,7 +190,7 @@ export function LinkProjectIdeaModal({
                 Link to idea
               </h3>
               <p className="text-sm text-muted-foreground">
-                Select the backlog idea that is the source of demand for this project. Each project can be linked to only one idea.
+                Link multiple backlog ideas to this project and keep their demand traceability together.
               </p>
             </div>
           </div>
@@ -184,6 +201,39 @@ export function LinkProjectIdeaModal({
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Project</p>
             <p className="mt-1 break-words text-sm font-semibold text-foreground">{projectName}</p>
           </div>
+
+          {currentLinkedIdeas.length > 0 ? (
+            <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-foreground">Linked ideas</div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {currentLinkedIdeas.length} idea{currentLinkedIdeas.length === 1 ? '' : 's'} linked to this project.
+                  </p>
+                </div>
+                <Lightbulb className="h-4 w-4 text-amber-600" aria-hidden />
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {currentLinkedIdeas.map((idea, index) => (
+                  <div key={idea.id} className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/10 px-2.5 py-2">
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground" title={idea.title}>
+                      {index === 0 ? 'Primary · ' : ''}{idea.title}
+                    </span>
+                    <button
+                      type="button"
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600"
+                      aria-label={`Unlink ${idea.title}`}
+                      title="Unlink idea"
+                      disabled={busy}
+                      onClick={() => void handleUnlink(idea)}
+                    >
+                      {submittingId === idea.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
             <div className="font-medium text-sm text-foreground">Select source idea</div>

@@ -4,16 +4,25 @@ import {
   Calendar,
   CalendarDays,
   CalendarRange,
+  CheckSquare2,
+  ChevronDown,
   GanttChartSquare,
   LayoutGrid,
   Maximize2,
   Minimize2,
+  ListChecks,
+  Plus,
+  Save,
   Search,
+  X,
   type LucideIcon,
 } from 'lucide-react'
-import type { WorkItemApiModel } from '@/lib/api/workApi'
-import { patchWorkItem } from '@/lib/api/workApi'
+import type { WorkItemApiModel, WorkItemType, WorkStatus, Priority } from '@/lib/api/workApi'
+import { createWorkItem, patchWorkItem, TECTONA_PROJECT_WORKSPACE } from '@/lib/api/workApi'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/components/ui/toast'
+import { EnterpriseRichTextEditor } from '@/components/enterprise/EnterpriseRichTextEditor'
 import {
   PlanningSvarGantt,
   type PlanningGanttItem,
@@ -25,6 +34,7 @@ import {
 import { TIMELINE_GANTT_GRID_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 import { applyDirectorySiblingOrder, type DirectorySiblingOrderMap } from '@/modules/task-work-management/utils/directorySiblingOrder'
 import { cn } from '@/lib/utils'
+import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import type { ProjectTemplate } from '../data/projectTemplates'
 import { buildProjectTimelineGanttItemsFromWorkItems } from '../lib/buildProjectTimelineGanttItems'
 import {
@@ -97,13 +107,65 @@ function filterTimelineGanttItems(items: PlanningGanttItem[], rawQuery: string):
   return items.filter((item) => visibleIds.has(item.id))
 }
 
+/** Keep the project chart anchored to its actual work-item dates, like Idea Conversion.
+ * This prevents the header from opening on an unrelated future window while the task rows
+ * are already scheduled in the current project delivery period. */
+function computeProjectTimelineWindow(items: PlanningGanttItem[]): { start: Date; end: Date } {
+  let minMs = Number.POSITIVE_INFINITY
+  for (const item of items) {
+    if (!item.startDate?.trim()) continue
+    const start = Date.parse(`${item.startDate.slice(0, 10)}T00:00:00Z`)
+    if (Number.isFinite(start)) minMs = Math.min(minMs, start)
+  }
+
+  const now = new Date()
+  const currentYear = now.getUTCFullYear()
+  const rollingStart = new Date(Date.UTC(currentYear, 0, 1))
+  const rollingEnd = new Date(Date.UTC(currentYear + 5, 11, 31))
+
+  if (!Number.isFinite(minMs)) return { start: rollingStart, end: rollingEnd }
+
+  const taskAnchoredStart = new Date(minMs - 14 * 86_400_000)
+  return {
+    start: taskAnchoredStart.getTime() < rollingStart.getTime() ? taskAnchoredStart : rollingStart,
+    end: rollingEnd,
+  }
+}
+
+type AddTaskDraft = {
+  title: string
+  type: WorkItemType
+  status: WorkStatus
+  priority: Priority
+  startDate: string
+  dueDate: string
+  assignee: string
+  parentId: string
+  description: string
+}
+
+const ADD_TASK_TYPES: WorkItemType[] = ['Task', 'Epic', 'Feature', 'Subtask', 'Checklist', 'Bug']
+const ADD_TASK_STATUSES: WorkStatus[] = ['Backlog', 'To Do', 'In Progress', 'In Review', 'Done']
+const ADD_TASK_PRIORITIES: Priority[] = ['Critical', 'High', 'Medium', 'Low']
+
+function addDaysToIsoDate(startDate: string, days: number): string {
+  const date = new Date(`${startDate}T00:00:00Z`)
+  if (!Number.isFinite(date.getTime())) return startDate
+  date.setUTCDate(date.getUTCDate() + Math.max(0, days))
+  return date.toISOString().slice(0, 10)
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 export function ProjectTimelinePanel({
   project,
-  template: _template,
   ownerName,
   workItems,
   usesApiItems = false,
   onWorkItemsChange,
+  openAddTaskRequest,
 }: {
   project: Project
   template?: ProjectTemplate
@@ -111,7 +173,9 @@ export function ProjectTimelinePanel({
   workItems: WorkItemApiModel[]
   usesApiItems?: boolean
   onWorkItemsChange?: () => void | Promise<void>
+  openAddTaskRequest?: number
 }) {
+  const { addToast } = useToast()
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelHeightPx, setPanelHeightPx] = useState<number | null>(null)
   const [zoomLevel, setZoomLevel] = useState<PlanningGanttZoomLevel>('Week')
@@ -125,6 +189,22 @@ export function ProjectTimelinePanel({
   const [timelineMoveHint, setTimelineMoveHint] = useState<string | null>(null)
   const [taskStructureRevision, setTaskStructureRevision] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [addTaskOpen, setAddTaskOpen] = useState(false)
+  const [addTaskSaving, setAddTaskSaving] = useState(false)
+  const [addTaskDraft, setAddTaskDraft] = useState<AddTaskDraft>(() => {
+    const today = todayIsoDate()
+    return {
+      title: '',
+      type: 'Task',
+      status: 'To Do',
+      priority: 'Medium',
+      startDate: today,
+      dueDate: addDaysToIsoDate(today, 1),
+      assignee: ownerName || 'Unassigned',
+      parentId: '',
+      description: '',
+    }
+  })
   const localWorkItemsRef = useRef(workItems)
   const siblingOrderRef = useRef<DirectorySiblingOrderMap>({})
 
@@ -179,6 +259,11 @@ export function ProjectTimelinePanel({
     [deferredSearch, ganttItems],
   )
 
+  const timelineWindow = useMemo(
+    () => computeProjectTimelineWindow(ganttItems),
+    [ganttItems],
+  )
+
   useEffect(() => {
     const visibleIds = new Set(filteredGanttItems.map((item) => item.id))
     if (selectedId && !visibleIds.has(selectedId)) setSelectedId('')
@@ -195,6 +280,87 @@ export function ProjectTimelinePanel({
 
   const hasActiveSearch = deferredSearch.trim().length > 0
   const hasActiveSearchRef = useRef(hasActiveSearch)
+
+  const resetAddTaskDraft = useCallback(() => {
+    const today = todayIsoDate()
+    setAddTaskDraft({
+      title: '',
+      type: 'Task',
+      status: 'To Do',
+      priority: 'Medium',
+      startDate: today,
+      dueDate: addDaysToIsoDate(today, 1),
+      assignee: ownerName || 'Unassigned',
+      parentId: '',
+      description: '',
+    })
+  }, [ownerName])
+
+  useEffect(() => {
+    if (openAddTaskRequest == null || openAddTaskRequest === 0) return
+    resetAddTaskDraft()
+    setAddTaskOpen(true)
+  }, [openAddTaskRequest, resetAddTaskDraft])
+
+  const handleCreateTask = useCallback(async () => {
+    const title = addTaskDraft.title.trim()
+    if (!title || addTaskSaving) return
+
+    const startDate = addTaskDraft.startDate || todayIsoDate()
+    const dueDate = addTaskDraft.dueDate || startDate
+    setAddTaskSaving(true)
+    try {
+      if (usesApiItems) {
+        await createWorkItem({
+          title,
+          type: addTaskDraft.type,
+          project: project.name,
+          workspace: TECTONA_PROJECT_WORKSPACE,
+          assignee: addTaskDraft.assignee.trim() || ownerName || 'Unassigned',
+          priority: addTaskDraft.priority,
+          status: addTaskDraft.status,
+          startDate,
+          dueDate,
+          parentId: addTaskDraft.parentId || null,
+          description: addTaskDraft.description.trim(),
+        })
+        await onWorkItemsChange?.()
+      } else {
+        const localId = `timeline-new-${Date.now()}`
+        const localItem: WorkItemApiModel = {
+          id: localId,
+          title,
+          type: addTaskDraft.type,
+          project: project.name,
+          workspace: TECTONA_PROJECT_WORKSPACE,
+          assignee: addTaskDraft.assignee.trim() || ownerName || 'Unassigned',
+          owner: addTaskDraft.assignee.trim() || ownerName || 'Unassigned',
+          role: 'Contributor',
+          team: 'Delivery Squad',
+          priority: addTaskDraft.priority,
+          status: addTaskDraft.status,
+          startDate,
+          dueDate,
+          parentId: addTaskDraft.parentId || null,
+          dependencyStatus: 'Clear',
+          progress: addTaskDraft.status === 'Done' ? 100 : 0,
+          estimatedHours: 8,
+          actualHours: 0,
+          lastUpdated: new Date().toISOString(),
+          description: addTaskDraft.description.trim(),
+        }
+        setLocalWorkItems((previous) => [...previous, localItem])
+      }
+
+      setAddTaskOpen(false)
+      resetAddTaskDraft()
+      addToast({ title: 'Task created', description: `"${title}" is now available in Timeline, List, Board, and Calendar.`, variant: 'success' })
+    } catch (error) {
+      addToast({ title: 'Failed to create task', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' })
+    } finally {
+      setAddTaskSaving(false)
+    }
+  }, [addTaskDraft, addTaskSaving, addToast, onWorkItemsChange, ownerName, project.name, resetAddTaskDraft, usesApiItems])
 
   useEffect(() => {
     hasActiveSearchRef.current = hasActiveSearch
@@ -424,7 +590,7 @@ export function ProjectTimelinePanel({
       }
       className={cn(
         'scroll-mt-24',
-        'glass-card flex min-h-0 flex-col overflow-hidden border border-border/40',
+        'liquid-glass-enterprise-panel flex min-h-0 flex-col overflow-hidden border border-border/40',
         'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
         isFullscreen
           ? 'fixed inset-x-0 top-12 bottom-0 z-50 rounded-none border-0 bg-background'
@@ -614,7 +780,11 @@ export function ProjectTimelinePanel({
                 enableGridEdit={!hasActiveSearch}
                 onTaskGridEditCommit={handleTaskGridEditCommit}
                 taskStructureRevision={taskStructureRevision}
-                surface="transparent"
+                timelineScaleResize={false}
+                enableTimelineScrollExtension={false}
+                timelineWindowOverride={timelineWindow}
+                scrollToTaskWindowOnMount
+                surface="solid"
               />
             )}
           </div>
@@ -623,14 +793,186 @@ export function ProjectTimelinePanel({
     </div>
   )
 
+  const addTaskDrawer = typeof document !== 'undefined'
+    ? createPortal(
+        <>
+          <div
+            className={cn(
+              'fixed inset-0 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity',
+              addTaskOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
+            )}
+            onClick={() => !addTaskSaving && setAddTaskOpen(false)}
+            aria-hidden="true"
+          />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-task-drawer-title"
+            className={cn(
+              'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col',
+              'border-l border-border bg-background/95 text-foreground shadow-2xl backdrop-blur-xl transition-transform duration-300',
+              addTaskOpen ? 'translate-x-0' : 'pointer-events-none translate-x-full',
+            )}
+            style={{ boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)' }}
+          >
+            <div className="flex shrink-0 items-start justify-between border-b border-border px-5 py-4">
+              <div className="pr-3">
+                <h2 id="add-task-drawer-title" className="flex items-center gap-2 text-xl font-semibold">
+                  <Plus className="h-5 w-5 text-primary" aria-hidden />
+                  Add Work Item
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Create execution work items for tasks, subtasks, epics, and checklist entries across projects and workspaces.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setAddTaskOpen(false)}
+                disabled={addTaskSaving}
+                aria-label="Close add task drawer"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                void handleCreateTask()
+              }}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 scrollbar-hide">
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground">Type <span className="text-red-500">*</span></span>
+            <div className="relative">
+              <CheckSquare2 className="pointer-events-none absolute left-3 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-primary" aria-hidden />
+              <select className="h-10 w-full appearance-none rounded-md border border-input bg-background px-9 pr-10 text-sm" value={addTaskDraft.type} disabled={addTaskSaving} onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, type: event.target.value as WorkItemType }))}>
+                {ADD_TASK_TYPES.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            </div>
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground">Title <span className="text-red-500">*</span></span>
+            <Input autoFocus value={addTaskDraft.title} disabled={addTaskSaving} placeholder="Short and descriptive" onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, title: event.target.value }))} className="h-10 text-sm" />
+          </label>
+          <label className="space-y-1.5 md:col-span-2">
+            <span className="text-[11px] font-semibold text-muted-foreground">Description</span>
+            <EnterpriseRichTextEditor
+              id="project-add-task-description"
+              value={addTaskDraft.description}
+              onChange={(description) => setAddTaskDraft((previous) => ({ ...previous, description }))}
+              placeholder="Execution context, acceptance notes, or delivery scope"
+              maxPlainTextLength={2000}
+              disabled={addTaskSaving}
+            />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2 md:col-span-2">
+            <label className="space-y-1.5">
+              <span className="text-[11px] font-semibold text-muted-foreground">
+                Project <span className="font-normal text-muted-foreground/60">(optional)</span>
+              </span>
+              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={project.name} disabled aria-label="Project">
+                <option value={project.name}>{project.name}</option>
+              </select>
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-[11px] font-semibold text-muted-foreground">
+                Workspace <span className="text-red-500">*</span>
+              </span>
+              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={TECTONA_PROJECT_WORKSPACE} disabled aria-label="Workspace">
+                <option value={TECTONA_PROJECT_WORKSPACE}>{TECTONA_PROJECT_WORKSPACE}</option>
+              </select>
+            </label>
+          </div>
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground">
+              Parent <span className="font-normal text-muted-foreground/60">(optional)</span>
+            </span>
+            <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={addTaskDraft.parentId} disabled={addTaskSaving} onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, parentId: event.target.value }))}>
+              <option value="">No parent (root level)</option>
+              {localWorkItems.filter((item) => item.type !== 'Checklist').map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground">Allowed parents: Epic, Feature.</p>
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground">Assignee</span>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-muted text-[11px] text-muted-foreground">?</span>
+              <select className="h-10 w-full appearance-none rounded-md border border-input bg-background pl-11 pr-10 text-sm" value={addTaskDraft.assignee} disabled={addTaskSaving} onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, assignee: event.target.value }))}>
+                <option value="Unassigned">Unassigned</option>
+                {ownerName && ownerName !== 'Unassigned' ? <option value={ownerName}>{ownerName}</option> : null}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            </div>
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2 md:col-span-2">
+            <label className="space-y-1.5">
+              <span className="text-[11px] font-semibold text-muted-foreground">Start date</span>
+              <Input type="date" value={addTaskDraft.startDate} disabled={addTaskSaving} onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, startDate: event.target.value, dueDate: previous.dueDate < event.target.value ? event.target.value : previous.dueDate }))} className="h-10 text-sm" />
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-[11px] font-semibold text-muted-foreground">Due date</span>
+              <Input type="date" value={addTaskDraft.dueDate} min={addTaskDraft.startDate} disabled={addTaskSaving} onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, dueDate: event.target.value }))} className="h-10 text-sm" />
+            </label>
+          </div>
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground">Status</span>
+            <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={addTaskDraft.status} disabled={addTaskSaving} onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, status: event.target.value as WorkStatus }))}>
+              {ADD_TASK_STATUSES.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground">Priority</span>
+            <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={addTaskDraft.priority} disabled={addTaskSaving} onChange={(event) => setAddTaskDraft((previous) => ({ ...previous, priority: event.target.value as Priority }))}>
+              {ADD_TASK_PRIORITIES.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+              </div>
+              <div className="flex shrink-0 gap-3 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                  disabled={addTaskSaving}
+                  onClick={() => void handleCreateTask()}
+                >
+                  <ListChecks className="h-4 w-4 shrink-0" aria-hidden />
+                  Save &amp; open detail
+                </Button>
+                <Button
+                  type="submit"
+                  className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                  disabled={addTaskSaving || !addTaskDraft.title.trim()}
+                >
+                  <Save className="h-4 w-4 shrink-0" aria-hidden />
+                  {addTaskSaving ? 'Saving...' : 'Save work item'}
+                </Button>
+              </div>
+            </form>
+          </aside>
+        </>,
+        document.body,
+      )
+    : null
+
   if (isFullscreen && typeof document !== 'undefined') {
     return (
       <>
         <div className="min-h-[50vh]" aria-hidden />
         {createPortal(panel, document.body)}
+        {addTaskDrawer}
       </>
     )
   }
 
-  return panel
+  return (
+    <>
+      {panel}
+      {addTaskDrawer}
+    </>
+  )
 }

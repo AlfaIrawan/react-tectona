@@ -4,6 +4,7 @@ import {
   parseBrdToKbContentStandard,
 } from './brdToKbContentStandard'
 import {
+  detectBrdVersionFromName,
   ensureBrdKbStandardContent,
   extractDocxHeadingOutline,
   extractAffectedApplicationsFromDocumentText,
@@ -28,6 +29,46 @@ describe('repository BRD metadata extraction', () => {
       version: 'V2',
       yyyymmdd: '20260414',
     })
+  })
+
+  it('parses structured names with multi-segment versions', () => {
+    // Regression: the version-format gate only allowed ONE decimal segment, so a name with
+    // "V0.2.5" failed structured parsing ENTIRELY (returned null) — not just a display glitch,
+    // this silently broke "same family, offer save-as-new-version" duplicate detection, since
+    // sameFamily() treats a null `structured` on either side as "definitely not the same family".
+    expect(parseBrdStructuredName('BRD_Project_HarmonyPenangananNonZoning_V0.2.5_20260824.docx')).toEqual({
+      projectOrInitiativeName: 'Project',
+      moduleOrFeatureName: 'HarmonyPenangananNonZoning',
+      version: 'V0.2.5',
+      yyyymmdd: '20260824',
+    })
+  })
+
+  it('distinguishes space-separated version segments in file names', () => {
+    // Regression: "v 0 2" and "v 0 2.5" (a common human naming convention — spaces standing in
+    // for dots) both collapsed to "V0", making two genuinely different revisions of the same
+    // document look like exact duplicates and silently overwriting the version distinction.
+    expect(detectBrdVersionFromName(
+      '[Harmony] Penanganan Non Zoning Collection di Cabang  Adira HI v 0 2.docx',
+    )).toBe('V0.2')
+    expect(detectBrdVersionFromName(
+      '[Harmony] Penanganan Non Zoning Collection di Cabang Adira HI v 0 2.5.docx',
+    )).toBe('V0.2.5')
+  })
+
+  it('keeps detecting simple version formats in file names', () => {
+    expect(detectBrdVersionFromName('SomeDoc_v2.docx')).toBe('V2')
+    expect(detectBrdVersionFromName('Report_version_3.docx')).toBe('V3')
+    expect(detectBrdVersionFromName('Draft_v1.5.docx')).toBe('V1.5')
+    expect(detectBrdVersionFromName('NoVersionHere.docx')).toBe('V1')
+  })
+
+  it('extracts multi-segment versions from BRD document content', () => {
+    // Regression: (?:\.\d+)? only allowed ONE decimal segment — "Version: 0.2.5" in the document
+    // body truncated to "V0.2", losing the ".5" — and this takes priority over file-name
+    // detection since document-body text is checked first.
+    expect(extractBrdVersionFromDocumentText('Business Requirement Document\nVersion: 0.2.5\n')).toBe('V0.2.5')
+    expect(extractBrdVersionFromDocumentText('Versi Dokumen: 0.2.5\n')).toBe('V0.2.5')
   })
 
   it('extracts version from BRD document content', () => {
@@ -315,6 +356,42 @@ describe('BRD to KB content standard enforcement', () => {
     })
   })
 
+  it('rejects a section heading word like "Overview" as a stakeholder name', () => {
+    // Regression: an approval-table row pairing a stray heading ("Overview") with a role
+    // ("Head of IT") was mistakenly captured as a stakeholder name/role pair.
+    const html = [
+      '<table>',
+      '<tr><td>No</td><td>Area</td><td>Name</td><td>Comments</td><td>Signature</td><td>Date</td></tr>',
+      '<tr><td>1</td><td>Head of IT</td><td>Overview</td><td></td><td></td><td></td></tr>',
+      '</table>',
+    ].join('')
+
+    const tableText = extractDocxTableStakeholderLines(html)
+    const stakeholders = sanitizeDetectedStakeholdersForRuntimeApi(
+      extractBrdStakeholdersFromDocumentText(tableText),
+    )
+
+    expect(stakeholders.some((item) => item.name === 'Overview')).toBe(false)
+  })
+
+  it('strips stray markdown bold markers from stakeholder name/role text', () => {
+    const html = [
+      '<table>',
+      '<tr><td>No</td><td>Area</td><td>Name</td><td>Comments</td><td>Signature</td><td>Date</td></tr>',
+      '<tr><td>1</td><td>**Head of IT**</td><td>Rendhy Wijayanto</td><td></td><td></td><td></td></tr>',
+      '</table>',
+    ].join('')
+
+    const tableText = extractDocxTableStakeholderLines(html)
+    const stakeholders = sanitizeDetectedStakeholdersForRuntimeApi(
+      extractBrdStakeholdersFromDocumentText(tableText),
+    )
+
+    const rendhy = stakeholders.find((item) => item.name === 'Rendhy Wijayanto')
+    expect(rendhy?.name).not.toMatch(/\*/)
+    expect(rendhy?.role).not.toMatch(/\*/)
+  })
+
   it('extracts stakeholders from docx html approval table with No column', () => {
     const html = [
       '<table>',
@@ -569,5 +646,33 @@ describe('BRD to KB content standard enforcement', () => {
     expect(cleaned).not.toContain('Stakeholder tambahan')
     expect(cleaned).not.toContain('Confirm BRD')
     expect(cleaned).toContain('Niko')
+  })
+
+  it('strips a TOC-leak line from a client-side-assembled section body', () => {
+    // Regression: when server-side section assembly is skipped (e.g. the backend couldn't reach
+    // the BRD-To-KB content standard), the client fallback pulls body text straight from the
+    // document — including stray TOC lines like "II. User Requirements 7".
+    const dirty = '<h3>Resiko/Risk</h3><p>II. User Requirements 7</p>'
+    const cleaned = scrubKbGeneratedContent(dirty)
+    expect(cleaned).toContain('<h3>Resiko/Risk</h3>')
+    expect(cleaned).not.toContain('User Requirements 7')
+  })
+
+  it('strips several concatenated TOC-leak entries on one line', () => {
+    const dirty = '<h3>Desain Matriks User/Design User Matrix</h3><p>III. MI/SOP 8 IV. BCP 9 V. Approval 10</p>'
+    const cleaned = scrubKbGeneratedContent(dirty)
+    expect(cleaned).not.toContain('MI/SOP 8')
+    expect(cleaned).not.toContain('V. Approval 10')
+  })
+
+  it('strips an unfilled form/dropdown instruction placeholder', () => {
+    const dirty = '<h3>Keuntungan/Benefit</h3><p>Pilih salah satu atau lebih kategori di bawah: Risk Management: Operational.</p>'
+    const cleaned = scrubKbGeneratedContent(dirty)
+    expect(cleaned).not.toContain('Pilih salah satu')
+  })
+
+  it('keeps real section content untouched', () => {
+    const clean = '<h3>Keuntungan/Benefit</h3><p>Mempercepat proses approval jaminan dari 5 hari menjadi 1 hari.</p>'
+    expect(scrubKbGeneratedContent(clean)).toBe(clean)
   })
 })

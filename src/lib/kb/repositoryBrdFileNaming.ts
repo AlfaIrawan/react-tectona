@@ -33,17 +33,28 @@ function humanizeSemanticName(value: string): string {
     .join(' ')
 }
 
+// Keeps each filename segment short enough that BRD_<project>_<module>_<version>_<date>.ext stays
+// a reasonable length even when the source document title is a long sentence.
+const MAX_SEGMENT_CHARS = 28
+
 function formatBrdSegmentForFileName(value: string, fallback: string): string {
   const humanized = humanizeSemanticName(value || fallback)
-  const tokenized = humanized
+  const words = humanized
     .split(/\s+/)
     .filter(Boolean)
     .map((part) => {
       if (/^(AI|API|KB|BRD|IT|ERP|CRM|SCF|FMCG|HO)$/i.test(part)) return part.toUpperCase()
       return part.charAt(0).toUpperCase() + part.slice(1).replace(/[^A-Za-z0-9]/g, '')
     })
-    .join('')
-    .replace(/[^A-Za-z0-9]/g, '')
+
+  let tokenized = ''
+  for (const word of words) {
+    const next = tokenized + word
+    if (tokenized && next.length > MAX_SEGMENT_CHARS) break
+    tokenized = next
+    if (tokenized.length >= MAX_SEGMENT_CHARS) break
+  }
+  tokenized = tokenized.replace(/[^A-Za-z0-9]/g, '').slice(0, MAX_SEGMENT_CHARS)
   return tokenized || fallback
 }
 
@@ -95,9 +106,9 @@ export type StructuredDocumentPrefix = 'BRD' | 'URD' | 'FSD' | 'TPL'
 /** Detect file-name prefix from document type cues in the original filename. */
 export function resolveStructuredDocumentPrefix(fileName: string): StructuredDocumentPrefix {
   const base = fileName.replace(/\.[^/.]+$/, '').toLowerCase()
-  if (/\bfsd\b|functional\s*spec/i.test(base)) return 'FSD'
-  if (/\burd\b|user\s*requirement/i.test(base)) return 'URD'
-  if (/\bbrd\b|business\s*requirement/i.test(base)) return 'BRD'
+  if (/\bfsd\b|functional[\s_-]*spec/i.test(base)) return 'FSD'
+  if (/\burd\b|user[\s_-]*requirement/i.test(base)) return 'URD'
+  if (/\bbrd\b|business[\s_-]*requirement/i.test(base)) return 'BRD'
   return 'TPL'
 }
 
@@ -127,7 +138,7 @@ export function buildAutoRenamedStructuredFileName(
   const ext = extMatch?.[1] ?? ''
   const parsed = parseBrdStructuredName(fileName)
   const prefix = overrides?.prefix ?? resolveStructuredDocumentPrefix(fileName)
-  const projectSegment = formatBrdSegmentForFileName(
+  let projectSegment = formatBrdSegmentForFileName(
     parsed?.projectOrInitiativeName
     ?? overrides?.projectName
     ?? projectName,
@@ -139,6 +150,12 @@ export function buildAutoRenamedStructuredFileName(
     ?? deriveBrdModuleNameFromFileName(fileName),
     prefix === 'URD' ? 'Requirement' : prefix === 'FSD' ? 'Specification' : 'Requirement',
   )
+  // When no real project name is known, both segments fall back to the same document-derived
+  // text — repeating it verbatim (e.g. "BRD_LongTitle_LongTitle_V1_...") is worse than a generic
+  // placeholder, so collapse the duplicate instead of keeping it.
+  if (projectSegment === moduleSegment) {
+    projectSegment = prefix === 'TPL' ? 'Workspace' : 'Project'
+  }
   const version = normalizeBrdVersionLabel(
     parsed?.version
     ?? overrides?.version

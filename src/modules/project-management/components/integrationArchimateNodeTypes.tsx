@@ -1,5 +1,5 @@
-import { Handle, Position, type NodeProps, type NodeTypes } from 'reactflow'
-import type { CSSProperties } from 'react'
+import { Handle, NodeResizer, Position, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
+import { useEffect, type CSSProperties } from 'react'
 import {
   buildIntegrationNodeBoxStyle,
 } from '@/modules/project-management/lib/integrationNodeAppearance'
@@ -14,7 +14,134 @@ import type {
   ArchimateNoteNodeData,
 } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
-export function ArchimateElementNode({ data }: NodeProps<ArchimateElementNodeData>) {
+const RESIZER_LINE_STYLE: CSSProperties = {
+  borderColor: '#0ea5e9',
+  borderWidth: 1.5,
+}
+
+const RESIZER_HANDLE_STYLE: CSSProperties = {
+  width: 10,
+  height: 10,
+  borderRadius: 3,
+  border: '1.5px solid #0ea5e9',
+  background: '#ffffff',
+  boxShadow: '0 1px 4px rgba(15, 23, 42, 0.18)',
+}
+
+function SelectionResizer({
+  selected,
+  minWidth,
+  minHeight,
+}: {
+  selected: boolean
+  minWidth: number
+  minHeight: number
+}) {
+  return (
+    <NodeResizer
+      isVisible={selected}
+      minWidth={minWidth}
+      minHeight={minHeight}
+      lineStyle={RESIZER_LINE_STYLE}
+      handleStyle={RESIZER_HANDLE_STYLE}
+    />
+  )
+}
+
+function ConnectionHandles({ nodeId, selected }: { nodeId: string; selected: boolean }) {
+  const updateNodeInternals = useUpdateNodeInternals()
+  const visibleHandleClass = [
+    '!flex !h-4 !w-4 !items-center !justify-center !border-0 !bg-transparent',
+    '!pointer-events-auto !z-30 !cursor-crosshair',
+    '!opacity-0 !transition-opacity !duration-150',
+    'group-hover:!opacity-100',
+    selected ? '!opacity-100' : '',
+  ].join(' ')
+  const legacyTargetClass = '!pointer-events-none !h-2 !w-2 !border-0 !opacity-0'
+  const extraOffsets = [20, 40, 60, 80]
+  const anchorDot = <span className="pointer-events-none block h-2 w-2 rounded-full border border-white bg-sky-500 shadow-[0_1px_5px_rgba(14,165,233,0.45)]" />
+
+  useEffect(() => {
+    updateNodeInternals(nodeId)
+  }, [nodeId, updateNodeInternals])
+
+  return (
+    <>
+      <Handle id="target-left" type="target" position={Position.Left} className={legacyTargetClass} />
+      <Handle id="target-top" type="target" position={Position.Top} className={legacyTargetClass} />
+      <Handle id="target-right" type="target" position={Position.Right} className={legacyTargetClass} />
+      <Handle id="target-bottom" type="target" position={Position.Bottom} className={legacyTargetClass} />
+
+      <Handle id="source-left" type="source" position={Position.Left} isConnectable isConnectableStart isConnectableEnd className={visibleHandleClass}>{anchorDot}</Handle>
+      <Handle id="source-top" type="source" position={Position.Top} isConnectable isConnectableStart isConnectableEnd className={visibleHandleClass}>{anchorDot}</Handle>
+      <Handle id="source-right" type="source" position={Position.Right} isConnectable isConnectableStart isConnectableEnd className={visibleHandleClass}>{anchorDot}</Handle>
+      <Handle id="source-bottom" type="source" position={Position.Bottom} isConnectable isConnectableStart isConnectableEnd className={visibleHandleClass}>{anchorDot}</Handle>
+
+      {extraOffsets.map((offset) => (
+        <Handle
+          key={`top-${offset}`}
+          id={`source-top-${offset}`}
+          type="source"
+          position={Position.Top}
+          isConnectable
+          isConnectableStart
+          isConnectableEnd
+          className={visibleHandleClass}
+          style={{ left: `${offset}%` }}
+        >
+          {anchorDot}
+        </Handle>
+      ))}
+      {extraOffsets.map((offset) => (
+        <Handle
+          key={`right-${offset}`}
+          id={`source-right-${offset}`}
+          type="source"
+          position={Position.Right}
+          isConnectable
+          isConnectableStart
+          isConnectableEnd
+          className={visibleHandleClass}
+          style={{ top: `${offset}%` }}
+        >
+          {anchorDot}
+        </Handle>
+      ))}
+      {extraOffsets.map((offset) => (
+        <Handle
+          key={`bottom-${offset}`}
+          id={`source-bottom-${offset}`}
+          type="source"
+          position={Position.Bottom}
+          isConnectable
+          isConnectableStart
+          isConnectableEnd
+          className={visibleHandleClass}
+          style={{ left: `${offset}%` }}
+        >
+          {anchorDot}
+        </Handle>
+      ))}
+      {extraOffsets.map((offset) => (
+        <Handle
+          key={`left-${offset}`}
+          id={`source-left-${offset}`}
+          type="source"
+          position={Position.Left}
+          isConnectable
+          isConnectableStart
+          isConnectableEnd
+          className={visibleHandleClass}
+          style={{ top: `${offset}%` }}
+        >
+          {anchorDot}
+        </Handle>
+      ))}
+    </>
+  )
+}
+
+export function ArchimateElementNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const resolvedVisual = data.visual
   const layerFill = getArchimateLayerFillBackground(
     data.layer,
@@ -29,14 +156,11 @@ export function ArchimateElementNode({ data }: NodeProps<ArchimateElementNodeDat
       : { backgroundColor: layerFill.backgroundColor ?? baseBoxStyle.backgroundColor }),
   }
   const notationImageUrl = getArchimateNotationImageUrl(data.notationId)
-  const handleClassName = '!h-2 !w-2 !border-0 !bg-slate-600 !opacity-0'
 
   return (
-    <div className="relative h-full w-full">
-      <Handle id="target-left" type="target" position={Position.Left} className={handleClassName} />
-      <Handle id="target-top" type="target" position={Position.Top} className={handleClassName} />
-      <Handle id="target-right" type="target" position={Position.Right} className={handleClassName} />
-      <Handle id="target-bottom" type="target" position={Position.Bottom} className={handleClassName} />
+    <div className="group relative h-full w-full">
+      <SelectionResizer selected={selected} minWidth={100} minHeight={56} />
+      <ConnectionHandles nodeId={id} selected={selected} />
 
       <div className="relative h-full w-full overflow-hidden border" style={boxStyle}>
         {notationImageUrl ? (
@@ -57,15 +181,11 @@ export function ArchimateElementNode({ data }: NodeProps<ArchimateElementNodeDat
         </div>
       </div>
 
-      <Handle id="source-left" type="source" position={Position.Left} className={handleClassName} />
-      <Handle id="source-top" type="source" position={Position.Top} className={handleClassName} />
-      <Handle id="source-right" type="source" position={Position.Right} className={handleClassName} />
-      <Handle id="source-bottom" type="source" position={Position.Bottom} className={handleClassName} />
     </div>
   )
 }
 
-export function ArchimateBoundaryNode({ data }: NodeProps<ArchimateBoundaryNodeData>) {
+export function ArchimateBoundaryNode({ id, data, selected }: NodeProps<ArchimateBoundaryNodeData>) {
   const boxStyle = buildIntegrationNodeBoxStyle({
     ...data.visual,
     lineStyle: data.visual?.lineStyle ?? 'dashed',
@@ -75,13 +195,17 @@ export function ArchimateBoundaryNode({ data }: NodeProps<ArchimateBoundaryNodeD
     rounded: data.visual?.rounded ?? true,
   })
   return (
-    <div className="h-full w-full border-2 px-4 py-3" style={boxStyle}>
-      <p className="text-xs font-semibold text-slate-600">{data.title}</p>
+    <div className="group relative h-full w-full">
+      <SelectionResizer selected={selected} minWidth={180} minHeight={120} />
+      <ConnectionHandles nodeId={id} selected={selected} />
+      <div className="h-full w-full border-2 px-4 py-3" style={boxStyle}>
+        <p className="text-xs font-semibold text-slate-600">{data.title}</p>
+      </div>
     </div>
   )
 }
 
-export function ArchimateNoteNode({ data }: NodeProps<ArchimateNoteNodeData>) {
+export function ArchimateNoteNode({ id, data, selected }: NodeProps<ArchimateNoteNodeData>) {
   const boxStyle = buildIntegrationNodeBoxStyle({
     ...data.visual,
     fillEnabled: data.visual?.fillEnabled ?? true,
@@ -91,13 +215,17 @@ export function ArchimateNoteNode({ data }: NodeProps<ArchimateNoteNodeData>) {
     rounded: data.visual?.rounded ?? true,
   })
   return (
-    <div className="h-full w-full border px-4 py-3" style={boxStyle}>
-      <p className="text-xs font-semibold text-slate-900">{data.title}</p>
-      {data.lines.map((line) => (
-        <p key={line} className="mt-1 text-[11px] leading-4 text-slate-600">
-          {line}
-        </p>
-      ))}
+    <div className="group relative h-full w-full">
+      <SelectionResizer selected={selected} minWidth={160} minHeight={60} />
+      <ConnectionHandles nodeId={id} selected={selected} />
+      <div className="h-full w-full border px-4 py-3" style={boxStyle}>
+        <p className="text-xs font-semibold text-slate-900">{data.title}</p>
+        {data.lines.map((line) => (
+          <p key={line} className="mt-1 text-[11px] leading-4 text-slate-600">
+            {line}
+          </p>
+        ))}
+      </div>
     </div>
   )
 }

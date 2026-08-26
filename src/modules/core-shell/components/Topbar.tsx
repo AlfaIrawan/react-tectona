@@ -28,6 +28,8 @@ import { PlatformHealthBadge } from './PlatformHealthBadge'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { useTopbarTenantLabel } from '../hooks/useTopbarTenantLabel'
 import { WorkspaceManagementGuideTopbarButton } from '@/modules/workspace-management/components/WorkspaceManagementGuideTopbarButton'
+import { useModuleAccess } from '@/auth/useModuleAccess'
+import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate'
 
 interface TopbarProps {
   sidebarCollapsed: boolean
@@ -38,6 +40,8 @@ interface TopbarProps {
 
 export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, onToggleTodoPanel }: TopbarProps) {
   const navigate = useNavigate()
+  const workspaceNavigate = useWorkspaceNavigate()
+  const moduleAccess = useModuleAccess()
   const chatOpen = useChatPanelStore((s) => s.open)
   const toggleChat = useChatPanelStore((s) => s.toggle)
   const setChatOpen = useChatPanelStore((s) => s.setOpen)
@@ -281,10 +285,17 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
                 <User className="w-4 h-4 mr-2" />
                 Profile
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate('/platform-settings-administration')}>
-                <Settings className="w-4 h-4 mr-2" />
-                Platform Settings & Administration
-              </DropdownMenuItem>
+              {moduleAccess.isPlatformAdmin ? (
+                <DropdownMenuItem onClick={() => workspaceNavigate('/platform-settings-administration')}>
+                  <Settings className="w-4 h-4 mr-2" />
+                  Platform Settings &amp; Administration
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem onClick={() => workspaceNavigate('/workspace-management')}>
+                  <Settings className="w-4 h-4 mr-2" />
+                  Workspace Settings
+                </DropdownMenuItem>
+              )}
               <div className="border-t border-border/40 my-1" />
               <DropdownMenuItem
                 className="text-destructive"

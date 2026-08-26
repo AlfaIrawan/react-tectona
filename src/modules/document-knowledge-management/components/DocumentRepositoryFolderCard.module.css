@@ -2,7 +2,8 @@
   width: 112px !important;
   max-width: 112px !important;
   height: 64px !important;
-  margin-top: 2px !important;
+  /* Keep the raised folder tab inside the slider viewport instead of clipping it. */
+  margin-top: 8px !important;
   overflow: visible !important;
 }
 

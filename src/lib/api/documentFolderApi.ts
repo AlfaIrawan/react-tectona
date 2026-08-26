@@ -48,8 +48,8 @@ export interface UpdateDocumentFolderPayload {
 
 function getV1Base(): string {
   const env = import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL?.trim()
-  if (env) return env.replace(/\/+$/, '')
-  return `${serviceApiBase('/api/document-knowledge', import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL)}/v1`
+  const base = (env || serviceApiBase('/api/document-knowledge', undefined)).replace(/\/+$/, '')
+  return /\/v1$/i.test(base) ? base : `${base}/v1`
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Actor-Id': 'react-tectona-ui' }

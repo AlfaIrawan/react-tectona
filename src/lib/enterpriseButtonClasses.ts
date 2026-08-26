@@ -18,7 +18,7 @@ const GRADIENT_ACTION_FOCUS = enterpriseControlFocusClass()
 /** Tombol aksi gradient (Assign Governance, New Workspace, …) — tanpa outline hitam browser saat fokus. */
 export function enterpriseCyanGradientActionButtonClass(): string {
   return cn(
-    'group relative inline-flex h-10 shrink-0 items-center gap-2 overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
+    'group relative inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
     GRADIENT_ACTION_FOCUS,
     'border border-cyan-200/80 bg-gradient-to-br from-sky-400 via-blue-500 to-blue-700',
     'shadow-[0_6px_16px_rgba(37,99,235,0.24),0_0_0_1px_rgba(103,232,249,0.28)] ring-1 ring-sky-300/35',
@@ -32,7 +32,7 @@ export function enterpriseCyanGradientActionButtonClass(): string {
 
 export function enterpriseIndigoGradientActionButtonClass(): string {
   return cn(
-    'group relative inline-flex h-10 shrink-0 items-center gap-2 overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
+    'group relative inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
     GRADIENT_ACTION_FOCUS,
     'border border-indigo-200/80 bg-gradient-to-br from-indigo-400 via-violet-500 to-purple-700',
     'shadow-[0_6px_16px_rgba(99,102,241,0.24),0_0_0_1px_rgba(167,139,250,0.28)] ring-1 ring-indigo-300/35',
@@ -47,7 +47,7 @@ export function enterpriseIndigoGradientActionButtonClass(): string {
 /** Destructive gradient CTA — selaras cyan/indigo pill (Reject, Delete, …). */
 export function enterpriseRoseGradientActionButtonClass(): string {
   return cn(
-    'group relative inline-flex h-10 shrink-0 items-center gap-2 overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
+    'group relative inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
     GRADIENT_ACTION_FOCUS,
     'border border-rose-200/80 bg-gradient-to-br from-rose-400 via-rose-500 to-red-700',
     'shadow-[0_6px_16px_rgba(225,29,72,0.22),0_0_0_1px_rgba(253,164,175,0.28)] ring-1 ring-rose-300/35',
@@ -62,7 +62,7 @@ export function enterpriseRoseGradientActionButtonClass(): string {
 /** Secondary / cancel — selaras Tilia `enterpriseSecondaryButtonClass`. */
 export function enterpriseSecondaryButtonClass(): string {
   return cn(
-    'h-10 px-4 rounded-lg text-sm font-semibold tracking-tight',
+    'inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 rounded-lg text-sm font-semibold tracking-tight',
     'border border-slate-300/90 bg-background/95 text-foreground',
     'shadow-sm hover:shadow-md',
     'hover:!bg-slate-100 hover:!text-foreground dark:hover:!bg-slate-800/70 dark:hover:!text-foreground',

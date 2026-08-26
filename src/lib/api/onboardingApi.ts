@@ -47,6 +47,12 @@ export type OnboardingStatus = OnboardingStatusResponse['onboarding_status']
 
 export { fetchWacOnboardingStatus as fetchOnboardingStatus }
 
+function onboardingApprovalMessage(message: string | undefined, personalWorkspaceId: string): string {
+  const marker = `[personal_workspace_id=${personalWorkspaceId}]`
+  const base = message?.trim() || 'Corporate onboarding complete — awaiting admin approval.'
+  return base.includes(marker) ? base : `${base} ${marker}`
+}
+
 export async function createPersonalWorkspaceOnboarding(input: {
   displayName: string
   slug: string
@@ -116,6 +122,7 @@ export async function completeCorporateOnboardingWithEmail(input: {
 export async function completeCorporateOnboardingWithAdminApproval(input: {
   subjectId: string
   workspaceId?: string | null
+  orgWorkspaceId?: string | null
   email: string
   message?: string
 }): Promise<OnboardingStatusResponse> {
@@ -168,12 +175,13 @@ export async function activateCorporateOnboardingWithoutEmail(input: {
 export async function submitCorporateOnboardingForAdminApproval(input: {
   subjectId: string
   workspaceId?: string | null
+  orgWorkspaceId?: string | null
   email: string
   message?: string
 }): Promise<OnboardingStatusResponse> {
   const progress = await fetchCorporateOnboardingProgress(input.email, TECTONA_AUTHZ_APP_ID)
   const workspaceId = input.workspaceId?.trim() || progress.personal_workspace_id?.trim()
-  const orgWorkspaceId = progress.default_workspace_id?.trim() || null
+  const orgWorkspaceId = input.orgWorkspaceId?.trim() || progress.default_workspace_id?.trim() || null
   if (!workspaceId) {
     throw new Error('Personal workspace not found. Create your personal workspace first.')
   }
@@ -182,18 +190,26 @@ export async function submitCorporateOnboardingForAdminApproval(input: {
     workspaceId,
     orgWorkspaceId,
     subjectId: input.subjectId,
-    message: input.message,
+    // The approval handler uses this marker to link the personal workspace
+    // into the organization tree in the same transaction as the approval.
+    message: onboardingApprovalMessage(input.message, workspaceId),
   })
   try {
     await deferPersonalWorkspaceForAdminApproval(
       workspaceId,
-      { identity_ref: input.subjectId },
+      { identity_ref: input.subjectId, org_workspace_id: orgWorkspaceId },
       { actorId: input.subjectId },
     )
   } catch {
     // WAC onboarding request succeeded; directory defer is best-effort for legacy rows.
   }
-  return fetchWacOnboardingStatus(TECTONA_AUTHZ_APP_ID, input.subjectId)
+  try {
+    return await fetchWacOnboardingStatus(TECTONA_AUTHZ_APP_ID, input.subjectId)
+  } catch {
+    // Admin-approval request already succeeded above; a transient failure refreshing
+    // the status afterward must not surface as a failure of this whole operation.
+    return { onboarding_status: 'join_pending', active_membership_count: 0 }
+  }
 }
 
 /** Option A — switch from email verification to admin approval on the status page. */
@@ -216,12 +232,12 @@ export async function switchCorporateOnboardingToAdminApproval(input: {
     workspaceId,
     orgWorkspaceId,
     subjectId: input.subjectId,
-    message: input.message ?? 'Switched from email verification to admin approval.',
+    message: onboardingApprovalMessage(input.message, workspaceId),
   })
   try {
     await deferPersonalWorkspaceForAdminApproval(
       workspaceId,
-      { identity_ref: input.subjectId },
+      { identity_ref: input.subjectId, org_workspace_id: orgWorkspaceId },
       { actorId: input.subjectId },
     )
   } catch {

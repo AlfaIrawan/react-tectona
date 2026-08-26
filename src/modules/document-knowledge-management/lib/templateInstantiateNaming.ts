@@ -1,7 +1,6 @@
 import type { DocumentTemplateResponse } from '@/lib/api/documentKnowledgeApi'
 import {
   buildAutoRenamedStructuredFileName,
-  buildStandardTemplateMasterFileName,
   deriveBrdModuleNameFromFileName,
   prefixForTemplateDocumentKind,
   testFileNameAgainstRegex,
@@ -131,12 +130,16 @@ export function buildTemplateInstantiateNamingPlan(params: {
   }
 }
 
-function detectTemplateDocumentKindFromFileName(fileName: string): TemplateDocumentKind {
+function detectTemplateDocumentKind(fileName: string, documentText = ''): TemplateDocumentKind {
   const base = fileName.replace(/\.[^/.]+$/, '').toLowerCase()
   if (/memo|surat|internal/i.test(base)) return 'memo_internal'
-  if (/\bfsd\b|functional\s*spec/i.test(base)) return 'fsd'
-  if (/\burd\b|user\s*requirement/i.test(base)) return 'urd'
-  if (/\bbrd\b|business\s*requirement/i.test(base)) return 'brd'
+  if (/\bfsd\b|functional[\s_-]*spec/i.test(base)) return 'fsd'
+  if (/\burd\b|user[\s_-]*requirement/i.test(base)) return 'urd'
+  if (/\bbrd\b|business[\s_-]*requirement/i.test(base)) return 'brd'
+  const content = documentText.slice(0, 12000).toLowerCase()
+  if (/\bfunctional\s+specification\s+design\b|\bfunctional\s+specification\b|\bfsd\b/i.test(content)) return 'fsd'
+  if (/\buser\s+requirement(?:s|\s+document)?\b|\burd\b/i.test(content)) return 'urd'
+  if (/\bbusiness\s+requirement(?:s|\s+document)?\b|\bbrd\b/i.test(content)) return 'brd'
   return 'general'
 }
 
@@ -165,10 +168,11 @@ export function buildTemplateUploadNamingPlan(params: {
   namingRule: RepositoryNamingRule | null
   lastModified?: number
   versionOverride?: string | null
+  documentText?: string
 }): TemplateUploadNamingPlan {
-  const { fileName, workspaceName, namingRule, lastModified, versionOverride } = params
+  const { fileName, workspaceName, namingRule, lastModified, versionOverride, documentText } = params
   const sourceFileName = fileName.trim() || 'template.docx'
-  const documentKind = detectTemplateDocumentKindFromFileName(sourceFileName)
+  const documentKind = detectTemplateDocumentKind(sourceFileName, documentText)
   const parsedSource = parseBrdStructuredName(sourceFileName)
   const documentVersionLabel = normalizeBrdVersionLabel(
     versionOverride ?? parsedSource?.version ?? detectBrdVersionFromName(sourceFileName),
@@ -178,16 +182,12 @@ export function buildTemplateUploadNamingPlan(params: {
   let effectiveFileName = sourceFileName
   if (!shouldSkipNamingForTemplateInstantiate(documentKind, sourceFileName)) {
     const prefix = prefixForTemplateDocumentKind(documentKind, sourceFileName)
-    if (namingRule) {
-      effectiveFileName = buildAutoRenamedStructuredFileName(sourceFileName, workspaceName, lastModified, {
-        projectName: parsedSource?.projectOrInitiativeName ?? workspaceName,
-        moduleName,
-        version: documentVersionLabel,
-        prefix,
-      })
-    } else {
-      effectiveFileName = buildStandardTemplateMasterFileName(sourceFileName, workspaceName, lastModified)
-    }
+    effectiveFileName = buildAutoRenamedStructuredFileName(sourceFileName, workspaceName, lastModified, {
+      projectName: parsedSource?.projectOrInitiativeName ?? workspaceName,
+      moduleName,
+      version: documentVersionLabel,
+      prefix,
+    })
   }
 
   const autoRenamed = effectiveFileName !== sourceFileName

@@ -511,6 +511,8 @@ Rules:
 - evidence_quote must cite document content or explicitly state what is missing.
 - Prefer Indonesian business language when documents are in Indonesian.
 - Use document_id values exactly as provided.
+- Make every scenario step executable and specific: identify the actor, screen or control, input/data, and action where the documents support it; avoid vague steps such as "process the flow".
+- Prefer 3-8 ordered steps per scenario and make the final step verify an observable expected outcome.
 
 Project: ${input.projectName}
 Project notes: ${extractPlainTextFromHtml(input.projectDescription ?? '').slice(0, 800) || 'none'}

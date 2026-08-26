@@ -269,17 +269,26 @@ export type ProjectAssistantAdvice = {
   body: string
 }
 
+export type ProjectAssistantInsight = {
+  label: string
+  value: string
+}
+
 export function buildProjectAssistantBrief(
   items: WorkItemApiModel[],
   projectName: string,
   options?: { template?: ProjectTemplate; anchorDate?: string },
-): { summary: string; advice: ProjectAssistantAdvice[] } {
+): { summary: string; summaryItems: ProjectAssistantInsight[]; advice: ProjectAssistantAdvice[] } {
   const metrics = buildProjectMetricsFromWorkItems(items, options)
   const total = items.length
 
   if (total === 0) {
     return {
       summary: `${projectName} has no scheduled work items yet. Use Board or Calendar to seed the delivery track and unlock flow analytics.`,
+      summaryItems: [
+        { label: 'Work items', value: 'No scheduled work items yet.' },
+        { label: 'Next step', value: 'Use Board or Calendar to seed the delivery track.' },
+      ],
       advice: [
         {
           title: 'Getting started',
@@ -311,6 +320,14 @@ export function buildProjectAssistantBrief(
   ]
     .filter(Boolean)
     .join(' ')
+
+  const summaryItems: ProjectAssistantInsight[] = [
+    { label: 'Work items', value: `${total} total` },
+    { label: 'Completed', value: doneCount },
+    { label: 'In progress', value: inProgressCount },
+    { label: 'In review', value: reviewCount },
+    { label: 'Flow health', value: deliveryInsight?.body ?? 'Updating from live board data.' },
+  ]
 
   const advice: ProjectAssistantAdvice[] = []
 
@@ -352,5 +369,5 @@ export function buildProjectAssistantBrief(
     })
   }
 
-  return { summary, advice: advice.slice(0, 2) }
+  return { summary, summaryItems, advice: advice.slice(0, 2) }
 }

@@ -39,9 +39,9 @@ describe('canActivateWorkspaceAsTenant', () => {
     ).toBe(true)
   })
 
-  it('allows platform admin regardless of membership', () => {
+  it('allows platform admin to activate an organization workspace without WAC membership', () => {
     expect(
-      canActivateWorkspaceAsTenant('personal', {
+      canActivateWorkspaceAsTenant('organization', {
         isPlatformAdmin: true,
         isCorporateUser: true,
         hasActiveMembership: false,
@@ -59,6 +59,51 @@ describe('canActivateWorkspaceAsTenant', () => {
         isWorkspaceOwner: false,
       }),
     ).toBe(false)
+  })
+
+  it('denies unknown tenant metadata without a WAC grant', () => {
+    expect(
+      canActivateWorkspaceAsTenant(null, {
+        isPlatformAdmin: false,
+        isCorporateUser: true,
+        hasActiveMembership: false,
+        isWorkspaceOwner: false,
+      }),
+    ).toBe(false)
+  })
+
+  it('denies non-corporate users without a WAC grant on organization workspace', () => {
+    expect(
+      canActivateWorkspaceAsTenant('organization', {
+        isPlatformAdmin: false,
+        isCorporateUser: false,
+        hasActiveMembership: false,
+        isWorkspaceOwner: false,
+      }),
+    ).toBe(false)
+  })
+
+  it('does not let organization ownership replace a WAC grant', () => {
+    expect(
+      canActivateWorkspaceAsTenant('organization', {
+        isPlatformAdmin: false,
+        isCorporateUser: true,
+        hasActiveMembership: false,
+        isWorkspaceOwner: true,
+      }),
+    ).toBe(false)
+  })
+
+  it('allows a creator to open a non-home directory workspace', () => {
+    expect(
+      canActivateWorkspaceAsTenant('organization', {
+        isPlatformAdmin: false,
+        isCorporateUser: true,
+        hasActiveMembership: false,
+        isWorkspaceOwner: true,
+        isOrganizationHomeWorkspace: false,
+      }),
+    ).toBe(true)
   })
 
   it('denies read_only_workspace membership for organization tenant', () => {
@@ -91,7 +136,10 @@ describe('membershipGrantsOrganizationWorkspaceSwitcherAccess', () => {
     expect(membershipGrantsOrganizationWorkspaceSwitcherAccess('read_only_workspace')).toBe(false)
   })
 
-  it('allows default participation scope', () => {
-    expect(membershipGrantsOrganizationWorkspaceSwitcherAccess(null)).toBe(true)
+  it('requires the full WAC scope', () => {
+    expect(membershipGrantsOrganizationWorkspaceSwitcherAccess(null)).toBe(false)
+    expect(membershipGrantsOrganizationWorkspaceSwitcherAccess('project_only')).toBe(false)
+    expect(membershipGrantsOrganizationWorkspaceSwitcherAccess('all')).toBe(true)
+    expect(membershipGrantsOrganizationWorkspaceSwitcherAccess('all_projects')).toBe(true)
   })
 })

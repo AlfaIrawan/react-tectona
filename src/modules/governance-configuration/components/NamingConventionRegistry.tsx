@@ -3,7 +3,7 @@ import type { CatalogItemDto } from '@/lib/api/governanceConfigurationApi'
 
 export function NamingConventionRegistry({ items }: { items: CatalogItemDto[] }) {
   return (
-    <Card className="p-4">
+    <Card className="liquid-glass-enterprise-panel p-4">
       <h2 className="text-sm font-semibold text-foreground">Naming Convention Registry</h2>
       <table className="mt-3 w-full text-xs">
         <thead>

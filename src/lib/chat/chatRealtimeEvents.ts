@@ -30,8 +30,8 @@ export function emitChatMessageReceived(payload: ChatMessageRealtimePayload): vo
   )
 }
 
-export function emitNotificationsUpdated(): void {
-  window.dispatchEvent(new CustomEvent(NOTIFICATIONS_UPDATED_EVENT))
+export function emitNotificationsUpdated(payload?: unknown): void {
+  window.dispatchEvent(new CustomEvent(NOTIFICATIONS_UPDATED_EVENT, { detail: payload }))
 }
 
 export function emitChatChannelReceipt(payload: ChatChannelReceiptPayload): void {

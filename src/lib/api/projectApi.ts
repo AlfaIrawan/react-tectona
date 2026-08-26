@@ -171,6 +171,7 @@ export interface UpdateProjectPayload {
   icon_name?: string
   border_color?: string
   folder_id?: string | null
+  workspace_id?: string | null
 }
 
 export async function updateProject(id: string, payload: UpdateProjectPayload): Promise<ProjectApi> {

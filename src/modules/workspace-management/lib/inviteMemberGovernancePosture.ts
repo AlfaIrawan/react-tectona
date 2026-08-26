@@ -10,8 +10,7 @@ export type InviteWorkspaceGovernanceSnapshot = {
 
 export type InviteMemberGovernancePostureInput = {
   selectedWorkspaces: InviteWorkspaceGovernanceSnapshot[]
-  workspaceRole: '' | 'Admin' | 'Manager' | 'Member' | 'Viewer'
-  employmentType: '' | 'Internal Employee' | 'Contractor' | 'External Partner' | 'Vendor'
+  workspaceRole: string
   participationDuration: '' | 'Permanent' | 'Temporary'
   participationScopeCode: string
   participationScopeOptions: ParticipationScopeOption[]
@@ -90,12 +89,10 @@ function participationRiskLabel(input: InviteMemberGovernancePostureInput): {
     return { value: 'Select role to preview', tone: 'default' }
   }
   let score = 0
-  if (input.workspaceRole === 'Admin') score += 3
-  else if (input.workspaceRole === 'Manager') score += 2
-  else if (input.workspaceRole === 'Member') score += 1
-
-  if (input.employmentType === 'External Partner' || input.employmentType === 'Vendor') score += 2
-  else if (input.employmentType === 'Contractor') score += 1
+  const normalizedRole = input.workspaceRole.toLowerCase()
+  if (normalizedRole.includes('admin') || normalizedRole.includes('owner')) score += 3
+  else if (normalizedRole.includes('manager') || normalizedRole.includes('editor')) score += 2
+  else if (normalizedRole.includes('member')) score += 1
 
   if (input.participationDuration === 'Temporary') score += 1
 
@@ -179,16 +176,12 @@ function latestPolicyReview(workspaces: InviteWorkspaceGovernanceSnapshot[]): st
 function approvalRequirementLabel(input: InviteMemberGovernancePostureInput): string {
   if (!input.workspaceRole) return 'Select role to preview'
   const worst = worstConfigurationStatus(input.selectedWorkspaces)
-  const elevatedRole = input.workspaceRole === 'Admin' || input.workspaceRole === 'Manager'
-  const external =
-    input.employmentType === 'External Partner'
-    || input.employmentType === 'Vendor'
-    || input.employmentType === 'Contractor'
+  const normalizedRole = input.workspaceRole.toLowerCase()
+  const elevatedRole = normalizedRole.includes('admin') || normalizedRole.includes('owner') || normalizedRole.includes('manager') || normalizedRole.includes('editor')
 
   if (worst === 'Non-Compliant' && elevatedRole) return 'Approval recommended'
   if (worst === 'Unconfigured' && input.workspaceRole === 'Admin') return 'Approval recommended'
-  if (external && elevatedRole) return 'Review recommended'
-  if (worst === 'Partial' && input.workspaceRole === 'Admin') return 'Review recommended'
+  if (worst === 'Partial' && normalizedRole.includes('admin')) return 'Review recommended'
   return 'Not required'
 }
 

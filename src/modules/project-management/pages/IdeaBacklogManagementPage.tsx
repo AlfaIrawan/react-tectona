@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { getSession } from '@/auth/authService'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import {
@@ -9,6 +9,7 @@ import {
   resolveWorkspaceApiId,
 } from '@/lib/tenantWorkspaceScope'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
+import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import {
   GripVertical,
   Eye,
@@ -49,6 +50,9 @@ import {
   Target,
   FolderKanban,
   Palette,
+  Upload,
+  FolderPlus,
+  Folder as FolderIcon,
 } from 'lucide-react'
 import {
   Bar,
@@ -62,13 +66,15 @@ import {
 } from 'recharts'
 import {
   DndContext,
-  DragOverlay,
   PointerSensor,
+  closestCenter,
   pointerWithin,
   useSensor,
   useSensors,
-  type DragStartEvent,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -92,6 +98,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import {
   enterpriseCyanGradientActionButtonClass,
+  enterpriseIndigoGradientActionButtonClass,
   enterpriseRoseGradientActionButtonClass,
   enterpriseSecondaryButtonClass,
   registerServicePrimaryButtonClass,
@@ -137,6 +144,7 @@ import {
   startIdeaSummaryJob,
   type IdeaDraftBrainstormMessage,
   type IdeaDraftChecklistItem,
+  type IdeaDraftDiscoveryProgress,
   type IdeaDraftEvidenceProgress,
   type IdeaDraftJobStatusResponse,
 } from '@/lib/api/tectonaAgentRuntimeApi'
@@ -147,15 +155,15 @@ type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
 }
 
 const BRAINSTORM_GAP_LABELS: Record<string, string> = {
-  as_is_actors: 'Pihak yang terlibat dalam proses saat ini',
-  as_is_steps: 'Langkah proses saat ini (AS-IS) dari awal sampai akhir',
-  as_is_systems: 'Sistem atau aplikasi yang dipakai hari ini',
-  pain_points: 'Pain points atau hambatan utama',
-  to_be_process: 'Gambaran proses yang diharapkan (TO-BE)',
-  diagram_validation: 'Validasi diagram proses bisnis',
-  'diagram validation': 'Validasi diagram proses bisnis',
-  to_be: 'Proses yang diharapkan (TO-BE)',
-  as_is: 'Proses bisnis saat ini (AS-IS)',
+  as_is_actors: 'People involved in the current process',
+  as_is_steps: 'Current AS-IS process steps from start to finish',
+  as_is_systems: 'Systems or applications used today',
+  pain_points: 'Main pain points or bottlenecks',
+  to_be_process: 'Expected TO-BE process overview',
+  diagram_validation: 'Business process diagram validation',
+  'diagram validation': 'Business process diagram validation',
+  to_be: 'Expected TO-BE process',
+  as_is: 'Current AS-IS business process',
 }
 
 function normalizeBrainstormGapKey(gap: string): string {
@@ -175,6 +183,18 @@ function formatBrainstormGapLabel(gap: string): string {
     .replace(/\bto be\b/gi, 'TO-BE')
     .replace(/\broa\b/gi, 'ROA')
     .replace(/^\w/, (char) => char.toUpperCase())
+}
+
+function formatBrainstormChecklistPrompt(prompt: string): string {
+  const trimmed = prompt.trim()
+  if (!trimmed) return trimmed
+  const normalized = normalizeBrainstormGapKey(trimmed)
+  if (BRAINSTORM_GAP_LABELS[normalized]) return BRAINSTORM_GAP_LABELS[normalized]
+  if (/^proses manajemen proyek/i.test(trimmed)) return 'Current project management process'
+  if (/^pain point/i.test(trimmed)) return 'Pain points to address'
+  if (/^sistem atau peran/i.test(trimmed)) return 'Related systems or roles'
+  if (/^kriteria keberhasilan/i.test(trimmed)) return 'Measurable success criteria'
+  return trimmed
 }
 
 function formatBrainstormExploringNext(gaps: string[]): string {
@@ -234,28 +254,6 @@ function mergeBrainstormUiMessages(
         : {}),
   }))
 }
-import { fetchAllProjects, fetchProject, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
-import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
-import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
-import {
-  fetchWorkspaceMembers,
-  TECTONA_WAC_APP_ID,
-  wacRoleCodeToUiRole,
-} from '@/lib/api/workspaceAccessControlApi'
-import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
-import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
-import { normalizeMermaidFences, splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
-import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
-import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
-
-type IdeaStatus = 'New Submission' | 'Under Review' | 'Approved' | 'Rejected' | 'Converted to Project'
-type IdeaType = 'Innovation' | 'Improvement' | 'Request'
-
-const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request']
-const IDEA_STATUSES: IdeaStatus[] = ['New Submission', 'Under Review', 'Approved', 'Rejected', 'Converted to Project']
-const DEFAULT_DRAFT_WORKSPACE_ID = 'react-tectona'
-const MAX_CREATE_IDEA_TAGS = 5
-const MAX_CREATE_IDEA_TAG_LENGTH = 24
 
 function isIdeaDraftJobLostError(message: string): boolean {
   const text = message.trim()
@@ -282,6 +280,728 @@ function friendlyBrainstormError(rawMessage: string): string {
   return rawMessage
 }
 
+type BrainstormTextBlock =
+  | { type: 'paragraph'; text: string }
+  | { type: 'list'; items: string[] }
+
+/** Turn inline "(1) … (2) …" / "1. …" into paragraph + ordered-list blocks for chat rendering. */
+function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
+  const normalized = text
+    .replace(/\s*(?:atau|or|,)?\s*\((\d+)\)\s+/gi, '\n$1. ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  if (!normalized) return []
+
+  const lines = normalized.split('\n')
+  const blocks: BrainstormTextBlock[] = []
+  let paragraphParts: string[] = []
+  let listItems: string[] = []
+
+  const flushParagraph = () => {
+    const joined = paragraphParts.join(' ').replace(/\s+/g, ' ').trim()
+    if (joined) blocks.push({ type: 'paragraph', text: joined })
+    paragraphParts = []
+  }
+  const flushList = () => {
+    if (listItems.length > 0) blocks.push({ type: 'list', items: listItems })
+    listItems = []
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) {
+      flushList()
+      flushParagraph()
+      continue
+    }
+    const numbered = line.match(/^\d+[\.\)]\s+(.+)$/)
+    if (numbered?.[1]) {
+      flushParagraph()
+      listItems.push(numbered[1].trim())
+      continue
+    }
+    flushList()
+    paragraphParts.push(line)
+  }
+
+  // Peel a trailing question off the last list item so it stays as its own paragraph.
+  if (listItems.length >= 2) {
+    const last = listItems[listItems.length - 1]
+    const sentences = last.split(/(?<=[.!])\s+(?=[A-ZÀ-ÖØ-Þ])/u)
+    if (sentences.length >= 2) {
+      const maybeQuestion = sentences[sentences.length - 1]?.trim() ?? ''
+      if (maybeQuestion.endsWith('?')) {
+        listItems[listItems.length - 1] = sentences.slice(0, -1).join(' ').trim()
+        flushList()
+        paragraphParts.push(maybeQuestion)
+      }
+    }
+  }
+
+  flushList()
+  flushParagraph()
+  return blocks
+}
+
+function formatBrainstormProse(chunk: string): string {
+  const blocks = parseBrainstormAssistantBlocks(chunk)
+  if (blocks.length === 0) return chunk
+  return blocks
+    .map((block) => {
+      if (block.type === 'paragraph') return block.text
+      return block.items.map((item, index) => `${index + 1}. ${item}`).join('\n')
+    })
+    .join('\n\n')
+}
+
+const BRAINSTORM_DIAGRAM_APPROVAL_RE =
+  /(?:sudah sesuai|sudah (?:ok|oke|benar|betul)|setuju|sepakat|approve(?:d)?|looks good|that(?:'s| is) (?:correct|right|fine)|ya[,!]?\s*(?:sudah|benar|ok|oke)|ok(?:e)?(?:\s*,)?\s*(?:lanjut|generate|sip)|ok(?:e)?(?:\s+\w+){0,8}\s*(?:aja|saja|lanjut|ikut|setuju|sip|gas)|ikut\s+(?:kamu|saja|aja)|baik(?:lah)?|silakan|boleh\s+(?:lanjut|terus|ya)|gas(?:\s+aja)?|iya[,!]?\s*(?:lanjut|setuju|ok|oke)?|sip[,!]?\s*(?:lanjut|sudah)|validated|validation ok|go\s*ahead|lgtm|sounds good|yes(?:[,!]?\s*(?:please|go\s*ahead|continue|ok|okay))?|yep|yeah|yup|sure|alright|all right|fine by me|agreed|ok je|okay je|teruskan|de acuerdo|está bien|vale|correcto|perfecto|sí|está correto|pode seguir|concordo|d'accord|oui|parfait|c'est bon|stimmt|in ordnung|genau|va bene|perfetto|sì|akkoord|sige|tama|okay lang|đúng|được|ok luôn|vâng|はい|大丈夫|好的|可以|没问题|沒問題|네|좋아요|حسنا|موافق|تمام|نعم|(?:^|\s)(?:ok|okay|oke|y|yy|👍|👌|✅)(?:$|[\s,.!]))/i
+
+const BRAINSTORM_DIAGRAM_REJECTION_RE =
+  /(?:(?:tidak|nggak|enggak|belum)\s+(?:sesuai|benar|betul|ok|oke|setuju)|masih\s+(?:salah|kurang|belum)|(?:salah|kurang|revisi|perbaiki|ubah|ganti)|not\s+(?:yet|correct|right|ok|okay)|still\s+(?:wrong|incorrect)|(?:please\s+)?(?:revise|fix|change)|(?:don't|do\s+not|jangan)|(?:wrong|incorrect)|いいえ|違う|不行|不对)/i
+
+function userTextApprovesDiagram(text: string): boolean {
+  const raw = (text || '').trim().replace(/\s+/g, ' ')
+  if (!raw) return false
+  const shortOk =
+    /^(ok|okay|oke|yes|yep|yeah|yup|sure|ya|iya|sip|baik|boleh|setuju|sí|si|sim|oui|ja|네|好的|可以|はい|大丈夫|موافق|تمام)$/i.test(
+      raw.replace(/[^\p{L}\p{N}\s👍👌✅]/gu, '').trim(),
+    )
+  const approved = BRAINSTORM_DIAGRAM_APPROVAL_RE.test(raw) || shortOk
+  if (!approved) return false
+  if (/\b(?:tapi|but|however|masih|still|kecuali|except)\b/i.test(raw) && BRAINSTORM_DIAGRAM_REJECTION_RE.test(raw)) {
+    return false
+  }
+  if (
+    /\b(?:revisi|perbaiki|ubah|ganti|revise|fix|change)\b/i.test(raw) &&
+    !/\b(?:no\s+(?:need|changes?)|tidak\s+perlu\s+(?:ubah|revisi))\b/i.test(raw)
+  ) {
+    return false
+  }
+  if (
+    /(?:tidak|nggak|enggak|belum)\s+(?:sesuai|benar|betul|ok|oke|setuju)|(?:not\s+(?:yet|correct|right)|still\s+(?:wrong|incorrect)|wrong|incorrect)/i.test(
+      raw,
+    )
+  ) {
+    return false
+  }
+  return true
+}
+
+function brainstormMessageHasDiagram(text: string): boolean {
+  const lowered = (text || '').toLowerCase()
+  return lowered.includes('```mermaid') || /\bflowchart\s+(td|lr|tb|rl)\b/i.test(lowered)
+}
+
+/** Client-side unlock when backend forgot ready_to_continue but chat evidence is complete. */
+function inferBrainstormReadyFromMessages(messages: IdeaDraftBrainstormMessage[]): boolean {
+  if (!messages.length) return false
+  const hasDiagram = messages.some((m) => m.role === 'assistant' && brainstormMessageHasDiagram(m.text))
+  if (!hasDiagram) return false
+  let lastUser = ''
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') {
+      lastUser = messages[i].text || ''
+      break
+    }
+  }
+  if (!userTextApprovesDiagram(lastUser)) return false
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
+  // If the latest assistant turn still presents a new diagram, wait for the next approval.
+  if (lastAssistant && brainstormMessageHasDiagram(lastAssistant.text)) return false
+  return true
+}
+
+type InitiativeLensId =
+  | 'efficiency'
+  | 'productivity'
+  | 'revenue'
+  | 'cost_of_credit'
+  | 'roa'
+
+const INITIATIVE_LENS_BADGE_CLASS: Record<InitiativeLensId, string> = {
+  efficiency: 'border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300',
+  productivity: 'border-violet-500/20 bg-violet-500/10 text-violet-700 dark:text-violet-300',
+  revenue: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  cost_of_credit: 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  roa: 'border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+}
+
+type InitiativeLensMatch = {
+  id: InitiativeLensId
+  label: string
+  score: number
+}
+
+const INITIATIVE_LENS_DEFINITIONS: Array<{
+  id: InitiativeLensId
+  label: string
+  patterns: RegExp[]
+}> = [
+  {
+    id: 'efficiency',
+    label: 'Efisiensi',
+    patterns: [
+      /\befisiensi\b/i,
+      /\befficien/i,
+      /\boptim/i,
+      /\bstreamlin/i,
+      /\breduce\s+(time|cycle|handling|manual|effort)\b/i,
+      /\bpercepat/i,
+      /\bhemat\s+waktu/i,
+    ],
+  },
+  {
+    id: 'productivity',
+    label: 'Produktivitas',
+    patterns: [
+      /\bproduktiv/i,
+      /\bproductiv/i,
+      /\bthroughput\b/i,
+      /\bcapacity\b/i,
+      /\boutput\b/i,
+      /\bworkload\b/i,
+      /\bbacklog\b/i,
+      /\bSLA\b/,
+      /\bhelpdesk\b/i,
+      /\bticket\b/i,
+    ],
+  },
+  {
+    id: 'revenue',
+    label: 'Revenue',
+    patterns: [
+      /\brevenue\b/i,
+      /\bpendapatan\b/i,
+      /\bsales\b/i,
+      /\bpenjualan\b/i,
+      /\bcross[- ]sell\b/i,
+      /\bupsell\b/i,
+      /\bconversion\b/i,
+      /\bmarket share\b/i,
+    ],
+  },
+  {
+    id: 'cost_of_credit',
+    label: 'Cost of Credit',
+    patterns: [
+      /\bcost of credit\b/i,
+      /\bbiaya kredit\b/i,
+      /\bNPL\b/,
+      /\bKPR\b/,
+      /\bkredit\b/i,
+      /\bcredit cost\b/i,
+      /\bprovision\b/i,
+      /\bwrite[- ]off\b/i,
+      /\bcollection\b/i,
+    ],
+  },
+  {
+    id: 'roa',
+    label: 'ROA',
+    patterns: [
+      /\bROA\b/,
+      /\breturn on assets\b/i,
+      /\bprofitabilit/i,
+      /\bmargin\b/i,
+      /\byield\b/i,
+      /\bNIM\b/,
+      /\baset\b/i,
+      /\bassets\b/i,
+    ],
+  },
+]
+
+function inferInitiativeLens(
+  title: string,
+  tags: string[],
+  messages: IdeaDraftBrainstormMessage[],
+): InitiativeLensMatch[] {
+  const corpus = [
+    title,
+    ...tags,
+    ...messages.map((message) => message.text),
+  ]
+    .join('\n')
+    .toLowerCase()
+
+  const scored = INITIATIVE_LENS_DEFINITIONS.map((definition) => {
+    let score = 0
+    for (const pattern of definition.patterns) {
+      if (pattern.test(corpus)) score += 1
+    }
+    return { id: definition.id, label: definition.label, score }
+  })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  return scored.slice(0, 2)
+}
+
+function resolveBrainstormConfidencePercent(
+  backendPercent: number | undefined,
+  progress: IdeaDraftEvidenceProgress | null,
+  ready: boolean,
+): number {
+  if (typeof backendPercent === 'number' && backendPercent > 0) {
+    return Math.max(0, Math.min(100, Math.round(backendPercent)))
+  }
+  if (!progress) return ready ? 85 : 0
+  const requiredRatio = progress.required_total > 0
+    ? progress.required_answered / progress.required_total
+    : progress.total > 0
+      ? progress.answered / progress.total
+      : 0
+  const overallRatio = progress.total > 0 ? progress.answered / progress.total : 0
+  const derived = Math.round(requiredRatio * 70 + overallRatio * 30)
+  if (ready) return Math.max(derived, 85)
+  return derived
+}
+
+function confidenceReadinessLabel(percent: number, ready: boolean): string {
+  if (ready || percent >= 80) return 'Ready to generate draft'
+  if (percent >= 55) return 'Context is taking shape'
+  if (percent >= 25) return 'More exploration needed'
+  return 'Just started - continue the discussion'
+}
+
+function BrainstormConfidenceRing({ percent }: { percent: number }) {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)))
+  const radius = 36
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (clamped / 100) * circumference
+  const tone = clamped >= 80
+    ? 'text-emerald-600'
+    : clamped >= 55
+      ? 'text-amber-600'
+      : 'text-slate-500'
+
+  return (
+    <div className="relative inline-flex h-[5.5rem] w-[5.5rem] shrink-0 items-center justify-center">
+      <svg className="h-full w-full -rotate-90" viewBox="0 0 88 88" aria-hidden>
+        <circle cx="44" cy="44" r={radius} fill="none" stroke="currentColor" strokeWidth="6" className="text-muted/30" />
+        <circle
+          cx="44"
+          cy="44"
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className={cn('transition-[stroke-dashoffset] duration-500', tone)}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={cn('text-xl font-semibold tabular-nums', tone)}>{clamped}%</span>
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Confidence</span>
+      </div>
+    </div>
+  )
+}
+
+// Stage 5 (explainable readiness): per-dimension weights behind the "Minimum Intake" bar below —
+// a confirmed answer counts fully, a partial/inferred one only partially, so the bar reflects
+// evidence quality instead of a binary answered/not-answered count.
+const EVIDENCE_STATUS_WEIGHT: Record<string, number> = {
+  missing: 0,
+  inferred: 0.4,
+  partial: 0.7,
+  confirmed: 1,
+}
+
+function BrainstormEvidenceRail({
+  confidencePercent,
+  progress,
+  discoveryProgress,
+  checklist,
+  gaps,
+  initiativeMatches,
+  ready,
+  collapsed,
+  onToggleCollapsed,
+}: {
+  confidencePercent: number
+  progress: IdeaDraftEvidenceProgress | null
+  discoveryProgress: IdeaDraftDiscoveryProgress | null
+  checklist: IdeaDraftChecklistItem[]
+  gaps: string[]
+  initiativeMatches: InitiativeLensMatch[]
+  ready: boolean
+  collapsed: boolean
+  onToggleCollapsed: () => void
+}) {
+  const resolvedConfidence = resolveBrainstormConfidencePercent(confidencePercent, progress, ready)
+  const readinessLabel = confidenceReadinessLabel(resolvedConfidence, ready)
+  const items = checklist.length > 0 ? checklist : progress?.items ?? []
+  const requiredTotal = progress?.required_total ?? items.filter((item) => item.required !== false).length
+  const requiredAnswered = progress?.required_answered
+    ?? items.filter((item) => item.required !== false && item.status === 'answered').length
+  const itemsTotal = progress?.total ?? items.length
+  const itemsAnswered = progress?.answered
+    ?? items.filter((item) => item.status === 'answered' || item.status === 'skipped').length
+  const progressPercent = requiredTotal > 0
+    ? Math.round((requiredAnswered / requiredTotal) * 100)
+    : items.length > 0
+      ? Math.round((items.filter((item) => item.status === 'answered').length / items.length) * 100)
+      : 0
+  // Stage 5 (explainable readiness): an evidence-quality-weighted version of the same bar — a
+  // "confirmed" answer counts fully, a "partial" one only partially, so 5/5 items reaching
+  // [answered] doesn't read as identical to 5/5 items with strong, specific evidence.
+  const evidenceQualityPercent = items.length > 0
+    ? Math.round(
+        (items.reduce((sum, item) => sum + (EVIDENCE_STATUS_WEIGHT[item.evidence_status ?? 'missing'] ?? 0), 0)
+          / items.length) * 100,
+      )
+    : 0
+  const discoveryCovered = discoveryProgress?.covered ?? 0
+  const discoveryTotal = discoveryProgress?.total ?? 0
+  const discoveryPercent = discoveryTotal > 0 ? Math.round((discoveryCovered / discoveryTotal) * 100) : 0
+
+  return (
+    <aside
+      className={cn(
+        'flex shrink-0 flex-col',
+        collapsed
+          ? 'w-12 border-r border-border/70 bg-background'
+          : 'w-full border-b border-border/70 bg-muted/20 p-3 md:w-[26rem] md:border-b-0 md:border-r md:p-4',
+      )}
+    >
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-2 py-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={onToggleCollapsed}
+            aria-label="Expand readiness panel"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Target className="h-4 w-4 text-muted-foreground" aria-hidden />
+          <span className="text-[10px] font-medium tabular-nums text-muted-foreground [writing-mode:vertical-rl]">
+            {resolvedConfidence}%
+          </span>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden border border-border/40',
+            'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+            'rounded-2xl',
+          )}
+        >
+          <div className="flex h-full min-h-0 w-full flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-5">
+              <div className="flex shrink-0 items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Target className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                    <h2 className="text-lg font-semibold text-foreground">Draft Readiness</h2>
+                  </div>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    AI confidence and AS-IS evidence progress before draft generation.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={onToggleCollapsed}
+                  aria-label="Collapse readiness panel"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="flex shrink-0 flex-col items-center gap-2 rounded-xl border border-border/40 bg-muted/10 px-4 py-3 text-center">
+                <BrainstormConfidenceRing percent={resolvedConfidence} />
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-semibold text-foreground">{readinessLabel}</p>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {ready
+                      ? 'Evidence is sufficient - the draft can be generated with stronger context.'
+                      : 'You can still generate a draft at any time; the initial draft may contain assumptions.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-background/70 p-3">
+                <div className="flex shrink-0 items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Evidence progress
+                  </p>
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {itemsAnswered}/{itemsTotal || items.length || 0} Total
+                  </span>
+                </div>
+                <div className="h-1.5 shrink-0 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all duration-500',
+                      progressPercent >= 80 ? 'bg-emerald-500' : progressPercent >= 40 ? 'bg-amber-500' : 'bg-primary/70',
+                    )}
+                    style={{ width: `${Math.max(progressPercent, items.length > 0 ? 4 : 0)}%` }}
+                  />
+                </div>
+                {itemsTotal > 0 && itemsAnswered >= itemsTotal ? (
+                  <>
+                    <p className="shrink-0 text-[11px] leading-4 text-muted-foreground">
+                      Minimum intake complete — this means there is enough to start a draft, not
+                      that every requirement detail is confirmed. Draft Readiness above (
+                      {resolvedConfidence}%) tracks that separately.
+                    </p>
+                    <div className="shrink-0 space-y-2 rounded-lg border border-border/40 bg-muted/10 p-2">
+                      <div>
+                        <div className="flex items-center justify-between text-[11px] font-medium">
+                          <span>Evidence quality</span>
+                          <span className="tabular-nums text-muted-foreground">{evidenceQualityPercent}%</span>
+                        </div>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className={cn(
+                              'h-full rounded-full transition-all duration-500',
+                              evidenceQualityPercent >= 80 ? 'bg-emerald-500' : evidenceQualityPercent >= 40 ? 'bg-amber-500' : 'bg-primary/70',
+                            )}
+                            style={{ width: `${evidenceQualityPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                      {discoveryTotal > 0 ? (
+                        <div>
+                          <div className="flex items-center justify-between text-[11px] font-medium">
+                            <span>Deep discovery</span>
+                            <span className="tabular-nums text-muted-foreground">
+                              {discoveryCovered}/{discoveryTotal}
+                            </span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-sky-500 transition-all duration-500"
+                              style={{ width: `${discoveryPercent}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                  {items.length > 0 ? (
+                    items.map((item) => {
+                      const status = item.status ?? 'pending'
+                      const Icon = status === 'answered'
+                        ? CircleCheck
+                        : status === 'asked'
+                          ? Circle
+                          : Circle
+                      return (
+                        <div
+                          key={item.id}
+                          className={cn(
+                            'flex items-start gap-2 rounded-lg px-2 py-1.5 text-xs leading-5',
+                            status === 'answered' && 'bg-emerald-50 text-emerald-950',
+                            status === 'asked' && 'bg-amber-50/80 text-amber-950',
+                            status === 'pending' && 'text-muted-foreground',
+                          )}
+                        >
+                          <Icon
+                            className={cn(
+                              'mt-0.5 h-3.5 w-3.5 shrink-0',
+                              status === 'answered' && 'text-emerald-600',
+                              status === 'asked' && 'text-amber-600',
+                            )}
+                            aria-hidden
+                          />
+                          <span className="min-w-0">{formatBrainstormChecklistPrompt(item.prompt)}</span>
+                        </div>
+                      )
+                    })
+                  ) : gaps.length > 0 ? (
+                    gaps.map((gap) => (
+                      <div key={gap} className="rounded-lg px-2 py-1.5 text-xs leading-5 text-muted-foreground">
+                        {formatBrainstormGapLabel(gap)}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="px-2 py-1 text-xs text-muted-foreground">
+                      The evidence checklist will appear after the assistant asks the first question.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="shrink-0 space-y-2 rounded-xl border border-border/40 bg-muted/10 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Initiative direction
+                </p>
+                {initiativeMatches.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {initiativeMatches.map((match) => (
+                      <Badge
+                        key={match.id}
+                        variant="secondary"
+                        className={cn(
+                          'rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
+                          INITIATIVE_LENS_BADGE_CLASS[match.id],
+                        )}
+                      >
+                        {match.label}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Not identified yet - value direction (efficiency, productivity, revenue, cost of credit, ROA) will appear as the discussion develops.
+                  </p>
+                )}
+                <p className="text-[10px] leading-4 text-muted-foreground">
+                  Early indication from the title, tags, and brainstorming content - not a final scoring decision.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </aside>
+  )
+}
+
+function BrainstormAssistantMessageBody({ text }: { text: string }) {
+  const segments = splitMermaidContent(text)
+  if (segments.length === 0) return null
+
+  // Mount diagrams directly so broken markdown fences cannot hide them as code blocks.
+  if (segments.some((s) => s.type === 'mermaid' || s.type === 'tecchart')) {
+    return (
+      <div className="space-y-2 text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2">
+        {segments.map((segment, index) => {
+          if (segment.type === 'mermaid') {
+            return <AssistantMermaidBlock key={`m-${index}`} source={segment.source} />
+          }
+          if (segment.type === 'tecchart') {
+            return null
+          }
+          const prose = formatBrainstormProse(segment.text).trim()
+          if (!prose) return null
+          return (
+            <AssistantChatMarkdown
+              key={`p-${index}`}
+              content={prose}
+              className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
+            />
+          )
+        })}
+      </div>
+    )
+  }
+
+  return (
+    <AssistantChatMarkdown
+      content={formatBrainstormProse(normalizeMermaidFences(text))}
+      className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
+    />
+  )
+}
+
+function BrainstormAssistantTypingMessage({
+  text,
+  animate,
+  onComplete,
+  onProgress,
+}: {
+  text: string
+  animate: boolean
+  onComplete?: () => void
+  onProgress?: () => void
+}) {
+  const mermaidStart = text.indexOf('```mermaid')
+  const typingTarget = mermaidStart >= 0 ? text.slice(0, mermaidStart) : text
+  const [displayText, setDisplayText] = useState(animate ? '' : text)
+  const [isTyping, setIsTyping] = useState(animate)
+
+  useEffect(() => {
+    if (!animate) {
+      setDisplayText(text)
+      setIsTyping(false)
+      return
+    }
+    setDisplayText('')
+    setIsTyping(true)
+    const tokens = typingTarget.match(/\S+\s*|\s+/g) ?? [typingTarget]
+    if (tokens.length === 0) {
+      setDisplayText(text)
+      setIsTyping(false)
+      onComplete?.()
+      return
+    }
+    let index = 0
+    const timerId = window.setInterval(() => {
+      index += 1
+      if (index >= tokens.length) {
+        window.clearInterval(timerId)
+        setDisplayText(text)
+        setIsTyping(false)
+        onComplete?.()
+        return
+      }
+      setDisplayText(tokens.slice(0, index).join(''))
+      onProgress?.()
+    }, 36)
+    return () => window.clearInterval(timerId)
+  }, [animate, onComplete, onProgress, text, typingTarget])
+
+  return (
+    <div className="relative">
+      <BrainstormAssistantMessageBody text={displayText || (isTyping ? ' ' : text)} />
+      {isTyping ? (
+        <span
+          className="ml-0.5 inline-block h-[1.05em] w-0.5 animate-pulse bg-primary align-[-0.15em]"
+          aria-hidden
+        />
+      ) : null}
+    </div>
+  )
+}
+
+import { fetchAllProjects, fetchProject, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import {
+  fetchWorkspaceMembers,
+  TECTONA_WAC_APP_ID,
+  wacRoleCodeToUiRole,
+} from '@/lib/api/workspaceAccessControlApi'
+import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
+import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
+import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
+import { normalizeMermaidFences, splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
+import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
+import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
+import { IdeaUploadReviewPanel } from '@/modules/project-management/components/IdeaUploadReviewPanel'
+import { IdeaBacklogFoldersSection } from '@/modules/project-management/components/IdeaBacklogFoldersSection'
+import { useIdeaFolderStore, type IdeaBacklogFolder } from '@/modules/project-management/store/ideaFolderStore'
+import { ProjectDragLayer } from '@/modules/projects/components/ProjectDragLayer'
+import { useToast } from '@/components/ui/toast'
+import { notifyEvent } from '@/lib/api/notificationApi'
+import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
+
+type IdeaStatus = 'New Submission' | 'Under Review' | 'Approved' | 'Rejected' | 'Converted to Project'
+type IdeaType = 'Innovation' | 'Improvement' | 'Request' | 'Transformation'
+
+const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request', 'Transformation']
+const IDEA_STATUSES: IdeaStatus[] = ['New Submission', 'Under Review', 'Approved', 'Rejected', 'Converted to Project']
+const ALL_CONTENT_FILTER_TAGS = ['folders', 'ideas'] as const
+type ContentFilterTag = (typeof ALL_CONTENT_FILTER_TAGS)[number]
+const DEFAULT_DRAFT_WORKSPACE_ID = 'react-tectona'
+const MAX_CREATE_IDEA_TAGS = 5
+const MAX_CREATE_IDEA_TAG_LENGTH = 24
+
+
 const IDEA_TAG_QUICK_SUGGESTIONS = [
   'Platform',
   'Integration',
@@ -302,6 +1022,7 @@ type Idea = {
   workspace?: string
   projectId?: string | null
   projectName?: string | null
+  folderId?: string | null
   tags: string[]
   createdAt: string
   reviewer: string
@@ -468,6 +1189,7 @@ function fromApiIdea(api: IdeaApi, projectNameById?: Record<string, string>): Id
     workspace: api.workspace_id ?? undefined,
     projectId,
     projectName: projectId && projectNameById?.[projectId] ? projectNameById[projectId] : null,
+    folderId: api.folder_id?.trim() || null,
     tags: api.tags,
     createdAt: api.created_date.slice(0, 10),
     reviewer: api.assignee_id ?? '—',
@@ -522,614 +1244,7 @@ const IDEA_DESCRIPTION_HEADING_LABELS = new Set([
   'supporting evidence',
 ])
 
-type BrainstormTextBlock =
-  | { type: 'paragraph'; text: string }
-  | { type: 'list'; items: string[] }
 
-/** Turn inline "(1) … (2) …" / "1. …" into paragraph + ordered-list blocks for chat rendering. */
-function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
-  const normalized = text
-    .replace(/\s*(?:atau|or|,)?\s*\((\d+)\)\s+/gi, '\n$1. ')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-
-  if (!normalized) return []
-
-  const lines = normalized.split('\n')
-  const blocks: BrainstormTextBlock[] = []
-  let paragraphParts: string[] = []
-  let listItems: string[] = []
-
-  const flushParagraph = () => {
-    const joined = paragraphParts.join(' ').replace(/\s+/g, ' ').trim()
-    if (joined) blocks.push({ type: 'paragraph', text: joined })
-    paragraphParts = []
-  }
-  const flushList = () => {
-    if (listItems.length > 0) blocks.push({ type: 'list', items: listItems })
-    listItems = []
-  }
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
-    if (!line) {
-      flushList()
-      flushParagraph()
-      continue
-    }
-    const numbered = line.match(/^\d+[\.\)]\s+(.+)$/)
-    if (numbered?.[1]) {
-      flushParagraph()
-      listItems.push(numbered[1].trim())
-      continue
-    }
-    flushList()
-    paragraphParts.push(line)
-  }
-
-  // Peel a trailing question off the last list item so it stays as its own paragraph.
-  if (listItems.length >= 2) {
-    const last = listItems[listItems.length - 1]
-    const sentences = last.split(/(?<=[.!])\s+(?=[A-ZÀ-ÖØ-Þ])/u)
-    if (sentences.length >= 2) {
-      const maybeQuestion = sentences[sentences.length - 1]?.trim() ?? ''
-      if (maybeQuestion.endsWith('?')) {
-        listItems[listItems.length - 1] = sentences.slice(0, -1).join(' ').trim()
-        flushList()
-        paragraphParts.push(maybeQuestion)
-      }
-    }
-  }
-
-  flushList()
-  flushParagraph()
-  return blocks
-}
-
-function formatBrainstormProse(chunk: string): string {
-  const blocks = parseBrainstormAssistantBlocks(chunk)
-  if (blocks.length === 0) return chunk
-  return blocks
-    .map((block) => {
-      if (block.type === 'paragraph') return block.text
-      return block.items.map((item, index) => `${index + 1}. ${item}`).join('\n')
-    })
-    .join('\n\n')
-}
-
-const BRAINSTORM_DIAGRAM_APPROVAL_RE =
-  /(?:sudah sesuai|sudah (?:ok|oke|benar|betul)|setuju|sepakat|approve(?:d)?|looks good|that(?:'s| is) (?:correct|right|fine)|ya[,!]?\s*(?:sudah|benar|ok|oke)|ok(?:e)?(?:\s*,)?\s*(?:lanjut|generate|sip)|ok(?:e)?(?:\s+\w+){0,8}\s*(?:aja|saja|lanjut|ikut|setuju|sip|gas)|ikut\s+(?:kamu|saja|aja)|baik(?:lah)?|silakan|boleh\s+(?:lanjut|terus|ya)|gas(?:\s+aja)?|iya[,!]?\s*(?:lanjut|setuju|ok|oke)?|sip[,!]?\s*(?:lanjut|sudah)|validated|validation ok|go\s*ahead|lgtm|sounds good|yes(?:[,!]?\s*(?:please|go\s*ahead|continue|ok|okay))?|yep|yeah|yup|sure|alright|all right|fine by me|agreed|ok je|okay je|teruskan|de acuerdo|está bien|vale|correcto|perfecto|sí|está correto|pode seguir|concordo|d'accord|oui|parfait|c'est bon|stimmt|in ordnung|genau|va bene|perfetto|sì|akkoord|sige|tama|okay lang|đúng|được|ok luôn|vâng|はい|大丈夫|好的|可以|没问题|沒問題|네|좋아요|حسنا|موافق|تمام|نعم|(?:^|\s)(?:ok|okay|oke|y|yy|👍|👌|✅)(?:$|[\s,.!]))/i
-
-const BRAINSTORM_DIAGRAM_REJECTION_RE =
-  /(?:(?:tidak|nggak|enggak|belum)\s+(?:sesuai|benar|betul|ok|oke|setuju)|masih\s+(?:salah|kurang|belum)|(?:salah|kurang|revisi|perbaiki|ubah|ganti)|not\s+(?:yet|correct|right|ok|okay)|still\s+(?:wrong|incorrect)|(?:please\s+)?(?:revise|fix|change)|(?:don't|do\s+not|jangan)|(?:wrong|incorrect)|いいえ|違う|不行|不对)/i
-
-function userTextApprovesDiagram(text: string): boolean {
-  const raw = (text || '').trim().replace(/\s+/g, ' ')
-  if (!raw) return false
-  const shortOk =
-    /^(ok|okay|oke|yes|yep|yeah|yup|sure|ya|iya|sip|baik|boleh|setuju|sí|si|sim|oui|ja|네|好的|可以|はい|大丈夫|موافق|تمام)$/i.test(
-      raw.replace(/[^\p{L}\p{N}\s👍👌✅]/gu, '').trim(),
-    )
-  const approved = BRAINSTORM_DIAGRAM_APPROVAL_RE.test(raw) || shortOk
-  if (!approved) return false
-  if (/\b(?:tapi|but|however|masih|still|kecuali|except)\b/i.test(raw) && BRAINSTORM_DIAGRAM_REJECTION_RE.test(raw)) {
-    return false
-  }
-  if (
-    /\b(?:revisi|perbaiki|ubah|ganti|revise|fix|change)\b/i.test(raw) &&
-    !/\b(?:no\s+(?:need|changes?)|tidak\s+perlu\s+(?:ubah|revisi))\b/i.test(raw)
-  ) {
-    return false
-  }
-  if (
-    /(?:tidak|nggak|enggak|belum)\s+(?:sesuai|benar|betul|ok|oke|setuju)|(?:not\s+(?:yet|correct|right)|still\s+(?:wrong|incorrect)|wrong|incorrect)/i.test(
-      raw,
-    )
-  ) {
-    return false
-  }
-  return true
-}
-
-function brainstormMessageHasDiagram(text: string): boolean {
-  const lowered = (text || '').toLowerCase()
-  return lowered.includes('```mermaid') || /\bflowchart\s+(td|lr|tb|rl)\b/i.test(lowered)
-}
-
-/** Client-side unlock when backend forgot ready_to_continue but chat evidence is complete. */
-function inferBrainstormReadyFromMessages(messages: IdeaDraftBrainstormMessage[]): boolean {
-  if (!messages.length) return false
-  const hasDiagram = messages.some((m) => m.role === 'assistant' && brainstormMessageHasDiagram(m.text))
-  if (!hasDiagram) return false
-  let lastUser = ''
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (messages[i]?.role === 'user') {
-      lastUser = messages[i].text || ''
-      break
-    }
-  }
-  if (!userTextApprovesDiagram(lastUser)) return false
-  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
-  // If the latest assistant turn still presents a new diagram, wait for the next approval.
-  if (lastAssistant && brainstormMessageHasDiagram(lastAssistant.text)) return false
-  return true
-}
-
-type InitiativeLensId =
-  | 'efficiency'
-  | 'productivity'
-  | 'revenue'
-  | 'cost_of_credit'
-  | 'roa'
-
-type InitiativeLensMatch = {
-  id: InitiativeLensId
-  label: string
-  score: number
-}
-
-const INITIATIVE_LENS_DEFINITIONS: Array<{
-  id: InitiativeLensId
-  label: string
-  patterns: RegExp[]
-}> = [
-  {
-    id: 'efficiency',
-    label: 'Efisiensi',
-    patterns: [
-      /\befisiensi\b/i,
-      /\befficien/i,
-      /\boptim/i,
-      /\bstreamlin/i,
-      /\breduce\s+(time|cycle|handling|manual|effort)\b/i,
-      /\bpercepat/i,
-      /\bhemat\s+waktu/i,
-    ],
-  },
-  {
-    id: 'productivity',
-    label: 'Produktivitas',
-    patterns: [
-      /\bproduktiv/i,
-      /\bproductiv/i,
-      /\bthroughput\b/i,
-      /\bcapacity\b/i,
-      /\boutput\b/i,
-      /\bworkload\b/i,
-      /\bbacklog\b/i,
-      /\bSLA\b/,
-      /\bhelpdesk\b/i,
-      /\bticket\b/i,
-    ],
-  },
-  {
-    id: 'revenue',
-    label: 'Revenue',
-    patterns: [
-      /\brevenue\b/i,
-      /\bpendapatan\b/i,
-      /\bsales\b/i,
-      /\bpenjualan\b/i,
-      /\bcross[- ]sell\b/i,
-      /\bupsell\b/i,
-      /\bconversion\b/i,
-      /\bmarket share\b/i,
-    ],
-  },
-  {
-    id: 'cost_of_credit',
-    label: 'Cost of Credit',
-    patterns: [
-      /\bcost of credit\b/i,
-      /\bbiaya kredit\b/i,
-      /\bNPL\b/,
-      /\bKPR\b/,
-      /\bkredit\b/i,
-      /\bcredit cost\b/i,
-      /\bprovision\b/i,
-      /\bwrite[- ]off\b/i,
-      /\bcollection\b/i,
-    ],
-  },
-  {
-    id: 'roa',
-    label: 'ROA',
-    patterns: [
-      /\bROA\b/,
-      /\breturn on assets\b/i,
-      /\bprofitabilit/i,
-      /\bmargin\b/i,
-      /\byield\b/i,
-      /\bNIM\b/,
-      /\baset\b/i,
-      /\bassets\b/i,
-    ],
-  },
-]
-
-function inferInitiativeLens(
-  title: string,
-  tags: string[],
-  messages: IdeaDraftBrainstormMessage[],
-): InitiativeLensMatch[] {
-  const corpus = [
-    title,
-    ...tags,
-    ...messages.map((message) => message.text),
-  ]
-    .join('\n')
-    .toLowerCase()
-
-  const scored = INITIATIVE_LENS_DEFINITIONS.map((definition) => {
-    let score = 0
-    for (const pattern of definition.patterns) {
-      if (pattern.test(corpus)) score += 1
-    }
-    return { id: definition.id, label: definition.label, score }
-  })
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-
-  return scored.slice(0, 2)
-}
-
-function resolveBrainstormConfidencePercent(
-  backendPercent: number | undefined,
-  progress: IdeaDraftEvidenceProgress | null,
-  ready: boolean,
-): number {
-  if (typeof backendPercent === 'number' && backendPercent > 0) {
-    return Math.max(0, Math.min(100, Math.round(backendPercent)))
-  }
-  if (!progress) return ready ? 85 : 0
-  const requiredRatio = progress.required_total > 0
-    ? progress.required_answered / progress.required_total
-    : progress.total > 0
-      ? progress.answered / progress.total
-      : 0
-  const overallRatio = progress.total > 0 ? progress.answered / progress.total : 0
-  const derived = Math.round(requiredRatio * 70 + overallRatio * 30)
-  if (ready) return Math.max(derived, 85)
-  return derived
-}
-
-function confidenceReadinessLabel(percent: number, ready: boolean): string {
-  if (ready || percent >= 80) return 'Siap generate draft'
-  if (percent >= 55) return 'Konteks mulai matang'
-  if (percent >= 25) return 'Masih perlu eksplorasi'
-  return 'Baru mulai — lanjutkan diskusi'
-}
-
-function BrainstormConfidenceRing({ percent }: { percent: number }) {
-  const clamped = Math.max(0, Math.min(100, Math.round(percent)))
-  const radius = 36
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference - (clamped / 100) * circumference
-  const tone = clamped >= 80
-    ? 'text-emerald-600'
-    : clamped >= 55
-      ? 'text-amber-600'
-      : 'text-slate-500'
-
-  return (
-    <div className="relative inline-flex h-[5.5rem] w-[5.5rem] items-center justify-center">
-      <svg className="h-full w-full -rotate-90" viewBox="0 0 88 88" aria-hidden>
-        <circle cx="44" cy="44" r={radius} fill="none" stroke="currentColor" strokeWidth="6" className="text-muted/30" />
-        <circle
-          cx="44"
-          cy="44"
-          r={radius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="6"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          className={cn('transition-[stroke-dashoffset] duration-500', tone)}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className={cn('text-xl font-semibold tabular-nums', tone)}>{clamped}%</span>
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Confidence</span>
-      </div>
-    </div>
-  )
-}
-
-function BrainstormEvidenceRail({
-  confidencePercent,
-  progress,
-  checklist,
-  gaps,
-  initiativeMatches,
-  ready,
-  collapsed,
-  onToggleCollapsed,
-}: {
-  confidencePercent: number
-  progress: IdeaDraftEvidenceProgress | null
-  checklist: IdeaDraftChecklistItem[]
-  gaps: string[]
-  initiativeMatches: InitiativeLensMatch[]
-  ready: boolean
-  collapsed: boolean
-  onToggleCollapsed: () => void
-}) {
-  const resolvedConfidence = resolveBrainstormConfidencePercent(confidencePercent, progress, ready)
-  const readinessLabel = confidenceReadinessLabel(resolvedConfidence, ready)
-  const items = checklist.length > 0 ? checklist : progress?.items ?? []
-  const requiredTotal = progress?.required_total ?? items.filter((item) => item.required !== false).length
-  const requiredAnswered = progress?.required_answered
-    ?? items.filter((item) => item.required !== false && item.status === 'answered').length
-  const progressPercent = requiredTotal > 0
-    ? Math.round((requiredAnswered / requiredTotal) * 100)
-    : items.length > 0
-      ? Math.round((items.filter((item) => item.status === 'answered').length / items.length) * 100)
-      : 0
-
-  return (
-    <aside
-      className={cn(
-        'flex shrink-0 flex-col',
-        collapsed
-          ? 'w-12 border-r border-border/70 bg-background'
-          : 'w-full border-b border-border/70 bg-muted/20 p-3 md:w-[min(42%,28rem)] md:border-b-0 md:border-r md:p-4',
-      )}
-    >
-      {collapsed ? (
-        <div className="flex flex-col items-center gap-2 py-3">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            onClick={onToggleCollapsed}
-            aria-label="Expand readiness panel"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Target className="h-4 w-4 text-muted-foreground" aria-hidden />
-          <span className="text-[10px] font-medium tabular-nums text-muted-foreground [writing-mode:vertical-rl]">
-            {resolvedConfidence}%
-          </span>
-        </div>
-      ) : (
-        <div
-          className={cn(
-            'glass-card flex min-h-0 flex-1 flex-col overflow-hidden border border-border/40',
-            'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
-            'rounded-2xl',
-          )}
-        >
-          <div className="flex h-full min-h-0 w-full flex-col">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-5">
-              <div className="flex shrink-0 items-start justify-between gap-3">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Target className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                    <h2 className="text-lg font-semibold text-foreground">Draft Readiness</h2>
-                  </div>
-                  <p className="text-[11px] leading-snug text-muted-foreground">
-                    Confidence AI dan progres evidence AS-IS sebelum generate draft.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={onToggleCollapsed}
-                  aria-label="Collapse readiness panel"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-              </div>
-
-              <div className="flex shrink-0 items-center gap-4 rounded-xl border border-border/40 bg-muted/10 px-4 py-3">
-                <BrainstormConfidenceRing percent={resolvedConfidence} />
-                <div className="min-w-0 space-y-1">
-                  <p className="text-sm font-semibold text-foreground">{readinessLabel}</p>
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    {ready
-                      ? 'Evidence cukup — draft bisa di-generate dengan konteks yang lebih kuat.'
-                      : 'Anda tetap bisa generate draft kapan saja; draft awal mungkin masih berisi asumsi.'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-background/70 p-3">
-                <div className="flex shrink-0 items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Evidence progress
-                  </p>
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {requiredAnswered}/{requiredTotal || items.length || 0} wajib
-                  </span>
-                </div>
-                <div className="h-1.5 shrink-0 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={cn(
-                      'h-full rounded-full transition-all duration-500',
-                      progressPercent >= 80 ? 'bg-emerald-500' : progressPercent >= 40 ? 'bg-amber-500' : 'bg-primary/70',
-                    )}
-                    style={{ width: `${Math.max(progressPercent, items.length > 0 ? 4 : 0)}%` }}
-                  />
-                </div>
-                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
-                  {items.length > 0 ? (
-                    items.map((item) => {
-                      const status = item.status ?? 'pending'
-                      const Icon = status === 'answered'
-                        ? CircleCheck
-                        : status === 'asked'
-                          ? Circle
-                          : Circle
-                      return (
-                        <div
-                          key={item.id}
-                          className={cn(
-                            'flex items-start gap-2 rounded-lg px-2 py-1.5 text-xs leading-5',
-                            status === 'answered' && 'bg-emerald-50 text-emerald-950',
-                            status === 'asked' && 'bg-amber-50/80 text-amber-950',
-                            status === 'pending' && 'text-muted-foreground',
-                          )}
-                        >
-                          <Icon
-                            className={cn(
-                              'mt-0.5 h-3.5 w-3.5 shrink-0',
-                              status === 'answered' && 'text-emerald-600',
-                              status === 'asked' && 'text-amber-600',
-                            )}
-                            aria-hidden
-                          />
-                          <span className="min-w-0">{item.prompt}</span>
-                        </div>
-                      )
-                    })
-                  ) : gaps.length > 0 ? (
-                    gaps.map((gap) => (
-                      <div key={gap} className="rounded-lg px-2 py-1.5 text-xs leading-5 text-muted-foreground">
-                        {formatBrainstormGapLabel(gap)}
-                      </div>
-                    ))
-                  ) : (
-                    <p className="px-2 py-1 text-xs text-muted-foreground">
-                      Checklist evidence akan muncul setelah pertanyaan pertama dari assistant.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="shrink-0 space-y-2 rounded-xl border border-border/40 bg-muted/10 p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Arah inisiatif
-                </p>
-                {initiativeMatches.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {initiativeMatches.map((match) => (
-                      <Badge
-                        key={match.id}
-                        variant="secondary"
-                        className="rounded-full border border-primary/15 bg-primary/8 px-2.5 py-0.5 text-[11px] font-medium text-foreground"
-                      >
-                        {match.label}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    Belum teridentifikasi — arah value (efisiensi, produktivitas, revenue, cost of credit, ROA) akan muncul seiring diskusi.
-                  </p>
-                )}
-                <p className="text-[10px] leading-4 text-muted-foreground">
-                  Indikasi awal dari judul, tag, dan isi brainstorming — bukan keputusan scoring final.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </aside>
-  )
-}
-
-function BrainstormAssistantMessageBody({ text }: { text: string }) {
-  const segments = splitMermaidContent(text)
-  if (segments.length === 0) return null
-
-  // Mount diagrams directly so broken markdown fences cannot hide them as code blocks.
-  if (segments.some((s) => s.type === 'mermaid' || s.type === 'tecchart')) {
-    return (
-      <div className="space-y-2 text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2">
-        {segments.map((segment, index) => {
-          if (segment.type === 'mermaid') {
-            return <AssistantMermaidBlock key={`m-${index}`} source={segment.source} />
-          }
-          if (segment.type === 'tecchart') {
-            return null
-          }
-          const prose = formatBrainstormProse(segment.text).trim()
-          if (!prose) return null
-          return (
-            <AssistantChatMarkdown
-              key={`p-${index}`}
-              content={prose}
-              className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
-            />
-          )
-        })}
-      </div>
-    )
-  }
-
-  return (
-    <AssistantChatMarkdown
-      content={formatBrainstormProse(normalizeMermaidFences(text))}
-      className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
-    />
-  )
-}
-
-function BrainstormAssistantTypingMessage({
-  text,
-  animate,
-  onComplete,
-  onProgress,
-}: {
-  text: string
-  animate: boolean
-  onComplete?: () => void
-  onProgress?: () => void
-}) {
-  const mermaidStart = text.indexOf('```mermaid')
-  const typingTarget = mermaidStart >= 0 ? text.slice(0, mermaidStart) : text
-  const [displayText, setDisplayText] = useState(animate ? '' : text)
-  const [isTyping, setIsTyping] = useState(animate)
-
-  useEffect(() => {
-    if (!animate) {
-      setDisplayText(text)
-      setIsTyping(false)
-      return
-    }
-    setDisplayText('')
-    setIsTyping(true)
-    const tokens = typingTarget.match(/\S+\s*|\s+/g) ?? [typingTarget]
-    if (tokens.length === 0) {
-      setDisplayText(text)
-      setIsTyping(false)
-      onComplete?.()
-      return
-    }
-    let index = 0
-    const timerId = window.setInterval(() => {
-      index += 1
-      if (index >= tokens.length) {
-        window.clearInterval(timerId)
-        setDisplayText(text)
-        setIsTyping(false)
-        onComplete?.()
-        return
-      }
-      setDisplayText(tokens.slice(0, index).join(''))
-      onProgress?.()
-    }, 36)
-    return () => window.clearInterval(timerId)
-  }, [animate, onComplete, onProgress, text, typingTarget])
-
-  return (
-    <div className="relative">
-      <BrainstormAssistantMessageBody text={displayText || (isTyping ? ' ' : text)} />
-      {isTyping ? (
-        <span
-          className="ml-0.5 inline-block h-[1.05em] w-0.5 animate-pulse bg-primary align-[-0.15em]"
-          aria-hidden
-        />
-      ) : null}
-    </div>
-  )
-}
 
 
 function RequiredFieldMark() {
@@ -1318,6 +1433,7 @@ const typeClass: Record<IdeaType, string> = {
   Innovation: 'bg-sky-100 text-sky-700 border-sky-200',
   Improvement: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   Request: 'bg-violet-100 text-violet-700 border-violet-200',
+  Transformation: 'bg-amber-100 text-amber-700 border-amber-200',
 }
 
 const DEFAULT_IDEA_CARD_ACCENT_COLOR = '#94a3b8'
@@ -1383,10 +1499,11 @@ const statusClass: Record<IdeaStatus, string> = {
   'Converted to Project': 'bg-violet-50 text-violet-700 border-violet-200',
 }
 
-function ideaTypeFilterVariant(type: IdeaType): 'sky' | 'emerald' | 'violet' {
+function ideaTypeFilterVariant(type: IdeaType): 'sky' | 'emerald' | 'violet' | 'amber' {
   if (type === 'Innovation') return 'sky'
   if (type === 'Improvement') return 'emerald'
-  return 'violet'
+  if (type === 'Request') return 'violet'
+  return 'amber'
 }
 
 function ideaStatusFilterVariant(status: IdeaStatus): 'amber' | 'cyan' | 'emerald' | 'slate' | 'violet' {
@@ -1399,10 +1516,93 @@ function ideaStatusFilterVariant(status: IdeaStatus): 'amber' | 'cyan' | 'emeral
 
 const LEGACY_DUMMY_OWNER_ID = '00000000-0000-0000-0000-000000000001'
 
+function isNestDropId(id: string) {
+  return id.startsWith('folder-nest-')
+}
+
+function isIdeaFolderDropId(id: string) {
+  return id.startsWith('folder-drop-')
+}
+
+function parseNestDropId(id: string) {
+  return id.replace('folder-nest-', '')
+}
+
+function parseIdeaFolderDropId(id: string) {
+  return id.replace('folder-drop-', '')
+}
+
+function canMoveIdeaFolderToTarget(
+  folderId: string,
+  targetParentId: string | null,
+  folders: IdeaBacklogFolder[],
+): boolean {
+  if (!targetParentId || targetParentId === folderId) return false
+  const byId = new Map(folders.map((folder) => [folder.id, folder]))
+  let cursor = byId.get(targetParentId)
+  const visited = new Set<string>()
+  while (cursor) {
+    if (cursor.id === folderId) return false
+    if (visited.has(cursor.id)) break
+    visited.add(cursor.id)
+    cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined
+  }
+  return true
+}
+
+function createIdeaFolderDropCollisionDetection(folders: IdeaBacklogFolder[]): CollisionDetection {
+  return (args) => {
+    const activeId = String(args.active.id)
+
+    if (activeId.startsWith('idea-')) {
+      const collisions = pointerWithin(args)
+      const dropHits = collisions.filter((collision) => isIdeaFolderDropId(String(collision.id)))
+      if (dropHits.length > 0) return dropHits
+      return collisions
+    }
+
+    if (activeId.startsWith('folder-')) {
+      const sourceId = activeId.replace('folder-', '')
+      const pointerCollisions = pointerWithin(args)
+      const nestHits = pointerCollisions.filter((collision) => {
+        const id = String(collision.id)
+        if (!isNestDropId(id)) return false
+        const targetId = parseNestDropId(id)
+        return sourceId !== targetId && canMoveIdeaFolderToTarget(sourceId, targetId, folders)
+      })
+      if (nestHits.length > 0) return nestHits
+
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((container) => {
+          const id = String(container.id)
+          return !isIdeaFolderDropId(id) && !isNestDropId(id)
+        }),
+      })
+    }
+
+    return pointerWithin(args)
+  }
+}
+
 export function IdeaBacklogManagementPage() {
   type SubmissionSortOrder = 'name-asc' | 'name-desc'
 
   const tenant = useTenantContextOptional()
+  const { addToast } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const currentFolderId = searchParams.get('folder')
+  const {
+    folders,
+    fetchFolders,
+    addFolder,
+    updateFolder,
+    deleteFolder,
+    getFolder,
+    foldersLoading,
+    foldersError,
+  } = useIdeaFolderStore()
+  const userWorkspaceOptions = useUserWorkspaceOptions()
   const workspaceManagementPath = useMemo(
     () => workspaceScopedPath(tenant?.slug ?? null, '/workspace-management', tenant?.workspaceId),
     [tenant?.slug, tenant?.workspaceId],
@@ -1417,6 +1617,10 @@ export function IdeaBacklogManagementPage() {
   const [selectedIdeaId, setSelectedIdeaId] = useState('')
   const [selectedIdeaIds, setSelectedIdeaIds] = useState<Set<string>>(() => new Set())
   const [query, setQuery] = useState('')
+  const [contentFilterTags, setContentFilterTags] = useState<Set<ContentFilterTag>>(
+    () => new Set(ALL_CONTENT_FILTER_TAGS),
+  )
+  const [folderSortOrder, setFolderSortOrder] = useState<SubmissionSortOrder>('name-asc')
   const [typeFilterTags, setTypeFilterTags] = useState<Set<IdeaType>>(() => new Set(IDEA_TYPES))
   const [statusFilterTags, setStatusFilterTags] = useState<Set<IdeaStatus>>(() => new Set(IDEA_STATUSES))
   const [submissionSortOrder, setSubmissionSortOrder] = useState<SubmissionSortOrder>('name-asc')
@@ -1425,12 +1629,18 @@ export function IdeaBacklogManagementPage() {
   const [showIntakePanel, setShowIntakePanel] = useState(false)
   const [isListView, setIsListView] = useState(false)
   const [orderedIdeaIds, setOrderedIdeaIds] = useState<string[]>([])
+  const [orderedFolderIds, setOrderedFolderIds] = useState<string[]>([])
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null)
+  const [activeDragId, setActiveDragId] = useState<string | null>(null)
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
+  const [dropTargetFolderName, setDropTargetFolderName] = useState<string | null>(null)
+  const [dragPointer, setDragPointer] = useState<{ x: number; y: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<FixedContextMenuPosition | null>(null)
   const [isSearchFieldMenu, setIsSearchFieldMenu] = useState(false)
   const [ideaCardContextMenu, setIdeaCardContextMenu] = useState<(FixedContextMenuPosition & { idea: Idea }) | null>(null)
   const [isSavingIdeaColor, setIsSavingIdeaColor] = useState(false)
   const [isCreateIdeaDrawerOpen, setIsCreateIdeaDrawerOpen] = useState(false)
+  const [isUploadIdeaPanelOpen, setIsUploadIdeaPanelOpen] = useState(false)
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
   const [isDeletingIdea, setIsDeletingIdea] = useState(false)
   const [deleteIdeaError, setDeleteIdeaError] = useState('')
@@ -1454,6 +1664,7 @@ export function IdeaBacklogManagementPage() {
   const [brainstormRemainingGaps, setBrainstormRemainingGaps] = useState<string[]>([])
   const [brainstormChecklist, setBrainstormChecklist] = useState<IdeaDraftChecklistItem[]>([])
   const [brainstormEvidenceProgress, setBrainstormEvidenceProgress] = useState<IdeaDraftEvidenceProgress | null>(null)
+  const [brainstormDiscoveryProgress, setBrainstormDiscoveryProgress] = useState<IdeaDraftDiscoveryProgress | null>(null)
   const [brainstormConfidencePercent, setBrainstormConfidencePercent] = useState(0)
   const [brainstormOfferGenerateAnyway, setBrainstormOfferGenerateAnyway] = useState(false)
   const [brainstormEvidenceRailCollapsed, setBrainstormEvidenceRailCollapsed] = useState(false)
@@ -1489,6 +1700,7 @@ export function IdeaBacklogManagementPage() {
   const [ideaAnalysisProgressById, setIdeaAnalysisProgressById] = useState<Record<string, IdeaAnalysisProgress>>({})
   const ideaAnalysisInFlightRef = useRef<Record<string, boolean>>({})
   const navigate = useNavigate()
+  const location = useLocation()
   const currentSession = getSession()
   const currentUserId = currentSession?.user.id.trim() ?? ''
   const currentUserDisplayName =
@@ -1508,10 +1720,11 @@ export function IdeaBacklogManagementPage() {
 
   const syncBrainstormEvidenceState = (status: Pick<
     IdeaDraftJobStatusResponse,
-    'intake_checklist' | 'evidence_progress' | 'confidence_percent' | 'brainstorm_ready'
+    'intake_checklist' | 'evidence_progress' | 'discovery_progress' | 'confidence_percent' | 'brainstorm_ready'
   >) => {
     setBrainstormChecklist(status.intake_checklist ?? status.evidence_progress?.items ?? [])
     setBrainstormEvidenceProgress(status.evidence_progress ?? null)
+    setBrainstormDiscoveryProgress(status.discovery_progress ?? null)
     setBrainstormConfidencePercent(
       resolveBrainstormConfidencePercent(
         status.confidence_percent,
@@ -1653,31 +1866,26 @@ export function IdeaBacklogManagementPage() {
     const hasTitle = createIdeaForm.title.trim().length > 0
     const hasDescription = createIdeaForm.description.trim().length > 0
     const hasWorkspace = createIdeaForm.workspaceId.trim().length > 0
-    const hasReviewer = createIdeaForm.reviewer.trim().length > 0
     const hasValidTags = !createIdeaTagFeedback
-    const workspaceAndReviewerReady = !isCreateIdeaWorkspaceLoading && !isReviewerOptionsLoading
-    const noBlockingLookupError = !createIdeaWorkspaceError && !reviewerOptionsError
+    const workspaceReady = !isCreateIdeaWorkspaceLoading
+    const noBlockingLookupError = !createIdeaWorkspaceError
 
     return (
       hasTitle &&
       hasDescription &&
       hasWorkspace &&
-      hasReviewer &&
       hasValidTags &&
-      workspaceAndReviewerReady &&
+      workspaceReady &&
       noBlockingLookupError
     )
   }, [
     createIdeaForm.description,
-    createIdeaForm.reviewer,
     createIdeaForm.title,
     createIdeaForm.workspaceId,
     createIdeaTagFeedback,
     createIdeaWorkspaceError,
     effectiveCreateIdeaTags.length,
     isCreateIdeaWorkspaceLoading,
-    isReviewerOptionsLoading,
-    reviewerOptionsError,
   ])
 
   useEffect(() => {
@@ -1815,6 +2023,7 @@ export function IdeaBacklogManagementPage() {
       Innovation: ideas.filter((idea) => idea.type === 'Innovation').length,
       Improvement: ideas.filter((idea) => idea.type === 'Improvement').length,
       Request: ideas.filter((idea) => idea.type === 'Request').length,
+      Transformation: ideas.filter((idea) => idea.type === 'Transformation').length,
     }
     return counts
   }, [ideas])
@@ -1838,8 +2047,170 @@ export function IdeaBacklogManagementPage() {
     return Object.values(statusCounts).reduce((sum, count) => sum + count, 0)
   }, [statusCounts])
 
+  const ideasInCurrentFolder = useMemo(() => {
+    const normalizedFolderId = currentFolderId ?? null
+    return ideas.filter((idea) => (idea.folderId ?? null) === normalizedFolderId)
+  }, [ideas, currentFolderId])
+
+  const foldersInCurrentParent = useMemo(() => {
+    const normalizedParentId = currentFolderId ?? null
+    return folders.filter((folder) => (folder.parentId ?? null) === normalizedParentId)
+  }, [folders, currentFolderId])
+
+  const folderAncestors = useMemo(() => {
+    if (!currentFolderId) return [] as IdeaBacklogFolder[]
+    const chain: IdeaBacklogFolder[] = []
+    let cursor = getFolder(currentFolderId)
+    while (cursor) {
+      chain.unshift(cursor)
+      cursor = cursor.parentId ? getFolder(cursor.parentId) : undefined
+    }
+    return chain
+  }, [currentFolderId, folders, getFolder])
+
+  const currentFolder = currentFolderId ? getFolder(currentFolderId) : undefined
+
+  useEffect(() => {
+    if (tenant?.loading) return
+    void fetchFolders(LEGACY_DUMMY_OWNER_ID)
+    void fetchFolders(LEGACY_DUMMY_OWNER_ID, currentFolderId ?? null)
+  }, [tenant?.loading, tenant?.workspaceId, currentFolderId, fetchFolders])
+
+  useEffect(() => {
+    const onTenantChanged = () => {
+      useIdeaFolderStore.getState().clearLocalCache()
+      void fetchFolders(LEGACY_DUMMY_OWNER_ID)
+      void fetchFolders(LEGACY_DUMMY_OWNER_ID, currentFolderId ?? null)
+    }
+    window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+    return () => window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
+  }, [currentFolderId, fetchFolders])
+
+  const handleOpenFolder = useCallback(
+    (folderId: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('folder', folderId)
+        return next
+      })
+    },
+    [setSearchParams],
+  )
+
+  const handleBackToFolderRoot = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('folder')
+      return next
+    })
+  }, [setSearchParams])
+
+  const handleNavigateToFolderAncestor = useCallback(
+    (folderId: string | null) => {
+      if (!folderId) {
+        handleBackToFolderRoot()
+        return
+      }
+      handleOpenFolder(folderId)
+    },
+    [handleBackToFolderRoot, handleOpenFolder],
+  )
+
+  const handleCreateFolderWithDefaultName = useCallback(async () => {
+    const parentId = currentFolderId ?? null
+    const siblings = folders.filter((folder) => (folder.parentId ?? null) === parentId)
+    const usedNumbers = siblings
+      .filter((folder) => /^Untitled \d+$/.test(folder.name))
+      .map((folder) => parseInt(folder.name.replace('Untitled ', ''), 10))
+    const nextNum = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : 1
+    const defaultName = `Untitled ${nextNum}`
+    try {
+      await addFolder({
+        name: defaultName,
+        parentId,
+        ownerId: LEGACY_DUMMY_OWNER_ID,
+      })
+      addToast({
+        title: 'Folder created',
+        description: `"${defaultName}" has been created. Rename via right-click.`,
+        variant: 'success',
+      })
+      notifyEvent({
+        type_code: 'folder',
+        title: 'Folder created',
+        body: `"${defaultName}" has been created in Idea & Backlog.`,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to create folder'
+      addToast({ title: 'Error', description: msg, variant: 'error' })
+    }
+  }, [folders, addFolder, addToast, currentFolderId])
+
+  const handleRenameIdeaFolder = useCallback(
+    async (folderId: string, name: string) => {
+      try {
+        await updateFolder(folderId, { name })
+        addToast({ title: 'Folder renamed', description: `"${name}" saved.`, variant: 'success' })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to rename folder'
+        addToast({ title: 'Error', description: msg, variant: 'error' })
+      }
+    },
+    [updateFolder, addToast],
+  )
+
+  const handleDeleteIdeaFolder = useCallback(
+    async (folder: IdeaBacklogFolder) => {
+      const ideasInFolder = ideas.filter((idea) => idea.folderId === folder.id).length
+      const childFolders = folders.filter((item) => item.parentId === folder.id).length
+      const confirmed = window.confirm(
+        `Delete folder "${folder.name}"? It contains ${ideasInFolder} idea(s) and ${childFolders} subfolder(s). Ideas will move to the parent level.`,
+      )
+      if (!confirmed) return
+      try {
+        await deleteFolder(folder.id)
+        if (currentFolderId === folder.id) {
+          handleNavigateToFolderAncestor(folder.parentId ?? null)
+        }
+        addToast({ title: 'Folder deleted', description: `"${folder.name}" removed.`, variant: 'success' })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to delete folder'
+        addToast({ title: 'Error', description: msg, variant: 'error' })
+      }
+    },
+    [ideas, folders, deleteFolder, currentFolderId, handleNavigateToFolderAncestor, addToast],
+  )
+
+  const filteredFolders = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return foldersInCurrentParent.filter((folder) => {
+      if (!q) return true
+      return (
+        folder.name.toLowerCase().includes(q)
+        || (folder.description ?? '').toLowerCase().includes(q)
+      )
+    })
+  }, [foldersInCurrentParent, query])
+
+  const contentCounts = useMemo(() => ({
+    folders: filteredFolders.length,
+    ideas: ideasInCurrentFolder.length,
+  }), [filteredFolders.length, ideasInCurrentFolder.length])
+
+  const contentTotalForLabel = contentCounts.folders + contentCounts.ideas
+
+  useEffect(() => {
+    if (!currentFolderId || foldersLoading) return
+    if (!getFolder(currentFolderId)) {
+      handleBackToFolderRoot()
+    }
+  }, [currentFolderId, foldersLoading, folders, getFolder, handleBackToFolderRoot])
+
+  const showFoldersSection = contentFilterTags.has('folders')
+  const showIdeasSection = contentFilterTags.has('ideas')
+
   const filteredIdeas = useMemo(() => {
-    return ideas.filter((idea) => {
+    return ideasInCurrentFolder.filter((idea) => {
       const matchQuery =
         idea.title.toLowerCase().includes(query.toLowerCase()) ||
         idea.description.toLowerCase().includes(query.toLowerCase()) ||
@@ -1848,7 +2219,7 @@ export function IdeaBacklogManagementPage() {
       const matchStatus = statusFilterTags.size === 0 || statusFilterTags.has(idea.status)
       return matchQuery && matchType && matchStatus
     })
-  }, [ideas, query, typeFilterTags, statusFilterTags])
+  }, [ideasInCurrentFolder, query, typeFilterTags, statusFilterTags])
 
   const sortedFilteredIdeas = useMemo(() => {
     return [...filteredIdeas].sort((a, b) => {
@@ -1866,16 +2237,18 @@ export function IdeaBacklogManagementPage() {
     return [...ordered, ...rest]
   }, [sortedFilteredIdeas, orderedIdeaIds])
 
-  const activeIdea = useMemo(
-    () => orderedSortedFilteredIdeas.find((idea) => idea.id === activeIdeaId) ?? null,
-    [orderedSortedFilteredIdeas, activeIdeaId]
-  )
-
   const isDragActive = activeIdeaId !== null
+  const isIdeaDragActive = activeDragId?.startsWith('idea-') ?? false
   const draggedIdeaIds = useMemo(() => {
     if (!activeIdeaId) return new Set<string>()
+    if (selectedIdeaIds.size > 1 && selectedIdeaIds.has(activeIdeaId)) return selectedIdeaIds
     return new Set([activeIdeaId])
-  }, [activeIdeaId])
+  }, [activeIdeaId, selectedIdeaIds])
+
+  const folderDropCollisionDetection = useMemo(
+    () => createIdeaFolderDropCollisionDetection(folders),
+    [folders],
+  )
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -1884,6 +2257,21 @@ export function IdeaBacklogManagementPage() {
       },
     })
   )
+
+  const isAnyItemDragActive = Boolean(activeDragId)
+  useEffect(() => {
+    if (!isAnyItemDragActive) {
+      setDragPointer(null)
+      setDropTargetFolderId(null)
+      setDropTargetFolderName(null)
+      return
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      setDragPointer({ x: event.clientX, y: event.clientY })
+    }
+    window.addEventListener('pointermove', onPointerMove)
+    return () => window.removeEventListener('pointermove', onPointerMove)
+  }, [isAnyItemDragActive])
 
   const decideIdea = async (status: IdeaStatus) => {
     if (!selectedIdea) return
@@ -1951,35 +2339,168 @@ export function IdeaBacklogManagementPage() {
 
   const handleIdeaDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id)
-    if (!id.startsWith('idea-')) return
-    setActiveIdeaId(id.replace('idea-', ''))
+    setActiveDragId(id)
+    if (id.startsWith('idea-')) setActiveIdeaId(id.replace('idea-', ''))
+    const activator = event.activatorEvent
+    if (activator && 'clientX' in activator && 'clientY' in activator) {
+      setDragPointer({
+        x: (activator as PointerEvent).clientX,
+        y: (activator as PointerEvent).clientY,
+      })
+    }
   }
 
-  const handleIdeaDragEnd = (event: DragEndEvent) => {
+  const clearIdeaDragState = () => {
     setActiveIdeaId(null)
+    setActiveDragId(null)
+    setDropTargetFolderId(null)
+    setDropTargetFolderName(null)
+  }
 
+  const moveIdeasToFolder = async (ideaIds: string[], folderId: string | null) => {
+    const targets = ideas.filter((idea) => ideaIds.includes(idea.id) && (idea.folderId ?? null) !== folderId)
+    if (targets.length === 0) return
+    const results = await Promise.all(
+      targets.map((idea) =>
+        patchIdea(idea.id, { folder_id: folderId, version: idea.version }).then((updated) => toIdea(updated)),
+      ),
+    )
+    const byId = new Map(results.map((idea) => [idea.id, idea]))
+    setIdeas((prev) => prev.map((idea) => byId.get(idea.id) ?? idea))
+    void fetchFolders(LEGACY_DUMMY_OWNER_ID)
+    void fetchFolders(LEGACY_DUMMY_OWNER_ID, currentFolderId ?? null)
+  }
+
+  const handleIdeaDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event
-    if (!over || active.id === over.id) return
+    const draggingId = String(active.id)
+    const overId = over ? String(over.id) : null
 
-    const activeId = String(active.id).replace('idea-', '')
-    const overId = String(over.id).replace('idea-', '')
+    try {
+      if (!overId) {
+        clearIdeaDragState()
+        return
+      }
 
-    const visibleIdeaIds = orderedSortedFilteredIdeas.map((idea) => idea.id)
-    const oldIndex = visibleIdeaIds.indexOf(activeId)
-    const newIndex = visibleIdeaIds.indexOf(overId)
+      if (draggingId.startsWith('folder-') && isNestDropId(overId)) {
+        const sourceId = draggingId.replace('folder-', '')
+        const targetId = parseNestDropId(overId)
+        if (sourceId !== targetId && canMoveIdeaFolderToTarget(sourceId, targetId, folders)) {
+          await updateFolder(sourceId, { parentId: targetId })
+          const targetName = getFolder(targetId)?.name ?? 'folder'
+          addToast({
+            title: 'Folder dipindahkan',
+            description: `Dipindahkan ke "${targetName}".`,
+            variant: 'success',
+          })
+        }
+        clearIdeaDragState()
+        return
+      }
 
-    if (oldIndex < 0 || newIndex < 0) return
+      if (
+        draggingId.startsWith('folder-')
+        && overId.startsWith('folder-')
+        && !isNestDropId(overId)
+        && !isIdeaFolderDropId(overId)
+      ) {
+        const siblingIds = filteredFolders.map((folder) => folder.id)
+        const orderedIds = [
+          ...orderedFolderIds.filter((id) => siblingIds.includes(id)),
+          ...siblingIds.filter((id) => !orderedFolderIds.includes(id)),
+        ]
+        const oldIndex = orderedIds.indexOf(draggingId.replace('folder-', ''))
+        const newIndex = orderedIds.indexOf(overId.replace('folder-', ''))
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          setOrderedFolderIds(arrayMove(orderedIds, oldIndex, newIndex))
+          addToast({
+            title: 'Urutan diubah',
+            description: 'Posisi folder telah diperbarui.',
+            variant: 'success',
+          })
+        }
+        clearIdeaDragState()
+        return
+      }
 
-    const reorderedVisible = arrayMove(visibleIdeaIds, oldIndex, newIndex)
+      if (draggingId.startsWith('idea-') && isIdeaFolderDropId(overId)) {
+        const ideaId = draggingId.replace('idea-', '')
+        const folderId = parseIdeaFolderDropId(overId)
+        const idsToMove =
+          selectedIdeaIds.size > 1 && selectedIdeaIds.has(ideaId)
+            ? Array.from(selectedIdeaIds)
+            : [ideaId]
+        await moveIdeasToFolder(idsToMove, folderId)
+        const folderName = getFolder(folderId)?.name ?? 'folder'
+        addToast({
+          title: 'Idea dipindahkan',
+          description: idsToMove.length > 1
+            ? `${idsToMove.length} ideas dipindahkan ke "${folderName}".`
+            : `Idea telah dipindahkan ke "${folderName}".`,
+          variant: 'success',
+        })
+        clearIdeaDragState()
+        return
+      }
 
-    setOrderedIdeaIds((prev) => {
-      const remaining = prev.filter((id) => !visibleIdeaIds.includes(id))
-      return [...reorderedVisible, ...remaining]
-    })
+      if (draggingId.startsWith('idea-') && overId.startsWith('idea-')) {
+        const activeId = draggingId.replace('idea-', '')
+        const overIdeaId = overId.replace('idea-', '')
+        const visibleIdeaIds = orderedSortedFilteredIdeas.map((idea) => idea.id)
+        const oldIndex = visibleIdeaIds.indexOf(activeId)
+        const newIndex = visibleIdeaIds.indexOf(overIdeaId)
+        if (oldIndex >= 0 && newIndex >= 0 && oldIndex !== newIndex) {
+          const reorderedVisible = arrayMove(visibleIdeaIds, oldIndex, newIndex)
+          setOrderedIdeaIds((prev) => {
+            const remaining = prev.filter((id) => !visibleIdeaIds.includes(id))
+            return [...reorderedVisible, ...remaining]
+          })
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to move item'
+      addToast({ title: 'Error', description: msg, variant: 'error' })
+    }
+
+    clearIdeaDragState()
+  }
+
+  const handleIdeaDragOver = (event: DragOverEvent) => {
+    const draggingId = String(event.active.id)
+    const overId = event.over?.id ? String(event.over.id) : null
+
+    if (!overId) {
+      setDropTargetFolderId(null)
+      setDropTargetFolderName(null)
+      return
+    }
+
+    if (draggingId.startsWith('idea-') && isIdeaFolderDropId(overId)) {
+      const folderId = parseIdeaFolderDropId(overId)
+      setDropTargetFolderId(folderId)
+      setDropTargetFolderName(getFolder(folderId)?.name ?? null)
+      return
+    }
+
+    if (draggingId.startsWith('folder-') && isNestDropId(overId)) {
+      const sourceId = draggingId.replace('folder-', '')
+      const folderId = parseNestDropId(overId)
+      if (sourceId === folderId || !canMoveIdeaFolderToTarget(sourceId, folderId, folders)) {
+        setDropTargetFolderId(null)
+        setDropTargetFolderName(null)
+        return
+      }
+      setDropTargetFolderId(folderId)
+      setDropTargetFolderName(getFolder(folderId)?.name ?? null)
+      return
+    }
+
+    setDropTargetFolderId(null)
+    setDropTargetFolderName(null)
   }
 
   const handleIdeaDragCancel = () => {
-    setActiveIdeaId(null)
+    clearIdeaDragState()
   }
 
   useEffect(() => {
@@ -2077,37 +2598,55 @@ export function IdeaBacklogManagementPage() {
   useEffect(() => {
     if (!isCreateIdeaDrawerOpen) return
 
-    let cancelled = false
-    setIsCreateIdeaWorkspaceLoading(true)
+    const activeWorkspaceId = resolveWorkspaceApiId(tenant?.workspaceId) ?? ''
+    if (activeWorkspaceId) {
+      setCreateIdeaForm((prev) => (
+        prev.workspaceId === activeWorkspaceId
+          ? prev
+          : { ...prev, workspaceId: activeWorkspaceId, reviewer: '' }
+      ))
+    }
+
+    setIsCreateIdeaWorkspaceLoading(userWorkspaceOptions.loading)
     setCreateIdeaWorkspaceError('')
 
-    void fetchAllWorkspaceOrgWorkspaces({ status: 'active' })
-      .then((rows) => {
-        if (cancelled) return
-        const options = rows
-          .map((row) => ({ id: row.id, name: row.name.trim() || row.workspace_key }))
-          .filter((row) => row.id && row.name)
-          .sort((a, b) => a.name.localeCompare(b.name))
-        setCreateIdeaWorkspaceOptions(options)
-        setCreateIdeaForm((prev) => {
-          const hasSelected = options.some((option) => option.id === prev.workspaceId)
-          if (hasSelected || options.length === 0) return prev
-          return { ...prev, workspaceId: options[0].id }
-        })
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setCreateIdeaWorkspaceOptions([])
-        setCreateIdeaWorkspaceError(err instanceof Error ? err.message : 'Failed to load workspaces.')
-      })
-      .finally(() => {
-        if (!cancelled) setIsCreateIdeaWorkspaceLoading(false)
-      })
-
-    return () => {
-      cancelled = true
+    if (userWorkspaceOptions.loading) {
+      setCreateIdeaWorkspaceOptions([])
+      return
     }
-  }, [isCreateIdeaDrawerOpen])
+
+    if (userWorkspaceOptions.error) {
+      setCreateIdeaWorkspaceOptions([])
+      setCreateIdeaWorkspaceError(userWorkspaceOptions.error)
+      setIsCreateIdeaWorkspaceLoading(false)
+      return
+    }
+
+    const options = userWorkspaceOptions.options
+      .map((option) => ({ id: option.workspaceId, name: option.workspaceName.trim() }))
+      .filter((option) => option.id && option.name)
+      .sort((a, b) => {
+        if (a.id === activeWorkspaceId) return -1
+        if (b.id === activeWorkspaceId) return 1
+        return a.name.localeCompare(b.name)
+      })
+    setCreateIdeaWorkspaceOptions(options)
+    setCreateIdeaForm((prev) => {
+      const hasSelected = options.some((option) => option.id === prev.workspaceId)
+      if (hasSelected || options.length === 0) return prev
+      const defaultWorkspaceId = options.some((option) => option.id === activeWorkspaceId)
+        ? activeWorkspaceId
+        : options[0].id
+      return { ...prev, workspaceId: defaultWorkspaceId }
+    })
+    setIsCreateIdeaWorkspaceLoading(false)
+  }, [
+    isCreateIdeaDrawerOpen,
+    tenant?.workspaceId,
+    userWorkspaceOptions.error,
+    userWorkspaceOptions.loading,
+    userWorkspaceOptions.options,
+  ])
 
   useEffect(() => {
     if (!isCreateIdeaDrawerOpen) return
@@ -2165,11 +2704,6 @@ export function IdeaBacklogManagementPage() {
           a.displayName.localeCompare(b.displayName)
         )
         setReviewerOptions(options)
-        setCreateIdeaForm((prev) => {
-          const hasSelected = options.some((option) => option.subjectId === prev.reviewer)
-          if (hasSelected || options.length === 0) return prev
-          return { ...prev, reviewer: options[0].subjectId }
-        })
       } catch (err: unknown) {
         if (cancelled) return
         setReviewerOptions([])
@@ -2560,6 +3094,7 @@ export function IdeaBacklogManagementPage() {
     setBrainstormRemainingGaps([])
     setBrainstormChecklist([])
     setBrainstormEvidenceProgress(null)
+    setBrainstormDiscoveryProgress(null)
     setBrainstormConfidencePercent(0)
     setBrainstormOfferGenerateAnyway(false)
     setBrainstormEvidenceRailCollapsed(false)
@@ -2635,11 +3170,6 @@ export function IdeaBacklogManagementPage() {
       return
     }
 
-    if (!createIdeaForm.reviewer.trim()) {
-      setCreateIdeaError('Reviewer is required.')
-      return
-    }
-
     const tags = effectiveCreateIdeaTags
 
     if (createIdeaTagFeedback) {
@@ -2656,6 +3186,7 @@ export function IdeaBacklogManagementPage() {
         workspace_id: createIdeaForm.workspaceId,
         owner_id: currentUserId || undefined,
         assignee_id: createIdeaForm.reviewer || undefined,
+        folder_id: currentFolderId ?? null,
       })
       const newIdea = {
         ...toIdea(created),
@@ -2695,7 +3226,7 @@ export function IdeaBacklogManagementPage() {
       overlapMessages.push(`${terminal.similar_ideas.length} similar idea(s) found`)
     }
     if (terminal.similar_documents.length > 0) {
-      overlapMessages.push(`${terminal.similar_documents.length} related BRD(s) found`)
+      overlapMessages.push(`${terminal.similar_documents.length} related document(s) found`)
     }
     if (terminal.warnings.includes('GENERATED_WITH_EVIDENCE_GAPS')) {
       overlapMessages.push('generated with explicitly labeled evidence gaps')
@@ -2707,16 +3238,26 @@ export function IdeaBacklogManagementPage() {
     )
   }
 
+  const applyIdeaDraftBrainstormState = (status: IdeaDraftJobStatusResponse) => {
+    setIdeaDraftJob(status)
+    setBrainstormMessages(status.brainstorm_messages ?? [])
+    setBrainstormReady(Boolean(status.brainstorm_ready))
+    setBrainstormRemainingGaps(status.brainstorm_remaining_gaps ?? status.evidence_summary.gaps ?? [])
+    setBrainstormOfferGenerateAnyway(Boolean(status.offer_generate_anyway))
+    syncBrainstormEvidenceState(status)
+  }
+
   const waitForIdeaDraftJob = async (jobId: string): Promise<IdeaDraftJobStatusResponse> => {
     for (let attempt = 0; attempt < 240; attempt += 1) {
       const status = await getIdeaDraftJob(jobId)
       setIdeaDraftJob(status)
       if (status.status === 'awaiting_input') {
-        setBrainstormMessages(status.brainstorm_messages ?? [])
-        setBrainstormReady(Boolean(status.brainstorm_ready))
-        setBrainstormRemainingGaps(status.brainstorm_remaining_gaps ?? status.evidence_summary.gaps ?? [])
-        setBrainstormOfferGenerateAnyway(Boolean(status.offer_generate_anyway))
-        syncBrainstormEvidenceState(status)
+        const hasOpening = (status.brainstorm_messages ?? []).some((message) => message.role === 'assistant')
+        if (!hasOpening && attempt < 239) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 400))
+          continue
+        }
+        applyIdeaDraftBrainstormState(status)
         setIsEvidenceDialogOpen(true)
         return status
       }
@@ -2857,6 +3398,7 @@ export function IdeaBacklogManagementPage() {
       setBrainstormOfferGenerateAnyway(Boolean(response.offer_generate_anyway) && !response.ready_to_continue)
       setBrainstormChecklist(response.intake_checklist ?? response.evidence_progress?.items ?? [])
       setBrainstormEvidenceProgress(response.evidence_progress ?? null)
+      setBrainstormDiscoveryProgress(response.discovery_progress ?? null)
       setBrainstormConfidencePercent(
         resolveBrainstormConfidencePercent(
           response.confidence_percent,
@@ -3012,6 +3554,53 @@ export function IdeaBacklogManagementPage() {
     }
   }
 
+  // Keep the panel's resumable "AI sessions" pointer in sync with the job's
+  // server-side status — independent of isEvidenceDialogOpen, so closing the
+  // modal (a UI-only state) never drops the pointer while the job is still
+  // awaiting brainstorm input.
+  useEffect(() => {
+    if (!ideaDraftJob) return
+    if (ideaDraftJob.status === 'awaiting_input') {
+      useIdeaDraftBrainstormPointerStore.getState().setPointer({
+        jobId: ideaDraftJob.job_id,
+        title: createIdeaForm.title.trim() || 'Untitled idea',
+        updatedAt: Date.now(),
+      })
+      return
+    }
+    useIdeaDraftBrainstormPointerStore.getState().clearPointer(ideaDraftJob.job_id)
+  }, [ideaDraftJob, createIdeaForm.title])
+
+  // Resume entry point: the chat panel navigates here with
+  // navigate('/idea-backlog', { state: { resumeBrainstormJobId } }). Uses router
+  // state (not a query param) deliberately: WorkspaceSlugLayout keys its <Outlet>
+  // on pathname+search+hash, so touching searchParams here would force a full
+  // remount of this page and wipe the very state this effect sets below.
+  useEffect(() => {
+    const jobId = (location.state as { resumeBrainstormJobId?: string } | null)?.resumeBrainstormJobId
+    if (!jobId) return
+
+    void (async () => {
+      try {
+        const status = await getIdeaDraftJob(jobId)
+        setIsCreateIdeaDrawerOpen(true)
+        const pointerTitle = useIdeaDraftBrainstormPointerStore.getState().pointer?.title
+        if (pointerTitle) {
+          setCreateIdeaForm((prev) => (prev.title.trim() ? prev : { ...prev, title: pointerTitle }))
+        }
+        if (status.status === 'awaiting_input') {
+          applyIdeaDraftBrainstormState(status)
+          setIsEvidenceDialogOpen(true)
+          setIsBrainstormMode(true)
+        } else {
+          setIdeaDraftJob(status)
+        }
+      } catch {
+        useIdeaDraftBrainstormPointerStore.getState().clearPointer(jobId)
+      }
+    })()
+  }, [location.state])
+
   const handleApplyAiResult = () => {
     if (aiAssistanceResult?.result) {
       const cleanedResult = aiAssistanceResult.result.trim()
@@ -3157,7 +3746,19 @@ export function IdeaBacklogManagementPage() {
         setSelectedIdeaIds(new Set())
       }}
     >
-      <Breadcrumb items={[{ label: 'Workspace', href: workspaceManagementPath }, { label: 'Idea & Backlog' }]} />
+      <Breadcrumb
+        items={[
+          { label: 'Workspace', href: workspaceManagementPath },
+          { label: 'Idea & Backlog', href: currentFolderId ? workspaceScopedPath(tenant?.slug ?? null, '/idea-backlog', tenant?.workspaceId) : undefined },
+          ...folderAncestors.map((folder, index) => ({
+            label: folder.name,
+            href:
+              index < folderAncestors.length - 1
+                ? `${workspaceScopedPath(tenant?.slug ?? null, '/idea-backlog', tenant?.workspaceId)}?folder=${folder.id}`
+                : undefined,
+          })),
+        ]}
+      />
 
       <style>{`
         @keyframes ideaBarReveal {
@@ -3211,18 +3812,6 @@ export function IdeaBacklogManagementPage() {
 
             <button
               type="button"
-              onClick={() => setShowFiltersPanel((v) => !v)}
-              className={cn(
-                'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
-                showFiltersPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
-              )}
-              aria-label={showFiltersPanel ? 'Hide search and filter panel' : 'Show search and filter panel'}
-            >
-              <Filter className="w-5 h-5" />
-            </button>
-
-            <button
-              type="button"
               onClick={() => setIsListView((v) => !v)}
               className={cn(
                 'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
@@ -3232,6 +3821,18 @@ export function IdeaBacklogManagementPage() {
               title={isListView ? 'Show as grid' : 'Show as list'}
             >
               <List className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowFiltersPanel((v) => !v)}
+              className={cn(
+                'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                showFiltersPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+              )}
+              aria-label={showFiltersPanel ? 'Hide search and filter panel' : 'Show search and filter panel'}
+            >
+              <Filter className="w-5 h-5" />
             </button>
           </div>
         }
@@ -3683,7 +4284,7 @@ export function IdeaBacklogManagementPage() {
                     ),
                   )
                 }}
-                placeholder="Search ideas, tags, submitter, or intent..."
+                placeholder="Search ideas and folders..."
                 className={ideaBacklogLiquidGlassFilterInputClass}
               />
             </div>
@@ -3691,12 +4292,64 @@ export function IdeaBacklogManagementPage() {
             <div className="relative pt-3">
               <div aria-hidden className={ideaBacklogLiquidGlassFilterPanelDividerClass} />
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <button
+                  type="button"
+                  onClick={() => void handleCreateFolderWithDefaultName()}
+                  className={enterpriseIndigoGradientActionButtonClass()}
+                >
+                  <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                  New folder
+                </button>
                 <button type="button" onClick={openCreateIdeaDrawer} className={enterpriseCyanGradientActionButtonClass()}>
                   <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
                   Create Idea
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setIsUploadIdeaPanelOpen(true)}
+                  className={cn(enterpriseSecondaryButtonClass(), 'inline-flex items-center gap-2')}
+                >
+                  <Upload className="h-4 w-4" strokeWidth={2.5} />
+                  Upload Idea
+                </button>
                 <div className="hidden min-w-[1rem] flex-1 lg:block" aria-hidden />
                 <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2 lg:ml-auto lg:w-auto lg:justify-end">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Content <span className="tabular-nums">({contentTotalForLabel})</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {ALL_CONTENT_FILTER_TAGS.map((tag) => {
+                        const on = contentFilterTags.has(tag)
+                        const count = contentCounts[tag]
+                        const label = tag === 'folders' ? 'Folders' : 'Ideas'
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => {
+                              setContentFilterTags((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(tag)) {
+                                  next.delete(tag)
+                                  if (next.size === 0) return new Set(ALL_CONTENT_FILTER_TAGS)
+                                } else {
+                                  next.add(tag)
+                                }
+                                return next
+                              })
+                            }}
+                            className={enterpriseFilterTagClass(on, tag === 'folders' ? 'violet' : 'cyan')}
+                            aria-pressed={on}
+                            title={on ? `Hide ${label}` : `Show ${label}`}
+                          >
+                            <span>{label}</span>
+                            <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="shrink-0 text-xs text-muted-foreground">
                       Type <span className="tabular-nums">({typeTotalForLabel})</span>
@@ -3781,6 +4434,43 @@ export function IdeaBacklogManagementPage() {
           </div>
         )}
 
+        {foldersError && (
+          <p className="text-sm text-rose-600">{foldersError}</p>
+        )}
+
+        {currentFolder && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2">
+            <FolderIcon className="h-4 w-4 text-indigo-600" />
+            <span className="text-sm font-medium text-foreground">{currentFolder.name}</span>
+            <Button type="button" variant="outline" size="sm" onClick={handleBackToFolderRoot}>
+              Back to all ideas
+            </Button>
+          </div>
+        )}
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={folderDropCollisionDetection}
+          onDragStart={handleIdeaDragStart}
+          onDragEnd={(event) => void handleIdeaDragEnd(event)}
+          onDragOver={handleIdeaDragOver}
+          onDragCancel={handleIdeaDragCancel}
+        >
+        {showFoldersSection && (
+          <IdeaBacklogFoldersSection
+            folders={filteredFolders}
+            sortOrder={folderSortOrder}
+            onSortOrderChange={setFolderSortOrder}
+            onOpenFolder={handleOpenFolder}
+            onRenameFolder={handleRenameIdeaFolder}
+            onDeleteFolder={(folder) => void handleDeleteIdeaFolder(folder)}
+            orderedFolderIds={orderedFolderIds}
+            isIdeaDragActive={isIdeaDragActive}
+            dropTargetFolderId={dropTargetFolderId}
+          />
+        )}
+
+        {showIdeasSection && (
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -3807,14 +4497,7 @@ export function IdeaBacklogManagementPage() {
             </DropdownMenu>
           </div>
 
-          <DndContext
-            sensors={sensors}
-            collisionDetection={pointerWithin}
-            onDragStart={handleIdeaDragStart}
-            onDragEnd={handleIdeaDragEnd}
-            onDragCancel={handleIdeaDragCancel}
-          >
-            <SortableContext items={orderedSortedFilteredIdeas.map((idea) => `idea-${idea.id}`)} strategy={rectSortingStrategy}>
+          <SortableContext items={orderedSortedFilteredIdeas.map((idea) => `idea-${idea.id}`)} strategy={rectSortingStrategy}>
               <div className={cn('grid gap-4', isListView ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4')}>
                 {orderedSortedFilteredIdeas.map((idea) => (
                   <SortableIdeaCard
@@ -3851,42 +4534,17 @@ export function IdeaBacklogManagementPage() {
                 ))}
               </div>
             </SortableContext>
-
-            <DragOverlay>
-              {activeIdea ? (
-                <div style={{ transform: 'rotate(2deg)' }}>
-                  <div
-                    className={cn(
-                      ideaBacklogLiquidGlassCardClass,
-                      'opacity-95 scale-105 shadow-2xl border-2 border-primary/30',
-                    )}
-                    style={{
-                      width: '360px',
-                      ['--idea-card-accent' as string]:
-                        activeIdea.cardAccentColor ?? DEFAULT_IDEA_CARD_ACCENT_COLOR,
-                      borderRight: `4px solid ${activeIdea.cardAccentColor ?? DEFAULT_IDEA_CARD_ACCENT_COLOR}`,
-                      boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(59, 130, 246, 0.3)',
-                    }}
-                  >
-                    <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                      <div className="p-1.5 rounded-lg bg-primary/10 flex-shrink-0">
-                        <div className="w-4 h-4 bg-primary/20 rounded" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-foreground mb-1 truncate">
-                          {activeIdea.title}
-                        </h3>
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {activeIdea.description}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
         </div>
+        )}
+
+        <ProjectDragLayer
+          activeId={activeDragId}
+          project={null}
+          projectCount={draggedIdeaIds.size}
+          overFolderName={dropTargetFolderName}
+          pointer={dragPointer}
+        />
+        </DndContext>
       </section>
 
       <ContextMenu
@@ -4064,7 +4722,13 @@ export function IdeaBacklogManagementPage() {
                 <span
                   className={cn(
                     'inline-block h-2 w-2 rounded-full',
-                    type === 'Innovation' ? 'bg-sky-500' : type === 'Improvement' ? 'bg-emerald-500' : 'bg-violet-500',
+                    type === 'Innovation'
+                      ? 'bg-sky-500'
+                      : type === 'Improvement'
+                        ? 'bg-emerald-500'
+                        : type === 'Request'
+                          ? 'bg-violet-500'
+                          : 'bg-amber-500',
                   )}
                 />
                 {type}
@@ -4215,6 +4879,22 @@ export function IdeaBacklogManagementPage() {
           Delete idea
         </ContextMenuItem>
       </ContextMenu>
+
+      <IdeaUploadReviewPanel
+        isOpen={isUploadIdeaPanelOpen}
+        onClose={() => setIsUploadIdeaPanelOpen(false)}
+        workspaceId={createIdeaForm.workspaceId || resolveWorkspaceApiId(tenant?.workspaceId) || ''}
+        currentUserId={currentUserId}
+        onIdeasCreated={(created) => {
+          const newIdeas = created.map((api) => ({
+            ...toIdea(api),
+            submittedBy: api.owner_id?.trim() || currentUserId,
+          }))
+          setIdeas((prev) => [...newIdeas, ...prev])
+          if (newIdeas[0]) selectSingleIdea(newIdeas[0].id)
+          newIdeas.forEach((idea) => void runAgentAnalysisForIdea(idea))
+        }}
+      />
 
       {typeof document !== 'undefined' &&
         createPortal(
@@ -4381,7 +5061,7 @@ export function IdeaBacklogManagementPage() {
                                   {' · '}
                                   {ideaDraftJob.similar_ideas.length} similar ideas
                                   {' · '}
-                                  {ideaDraftJob.similar_documents.length} related BRDs
+                                  {ideaDraftJob.similar_documents.length} related documents
                                 </p>
                               </div>
                               <span className="shrink-0 text-xs font-semibold text-blue-700">
@@ -4446,7 +5126,7 @@ export function IdeaBacklogManagementPage() {
                                 <p className="font-semibold">Potential overlap detected</p>
                                 {[...ideaDraftJob.similar_ideas, ...ideaDraftJob.similar_documents].map((item) => (
                                   <p key={`${item.kind}-${item.id}-${item.title}`} className="mt-1 truncate">
-                                    {item.kind === 'brd' ? 'BRD' : 'Idea'} · {item.title}
+                                    {item.kind === 'brd' ? 'BRD' : item.kind === 'document' ? 'Document' : 'Idea'} · {item.title}
                                     {' · '}
                                     {Math.round(item.similarity_score * 100)}%
                                   </p>
@@ -4712,13 +5392,14 @@ export function IdeaBacklogManagementPage() {
                           <option value="Innovation">Innovation</option>
                           <option value="Improvement">Improvement</option>
                           <option value="Request">Request</option>
+                          <option value="Transformation">Transformation</option>
                         </select>
                       </div>
 
                       <div className="space-y-1.5 sm:col-span-1 lg:col-span-4">
                         <Label htmlFor="idea-reviewer" className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Users className="h-3.5 w-3.5" />
-                          Reviewer <RequiredFieldMark />
+                          Reviewer <span className="text-[10px] text-muted-foreground/70">(Optional)</span>
                         </Label>
                         <select
                           id="idea-reviewer"
@@ -4732,7 +5413,7 @@ export function IdeaBacklogManagementPage() {
                               ? 'Loading workspace members...'
                               : reviewerOptionsError
                                 ? 'Failed to load members'
-                                : 'Select workspace member'}
+                                : 'Select reviewer (optional)'}
                           </option>
                           {reviewerOptions.map((option) => (
                             <option key={option.subjectId} value={option.subjectId}>
@@ -4931,6 +5612,7 @@ export function IdeaBacklogManagementPage() {
                           <BrainstormEvidenceRail
                             confidencePercent={brainstormConfidencePercent}
                             progress={brainstormEvidenceProgress}
+                            discoveryProgress={brainstormDiscoveryProgress}
                             checklist={brainstormChecklist}
                             gaps={brainstormRemainingGaps}
                             initiativeMatches={brainstormInitiativeMatches}
@@ -4944,6 +5626,7 @@ export function IdeaBacklogManagementPage() {
                             <BrainstormEvidenceRail
                               confidencePercent={brainstormConfidencePercent}
                               progress={brainstormEvidenceProgress}
+                              discoveryProgress={brainstormDiscoveryProgress}
                               checklist={brainstormChecklist}
                               gaps={brainstormRemainingGaps}
                               initiativeMatches={brainstormInitiativeMatches}
@@ -4956,17 +5639,28 @@ export function IdeaBacklogManagementPage() {
                             ref={brainstormScrollRef}
                             className="min-h-0 flex-1 overflow-y-auto"
                           >
-                            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6">
-                          {brainstormMessages.length === 0 && !isBrainstormSending ? (
-                            <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
+                            <div
+                              className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6"
+                            >
+                          {brainstormMessages.length === 0 ? (
+                            <div
+                              className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center"
+                              aria-live="polite"
+                            >
                               <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                                <Sparkles className="h-6 w-6" aria-hidden />
+                                {isBrainstormSending ? (
+                                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
+                                ) : (
+                                  <Sparkles className="h-6 w-6" aria-hidden />
+                                )}
                               </div>
                               <h4 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
-                                Brainstorm with Tectona
+                                {isBrainstormSending ? 'Tectona Assistant is preparing a response' : 'Brainstorm with Tectona'}
                               </h4>
                               <p className="max-w-md text-sm leading-6 text-muted-foreground">
-                                Share AS-IS context so we can shape a stronger draft. Ask questions, propose options, and fill gaps together.
+                                {isBrainstormSending
+                                  ? 'Your message was sent. The next question is being prepared.'
+                                  : 'Share AS-IS context so we can shape a stronger draft. Ask questions, propose options, and fill gaps together.'}
                               </p>
                             </div>
                           ) : null}
@@ -5074,7 +5768,7 @@ export function IdeaBacklogManagementPage() {
                                 )}
                                 onClick={() => void handleSendBrainstormMessage('Continue questions')}
                               >
-                                Continue questions
+                                Continue Discovery
                               </button>
                               <button
                                 type="button"
@@ -5093,7 +5787,7 @@ export function IdeaBacklogManagementPage() {
                           )}
                           {!brainstormReady && !brainstormOfferGenerateAnyway && brainstormRemainingGaps.length > 0 && brainstormMessages.length > 0 && (
                             <p className="text-xs leading-5 text-muted-foreground">
-                              Selanjutnya: {formatBrainstormExploringNext(brainstormRemainingGaps)}
+                              Next: {formatBrainstormExploringNext(brainstormRemainingGaps)}
                               {brainstormRemainingGaps.length > 3 ? ' · …' : ''}
                             </p>
                           )}
@@ -5247,14 +5941,19 @@ export function IdeaBacklogManagementPage() {
                             )}
                           </div>
                         </div>
-                        <div className="flex flex-col gap-2 border-t border-border/70 bg-muted/20 px-5 py-4 sm:flex-row sm:items-stretch sm:justify-end sm:gap-3">
+                        <div
+                          className={cn(
+                            'grid gap-2 border-t border-border/70 bg-muted/20 px-5 py-4',
+                            ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE') ? 'grid-cols-1' : 'grid-cols-2',
+                          )}
+                        >
                           {!ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE') && (
                             <button
                               type="button"
                               disabled={isDraftContinuing}
                               className={cn(
                                 enterpriseSecondaryButtonClass(),
-                                'inline-flex w-full items-center justify-center gap-2 sm:min-w-0 sm:flex-1',
+                                'w-full justify-center',
                                 'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm',
                               )}
                               onClick={() => void handleContinueIdeaDraft('generate_anyway')}
@@ -5265,11 +5964,7 @@ export function IdeaBacklogManagementPage() {
                           )}
                           <button
                             type="button"
-                            className={cn(
-                              enterpriseCyanGradientActionButtonClass(),
-                              'w-full justify-center sm:min-w-0',
-                              ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE') ? 'sm:w-full' : 'sm:flex-1',
-                            )}
+                            className={cn(enterpriseCyanGradientActionButtonClass(), 'w-full justify-center')}
                             title={
                               ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE')
                                 ? 'Clarify the idea title and context with Tectona Assistant'
@@ -5281,17 +5976,17 @@ export function IdeaBacklogManagementPage() {
                                 : 'Brainstorm with Tectona Assistant'
                             }
                             onClick={() => {
-                              setBrainstormMessages(ideaDraftJob.brainstorm_messages ?? [])
-                              setBrainstormReady(Boolean(ideaDraftJob.brainstorm_ready))
-                              setBrainstormRemainingGaps(
-                                ideaDraftJob.brainstorm_remaining_gaps
-                                ?? ideaDraftJob.evidence_summary.gaps
-                                ?? [],
-                              )
-                              setBrainstormOfferGenerateAnyway(Boolean(ideaDraftJob.offer_generate_anyway))
-                              syncBrainstormEvidenceState(ideaDraftJob)
-                              setBrainstormEvidenceRailCollapsed(false)
-                              setIsBrainstormMode(true)
+                              void (async () => {
+                                let nextJob = ideaDraftJob
+                                try {
+                                  nextJob = await getIdeaDraftJob(ideaDraftJob.job_id)
+                                } catch {
+                                  nextJob = ideaDraftJob
+                                }
+                                applyIdeaDraftBrainstormState(nextJob)
+                                setBrainstormEvidenceRailCollapsed(false)
+                                setIsBrainstormMode(true)
+                              })()
                             }}
                           >
                             <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
@@ -5306,7 +6001,6 @@ export function IdeaBacklogManagementPage() {
                   document.body,
                 )
               : null}
-
             {deleteIdeaTarget && typeof document !== 'undefined'
               ? createPortal(
                   <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">

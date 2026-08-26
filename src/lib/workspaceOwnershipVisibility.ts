@@ -20,6 +20,17 @@ export type WorkspaceOwnershipRef = {
   tenantMode?: TenantMode | null
 }
 
+/** Organization home is the only directory node whose creator must still have WAC. */
+export function isOrganizationHomeWorkspace(
+  workspace: Pick<WorkspaceOwnershipRef, 'metadata'>,
+): boolean {
+  const meta = workspace.metadata && typeof workspace.metadata === 'object' ? workspace.metadata : {}
+  const classification = meta.tectona_workspace_classification
+  const parentId = meta.parent_workspace_id
+  return classification === 'Organization'
+    && !(typeof parentId === 'string' && parentId.trim())
+}
+
 export type DirectoryAccessBadge = 'wac_member' | 'creator'
 
 export type WorkspaceOwnershipSubject = {
@@ -63,6 +74,21 @@ export function isWorkspaceOwnedBySubject(
 
   const createdBy = workspace.createdBy?.trim()
   if (createdBy && isLikelyIdentityRef(createdBy) && createdBy === subjectId) return true
+
+  // Older workspace rows stored the creator as a display name or email local-part
+  // instead of the identity UUID. Accept it only when it exactly matches the
+  // authenticated subject's known name/email.
+  if (createdBy) {
+    const createdByNorm = normalizePersonName(createdBy)
+    const subjectNameNorm = normalizePersonName(subject.name)
+    const subjectEmailNorm = normalizePersonName(subject.email?.split('@')[0])
+    if (
+      createdByNorm
+      && (createdByNorm === subjectNameNorm || createdByNorm === subjectEmailNorm)
+    ) {
+      return true
+    }
+  }
 
   const subjectName = normalizePersonName(subject.name)
   if (!subjectName) return false
@@ -220,8 +246,22 @@ export function subjectHasFullWacOnWorkspace(
 }
 
 /**
+ * True when the subject has any active WAC membership on this workspace, regardless of
+ * participation scope. Unlike {@link subjectHasFullWacOnWorkspace}, a narrower scope
+ * (e.g. `project_only`) still counts -- this only answers "are they a WAC member here at all".
+ */
+export function subjectHasAnyWacOnWorkspace(
+  workspaceId: string,
+  membershipWorkspaceIds: ReadonlySet<string>,
+): boolean {
+  return membershipWorkspaceIds.has(workspaceId)
+}
+
+/**
  * WAC member badge on a directory row: membership on this workspace, or on org home
- * for nested personal org-tree rows.
+ * for nested personal org-tree rows. Any active participation scope qualifies -- the
+ * badge means "is a WAC member here", not "has broad/all-scope access" (that stricter
+ * check is {@link subjectHasFullWacOnWorkspace}, used for join-organization gating).
  */
 export function subjectHasDirectoryWacMemberBadge(input: {
   workspaceId: string
@@ -233,26 +273,14 @@ export function subjectHasDirectoryWacMemberBadge(input: {
   const subjectId = input.subjectId.trim()
   if (!subjectId) return false
 
-  if (
-    subjectHasFullWacOnWorkspace(
-      subjectId,
-      input.workspaceId,
-      input.membershipWorkspaceIds,
-      input.membershipRows,
-    )
-  ) {
+  if (subjectHasAnyWacOnWorkspace(input.workspaceId, input.membershipWorkspaceIds)) {
     return true
   }
 
   const orgHomeId = input.orgHomeWorkspaceId?.trim()
   if (!orgHomeId || orgHomeId === input.workspaceId) return false
 
-  return subjectHasFullWacOnWorkspace(
-    subjectId,
-    orgHomeId,
-    input.membershipWorkspaceIds,
-    input.membershipRows,
-  )
+  return subjectHasAnyWacOnWorkspace(orgHomeId, input.membershipWorkspaceIds)
 }
 
 export function resolveDirectoryAccessBadges(

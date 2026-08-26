@@ -8,7 +8,7 @@ const ROWS = [
 export function ChangeHistoryPage() {
   return (
     <div className="space-y-6">
-      <div className="overflow-hidden rounded-2xl border border-border/60">
+      <div className="overflow-hidden rounded-2xl border border-border/60 liquid-glass-enterprise-panel">
         <table className="w-full text-left text-xs">
           <thead className="border-b border-border/60 bg-muted/40 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             <tr>

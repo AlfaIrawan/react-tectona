@@ -137,8 +137,8 @@ import { actorHeaders, apiFetch, authHeaders, tectonaServiceHeaders } from './ht
 
 function getV1Base(): string {
   const env = import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL?.trim()
-  if (env) return env.replace(/\/+$/, '')
-  return `${serviceApiBase('/api/document-knowledge', import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL)}/v1`
+  const base = (env || serviceApiBase('/api/document-knowledge', undefined)).replace(/\/+$/, '')
+  return /\/v1$/i.test(base) ? base : `${base}/v1`
 }
 
 async function handleJson<T>(res: Response): Promise<T> {
@@ -572,6 +572,59 @@ export async function fetchOnlyOfficeEditorConfig(documentId: string): Promise<O
   return (await res.json()) as OnlyOfficeEditorConfig
 }
 
+export type DocumentCompareOnlyOfficeConfig = OnlyOfficeEditorConfig & {
+  compareDocument: {
+    c: 'compare' | 'combine' | 'insert-text'
+    fileType: string
+    url: string
+    token: string
+  }
+  labels: {
+    serverTitle: string
+    uploadTitle: string
+  }
+}
+
+/** Stage a not-yet-uploaded file (browser File, no server-side document/attachment yet) so
+ * OnlyOffice's Document Server can fetch it for a "compare before upload" session. TTL'd,
+ * ticket-gated — never becomes a real document attachment. */
+export async function stageDocumentCompareUpload(
+  file: File,
+): Promise<{ staging_id: string; file_name: string }> {
+  const base = getV1Base()
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await apiFetch(`${base}/documents/compare-upload/staging`, {
+    method: 'POST',
+    headers: actorHeaders({ Accept: 'application/json' }),
+    body: formData,
+  })
+  return handleJson<{ staging_id: string; file_name: string }>(res)
+}
+
+export async function fetchDocumentCompareOnlyOfficeConfig(
+  documentId: string,
+  stagingId: string,
+): Promise<DocumentCompareOnlyOfficeConfig> {
+  const base = getV1Base()
+  const sp = new URLSearchParams({ staging_id: stagingId })
+  const res = await apiFetch(
+    `${base}/documents/${encodeURIComponent(documentId)}/onlyoffice/compare-config?${sp.toString()}`,
+    { headers: tectonaServiceHeaders({ Accept: 'application/json' }) },
+  )
+  if (!res.ok) {
+    let detail = `Compare editor unavailable (HTTP ${res.status}).`
+    try {
+      const payload = await res.json()
+      if (payload?.detail) detail = String(payload.detail)
+    } catch {
+      // keep default
+    }
+    throw new Error(detail)
+  }
+  return (await res.json()) as DocumentCompareOnlyOfficeConfig
+}
+
 /** Id of the document's most recent attachment version (used to detect a save produced by editing). */
 export async function fetchLatestAttachmentId(
   documentId: string,
@@ -668,6 +721,7 @@ export interface DocumentTemplateResponse {
 
 export interface TemplateAgentSchema {
   document_kind?: string
+  compiler?: TemplateSchemaCompilerResult
   placeholders?: Array<{
     key: string
     label?: string
@@ -684,14 +738,58 @@ export interface TemplateAgentSchema {
     kind?: string
     min_paragraphs?: number
   }>
+  repeaters?: Array<{
+    id: string
+    collection: string
+    kind: string
+    fields?: string[]
+    image_fields?: string[]
+    marker?: string | null
+    start_marker?: string | null
+    end_marker?: string | null
+    numbering_prefix?: string | null
+    parent_collection?: string | null
+    /** Set only for a repeater CANDIDATE (no marker yet) confirmed by the user in the review UI —
+     * tells the DKM service exactly which table/row to insert the marker into. */
+    location?: { table_index?: number; row_index?: number } | null
+    source?: string
+    confidence?: number
+    reason?: string
+  }>
+}
+
+export interface TemplateSchemaDiagnostic {
+  code: string
+  message: string
+  path?: string
+}
+
+export interface TemplateSchemaCompilerResult {
+  schema_version: number
+  compiler_version: string
+  attachment_id?: string | null
+  attachment_checksum?: string | null
+  compiled_at?: string
+  valid: boolean
+  errors: TemplateSchemaDiagnostic[]
+  warnings: TemplateSchemaDiagnostic[]
+  stats?: {
+    placeholder_count?: number
+    section_count?: number
+    repeater_count?: number
+    image_field_count?: number
+    max_repeater_depth?: number
+  }
 }
 
 export interface DocumentTemplatePatchRequest {
+  template_code?: string
   name?: string
   description?: string | null
   body_template?: string
   status_code?: string
   metadata?: Record<string, unknown>
+  latest_file_name?: string
   version?: number
 }
 
@@ -712,6 +810,7 @@ export interface TemplateInstantiateRequest {
   /** Optional LLM fill maps from agent-runtime `/fill-template`. */
   fills?: Record<string, string>
   sections?: Record<string, string>
+  collections?: Record<string, Array<Record<string, unknown>>>
   agent_schema?: Record<string, unknown>
   /** Base64-encoded PNGs of rendered PlantUML diagrams, keyed by placeholder key. */
   diagrams?: Record<string, string>
@@ -759,7 +858,12 @@ export async function listTemplates(params?: {
   const res = await apiFetch(`${base}/templates${q ? `?${q}` : ''}`, {
     headers: { Accept: 'application/json' },
   })
-  return handleJson<DocumentTemplateResponse[]>(res)
+  const payload = await handleJson<DocumentTemplateResponse[] | { items?: DocumentTemplateResponse[] }>(res)
+  // The document-knowledge service has returned both a bare array and a paginated
+  // `{ items: [...] }` envelope across deployments. Normalize both shapes here so
+  // the UI does not silently render an empty library when the envelope is used.
+  if (Array.isArray(payload)) return payload
+  return Array.isArray(payload?.items) ? payload.items : []
 }
 
 export async function createTemplate(body: DocumentTemplateCreateRequest): Promise<DocumentTemplateResponse> {
@@ -961,9 +1065,12 @@ export async function instantiateTemplateFromProject(
 export interface TemplatePreviewRequest {
   fills?: Record<string, string>
   sections?: Record<string, string>
+  collections?: Record<string, Array<Record<string, unknown>>>
   agent_schema?: Record<string, unknown>
   /** Base64-encoded PNGs of rendered PlantUML diagrams, keyed by placeholder key. */
   diagrams?: Record<string, string>
+  /** Generate stable fictional sample values from the persisted, validated agent schema. */
+  mock_data?: boolean
 }
 
 export interface TemplatePreviewStagingResponse {
@@ -1010,6 +1117,38 @@ export async function fetchTemplatePreviewOnlyOfficeConfig(
     throw new Error(detail)
   }
   return (await res.json()) as OnlyOfficeEditorConfig
+}
+
+export interface TemplatePrepareRequest {
+  agent_schema: TemplateAgentSchema
+  publish?: boolean
+  confirmation_mode?: string
+}
+
+export interface TemplatePrepareResponse {
+  template: DocumentTemplateResponse
+  attachment_created: boolean
+  anchored_placeholders: string[]
+  anchored_sections: string[]
+  existing_anchors: string[]
+}
+
+/** Convert confirmed schema recommendations into deterministic DOCX anchors and persist the
+ * schema against the resulting attachment checksum. */
+export async function prepareMasterTemplateForAi(
+  templateId: string,
+  body: TemplatePrepareRequest,
+): Promise<TemplatePrepareResponse> {
+  const base = getV1Base()
+  const res = await apiFetch(
+    `${base}/templates/${encodeURIComponent(templateId)}:prepare-for-ai`,
+    {
+      method: 'POST',
+      headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+      body: JSON.stringify(body),
+    },
+  )
+  return handleJson<TemplatePrepareResponse>(res)
 }
 
 export async function fetchTemplateOnlyOfficeEditorConfig(templateId: string): Promise<OnlyOfficeEditorConfig> {

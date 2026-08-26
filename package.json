@@ -1,7 +1,7 @@
 {
   "name": "react-tectona",
   "private": true,
-  "version": "0.0.0 (build 16)",
+  "version": "2026.0.0 (build 30)",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -45,6 +45,7 @@
     "driver.js": "^1.8.0",
     "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
+    "exceljs": "^4.4.0",
     "frappe-gantt": "^1.2.2",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",

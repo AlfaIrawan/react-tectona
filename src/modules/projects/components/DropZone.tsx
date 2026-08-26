@@ -11,7 +11,7 @@ export function DropZone({ isOver, children, className }: DropZoneProps) {
   return (
     <div
       className={cn(
-        'glass-card rounded-xl p-8 border-2 border-dashed transition-all',
+        'liquid-glass-enterprise-panel rounded-xl p-8 border-2 border-dashed transition-all',
         isOver
           ? 'border-primary bg-primary/5 shadow-lg'
           : 'border-border hover:border-primary/50',

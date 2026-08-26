@@ -14,18 +14,13 @@ type SlugAccessState = 'pending' | 'allowed' | 'denied'
 /** Syncs active tenant from `/w/:workspaceSlug/*` and renders nested shell routes. */
 export function WorkspaceSlugLayout() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>()
-  const { setActiveTenant, workspaceId: activeWorkspaceId } = useTenantContext()
+  const { setActiveTenant } = useTenantContext()
   const location = useLocation()
   const [accessState, setAccessState] = useState<SlugAccessState>('pending')
 
   useEffect(() => {
     const normalizedParam = workspaceSlug?.trim()
     if (!normalizedParam) {
-      setAccessState('denied')
-      return
-    }
-
-    if (isAllWorkspacesRouteScope(activeWorkspaceId)) {
       setAccessState('denied')
       return
     }
@@ -57,16 +52,10 @@ export function WorkspaceSlugLayout() {
     return () => {
       cancelled = true
     }
-  }, [workspaceSlug, activeWorkspaceId, setActiveTenant])
-
-  if (workspaceSlug?.trim() && isAllWorkspacesRouteScope(activeWorkspaceId)) {
-    const legacyPath = legacyAppPathFromLocation(
-      location.pathname,
-      location.search,
-      location.hash,
-    )
-    return <Navigate to={legacyPath || '/projects'} replace />
-  }
+  // Do not restart access evaluation when TenantContext hydrates or normalizes
+  // the active tenant. Root/admin hydration changes activeWorkspaceId after
+  // mount; including it here resets the route to "pending" and loops API calls.
+  }, [workspaceSlug, setActiveTenant])
 
   if (!workspaceSlug?.trim()) {
     return <Navigate to="/projects" replace />
@@ -106,7 +95,7 @@ export function WorkspaceScopeRedirectLayout() {
       workspaceId,
     )
     if (target !== `${location.pathname}${location.search}${location.hash}`) {
-      return <Navigate to={target} replace />
+      return <Navigate to={target} replace state={location.state} />
     }
   }
 

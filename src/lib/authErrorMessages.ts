@@ -62,6 +62,14 @@ function messageForCode(code: string): string | undefined {
  */
 export function formatAuthErrorMessage(raw: string, status?: number): string {
   const trimmed = raw.trim()
+  // Nginx/proxy failures may return an HTML error document even though the
+  // client requested JSON. Never render that document inside the login form.
+  if (
+    /<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]/i.test(trimmed)
+    || /502\s+Bad\s+Gateway|503\s+Service\s+Unavailable/i.test(trimmed)
+  ) {
+    return 'Identity service is unavailable. Ensure identity-lite is running on port 8430, then try again.'
+  }
   if (!trimmed) {
     if (status === 502 || status === 503) {
       return 'Identity service is unavailable. Ensure identity-lite is running on port 8430, then try again.'

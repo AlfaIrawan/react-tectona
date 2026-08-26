@@ -79,7 +79,17 @@ export function ProjectAssistantSidebarCard({
               <div className="h-3 w-[78%] animate-pulse rounded bg-muted/50" />
             </div>
           ) : (
-            <p className="text-xs leading-5 text-muted-foreground">{brief.summary}</p>
+            <ul className="space-y-1.5 text-xs leading-4 text-muted-foreground">
+              {brief.summaryItems.map((item) => (
+                <li key={item.label} className="flex gap-1.5">
+                  <span className="mt-0.5 text-sky-500" aria-hidden>•</span>
+                  <span>
+                    <strong className="font-semibold text-foreground">{item.label}:</strong>{' '}
+                    {item.value}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
 

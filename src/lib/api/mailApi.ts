@@ -1,4 +1,4 @@
-import { tectonaServiceHeaders } from '@/lib/api/httpClient'
+import { apiFetch, tectonaServiceHeaders } from '@/lib/api/httpClient'
 
 export type EmailFolder = 'inbox' | 'sent' | 'draft' | 'archived' | 'deleted' | 'junk'
 
@@ -74,13 +74,13 @@ async function parseError(response: Response): Promise<string> {
 }
 
 export async function getMailboxConfig(): Promise<MailboxConfigStatus> {
-  const response = await fetch(`${BASE}/mailbox/config`, { headers: tectonaServiceHeaders() })
+  const response = await apiFetch(`${BASE}/mailbox/config`, { headers: tectonaServiceHeaders() })
   if (!response.ok) throw new Error(await parseError(response))
   return response.json()
 }
 
 export async function saveMailboxConfig(payload: MailboxConfigSave): Promise<MailboxConfigPublic> {
-  const response = await fetch(`${BASE}/mailbox/config`, {
+  const response = await apiFetch(`${BASE}/mailbox/config`, {
     method: 'PUT',
     headers: tectonaServiceHeaders(),
     body: JSON.stringify(payload),
@@ -90,7 +90,7 @@ export async function saveMailboxConfig(payload: MailboxConfigSave): Promise<Mai
 }
 
 export async function testMailboxConfig(payload: MailboxConfigSave): Promise<MailboxTestResult> {
-  const response = await fetch(`${BASE}/mailbox/config/test`, {
+  const response = await apiFetch(`${BASE}/mailbox/config/test`, {
     method: 'POST',
     headers: tectonaServiceHeaders(),
     body: JSON.stringify(payload),
@@ -101,14 +101,14 @@ export async function testMailboxConfig(payload: MailboxConfigSave): Promise<Mai
 
 export async function listMailMessages(folder: EmailFolder, limit = 50): Promise<MailMessageListResponse> {
   const params = new URLSearchParams({ folder, limit: String(limit) })
-  const response = await fetch(`${BASE}/messages?${params}`, { headers: tectonaServiceHeaders() })
+  const response = await apiFetch(`${BASE}/messages?${params}`, { headers: tectonaServiceHeaders() })
   if (!response.ok) throw new Error(await parseError(response))
   return response.json()
 }
 
 export async function getMailMessageDetail(folder: EmailFolder, uid: string): Promise<MailMessageDetail> {
   const params = new URLSearchParams({ folder })
-  const response = await fetch(`${BASE}/messages/${encodeURIComponent(uid)}?${params}`, {
+  const response = await apiFetch(`${BASE}/messages/${encodeURIComponent(uid)}?${params}`, {
     headers: tectonaServiceHeaders(),
   })
   if (!response.ok) throw new Error(await parseError(response))
@@ -117,7 +117,7 @@ export async function getMailMessageDetail(folder: EmailFolder, uid: string): Pr
 
 export async function markMailMessageRead(folder: EmailFolder, uid: string): Promise<void> {
   const params = new URLSearchParams({ folder })
-  const response = await fetch(`${BASE}/messages/${encodeURIComponent(uid)}/read?${params}`, {
+  const response = await apiFetch(`${BASE}/messages/${encodeURIComponent(uid)}/read?${params}`, {
     method: 'POST',
     headers: tectonaServiceHeaders(),
   })
@@ -126,7 +126,7 @@ export async function markMailMessageRead(folder: EmailFolder, uid: string): Pro
 
 export async function moveMailMessage(folder: EmailFolder, uid: string, targetFolder: EmailFolder): Promise<void> {
   const params = new URLSearchParams({ folder })
-  const response = await fetch(`${BASE}/messages/${encodeURIComponent(uid)}/move?${params}`, {
+  const response = await apiFetch(`${BASE}/messages/${encodeURIComponent(uid)}/move?${params}`, {
     method: 'POST',
     headers: tectonaServiceHeaders(),
     body: JSON.stringify({ target_folder: targetFolder }),
@@ -135,7 +135,7 @@ export async function moveMailMessage(folder: EmailFolder, uid: string, targetFo
 }
 
 export async function sendMailMessage(payload: SendMailRequest): Promise<void> {
-  const response = await fetch(`${BASE}/messages/send`, {
+  const response = await apiFetch(`${BASE}/messages/send`, {
     method: 'POST',
     headers: tectonaServiceHeaders(),
     body: JSON.stringify(payload),

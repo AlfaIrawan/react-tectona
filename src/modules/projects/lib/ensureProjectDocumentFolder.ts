@@ -1,5 +1,6 @@
 import {
   createDocumentFolder,
+  deleteDocumentFolder,
   fetchAllDocumentFolders,
   getDocumentFolder,
   updateDocumentFolder,
@@ -22,6 +23,12 @@ export async function ensureProjectDocumentFolder(project: {
   if (cachedFolderId) {
     const existing = await getDocumentFolder(cachedFolderId)
     if (existing) {
+      const linkedProjectId = parseProjectIdFromDocumentFolderDescription(existing.description)
+      if (linkedProjectId && linkedProjectId !== project.id) {
+        // A stale persisted mapping must never make a new project reuse another
+        // project's repository folder.
+        store.removeFolderMapping(project.id)
+      } else {
       if (existing.name !== folderName) {
         try {
           await updateDocumentFolder(existing.id, { name: folderName })
@@ -30,6 +37,7 @@ export async function ensureProjectDocumentFolder(project: {
         }
       }
       return existing.id
+      }
     }
     store.removeFolderMapping(project.id)
   }
@@ -81,6 +89,46 @@ export async function ensureProjectDocumentFolder(project: {
   })
   store.setFolderMapping(project.id, created.id)
   return created.id
+}
+
+/** Removes the project-linked repository folder and any nested folders. */
+export async function deleteProjectDocumentFolder(projectId: string): Promise<void> {
+  const store = useProjectDocumentFolderStore.getState()
+  const folders = await fetchAllDocumentFolders()
+  const root = folders.find(
+    (folder) => parseProjectIdFromDocumentFolderDescription(folder.description) === projectId,
+  )
+  if (!root) {
+    store.removeFolderMapping(projectId)
+    return
+  }
+
+  const idsToDelete = new Set([root.id])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const folder of folders) {
+      if (folder.parent_id && idsToDelete.has(folder.parent_id) && !idsToDelete.has(folder.id)) {
+        idsToDelete.add(folder.id)
+        changed = true
+      }
+    }
+  }
+
+  const depthById = new Map<string, number>()
+  const getDepth = (id: string): number => {
+    const cached = depthById.get(id)
+    if (cached !== undefined) return cached
+    const folder = folders.find((item) => item.id === id)
+    const depth = folder?.parent_id && idsToDelete.has(folder.parent_id) ? getDepth(folder.parent_id) + 1 : 0
+    depthById.set(id, depth)
+    return depth
+  }
+
+  for (const folderId of Array.from(idsToDelete).sort((a, b) => getDepth(b) - getDepth(a))) {
+    await deleteDocumentFolder(folderId)
+  }
+  store.removeFolderMapping(projectId)
 }
 
 export async function syncProjectDocumentFolderName(

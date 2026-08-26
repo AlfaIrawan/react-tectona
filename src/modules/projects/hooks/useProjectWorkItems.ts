@@ -47,7 +47,7 @@ export function useProjectWorkItems(project: Project | null, ownerName: string) 
         workspace: TECTONA_PROJECT_WORKSPACE,
       })
 
-      const scoped = filterWorkItemsForProject(response.items, project.id)
+      const scoped = filterWorkItemsForProject(response.items, project.id, project.name)
       if (scoped.length === 0) {
         setWorkItems(buildFallbackWorkItems(project, { ownerName }))
         setUsesApiItems(false)

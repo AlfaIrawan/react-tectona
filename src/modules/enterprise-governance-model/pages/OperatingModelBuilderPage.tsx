@@ -43,7 +43,7 @@ export function OperatingModelBuilderPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/10 p-4 shadow-sm">
+      <div className="rounded-2xl border border-border/60 liquid-glass-enterprise-panel p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           {STEPS.map((s, i) => (
             <button

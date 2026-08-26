@@ -1060,7 +1060,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
       {/* Add new — elegant input + floating add with glow */}
       <div
         className={cn(
-          'glass-card rounded-2xl p-4 space-y-4',
+          'liquid-glass-enterprise-panel rounded-2xl p-4 space-y-4',
           'border border-white/40 dark:border-white/10',
           'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
           'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',

@@ -240,7 +240,7 @@ export function CorporateOrganizationStep({
     }
   }, [email])
 
-  const completeAfterJoinStep = async () => {
+  const completeAfterJoinStep = async (orgWorkspaceId?: string) => {
     const subjectId = getSession()?.user.id
     if (!subjectId) throw new Error('Session expired. Sign in again.')
 
@@ -266,6 +266,7 @@ export function CorporateOrganizationStep({
         email,
         subjectId,
         workspaceId: readActiveWorkspaceId(),
+        orgWorkspaceId,
         message: 'Corporate onboarding complete — awaiting admin approval.',
       })
       onAdminApprovalPending()
@@ -293,10 +294,14 @@ export function CorporateOrganizationStep({
   const handleOptionalContinue = async () => {
     setLocalError('')
     setFinalizing(true)
-    const subjectId = getSession()?.user.id
-    if (subjectId) markCorporateJoinStepCompleted(subjectId)
     try {
-      await completeAfterJoinStep()
+      // The organization match was resolved during bootstrap.  The optional
+      // step has no form input; use the matched organization's default
+      // workspace so signup submits the corporate approval request and the
+      // server can place the personal workspace in the organization tree.
+      await completeAfterJoinStep(defaultOrgWorkspace?.workspaceId)
+      const subjectId = getSession()?.user.id
+      if (subjectId) markCorporateJoinStepCompleted(subjectId)
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Failed to continue onboarding.')
     } finally {
@@ -312,8 +317,6 @@ export function CorporateOrganizationStep({
   }) => {
     setLocalError('')
     setFinalizing(true)
-    const subjectId = getSession()?.user.id
-    if (subjectId) markCorporateJoinStepCompleted(subjectId)
     try {
       await onJoinSubmit(input)
     } catch (err) {
@@ -323,7 +326,12 @@ export function CorporateOrganizationStep({
     }
 
     try {
-      await completeAfterJoinStep()
+      // Preserve the workspace selected in the signup join step so the
+      // corporate approval handler can link the personal workspace to this
+      // organization tree instead of treating it as standalone.
+      await completeAfterJoinStep(input.workspaceId)
+      const subjectId = getSession()?.user.id
+      if (subjectId) markCorporateJoinStepCompleted(subjectId)
     } catch (err) {
       setLocalError(
         err instanceof Error ? err.message : 'Join request sent, but onboarding could not be completed.',

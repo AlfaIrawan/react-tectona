@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -18,6 +19,7 @@ import {
   Lightbulb,
   Loader2,
   Plus,
+  RefreshCw,
   Share2,
   Upload,
   UserPlus,
@@ -37,7 +39,15 @@ import {
 } from '@/components/enterprise/EnterpriseViewControlRail'
 import { cn } from '@/lib/utils'
 import { fetchProject } from '@/lib/api/projectApi'
-import type { WorkItemApiModel } from '@/lib/api/workApi'
+import {
+  listWorkItems,
+  moveWorkItemWorkspace,
+  patchWorkItem,
+  TECTONA_PROJECT_WORKSPACE,
+  type WorkItemApiModel,
+} from '@/lib/api/workApi'
+import { syncJiraAll, syncMondayAll } from '@/lib/api/workIntegrationApi'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { enrichProjectWithIdentityNames, fetchIdentityDisplayNameMap } from '../lib/projectMemberIdentity'
 import { ProjectDetailHeaderFields } from '../components/ProjectDetailHeaderFields'
 import { ProjectAssistantSidebarCard } from '../components/ProjectAssistantSidebarCard'
@@ -87,7 +97,10 @@ import { useProjectDocsStore } from '../store/projectDocsStore'
 import { fetchProjectDocumentsForScenarios } from '../lib/fetchProjectDocumentsForScenarios'
 import { loadProjectScenarioState } from '../lib/projectScenariosStorage'
 import { syncIdeaDocumentsToProjectFolder } from '../lib/ideaLinkedDocuments'
-import { uploadFilesToProjectDocumentFolder } from '../lib/uploadProjectDocuments'
+import {
+  uploadFilesToProjectDocumentFolder,
+  type ProjectDocumentRevisionConflict,
+} from '../lib/uploadProjectDocuments'
 
 function formatProjectDate(dateString?: string): string {
   if (!dateString) return '-'
@@ -96,6 +109,308 @@ function formatProjectDate(dateString?: string): string {
     month: 'short',
     day: 'numeric',
   })
+}
+
+const MONDAY_LOGO_SRC = '/images/logo-mondays.png'
+const JIRA_LOGO_SRC = '/images/logo-jira.png'
+
+function IntegrationSyncToolbarButton({
+  mondaySyncing,
+  jiraSyncing,
+  onSyncMonday,
+  onSyncJira,
+}: {
+  mondaySyncing: boolean
+  jiraSyncing: boolean
+  onSyncMonday: () => void
+  onSyncJira: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null)
+  const syncing = mondaySyncing || jiraSyncing
+
+  const updateAnchor = () => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    setAnchor({ left: rect.left, top: rect.bottom + 6 })
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    updateAnchor()
+    const onReposition = () => updateAnchor()
+    window.addEventListener('resize', onReposition)
+    window.addEventListener('scroll', onReposition, true)
+    return () => {
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('scroll', onReposition, true)
+    }
+  }, [open])
+
+  return (
+    <>
+      <div ref={triggerRef}>
+        <Tooltip content="Sync integrations" side="bottom" size="compact" sideOffset={6}>
+          <EnterpriseViewControlButton
+            aria-label="Sync integrations"
+            aria-expanded={open}
+            aria-haspopup="menu"
+            disabled={syncing}
+            onClick={() => {
+              if (syncing) return
+              if (open) setOpen(false)
+              else {
+                updateAnchor()
+                setOpen(true)
+              }
+            }}
+          >
+            <RefreshCw className={cn('h-[18px] w-[18px]', syncing && 'animate-spin')} strokeWidth={1.8} />
+          </EnterpriseViewControlButton>
+        </Tooltip>
+      </div>
+      {open && anchor && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="menu"
+              aria-label="Integration sync providers"
+              className="fixed z-[1200] flex flex-col items-stretch gap-1 rounded-xl border border-slate-200/90 bg-white p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.12)] ring-1 ring-white/60"
+              style={{ left: anchor.left, top: anchor.top }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                aria-label="Sync Monday"
+                title="Sync Monday"
+                disabled={mondaySyncing}
+                className="flex h-10 min-w-10 items-center justify-center rounded-lg transition hover:bg-slate-50 active:scale-95 disabled:opacity-50"
+                onClick={() => {
+                  setOpen(false)
+                  onSyncMonday()
+                }}
+              >
+                <img src={MONDAY_LOGO_SRC} alt="" aria-hidden draggable={false} className="h-7 w-7 object-contain" />
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                aria-label="Sync Jira"
+                title="Sync Jira"
+                disabled={jiraSyncing}
+                className="flex h-10 min-w-10 items-center justify-center rounded-lg transition hover:bg-slate-50 active:scale-95 disabled:opacity-50"
+                onClick={() => {
+                  setOpen(false)
+                  onSyncJira()
+                }}
+              >
+                <img src={JIRA_LOGO_SRC} alt="" aria-hidden draggable={false} className="h-7 w-7 object-contain" />
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  )
+}
+
+function isMondayWorkItem(item: WorkItemApiModel): boolean {
+  return (
+    item.syncOrigin === 'monday' ||
+    (item.externalLinks ?? []).some((link) => link.provider === 'monday')
+  )
+}
+
+function MondayTaskPickerDialog({
+  open,
+  project,
+  onOpenChange,
+  onCompleted,
+  onSyncingChange,
+}: {
+  open: boolean
+  project: Project
+  onOpenChange: (open: boolean) => void
+  onCompleted: (count: number) => void
+  onSyncingChange: (syncing: boolean) => void
+}) {
+  const [items, setItems] = useState<WorkItemApiModel[]>([])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadMondayItems = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await listWorkItems()
+      const mondayItems = response.items.filter(isMondayWorkItem)
+      setItems(mondayItems)
+      setSelectedIds(
+        new Set(mondayItems.filter((item) => item.project === project.name).map((item) => item.id)),
+      )
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load Monday tasks.')
+    } finally {
+      setLoading(false)
+    }
+  }, [project.name])
+
+  useEffect(() => {
+    if (open) void loadMondayItems()
+  }, [loadMondayItems, open])
+
+  const handleRefreshFromMonday = async () => {
+    setLoading(true)
+    setError(null)
+    onSyncingChange(true)
+    try {
+      await syncMondayAll()
+      await loadMondayItems()
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : 'Monday sync failed.')
+    } finally {
+      onSyncingChange(false)
+      setLoading(false)
+    }
+  }
+
+  const handleConfirm = async () => {
+    const selectedItems = items.filter((item) => selectedIds.has(item.id))
+    setSaving(true)
+    setError(null)
+    onSyncingChange(true)
+    try {
+      await Promise.all(
+        selectedItems.map(async (item) => {
+          if (item.workspace !== TECTONA_PROJECT_WORKSPACE) {
+            await moveWorkItemWorkspace(item.id, TECTONA_PROJECT_WORKSPACE)
+          }
+          await patchWorkItem(item.id, {
+            project: project.name,
+            workspace: TECTONA_PROJECT_WORKSPACE,
+            expectedVersion: item.version,
+          })
+        }),
+      )
+      onCompleted(selectedItems.length)
+      onOpenChange(false)
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Unable to add selected tasks to this project.')
+    } finally {
+      setSaving(false)
+      onSyncingChange(false)
+    }
+  }
+
+  const allSelected = items.length > 0 && selectedIds.size === items.length
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-full sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Select Monday tasks</DialogTitle>
+          <DialogDescription>
+            Choose the Monday items to add to <span className="font-semibold text-foreground">{project.name}</span>.
+            Selected items will appear in Project List, Timeline, Board, and Calendar.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
+          <span className="text-xs text-muted-foreground">
+            {selectedIds.size} of {items.length} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedIds(allSelected ? new Set() : new Set(items.map((item) => item.id)))}>
+              {allSelected ? 'Clear all' : 'Select all'}
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void handleRefreshFromMonday()} disabled={loading || saving}>
+              <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
+              Refresh from Monday
+            </Button>
+          </div>
+        </div>
+
+        <div className="max-h-[min(52vh,480px)] overflow-y-auto rounded-xl border border-slate-200 bg-white">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading Monday tasks...
+            </div>
+          ) : items.length === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+              No Monday tasks are available yet. Click “Refresh from Monday” to pull the latest items.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {items.map((item) => {
+                const checked = selectedIds.has(item.id)
+                const alreadyInProject = item.project === project.name
+                return (
+                  <label key={item.id} className="flex cursor-pointer items-start gap-3 px-4 py-3 transition hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setSelectedIds((current) => {
+                          const next = new Set(current)
+                          if (next.has(item.id)) next.delete(item.id)
+                          else next.add(item.id)
+                          return next
+                        })
+                      }}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-slate-800">{item.title}</span>
+                      <span className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-muted-foreground">
+                        <span>{item.label || 'Monday item'}</span>
+                        <span>·</span>
+                        <span>{item.status}</span>
+                        {alreadyInProject ? <span className="font-medium text-emerald-600">Already in this project</span> : null}
+                      </span>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline" disabled={saving}>Cancel</Button>
+          </DialogClose>
+          <Button type="button" onClick={() => void handleConfirm()} disabled={saving || loading || selectedIds.size === 0}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Add selected tasks
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function SortableNavItem({
@@ -341,6 +656,14 @@ export function ProjectDetailPage() {
   const [activePanel, setActivePanel] = useState<ProjectPanelKey>('summary')
   const [addMembersOpen, setAddMembersOpen] = useState(false)
   const [uploadingDocs, setUploadingDocs] = useState(false)
+  const [mondaySyncing, setMondaySyncing] = useState(false)
+  const [jiraSyncing, setJiraSyncing] = useState(false)
+  const [mondayPickerOpen, setMondayPickerOpen] = useState(false)
+  const [addTaskRequest, setAddTaskRequest] = useState(0)
+  const [documentRevisionPrompt, setDocumentRevisionPrompt] = useState<{
+    conflict: ProjectDocumentRevisionConflict
+    resolve: (proceed: boolean) => void
+  } | null>(null)
   const docsUploadInputRef = useRef<HTMLInputElement>(null)
   const bumpDocsRefresh = useProjectDocsStore((state) => state.bumpRefresh)
   const docsRefreshVersion = useProjectDocsStore((state) => state.refreshVersion)
@@ -454,6 +777,7 @@ export function ProjectDetailPage() {
   }, [inboxPendingCount, scenariosStale])
   const {
     linkedIdea,
+    linkedIdeas,
     loading: linkedIdeaLoading,
     reload: reloadLinkedIdea,
     setLinkedIdea,
@@ -477,10 +801,21 @@ export function ProjectDetailPage() {
 
     setUploadingDocs(true)
     try {
-      const { uploadedCount, duplicates } = await uploadFilesToProjectDocumentFolder(
+      const { uploadedCount, revisedCount, duplicates } = await uploadFilesToProjectDocumentFolder(
         project,
         Array.from(files),
-        linkedIdea ? { ideaId: linkedIdea.id } : undefined,
+        {
+          ideaId: linkedIdea?.id,
+          onRevisionConflict: (conflict) => new Promise<boolean>((resolve) => {
+            setDocumentRevisionPrompt({
+              conflict,
+              resolve: (proceed) => {
+                setDocumentRevisionPrompt(null)
+                resolve(proceed)
+              },
+            })
+          }),
+        },
       )
       if (uploadedCount > 0) {
         bumpDocsRefresh()
@@ -494,10 +829,19 @@ export function ProjectDetailPage() {
           variant: 'success',
         })
       }
+      if (revisedCount > 0) {
+        bumpDocsRefresh()
+        setActivePanel('docs')
+        addToast({
+          title: 'Document revision committed',
+          description: `${revisedCount} document${revisedCount === 1 ? '' : 's'} uploaded as a new version in this project’s Docs.`,
+          variant: 'success',
+        })
+      }
       for (const duplicate of duplicates) {
         addToast({
-          title: 'Upload blocked — identical document already exists',
-          description: `"${duplicate.fileName}" has the same content as "${duplicate.existingTitle}", already in this project's Docs.`,
+          title: 'Upload blocked — document already exists',
+          description: `"${duplicate.fileName}" was not committed because "${duplicate.existingTitle}" already exists with the same content or source name.`,
           variant: 'error',
         })
       }
@@ -507,6 +851,38 @@ export function ProjectDetailPage() {
     } finally {
       setUploadingDocs(false)
       if (docsUploadInputRef.current) docsUploadInputRef.current.value = ''
+    }
+  }
+
+  const handleSyncMonday = () => {
+    if (mondaySyncing) return
+    setMondayPickerOpen(true)
+  }
+
+  const handleSyncJira = async () => {
+    if (jiraSyncing) return
+    setJiraSyncing(true)
+    try {
+      const result = await syncJiraAll()
+      const count = result.synced ?? 0
+      const projects = result.projects?.length ?? (result.project_key ? 1 : 0)
+      await reloadWorkItems()
+      addToast({
+        title: 'Jira sync complete',
+        description:
+          count > 0
+            ? `Synced ${count} item${count === 1 ? '' : 's'} from ${projects} Jira project${projects === 1 ? '' : 's'}.`
+            : 'Pull completed with 0 items. Check Jira credentials and project access.',
+        variant: 'success',
+      })
+    } catch {
+      addToast({
+        title: 'Jira sync failed',
+        description: 'Set Jira credentials on the Work Integration Hub (port 8433), or configure the Jira webhook.',
+        variant: 'error',
+      })
+    } finally {
+      setJiraSyncing(false)
     }
   }
 
@@ -674,6 +1050,9 @@ export function ProjectDetailPage() {
                     >
                       <Lightbulb className="h-3 w-3 shrink-0" aria-hidden />
                       <span className="truncate">{linkedIdea.title}</span>
+                      {linkedIdeas.length > 1 ? (
+                        <span className="shrink-0 text-amber-700/75">+{linkedIdeas.length - 1}</span>
+                      ) : null}
                     </button>
                   ) : null}
                 </div>
@@ -702,10 +1081,23 @@ export function ProjectDetailPage() {
 
             <div className="flex shrink-0 flex-col items-end justify-between gap-2 self-stretch pt-0.5">
               <EnterpriseViewControlRail className="flex-nowrap">
+                <Tooltip content="Add task" side="bottom" size="compact" sideOffset={6}>
+                  <EnterpriseViewControlButton
+                    aria-label="Add task"
+                    onClick={() => {
+                      setActivePanel('timeline')
+                      setAddTaskRequest((value) => value + 1)
+                    }}
+                  >
+                    <Plus className="h-[18px] w-[18px]" strokeWidth={1.8} />
+                  </EnterpriseViewControlButton>
+                </Tooltip>
+                <EnterpriseViewControlSeparator />
                 <ProjectSourceIdeaChip
                   projectId={project.id}
                   projectName={project.name}
                   linkedIdea={linkedIdea}
+                  linkedIdeas={linkedIdeas}
                   loading={linkedIdeaLoading}
                   onLinked={(idea) => {
                     setLinkedIdea(idea)
@@ -722,6 +1114,13 @@ export function ProjectDetailPage() {
                     setLinkedIdea(null)
                     void reloadLinkedIdea()
                   }}
+                />
+                <EnterpriseViewControlSeparator />
+                <IntegrationSyncToolbarButton
+                  mondaySyncing={mondaySyncing}
+                  jiraSyncing={jiraSyncing}
+                  onSyncMonday={() => void handleSyncMonday()}
+                  onSyncJira={() => void handleSyncJira()}
                 />
                 <EnterpriseViewControlSeparator />
                 <Tooltip content="Share" side="bottom" size="compact" sideOffset={6}>
@@ -812,6 +1211,7 @@ export function ProjectDetailPage() {
             workItems={activeWorkItems}
             usesApiItems={usesApiItems}
             onWorkItemsChange={reloadWorkItems}
+            openAddTaskRequest={addTaskRequest}
           />
         ) : activePanel === 'board' ? (
           <ProjectBoardPanel
@@ -915,6 +1315,62 @@ export function ProjectDetailPage() {
           })
         }}
       />
+
+      <MondayTaskPickerDialog
+        open={mondayPickerOpen}
+        project={project}
+        onOpenChange={setMondayPickerOpen}
+        onSyncingChange={setMondaySyncing}
+        onCompleted={(count) => {
+          void reloadWorkItems()
+          addToast({
+            title: 'Monday tasks added',
+            description: `${count} Monday task${count === 1 ? '' : 's'} is now available in this project’s list, timeline, board, and calendar.`,
+            variant: 'success',
+          })
+        }}
+      />
+
+      <Dialog
+        open={Boolean(documentRevisionPrompt)}
+        onOpenChange={(open) => {
+          if (!open) documentRevisionPrompt?.resolve(false)
+        }}
+      >
+        <DialogContent className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-0 text-slate-900 shadow-2xl dark:border-amber-900/60 dark:bg-slate-900 dark:text-slate-100">
+          <DialogHeader className="border-b border-slate-200/80 bg-amber-50/70 px-5 py-4 dark:border-slate-700/70 dark:bg-amber-950/20">
+            <DialogTitle>Existing document detected</DialogTitle>
+            <DialogDescription>
+              This file has the same source name as a document in this project, but its content is different.
+              Do you want to merge it as a new document version?
+            </DialogDescription>
+          </DialogHeader>
+          {documentRevisionPrompt ? (
+            <div className="space-y-3 px-5 py-4 text-sm">
+              <div className="rounded-xl border border-border bg-muted/20 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Incoming file</p>
+                <p className="mt-1 break-words font-medium">{documentRevisionPrompt.conflict.fileName}</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Existing document: <span className="font-medium text-foreground">{documentRevisionPrompt.conflict.existingTitle}</span>
+                {' · '}Current version: <span className="font-semibold text-foreground">v{documentRevisionPrompt.conflict.existingVersion}</span>
+              </p>
+            </div>
+          ) : null}
+          <DialogFooter className="border-t border-border/70 px-5 py-3">
+            <DialogClose asChild>
+              <Button type="button" variant="outline" className="h-9">Cancel</Button>
+            </DialogClose>
+            <Button
+              type="button"
+              className="h-9 bg-amber-600 text-white hover:bg-amber-700"
+              onClick={() => documentRevisionPrompt?.resolve(true)}
+            >
+              Merge as new version
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

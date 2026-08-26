@@ -3,7 +3,7 @@ import type { CatalogItemDto } from '@/lib/api/governanceConfigurationApi'
 
 export function WorkflowPolicyCatalog({ items }: { items: CatalogItemDto[] }) {
   return (
-    <Card className="p-4">
+    <Card className="liquid-glass-enterprise-panel p-4">
       <h2 className="text-sm font-semibold text-foreground">Workflow Policy Catalog</h2>
       <CatalogTable items={items} />
     </Card>

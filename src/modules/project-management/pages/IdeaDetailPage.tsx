@@ -3,6 +3,7 @@ import { getSession } from '@/auth/authService'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import type { LucideIcon } from 'lucide-react'
 import {
   AlignCenter,
   AlignLeft,
@@ -62,6 +63,7 @@ import {
   Circle,
   Info,
   GripVertical,
+  Workflow,
 } from 'lucide-react'
 import {
   DndContext,
@@ -83,20 +85,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import {
-  Background,
-  Controls,
-  Handle,
-  MiniMap,
-  type Edge,
-  MarkerType,
-  type Node,
-  type NodeProps,
-  type NodeTypes,
-  Position,
-  ReactFlow,
-} from 'reactflow'
-import 'reactflow/dist/style.css'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -118,6 +106,11 @@ import { enterpriseCyanGradientActionButtonClass, enterpriseIndigoGradientAction
 import {
   analyzeIdeaScoring,
   analyzeIdeaIntegration,
+  analyzeIdeaC4Architecture,
+  type C4ArchitectureLevel,
+  analyzeIdeaProcess,
+  analyzeIdeaProcessDetail,
+  type ProcessSubTask,
   fillDkmTemplate,
   generateBenefitAnalysis,
   generateIdeaBrd,
@@ -145,13 +138,22 @@ import {
   type DocumentResponse,
   type DocumentTemplateResponse,
 } from '@/lib/api/documentKnowledgeApi'
-import { createDocumentFolder, fetchDocumentFolders, type DocumentFolder } from '@/lib/api/documentFolderApi'
-import { fetchProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { belongsToDkmTemplateScope } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
+import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
+import {
+  createDocumentFolder,
+  deleteDocumentFolder,
+  fetchDocumentFolders,
+  updateDocumentFolder,
+  type DocumentFolder,
+} from '@/lib/api/documentFolderApi'
+import { createProject, fetchProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
 import { ensureProjectDocumentFolder } from '@/modules/projects/lib/ensureProjectDocumentFolder'
 import { nextUntitledDocumentFolderName } from '@/modules/document-knowledge-management/lib/documentFolderUtils'
 import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
 import { findRepositoryTraceEntryByDocumentId } from '@/lib/kb/repositoryKbFromDocument'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/EnterpriseDeleteConfirmModal'
 import { DocumentOnlyOfficeEditor } from '@/modules/document-knowledge-management/components/DocumentOnlyOfficeEditor'
 import {
   DocumentRepositoryPaginationControls,
@@ -174,6 +176,10 @@ import {
   getPersistentIdeaSummary,
   getPersistentIdeaIntegration,
   upsertPersistentIdeaIntegration,
+  getPersistentIdeaC4Architecture,
+  upsertPersistentIdeaC4Architecture,
+  getPersistentIdeaProcessDiagram,
+  upsertPersistentIdeaProcessDiagram,
   type ScoringResponseApi,
   upsertPersistentIdeaSummary,
   toBackendStatus,
@@ -196,6 +202,14 @@ import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextR
 import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
+import { integrationArchimateNodeTypes } from '@/modules/project-management/components/integrationArchimateNodeTypes'
+import { loadIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
+import { ReactFlow } from 'reactflow'
+import { IdeaSectionReviewWorkspace } from '@/modules/project-management/components/IdeaSectionReviewWorkspace'
+import {
+  formatConversionReviewContent,
+  formatCostBenefitReviewContent,
+} from '@/modules/project-management/lib/ideaSectionReviewContent'
 import {
   buildPersistentIntegrationPayload,
   EMPTY_RUNTIME_INTEGRATION_ANALYSIS,
@@ -208,9 +222,23 @@ import {
 import type { IntegrationGraphRecord } from '@/modules/project-management/lib/integrationGraphStorage'
 import { saveIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
 import {
+  buildPersistentC4Payload,
+  emptyRuntimeC4Analysis,
+  runtimeC4FromAgentResponse,
+  runtimeC4FromPersistent,
+  type RuntimeC4Analysis,
+} from '@/modules/project-management/lib/c4ArchitectureService'
+import { usePlantUmlPngPreview } from '@/modules/project-management/lib/usePlantUmlPngPreview'
+import {
+  buildPersistentProcessDiagramPayload,
+  emptyRuntimeProcessDiagramAnalysis,
+  runtimeProcessDiagramFromAgentResponse,
+  runtimeProcessDiagramFromPersistent,
+  type RuntimeProcessDiagramAnalysis,
+} from '@/modules/project-management/lib/processDiagramService'
+import {
   IdeaConversionGanttToolbar,
-  IdeaConversionTimeline,
-  scrollConversionGanttChart,
+  IdeaConversionGanttWorkspace,
 } from '@/modules/project-management/components/IdeaConversionTimeline'
 import type { PlanningGanttZoomLevel } from '@/modules/planning-scheduling/components/PlanningSvarGantt'
 import { ManageCustomStatusesModal } from '@/modules/project-management/components/ManageCustomStatusesModal'
@@ -225,7 +253,7 @@ import { useIdeaNavSectionsStore } from '@/modules/project-management/store/idea
 import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 
 type IdeaStatus = 'New Submission' | 'Under Review' | 'Approved' | 'Rejected' | 'Converted to Project'
-type IdeaType = 'Innovation' | 'Improvement' | 'Request' | 'Issue'
+type IdeaType = 'Innovation' | 'Improvement' | 'Request' | 'Transformation' | 'Issue'
 
 type Idea = {
   id: string
@@ -272,15 +300,9 @@ type BrdSection = {
   content: string
 }
 
-type BpmnKind = 'start' | 'end' | 'task' | 'gateway' | 'dataStore'
-
-type BpmnNodeData = {
-  label: string
-  kind: BpmnKind
-}
-
-const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request', 'Issue']
+const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request', 'Transformation', 'Issue']
 const WORKSPACE_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 
 function isWorkspaceUuid(value: string | null | undefined): value is string {
   const trimmed = value?.trim()
@@ -1033,6 +1055,7 @@ const typeClass: Record<IdeaType, string> = {
   Innovation: 'bg-sky-100 text-sky-700 border-sky-200',
   Improvement: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   Request: 'bg-violet-100 text-violet-700 border-violet-200',
+  Transformation: 'bg-amber-100 text-amber-700 border-amber-200',
   Issue: 'bg-rose-100 text-rose-700 border-rose-200',
 }
 
@@ -1040,6 +1063,7 @@ const typeAccent: Record<IdeaType, string> = {
   Innovation: '#0ea5e9',
   Improvement: '#10b981',
   Request: '#8b5cf6',
+  Transformation: '#f59e0b',
   Issue: '#f43f5e',
 }
 
@@ -1183,143 +1207,6 @@ const INITIAL_BRD_SECTIONS: BrdSection[] = [
       'Fase 1: integrasi data SLA lintas sistem dan baseline scoring. Fase 2: dashboard operasional dan workflow eskalasi rekomendasi. Fase 3: adopsi lintas entitas multi finance dan optimasi berkelanjutan.',
   },
 ]
-
-function shortPhrase(text: string, fallback: string) {
-  const cleaned = text.replace(/\s+/g, ' ').trim()
-  if (!cleaned) return fallback
-  const firstSentence = cleaned.split(/[.!?]/)[0]?.trim() || fallback
-  return firstSentence.length > 34 ? `${firstSentence.slice(0, 31).trim()}...` : firstSentence
-}
-
-function mermaidSafe(label: string) {
-  return label.replace(/"/g, "'")
-}
-
-function inferBpmnKind(label: string, index: number, total: number): BpmnKind {
-  const text = label.toLowerCase()
-  if (index === 0) return 'start'
-  if (index === total - 1) return 'end'
-  if (/(decision|approve|review|priorit|gate)/.test(text)) return 'gateway'
-  if (/(dependenc|data|api|platform|integration)/.test(text)) return 'dataStore'
-  return 'task'
-}
-
-function BpmnNode({ data }: NodeProps<BpmnNodeData>) {
-  const baseLabel = (
-    <span className="text-[11px] leading-tight text-slate-800 font-medium text-center px-2">{data.label}</span>
-  )
-
-  return (
-    <div className="relative">
-      <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-slate-600 !border-0 !opacity-0" />
-
-      {data.kind === 'start' && (
-        <div className="h-16 w-16 rounded-full border-[2px] border-slate-700 bg-white shadow-[0_8px_20px_-16px_rgba(15,23,42,0.55)] flex items-center justify-center">
-          <span className="text-[10px] font-semibold text-slate-700">Start</span>
-        </div>
-      )}
-
-      {data.kind === 'end' && (
-        <div className="relative h-16 w-16 rounded-full border-[2px] border-slate-800 bg-white shadow-[0_8px_20px_-16px_rgba(15,23,42,0.55)] flex items-center justify-center">
-          <div className="absolute inset-[8px] rounded-full border-[2px] border-slate-800" />
-          <span className="text-[10px] font-semibold text-slate-700">End</span>
-        </div>
-      )}
-
-      {data.kind === 'task' && (
-        <div className="min-h-[62px] w-[220px] rounded-[10px] border border-slate-600 bg-white shadow-[0_10px_22px_-18px_rgba(15,23,42,0.55)] flex items-center justify-center px-2 py-2">
-          {baseLabel}
-        </div>
-      )}
-
-      {data.kind === 'gateway' && (
-        <div className="h-[96px] w-[96px] rotate-45 rounded-[8px] border-[1.5px] border-slate-700 bg-white shadow-[0_10px_22px_-18px_rgba(15,23,42,0.55)] flex items-center justify-center">
-          <div className="-rotate-45 flex items-center justify-center px-2">
-            <span className="text-[10px] leading-tight text-slate-800 font-semibold text-center">{data.label}</span>
-          </div>
-        </div>
-      )}
-
-      {data.kind === 'dataStore' && (
-        <div className="min-h-[64px] w-[220px] rounded-[10px] border border-slate-600 bg-white shadow-[0_10px_22px_-18px_rgba(15,23,42,0.55)] overflow-hidden">
-          <div className="h-3.5 border-b border-slate-300 bg-slate-100" />
-          <div className="flex items-center justify-center px-2 py-2">{baseLabel}</div>
-        </div>
-      )}
-
-      <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-slate-600 !border-0 !opacity-0" />
-    </div>
-  )
-}
-
-const bpmnNodeTypes: NodeTypes = { bpmn: BpmnNode }
-
-function parseMermaidToReactFlow(mermaidSource: string) {
-  const lines = mermaidSource.split('\n').map((line) => line.trim())
-  const nodeOrder: string[] = []
-  const labels = new Map<string, string>()
-  const parsedEdges: Array<{ source: string; target: string }> = []
-
-  const nodeRegex = /^([A-Za-z0-9_]+)\["(.+)"\]$/
-  const edgeRegex = /^([A-Za-z0-9_]+)\s*-->\s*([A-Za-z0-9_]+)$/
-
-  for (const line of lines) {
-    const nodeMatch = line.match(nodeRegex)
-    if (nodeMatch) {
-      const [, id, label] = nodeMatch
-      if (!labels.has(id)) {
-        nodeOrder.push(id)
-      }
-      labels.set(id, label)
-      continue
-    }
-
-    const edgeMatch = line.match(edgeRegex)
-    if (edgeMatch) {
-      const [, source, target] = edgeMatch
-      parsedEdges.push({ source, target })
-    }
-  }
-
-  const maxCols = 4
-  const colGap = 260
-  const rowGap = 120
-  const baseX = 80
-  const baseY = 60
-  const nodeKindMap = new Map<string, BpmnKind>()
-
-  const nodes: Node[] = nodeOrder.map((id, index) => {
-    const row = Math.floor(index / maxCols)
-    const col = index % maxCols
-    const label = labels.get(id) ?? id
-    const kind = inferBpmnKind(label, index, nodeOrder.length)
-    nodeKindMap.set(id, kind)
-
-    return {
-      id,
-      type: 'bpmn',
-      position: { x: baseX + col * colGap, y: baseY + row * rowGap },
-      data: { label, kind },
-      draggable: false,
-      selectable: false,
-    }
-  })
-
-  const edges: Edge[] = parsedEdges.map((edge, index) => ({
-    id: `e-${edge.source}-${edge.target}-${index}`,
-    source: edge.source,
-    target: edge.target,
-    type: 'smoothstep',
-    animated: false,
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#334155' },
-    style:
-      nodeKindMap.get(edge.source) === 'dataStore' || nodeKindMap.get(edge.target) === 'dataStore'
-        ? { stroke: '#475569', strokeWidth: 1.7, strokeDasharray: '6 5' }
-        : { stroke: '#334155', strokeWidth: 1.8 },
-  }))
-
-  return { nodes, edges }
-}
 
 function confidenceClass(value: number) {
   if (value >= 90) return 'text-emerald-700 bg-emerald-50 border-emerald-200'
@@ -1707,82 +1594,99 @@ function CostBenefitEvidenceSection({
 
   return (
     <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
-      <CardContent className="relative z-10 space-y-4 p-4">
-        <div className="flex flex-col gap-3 border-b border-white/45 pb-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-900 backdrop-blur-md">
-              <ClipboardList className="h-3.5 w-3.5" />
-              Evidence readiness
+      <CardContent className="relative z-10 space-y-3 p-3.5 sm:p-4">
+        <div className="grid gap-3 border-b border-white/45 pb-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-white/55 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-900 backdrop-blur-md">
+                <ClipboardList className="h-3.5 w-3.5" />
+                Evidence readiness
+              </div>
+              <h3 className="text-sm font-semibold text-slate-950">Finance upgrade path</h3>
             </div>
-            <h3 className="text-base font-semibold text-slate-950">Finance upgrade path</h3>
-            <p className="text-sm leading-6 text-slate-600">
-              Cost–benefit stays in narrative mode until the evidence below is strong enough for an honest numeric model.
+            <p className="mt-1.5 text-xs leading-5 text-slate-600">
+              Cost–benefit stays in narrative mode until the evidence below supports an honest numeric model.
             </p>
           </div>
-          <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex shrink-0 flex-col items-center gap-1 px-4 py-3')}>
-            <div
-              className="relative flex h-16 w-16 items-center justify-center rounded-full"
-              style={{
-                background: `conic-gradient(#f59e0b ${readinessPercent * 3.6}deg, #e2e8f0 0deg)`,
-              }}
-            >
-              <div className="flex h-[52px] w-[52px] flex-col items-center justify-center rounded-full bg-white text-center">
-                <span className="text-sm font-bold tabular-nums text-slate-900">{readinessPercent}%</span>
-              </div>
+          <div className="rounded-lg border border-white/65 bg-white/45 px-3 py-2 backdrop-blur-md">
+            <div className="flex items-center justify-between gap-3 text-[11px]">
+              <span className="font-semibold text-slate-700">
+                {completedCount}/{evidenceItems.length} signals ready
+              </span>
+              <span className="font-bold tabular-nums text-slate-900">{readinessPercent}%</span>
             </div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Evidence ready</p>
-            <p className="text-[11px] text-slate-600">
-              {completedCount}/{evidenceItems.length} signals
-            </p>
+            <div
+              className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200/90"
+              role="progressbar"
+              aria-label="Cost benefit evidence readiness"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={readinessPercent}
+            >
+              <div
+                className={cn(
+                  'h-full rounded-full transition-[width] duration-300',
+                  readinessPercent === 100 ? 'bg-emerald-500' : 'bg-amber-500',
+                )}
+                style={{ width: `${readinessPercent}%` }}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
           {evidenceItems.map((item) => (
             <div
               key={item.id}
               className={cn(
-                'flex items-start gap-3 rounded-xl border px-3 py-2.5 backdrop-blur-md',
+                'min-w-0 rounded-lg border px-3 py-2.5 backdrop-blur-md',
                 item.complete
                   ? 'border-emerald-200/80 bg-emerald-50/40'
                   : cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'border-white/60'),
               )}
             >
-              {item.complete ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-              ) : (
-                <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-slate-900">{item.label}</p>
-                <p className="mt-0.5 text-[11px] leading-4 text-slate-500">{item.detail}</p>
+              <div className="flex min-w-0 items-center gap-2">
+                {item.complete ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                ) : (
+                  <Circle className="h-4 w-4 shrink-0 text-slate-300" />
+                )}
+                <p className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-900" title={item.label}>
+                  {item.label}
+                </p>
+                {item.complete ? (
+                  <span className="shrink-0 text-[10px] font-semibold uppercase text-emerald-700">Ready</span>
+                ) : null}
                 {!item.complete && item.ctaPanel ? (
                   <Button
                     type="button"
                     variant="link"
-                    className="mt-1 h-auto px-0 py-0 text-[11px] font-semibold text-violet-700"
+                    className="h-auto shrink-0 gap-0.5 px-0 py-0 text-[10px] font-semibold text-violet-700"
                     onClick={() => onNavigateToPanel(item.ctaPanel!)}
                   >
                     {item.ctaPanel === 'summary'
-                      ? 'Complete in Summary'
+                      ? 'Complete Summary'
                       : item.ctaPanel === 'scoring'
                         ? 'Open Scoring'
                         : item.ctaPanel === 'document'
                           ? 'Open Docs'
                           : 'Open panel'}
+                    <ChevronRight className="h-3 w-3" />
                   </Button>
                 ) : null}
                 {!item.complete && item.ctaBacklog ? (
                   <Button
                     type="button"
                     variant="link"
-                    className="mt-1 h-auto px-0 py-0 text-[11px] font-semibold text-violet-700"
+                    className="h-auto shrink-0 gap-0.5 px-0 py-0 text-[10px] font-semibold text-violet-700"
                     onClick={onOpenBacklog}
                   >
-                    Open Idea &amp; Backlog
+                    Open Backlog
+                    <ChevronRight className="h-3 w-3" />
                   </Button>
                 ) : null}
               </div>
+              <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-slate-500">{item.detail}</p>
             </div>
           ))}
         </div>
@@ -2066,6 +1970,151 @@ function ScoringDraftReadinessCard({
   )
 }
 
+function DiagramGalleryCard({
+  title,
+  icon: Icon,
+  description,
+  imageSrc,
+  imageLoading = false,
+  imageError = null,
+  missing,
+  generationError,
+  confidence,
+  isRegenerating,
+  onRegenerate,
+}: {
+  title: string
+  icon: LucideIcon
+  description: string
+  imageSrc: string | null
+  imageLoading?: boolean
+  imageError?: string | null
+  missing: boolean
+  generationError: string | null
+  confidence: number | null
+  isRegenerating: boolean
+  onRegenerate: () => void
+}) {
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isFullscreen])
+
+  const hasDiagram = Boolean(imageSrc)
+
+  return (
+    <div className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
+          <span className="text-sm font-semibold text-foreground">{title}</span>
+        </div>
+        {typeof confidence === 'number' && confidence > 0 ? (
+          <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence))}>
+            {confidence}%
+          </Badge>
+        ) : null}
+      </div>
+      <div className="relative mt-2 h-32 overflow-hidden rounded-xl border border-border/30 bg-slate-50">
+        {hasDiagram ? (
+          <img
+            src={imageSrc ?? undefined}
+            alt={title}
+            className="h-full w-full object-contain"
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center text-[11px] text-muted-foreground">
+            {isRegenerating || imageLoading ? (
+              <>
+                <RefreshCcw className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                Building diagram…
+              </>
+            ) : imageError || generationError ? (
+              <span className="text-rose-600">{imageError || generationError}</span>
+            ) : missing ? (
+              "AI couldn't produce a diagram — not enough evidence in this idea yet"
+            ) : (
+              'No diagram yet'
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          aria-label={`Open ${title}`}
+          onClick={() => setIsFullscreen(true)}
+          className="absolute inset-0 z-10"
+        />
+      </div>
+      <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
+
+      {isFullscreen && (
+        <div className="fixed inset-x-0 top-12 bottom-0 z-50">
+          <div className="liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-background shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2">
+              <div className="flex shrink-0 items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Icon className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                  <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {typeof confidence === 'number' && confidence > 0 ? (
+                    <Badge variant="outline" className={cn('text-[10px] font-semibold', confidenceClass(confidence))}>
+                      Confidence {confidence}%
+                    </Badge>
+                  ) : null}
+                  <Button size="sm" variant="outline" onClick={onRegenerate} disabled={isRegenerating}>
+                    <RefreshCcw className={cn('mr-1.5 h-3.5 w-3.5', isRegenerating && 'animate-spin')} aria-hidden />
+                    Regenerate
+                  </Button>
+                  <button
+                    type="button"
+                    aria-label={`Exit ${title} fullscreen`}
+                    title="Exit fullscreen (Esc)"
+                    onClick={() => setIsFullscreen(false)}
+                    className={cn(
+                      'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                      enterpriseControlFocusClass,
+                      'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                    )}
+                  >
+                    <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border/30 bg-slate-50 p-4">
+                {imageSrc ? (
+                  <img src={imageSrc} alt={title} className="mx-auto max-w-full" />
+                ) : (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-center text-sm text-muted-foreground">
+                    {isRegenerating || imageLoading ? (
+                      <>
+                        <RefreshCcw className="h-4 w-4 animate-spin" aria-hidden />
+                        Building diagram…
+                      </>
+                    ) : imageError || generationError ? (
+                      <span className="text-rose-600">{imageError || generationError}</span>
+                    ) : missing ? (
+                      "AI couldn't produce a diagram — not enough evidence in this idea yet"
+                    ) : (
+                      'No diagram yet'
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CollapsiblePanel({
   panelKey,
   title,
@@ -2075,6 +2124,7 @@ function CollapsiblePanel({
   showToggle = true,
   confidence,
   statusBadge,
+  headerActions,
   fillHeight = false,
   immersive = false,
   children,
@@ -2087,6 +2137,7 @@ function CollapsiblePanel({
   showToggle?: boolean
   confidence?: number
   statusBadge?: { label: string; className: string }
+  headerActions?: React.ReactNode
   fillHeight?: boolean
   immersive?: boolean
   children: React.ReactNode
@@ -2094,7 +2145,7 @@ function CollapsiblePanel({
   return (
     <Card
       className={cn(
-        'glass-card rounded-2xl border-border/30 shadow-sm',
+        'liquid-glass-enterprise-panel rounded-2xl border-border/30 shadow-sm',
         fillHeight && 'flex h-full min-h-0 flex-col overflow-hidden',
         immersive && 'overflow-hidden',
       )}
@@ -2103,13 +2154,13 @@ function CollapsiblePanel({
       <CardHeader className={cn('pb-3', fillHeight && 'shrink-0')}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <CardTitle className="text-base text-slate-900 flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-base leading-tight text-slate-900">
               <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border/40 bg-white/90">
                 <Sparkles className="h-3 w-3 text-slate-600" />
               </span>
               {title}
             </CardTitle>
-            <CardDescription className="mt-1">{description}</CardDescription>
+            <CardDescription className="mt-0.5 leading-tight">{description}</CardDescription>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -2122,6 +2173,7 @@ function CollapsiblePanel({
                 Confidence {confidence}%
               </Badge>
             ) : null}
+            {headerActions}
             {showToggle && (
               <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => onToggle(panelKey)}>
                 {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -2335,12 +2387,22 @@ function renderIdeaPanelWithOptionalFullscreen(
   isFullscreen: boolean,
   panel: React.ReactNode,
 ): React.ReactNode {
-  if (isFullscreen && typeof document !== 'undefined') {
+  if (isFullscreen) {
+    // Deliberately NOT a `createPortal(..., document.body)` — matches every other fullscreen
+    // idea-panel wrapper in this file (Integration, Cost Benefit, Conversion, Idea Docs — all
+    // plain `fixed inset-x-0 top-12 bottom-0 z-50` in place). `#root` (the whole React app's
+    // mount node) has its own `position: relative; z-index: 1`, which makes it a stacking
+    // context — a portal to `document.body` escapes that context entirely and becomes a true
+    // sibling of `#root`, so it always paints above EVERYTHING inside `#root` (topbar dropdowns,
+    // chat/email panels, notifications, todo — all far higher z-index, but trapped inside
+    // `#root`) regardless of what z-index is set here. Rendering in place keeps this panel inside
+    // the same stacking context as that topbar UI, so z-50 vs. their z-60+ actually behaves as
+    // intended: those menus render above it, the way "fullscreen content, chrome-level UI on top"
+    // is supposed to work.
     return (
-      <>
-        <div className="min-h-[50vh]" aria-hidden />
-        {createPortal(panel, document.body)}
-      </>
+      <div className="fixed inset-x-0 top-12 bottom-0 z-50 flex min-h-0 w-screen flex-col overflow-hidden bg-background">
+        {panel}
+      </div>
     )
   }
   return panel
@@ -3235,6 +3297,8 @@ export function IdeaDetailPage() {
   const [metaPatchLastSavedAt, setMetaPatchLastSavedAt] = useState<Date | null>(null)
   const lastMetaToastRef = useRef<{ key: string; at: number } | null>(null)
 
+  const { options: userWorkspaceOptions } = useUserWorkspaceOptions()
+
   const [brdPages, setBrdPages] = useState<string[]>([''])
   const [ideaDocTemplates, setIdeaDocTemplates] = useState<DocumentTemplateResponse[]>([])
   const [ideaDocTemplatesLoading, setIdeaDocTemplatesLoading] = useState(false)
@@ -3251,14 +3315,15 @@ export function IdeaDetailPage() {
   const ideaSummaryPanelRef = useRef<HTMLDivElement>(null)
   const [ideaSummaryPanelHeightPx, setIdeaSummaryPanelHeightPx] = useState<number | null>(null)
   const [isSummaryPanelFullscreen, setIsSummaryPanelFullscreen] = useState(false)
+  const ideaDiagramsPanelRef = useRef<HTMLDivElement>(null)
+  const [ideaDiagramsPanelHeightPx, setIdeaDiagramsPanelHeightPx] = useState<number | null>(null)
+  const [isDiagramsPanelFullscreen, setIsDiagramsPanelFullscreen] = useState(false)
   const ideaScoringPanelRef = useRef<HTMLDivElement>(null)
   const [ideaScoringPanelHeightPx, setIdeaScoringPanelHeightPx] = useState<number | null>(null)
   const [isScoringPanelFullscreen, setIsScoringPanelFullscreen] = useState(false)
   const ideaImpactPanelRef = useRef<HTMLDivElement>(null)
   const [ideaImpactPanelHeightPx, setIdeaImpactPanelHeightPx] = useState<number | null>(null)
   const [isImpactPanelFullscreen, setIsImpactPanelFullscreen] = useState(false)
-  const ideaIntegrationPanelRef = useRef<HTMLDivElement>(null)
-  const [ideaIntegrationPanelHeightPx, setIdeaIntegrationPanelHeightPx] = useState<number | null>(null)
   const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
   const ideaCostBenefitPanelRef = useRef<HTMLDivElement>(null)
   const [ideaCostBenefitPanelHeightPx, setIdeaCostBenefitPanelHeightPx] = useState<number | null>(null)
@@ -3283,6 +3348,16 @@ export function IdeaDetailPage() {
   const [ideaDocSubfolders, setIdeaDocSubfolders] = useState<DocumentFolder[]>([])
   const [ideaDocFolderCreateBusy, setIdeaDocFolderCreateBusy] = useState(false)
   const [ideaDocFolderInitBusy, setIdeaDocFolderInitBusy] = useState(false)
+  const [ideaDocFolderContextMenu, setIdeaDocFolderContextMenu] = useState<{
+    folder: DocumentFolder
+    x: number
+    y: number
+  } | null>(null)
+  const [ideaDocFolderRenameTarget, setIdeaDocFolderRenameTarget] = useState<DocumentFolder | null>(null)
+  const [ideaDocFolderRenameValue, setIdeaDocFolderRenameValue] = useState('')
+  const [ideaDocFolderRenameBusy, setIdeaDocFolderRenameBusy] = useState(false)
+  const [ideaDocFolderDeleteTarget, setIdeaDocFolderDeleteTarget] = useState<DocumentFolder | null>(null)
+  const [ideaDocFolderDeleteBusy, setIdeaDocFolderDeleteBusy] = useState(false)
   const selectedIdeaDocGenerateTemplate = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId) ?? null
   const ideaDocGenerateSourceChars = ideaDocGenerateSource.trim().length
   const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
@@ -3387,8 +3462,12 @@ export function IdeaDetailPage() {
     summary: true,
     scoring: true,
     impact: true,
+    diagrams: true,
     integration: true,
     process: true,
+    c4Level1: true,
+    c4Level2: true,
+    bpmnHigh: true,
     costBenefit: true,
     conversion: true,
     document: true,
@@ -3397,8 +3476,12 @@ export function IdeaDetailPage() {
     summary: false,
     scoring: false,
     impact: false,
+    diagrams: false,
     integration: false,
     process: false,
+    c4Level1: false,
+    c4Level2: false,
+    bpmnHigh: false,
     costBenefit: false,
     conversion: false,
     document: false,
@@ -3407,8 +3490,12 @@ export function IdeaDetailPage() {
     summary: 92,
     scoring: 91,
     impact: 86,
+    diagrams: 88,
     integration: 0,
     process: 88,
+    c4Level1: 0,
+    c4Level2: 0,
+    bpmnHigh: 0,
     costBenefit: 79,
     conversion: 90,
     document: 84,
@@ -3642,7 +3729,6 @@ export function IdeaDetailPage() {
   const [conversionTimeline, setConversionTimeline] = useState<GenerateIdeaConversionResponse | null>(null)
   const [conversionError, setConversionError] = useState<string | null>(null)
   const [conversionZoomLevel, setConversionZoomLevel] = useState<PlanningGanttZoomLevel>('Week')
-  const conversionGanttHostRef = useRef<HTMLDivElement | null>(null)
   const [runtimeIntegrationAnalysis, setRuntimeIntegrationAnalysis] = useState<RuntimeIntegrationAnalysis>(
     EMPTY_RUNTIME_INTEGRATION_ANALYSIS,
   )
@@ -3653,6 +3739,30 @@ export function IdeaDetailPage() {
   const [integrationBootstrapRecord, setIntegrationBootstrapRecord] = useState<IntegrationGraphRecord | null>(null)
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
   const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
+  const [c4Level1Analysis, setC4Level1Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L1'))
+  const [c4Level1Loaded, setC4Level1Loaded] = useState(false)
+  const [c4Level1Missing, setC4Level1Missing] = useState(false)
+  const [c4Level1GenerationError, setC4Level1GenerationError] = useState<string | null>(null)
+  const [c4Level2Analysis, setC4Level2Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L2'))
+  const [c4Level2Loaded, setC4Level2Loaded] = useState(false)
+  const [c4Level2Missing, setC4Level2Missing] = useState(false)
+  const [c4Level2GenerationError, setC4Level2GenerationError] = useState<string | null>(null)
+  const c4Level1Preview = usePlantUmlPngPreview(c4Level1Analysis.plantumlSource)
+  const c4Level2Preview = usePlantUmlPngPreview(c4Level2Analysis.plantumlSource)
+  const [bpmnHighAnalysis, setBpmnHighAnalysis] = useState<RuntimeProcessDiagramAnalysis>(
+    emptyRuntimeProcessDiagramAnalysis(),
+  )
+  const [bpmnHighLoaded, setBpmnHighLoaded] = useState(false)
+  const [bpmnHighMissing, setBpmnHighMissing] = useState(false)
+  const [bpmnHighGenerationError, setBpmnHighGenerationError] = useState<string | null>(null)
+  type ProcessDetailState = {
+    analysis: RuntimeProcessDiagramAnalysis
+    loaded: boolean
+    missing: boolean
+    generationError: string | null
+    isRegenerating: boolean
+  }
+  const [processDetailsByKey, setProcessDetailsByKey] = useState<Record<string, ProcessDetailState>>({})
   const [isFreshIdea, setIsFreshIdea] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -4376,17 +4486,13 @@ export function IdeaDetailPage() {
           )
         }
 
-        if (!options.autoGenerateIfMissing) {
-          setIntegrationLoaded(false)
-          setIntegrationMissing(true)
-          setRuntimeIntegrationAnalysis(EMPTY_RUNTIME_INTEGRATION_ANALYSIS)
-          setIntegrationBootstrapRecord(null)
-          setConfidence((prev) => ({ ...prev, integration: 0 }))
-          return
-        }
       }
 
+      // Nothing persisted (and not a forced regenerate) — generate now rather than showing a
+      // manual "Generate" button. The only way this diagram is truly "missing" going forward is if
+      // the AI itself reports insufficient_data after actually trying.
       setIntegrationMissing(false)
+      setRegenerating((prev) => ({ ...prev, integration: true }))
       try {
         const response = await analyzeIdeaIntegration(
           {
@@ -4436,9 +4542,301 @@ export function IdeaDetailPage() {
         )
         setIntegrationWarnings(['INTEGRATION_GENERATION_FAILED'])
         setConfidence((prev) => ({ ...prev, integration: 0 }))
+      } finally {
+        setRegenerating((prev) => ({ ...prev, integration: false }))
       }
     },
     [applyIntegrationState, idea, runtimeUserId],
+  )
+
+  const applyC4ArchitectureState = useCallback((level: C4ArchitectureLevel, analysis: RuntimeC4Analysis) => {
+    const setAnalysis = level === 'L1' ? setC4Level1Analysis : setC4Level2Analysis
+    const setLoaded = level === 'L1' ? setC4Level1Loaded : setC4Level2Loaded
+    const setMissing = level === 'L1' ? setC4Level1Missing : setC4Level2Missing
+    const confidenceKey = level === 'L1' ? 'c4Level1' : 'c4Level2'
+    setAnalysis(analysis)
+    setLoaded(true)
+    setMissing(analysis.status === 'insufficient_data')
+    setConfidence((prev) => ({
+      ...prev,
+      [confidenceKey]: Math.round(Math.max(0, Math.min(1, analysis.confidenceScore ?? 0)) * 100),
+    }))
+  }, [])
+
+  const loadRuntimeC4Architecture = useCallback(
+    async (
+      level: C4ArchitectureLevel,
+      sourceIdea: Idea = idea,
+      options: { forceRefresh?: boolean; autoGenerateIfMissing?: boolean } = {},
+    ) => {
+      const setGenerationError = level === 'L1' ? setC4Level1GenerationError : setC4Level2GenerationError
+      const setLoaded = level === 'L1' ? setC4Level1Loaded : setC4Level2Loaded
+      const setMissing = level === 'L1' ? setC4Level1Missing : setC4Level2Missing
+      const setAnalysis = level === 'L1' ? setC4Level1Analysis : setC4Level2Analysis
+      const confidenceKey = level === 'L1' ? 'c4Level1' : 'c4Level2'
+      setGenerationError(null)
+
+      if (!options.forceRefresh) {
+        try {
+          const persistent = await getPersistentIdeaC4Architecture(sourceIdea.id, level)
+          if (persistent) {
+            applyC4ArchitectureState(level, runtimeC4FromPersistent(persistent))
+            return
+          }
+        } catch (error) {
+          setGenerationError(error instanceof Error ? error.message : `Failed to load stored C4 ${level} architecture.`)
+        }
+
+      }
+
+      // Nothing persisted (and not a forced regenerate) — generate now rather than showing a
+      // manual "Generate" button.
+      setMissing(false)
+      const regeneratingKey = level === 'L1' ? 'c4Level1' : 'c4Level2'
+      setRegenerating((prev) => ({ ...prev, [regeneratingKey]: true }))
+      try {
+        const response = await analyzeIdeaC4Architecture(
+          {
+            idea_id: sourceIdea.id,
+            level,
+            context: {
+              workspace_id: sourceIdea.workspace ?? null,
+              user_id: runtimeUserId,
+              session_id: `idea-detail-c4-${level.toLowerCase()}-${sourceIdea.id}`,
+            },
+            idea: {
+              id: sourceIdea.id,
+              title: sourceIdea.title,
+              description: sourceIdea.description || null,
+              business_objective: sourceIdea.businessObjective ?? null,
+              scope_summary: sourceIdea.scopeSummary ?? null,
+              risk_summary: sourceIdea.riskSummary ?? null,
+              status: sourceIdea.status,
+              tags: sourceIdea.tags,
+            },
+          },
+          150_000,
+        )
+
+        const analysis = runtimeC4FromAgentResponse(response)
+
+        try {
+          await upsertPersistentIdeaC4Architecture(sourceIdea.id, level, {
+            ...buildPersistentC4Payload(analysis, runtimeUserId || 'tectona-agent'),
+            version: sourceIdea.version,
+          })
+        } catch (persistError) {
+          analysis.warnings = [
+            ...analysis.warnings,
+            persistError instanceof Error ? persistError.message : 'C4_ARCHITECTURE_PERSIST_FAILED',
+          ]
+        }
+
+        applyC4ArchitectureState(level, analysis)
+      } catch (error) {
+        setAnalysis(emptyRuntimeC4Analysis(level))
+        setLoaded(false)
+        setMissing(false)
+        setGenerationError(error instanceof Error ? error.message : `AI C4 ${level} architecture analysis failed.`)
+        setConfidence((prev) => ({ ...prev, [confidenceKey]: 0 }))
+      } finally {
+        setRegenerating((prev) => ({ ...prev, [regeneratingKey]: false }))
+      }
+    },
+    [applyC4ArchitectureState, idea, runtimeUserId],
+  )
+
+  const applyProcessDiagramState = useCallback((analysis: RuntimeProcessDiagramAnalysis) => {
+    setBpmnHighAnalysis(analysis)
+    setBpmnHighLoaded(true)
+    setBpmnHighMissing(analysis.status === 'insufficient_data')
+    setConfidence((prev) => ({
+      ...prev,
+      bpmnHigh: Math.round(Math.max(0, Math.min(1, analysis.confidenceScore ?? 0)) * 100),
+    }))
+  }, [])
+
+  const loadRuntimeProcessDiagram = useCallback(
+    async (
+      sourceIdea: Idea = idea,
+      options: { forceRefresh?: boolean; autoGenerateIfMissing?: boolean } = {},
+    ) => {
+      const processKey = 'high'
+      setBpmnHighGenerationError(null)
+
+      if (!options.forceRefresh) {
+        try {
+          const persistent = await getPersistentIdeaProcessDiagram(sourceIdea.id, processKey)
+          if (persistent) {
+            applyProcessDiagramState(runtimeProcessDiagramFromPersistent(persistent))
+            return
+          }
+        } catch (error) {
+          setBpmnHighGenerationError(
+            error instanceof Error ? error.message : 'Failed to load stored process diagram.',
+          )
+        }
+
+      }
+
+      // Nothing persisted (and not a forced regenerate) — generate now rather than showing a
+      // manual "Generate" button.
+      setBpmnHighMissing(false)
+      setRegenerating((prev) => ({ ...prev, bpmnHigh: true }))
+      try {
+        const response = await analyzeIdeaProcess(
+          {
+            idea_id: sourceIdea.id,
+            context: {
+              workspace_id: sourceIdea.workspace ?? null,
+              user_id: runtimeUserId,
+              session_id: `idea-detail-process-${sourceIdea.id}`,
+            },
+            idea: {
+              id: sourceIdea.id,
+              title: sourceIdea.title,
+              description: sourceIdea.description || null,
+              business_objective: sourceIdea.businessObjective ?? null,
+              scope_summary: sourceIdea.scopeSummary ?? null,
+              risk_summary: sourceIdea.riskSummary ?? null,
+              status: sourceIdea.status,
+              tags: sourceIdea.tags,
+            },
+          },
+          180_000,
+        )
+
+        const analysis = runtimeProcessDiagramFromAgentResponse(response)
+
+        try {
+          await upsertPersistentIdeaProcessDiagram(sourceIdea.id, processKey, {
+            ...buildPersistentProcessDiagramPayload(analysis, runtimeUserId || 'tectona-agent'),
+            version: sourceIdea.version,
+          })
+        } catch (persistError) {
+          analysis.warnings = [
+            ...analysis.warnings,
+            persistError instanceof Error ? persistError.message : 'PROCESS_DIAGRAM_PERSIST_FAILED',
+          ]
+        }
+
+        applyProcessDiagramState(analysis)
+      } catch (error) {
+        setBpmnHighAnalysis(emptyRuntimeProcessDiagramAnalysis())
+        setBpmnHighLoaded(false)
+        setBpmnHighMissing(false)
+        setBpmnHighGenerationError(error instanceof Error ? error.message : 'AI process analysis failed.')
+        setConfidence((prev) => ({ ...prev, bpmnHigh: 0 }))
+      } finally {
+        setRegenerating((prev) => ({ ...prev, bpmnHigh: false }))
+      }
+    },
+    [applyProcessDiagramState, idea, runtimeUserId],
+  )
+
+  const setProcessDetailState = useCallback((taskKey: string, state: ProcessDetailState) => {
+    setProcessDetailsByKey((prev) => ({ ...prev, [taskKey]: state }))
+  }, [])
+
+  const loadRuntimeProcessDetail = useCallback(
+    async (
+      taskKey: string,
+      taskLabel: string,
+      sourceIdea: Idea = idea,
+      options: { forceRefresh?: boolean } = {},
+    ) => {
+      if (!options.forceRefresh) {
+        try {
+          const persistent = await getPersistentIdeaProcessDiagram(sourceIdea.id, taskKey)
+          if (persistent) {
+            const analysis = runtimeProcessDiagramFromPersistent(persistent)
+            setProcessDetailState(taskKey, {
+              analysis,
+              loaded: true,
+              missing: analysis.status === 'insufficient_data',
+              generationError: null,
+              isRegenerating: false,
+            })
+            return
+          }
+        } catch {
+          // no persisted detail yet for this task — fall through to the "missing" empty state
+        }
+        setProcessDetailState(taskKey, {
+          analysis: emptyRuntimeProcessDiagramAnalysis(),
+          loaded: false,
+          missing: true,
+          generationError: null,
+          isRegenerating: false,
+        })
+        return
+      }
+
+      setProcessDetailState(taskKey, {
+        analysis: processDetailsByKey[taskKey]?.analysis ?? emptyRuntimeProcessDiagramAnalysis(),
+        loaded: processDetailsByKey[taskKey]?.loaded ?? false,
+        missing: false,
+        generationError: null,
+        isRegenerating: true,
+      })
+      try {
+        const response = await analyzeIdeaProcessDetail(
+          {
+            idea_id: sourceIdea.id,
+            context: {
+              workspace_id: sourceIdea.workspace ?? null,
+              user_id: runtimeUserId,
+              session_id: `idea-detail-process-detail-${taskKey}-${sourceIdea.id}`,
+            },
+            idea: {
+              id: sourceIdea.id,
+              title: sourceIdea.title,
+              description: sourceIdea.description || null,
+              business_objective: sourceIdea.businessObjective ?? null,
+              scope_summary: sourceIdea.scopeSummary ?? null,
+              risk_summary: sourceIdea.riskSummary ?? null,
+              status: sourceIdea.status,
+              tags: sourceIdea.tags,
+            },
+            task_key: taskKey,
+            task_label: taskLabel,
+            high_level_bpmn_xml: bpmnHighAnalysis.bpmnXml,
+          },
+          180_000,
+        )
+
+        const analysis = runtimeProcessDiagramFromAgentResponse(response)
+
+        try {
+          await upsertPersistentIdeaProcessDiagram(sourceIdea.id, taskKey, {
+            ...buildPersistentProcessDiagramPayload(analysis, runtimeUserId || 'tectona-agent'),
+            version: sourceIdea.version,
+          })
+        } catch (persistError) {
+          analysis.warnings = [
+            ...analysis.warnings,
+            persistError instanceof Error ? persistError.message : 'PROCESS_DETAIL_PERSIST_FAILED',
+          ]
+        }
+
+        setProcessDetailState(taskKey, {
+          analysis,
+          loaded: true,
+          missing: analysis.status === 'insufficient_data',
+          generationError: null,
+          isRegenerating: false,
+        })
+      } catch (error) {
+        setProcessDetailState(taskKey, {
+          analysis: emptyRuntimeProcessDiagramAnalysis(),
+          loaded: false,
+          missing: false,
+          generationError: error instanceof Error ? error.message : 'AI process detail analysis failed.',
+          isRegenerating: false,
+        })
+      }
+    },
+    [idea, runtimeUserId, bpmnHighAnalysis.bpmnXml, processDetailsByKey, setProcessDetailState],
   )
 
   const loadRuntimeSummaryRef = useRef(loadRuntimeSummary)
@@ -4447,6 +4845,9 @@ export function IdeaDetailPage() {
   const loadRuntimeBenefitRef = useRef(loadRuntimeBenefit)
   const loadRuntimeConversionRef = useRef(loadRuntimeConversion)
   const loadRuntimeIntegrationRef = useRef(loadRuntimeIntegration)
+  const loadRuntimeC4ArchitectureRef = useRef(loadRuntimeC4Architecture)
+  const loadRuntimeProcessDiagramRef = useRef(loadRuntimeProcessDiagram)
+  const loadRuntimeProcessDetailRef = useRef(loadRuntimeProcessDetail)
 
   useEffect(() => {
     loadRuntimeSummaryRef.current = loadRuntimeSummary
@@ -4471,6 +4872,29 @@ export function IdeaDetailPage() {
   useEffect(() => {
     loadRuntimeIntegrationRef.current = loadRuntimeIntegration
   }, [loadRuntimeIntegration])
+
+  useEffect(() => {
+    loadRuntimeC4ArchitectureRef.current = loadRuntimeC4Architecture
+  }, [loadRuntimeC4Architecture])
+
+  useEffect(() => {
+    loadRuntimeProcessDiagramRef.current = loadRuntimeProcessDiagram
+  }, [loadRuntimeProcessDiagram])
+
+  useEffect(() => {
+    loadRuntimeProcessDetailRef.current = loadRuntimeProcessDetail
+  }, [loadRuntimeProcessDetail])
+
+  // BPMN Detail is lazy — never auto-generated — but once the high-level diagram names its
+  // sub-processes, check (check-only, no forceRefresh) whether any of them were already generated
+  // on a previous visit, so persisted details reappear instead of resetting to "click Generate"
+  // every time the page reloads.
+  useEffect(() => {
+    for (const task of bpmnHighAnalysis.subProcesses) {
+      void loadRuntimeProcessDetailRef.current(task.key, task.label, idea)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bpmnHighAnalysis.subProcesses])
 
   // Initial load: hydrate idea from API, then read idea_summary from DB (no agent on refresh).
   useEffect(() => {
@@ -4520,7 +4944,10 @@ export function IdeaDetailPage() {
         await loadRuntimeScoringRef.current(hydratedIdea, { forceRefresh: wasFreshIdea })
         await loadRuntimeBenefitRef.current(hydratedIdea)
         await loadRuntimeConversionRef.current(hydratedIdea)
-        await loadRuntimeIntegrationRef.current(hydratedIdea, { autoGenerateIfMissing: wasFreshIdea })
+        await loadRuntimeIntegrationRef.current(hydratedIdea)
+        await loadRuntimeC4ArchitectureRef.current('L1', hydratedIdea)
+        await loadRuntimeC4ArchitectureRef.current('L2', hydratedIdea)
+        await loadRuntimeProcessDiagramRef.current(hydratedIdea)
       } finally {
         if (wasFreshIdea) {
           setRegenerating((prev) => ({ ...prev, summary: false }))
@@ -4744,16 +5171,28 @@ export function IdeaDetailPage() {
     if (activePanel !== 'document') return
     let cancelled = false
     setIdeaDocTemplatesLoading(true)
-    // Fetch without a workspace filter — templates registered without a workspace_id are shared
-    // "global" library templates (e.g. URD) and would be silently excluded by a strict server-side
-    // workspace_id match, so scoping is applied client-side instead.
+    // Fetch without a workspace filter, then scope client-side with the SAME resolution used by
+    // the Document Repository's own template library (`belongsToDkmTemplateScope`) — it infers a
+    // template's workspace from its naming convention (e.g. "URD_AdiraFinanceWs_...") when the
+    // workspace_id column/metadata is empty, instead of naively treating every unscoped row as a
+    // shared "global" template. Without this, a template that visibly belongs to one workspace's
+    // repository (by name) could still appear — and be unusable, since it was never prepared for
+    // agent use in this workspace — in every other workspace's "Generate from template" list.
+    const workspaceCandidates = userWorkspaceOptions.map((option) => ({
+      id: option.workspaceId,
+      name: option.workspaceName,
+      organizationId: option.organizationId,
+      tenantMode: option.tenantMode,
+    }))
+    const scope = idea.workspace
+      ? ({ mode: 'single', workspaceId: idea.workspace, tenantMode: null } as const)
+      : ({ mode: 'all' } as const)
     void listTemplates({ status: 'active' })
       .then((items) => {
         if (cancelled) return
         setIdeaDocTemplates(
           items.filter(
-            (item) =>
-              item.has_attachment && (!item.workspace_id || item.workspace_id === idea.workspace),
+            (item) => item.has_attachment && belongsToDkmTemplateScope(item, scope, workspaceCandidates),
           ),
         )
       })
@@ -4766,13 +5205,16 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [activePanel, idea.workspace])
+  }, [activePanel, idea.workspace, userWorkspaceOptions])
 
   useEffect(() => {
     if (activePanel !== 'document') return
     let cancelled = false
     setIdeaDocsLoading(true)
-    void listAllDocuments({ workspace_id: idea.workspace ?? undefined, page: 1, page_size: 100 })
+    // Load the repository without a workspace filter so legacy documents that
+    // were created before workspace metadata was populated remain discoverable.
+    // The Idea tag/metadata filter below still scopes the result to this Idea.
+    void listAllDocuments({ page: 1, page_size: 100 })
       .then((response) => {
         if (cancelled) return
         const linked = response.items.filter(
@@ -4873,6 +5315,54 @@ export function IdeaDetailPage() {
       document.body.style.overflow = previousOverflow
     }
   }, [isSummaryPanelFullscreen])
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'diagrams') return
+    if (isDiagramsPanelFullscreen) {
+      setIdeaDiagramsPanelHeightPx(null)
+      return
+    }
+    const panelEl = ideaDiagramsPanelRef.current
+    if (!panelEl) return
+
+    const updateHeight = () => {
+      setIdeaDiagramsPanelHeightPx(measureProjectPanelHeight(panelEl))
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    window.addEventListener('scroll', updateHeight, { passive: true })
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(panelEl)
+    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      window.removeEventListener('scroll', updateHeight)
+      observer.disconnect()
+    }
+  }, [activePanel, isDiagramsPanelFullscreen])
+
+  useEffect(() => {
+    if (activePanel !== 'diagrams' && isDiagramsPanelFullscreen) {
+      setIsDiagramsPanelFullscreen(false)
+    }
+  }, [activePanel, isDiagramsPanelFullscreen])
+
+  useEffect(() => {
+    if (!isDiagramsPanelFullscreen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsDiagramsPanelFullscreen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isDiagramsPanelFullscreen])
 
   useLayoutEffect(() => {
     if (activePanel !== 'scoring') return
@@ -5016,36 +5506,8 @@ export function IdeaDetailPage() {
     }
   }, [isCostBenefitPanelFullscreen])
 
-  useLayoutEffect(() => {
-    if (activePanel !== 'integration') return
-    if (isIntegrationPanelFullscreen) {
-      setIdeaIntegrationPanelHeightPx(null)
-      return
-    }
-    const panelEl = ideaIntegrationPanelRef.current
-    if (!panelEl) return
-
-    const updateHeight = () => {
-      setIdeaIntegrationPanelHeightPx(measureProjectPanelHeight(panelEl))
-    }
-
-    updateHeight()
-    window.addEventListener('resize', updateHeight)
-    window.addEventListener('scroll', updateHeight, { passive: true })
-
-    const observer = new ResizeObserver(updateHeight)
-    observer.observe(panelEl)
-    if (panelEl.parentElement) observer.observe(panelEl.parentElement)
-
-    return () => {
-      window.removeEventListener('resize', updateHeight)
-      window.removeEventListener('scroll', updateHeight)
-      observer.disconnect()
-    }
-  }, [activePanel, isIntegrationPanelFullscreen])
-
   useEffect(() => {
-    if (activePanel !== 'integration' && isIntegrationPanelFullscreen) {
+    if (activePanel !== 'diagrams' && isIntegrationPanelFullscreen) {
       setIsIntegrationPanelFullscreen(false)
     }
   }, [activePanel, isIntegrationPanelFullscreen])
@@ -5162,8 +5624,11 @@ export function IdeaDetailPage() {
   const isIdeaDocAtProjectRoot = ideaDocFolderStack.length <= 1
   const ideaDocsInCurrentFolder = useMemo(() => {
     if (!ideaDocCurrentFolder) return ideaGeneratedDocs
+    // Keep documents visible at the Idea root even when they were created
+    // before the current project-backed root folder was initialized.
+    if (isIdeaDocAtProjectRoot) return ideaGeneratedDocs
     return ideaGeneratedDocs.filter((doc) => doc.folder_id === ideaDocCurrentFolder.id)
-  }, [ideaDocCurrentFolder, ideaGeneratedDocs])
+  }, [ideaDocCurrentFolder, ideaGeneratedDocs, isIdeaDocAtProjectRoot])
 
   const ideaRepositoryItems = useMemo(
     () => ideaDocsInCurrentFolder.map((doc) => mapDocumentToRepositoryItem(doc, idea.title)),
@@ -5197,11 +5662,18 @@ export function IdeaDetailPage() {
     }
 
     const targetProject = projectList.projects?.[0]
-    if (!targetProject?.id) {
-      throw new Error('No project available to store the generated document.')
-    }
-    return targetProject
-  }, [idea.project_id, idea.workspace])
+    if (targetProject?.id) return targetProject
+
+    // Ideas can be documented before they are converted into a user-created
+    // project. Create a workspace-scoped document container so Docs remains
+    // usable without requiring a separate conversion step first.
+    return createProject({
+      name: idea.title.trim().slice(0, 255) || 'Idea workspace project',
+      description: `Document container for idea: ${idea.title.trim() || idea.id}`,
+      tags: ['idea-docs', idea.id],
+      workspace_id: idea.workspace ?? null,
+    })
+  }, [idea.id, idea.project_id, idea.title, idea.workspace])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -5270,6 +5742,11 @@ export function IdeaDetailPage() {
     setIdeaDocsPage(1)
   }, [])
 
+  const openIdeaDocFolderContextMenu = useCallback((folder: DocumentFolder, x: number, y: number) => {
+    setIdeaDocContextMenu(null)
+    setIdeaDocFolderContextMenu({ folder, x, y })
+  }, [])
+
   const handleIdeaDocCreateFolder = useCallback(async () => {
     if (!ideaDocCurrentFolder || ideaDocFolderCreateBusy) return
 
@@ -5307,6 +5784,115 @@ export function IdeaDetailPage() {
     }
   }, [addToast, idea.submittedBy, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders])
 
+  const handleIdeaDocCreateSubfolder = useCallback(async (parentFolder: DocumentFolder) => {
+    if (ideaDocFolderCreateBusy) return
+
+    setIdeaDocFolderCreateBusy(true)
+    try {
+      const existingChildren = await fetchDocumentFolders({
+        parent_id: parentFolder.id,
+        page: 1,
+        page_size: 100,
+      })
+      const session = getSession()
+      const name = nextUntitledDocumentFolderName(existingChildren.folders)
+      await createDocumentFolder({
+        name,
+        description: null,
+        parent_id: parentFolder.id,
+        owner_id: session?.user.id || session?.user.email || idea.submittedBy || null,
+      })
+      setIdeaDocSubfolders((prev) => prev.map((folder) => (
+        folder.id === parentFolder.id
+          ? { ...folder, children_count: folder.children_count + 1 }
+          : folder
+      )))
+      addToast({
+        title: 'Subfolder created',
+        description: `"${name}" was created inside ${parentFolder.name}.`,
+        variant: 'success',
+      })
+    } catch (error) {
+      addToast({
+        title: 'Failed to create subfolder',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocFolderCreateBusy(false)
+    }
+  }, [addToast, idea.submittedBy, ideaDocFolderCreateBusy])
+
+  const handleIdeaDocFolderRenameConfirm = useCallback(async () => {
+    if (!ideaDocFolderRenameTarget) return
+    const nextName = ideaDocFolderRenameValue.trim()
+    if (!nextName) {
+      addToast({ title: 'Folder name required', description: 'Enter a folder name.', variant: 'error' })
+      return
+    }
+
+    setIdeaDocFolderRenameBusy(true)
+    try {
+      const updated = await updateDocumentFolder(ideaDocFolderRenameTarget.id, { name: nextName })
+      setIdeaDocSubfolders((prev) => prev.map((folder) => (folder.id === updated.id ? updated : folder)))
+      setIdeaDocFolderStack((prev) => prev.map((folder) => (
+        folder.id === updated.id ? { ...folder, name: updated.name } : folder
+      )))
+      setIdeaDocFolderRenameTarget(null)
+      addToast({ title: 'Folder renamed', description: updated.name, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Rename failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocFolderRenameBusy(false)
+    }
+  }, [addToast, ideaDocFolderRenameTarget, ideaDocFolderRenameValue])
+
+  const handleIdeaDocFolderDeleteConfirm = useCallback(async () => {
+    if (!ideaDocFolderDeleteTarget) return
+    if (ideaDocFolderDeleteTarget.document_count > 0 || ideaDocFolderDeleteTarget.children_count > 0) {
+      addToast({
+        title: 'Folder is not empty',
+        description: 'Move or delete its documents and subfolders first.',
+        variant: 'error',
+      })
+      return
+    }
+
+    setIdeaDocFolderDeleteBusy(true)
+    try {
+      await deleteDocumentFolder(ideaDocFolderDeleteTarget.id)
+      setIdeaDocSubfolders((prev) => prev.filter((folder) => folder.id !== ideaDocFolderDeleteTarget.id))
+      setIdeaDocFolderDeleteTarget(null)
+      addToast({ title: 'Folder deleted', description: ideaDocFolderDeleteTarget.name, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocFolderDeleteBusy(false)
+    }
+  }, [addToast, ideaDocFolderDeleteTarget])
+
+  const copyIdeaDocFolderPath = useCallback(async (folder: DocumentFolder) => {
+    const path = [...ideaDocFolderStack.map((item) => item.name), folder.name].join(' / ')
+    try {
+      await navigator.clipboard.writeText(path)
+      addToast({ title: 'Folder path copied', description: path, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'Copy failed',
+        description: error instanceof Error ? error.message : 'Clipboard access is unavailable.',
+        variant: 'error',
+      })
+    }
+  }, [addToast, ideaDocFolderStack])
+
   const openIdeaDocGenerateDialog = useCallback(() => {
     const firstTemplate = ideaDocTemplates[0]
     setIdeaDocGenerateTemplateId(firstTemplate?.id ?? '')
@@ -5339,7 +5925,7 @@ export function IdeaDetailPage() {
     }, IDEA_DOC_GENERATE_STEP_INTERVAL_MS)
     try {
       const targetProject = await resolveIdeaTargetProject()
-      const targetFolderId = await ensureProjectDocumentFolder({
+      const targetFolderId = ideaDocCurrentFolder?.id ?? await ensureProjectDocumentFolder({
         id: targetProject.id,
         name: targetProject.name,
       })
@@ -5373,6 +5959,7 @@ export function IdeaDetailPage() {
         version_notes: `AI-generated from template ${template.template_code} for idea ${idea.id}`,
         fills: filled.payload.fills ?? {},
         sections: filled.payload.sections ?? {},
+        collections: filled.payload.collections ?? {},
         agent_schema: filled.agent_schema,
         diagrams: filled.rendered_diagrams ?? {},
       })
@@ -5406,6 +5993,7 @@ export function IdeaDetailPage() {
     idea.id,
     idea.title,
     idea.workspace,
+    ideaDocCurrentFolder?.id,
     ideaDocGenerateBusy,
     ideaDocGenerateSource,
     ideaDocGenerateTemplateId,
@@ -5546,53 +6134,12 @@ export function IdeaDetailPage() {
     }
   }, [addToast, ideaDocDeleteTarget])
 
-  const processFlowNodes = useMemo(() => {
-    const byKey = new Map(brdSections.map((section) => [section.key, section.content]))
-    return [
-      'Idea intake',
-      shortPhrase(byKey.get('problem-statement') ?? '', 'Problem analysis'),
-      shortPhrase(byKey.get('objectives') ?? '', 'Define objectives'),
-      shortPhrase(byKey.get('functional-requirements') ?? '', 'Design solution workflow'),
-      shortPhrase(byKey.get('dependencies') ?? '', 'Integrate dependencies'),
-      'Backlog conversion',
-      'Project and task delivery',
-    ]
-  }, [brdSections])
-
-  const processDiagram = useMemo(() => {
-    return {
-      client: processFlowNodes[0],
-      orchestrator: processFlowNodes[1],
-      aiRuntime: processFlowNodes[2],
-      mcpService: processFlowNodes[3],
-      integrationHub: processFlowNodes[4],
-      backlog: processFlowNodes[5],
-      delivery: processFlowNodes[6],
-    }
-  }, [processFlowNodes])
-
-  const fallbackMermaidCode = useMemo(() => {
-    const nodeLines = processFlowNodes
-      .map((label, idx) => `  N${idx + 1}["${mermaidSafe(label)}"]`)
-      .join('\n')
-    const edgeLines = processFlowNodes
-      .slice(0, -1)
-      .map((_, idx) => `  N${idx + 1} --> N${idx + 2}`)
-      .join('\n')
-    return `flowchart LR\n${nodeLines}\n${edgeLines}`
-  }, [processFlowNodes])
-
   const mermaidCode = useMemo(() => {
-    if (brainstormProcessDiagrams.length === 0) return fallbackMermaidCode
+    if (brainstormProcessDiagrams.length === 0) return ''
     return brainstormProcessDiagrams
       .map((diagram) => `%% ${diagram.label}\n${diagram.source}`)
       .join('\n\n')
-  }, [brainstormProcessDiagrams, fallbackMermaidCode])
-
-  const reactFlowFromMermaid = useMemo(
-    () => parseMermaidToReactFlow(fallbackMermaidCode),
-    [fallbackMermaidCode],
-  )
+  }, [brainstormProcessDiagrams])
 
   // Sync render lock state to ref for immediate rebalance gating
   useEffect(() => {
@@ -5693,6 +6240,57 @@ export function IdeaDetailPage() {
             // keep current snapshot
           }
           await loadRuntimeIntegrationRef.current(refreshedIdea, { forceRefresh: true })
+        } finally {
+          const elapsedMs = Date.now() - startedAt
+          const minLoadingMs = 700
+          if (elapsedMs < minLoadingMs) {
+            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
+          }
+          setRegenerating((prev) => ({ ...prev, [key]: false }))
+        }
+      })()
+      return
+    }
+
+    if (key === 'c4Level1' || key === 'c4Level2') {
+      const level: C4ArchitectureLevel = key === 'c4Level1' ? 'L1' : 'L2'
+      void (async () => {
+        const startedAt = Date.now()
+        try {
+          let refreshedIdea = idea
+          try {
+            const api = await getIdeaById(idea.id)
+            refreshedIdea = ideaFromApi(api)
+            setIdea(refreshedIdea)
+          } catch {
+            // keep current snapshot
+          }
+          await loadRuntimeC4ArchitectureRef.current(level, refreshedIdea, { forceRefresh: true })
+        } finally {
+          const elapsedMs = Date.now() - startedAt
+          const minLoadingMs = 700
+          if (elapsedMs < minLoadingMs) {
+            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
+          }
+          setRegenerating((prev) => ({ ...prev, [key]: false }))
+        }
+      })()
+      return
+    }
+
+    if (key === 'bpmnHigh') {
+      void (async () => {
+        const startedAt = Date.now()
+        try {
+          let refreshedIdea = idea
+          try {
+            const api = await getIdeaById(idea.id)
+            refreshedIdea = ideaFromApi(api)
+            setIdea(refreshedIdea)
+          } catch {
+            // keep current snapshot
+          }
+          await loadRuntimeProcessDiagramRef.current(refreshedIdea, { forceRefresh: true })
         } finally {
           const elapsedMs = Date.now() - startedAt
           const minLoadingMs = 700
@@ -9554,6 +10152,79 @@ export function IdeaDetailPage() {
     Math.max(1, brdVisiblePageCount) * BRD_PAGE_HEIGHT_PX +
     Math.max(0, brdVisiblePageCount - 1) * BRD_PAGE_GAP_PX
 
+  const getSectionReviewContent = (sectionKey: PanelKey): string => {
+    if (sectionKey === 'summary') {
+      return [
+        runtimeSummary.summary_title,
+        runtimeSummary.executive_brief,
+        runtimeSummary.core_pressure && `Core pressure: ${runtimeSummary.core_pressure}`,
+        runtimeSummary.strategic_response && `Strategic response: ${runtimeSummary.strategic_response}`,
+        runtimeSummary.value_thesis && `Value thesis: ${runtimeSummary.value_thesis}`,
+        runtimeSummary.board_note && `Board note: ${runtimeSummary.board_note}`,
+      ].filter(Boolean).join('\n\n')
+    }
+    if (sectionKey === 'scoring') {
+      return [
+        runtimeScoringAnalysis.summary_title,
+        runtimeScoringAnalysis.executive_brief,
+        runtimeScoringAnalysis.recommended_action && `Recommended action: ${runtimeScoringAnalysis.recommended_action}`,
+        runtimeScoringAnalysis.commentary,
+      ].filter(Boolean).join('\n\n')
+    }
+    if (sectionKey === 'impact') {
+      return [
+        `Idea: ${idea.title}`,
+        `Business value: ${idea.scoring.businessValue}/10`,
+        `Effort: ${idea.scoring.effort}/10`,
+        `Risk: ${idea.scoring.risk}/10`,
+        `ROI: ${idea.scoring.roi}/10`,
+        idea.businessObjective && `Business objective: ${idea.businessObjective}`,
+        idea.riskSummary && `Risk summary: ${idea.riskSummary}`,
+      ].filter(Boolean).join('\n')
+    }
+    if (sectionKey === 'integration') {
+      return [
+        runtimeIntegrationAnalysis.summaryTitle,
+        runtimeIntegrationAnalysis.executiveBrief,
+        runtimeIntegrationAnalysis.integrationPatterns.length
+          ? `Integration patterns: ${runtimeIntegrationAnalysis.integrationPatterns.join(', ')}`
+          : '',
+        runtimeIntegrationAnalysis.missingEvidence.length
+          ? `Missing evidence: ${runtimeIntegrationAnalysis.missingEvidence.join(', ')}`
+          : '',
+      ].filter(Boolean).join('\n\n')
+    }
+    if (sectionKey === 'process') return mermaidCode
+    if (sectionKey === 'costBenefit') {
+      return benefitAnalysis
+        ? formatCostBenefitReviewContent(benefitAnalysis)
+        : 'No cost and benefit analysis is available yet.'
+    }
+    if (sectionKey === 'conversion') {
+      return conversionTimeline
+        ? formatConversionReviewContent(conversionTimeline)
+        : 'No conversion timeline is available yet.'
+    }
+    return ideaRepositoryItems.length
+      ? `Supporting documents:\n${ideaRepositoryItems.map((item) => `- ${item.name}`).join('\n')}`
+      : 'No supporting documents are linked to this idea yet.'
+  }
+
+  const renderSectionReviewWorkspace = (sectionKey: PanelKey, sectionLabel: string) => (
+    <IdeaSectionReviewWorkspace
+      ideaId={idea.id}
+      ideaTitle={idea.title}
+      ideaDescription={idea.description}
+      workspaceId={idea.workspace}
+      userId={currentUserId || runtimeUserId}
+      userName={currentUserDisplayName || submittedByDisplayName}
+      sectionKey={sectionKey}
+      sectionLabel={sectionLabel}
+      currentContent={getSectionReviewContent(sectionKey)}
+      ideaVersion={idea.version}
+    />
+  )
+
   return (
     <>
       {brdBulletMenu}
@@ -9788,7 +10459,7 @@ export function IdeaDetailPage() {
               'scroll-mt-24',
               IDEA_SUMMARY_LIQUID_GLASS_SHELL,
               isSummaryPanelFullscreen
-                ? 'fixed inset-x-0 top-12 bottom-0 z-[60] rounded-none border-0 bg-background'
+                ? 'h-full rounded-none border-0 bg-background'
                 : 'rounded-2xl',
             )}
           >
@@ -9799,7 +10470,7 @@ export function IdeaDetailPage() {
                   isSummaryPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
                 )}
               >
-                <div className="shrink-0 space-y-3">
+                <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2">
                       <Sparkles className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
@@ -9814,6 +10485,7 @@ export function IdeaDetailPage() {
                           Confidence {confidence.summary}%
                         </Badge>
                       ) : null}
+                      {renderSectionReviewWorkspace('summary', 'Summary')}
                       <button
                         type="button"
                         aria-pressed={isSummaryPanelFullscreen}
@@ -10218,7 +10890,7 @@ export function IdeaDetailPage() {
               'scroll-mt-24',
               IDEA_SUMMARY_LIQUID_GLASS_SHELL,
               isScoringPanelFullscreen
-                ? 'fixed inset-x-0 top-12 bottom-0 z-[60] rounded-none border-0 bg-background'
+                ? 'h-full rounded-none border-0 bg-background'
                 : 'rounded-2xl',
             )}
           >
@@ -10229,7 +10901,7 @@ export function IdeaDetailPage() {
                   isScoringPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
                 )}
               >
-                <div className="shrink-0 space-y-3">
+                <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2">
                       <Gauge className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
@@ -10251,6 +10923,7 @@ export function IdeaDetailPage() {
                           Confidence {confidence.scoring}%
                         </Badge>
                       ) : null}
+                      {renderSectionReviewWorkspace('scoring', 'Scoring')}
                       <button
                         type="button"
                         aria-pressed={isScoringPanelFullscreen}
@@ -10625,7 +11298,7 @@ export function IdeaDetailPage() {
               'scroll-mt-24',
               IDEA_SUMMARY_LIQUID_GLASS_SHELL,
               isImpactPanelFullscreen
-                ? 'fixed inset-x-0 top-12 bottom-0 z-[60] rounded-none border-0 bg-background'
+                ? 'h-full rounded-none border-0 bg-background'
                 : 'rounded-2xl',
             )}
           >
@@ -10636,7 +11309,7 @@ export function IdeaDetailPage() {
                   isImpactPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
                 )}
               >
-                <div className="shrink-0 space-y-3">
+                <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2">
                       <Target className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
@@ -10651,6 +11324,7 @@ export function IdeaDetailPage() {
                           Confidence {confidence.impact}%
                         </Badge>
                       ) : null}
+                      {renderSectionReviewWorkspace('impact', 'Impact')}
                       <button
                         type="button"
                         aria-pressed={isImpactPanelFullscreen}
@@ -10978,65 +11652,57 @@ export function IdeaDetailPage() {
             ),
           )}
 
-        {activePanel === 'integration' && (
-        <div id="panel-integration" className="scroll-mt-24">
-          <div
-            ref={ideaIntegrationPanelRef}
+        {activePanel === 'diagrams' && (
+        <div id="panel-diagrams" className="scroll-mt-24">
+        {renderIdeaPanelWithOptionalFullscreen(
+          isDiagramsPanelFullscreen,
+          (
+        <div
+            ref={ideaDiagramsPanelRef}
             style={
-              isIntegrationPanelFullscreen
+              isDiagramsPanelFullscreen
                 ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
-                : ideaIntegrationPanelHeightPx != null
-                  ? { height: ideaIntegrationPanelHeightPx, maxHeight: ideaIntegrationPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
+                : ideaDiagramsPanelHeightPx != null
+                  ? { height: ideaDiagramsPanelHeightPx, maxHeight: ideaDiagramsPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined
             }
-            className={cn('min-h-0', isIntegrationPanelFullscreen && 'fixed inset-x-0 top-12 bottom-0 z-50')}
+            className={cn(
+              IDEA_SUMMARY_LIQUID_GLASS_SHELL,
+              isDiagramsPanelFullscreen ? 'h-full rounded-none border-0 bg-background' : 'rounded-2xl',
+            )}
           >
-            <div
-              className={cn(
-                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
-                isIntegrationPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
-              )}
-            >
+            <div className="flex h-full min-h-0 w-full flex-col">
               <div
                 className={cn(
                   'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden',
-                  isIntegrationPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
+                  isDiagramsPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
                 )}
               >
-                <div className="shrink-0 space-y-3">
+                <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2">
-                      <GitBranch className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                      <h2 className="text-lg font-semibold text-foreground">AI Integration Recommendation</h2>
+                      <Workflow className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                      <h2 className="text-lg font-semibold text-foreground">Diagrams</h2>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {integrationLoaded && typeof confidence.integration === 'number' ? (
-                        <Badge
-                          variant="outline"
-                          className={cn('text-[10px] font-semibold', confidenceClass(confidence.integration))}
-                        >
-                          Confidence {confidence.integration}%
-                        </Badge>
-                      ) : null}
+                      {/* No single confidence badge here — each diagram family below (ArchiMate,
+                          C4 L1/L2, BPMN) is generated independently and shows its own confidence
+                          on its own card, so one number at this level would misrepresent the rest. */}
+                      {renderSectionReviewWorkspace('integration', 'Integration')}
                       <button
                         type="button"
-                        aria-pressed={isIntegrationPanelFullscreen}
-                        aria-label={
-                          isIntegrationPanelFullscreen
-                            ? 'Exit integration fullscreen'
-                            : 'Expand integration to fullscreen'
-                        }
-                        title={isIntegrationPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
-                        onClick={() => setIsIntegrationPanelFullscreen((prev) => !prev)}
+                        aria-pressed={isDiagramsPanelFullscreen}
+                        aria-label={isDiagramsPanelFullscreen ? 'Exit diagrams fullscreen' : 'Expand diagrams to fullscreen'}
+                        title={isDiagramsPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                        onClick={() => setIsDiagramsPanelFullscreen((prev) => !prev)}
                         className={cn(
                           'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
                           enterpriseControlFocusClass,
-                          isIntegrationPanelFullscreen &&
+                          isDiagramsPanelFullscreen &&
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
                         )}
                       >
-                        {isIntegrationPanelFullscreen ? (
+                        {isDiagramsPanelFullscreen ? (
                           <Minimize2 className="h-3.5 w-3.5" aria-hidden />
                         ) : (
                           <Maximize2 className="h-3.5 w-3.5" aria-hidden />
@@ -11045,217 +11711,182 @@ export function IdeaDetailPage() {
                     </div>
                   </div>
                   <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
-                    Integration architecture recommendation with ArchiMate canvas and PlantUML source.
+                    AI-generated architecture and business process diagrams for this idea.
                   </p>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-hidden">
-            <EditableIntegrationArchitectureCanvas
-              ideaId={idea.id}
-              bootstrapKey={integrationBootstrapKey}
-              bootstrapRecord={integrationBootstrapRecord}
-              isGenerating={isIntegrationRefreshing}
-              fillHeight
-              hideStudioHeader
-              toolbarExtra={
-                <>
-                  {integrationMissing && !integrationGenerationError && !isIntegrationRefreshing ? (
-                    <button
-                      type="button"
-                      className={cn(enterpriseCyanGradientActionButtonClass(), 'min-w-0 flex-1 justify-center')}
-                      onClick={() => {
-                        setRegenerating((prev) => ({ ...prev, integration: true }))
-                        void loadRuntimeIntegration(idea, { forceRefresh: true }).finally(() => {
-                          setRegenerating((prev) => ({ ...prev, integration: false }))
-                        })
-                      }}
-                    >
-                      <Sparkles
-                        className="h-4 w-4 transition-transform duration-200 group-hover:scale-110"
-                        strokeWidth={2.5}
-                      />
-                      Generate integrasi AI
-                    </button>
-                  ) : integrationLoaded && !integrationGenerationError ? (
-                    <button
-                      type="button"
-                      disabled={isIntegrationRefreshing}
-                      className={cn(
-                        enterpriseSecondaryButtonClass(),
-                        'inline-flex min-w-0 flex-1 items-center justify-center gap-2 disabled:pointer-events-none disabled:opacity-50',
-                      )}
-                      onClick={() => regeneratePanel('integration')}
-                    >
-                      <RefreshCcw
-                        className={cn('h-4 w-4', isIntegrationRefreshing && 'animate-spin')}
-                        strokeWidth={2.5}
-                      />
-                      Regenerate
-                    </button>
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <GitBranch className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
+                    <span className="text-sm font-semibold text-foreground">ArchiMate Integration</span>
+                  </div>
+                  {integrationLoaded && typeof confidence.integration === 'number' && confidence.integration > 0 ? (
+                    <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence.integration))}>
+                      {confidence.integration}%
+                    </Badge>
                   ) : null}
-                </>
-              }
-              studioOverlay={
-                <>
-                  {runtimeIntegrationAnalysis.status === 'insufficient_data' &&
-                  integrationLoaded &&
-                  !isIntegrationRefreshing ? (
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-800">
-                        Evidence kurang
-                      </Badge>
-                    </div>
-                  ) : null}
-
-                  {isIntegrationRefreshing && (
-                    <div className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-                      <RefreshCcw className="h-3.5 w-3.5 animate-spin text-sky-600" />
-                      <span>Tectona Assistant menyusun rekomendasi integrasi…</span>
-                    </div>
-                  )}
-
-                  {integrationGenerationError && !isIntegrationRefreshing && (
-                    <div
-                      role="alert"
-                      className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-900"
-                    >
-                      <span className="font-semibold text-rose-800">Analisis integrasi gagal — </span>
-                      {integrationGenerationError}
-                    </div>
-                  )}
-
-                  {integrationLoaded && !integrationGenerationError && (
-                    <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-50"
-                        onClick={() => setIntegrationBriefExpanded((prev) => !prev)}
-                      >
-                        <ChevronDown
-                          className={cn(
-                            'h-4 w-4 shrink-0 text-slate-500 transition-transform',
-                            integrationBriefExpanded && 'rotate-180',
-                          )}
-                        />
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800">
-                          {runtimeIntegrationAnalysis.summaryTitle}
-                        </span>
-                      </button>
-                      {integrationBriefExpanded && (
-                        <div className="max-h-32 space-y-2 overflow-y-auto border-t border-border/30 px-3 py-2 text-xs text-slate-600">
-                          <p className="leading-5">{runtimeIntegrationAnalysis.executiveBrief}</p>
-                          {runtimeIntegrationAnalysis.integrationPatterns.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5">
-                              {runtimeIntegrationAnalysis.integrationPatterns.map((pattern) => (
-                                <Badge key={pattern} variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-800">
-                                  {pattern}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-                          {runtimeIntegrationAnalysis.missingEvidence.length > 0 && (
-                            <ul className="list-disc pl-4 text-amber-900">
-                              {runtimeIntegrationAnalysis.missingEvidence.map((item) => (
-                                <li key={item}>{item}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              }
-            />
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        )}
-
-        {activePanel === 'process' && (
-        <div id="panel-process" className="scroll-mt-24">
-          <CollapsiblePanel
-            panelKey="process"
-            title="AI Business Process Visualization"
-            description="AS-IS / TO-BE process view from brainstorming and BRD analysis."
-            isOpen={collapsed.process}
-            onToggle={togglePanel}
-            confidence={confidence.process}
-          >
-            <div className="space-y-3">
-              {brainstormProcessDiagrams.length > 0 ? (
-                <Card className="border-border/40 bg-white/85">
-                  <CardContent className="pt-4 space-y-4">
-                    <div>
-                      <p className="text-xs font-semibold text-slate-600 mb-1">Process diagram from brainstorming</p>
-                      <p className="text-[11px] text-slate-500">
-                        Source: the AS-IS / TO-BE diagram agreed during Create Idea, saved in the idea description.
-                      </p>
-                    </div>
-                    {brainstormProcessDiagrams.map((diagram) => (
-                      <div key={`${diagram.label}-${diagram.source.slice(0, 48)}`} className="space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                          {diagram.label}
-                        </p>
-                        <AssistantMermaidBlock source={diagram.source} />
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card className="border-border/40 bg-white/85">
-                  <CardContent className="pt-4">
-                    <p className="text-xs font-semibold text-slate-600 mb-3">Business architecture diagram preview</p>
-                    <p className="text-[11px] text-slate-500 mb-3">
-                      No AS-IS/TO-BE diagram yet in the idea description. Showing a summarized flow from the BRD section
-                      (Problem statement, Objectives, Functional requirements, Dependencies).
-                    </p>
-
-                    <div className="rounded-xl border border-border/40 bg-white/70 p-3">
-                      <div className="h-[500px] rounded-xl border border-slate-200/80 overflow-hidden">
+                <div className="relative mt-2 h-32 overflow-hidden rounded-xl border border-border/30 bg-slate-50">
+                  {(() => {
+                    // The canvas itself falls back to its own localStorage cache
+                    // (`loadIntegrationGraph`) when the backend-synced `integrationBootstrapRecord`
+                    // hasn't resolved yet on this mount — mirror that same fallback here so the
+                    // thumbnail doesn't flash "no diagram" while the canvas is already showing one.
+                    // Once the fetch has genuinely completed (`integrationLoaded`), stop consulting
+                    // localStorage even if the record is null/empty — otherwise a stale cached
+                    // diagram from a previous (possibly pre-bugfix, possibly unrelated) session can
+                    // silently outlive a fresh "insufficient_data" or parse-failed result, which is
+                    // exactly the "still showing a mockup" confusion this was causing.
+                    const graph = integrationBootstrapRecord ?? (integrationLoaded ? null : loadIntegrationGraph(idea.id))
+                    if (graph && graph.nodes.length > 0) {
+                      return (
                         <ReactFlow
-                          nodes={reactFlowFromMermaid.nodes}
-                          edges={reactFlowFromMermaid.edges}
-                          nodeTypes={bpmnNodeTypes}
+                          nodes={graph.nodes}
+                          edges={graph.edges}
+                          nodeTypes={integrationArchimateNodeTypes}
                           fitView
-                          fitViewOptions={{ padding: 0.2 }}
+                          fitViewOptions={{ padding: 0.15 }}
                           nodesDraggable={false}
                           nodesConnectable={false}
                           elementsSelectable={false}
-                          panOnDrag
-                          zoomOnScroll
-                          zoomOnPinch
-                          minZoom={0.5}
-                          maxZoom={1.6}
+                          panOnDrag={false}
+                          zoomOnScroll={false}
+                          zoomOnPinch={false}
+                          zoomOnDoubleClick={false}
                           proOptions={{ hideAttribution: true }}
-                        >
-                          <MiniMap
-                            zoomable
-                            pannable
-                            nodeColor="#cbd5e1"
-                            maskColor="rgba(15, 23, 42, 0.08)"
-                            className="!bg-white/95 !border !border-slate-200"
-                          />
-                          <Controls showInteractive={false} />
-                          <Background color="#dbeafe" gap={22} />
-                        </ReactFlow>
+                        />
+                      )
+                    }
+                    return (
+                      <div className="flex h-full w-full items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
+                        {isIntegrationRefreshing ? (
+                          <>
+                            <RefreshCcw className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                            Building diagram…
+                          </>
+                        ) : integrationGenerationError ? (
+                          <span className="text-rose-600">{integrationGenerationError}</span>
+                        ) : (
+                          "AI couldn't produce a diagram — not enough evidence in this idea yet"
+                        )}
                       </div>
+                    )
+                  })()}
+                  <button
+                    type="button"
+                    aria-label="Open ArchiMate canvas"
+                    onClick={() => setIsIntegrationPanelFullscreen(true)}
+                    className="absolute inset-0 z-10"
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                  Integration architecture recommendation with ArchiMate canvas and PlantUML source.
+                </p>
+              </div>
 
-                      <div className="mt-3 rounded-lg border border-border/40 bg-white/90 px-3 py-2 text-[11px] text-slate-600 flex flex-wrap items-center gap-3">
-                        <span className="font-semibold text-slate-700">BPMN-style rendering on React Flow</span>
-                        <span>Start/End events: circle and double-circle</span>
-                        <span>Task: rounded rectangle</span>
-                        <span>Gateway: diamond shape</span>
-                        <span>Data store/object: dashed integration flow</span>
-                      </div>
+              {brainstormProcessDiagrams.length > 0 ? (
+                brainstormProcessDiagrams.map((diagram) => (
+                  <div
+                    key={`${diagram.label}-${diagram.source.slice(0, 48)}`}
+                    className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm"
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{diagram.label}</p>
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      Process diagram from brainstorming during Create Idea.
+                    </p>
+                    <div className="mt-2">
+                      <AssistantMermaidBlock source={diagram.source} />
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-border/50 bg-white/60 p-6 text-center">
+                  <Workflow className="h-5 w-5 text-muted-foreground" aria-hidden />
+                  <p className="text-xs font-semibold text-slate-600">No process diagram from brainstorming yet</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    AS-IS/TO-BE diagrams will appear here once they're drawn during Create Idea.
+                  </p>
+                </div>
               )}
 
-              <div className="flex flex-wrap gap-2">
+              <DiagramGalleryCard
+                title="C4 Level 1"
+                icon={Layers}
+                description="System context diagram (C4)."
+                imageSrc={c4Level1Preview.objectUrl}
+                imageLoading={c4Level1Preview.isLoading}
+                imageError={c4Level1Preview.error}
+                missing={c4Level1Missing}
+                generationError={c4Level1GenerationError}
+                confidence={c4Level1Loaded ? confidence.c4Level1 : null}
+                isRegenerating={regenerating.c4Level1}
+                onRegenerate={() => regeneratePanel('c4Level1')}
+              />
+              <DiagramGalleryCard
+                title="C4 Level 2"
+                icon={Cpu}
+                description="Container diagram (C4)."
+                imageSrc={c4Level2Preview.objectUrl}
+                imageLoading={c4Level2Preview.isLoading}
+                imageError={c4Level2Preview.error}
+                missing={c4Level2Missing}
+                generationError={c4Level2GenerationError}
+                confidence={c4Level2Loaded ? confidence.c4Level2 : null}
+                isRegenerating={regenerating.c4Level2}
+                onRegenerate={() => regeneratePanel('c4Level2')}
+              />
+              <DiagramGalleryCard
+                title="BPMN High-Level"
+                icon={Workflow}
+                description="BPMN 2.0 business process diagram."
+                imageSrc={bpmnHighAnalysis.renderedPngBase64 ? `data:image/png;base64,${bpmnHighAnalysis.renderedPngBase64}` : null}
+                missing={bpmnHighMissing}
+                generationError={bpmnHighGenerationError}
+                confidence={bpmnHighLoaded ? confidence.bpmnHigh : null}
+                isRegenerating={regenerating.bpmnHigh}
+                onRegenerate={() => regeneratePanel('bpmnHigh')}
+              />
+
+              {bpmnHighAnalysis.subProcesses.length === 0 ? (
+                <div className="flex flex-col justify-between rounded-2xl border border-dashed border-border/40 bg-muted/10 p-4 opacity-60">
+                  <div className="flex items-center gap-2">
+                    <ListTree className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="text-sm font-semibold text-muted-foreground">BPMN Detail</span>
+                  </div>
+                  <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                    Generate BPMN High-Level first to see per-step detail.
+                  </p>
+                </div>
+              ) : (
+                bpmnHighAnalysis.subProcesses.map((task: ProcessSubTask) => {
+                  const detail = processDetailsByKey[task.key]
+                  return (
+                    <DiagramGalleryCard
+                      key={task.key}
+                      title={`Detail: ${task.label}`}
+                      icon={ListTree}
+                      description="Per-step process detail (BPMN)."
+                      imageSrc={
+                        detail?.analysis.renderedPngBase64
+                          ? `data:image/png;base64,${detail.analysis.renderedPngBase64}`
+                          : null
+                      }
+                      missing={detail?.missing ?? true}
+                      generationError={detail?.generationError ?? null}
+                      confidence={detail?.loaded ? Math.round(Math.max(0, Math.min(1, detail.analysis.confidenceScore)) * 100) : null}
+                      isRegenerating={detail?.isRegenerating ?? false}
+                      onRegenerate={() => void loadRuntimeProcessDetail(task.key, task.label, idea, { forceRefresh: true })}
+                    />
+                  )
+                })
+              )}
+            </div>
+
+            {brainstormProcessDiagrams.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={() => setShowMermaidCode((v) => !v)}>
                   {showMermaidCode ? 'Hide diagram source' : 'Show diagram source'}
                 </Button>
@@ -11271,14 +11902,154 @@ export function IdeaDetailPage() {
                   <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy diagram
                 </Button>
               </div>
+            )}
 
-              {showMermaidCode && (
-                <pre className="rounded-xl border border-border/40 bg-slate-950 p-3 text-xs text-slate-100 overflow-auto">
-                  {mermaidCode}
-                </pre>
-              )}
+            {showMermaidCode && brainstormProcessDiagrams.length > 0 && (
+              <pre className="mt-3 rounded-xl border border-border/40 bg-slate-950 p-3 text-xs text-slate-100 overflow-auto">
+                {mermaidCode}
+              </pre>
+            )}
+                </div>
+              </div>
             </div>
-          </CollapsiblePanel>
+          </div>
+          ),
+        )}
+
+          {isIntegrationPanelFullscreen && (
+            <div className="fixed inset-x-0 top-12 bottom-0 z-50">
+              <div className="liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-background shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2">
+                  <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <GitBranch className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                        <h2 className="text-lg font-semibold text-foreground">AI Integration Recommendation</h2>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {integrationLoaded && typeof confidence.integration === 'number' ? (
+                          <Badge
+                            variant="outline"
+                            className={cn('text-[10px] font-semibold', confidenceClass(confidence.integration))}
+                          >
+                            Confidence {confidence.integration}%
+                          </Badge>
+                        ) : null}
+                        {renderSectionReviewWorkspace('integration', 'Integration')}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => regeneratePanel('integration')}
+                          disabled={isIntegrationRefreshing}
+                        >
+                          <RefreshCcw className={cn('mr-1.5 h-3.5 w-3.5', isIntegrationRefreshing && 'animate-spin')} aria-hidden />
+                          Regenerate
+                        </Button>
+                        <button
+                          type="button"
+                          aria-label="Exit integration fullscreen"
+                          title="Exit fullscreen (Esc)"
+                          onClick={() => setIsIntegrationPanelFullscreen(false)}
+                          className={cn(
+                            'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                            enterpriseControlFocusClass,
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                          )}
+                        >
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+                      Integration architecture recommendation with ArchiMate canvas and PlantUML source.
+                    </p>
+                  </div>
+
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    <EditableIntegrationArchitectureCanvas
+                      ideaId={idea.id}
+                      bootstrapKey={integrationBootstrapKey}
+                      bootstrapRecord={integrationBootstrapRecord}
+                      isGenerating={isIntegrationRefreshing}
+                      fillHeight
+                      hideStudioHeader
+                      studioOverlay={false ? (
+                        <>
+                          {runtimeIntegrationAnalysis.status === 'insufficient_data' &&
+                          integrationLoaded &&
+                          !isIntegrationRefreshing ? (
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-800">
+                                Evidence kurang
+                              </Badge>
+                            </div>
+                          ) : null}
+
+                          {isIntegrationRefreshing && (
+                            <div className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
+                              <RefreshCcw className="h-3.5 w-3.5 animate-spin text-sky-600" />
+                              <span>Tectona Assistant menyusun rekomendasi integrasi…</span>
+                            </div>
+                          )}
+
+                          {integrationGenerationError && !isIntegrationRefreshing && (
+                            <div
+                              role="alert"
+                              className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-900"
+                            >
+                              <span className="font-semibold text-rose-800">Analisis integrasi gagal — </span>
+                              {integrationGenerationError}
+                            </div>
+                          )}
+
+                          {integrationLoaded && !integrationGenerationError && (
+                            <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-50"
+                                onClick={() => setIntegrationBriefExpanded((prev) => !prev)}
+                              >
+                                <ChevronDown
+                                  className={cn(
+                                    'h-4 w-4 shrink-0 text-slate-500 transition-transform',
+                                    integrationBriefExpanded && 'rotate-180',
+                                  )}
+                                />
+                                <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800">
+                                  {runtimeIntegrationAnalysis.summaryTitle}
+                                </span>
+                              </button>
+                              {integrationBriefExpanded && (
+                                <div className="max-h-32 space-y-2 overflow-y-auto border-t border-border/30 px-3 py-2 text-xs text-slate-600">
+                                  <p className="leading-5">{runtimeIntegrationAnalysis.executiveBrief}</p>
+                                  {runtimeIntegrationAnalysis.integrationPatterns.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {runtimeIntegrationAnalysis.integrationPatterns.map((pattern) => (
+                                        <Badge key={pattern} variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-800">
+                                          {pattern}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {runtimeIntegrationAnalysis.missingEvidence.length > 0 && (
+                                    <ul className="list-disc pl-4 text-amber-900">
+                                      {runtimeIntegrationAnalysis.missingEvidence.map((item) => (
+                                        <li key={item}>{item}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      ) : null}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         )}
 
@@ -11297,8 +12068,8 @@ export function IdeaDetailPage() {
           >
             <div
               className={cn(
-                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+                'liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden border',
+                'shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
                 isCostBenefitPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
               )}
             >
@@ -11308,7 +12079,7 @@ export function IdeaDetailPage() {
                   isCostBenefitPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
                 )}
               >
-                <div className="shrink-0 space-y-3">
+                <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2">
                       <DollarSign className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
@@ -11323,6 +12094,7 @@ export function IdeaDetailPage() {
                           Confidence {confidence.costBenefit}%
                         </Badge>
                       ) : null}
+                      {renderSectionReviewWorkspace('costBenefit', 'Cost Benefit')}
                       <button
                         type="button"
                         aria-pressed={isCostBenefitPanelFullscreen}
@@ -11686,8 +12458,8 @@ export function IdeaDetailPage() {
           >
             <div
               className={cn(
-                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+                'liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden border',
+                'shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
                 isConversionPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
               )}
             >
@@ -11698,11 +12470,13 @@ export function IdeaDetailPage() {
                   isConversionPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
                 )}
               >
-                <div className="shrink-0 space-y-3">
+                <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Layers className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                      <h2 className="text-lg font-semibold text-foreground">Idea to Execution Conversion</h2>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Layers className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                        <h2 className="text-lg font-semibold text-foreground">Idea to Execution Conversion</h2>
+                      </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {typeof confidence.conversion === 'number' ? (
@@ -11713,6 +12487,7 @@ export function IdeaDetailPage() {
                           Confidence {confidence.conversion}%
                         </Badge>
                       ) : null}
+                      {renderSectionReviewWorkspace('conversion', 'Conversion')}
                       <button
                         type="button"
                         aria-pressed={isConversionPanelFullscreen}
@@ -11736,10 +12511,10 @@ export function IdeaDetailPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-                    <p className="max-w-xl text-[11px] leading-snug text-muted-foreground">
-                      Sprint → Epic → Task → Sub-task timeline for delivery handoff. Drag bars or edit inline;
-                      use ← → or scroll the timeline to move between periods.
+                  <div className="mt-0.5 flex flex-col gap-2 pl-7 lg:flex-row lg:items-center lg:justify-between">
+                    <p className="max-w-xl text-[11px] leading-tight text-muted-foreground">
+                        Sprint → Epic → Task → Sub-task timeline for delivery handoff. Drag bars or edit inline;
+                        scroll the chart to pan within the rolling year window.
                     </p>
                     {conversionTimeline?.sprints?.length ? (
                       <IdeaConversionGanttToolbar
@@ -11747,13 +12522,7 @@ export function IdeaDetailPage() {
                         projectName={idea.title}
                         zoomLevel={conversionZoomLevel}
                         onZoomLevelChange={setConversionZoomLevel}
-                        onTimelineNavigate={(direction) =>
-                          scrollConversionGanttChart(
-                            conversionGanttHostRef.current,
-                            direction,
-                            conversionZoomLevel,
-                          )
-                        }
+                        className="!p-0"
                       />
                     ) : null}
                   </div>
@@ -11766,13 +12535,11 @@ export function IdeaDetailPage() {
                     </div>
                   ) : null}
                   {conversionTimeline?.sprints?.length ? (
-                    <IdeaConversionTimeline
+                    <IdeaConversionGanttWorkspace
                       sprints={conversionTimeline.sprints}
                       projectName={idea.title}
                       zoomLevel={conversionZoomLevel}
-                      onChartHostReady={(host) => {
-                        conversionGanttHostRef.current = host
-                      }}
+                      onZoomLevelChange={setConversionZoomLevel}
                     />
                   ) : (
                     !conversionError && (
@@ -11804,8 +12571,8 @@ export function IdeaDetailPage() {
           >
             <div
               className={cn(
-                'glass-card flex h-full min-h-0 flex-col overflow-hidden border border-border/40',
-                'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+                'liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden border',
+                'shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
                 isIdeaDocsPanelFullscreen ? 'rounded-none border-0 bg-background' : 'rounded-2xl',
               )}
             >
@@ -11815,38 +12582,70 @@ export function IdeaDetailPage() {
                   isIdeaDocsPanelFullscreen ? 'px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2' : 'p-4 lg:p-5',
                 )}
               >
-              <div className="shrink-0 space-y-3">
+              <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
                     <FileText className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                     <h2 className="text-lg font-semibold text-foreground">Idea Docs</h2>
                   </div>
-                  <button
-                    type="button"
-                    aria-pressed={isIdeaDocsPanelFullscreen}
-                    aria-label={isIdeaDocsPanelFullscreen ? 'Exit docs fullscreen' : 'Expand docs to fullscreen'}
-                    title={isIdeaDocsPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
-                    onClick={() => setIsIdeaDocsPanelFullscreen((prev) => !prev)}
-                    className={cn(
-                      'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
-                      enterpriseControlFocusClass,
-                      isIdeaDocsPanelFullscreen &&
-                        'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
-                    )}
-                  >
-                    {isIdeaDocsPanelFullscreen ? (
-                      <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-                    ) : (
-                      <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-                    )}
-                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {renderSectionReviewWorkspace('document', 'Docs')}
+                    <button
+                      type="button"
+                      aria-pressed={isIdeaDocsPanelFullscreen}
+                      aria-label={isIdeaDocsPanelFullscreen ? 'Exit docs fullscreen' : 'Expand docs to fullscreen'}
+                      title={isIdeaDocsPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                      onClick={() => setIsIdeaDocsPanelFullscreen((prev) => !prev)}
+                      className={cn(
+                        'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                        enterpriseControlFocusClass,
+                        isIdeaDocsPanelFullscreen &&
+                          'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                      )}
+                    >
+                      {isIdeaDocsPanelFullscreen ? (
+                        <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-start justify-between gap-3">
-                  <p className="max-w-2xl flex-1 text-[11px] leading-snug text-muted-foreground">
+                <div className="space-y-2 pb-4">
+                  <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
                     Upload supporting documents or diagrams to auto-generate a knowledge base entry, or
                     pick a Document & Knowledge Management template to draft a new document for this idea.
                   </p>
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                </div>
+                {!isIdeaDocAtProjectRoot && ideaDocFolderStack.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1 text-sm">
+                    <button
+                      type="button"
+                      className="inline-flex items-center rounded-md px-1.5 py-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                      title="Back to parent folder"
+                      onClick={goToIdeaDocParentFolder}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    {ideaDocFolderStack.map((folder, index) => (
+                      <span key={folder.id} className="flex items-center gap-1">
+                        {index > 0 ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" /> : null}
+                        <button
+                          type="button"
+                          className={cn(
+                            'rounded-md px-2 py-1 font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                            index === ideaDocFolderStack.length - 1 && 'text-foreground',
+                          )}
+                          onClick={() => navigateIdeaDocFolderIndex(index)}
+                        >
+                          {folder.name}
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
                     {ideaDocCurrentFolder ? (
                       <>
                         <button
@@ -11880,36 +12679,7 @@ export function IdeaDetailPage() {
                       </>
                     ) : null}
                   </div>
-                </div>
-                {!isIdeaDocAtProjectRoot && ideaDocFolderStack.length > 0 ? (
-                  <div className="flex flex-wrap items-center gap-1 text-sm">
-                    <button
-                      type="button"
-                      className="inline-flex items-center rounded-md px-1.5 py-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                      title="Back to parent folder"
-                      onClick={goToIdeaDocParentFolder}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </button>
-                    {ideaDocFolderStack.map((folder, index) => (
-                      <span key={folder.id} className="flex items-center gap-1">
-                        {index > 0 ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" /> : null}
-                        <button
-                          type="button"
-                          className={cn(
-                            'rounded-md px-2 py-1 font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                            index === ideaDocFolderStack.length - 1 && 'text-foreground',
-                          )}
-                          onClick={() => navigateIdeaDocFolderIndex(index)}
-                        >
-                          {folder.name}
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {ideaDocsTotalCount > 0 ? (
-                  <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-end">
+                  {ideaDocsTotalCount > 0 ? (
                     <DocumentRepositoryPaginationControls
                       page={ideaDocsPage}
                       pageSize={ideaDocsPageSize}
@@ -11921,15 +12691,16 @@ export function IdeaDetailPage() {
                         setIdeaDocsPage(1)
                       }}
                     />
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
               </div>
 
               <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
                 <div
                   className={cn(
                     'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl',
-                    showIdeaDocEmptyState && 'border border-border/40 bg-muted/10',
+                    showIdeaDocEmptyState &&
+                      'border border-white/60 bg-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] backdrop-blur-xl',
                   )}
                 >
                   {(ideaDocTemplatesLoading || ideaDocsLoading || ideaDocFolderInitBusy) &&
@@ -11968,6 +12739,17 @@ export function IdeaDetailPage() {
                                 className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-muted/40"
                                 title={`Open ${folder.name}`}
                                 onClick={() => openIdeaDocSubfolder(folder)}
+                                onContextMenu={(event) => {
+                                  event.preventDefault()
+                                  openIdeaDocFolderContextMenu(folder, event.clientX, event.clientY)
+                                }}
+                                onKeyDown={(event) => {
+                                  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+                                    event.preventDefault()
+                                    const rect = event.currentTarget.getBoundingClientRect()
+                                    openIdeaDocFolderContextMenu(folder, rect.left + 24, rect.top + rect.height / 2)
+                                  }
+                                }}
                               >
                                 <Folder className="h-4 w-4 shrink-0 text-sky-600" aria-hidden />
                                 <span className="min-w-0 flex-1 truncate font-medium text-foreground">{folder.name}</span>
@@ -12205,6 +12987,204 @@ export function IdeaDetailPage() {
               setIdeaDocEditId(null)
               setIdeaDocEditTitle(null)
             }}
+          />
+
+          {ideaDocFolderContextMenu ? (
+            <ContextMenu
+              open
+              x={ideaDocFolderContextMenu.x}
+              y={ideaDocFolderContextMenu.y}
+              onClose={() => setIdeaDocFolderContextMenu(null)}
+              zIndex={1300}
+            >
+              <ContextMenuItem
+                onSelect={() => {
+                  const { folder } = ideaDocFolderContextMenu
+                  setIdeaDocFolderContextMenu(null)
+                  openIdeaDocSubfolder(folder)
+                }}
+              >
+                <Folder className="h-4 w-4 shrink-0 text-sky-600" />
+                Open folder
+              </ContextMenuItem>
+              <ContextMenuItem
+                className={cn(ideaDocFolderCreateBusy && 'pointer-events-none opacity-50')}
+                aria-disabled={ideaDocFolderCreateBusy}
+                onSelect={() => {
+                  const { folder } = ideaDocFolderContextMenu
+                  setIdeaDocFolderContextMenu(null)
+                  void handleIdeaDocCreateSubfolder(folder)
+                }}
+              >
+                {ideaDocFolderCreateBusy ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                ) : (
+                  <FolderPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+                New subfolder
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  const { folder } = ideaDocFolderContextMenu
+                  setIdeaDocFolderContextMenu(null)
+                  openIdeaDocSubfolder(folder)
+                  openIdeaDocGenerateDialog()
+                }}
+              >
+                <Sparkles className="h-4 w-4 shrink-0 text-violet-600" />
+                Generate document here
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  const { folder } = ideaDocFolderContextMenu
+                  setIdeaDocFolderContextMenu(null)
+                  setIdeaDocFolderRenameTarget(folder)
+                  setIdeaDocFolderRenameValue(folder.name)
+                }}
+              >
+                <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
+                Rename
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onSelect={() => {
+                  const { folder } = ideaDocFolderContextMenu
+                  setIdeaDocFolderContextMenu(null)
+                  void copyIdeaDocFolderPath(folder)
+                }}
+              >
+                <Copy className="h-4 w-4 shrink-0 text-muted-foreground" />
+                Copy folder path
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  const { folder } = ideaDocFolderContextMenu
+                  setIdeaDocFolderContextMenu(null)
+                  addToast({
+                    title: folder.name,
+                    description: `${folder.document_count} documents · ${folder.children_count} subfolders`,
+                    variant: 'info',
+                  })
+                }}
+              >
+                <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
+                Folder details
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={cn(
+                  'text-rose-600 hover:bg-rose-50',
+                  (ideaDocFolderContextMenu.folder.document_count > 0
+                    || ideaDocFolderContextMenu.folder.children_count > 0)
+                    && 'pointer-events-none opacity-45',
+                )}
+                aria-disabled={
+                  ideaDocFolderContextMenu.folder.document_count > 0
+                  || ideaDocFolderContextMenu.folder.children_count > 0
+                }
+                title={
+                  ideaDocFolderContextMenu.folder.document_count > 0
+                  || ideaDocFolderContextMenu.folder.children_count > 0
+                    ? 'Only empty folders can be deleted.'
+                    : 'Delete folder'
+                }
+                onSelect={() => {
+                  const { folder } = ideaDocFolderContextMenu
+                  setIdeaDocFolderContextMenu(null)
+                  setIdeaDocFolderDeleteTarget(folder)
+                }}
+              >
+                <Trash2 className="h-4 w-4 shrink-0" />
+                Delete folder
+              </ContextMenuItem>
+            </ContextMenu>
+          ) : null}
+
+          <Dialog
+            open={Boolean(ideaDocFolderRenameTarget)}
+            onOpenChange={(open) => {
+              if (!open && !ideaDocFolderRenameBusy) setIdeaDocFolderRenameTarget(null)
+            }}
+          >
+            <DialogContent className="max-w-md overflow-hidden rounded-2xl p-0">
+              <DialogHeader className="mb-0 border-b border-border/70 bg-muted/25 px-6 py-5">
+                <div className="flex items-start gap-4">
+                  <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/12 text-sky-700 ring-1 ring-sky-500/25">
+                    <PencilLine className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="space-y-1 text-left">
+                    <DialogTitle className="text-base font-semibold tracking-tight">Rename folder</DialogTitle>
+                    <DialogDescription>Update the folder name without changing its contents or location.</DialogDescription>
+                  </div>
+                </div>
+              </DialogHeader>
+              <div className="px-6 py-5">
+                <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                  <Label
+                    htmlFor="idea-doc-folder-rename-input"
+                    className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                  >
+                    Folder name
+                  </Label>
+                  <Input
+                    id="idea-doc-folder-rename-input"
+                    className="mt-1.5"
+                    value={ideaDocFolderRenameValue}
+                    disabled={ideaDocFolderRenameBusy}
+                    autoFocus
+                    onChange={(event) => setIdeaDocFolderRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void handleIdeaDocFolderRenameConfirm()
+                    }}
+                  />
+                </div>
+              </div>
+              <DialogFooter className="gap-3 border-t border-border/70 bg-muted/20 px-6 py-4 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                  disabled={ideaDocFolderRenameBusy}
+                  onClick={() => setIdeaDocFolderRenameTarget(null)}
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                  disabled={ideaDocFolderRenameBusy || !ideaDocFolderRenameValue.trim()}
+                  onClick={() => void handleIdeaDocFolderRenameConfirm()}
+                >
+                  {ideaDocFolderRenameBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {ideaDocFolderRenameBusy ? 'Saving…' : 'Save changes'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <EnterpriseDeleteConfirmModal
+            open={Boolean(ideaDocFolderDeleteTarget)}
+            onClose={() => {
+              if (!ideaDocFolderDeleteBusy) setIdeaDocFolderDeleteTarget(null)
+            }}
+            onConfirm={() => void handleIdeaDocFolderDeleteConfirm()}
+            busy={ideaDocFolderDeleteBusy}
+            title="Delete folder"
+            description="This permanently removes the empty folder and cannot be undone."
+            entityLabel="Folder"
+            entityValue={ideaDocFolderDeleteTarget?.name ?? '—'}
+            impactSummary={
+              <>
+                <div className="font-medium text-foreground">Impact summary</div>
+                <div className="mt-1">Documents: {ideaDocFolderDeleteTarget?.document_count ?? 0}</div>
+                <div>Subfolders: {ideaDocFolderDeleteTarget?.children_count ?? 0}</div>
+              </>
+            }
+            enterpriseNote="Enterprise note: only empty folders can be deleted. Documents and subfolders are never removed implicitly."
+            confirmLabel="Delete folder"
+            confirmBusyLabel="Deleting..."
+            dialogTitleId="idea-doc-delete-folder-dialog-title"
           />
 
           {ideaDocContextMenu ? (
@@ -12501,4 +13481,3 @@ export function IdeaDetailPage() {
     </>
   )
 }
-

@@ -1376,7 +1376,7 @@ export function ProjectListPage() {
             description="Retrieving projects and folders from the service."
           />
         ) : projectsError ? (
-          <div className="glass-card rounded-2xl p-12 text-center">
+          <div className="liquid-glass-enterprise-panel rounded-2xl p-12 text-center">
             <p className="text-destructive mb-4">{projectsError}</p>
             <Button onClick={() => fetchProjects()}>
               Retry
@@ -1424,7 +1424,7 @@ export function ProjectListPage() {
                 ) : null}
 
                 {!showFoldersSection && !showProjectsSection && (
-                  <div className="glass-card rounded-2xl p-12">
+                  <div className="liquid-glass-enterprise-panel rounded-2xl p-12">
                     <EmptyState
                       title="No items found"
                       description="Try adjusting your search or filter criteria."
@@ -1492,7 +1492,7 @@ export function ProjectListPage() {
 
             {/* Empty State for both sections */}
             {!showFoldersSection && !showProjectsSection && (
-              <div className="glass-card rounded-2xl p-12">
+              <div className="liquid-glass-enterprise-panel rounded-2xl p-12">
                 <EmptyState
                   title="No items found"
                   description="Try adjusting your search or filter criteria."

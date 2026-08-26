@@ -89,7 +89,7 @@ export function PolicyCatalogPage() {
         {cards.map((p, idx) => (
           <div
             key={p.id}
-            className="rounded-2xl border border-border/60 bg-gradient-to-br from-background to-muted/15 p-4 shadow-sm"
+            className="rounded-2xl border border-border/60 liquid-glass-enterprise-panel p-4 shadow-sm"
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>

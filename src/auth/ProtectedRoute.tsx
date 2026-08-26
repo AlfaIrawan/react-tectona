@@ -8,6 +8,7 @@ import { TenantContextProvider } from './TenantContext'
 import { UserWorkspaceOptionsProvider } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 
 const SESSION_VERIFY_TIMEOUT_MS = 15_000
+const SESSION_VERIFY_TIMEOUT = Symbol('session_verify_timeout')
 
 /**
  * Requires a valid identity-lite session. Uses layout route pattern with Outlet.
@@ -22,21 +23,29 @@ export function ProtectedRoute() {
 
     const verify = () => {
       setChecking(true)
-      const verifySession = maintainActiveSession({ forceStatusCheck: true }).then(async () => {
+      // Do not block the initial route on the remote session-status endpoint.
+      // Token refresh is still performed when needed; periodic/focus checks
+      // remain responsible for detecting a remote sign-out.
+      const verifySession = maintainActiveSession().then(async () => {
         let session = getSession()
         if (!session) {
           session = await attemptSilentSso()
         }
         return session
       })
-      const timeout = new Promise<null>((resolve) => {
-        window.setTimeout(() => resolve(null), SESSION_VERIFY_TIMEOUT_MS)
+      const timeout = new Promise<typeof SESSION_VERIFY_TIMEOUT>((resolve) => {
+        window.setTimeout(() => resolve(SESSION_VERIFY_TIMEOUT), SESSION_VERIFY_TIMEOUT_MS)
       })
 
       void Promise.race([verifySession, timeout])
-        .then((session) => {
+        .then((result) => {
           if (!cancelled) {
-            setAuthenticated(session != null)
+            // A slow session-status endpoint must not leave the whole SPA on
+            // an endless loading screen. Keep a locally stored session and
+            // let authenticated API calls perform their normal recovery.
+            setAuthenticated(
+              result === SESSION_VERIFY_TIMEOUT ? getSession() != null : result != null,
+            )
             setChecking(false)
           }
         })

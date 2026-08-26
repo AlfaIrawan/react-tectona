@@ -320,17 +320,30 @@ export async function fetchWorkspaceOrgWorkspaces(params?: {
   page_size?: number
   organization_id?: string
   status_code?: string
+  include_archived?: boolean
 }): Promise<WorkspaceOrgWorkspaceListResponse> {
   const q = new URLSearchParams()
   if (params?.page != null) q.set('page', String(params.page))
   if (params?.page_size != null) q.set('page_size', String(params.page_size))
   if (params?.organization_id) q.set('organization_id', params.organization_id)
   if (params?.status_code) q.set('status_code', params.status_code)
+  if (params?.include_archived) q.set('include_archived', 'true')
   const suffix = q.toString() ? `?${q}` : ''
   const res = await apiFetch(orgUrl(`/v1/workspaces${suffix}`), {
     headers: tectonaServiceHeaders(),
   })
   return handleJson<WorkspaceOrgWorkspaceListResponse>(res)
+}
+
+/** Directory memberships for a concrete workspace, used to scope invite candidates. */
+export async function fetchWorkspaceOrgMemberships(workspaceId: string): Promise<WorkspaceOrgMembershipDto[]> {
+  const id = workspaceId.trim()
+  if (!id) return []
+  const res = await apiFetch(
+    orgUrl(`/v1/workspaces/${encodeURIComponent(id)}/memberships`),
+    { headers: tectonaServiceHeaders() },
+  )
+  return handleJson<WorkspaceOrgMembershipDto[]>(res)
 }
 
 /** Fetch all workspace rows (paginated server-side until exhausted). */
@@ -339,7 +352,10 @@ export async function fetchAllWorkspaceOrgWorkspaces(): Promise<WorkspaceOrgWork
   let page = 1
   const all: WorkspaceOrgWorkspaceDto[] = []
   for (;;) {
-    const res = await fetchWorkspaceOrgWorkspaces({ page, page_size: pageSize })
+    // Archived workspaces are soft-deleted, not gone -- the Directory tree needs them
+    // present so children keep their real structural parent (and a real Lifecycle
+    // status to display), instead of silently falling back elsewhere once archived.
+    const res = await fetchWorkspaceOrgWorkspaces({ page, page_size: pageSize, include_archived: true })
     all.push(...(res.items ?? []))
     if (all.length >= (res.total ?? 0) || (res.items?.length ?? 0) < pageSize) break
     page += 1
@@ -474,6 +490,19 @@ export async function deleteWorkspaceOrgWorkspaceType(typeId: string, opts?: { a
   await handleJson<void>(res)
 }
 
+export type WorkspaceOrgMembershipDto = {
+  id: string
+  workspace_id: string
+  workspace_key: string
+  workspace_name: string
+  identity_ref: string
+  role_code: string
+  status_code: string
+  version: number
+  created_date?: string
+  updated_date?: string | null
+}
+
 export type IdentityWorkspaceOrgMembershipDto = {
   workspace_id: string
   workspace_key: string
@@ -523,6 +552,43 @@ export async function createPersonalWorkspace(
     body: JSON.stringify(payload),
   })
   return handleJson<PersonalWorkspaceResponse>(res)
+}
+
+export type IdentityWorkspaceRepairPayload = {
+  identityRef: string
+  ownerEmail: string
+  displayName: string
+  slug: string
+  appId: string
+}
+
+export type IdentityWorkspaceRepairResponse = {
+  organization_id: string
+  workspace_id: string
+  slug: string
+  tenant_mode: TenantMode
+  display_name: string
+  organization_name?: string
+}
+
+export async function repairIdentityWorkspace(
+  payload: IdentityWorkspaceRepairPayload,
+  opts?: { actorId?: string },
+): Promise<IdentityWorkspaceRepairResponse> {
+  const headers = tectonaServiceHeaders()
+  if (opts?.actorId?.trim()) headers['X-Actor-Id'] = opts.actorId.trim()
+  const res = await apiFetch(orgUrl('/v1/admin/identity-workspace-repair'), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      identity_ref: payload.identityRef,
+      owner_email: payload.ownerEmail,
+      display_name: payload.displayName,
+      slug: payload.slug,
+      app_id: payload.appId,
+    }),
+  })
+  return handleJson<IdentityWorkspaceRepairResponse>(res)
 }
 
 export async function resolveOrganizationByEmail(email: string): Promise<DomainResolveResponse> {
@@ -649,7 +715,7 @@ export type WorkspaceDirectoryMembershipDto = {
 
 export async function deferPersonalWorkspaceForAdminApproval(
   personalWorkspaceId: string,
-  payload: { identity_ref: string },
+  payload: { identity_ref: string; org_workspace_id?: string | null },
   opts?: { actorId?: string },
 ): Promise<WorkspaceOrgWorkspaceDto> {
   const res = await apiFetch(
@@ -665,7 +731,7 @@ export async function deferPersonalWorkspaceForAdminApproval(
 
 export async function completePersonalWorkspaceAfterAdminApproval(
   personalWorkspaceId: string,
-  payload: { identity_ref: string },
+  payload: { identity_ref: string; org_workspace_id?: string | null },
   opts?: { actorId?: string },
 ): Promise<WorkspaceOrgWorkspaceDto> {
   const res = await apiFetch(

@@ -4,7 +4,8 @@ import type { TenantMode } from '@/lib/onboardingFeature'
 /**
  * Modules hidden for end-user GA menu until ready.
  * Visible set matches App Launcher for personal / non-organization users:
- * Workspace, Project, Idea & Backlog, Task & Work, Planning & Scheduling, Document & Knowledge.
+ * Workspace, Project, Idea & Backlog, Task & Work, Planning & Scheduling, Workflow & Automation
+ * Engine, Resource Management, Document & Knowledge.
  * Platform admin bypasses.
  */
 export const CORPORATE_HIDDEN_MODULE_IDS: readonly ModuleId[] = [
@@ -14,8 +15,6 @@ export const CORPORATE_HIDDEN_MODULE_IDS: readonly ModuleId[] = [
   'reporting',
   'enterprise_governance_model',
   'portfolio_governance',
-  'resource',
-  'workflow',
 ] as const
 
 /** Canonical end-user App Launcher order (non–platform-admin GA menu). */
@@ -25,6 +24,8 @@ export const END_USER_GA_MODULE_IDS: readonly ModuleId[] = [
   'idea_backlog',
   'task_work',
   'planning',
+  'workflow',
+  'resource',
   'document_knowledge',
 ] as const
 

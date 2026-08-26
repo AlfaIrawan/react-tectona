@@ -1,50 +1,51 @@
 import type { TenantMode } from '@/lib/onboardingFeature'
+import { normalizeParticipationScopeCode, PARTICIPATION_SCOPE_CODE } from '@/lib/participationScopeRules'
 
 export const ACCESSIBLE_WORKSPACE_IDS_KEY = 'tectona:accessible-workspace-ids'
 
 export type CorporateWorkspaceVisibilityInput = {
   isPlatformAdmin: boolean
+  isOrganizationAdmin?: boolean
   isCorporateUser: boolean
-  /**
-   * True when the user already has an active WAC membership on this workspace.
-   * Domain-verified corporate users may nest under the org Directory tree without
-   * membership; org workspace content stays hidden until membership is granted.
-   */
+  /** True when the user already has an active WAC membership on this workspace. */
   hasActiveMembership?: boolean
-  /**
-   * When set with org tenant + active membership, `read_only_workspace` does not
-   * grant org switcher / tenant activation (directory join only).
-   */
+  /** Organization workspace access requires the full WAC scope. */
   membershipParticipationScopeCode?: string | null
   /** True when workspace-org metadata or directory role marks this user as owner. */
   isWorkspaceOwner?: boolean
+  /** True only for the organization home node (e.g. Adira Finance WS). */
+  isOrganizationHomeWorkspace?: boolean
 }
 
-/** Join-approve external tier — directory tree only, not org workspace switcher. */
+/** Only the full organization WAC grant may activate an organization workspace. */
 export function membershipGrantsOrganizationWorkspaceSwitcherAccess(
   participationScopeCode: string | null | undefined,
 ): boolean {
-  const code = (participationScopeCode ?? '').trim().toLowerCase()
-  if (!code) return true
-  return code !== 'read_only_workspace'
+  if (!participationScopeCode?.trim()) return false
+  return normalizeParticipationScopeCode(participationScopeCode.trim().toLowerCase())
+    === PARTICIPATION_SCOPE_CODE.ALL
 }
 
 export function isOrganizationTenantMode(tenantMode: TenantMode | null | undefined): boolean {
-  return tenantMode === 'organization'
+  // Unknown tenant metadata is treated as organization-scoped. The switcher
+  // labels every non-personal option as an organization workspace, so access
+  // must fail closed until WAC confirms membership.
+  return tenantMode !== 'personal'
 }
 
 /**
- * Corporate users cannot open organization workspaces until granted (active membership).
- * Platform admins always see them. Personal / other tenant modes are never hidden by this rule.
+ * Organization workspace access is granted by an active WAC membership. Platform
+ * administration and directory ownership do not implicitly grant tenant access.
+ * Personal workspaces remain owner-accessible.
  */
 export function isOrganizationWorkspaceHiddenByDefault(
   tenantMode: TenantMode | null | undefined,
   opts: CorporateWorkspaceVisibilityInput,
 ): boolean {
-  if (opts.isPlatformAdmin) return false
-  if (!opts.isCorporateUser) return false
   if (!isOrganizationTenantMode(tenantMode)) return false
-  if (opts.isWorkspaceOwner) return false
+  if (opts.isPlatformAdmin || opts.isOrganizationAdmin) return false
+  // Ownership never grants access to an organization workspace. It still allows
+  // a user's personal workspace through the non-organization path above.
   if (!opts.hasActiveMembership) return true
   if (
     opts.membershipParticipationScopeCode !== undefined
@@ -62,13 +63,19 @@ export function isWorkspaceListedForUser(
   return !isOrganizationWorkspaceHiddenByDefault(tenantMode, opts)
 }
 
-/** True when a corporate user may activate this workspace as active tenant. */
+/** True when a non-admin user may activate this workspace as active tenant. */
 export function canActivateWorkspaceAsTenant(
   tenantMode: TenantMode | null | undefined,
   opts: CorporateWorkspaceVisibilityInput,
 ): boolean {
-  if (opts.isPlatformAdmin) return true
-  if (opts.isWorkspaceOwner) return true
+  if ((opts.isPlatformAdmin || opts.isOrganizationAdmin) && isOrganizationTenantMode(tenantMode)) return true
+  if (
+    opts.isWorkspaceOwner
+    && (
+      !isOrganizationTenantMode(tenantMode)
+      || opts.isOrganizationHomeWorkspace === false
+    )
+  ) return true
   if (!opts.hasActiveMembership) return false
   return isWorkspaceListedForUser(tenantMode, opts)
 }

@@ -16,8 +16,11 @@ import { useToast } from '@/components/ui/toast'
 import { fillDkmTemplate } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
   instantiateTemplateFromProject,
-  listTemplates,
+  listProjectDocuments,
+  patchDocument,
   type DocumentTemplateResponse,
+  type DocumentResponse,
+  listTemplates,
 } from '@/lib/api/documentKnowledgeApi'
 import {
   enterpriseSecondaryButtonClass,
@@ -35,6 +38,12 @@ const GENERATE_STEPS = [
 ] as const
 
 const GENERATE_STEP_INTERVAL_MS = 2200
+
+type DuplicateDocumentPrompt = {
+  title: string
+  existingTitle: string
+  resolve: (proceed: boolean) => void
+}
 
 export type ProjectDocGenerateFromTemplateDialogProps = {
   open: boolean
@@ -102,6 +111,7 @@ export function ProjectDocGenerateFromTemplateDialog({
   const [sourceText, setSourceText] = useState('')
   const [busy, setBusy] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
+  const [duplicatePrompt, setDuplicatePrompt] = useState<DuplicateDocumentPrompt | null>(null)
   const stepTimerRef = useRef<number | null>(null)
 
   const selectedTemplate = templates.find((item) => item.id === templateId) ?? null
@@ -193,6 +203,40 @@ export function ProjectDocGenerateFromTemplateDialog({
     }
 
     if (busy) return
+
+    // Check before the expensive AI fill and before creating a repository record.
+    // Generated project documents are identified by both their deterministic title
+    // and template metadata so an older record without metadata is still covered.
+    const proposedTitle = `${template.name} — ${project.name}`.slice(0, 255)
+    let existingDocument: DocumentResponse | null = null
+    try {
+      const response = await listProjectDocuments(project.id, { page: 1, page_size: 100 })
+      existingDocument = response.items.find((document) => {
+        const metadata = (document.metadata ?? {}) as Record<string, unknown>
+        const sameTitle = document.title.trim().toLowerCase() === proposedTitle.trim().toLowerCase()
+        const sameTemplate = metadata.template_code === template.template_code
+          && metadata.storage_project_id === project.id
+        return sameTitle || sameTemplate
+      }) ?? null
+    } catch {
+      // Duplicate checking is best-effort; generation can continue if the
+      // repository lookup is temporarily unavailable.
+    }
+
+    if (existingDocument) {
+      const proceed = await new Promise<boolean>((resolve) => {
+        setDuplicatePrompt({
+          title: proposedTitle,
+          existingTitle: existingDocument.title,
+          resolve: (value) => {
+            setDuplicatePrompt(null)
+            resolve(value)
+          },
+        })
+      })
+      if (!proceed) return
+    }
+
     setBusy(true)
     setStepIndex(0)
     let stepIdx = 0
@@ -216,37 +260,59 @@ export function ProjectDocGenerateFromTemplateDialog({
       const tags = ['from-template', 'ai-generated', 'project-docs', template.template_code]
       if (linkedIdeaId) tags.push(linkedIdeaId)
 
-      const created = await instantiateTemplateFromProject(project.id, template.id, {
-        title: `${template.name} — ${project.name}`.slice(0, 255),
-        summary: filled.payload.summary?.trim() || template.description || undefined,
-        workspace_id: linkedIdeaWorkspaceId ?? project.workspaceId ?? null,
-        folder_id: folderId,
-        document_type_code: template.document_type_code,
-        category_code: template.category_code,
-        status_code: 'draft',
-        tags,
-        access_scope_codes: ['project_team'],
-        metadata: {
-          source: 'project-docs-ai-generate',
-          template_code: template.template_code,
-          ai_generated: true,
-          fill_correlation_id: filled.correlation_id,
-          storage_project_id: project.id,
-          storage_project_name: project.name,
-          ...(linkedIdeaId ? { idea_id: linkedIdeaId } : {}),
-        },
-        version_notes: `AI-generated from template ${template.template_code} for project ${project.id}`,
-        fills: filled.payload.fills ?? {},
-        sections: filled.payload.sections ?? {},
-        agent_schema: filled.agent_schema,
-        diagrams: filled.rendered_diagrams ?? {},
-      })
+      const generatedMetadata = {
+        ...(existingDocument?.metadata ?? {}),
+        source: 'project-docs-ai-generate',
+        template_code: template.template_code,
+        ai_generated: true,
+        fill_correlation_id: filled.correlation_id,
+        storage_project_id: project.id,
+        storage_project_name: project.name,
+        ...(linkedIdeaId ? { idea_id: linkedIdeaId } : {}),
+        // Keep the generated structured payload with the version metadata when
+        // the existing document is revised through the generic document PATCH API.
+        generated_fills: filled.payload.fills ?? {},
+        generated_sections: filled.payload.sections ?? {},
+        generated_collections: filled.payload.collections ?? {},
+        generated_agent_schema: filled.agent_schema,
+        generated_diagrams: filled.rendered_diagrams ?? {},
+      }
+
+      const created = existingDocument
+        ? await patchDocument(existingDocument.id, {
+          version: existingDocument.version,
+          title: proposedTitle,
+          summary: filled.payload.summary?.trim() || template.description || undefined,
+          content: filled.payload.summary?.trim() || template.description || `Generated from ${template.name}`,
+          metadata: generatedMetadata,
+          version_notes: `Revised from template ${template.template_code} for project ${project.id}`,
+        })
+        : await instantiateTemplateFromProject(project.id, template.id, {
+          title: proposedTitle,
+          summary: filled.payload.summary?.trim() || template.description || undefined,
+          workspace_id: linkedIdeaWorkspaceId ?? project.workspaceId ?? null,
+          folder_id: folderId,
+          document_type_code: template.document_type_code,
+          category_code: template.category_code,
+          status_code: 'draft',
+          tags,
+          access_scope_codes: ['project_team'],
+          metadata: generatedMetadata,
+          version_notes: `AI-generated from template ${template.template_code} for project ${project.id}`,
+          fills: filled.payload.fills ?? {},
+          sections: filled.payload.sections ?? {},
+          collections: filled.payload.collections ?? {},
+          agent_schema: filled.agent_schema,
+          diagrams: filled.rendered_diagrams ?? {},
+        })
 
       onOpenChange(false)
       onGenerated?.({ id: created.id, title: created.title })
       addToast({
-        title: 'Document generated',
-        description: `${created.title} opened in the document editor.`,
+        title: existingDocument ? 'Document revision committed' : 'Document generated',
+        description: existingDocument
+          ? `${created.title} was merged into the existing document as a new version.`
+          : `${created.title} opened in the document editor.`,
         variant: 'success',
       })
     } catch (error) {
@@ -425,7 +491,7 @@ export function ProjectDocGenerateFromTemplateDialog({
             type="button"
             variant="outline"
             className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
-            disabled={busy}
+            disabled={busy || Boolean(duplicatePrompt)}
             onClick={() => onOpenChange(false)}
           >
             <X className="h-4 w-4 shrink-0" aria-hidden />
@@ -434,7 +500,7 @@ export function ProjectDocGenerateFromTemplateDialog({
           <Button
             type="button"
             className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
-            disabled={busy || !templateId || !sourceText.trim()}
+            disabled={busy || Boolean(duplicatePrompt) || !templateId || !sourceText.trim()}
             onClick={() => void handleGenerate()}
           >
             {busy ? (
@@ -446,6 +512,56 @@ export function ProjectDocGenerateFromTemplateDialog({
           </Button>
         </div>
       </div>
+
+      {duplicatePrompt ? (
+        <div className="absolute inset-0 z-[1402] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-950/35" aria-hidden="true" />
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="project-doc-duplicate-title"
+            className="relative w-full max-w-md overflow-hidden rounded-2xl border border-amber-200 bg-white shadow-2xl dark:border-amber-900/60 dark:bg-slate-900"
+          >
+            <div className="border-b border-slate-200/80 bg-amber-50/70 px-5 py-4 dark:border-slate-700/70 dark:bg-amber-950/20">
+              <div className="flex items-start gap-3">
+                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700 ring-1 ring-amber-300/70 dark:bg-amber-950/60 dark:text-amber-300 dark:ring-amber-800">
+                  <FileText className="h-4 w-4" aria-hidden />
+                </span>
+                <div>
+                  <h3 id="project-doc-duplicate-title" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Document already exists
+                  </h3>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                    This template has already generated a document in this project. Generate another copy anyway?
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2 px-5 py-4 text-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">New document</p>
+              <p className="rounded-xl border border-border bg-muted/20 px-3 py-2 font-medium text-foreground">{duplicatePrompt.title}</p>
+              <p className="text-xs text-muted-foreground">Existing: {duplicatePrompt.existingTitle}</p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border/70 px-5 py-3">
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(enterpriseSecondaryButtonClass(), 'h-9 px-3 text-xs')}
+                onClick={() => duplicatePrompt.resolve(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className={cn(registerServicePrimaryButtonClass(), 'h-9 px-3 text-xs')}
+                onClick={() => duplicatePrompt.resolve(true)}
+              >
+                Generate anyway
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>,
     document.body,
   )

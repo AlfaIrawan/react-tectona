@@ -778,7 +778,7 @@ export function ProjectManagementPage() {
       )}
 
       {showFilters && (
-        <Card className="glass-card rounded-2xl border-white/40 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/40 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs text-muted-foreground">Search & Filters</CardTitle>
           </CardHeader>
@@ -865,7 +865,7 @@ export function ProjectManagementPage() {
             { label: 'At-Risk Projects', value: metrics.atRiskProjects, icon: AlertTriangle, subtitle: 'Needs intervention' },
             { label: 'Total Milestones', value: metrics.totalMilestones, icon: Flag, subtitle: 'Tracked checkpoints' },
           ].map((item) => (
-            <Card key={item.label} className="glass-card relative overflow-hidden rounded-2xl border-white/50">
+            <Card key={item.label} className="liquid-glass-enterprise-panel relative overflow-hidden rounded-2xl border-white/50">
               <CardContent className="p-4">
                 {loading ? (
                   <div className="space-y-2">
@@ -887,13 +887,13 @@ export function ProjectManagementPage() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          <Card className="glass-card rounded-2xl border-white/50 xl:col-span-1">
+          <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-1">
             <CardHeader>
               <CardTitle className="text-sm">Delivery Health Summary</CardTitle>
               <CardDescription>Overall execution pulse across portfolio</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="rounded-xl border border-border/60 p-3 bg-background/80">
+              <div className="liquid-glass-enterprise-panel rounded-xl border border-border/60 p-3">
                 <div className="text-xs text-muted-foreground">Overall health score</div>
                 <div className="text-2xl font-semibold mt-1">{deliveryHealth.score}%</div>
                 <div className="mt-2 h-2.5 rounded-full bg-muted overflow-hidden">
@@ -917,7 +917,7 @@ export function ProjectManagementPage() {
             </CardContent>
           </Card>
 
-          <Card className="glass-card rounded-2xl border-white/50 xl:col-span-2">
+          <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-2">
             <CardHeader>
               <CardTitle className="text-sm">Project Distribution</CardTitle>
               <CardDescription>Distribution by project type</CardDescription>
@@ -955,7 +955,7 @@ export function ProjectManagementPage() {
           </div>
         </div>
 
-        <Card className="glass-card rounded-2xl border-white/50">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50">
           <CardContent className="p-0 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1460px] text-xs">
@@ -1123,7 +1123,7 @@ export function ProjectManagementPage() {
       </section>
 
       <section className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <Card className="glass-card rounded-2xl border-white/50 xl:col-span-6">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-6">
           <CardHeader>
             <CardTitle className="text-sm">Milestone & Delivery Tracking</CardTitle>
             <CardDescription>Upcoming, overdue, and completed milestones across projects</CardDescription>
@@ -1150,7 +1150,7 @@ export function ProjectManagementPage() {
 
             <div className="space-y-2">
               {MILESTONES.map((milestone) => (
-                <div key={milestone.id} className="rounded-xl border border-border/60 p-3 bg-background/90">
+                <div key={milestone.id} className="liquid-glass-enterprise-panel rounded-xl border border-border/60 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <div className="text-xs font-semibold text-foreground">{milestone.name}</div>
@@ -1175,7 +1175,7 @@ export function ProjectManagementPage() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card rounded-2xl border-white/50 xl:col-span-6">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-6">
           <CardHeader>
             <CardTitle className="text-sm">Project Health & Risk</CardTitle>
             <CardDescription>Risk posture, issue volume, and delivery health indicators</CardDescription>
@@ -1249,7 +1249,7 @@ export function ProjectManagementPage() {
       </section>
 
       <section className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <Card className="glass-card rounded-2xl border-white/50 xl:col-span-7">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-7">
           <CardHeader>
             <CardTitle className="text-sm">Project Team Management</CardTitle>
             <CardDescription>Team composition, role assignment, and capacity control</CardDescription>
@@ -1308,13 +1308,13 @@ export function ProjectManagementPage() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card rounded-2xl border-white/50 xl:col-span-5">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-5">
           <CardHeader>
             <CardTitle className="text-sm">Timeline & Planning Snapshot</CardTitle>
             <CardDescription>Lifecycle phases with planned vs actual progress</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="h-[132px] rounded-xl border border-border/60 overflow-hidden">
+            <div className="h-[132px] w-full min-w-0 rounded-xl border border-border/60 overflow-hidden">
               <ReactFlow
                 nodes={LIFECYCLE_NODES}
                 edges={LIFECYCLE_EDGES}
@@ -1375,14 +1375,14 @@ export function ProjectManagementPage() {
       </section>
 
       <section className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <Card className="glass-card rounded-2xl border-white/50 xl:col-span-5">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-5">
           <CardHeader>
             <CardTitle className="text-sm">Project Governance Snapshot</CardTitle>
             <CardDescription>Stage gate, approval flow, compliance, and audit readiness</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {projectData.slice(0, 5).map((project) => (
-              <div key={project.id} className="rounded-xl border border-border/60 p-3 bg-background/90">
+              <div key={project.id} className="liquid-glass-enterprise-panel rounded-xl border border-border/60 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-xs font-semibold text-foreground">{project.code}</div>
@@ -1408,7 +1408,7 @@ export function ProjectManagementPage() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card rounded-2xl border-white/50 xl:col-span-7">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50 xl:col-span-7">
           <CardHeader>
             <CardTitle className="text-sm">Linked Artifacts & Documents</CardTitle>
             <CardDescription>Project documents, templates, notes, and linked assets</CardDescription>
@@ -1450,7 +1450,7 @@ export function ProjectManagementPage() {
       </section>
 
       <section>
-        <Card className="glass-card rounded-2xl border-white/50">
+        <Card className="liquid-glass-enterprise-panel rounded-2xl border-white/50">
           <CardHeader>
             <CardTitle className="text-sm">Recent Activity & Audit</CardTitle>
             <CardDescription>Audit-friendly stream of execution and governance events</CardDescription>
@@ -1581,7 +1581,7 @@ export function ProjectManagementPage() {
 
       {selectedRows.length > 0 && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[900]">
-          <div className="rounded-xl border border-border/60 bg-background/95 shadow-lg px-3 py-2 flex items-center gap-2 text-xs">
+          <div className="liquid-glass-enterprise-panel rounded-xl border border-border/60 shadow-lg px-3 py-2 flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">{selectedRows.length} projects selected</span>
             <Button className="h-7 px-2 text-[11px]">Apply template</Button>
             <Button variant="outline" className="h-7 px-2 text-[11px]">Export selection</Button>

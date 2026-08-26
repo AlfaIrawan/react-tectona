@@ -21,7 +21,9 @@ export function ProjectDragLayer({
 }: ProjectDragLayerProps) {
   if (typeof document === 'undefined' || !pointer) return null
 
-  const isProjectDrag = Boolean(activeId?.startsWith('project-') && project)
+  const isProjectDrag = Boolean(
+    (activeId?.startsWith('project-') && project) || activeId?.startsWith('idea-'),
+  )
   const isFolderDrag = Boolean(activeId?.startsWith('folder-'))
   const showMoveHint = Boolean(overFolderName && (isProjectDrag || isFolderDrag))
 

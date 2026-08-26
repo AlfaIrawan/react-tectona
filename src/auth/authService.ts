@@ -27,12 +27,14 @@ import {
 import { clearStoredUserWorkspaceContext } from '@/lib/storedUserWorkspaceContext'
 import { clearCorporateOnboardingSession } from '@/lib/corporateOnboardingSession'
 import { invalidateSubjectMembershipsCache } from '@/lib/wacMembershipCache'
+import { normalizeUserDisplayName } from '@/lib/userDisplayName'
 import { upsertWorkspacePresenceWithToken, sendOfflinePresenceBeacon } from '@/lib/api/collaborationContextApi'
 import { TECTONA_CHAT_WORKSPACE_ID } from '@/lib/api/tectonaAgentRuntimeApi'
 import { useCollaborationPresenceStore } from '@/stores/collaboration-presence-store'
 import { useMyPresenceStore } from '@/stores/my-presence-store'
 import { useVoiceRecordRequestStore } from '@/stores/voice-record-request-store'
 import { clearSensitiveRuntimeCaches } from '@/lib/pwa/initPwa'
+import { maskToken, recordTokenEvent } from '@/lib/tokenTelemetry'
 
 /** Default Tectona accounts (identity-lite bootstrap). */
 export const DEFAULT_ACCOUNTS = [
@@ -57,6 +59,10 @@ export interface Session {
     email: string
     role: string
     roles?: string[]
+    jobTitle?: string | null
+    organizationalUnit?: string | null
+    accountStatus?: string | null
+    createdAt?: string | null
   }
   token: string
   refreshToken?: string
@@ -142,7 +148,7 @@ function applyTokenResponse(session: Session, tokenResponse: {
 }
 
 function buildSessionFromUserinfo(
-  userinfo: { sub: string; email?: string; roles?: string[] },
+  userinfo: { sub: string; email?: string; display_name?: string | null; roles?: string[]; job_title?: string | null; organizational_unit?: string | null; account_status?: string | null; created_at?: string | null },
   normalizedEmail: string,
   tokenResponse: { access_token: string; expires_in: number; refresh_token?: string },
 ): Session {
@@ -154,10 +160,14 @@ function buildSessionFromUserinfo(
   return {
     user: {
       id: userinfo.sub,
-      name: resolvedEmail.split('@')[0] ?? 'User',
+      name: normalizeUserDisplayName(userinfo.display_name || resolvedEmail),
       email: resolvedEmail,
       role: uiRole,
       roles: userinfo.roles ?? [],
+      jobTitle: userinfo.job_title ?? null,
+      organizationalUnit: userinfo.organizational_unit ?? null,
+      accountStatus: userinfo.account_status ?? null,
+      createdAt: userinfo.created_at ?? null,
     },
     token: tokenResponse.access_token,
     refreshToken: tokenResponse.refresh_token,
@@ -181,6 +191,13 @@ export async function attemptSilentSso(): Promise<Session | null> {
     const userinfo = await fetchUserInfo(tokenResponse.access_token)
     const session = buildSessionFromUserinfo(userinfo, userinfo.email ?? '', tokenResponse)
     persistSession(session)
+    recordTokenEvent(session.user.id, {
+      source: 'system',
+      kind: 'issued',
+      event: 'Silent SSO session bootstrap',
+      tokenPreview: maskToken(session.token),
+      expiresAt: session.expiresAt,
+    })
     emitSessionActive()
     return session
   } catch {
@@ -193,6 +210,15 @@ export async function registerPasskey(label?: string): Promise<void> {
   const session = getSession()
   if (!session?.token) throw new Error('not_authenticated')
   await enrollPasskey(session.token, label)
+  recordTokenEvent(session.user.id, {
+    source: 'user',
+    kind: 'used',
+    event: 'Passkey enrollment',
+    trigger: 'User clicked Add passkey',
+    context: 'Security settings',
+    tokenPreview: maskToken(session.token),
+    expiresAt: session.expiresAt,
+  })
 }
 
 /** Sign in with a passkey (usernameless / discoverable) and persist the session. */
@@ -201,6 +227,13 @@ export async function loginWithPasskey(): Promise<Session> {
   const userinfo = await fetchUserInfo(tokenResponse.access_token)
   const session = buildSessionFromUserinfo(userinfo, userinfo.email ?? '', tokenResponse)
   persistSession(session)
+  recordTokenEvent(session.user.id, {
+    source: 'user',
+    kind: 'issued',
+    event: 'Passkey sign in',
+    tokenPreview: maskToken(session.token),
+    expiresAt: session.expiresAt,
+  })
   emitSessionActive()
   return session
 }
@@ -217,6 +250,13 @@ async function performRefresh(session: Session): Promise<Session | null> {
     const tokenResponse = await refreshAccessToken(session.refreshToken)
     const updated = applyTokenResponse(session, tokenResponse)
     persistSession(updated)
+    recordTokenEvent(session.user.id, {
+      source: 'system',
+      kind: 'refreshed',
+      event: 'Automatic token refresh',
+      tokenPreview: maskToken(updated.token),
+      expiresAt: updated.expiresAt,
+    })
     emitSessionTokenRefreshed()
     return updated
   } catch (err) {
@@ -269,6 +309,13 @@ async function completeLogin(
   const userinfo = await fetchUserInfo(tokenResponse.access_token)
   const session = buildSessionFromUserinfo(userinfo, normalizedEmail, tokenResponse)
   persistSession(session)
+  recordTokenEvent(session.user.id, {
+    source: 'user',
+    kind: 'issued',
+    event: 'Sign in',
+    tokenPreview: maskToken(session.token),
+    expiresAt: session.expiresAt,
+  })
   clearStoredUserWorkspaceContext()
   resetIntentionalSignOut()
   void import('@/lib/chat/chatContactDirectory')
@@ -399,6 +446,14 @@ export function logout(): void {
   const session = readStoredSession()
   const refreshToken = session?.refreshToken
   const accessToken = session?.token
+  if (session?.user.id && accessToken) {
+    recordTokenEvent(session.user.id, {
+      source: 'user',
+      kind: 'revoked',
+      event: 'Sign out and revoke session',
+      tokenPreview: maskToken(accessToken),
+    })
+  }
   clearLocalSession(session)
   void publishOfflinePresence(session, { allowRefresh: false }).catch(() => undefined)
   if (refreshToken || accessToken) {
@@ -412,6 +467,14 @@ export async function logoutAsync(): Promise<void> {
   const session = readStoredSession()
   const refreshToken = session?.refreshToken
   const accessToken = session?.token
+  if (session?.user.id && accessToken) {
+    recordTokenEvent(session.user.id, {
+      source: 'user',
+      kind: 'revoked',
+      event: 'Sign out and revoke session',
+      tokenPreview: maskToken(accessToken),
+    })
+  }
   clearLocalSession(session)
   try {
     await publishOfflinePresence(session, { allowRefresh: false })
@@ -474,6 +537,15 @@ export async function validateActiveServerSession(): Promise<boolean> {
   if (!session?.token) return false
   try {
     await checkSessionStatus(session.token)
+    recordTokenEvent(session.user.id, {
+      source: 'system',
+      kind: 'used',
+      event: 'Session status check',
+      trigger: 'App focus / API preflight',
+      context: 'Automatic session validation',
+      tokenPreview: maskToken(session.token),
+      expiresAt: session.expiresAt,
+    })
     return true
   } catch (err) {
     if (isSessionRevokedError(err)) {

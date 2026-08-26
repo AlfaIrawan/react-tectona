@@ -24,6 +24,7 @@ import { IntentStep, type OnboardingIntent } from '@/modules/onboarding/componen
 import { PersonalOnboardingStep } from '@/modules/onboarding/components/PersonalOnboardingStep'
 import { CorporateOrganizationStep } from '@/modules/onboarding/components/CorporateOrganizationStep'
 import { isConsumerEmail } from '@/lib/onboardingFeature'
+import { TENANT_STORAGE_KEY, type StoredTenantSelection } from '@/lib/onboardingFeature'
 
 type WizardStep = 'intent' | 'personal' | 'corporate'
 
@@ -185,7 +186,18 @@ export function OnboardingPage() {
     setSubmitting(true)
     setError('')
     try {
-      await submitJoinRequestByWorkspaceId(input.workspaceId, input.message)
+      let personalWorkspaceId: string | null = progress?.personal_workspace_id?.trim() || null
+      if (!personalWorkspaceId) {
+        try {
+          const raw = sessionStorage.getItem(TENANT_STORAGE_KEY)
+          personalWorkspaceId = raw ? (JSON.parse(raw) as StoredTenantSelection).workspaceId?.trim() || null : null
+        } catch {
+          personalWorkspaceId = null
+        }
+      }
+      const marker = personalWorkspaceId ? `[personal_workspace_id=${personalWorkspaceId}]` : ''
+      const message = [input.message?.trim(), marker].filter(Boolean).join(' ')
+      await submitJoinRequestByWorkspaceId(input.workspaceId, message || undefined)
       await queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit join request.')
@@ -195,7 +207,7 @@ export function OnboardingPage() {
     }
   }
 
-  const handleAdminApprovalPending = () => {
+  const handleAdminApprovalPending = async () => {
     const subjectId = getSession()?.user.id
     if (subjectId) {
       markCorporateJoinStepCompleted(subjectId)
@@ -204,7 +216,8 @@ export function OnboardingPage() {
     }
     void queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
     void queryClient.invalidateQueries({ queryKey: ['corporate-onboarding-progress'] })
-    navigate('/onboarding/status?reason=join_pending', { replace: true })
+    await logoutAsync()
+    window.location.href = '/login'
   }
 
   const handleEmailVerificationReady = async () => {
@@ -228,7 +241,7 @@ export function OnboardingPage() {
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4">
       <div className="w-full max-w-lg mx-auto">
-        <div className="glass-card rounded-lg shadow-2xl p-8">
+        <div className="liquid-glass-enterprise-panel rounded-lg p-8">
           <div className="mb-6 space-y-2 text-center">
             <img src="/images/logo.png" alt="Tectona" className="mx-auto h-20 w-auto object-contain" />
             <p className="text-sm text-muted-foreground">Complete onboarding to start using Tectona</p>

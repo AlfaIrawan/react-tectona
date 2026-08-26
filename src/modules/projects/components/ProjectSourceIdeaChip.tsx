@@ -18,6 +18,7 @@ export function ProjectSourceIdeaChip({
   projectId,
   projectName,
   linkedIdea,
+  linkedIdeas = linkedIdea ? [linkedIdea] : [],
   loading,
   onLinked,
   onUnlinked,
@@ -25,6 +26,7 @@ export function ProjectSourceIdeaChip({
   projectId: string
   projectName: string
   linkedIdea: IdeaApi | null
+  linkedIdeas?: IdeaApi[]
   loading?: boolean
   onLinked: (idea: IdeaApi) => void
   onUnlinked: () => void
@@ -65,8 +67,9 @@ export function ProjectSourceIdeaChip({
       onOpenChange={setLinkModalOpen}
       projectId={projectId}
       projectName={projectName}
-      currentLinkedIdea={linkedIdea}
+      currentLinkedIdeas={linkedIdeas}
       onLinked={onLinked}
+      onUnlinked={onUnlinked}
     />
   )
 
@@ -97,7 +100,11 @@ export function ProjectSourceIdeaChip({
     )
   }
 
-  const tooltipText = linkedIdea.title.length > 42 ? `${linkedIdea.title.slice(0, 42)}…` : linkedIdea.title
+  const tooltipText = linkedIdeas.length > 1
+    ? `${linkedIdeas.length} ideas linked`
+    : linkedIdea.title.length > 42
+      ? `${linkedIdea.title.slice(0, 42)}…`
+      : linkedIdea.title
 
   return (
     <>
@@ -111,10 +118,12 @@ export function ProjectSourceIdeaChip({
         </Tooltip>
 
         <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem onClick={() => navigate(`/idea-backlog/${linkedIdea.id}`)}>
-            <ExternalLink className="mr-2 h-4 w-4" />
-            View idea
-          </DropdownMenuItem>
+          {linkedIdeas.map((idea) => (
+            <DropdownMenuItem key={idea.id} onClick={() => navigate(`/idea-backlog/${idea.id}`)}>
+              <ExternalLink className="mr-2 h-4 w-4" />
+              <span className="truncate">{idea.title}</span>
+            </DropdownMenuItem>
+          ))}
           <DropdownMenuItem onClick={() => setLinkModalOpen(true)}>
             <Link2 className="mr-2 h-4 w-4" />
             Change linked idea

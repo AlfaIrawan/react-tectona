@@ -56,6 +56,46 @@ describe('BRD duplicate detection', () => {
     expect(matches.map((m) => m.id)).toEqual(['old'])
   })
 
+  it('still matches the same family when the version has multiple decimal segments', () => {
+    // Regression: "V0.2.5" used to fail structured-name parsing entirely (not just its own
+    // display), so a multi-segment revision upload never got linked to its family at all — the
+    // "Save as new version" prompt never appeared, and it silently became a disconnected document.
+    const subject = makeDoc({
+      id: 'new',
+      fileName: 'BRD_Project_HarmonyPenangananNonZoning_V0.2.5_20260824.docx',
+    })
+    const existing = [
+      makeDoc({ id: 'old', fileName: 'BRD_Project_HarmonyPenangananNonZoning_V0.2_20260824.docx' }),
+    ]
+    const matches = findNameMatches(subject, existing)
+    expect(matches.map((m) => m.id)).toEqual(['old'])
+  })
+
+  it('matches the same family despite small naming drift between revisions (stray trailing digit)', () => {
+    // Regression: real uploads aren't always named consistently across versions — a one-character
+    // typo/drift in the module name (a stray trailing "1") made the exact-string family match miss
+    // entirely, so V1 and V2 of the same document never got linked and both landed in the
+    // repository as unrelated documents with no duplicate prompt at all.
+    const subject = makeDoc({
+      id: 'new',
+      fileName: 'BRD_Project_DraftAPISpecCmsToDIb_V2_20260826.docx',
+    })
+    const existing = [
+      makeDoc({ id: 'old', fileName: 'BRD_Project_DraftAPISpecCmsToDIb1_V1_20260826.docx' }),
+    ]
+    const matches = findNameMatches(subject, existing)
+    expect(matches.map((m) => m.id)).toEqual(['old'])
+  })
+
+  it('does not fuzzy-match genuinely different modules', () => {
+    const subject = makeDoc({ id: 'new', fileName: 'BRD_Project_PayrollSync_V1_20260826.docx' })
+    const existing = [
+      makeDoc({ id: 'other', fileName: 'BRD_Project_InventorySync_V1_20260826.docx' }),
+    ]
+    const matches = findNameMatches(subject, existing)
+    expect(matches.map((m) => m.id)).toEqual([])
+  })
+
   it('detects which documents already have a generated KB (via source footer doc id)', () => {
     const kbContents = [
       '<h2>Sumber dokumen</h2><ul><li><strong>Document ID:</strong> doc-123</li></ul>',

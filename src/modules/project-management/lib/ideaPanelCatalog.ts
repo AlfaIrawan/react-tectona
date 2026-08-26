@@ -1,21 +1,24 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   ClipboardList,
-  Cpu,
   DollarSign,
   FileText,
   Gauge,
-  GitBranch,
   Layers,
   TrendingUp,
+  Workflow,
 } from 'lucide-react'
 
 export type IdeaPanelKey =
   | 'summary'
   | 'scoring'
   | 'impact'
+  | 'diagrams'
   | 'integration'
   | 'process'
+  | 'c4Level1'
+  | 'c4Level2'
+  | 'bpmnHigh'
   | 'costBenefit'
   | 'conversion'
   | 'document'
@@ -26,12 +29,15 @@ export type IdeaPanelCatalogEntry = {
   icon: LucideIcon
 }
 
+// `integration` and `process` stay valid `IdeaPanelKey` values (used internally by `confidence`,
+// `regenerating`, and `renderSectionReviewWorkspace`'s per-section review history) even though
+// they're no longer their own sidebar entries — they're now sub-sections inside the merged
+// `diagrams` gallery panel.
 export const IDEA_PANEL_CATALOG: IdeaPanelCatalogEntry[] = [
   { key: 'summary', label: 'Summary', icon: ClipboardList },
   { key: 'scoring', label: 'Scoring', icon: Gauge },
   { key: 'impact', label: 'Impact', icon: TrendingUp },
-  { key: 'integration', label: 'Integration', icon: Cpu },
-  { key: 'process', label: 'Process', icon: GitBranch },
+  { key: 'diagrams', label: 'Diagrams', icon: Workflow },
   { key: 'costBenefit', label: 'Cost Benefit', icon: DollarSign },
   { key: 'conversion', label: 'Conversion', icon: Layers },
   { key: 'document', label: 'Docs', icon: FileText },

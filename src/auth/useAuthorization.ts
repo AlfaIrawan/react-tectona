@@ -8,6 +8,7 @@ import {
   type WacMembershipDto,
   wacRoleCodeToUiRole,
 } from '@/lib/api/workspaceAccessControlApi'
+import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
 import {
   TECTONA_AUTHZ_ACTIONS,
   TECTONA_AUTHZ_RESOURCES,
@@ -15,6 +16,7 @@ import {
 } from '@/lib/constants/tectonaAuthz'
 import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
+import { isOrganizationHomeWorkspace, isWorkspaceOwnedBySubject } from '@/lib/workspaceOwnershipVisibility'
 
 export type WorkspacePanelAuth = 'overview' | 'directory' | 'governance' | 'members' | 'assets' | 'activity'
 
@@ -218,6 +220,40 @@ export function useWorkspaceManagementAuthorization(scopeOverride?: string): Wor
     setLoading(true)
 
     void (async () => {
+      // Operational workspace creators are allowed to manage their own workspace
+      // even before a WAC membership is provisioned. Organization home access
+      // remains WAC-controlled.
+      try {
+        if (activeWorkspaceId && !isAllWorkspacesSelection(activeWorkspaceId)) {
+          const directory = await fetchAllWorkspaceOrgWorkspaces()
+          const activeWorkspace = directory.find((workspace) => workspace.id === activeWorkspaceId)
+          const isOperationalOwner = Boolean(
+            activeWorkspace
+            && !isOrganizationHomeWorkspace(activeWorkspace)
+            && isWorkspaceOwnedBySubject(
+              {
+                id: activeWorkspace.id,
+                metadata: activeWorkspace.metadata,
+                createdBy: activeWorkspace.created_by ?? null,
+                tenantMode: activeWorkspace.tenant_mode ?? null,
+              },
+              {
+                id: sub,
+                name: session?.user.name,
+                email: session?.user.email,
+              },
+            ),
+          )
+          if (isOperationalOwner) {
+            setAccess(FULL_ACCESS)
+            setLoading(false)
+            return
+          }
+        }
+      } catch {
+        // Continue with WAC and policy checks when the directory is unavailable.
+      }
+
       // Prefer WAC membership on the active workspace (same source as useModuleAccess).
       try {
         const memberships = await fetchSubjectMemberships(TECTONA_WAC_APP_ID, sub, { activeOnly: true })

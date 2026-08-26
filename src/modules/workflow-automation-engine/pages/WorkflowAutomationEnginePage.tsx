@@ -1,9 +1,12 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import {
   Activity,
   AlertTriangle,
+  ArrowLeftToLine,
+  ArrowRightToLine,
   BarChart3,
   Bot,
+  CalendarClock,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -11,19 +14,31 @@ import {
   Download,
   Filter,
   Gauge,
-  GitBranch,
   Info,
+  LayoutGrid,
+  PanelLeft,
   Layers3,
+  MousePointerClick,
+  Pin,
   PlayCircle,
+  Copy,
+  MoreVertical,
+  Pencil,
+  Plus,
+  Trash2,
+  RotateCcw,
+  Ruler,
   Search,
-  Settings2,
   ShieldCheck,
   Signal,
   Sparkles,
-  Target,
   TrendingUp,
+  UnfoldHorizontal,
+  Users,
+  Webhook,
   Workflow,
   Zap,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   Area,
@@ -41,11 +56,14 @@ import {
 } from 'recharts'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { useTenantContext } from '@/auth/TenantContext'
+import { getDevelopmentAccounts, getSession } from '@/auth/authService'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { enterpriseCyanGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import {
   computeWorkspaceMainPanelViewportHeightPx,
@@ -60,15 +78,51 @@ import {
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { Select, SelectItem } from '@/components/ui/select'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { Switch } from '@/components/ui/switch'
+import { DndContext } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
+import { useEnterpriseSortableColumns } from '@/components/enterprise/useEnterpriseSortableColumns'
+import { EnterpriseSortableHeaderCell } from '@/components/enterprise/EnterpriseSortableHeaderCell'
+import { EnterpriseColumnFilterDropdown } from '@/components/enterprise/EnterpriseColumnFilterDropdown'
+import { EnterpriseGroupByControl } from '@/components/enterprise/EnterpriseGroupByControl'
+import { EnterpriseSelectionToggle } from '@/components/enterprise/EnterpriseSelectionToggle'
+import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/EnterpriseColumnVisibilityControl'
+import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
+import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
+import { WorkflowBuilderCanvas } from '@/modules/workflow-automation-engine/components/WorkflowBuilderCanvas'
+import { useToast } from '@/components/ui/toast'
+import {
+  createWorkflow as apiCreateWorkflow,
+  deleteWorkflowApi,
+  duplicateWorkflowApi,
+  listWorkflows,
+  type WorkflowSummaryDto,
+} from '@/lib/api/workflowAutomationApi'
+import {
+  createAutomationRule as apiCreateAutomationRule,
+  deleteAutomationRuleApi,
+  listAutomationRules,
+  updateAutomationRule as apiUpdateAutomationRule,
+  type AutomationRuleDto,
+  type AutomationRuleTrigger,
+} from '@/lib/api/workflowAutomationRulesApi'
+import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { fetchWorkspaceMembers, TECTONA_WAC_APP_ID } from '@/lib/api/workspaceAccessControlApi'
+import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused' | 'Needs Approval'
-type PanelId = 'overview' | 'catalog' | 'builder' | 'automation' | 'monitoring'
+type PanelId = 'overview' | 'catalog' | 'automation' | 'monitoring'
 
 type WorkflowRecord = {
   id: string
   name: string
+  project: string
   type: 'Delivery' | 'Governance' | 'Financial' | 'Change' | 'Risk'
   owner: string
+  ownerId?: string
+  ownerEmail?: string
   status: WorkflowStatus
   trigger: 'Event' | 'Schedule' | 'Manual' | 'Webhook'
   successRate: number
@@ -76,21 +130,80 @@ type WorkflowRecord = {
   lastUpdated: string
 }
 
-const WORKFLOWS: WorkflowRecord[] = [
-  { id: 'wf-001', name: 'Capital approval routing', type: 'Financial', owner: 'Mira Hadi', status: 'Active', trigger: 'Event', successRate: 98, executions: 148, lastUpdated: '12 min ago' },
-  { id: 'wf-002', name: 'Sprint replan escalation', type: 'Delivery', owner: 'Ayla Brooks', status: 'Active', trigger: 'Schedule', successRate: 95, executions: 72, lastUpdated: '34 min ago' },
-  { id: 'wf-003', name: 'Change request gatekeeper', type: 'Governance', owner: 'Nadia Singh', status: 'Needs Approval', trigger: 'Manual', successRate: 89, executions: 34, lastUpdated: '1 hour ago' },
-  { id: 'wf-004', name: 'Risk exception remediation', type: 'Risk', owner: 'Jonas Reed', status: 'Draft', trigger: 'Webhook', successRate: 83, executions: 12, lastUpdated: 'Today, 08:10' },
-  { id: 'wf-005', name: 'Vendor handoff automation', type: 'Change', owner: 'Mina Alvarez', status: 'Paused', trigger: 'Event', successRate: 91, executions: 58, lastUpdated: 'Today, 07:25' },
-]
+type WorkflowOwnerOption = {
+  id: string
+  name: string
+  email: string
+}
 
-const CATALOG_SNAPSHOT: Array<{ name: string; category: WorkflowRecord['type']; owner: string; trigger: WorkflowRecord['trigger']; status: WorkflowStatus; lastExecution: string }> = [
-  { name: 'Capital Approval Routing', category: 'Financial', owner: 'Mira Hadi', trigger: 'Manual', status: 'Active', lastExecution: '2 min ago' },
-  { name: 'Sprint Replan Escalation', category: 'Delivery', owner: 'Ayla Brooks', trigger: 'Event', status: 'Active', lastExecution: '8 min ago' },
-  { name: 'Change Request Gatekeeper', category: 'Governance', owner: 'Nadia Singh', trigger: 'Webhook', status: 'Needs Approval', lastExecution: '15 min ago' },
-  { name: 'Risk Exception Remediation', category: 'Risk', owner: 'Jonas Reed', trigger: 'Manual', status: 'Draft', lastExecution: '1 hour ago' },
-  { name: 'Vendor Handoff Automation', category: 'Change', owner: 'Mina Alvarez', trigger: 'Schedule', status: 'Paused', lastExecution: '2 hours ago' },
-]
+const UNASSIGNED_WORKFLOW_OWNER = 'Unassigned'
+
+// ---------------------------------------------------------------------------
+// Operational rules: lightweight When / If / Then controls linked to a workflow.
+// ---------------------------------------------------------------------------
+type AutomationRule = {
+  id: string
+  name: string
+  trigger: WorkflowRecord['trigger']
+  condition: string
+  action: string
+  enabled: boolean
+  linkedWorkflowId: string
+  triggerCount: number
+  lastTriggered: string
+  workspaceId?: string | null
+  ownerId?: string | null
+  ownerName?: string | null
+  ownerEmail?: string | null
+  triggerEvent: string
+}
+
+function mapAutomationRule(dto: AutomationRuleDto): AutomationRule {
+  return {
+    id: dto.id,
+    name: dto.name,
+    trigger: dto.trigger,
+    triggerEvent: dto.trigger_event,
+    condition: String(dto.condition?.summary ?? dto.condition?.field ?? 'Any matching record'),
+    action: String(dto.action?.summary ?? dto.action?.type ?? 'Run linked workflow'),
+    enabled: dto.enabled,
+    linkedWorkflowId: dto.workflow_id ?? '',
+    triggerCount: dto.trigger_count,
+    lastTriggered: dto.last_triggered ? new Date(dto.last_triggered).toLocaleString() : 'Never',
+    workspaceId: dto.workspace_id,
+    ownerId: dto.owner_id,
+    ownerName: dto.owner_name,
+    ownerEmail: dto.owner_email,
+  }
+}
+
+function normalizeOwnerLookup(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function formatIdentityDisplayName(displayName: string | null | undefined, email: string): string {
+  const raw = displayName?.trim() || email.trim()
+  const localPart = raw.includes('@') ? raw.split('@')[0] ?? raw : raw
+  const shouldHumanize = /[._-]/.test(localPart) || localPart === localPart.toLowerCase()
+  if (!shouldHumanize) return raw
+  return localPart
+    .replace(/[._-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1).toLowerCase()}`)
+    .join(' ')
+}
+
+function resolveWorkflowOwner(
+  candidate: string,
+  ownerOptions: WorkflowOwnerOption[],
+  fallbackIndex: number,
+): WorkflowOwnerOption | null {
+  if (ownerOptions.length === 0) return null
+  const candidateKey = normalizeOwnerLookup(candidate)
+  const matched = ownerOptions.find((owner) => normalizeOwnerLookup(owner.name) === candidateKey || normalizeOwnerLookup(owner.email) === candidateKey)
+  return matched ?? ownerOptions[fallbackIndex % ownerOptions.length] ?? null
+}
 
 const EXECUTION_TREND = [
   { date: 'May 18', total: 620, success: 560, failure: 60 },
@@ -165,14 +278,13 @@ const AI_INSIGHTS: Array<{ text: string; level: InsightLevel }> = [
 const PANELS: Array<{ id: PanelId; label: string; icon: React.ComponentType<{ className?: string }>; badge: string; desc: string }> = [
   { id: 'overview', label: 'Execution Overview', icon: Sparkles, badge: 'Command', desc: 'Health, throughput, and KPI summary for workflows.' },
   { id: 'catalog', label: 'Workflow Catalog', icon: Workflow, badge: 'Core', desc: 'Workflow directory with filters and quick actions.' },
-  { id: 'builder', label: 'Workflow Builder', icon: GitBranch, badge: 'Design', desc: 'Visual nodes, sequencing, and flow validation.' },
   { id: 'automation', label: 'Automation Rules', icon: Bot, badge: 'Rules', desc: 'Trigger, condition, action, and status control.' },
   { id: 'monitoring', label: 'Runtime Monitoring', icon: Activity, badge: 'Runtime', desc: 'Execution, queues, and operational incidents.' },
 ]
 
 const PANEL_GROUPS: Array<{ group: string; items: typeof PANELS }> = [
   { group: 'Command Center', items: PANELS.filter((panel) => panel.id === 'overview') },
-  { group: 'Control Library', items: PANELS.filter((panel) => ['catalog', 'builder'].includes(panel.id)) },
+  { group: 'Control Library', items: PANELS.filter((panel) => ['catalog'].includes(panel.id)) },
   { group: 'Assurance & Traceability', items: PANELS.filter((panel) => ['automation', 'monitoring'].includes(panel.id)) },
 ]
 
@@ -185,6 +297,137 @@ function statusTone(status: WorkflowStatus | 'Failed') {
   return 'border-slate-200 bg-slate-100 text-slate-700'
 }
 
+function statusAccentColor(status: WorkflowStatus | 'Failed'): string {
+  if (status === 'Active') return '#10b981'
+  if (status === 'Failed') return '#ef4444'
+  if (status === 'Paused') return '#f97316'
+  if (status === 'Needs Approval') return '#f59e0b'
+  return '#94a3b8'
+}
+
+const TRIGGER_ICONS: Record<WorkflowRecord['trigger'], React.ComponentType<{ className?: string }>> = {
+  Event: Zap,
+  Schedule: CalendarClock,
+  Manual: MousePointerClick,
+  Webhook: Webhook,
+}
+
+function successTone(rate: number): string {
+  if (rate >= 95) return '#10b981'
+  if (rate >= 88) return '#22c55e'
+  if (rate >= 80) return '#f59e0b'
+  return '#ef4444'
+}
+
+// Deterministic per-workflow execution sparkline derived from id + success rate (no RNG).
+function workflowSpark(record: WorkflowRecord): number[] {
+  const seed = record.id.split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0)
+  return Array.from({ length: 7 }, (_, i) => {
+    const wave = Math.sin((i + (seed % 5)) / 1.6) * 8
+    return Math.max(4, Math.round(record.successRate - 6 + wave + ((seed + i * 7) % 6)))
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Workflow Directory enterprise data-table (mirrors the Workspace / Document
+// Repository directory tables: drag-reorder / resize / freeze columns, 3-state
+// sort, per-column filters, group-by, selection, column visibility, paging).
+// ---------------------------------------------------------------------------
+type WorkflowTableColumnKey =
+  | 'name'
+  | 'type'
+  | 'owner'
+  | 'trigger'
+  | 'status'
+  | 'successRate'
+  | 'executions'
+  | 'lastUpdated'
+
+const WORKFLOW_TABLE_PINNED_FIRST_COLUMN: WorkflowTableColumnKey = 'name'
+const WORKFLOW_TABLE_DEFAULT_COLUMN_ORDER: WorkflowTableColumnKey[] = [
+  'name',
+  'type',
+  'owner',
+  'trigger',
+  'status',
+  'successRate',
+  'executions',
+  'lastUpdated',
+]
+
+function workflowTableColumnLabel(key: WorkflowTableColumnKey): string {
+  switch (key) {
+    case 'name': return 'Workflow'
+    case 'type': return 'Type'
+    case 'owner': return 'Owner'
+    case 'trigger': return 'Trigger'
+    case 'status': return 'Status'
+    case 'successRate': return 'Success Rate'
+    case 'executions': return 'Executions'
+    case 'lastUpdated': return 'Updated'
+  }
+}
+
+function workflowTableColumnHeaderIcon(key: WorkflowTableColumnKey): LucideIcon {
+  switch (key) {
+    case 'name': return Workflow
+    case 'type': return Layers3
+    case 'owner': return Users
+    case 'trigger': return Zap
+    case 'status': return ShieldCheck
+    case 'successRate': return Gauge
+    case 'executions': return Activity
+    case 'lastUpdated': return Clock3
+  }
+}
+
+const WORKFLOW_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: WorkflowTableColumnKey; label: string }[] =
+  WORKFLOW_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: workflowTableColumnLabel(key) }))
+
+type WorkflowTableGroupByKey = 'type' | 'owner' | 'status' | 'trigger'
+const WORKFLOW_TABLE_GROUP_BY_OPTIONS: readonly { key: WorkflowTableGroupByKey; label: string }[] = [
+  { key: 'type', label: 'Type' },
+  { key: 'owner', label: 'Owner' },
+  { key: 'status', label: 'Status' },
+  { key: 'trigger', label: 'Trigger' },
+]
+
+function workflowTableGroupLabel(item: WorkflowRecord, groupBy: WorkflowTableGroupByKey): string {
+  if (groupBy === 'type') return item.type
+  if (groupBy === 'owner') return item.owner
+  if (groupBy === 'status') return item.status
+  return item.trigger
+}
+
+// Two-word identity display names use first/last initials; single-word names use first two letters.
+function ownerInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+// Deterministic per-owner color tone (avatar solid + name pill tint) — mirrors the
+// Workspace Directory owner chips where each person gets a distinct colour.
+const OWNER_TONES = [
+  { avatar: 'bg-orange-500', pill: 'bg-orange-50 text-orange-700 ring-orange-200' },
+  { avatar: 'bg-pink-500', pill: 'bg-pink-50 text-pink-700 ring-pink-200' },
+  { avatar: 'bg-blue-500', pill: 'bg-blue-50 text-blue-700 ring-blue-200' },
+  { avatar: 'bg-emerald-500', pill: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  { avatar: 'bg-violet-500', pill: 'bg-violet-50 text-violet-700 ring-violet-200' },
+  { avatar: 'bg-cyan-500', pill: 'bg-cyan-50 text-cyan-700 ring-cyan-200' },
+] as const
+
+function ownerTone(name: string): (typeof OWNER_TONES)[number] {
+  const seed = name.split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0)
+  return OWNER_TONES[seed % OWNER_TONES.length]
+}
+
+// Slug code shown under the workflow name (e.g. "AI backlog approval" → "AI-BACKLOG-APPROVAL").
+function workflowCode(record: WorkflowRecord): string {
+  return record.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
 function Panel({
   title,
   description,
@@ -194,6 +437,7 @@ function Panel({
   panelRef,
   style,
   headerIcon,
+  right,
 }: {
   title: string
   description: string
@@ -203,22 +447,26 @@ function Panel({
   panelRef?: RefObject<HTMLElement | null>
   style?: CSSProperties
   headerIcon?: React.ReactNode
+  right?: React.ReactNode
 }) {
   return (
     <section
       ref={panelRef}
       style={style}
       className={cn(
-        'rounded-3xl border border-slate-200/80 bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)]',
+        'rounded-3xl border liquid-glass-enterprise-panel',
         className
       )}
     >
-      <div className={cn('shrink-0', headerIcon ? 'p-4 pb-0 lg:p-5 lg:pb-0' : 'px-5 py-4')}>
-        <div className="flex min-w-0 items-center gap-2">
-          {headerIcon ? <span className="shrink-0 text-slate-900">{headerIcon}</span> : null}
-          <h2 className={cn('min-w-0 font-semibold text-slate-900', headerIcon ? 'text-lg' : 'text-sm')}>{title}</h2>
+      <div className={cn('flex shrink-0 items-start justify-between gap-4', headerIcon ? 'p-4 pb-0 lg:p-5 lg:pb-0' : 'px-5 py-4')}>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            {headerIcon ? <span className="shrink-0 text-slate-900">{headerIcon}</span> : null}
+            <h2 className={cn('min-w-0 font-semibold text-slate-900', headerIcon ? 'text-lg' : 'text-sm')}>{title}</h2>
+          </div>
+          <p className={cn('text-slate-600', headerIcon ? 'mt-0.5 text-[11px]' : 'mt-1 text-xs')}>{description}</p>
         </div>
-        <p className={cn('text-slate-600', headerIcon ? 'mt-0.5 text-[11px]' : 'mt-1 text-xs')}>{description}</p>
+        {right ? <div className="shrink-0">{right}</div> : null}
       </div>
       <div className={cn(headerIcon ? 'px-4 pb-4 pt-3 lg:px-5 lg:pb-5' : 'p-5', bodyClassName)}>{children}</div>
     </section>
@@ -408,7 +656,7 @@ function kpiCardChrome(cardId: string): string {
 function KpiSparkline({ data, color }: { data: number[]; color: string }) {
   const chartData = data.map((value, index) => ({ idx: index, value }))
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
       <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
         <defs>
           <linearGradient id={`workflow-kpi-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
@@ -422,7 +670,28 @@ function KpiSparkline({ data, color }: { data: number[]; color: string }) {
   )
 }
 
+/** Map a backend workflow DTO (snake_case) to the UI's WorkflowRecord shape. */
+function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOption[] = []): WorkflowRecord {
+  const owner = resolveWorkflowOwner(dto.owner, ownerOptions, -1)
+  return {
+    id: dto.id,
+    name: dto.name,
+    project: dto.category,
+    type: dto.category as WorkflowRecord['type'],
+    owner: owner?.name ?? UNASSIGNED_WORKFLOW_OWNER,
+    ownerId: owner?.id,
+    ownerEmail: owner?.email,
+    status: dto.status as WorkflowRecord['status'],
+    trigger: dto.trigger,
+    successRate: dto.success_rate,
+    executions: dto.executions,
+    lastUpdated: dto.last_updated,
+  }
+}
+
 export function WorkflowAutomationEnginePage() {
+  const { addToast } = useToast()
+  const { workspaceId, selectedWorkspaceIds } = useTenantContext()
   const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)
   const sidebarMini = usePreferencesStore((s) => s.preferences.sidebarMini ?? true)
   const navDocked = isWorkspaceNavDocked(sidebarFixed)
@@ -438,22 +707,165 @@ export function WorkflowAutomationEnginePage() {
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
   const [search, setSearch] = useState('')
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [builder, setBuilder] = useState<{ open: boolean; workflowId: string | null }>({ open: false, workflowId: null })
+  const [workflows, setWorkflows] = useState<WorkflowRecord[]>([])
+  const [workflowCatalogState, setWorkflowCatalogState] = useState<'loading' | 'backend' | 'error'>('loading')
+  const workflowOwnerOptionsRef = useRef<WorkflowOwnerOption[]>([])
+  const [workflowOwnerOptions, setWorkflowOwnerOptions] = useState<WorkflowOwnerOption[]>([])
+  const [rowMenu, setRowMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [automationRules, setAutomationRules] = useState<AutomationRule[]>([])
+  const [automationRulesState, setAutomationRulesState] = useState<'loading' | 'backend' | 'error'>('loading')
+  const [ruleSearch, setRuleSearch] = useState('')
+  const [ruleMenu, setRuleMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [ruleEditor, setRuleEditor] = useState<{
+    id: string
+    name: string
+    trigger: AutomationRuleTrigger
+    triggerEvent: string
+    condition: string
+    action: string
+    linkedWorkflowId: string
+    ownerId: string
+  } | null>(null)
+
+  // Owners come from active Identity Lite users, narrowed to the active workspace
+  // memberships when a workspace scope is selected. No synthetic owner names.
+  useEffect(() => {
+    let cancelled = false
+
+    const loadCatalogAndOwners = async () => {
+      setWorkflowCatalogState('loading')
+      const activeWorkspaceIds = isAllWorkspacesSelection(workspaceId)
+        ? selectedWorkspaceIds
+        : workspaceId
+          ? [workspaceId]
+          : []
+      let identityUsers: IdentityUserDto[] = []
+      try {
+        const response = await fetchIdentityUsers({ limit: 500 })
+        identityUsers = response.items
+      } catch {
+        // Identity Lite may be unavailable during offline UI development.
+      }
+
+      let memberSubjectIds = new Set<string>()
+      if (activeWorkspaceIds.length > 0) {
+        const memberResponses = await Promise.allSettled(
+          activeWorkspaceIds.map((id) => fetchWorkspaceMembers(TECTONA_WAC_APP_ID, id)),
+        )
+        memberSubjectIds = new Set(
+          memberResponses.flatMap((result) => result.status === 'fulfilled' ? result.value.items.map((member) => member.subject_id) : []),
+        )
+      }
+
+      const excludedIdentityStatuses = new Set(['deleted', 'disabled', 'deactivated', 'inactive'])
+      const hasCompleteIdentityDirectory = identityUsers.length > 1 || !import.meta.env.DEV
+      const identitySource = hasCompleteIdentityDirectory
+        ? identityUsers
+        : [
+            ...identityUsers,
+            ...getDevelopmentAccounts().map((account) => ({
+              id: `dev-identity:${account.email}`,
+              email: account.email,
+              display_name: account.name,
+              status_code: 'active',
+            } satisfies IdentityUserDto)),
+          ]
+      const candidates = identitySource.filter((user) => {
+        if (excludedIdentityStatuses.has(user.status_code.trim().toLowerCase())) return false
+        return !hasCompleteIdentityDirectory || memberSubjectIds.size === 0 || memberSubjectIds.has(user.id)
+      })
+      const ownersById = new Map<string, WorkflowOwnerOption>()
+      const ownerEmails = new Set<string>()
+      candidates.forEach((user) => {
+        const name = formatIdentityDisplayName(user.display_name, user.email)
+        const email = user.email.trim().toLowerCase()
+        if (!name || !email || ownersById.has(user.id) || ownerEmails.has(email)) return
+        ownersById.set(user.id, { id: user.id, name, email: user.email.trim() })
+        ownerEmails.add(email)
+      })
+
+      const currentUser = getSession()?.user
+      if (currentUser?.id && !ownersById.has(currentUser.id) && !ownerEmails.has(currentUser.email.trim().toLowerCase())) {
+        ownersById.set(currentUser.id, {
+          id: currentUser.id,
+          name: formatIdentityDisplayName(currentUser.name, currentUser.email),
+          email: currentUser.email,
+        })
+        ownerEmails.add(currentUser.email.trim().toLowerCase())
+      }
+
+      const ownerOptions = Array.from(ownersById.values())
+      if (cancelled) return
+      workflowOwnerOptionsRef.current = ownerOptions
+      setWorkflowOwnerOptions(ownerOptions)
+
+      try {
+        const rows = await listWorkflows(isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined)
+        if (cancelled) return
+        setWorkflows(rows.map((row) => mapWorkflowDto(row, ownerOptions)))
+        setWorkflowCatalogState('backend')
+      } catch {
+        if (!cancelled) {
+          setWorkflows([])
+          setWorkflowCatalogState('error')
+        }
+      }
+    }
+
+    void loadCatalogAndOwners()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedWorkspaceIds, workspaceId])
+
+  useEffect(() => {
+    let cancelled = false
+    listAutomationRules(isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined)
+      .then((rows) => {
+        if (!cancelled) {
+          setAutomationRules(rows.map(mapAutomationRule))
+          setAutomationRulesState('backend')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAutomationRules([])
+          setAutomationRulesState('error')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
+  // The filters/search card is always visible now — its show/hide toggle button was removed.
+  const showFiltersPanel = true
+  const [showKpiCards, setShowKpiCards] = useState(true)
+  const [showEnterpriseNav, setShowEnterpriseNav] = useState(true)
   const navPanelRef = useRef<HTMLDivElement | null>(null)
   const activeMainPanelRef = useRef<HTMLElement | null>(null)
+  const filterCardRef = useRef<HTMLDivElement | null>(null)
   const [navPanelHeightPx, setNavPanelHeightPx] = useState<number | null>(null)
   const [mainPanelViewportHeightPx, setMainPanelViewportHeightPx] = useState<number | null>(null)
   const isOverviewSectionActive = activePanel === 'overview'
+  const isHeightManagedSectionActive =
+    activePanel === 'overview'
+    || activePanel === 'catalog'
+    || activePanel === 'automation'
+    || activePanel === 'monitoring'
 
   useLayoutEffect(() => {
-    if (!isOverviewSectionActive) {
-      setMainPanelViewportHeightPx(null)
-      return
+    if (!isHeightManagedSectionActive) {
+      const raf = window.requestAnimationFrame(() => setMainPanelViewportHeightPx(null))
+      return () => window.cancelAnimationFrame(raf)
     }
 
     const compute = () => {
       const el = activeMainPanelRef.current
       if (!el) return
+      // Same formula as Task & Work Management's directory panel (no compensation for the
+      // filter card's height) — measuring the panel's own top keeps both panels' computed
+      // height/limit consistent as long as their filter-card structures are alike.
       setMainPanelViewportHeightPx(computeWorkspaceMainPanelViewportHeightPx(el.getBoundingClientRect().top))
     }
 
@@ -469,6 +881,7 @@ export function WorkflowAutomationEnginePage() {
     const ro = new ResizeObserver(compute)
     if (activeMainPanelRef.current) ro.observe(activeMainPanelRef.current)
     if (navPanelRef.current) ro.observe(navPanelRef.current)
+    if (filterCardRef.current) ro.observe(filterCardRef.current)
 
     return () => {
       window.cancelAnimationFrame(raf)
@@ -477,12 +890,12 @@ export function WorkflowAutomationEnginePage() {
       window.removeEventListener('resize', compute)
       ro.disconnect()
     }
-  }, [isOverviewSectionActive, isWorkspaceCollapsed, showFiltersPanel, sidebarFixed])
+  }, [isHeightManagedSectionActive, activePanel, isWorkspaceCollapsed, showFiltersPanel, showKpiCards, sidebarFixed])
 
   useLayoutEffect(() => {
     if (navDocked) {
-      setNavPanelHeightPx(null)
-      return
+      const raf = window.requestAnimationFrame(() => setNavPanelHeightPx(null))
+      return () => window.cancelAnimationFrame(raf)
     }
 
     const compute = () => {
@@ -522,23 +935,27 @@ export function WorkflowAutomationEnginePage() {
       ro.disconnect()
     }
   }, [
-    isOverviewSectionActive,
+    isHeightManagedSectionActive,
+    activePanel,
     isWorkspaceCollapsed,
     mainPanelViewportHeightPx,
     navDocked,
+    showKpiCards,
     showFiltersPanel,
     sidebarFixed,
   ])
 
   const filtered = useMemo(() => {
-    return WORKFLOWS.filter((item) => {
+    return workflows.filter((item) => {
       const matchesSearch =
         search.length === 0 ||
-        [item.name, item.id, item.owner, item.type, item.trigger].join(' ').toLowerCase().includes(search.toLowerCase())
+        [item.name, item.id, item.project, item.owner, item.type, item.trigger].join(' ').toLowerCase().includes(search.toLowerCase())
       return matchesSearch
     })
-  }, [search])
-  const overviewWorkflows = activePanel === 'overview' ? WORKFLOWS : filtered
+  }, [search, workflows])
+  // KPI cards and all catalog views use the complete backend response. Search is
+  // only a presentation filter and must never change the source metrics.
+  const overviewWorkflows = workflows
 
   const summary = useMemo(() => {
     const active = overviewWorkflows.filter((item) => item.status === 'Active').length
@@ -549,6 +966,405 @@ export function WorkflowAutomationEnginePage() {
     return { total: overviewWorkflows.length, active, paused, needsApproval, avgSuccess, executions }
   }, [overviewWorkflows])
 
+  const filteredAutomationRules = useMemo(() => {
+    const q = ruleSearch.trim().toLowerCase()
+    if (!q) return automationRules
+    return automationRules.filter((rule) =>
+      [rule.name, rule.trigger, rule.condition, rule.action].join(' ').toLowerCase().includes(q),
+    )
+  }, [automationRules, ruleSearch])
+
+  const automationRuleGroups = useMemo(() => {
+    const groups = new Map<string, AutomationRule[]>()
+    filteredAutomationRules.forEach((rule) => {
+      const group = rule.trigger === 'Webhook' ? 'Integration & Webhook' : /approval/i.test(`${rule.name} ${rule.condition}`) ? 'Approval & Governance' : /risk|sla|overdue|delay/i.test(`${rule.name} ${rule.condition}`) ? 'Risk & SLA' : 'Project Delivery'
+      groups.set(group, [...(groups.get(group) ?? []), rule])
+    })
+    return Array.from(groups.entries())
+  }, [filteredAutomationRules])
+
+  const toggleAutomationRule = useCallback((id: string) => {
+    const source = automationRules.find((rule) => rule.id === id)
+    if (!source) return
+    const enabled = !source.enabled
+    setAutomationRules((current) => current.map((r) => (r.id === id ? { ...r, enabled } : r)))
+    void apiUpdateAutomationRule(id, { enabled }).catch(() => {
+      setAutomationRules((current) => current.map((r) => (r.id === id ? { ...r, enabled: !enabled } : r)))
+      addToast({ variant: 'error', title: 'Rule update failed', description: 'The backend did not save this status change.' })
+    })
+  }, [addToast, automationRules])
+
+  const duplicateAutomationRule = useCallback((id: string) => {
+    const source = automationRules.find((rule) => rule.id === id)
+    if (!source) return
+    void apiCreateAutomationRule({
+      name: `${source.name} (Copy)`, trigger: source.trigger as AutomationRuleTrigger, trigger_event: source.triggerEvent,
+      workspace_id: source.workspaceId ?? (isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId),
+      owner_id: source.ownerId, owner_name: source.ownerName, owner_email: source.ownerEmail,
+      condition: { summary: source.condition }, action: { summary: source.action }, workflow_id: source.linkedWorkflowId || undefined, enabled: false,
+    }).then((created) => setAutomationRules((current) => [mapAutomationRule(created), ...current]))
+      .catch(() => addToast({ variant: 'error', title: 'Rule duplication failed', description: 'The backend did not create the copy.' }))
+  }, [addToast, automationRules, workspaceId])
+
+  const deleteAutomationRule = useCallback((id: string) => {
+    const previous = automationRules
+    setAutomationRules((current) => current.filter((r) => r.id !== id))
+    void deleteAutomationRuleApi(id).catch(() => {
+      setAutomationRules(previous)
+      addToast({ variant: 'error', title: 'Rule deletion failed', description: 'The backend did not delete this rule.' })
+    })
+  }, [addToast, automationRules])
+
+  const createAutomationRule = useCallback(() => {
+    void apiCreateAutomationRule({
+      name: 'Untitled operational rule', trigger: 'Event', trigger_event: 'approval.completed',
+      workspace_id: isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId,
+      condition: { summary: 'Any matching record' }, action: { summary: 'Run linked workflow' },
+      workflow_id: workflows[0]?.id, enabled: false,
+    }).then((created) => {
+      setAutomationRules((current) => [mapAutomationRule(created), ...current])
+      addToast({ variant: 'success', title: 'Rule created', description: 'Configure the new rule before enabling it.' })
+    }).catch(() => addToast({ variant: 'error', title: 'Rule creation failed', description: 'The backend did not create this rule.' }))
+  }, [addToast, workflows, workspaceId])
+
+  const openAutomationRuleEditor = useCallback((rule: AutomationRule) => {
+    setRuleEditor({ id: rule.id, name: rule.name, trigger: rule.trigger as AutomationRuleTrigger, triggerEvent: rule.triggerEvent, condition: rule.condition, action: rule.action, linkedWorkflowId: rule.linkedWorkflowId, ownerId: rule.ownerId ?? '' })
+    setRuleMenu(null)
+  }, [])
+
+  const saveAutomationRuleEditor = useCallback(() => {
+    if (!ruleEditor) return
+    const owner = workflowOwnerOptions.find((item) => item.id === ruleEditor.ownerId)
+    void apiUpdateAutomationRule(ruleEditor.id, {
+      name: ruleEditor.name.trim() || 'Untitled operational rule', trigger: ruleEditor.trigger, trigger_event: ruleEditor.triggerEvent,
+      condition: { summary: ruleEditor.condition.trim() || 'Any matching record' }, action: { summary: ruleEditor.action.trim() || 'Run linked workflow' },
+      workflow_id: ruleEditor.linkedWorkflowId || undefined, owner_id: owner?.id, owner_name: owner?.name, owner_email: owner?.email,
+    }).then((updated) => {
+      setAutomationRules((current) => current.map((rule) => rule.id === updated.id ? mapAutomationRule(updated) : rule))
+      setRuleEditor(null)
+      addToast({ variant: 'success', title: 'Rule saved' })
+    }).catch(() => addToast({ variant: 'error', title: 'Rule save failed', description: 'The backend did not save these changes.' }))
+  }, [addToast, ruleEditor, workflowOwnerOptions])
+
+  const catalogSnapshotRows = useMemo(
+    () => workflows.map((workflow) => ({
+      id: workflow.id,
+      name: workflow.name,
+      project: workflow.project,
+      category: workflow.type,
+      trigger: workflow.trigger,
+      status: workflow.status,
+      lastExecution: workflow.lastUpdated,
+      owner: workflow.owner,
+    })),
+    [workflows],
+  )
+
+  // --- Workflow Directory enterprise table state ---------------------------
+  const [workflowTableSort, setWorkflowTableSort] = useState<{ key: WorkflowTableColumnKey; dir: 'asc' | 'desc' } | null>(null)
+  const [workflowTableGroupBy, setWorkflowTableGroupBy] = useState<WorkflowTableGroupByKey | null>(null)
+  const [showWorkflowTableSelection, setShowWorkflowTableSelection] = useState(false)
+  const [workflowTableSelectedIds, setWorkflowTableSelectedIds] = useState<string[]>([])
+
+  const insertCopyLocally = useCallback((id: string) => {
+    setWorkflows((current) => {
+      const index = current.findIndex((item) => item.id === id)
+      if (index === -1) return current
+      const source = current[index]
+      const copy: WorkflowRecord = {
+        ...source,
+        id: `wf-copy-${Math.random().toString(36).slice(2, 8)}`,
+        name: `${source.name} (Copy)`,
+        status: 'Draft',
+        executions: 0,
+        lastUpdated: 'Just now',
+      }
+      const next = [...current]
+      next.splice(index + 1, 0, copy)
+      return next
+    })
+  }, [])
+
+  const duplicateWorkflow = useCallback(
+    (id: string) => {
+      duplicateWorkflowApi(id)
+        .then((created) => {
+          setWorkflows((current) => {
+            const index = current.findIndex((item) => item.id === id)
+            const next = [...current]
+            next.splice(index === -1 ? next.length : index + 1, 0, mapWorkflowDto(created, workflowOwnerOptionsRef.current, index + 1))
+            return next
+          })
+          addToast({ variant: 'success', title: 'Workflow duplicated', description: created.name })
+        })
+        .catch(() => {
+          // Offline fallback: duplicate locally so the prototype keeps working.
+          insertCopyLocally(id)
+          addToast({ variant: 'warning', title: 'Duplicated locally', description: 'Backend unavailable — change is not saved.' })
+        })
+    },
+    [addToast, insertCopyLocally],
+  )
+
+  const deleteWorkflow = useCallback(
+    (id: string) => {
+      // Optimistic removal from the UI.
+      setWorkflows((current) => current.filter((item) => item.id !== id))
+      setWorkflowTableSelectedIds((current) => current.filter((sid) => sid !== id))
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.removeItem(`tectona.workflow-builder.${id}`)
+        } catch {
+          // ignore — prototype persistence only
+        }
+      }
+      deleteWorkflowApi(id)
+        .then(() => addToast({ variant: 'success', title: 'Workflow deleted' }))
+        .catch(() => addToast({ variant: 'warning', title: 'Deleted locally', description: 'Backend unavailable — change is not saved.' }))
+    },
+    [addToast],
+  )
+
+  const createWorkflow = useCallback(() => {
+    apiCreateWorkflow({ name: 'Untitled Workflow' })
+      .then((created) => {
+        setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current, 0), ...current])
+        setBuilder({ open: true, workflowId: created.id })
+      })
+      .catch(() => {
+        // Offline fallback: open the builder in local "new" mode.
+        setBuilder({ open: true, workflowId: null })
+        addToast({ variant: 'warning', title: 'Offline mode', description: 'Backend unavailable — new workflow will be saved locally.' })
+      })
+  }, [addToast])
+  const [workflowPage, setWorkflowPage] = useState(1)
+  const [workflowPageSize, setWorkflowPageSize] = useState(10)
+  const [workflowFilterType, setWorkflowFilterType] = useState<Set<string>>(new Set())
+  const [workflowFilterOwner, setWorkflowFilterOwner] = useState<Set<string>>(new Set())
+  const [workflowFilterStatus, setWorkflowFilterStatus] = useState<Set<string>>(new Set())
+  const [workflowFilterTrigger, setWorkflowFilterTrigger] = useState<Set<string>>(new Set())
+
+  const toggleWorkflowFilterValue = useCallback(
+    (setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string) => {
+      setter((prev) => {
+        const next = new Set(prev)
+        if (next.has(value)) next.delete(value)
+        else next.add(value)
+        return next
+      })
+    },
+    [],
+  )
+
+  const buildFilterOptions = useCallback(
+    (accessor: (item: WorkflowRecord) => string) => {
+      const counts = new Map<string, number>()
+      filtered.forEach((item) => {
+        const value = accessor(item)
+        counts.set(value, (counts.get(value) ?? 0) + 1)
+      })
+      return Array.from(counts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([value, count]) => ({ value, count }))
+    },
+    [filtered],
+  )
+
+  const workflowTypeFilterOptions = useMemo(() => buildFilterOptions((item) => item.type), [buildFilterOptions])
+  const workflowOwnerFilterOptions = useMemo(() => buildFilterOptions((item) => item.owner), [buildFilterOptions])
+  const workflowStatusFilterOptions = useMemo(() => buildFilterOptions((item) => item.status), [buildFilterOptions])
+  const workflowTriggerFilterOptions = useMemo(() => buildFilterOptions((item) => item.trigger), [buildFilterOptions])
+
+  const columnFilteredWorkflows = useMemo(() => {
+    return filtered.filter((item) => {
+      if (workflowFilterType.size > 0 && !workflowFilterType.has(item.type)) return false
+      if (workflowFilterOwner.size > 0 && !workflowFilterOwner.has(item.owner)) return false
+      if (workflowFilterStatus.size > 0 && !workflowFilterStatus.has(item.status)) return false
+      if (workflowFilterTrigger.size > 0 && !workflowFilterTrigger.has(item.trigger)) return false
+      return true
+    })
+  }, [filtered, workflowFilterType, workflowFilterOwner, workflowFilterStatus, workflowFilterTrigger])
+
+  const toggleWorkflowTableSort = useCallback((key: WorkflowTableColumnKey) => {
+    setWorkflowTableSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }, [])
+
+  const sortedWorkflows = useMemo(() => {
+    if (!workflowTableSort) return columnFilteredWorkflows
+    const { key, dir } = workflowTableSort
+    const mul = dir === 'asc' ? 1 : -1
+    const valueByKey = (item: WorkflowRecord): string | number => {
+      switch (key) {
+        case 'name': return item.name
+        case 'type': return item.type
+        case 'owner': return item.owner
+        case 'trigger': return item.trigger
+        case 'status': return item.status
+        case 'successRate': return item.successRate
+        case 'executions': return item.executions
+        case 'lastUpdated': return item.lastUpdated
+      }
+    }
+    return [...columnFilteredWorkflows].sort((a, b) => {
+      const left = valueByKey(a)
+      const right = valueByKey(b)
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * mul
+      return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' }) * mul
+    })
+  }, [columnFilteredWorkflows, workflowTableSort])
+
+  const workflowFlatRows = useMemo(() => {
+    if (workflowTableGroupBy) {
+      const grouped = [...sortedWorkflows].sort((a, b) =>
+        workflowTableGroupLabel(a, workflowTableGroupBy).localeCompare(
+          workflowTableGroupLabel(b, workflowTableGroupBy),
+          undefined,
+          { sensitivity: 'base' },
+        ),
+      )
+      return grouped.map((item) => ({ item, groupLabel: workflowTableGroupLabel(item, workflowTableGroupBy) }))
+    }
+    return sortedWorkflows.map((item) => ({ item, groupLabel: null as string | null }))
+  }, [sortedWorkflows, workflowTableGroupBy])
+
+  const workflowTotalPages = Math.max(1, Math.ceil(workflowFlatRows.length / workflowPageSize))
+  const workflowPageSafe = Math.min(workflowPage, workflowTotalPages)
+  const workflowStart = workflowFlatRows.length === 0 ? 0 : (workflowPageSafe - 1) * workflowPageSize + 1
+  const workflowEnd = Math.min(workflowFlatRows.length, workflowPageSafe * workflowPageSize)
+  const pagedWorkflowRows = workflowFlatRows.slice(workflowStart === 0 ? 0 : workflowStart - 1, workflowEnd)
+
+  // Extract `tableRef` via rest-destructuring so the remaining `workflowTableColumns` object holds no
+  // ref value — otherwise the react-hooks/refs rule flags every `.member` access as a ref read during
+  // render. The ref is used only where refs are allowed (the `ref=` prop and event handlers).
+  const { tableRef: workflowTableRef, ...workflowTableColumns } = useEnterpriseSortableColumns<WorkflowTableColumnKey>({
+    initialOrder: WORKFLOW_TABLE_DEFAULT_COLUMN_ORDER,
+    pinnedFirstKey: WORKFLOW_TABLE_PINNED_FIRST_COLUMN,
+    hasSelectionColumn: showWorkflowTableSelection,
+    onColumnHidden: (key) => {
+      if (workflowTableGroupBy && (key as string) === workflowTableGroupBy) setWorkflowTableGroupBy(null)
+    },
+  })
+
+  const toggleWorkflowTableRowSelection = useCallback((id: string) => {
+    setWorkflowTableSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }, [])
+
+  const setShowWorkflowTableSelectionSafe = useCallback((checked: boolean) => {
+    setShowWorkflowTableSelection(checked)
+    if (!checked) setWorkflowTableSelectedIds([])
+  }, [])
+
+  const renderWorkflowTableCell = (item: WorkflowRecord, key: WorkflowTableColumnKey) => {
+    switch (key) {
+      case 'name':
+        return (
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-slate-900">{item.name}</div>
+            <div className="mt-0.5 truncate text-[10px] text-slate-500" title={item.project}>{item.project}</div>
+            <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{workflowCode(item)}</div>
+          </div>
+        )
+      case 'type':
+        return <span className="text-slate-600">{item.type}</span>
+      case 'owner': {
+        const tone = ownerTone(item.owner)
+        return (
+          <span className="inline-flex items-center gap-2">
+            <span className={cn('inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white', tone.avatar)}>
+              {ownerInitials(item.owner)}
+            </span>
+            <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1', tone.pill)}>{item.owner}</span>
+          </span>
+        )
+      }
+      case 'trigger': {
+        const TriggerIcon = TRIGGER_ICONS[item.trigger]
+        return (
+          <span className="inline-flex items-center gap-1.5 text-slate-600">
+            <TriggerIcon className="h-3.5 w-3.5 text-slate-400" /> {item.trigger}
+          </span>
+        )
+      }
+      case 'status':
+        return <Badge className={cn('rounded-full border', statusTone(item.status))}>{item.status}</Badge>
+      case 'successRate':
+        return (
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full" style={{ width: `${item.successRate}%`, background: successTone(item.successRate) }} />
+            </div>
+            <span className="w-8 tabular-nums font-semibold" style={{ color: successTone(item.successRate) }}>{item.successRate}%</span>
+          </div>
+        )
+      case 'executions':
+        return (
+          <div className="flex items-center gap-2">
+            <span className="tabular-nums text-slate-700">{item.executions}</span>
+            <div className="h-6 w-16">
+              <KpiSparkline data={workflowSpark(item)} color={statusAccentColor(item.status)} />
+            </div>
+          </div>
+        )
+      case 'lastUpdated':
+        return <span className="text-slate-500">{item.lastUpdated}</span>
+    }
+  }
+
+  const renderWorkflowFilterSlot = (key: WorkflowTableColumnKey) => {
+    switch (key) {
+      case 'type':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Type"
+            ariaLabel="Filter by type"
+            options={workflowTypeFilterOptions}
+            selected={workflowFilterType}
+            onToggleOption={(value) => toggleWorkflowFilterValue(setWorkflowFilterType, value)}
+            onShowAll={() => setWorkflowFilterType(new Set())}
+          />
+        )
+      case 'owner':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Owner"
+            ariaLabel="Filter by owner"
+            options={workflowOwnerFilterOptions}
+            selected={workflowFilterOwner}
+            onToggleOption={(value) => toggleWorkflowFilterValue(setWorkflowFilterOwner, value)}
+            onShowAll={() => setWorkflowFilterOwner(new Set())}
+          />
+        )
+      case 'status':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Status"
+            ariaLabel="Filter by status"
+            options={workflowStatusFilterOptions}
+            selected={workflowFilterStatus}
+            onToggleOption={(value) => toggleWorkflowFilterValue(setWorkflowFilterStatus, value)}
+            onShowAll={() => setWorkflowFilterStatus(new Set())}
+          />
+        )
+      case 'trigger':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Trigger"
+            ariaLabel="Filter by trigger"
+            options={workflowTriggerFilterOptions}
+            selected={workflowFilterTrigger}
+            onToggleOption={(value) => toggleWorkflowFilterValue(setWorkflowFilterTrigger, value)}
+            onShowAll={() => setWorkflowFilterTrigger(new Set())}
+          />
+        )
+      default:
+        return undefined
+    }
+  }
+
   return (
     <div className="min-h-0 space-y-6 pb-0">
       <div className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant))}>
@@ -558,30 +1374,44 @@ export function WorkflowAutomationEnginePage() {
           title="Workflow & Automation Engine"
           description="Design workflows, approvals, triggers, and automation with a UI pattern consistent with Task & Work Management"
           right={
-            <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/75 p-1.5 shadow-sm">
-              <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition hover:bg-white hover:text-slate-900" title="Export workflow snapshot">
-                <Download className="h-5 w-5" />
+            <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm flex-nowrap shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowKpiCards((v) => !v)}
+                className={cn(
+                  'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                  showKpiCards && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                )}
+                aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+              >
+                <LayoutGrid className="w-5 h-5" />
               </button>
-              <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition hover:bg-white hover:text-slate-900" title="Automation settings">
-                <Settings2 className="h-5 w-5" />
+              <button
+                type="button"
+                onClick={() => setShowEnterpriseNav((v) => !v)}
+                className={cn(
+                  'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                  showEnterpriseNav && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                )}
+                aria-label={showEnterpriseNav ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+                title={showEnterpriseNav ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+              >
+                <PanelLeft className="w-5 h-5" />
               </button>
-              {activePanel !== 'overview' ? (
-                <button
-                  type="button"
-                  onClick={() => setShowFiltersPanel((current) => !current)}
-                  className={cn(
-                    'flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition hover:bg-white hover:text-slate-900',
-                    showFiltersPanel && 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                  )}
-                  title={showFiltersPanel ? 'Hide filters panel' : 'Show filters panel'}
-                >
-                  <Target className="h-5 w-5" />
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm"
+                aria-label="Export workflow snapshot"
+                title="Export workflow snapshot"
+              >
+                <Download className="w-5 h-5" />
+              </button>
             </div>
           }
         />
 
+        {showKpiCards ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
           {[
             { id: 'total', label: 'Total Workflows', value: summary.total, icon: Workflow, sparkColor: '#0ea5e9' },
@@ -610,13 +1440,17 @@ export function WorkflowAutomationEnginePage() {
             </button>
           ))}
         </div>
+        ) : null}
 
       <div
         className={cn(
-          workspaceOuterGridClass(sidebarFixed, isWorkspaceCollapsed, enterpriseNavLayoutVariant),
-          sidebarFixed ? 'items-stretch' : undefined
+          showEnterpriseNav
+            ? workspaceOuterGridClass(sidebarFixed, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
+            : 'relative w-full min-w-0',
+          showEnterpriseNav && sidebarFixed ? 'items-stretch' : undefined
         )}
       >
+        {showEnterpriseNav ? (
         <aside className={cn(workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant), sidebarFixed && 'self-stretch')}>
           <div
             ref={navPanelRef}
@@ -664,7 +1498,7 @@ export function WorkflowAutomationEnginePage() {
 
             {isWorkspaceCollapsed ? (
               <div className={cn(workspaceNavMenuScrollClass(), 'pt-0')}>
-                <EnterpriseNavIconRail items={WORKFLOW_NAV_RAIL_ITEMS} activeId={activePanel} onSelect={setActivePanel} />
+                <EnterpriseNavIconRail items={WORKFLOW_NAV_RAIL_ITEMS} activeId={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />
               </div>
             ) : (
               <>
@@ -766,19 +1600,35 @@ export function WorkflowAutomationEnginePage() {
             )}
           </div>
         </aside>
+        ) : null}
 
-        <div className={workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)}>
+        <div
+          className={workspaceMainColumnClass(false, isWorkspaceCollapsed, enterpriseNavLayoutVariant)}
+        >
+          {/* Outer wrapper already applies workspaceDockedContentInsetClass — pass docked=false
+              to avoid double left padding that narrows the panel when Fixed Sidebar is off. */}
           {showFiltersPanel && activePanel !== 'overview' ? (
-          <Card className="glass-card rounded-2xl p-4">
-            <div className="relative">
+          <Card ref={filterCardRef} className="liquid-glass-enterprise-panel rounded-2xl p-4 space-y-3">
+            <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                className="h-11 rounded-2xl border-slate-200 bg-white pl-9 text-sm"
-                placeholder="Search workflow name, ID, owner, type, trigger"
+                value={activePanel === 'automation' ? ruleSearch : search}
+                onChange={(event) => (activePanel === 'automation' ? setRuleSearch(event.target.value) : setSearch(event.target.value))}
+                className="h-11 w-full rounded-2xl border-slate-200 bg-white pl-9 text-sm"
+                placeholder={activePanel === 'automation' ? 'Search rule name, trigger, condition, action' : 'Search workflow name, ID, owner, type, trigger'}
               />
             </div>
+            {activePanel === 'catalog' ? (
+              <button type="button" onClick={createWorkflow} className={enterpriseCyanGradientActionButtonClass()}>
+                <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                New Workflow
+              </button>
+            ) : activePanel === 'automation' ? (
+              <button type="button" onClick={createAutomationRule} className={enterpriseCyanGradientActionButtonClass()}>
+                <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                New Rule
+              </button>
+            ) : null}
           </Card>
           ) : null}
 
@@ -805,15 +1655,18 @@ export function WorkflowAutomationEnginePage() {
                     <table className="w-full text-[11px]">
                       <thead className="text-slate-500">
                         <tr className="text-left">
-                          {['Workflow Name', 'Category', 'Owner', 'Trigger', 'Status', 'Last Execution'].map((header) => (
+                          {['Workflow / Project', 'Category', 'Owner', 'Trigger', 'Status', 'Last Execution'].map((header) => (
                             <th key={header} className="px-1 pb-2 font-semibold">{header}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {CATALOG_SNAPSHOT.map((item) => (
+                        {catalogSnapshotRows.map((item) => (
                           <tr key={item.name} className="border-t border-slate-100">
-                            <td className="px-1 py-2 font-medium text-slate-900">{item.name}</td>
+                            <td className="px-1 py-2 font-medium text-slate-900">
+                              <div>{item.name}</div>
+                              <div className="mt-0.5 text-[10px] font-normal text-slate-500">{item.project}</div>
+                            </td>
                             <td className="px-1 py-2 text-slate-600">{item.category}</td>
                             <td className="px-1 py-2 text-slate-600">{item.owner}</td>
                             <td className="px-1 py-2 text-slate-600">{item.trigger}</td>
@@ -1122,71 +1975,668 @@ export function WorkflowAutomationEnginePage() {
           ) : null}
 
           {activePanel === 'catalog' ? (
-            <Panel title="Workflow & Automation Directory Panel" description="List of workflows with status, trigger, success rate, and quick operational actions.">
-              <div className="overflow-hidden rounded-2xl border border-slate-200">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-50/95 text-slate-600">
-                    <tr>
-                      {['Workflow', 'Type', 'Owner', 'Trigger', 'Status', 'Success', 'Executions', 'Updated'].map((header) => (
-                        <th key={header} className="px-3 py-3 text-left font-semibold">{header}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((item) => (
-                      <tr key={item.id} className="border-t border-slate-100 bg-white/90">
-                        <td className="px-3 py-3 font-medium text-slate-900">{item.name}</td>
-                        <td className="px-3 py-3 text-slate-700">{item.type}</td>
-                        <td className="px-3 py-3 text-slate-700">{item.owner}</td>
-                        <td className="px-3 py-3 text-slate-700">{item.trigger}</td>
-                        <td className="px-3 py-3"><Badge className={cn('rounded-full border', statusTone(item.status))}>{item.status}</Badge></td>
-                        <td className="px-3 py-3 text-slate-700">{item.successRate}%</td>
-                        <td className="px-3 py-3 text-slate-700">{item.executions}</td>
-                        <td className="px-3 py-3 text-slate-700">{item.lastUpdated}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-          ) : null}
+            <Panel
+              title="Workflow & Automation Directory Panel"
+              description="List of workflows with status, trigger, success rate, and quick operational actions."
+              headerIcon={<Workflow className="h-5 w-5" />}
+              panelRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              bodyClassName="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              right={
+                    <div className="flex flex-wrap items-center justify-end gap-3 py-1 text-xs text-muted-foreground">
+                      <Badge variant="outline" className={cn('mr-1 text-[10px] font-semibold', workflowCatalogState === 'backend' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : workflowCatalogState === 'loading' ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-rose-200 bg-rose-50 text-rose-700')}>
+                        {workflowCatalogState === 'backend' ? 'Backend data' : workflowCatalogState === 'loading' ? 'Loading backend' : 'Backend unavailable'}
+                      </Badge>
+                      <EnterpriseGroupByControl
+                        options={WORKFLOW_TABLE_GROUP_BY_OPTIONS}
+                        value={workflowTableGroupBy}
+                        onChange={(key) => setWorkflowTableGroupBy(key)}
+                      />
+                      <EnterpriseSelectionToggle checked={showWorkflowTableSelection} onChange={setShowWorkflowTableSelectionSafe} />
+                      <EnterpriseColumnVisibilityControl
+                        columns={WORKFLOW_TABLE_COLUMN_VISIBILITY_OPTIONS}
+                        hidden={workflowTableColumns.hiddenColumns}
+                        visibleCount={workflowTableColumns.visibleColumnOrder.length}
+                        onToggle={workflowTableColumns.toggleColumnVisibility}
+                        onShowAll={workflowTableColumns.showAllColumns}
+                        canEnable={workflowTableColumns.canShowColumn}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Showing <span className="font-semibold text-foreground">{workflowStart}</span>-<span className="font-semibold text-foreground">{workflowEnd}</span> of <span className="font-semibold text-foreground">{workflowFlatRows.length}</span>
+                      </p>
+                      <span className="text-xs text-muted-foreground">Rows:</span>
+                      <Select
+                        value={String(workflowPageSize)}
+                        onChange={(e) => {
+                          setWorkflowPageSize(parseInt(e.target.value, 10))
+                          setWorkflowPage(1)
+                        }}
+                        className="h-10 w-[84px] text-sm"
+                      >
+                        <SelectItem value="5">5</SelectItem>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="15">15</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                      </Select>
+                      <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                        <button
+                          type="button"
+                          className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                          onClick={() => setWorkflowPage((prev) => Math.max(1, prev - 1))}
+                          disabled={workflowPageSafe <= 1}
+                        >
+                          Previous
+                        </button>
+                        <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">{workflowPageSafe} / {workflowTotalPages}</div>
+                        <button
+                          type="button"
+                          className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                          onClick={() => setWorkflowPage((prev) => Math.min(workflowTotalPages, prev + 1))}
+                          disabled={workflowPageSafe >= workflowTotalPages}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+              }
+            >
+                  {workflowFlatRows.length > 0 ? (
+                    <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl">
+                      <DndContext sensors={workflowTableColumns.dndSensors} onDragEnd={workflowTableColumns.handleColumnDragEnd}>
+                        <table
+                          ref={workflowTableRef}
+                          className={cn(
+                            'border-collapse text-xs select-none',
+                            workflowTableColumns.hasAnyCustomWidth || workflowTableColumns.resizingKey ? 'table-fixed w-full' : 'w-full',
+                          )}
+                        >
+                          <colgroup>
+                            {showWorkflowTableSelection ? <col className="w-10" /> : null}
+                            {workflowTableColumns.visibleColumnOrder.map((key) => (
+                              <col key={key} style={workflowTableColumns.columnWidthStyle(key)} />
+                            ))}
+                            <col className="w-12" />
+                          </colgroup>
+                          <thead className="sticky top-0 z-10">
+                            <tr className="text-left text-muted-foreground">
+                              {showWorkflowTableSelection ? (
+                                <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                  <input
+                                    type="checkbox"
+                                    id="workflow-table-select-all"
+                                    name="workflow-table-select-all"
+                                    checked={
+                                      workflowTableSelectedIds.length > 0
+                                      && workflowTableSelectedIds.length === pagedWorkflowRows.length
+                                    }
+                                    onChange={() =>
+                                      setWorkflowTableSelectedIds(
+                                        workflowTableSelectedIds.length === pagedWorkflowRows.length
+                                          ? []
+                                          : pagedWorkflowRows.map(({ item }) => item.id),
+                                      )
+                                    }
+                                    aria-label="Select all rows on this page"
+                                  />
+                                </th>
+                              ) : null}
+                              <SortableContext items={workflowTableColumns.visibleColumnOrder} strategy={rectSortingStrategy}>
+                                {workflowTableColumns.visibleColumnOrder.map((key) => (
+                                  <EnterpriseSortableHeaderCell
+                                    key={key}
+                                    columnKey={key}
+                                    label={workflowTableColumnLabel(key)}
+                                    icon={workflowTableColumnHeaderIcon(key)}
+                                    isPinned={workflowTableColumns.isPinnedColumn(key)}
+                                    isFirstColumn={workflowTableColumns.isFirstColumn(key)}
+                                    isLastColumn={workflowTableColumns.isLastColumn(key)}
+                                    widthStyle={workflowTableColumns.columnWidthStyle(key)}
+                                    sortDir={workflowTableSort?.key === key ? workflowTableSort.dir : null}
+                                    onToggleSort={toggleWorkflowTableSort}
+                                    filterSlot={renderWorkflowFilterSlot(key)}
+                                    frozenColumnClass={workflowTableColumns.frozenColumnHeaderClass}
+                                    firstColumnTintClass={workflowTableColumns.firstColumnTintHeaderClass}
+                                    isResizing={workflowTableColumns.resizingKey === key}
+                                    onBeginResize={workflowTableColumns.beginColumnResize}
+                                    onContextMenu={(event, columnKey) =>
+                                      workflowTableColumns.setHeaderContextMenu({ x: event.clientX, y: event.clientY, columnKey })
+                                    }
+                                  />
+                                ))}
+                              </SortableContext>
+                              <th className="w-12 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                <span className="sr-only">Actions</span>
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedWorkflowRows.map(({ item, groupLabel }, rowIndex) => {
+                              const previousGroupLabel = pagedWorkflowRows[rowIndex - 1]?.groupLabel ?? null
+                              const showGroupHeader = workflowTableGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                              const groupTint = workflowTableGroupBy && groupLabel ? getEnterpriseGroupTint(workflowTableGroupBy, groupLabel) : null
+                              const isSelected = showWorkflowTableSelection && workflowTableSelectedIds.includes(item.id)
+                              const resolveBodyCellBackground = (isFirstColumn: boolean) => {
+                                if (isSelected) return ''
+                                const stickyFirstClass =
+                                  workflowTableColumns.freezeFirstColumn && isFirstColumn
+                                    ? 'sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+                                    : ''
+                                if (groupTint) {
+                                  return cn(isFirstColumn ? groupTint.first : groupTint.row, stickyFirstClass)
+                                }
+                                if (workflowTableColumns.freezeFirstColumn && isFirstColumn) return workflowTableColumns.frozenColumnBodyClass
+                                if (isFirstColumn) return workflowTableColumns.firstColumnTintBodyClass
+                                return ''
+                              }
+                              const cellClass = cn(
+                                'border-b border-slate-200/60 px-3 py-3.5 align-middle transition-colors dark:border-slate-700/20',
+                                isSelected
+                                  ? 'bg-primary/10'
+                                  : groupTint
+                                    ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
+                                    : 'group-hover:bg-sky-50/40',
+                              )
+                              return (
+                                <Fragment key={item.id}>
+                                  {showGroupHeader ? (
+                                    <tr>
+                                      <td
+                                        colSpan={workflowTableColumns.visibleColumnOrder.length + (showWorkflowTableSelection ? 1 : 0) + 1}
+                                        className={cn(
+                                          'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                          groupTint?.first,
+                                        )}
+                                      >
+                                        {WORKFLOW_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === workflowTableGroupBy)?.label}: {groupLabel}
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                  <tr
+                                    onClick={() => setBuilder({ open: true, workflowId: item.id })}
+                                    className="group cursor-pointer transition-colors"
+                                  >
+                                    {showWorkflowTableSelection ? (
+                                      <td
+                                        className={cn(cellClass, 'w-10', resolveBodyCellBackground(false))}
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          id={`workflow-table-select-${item.id}`}
+                                          name={`workflow-table-select-${item.id}`}
+                                          checked={workflowTableSelectedIds.includes(item.id)}
+                                          onChange={() => toggleWorkflowTableRowSelection(item.id)}
+                                          aria-label={`Select ${item.name}`}
+                                        />
+                                      </td>
+                                    ) : null}
+                                    {workflowTableColumns.visibleColumnOrder.map((key) => {
+                                      const isFirstCol = workflowTableColumns.visibleColumnOrder[0] === key
+                                      return (
+                                        <td
+                                          key={key}
+                                          className={cn(cellClass, resolveBodyCellBackground(isFirstCol))}
+                                          style={{
+                                            ...(workflowTableColumns.columnWidthStyle(key) ?? {}),
+                                            ...(key === 'name' ? { boxShadow: `inset 3px 0 0 ${statusAccentColor(item.status)}` } : {}),
+                                          }}
+                                        >
+                                          {renderWorkflowTableCell(item, key)}
+                                        </td>
+                                      )
+                                    })}
+                                    <td
+                                      className={cn(cellClass, 'w-12 text-right')}
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 data-[open=true]:opacity-100"
+                                        data-open={rowMenu?.id === item.id}
+                                        aria-label={`Actions for ${item.name}`}
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          setRowMenu(
+                                            rowMenu?.id === item.id
+                                              ? null
+                                              : { id: item.id, x: event.clientX, y: event.clientY },
+                                          )
+                                        }}
+                                      >
+                                        <MoreVertical className="h-4 w-4" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                </Fragment>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </DndContext>
 
-          {activePanel === 'builder' ? (
-            <Panel title="Workflow Builder Panel" description="Visual flow design and node sequencing for automation engine execution.">
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-                {['Start Trigger', 'Approval Gate', 'Condition Rule', 'Action Dispatch', 'End State'].map((node, index) => (
-                  <div key={node} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Node {index + 1}</div>
-                    <div className="mt-2 text-sm font-semibold text-slate-900">{node}</div>
-                    <div className="mt-1 text-xs text-slate-600">Workflow stage configuration for business process orchestration.</div>
-                  </div>
-                ))}
-              </div>
+                      <ContextMenu
+                        open={workflowTableColumns.headerContextMenu !== null}
+                        x={workflowTableColumns.headerContextMenu?.x ?? 0}
+                        y={workflowTableColumns.headerContextMenu?.y ?? 0}
+                        onClose={() => workflowTableColumns.setHeaderContextMenu(null)}
+                      >
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = workflowTableColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            workflowTableColumns.autoResizeColumn(key)
+                            workflowTableColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <UnfoldHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Auto Resize Column
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = workflowTableColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            workflowTableColumns.setColumnWidthDialog({ open: true, columnKey: key, valuePx: '' })
+                            workflowTableColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <Ruler className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Column Width...
+                        </ContextMenuItem>
+                        {workflowTableColumns.hasAnyCustomWidth ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                workflowTableColumns.resetAllColumnWidths()
+                                workflowTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <RotateCcw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Reset Column Width
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                        {workflowTableColumns.headerContextMenu?.columnKey
+                        && workflowTableColumns.isSecondColumn(workflowTableColumns.headerContextMenu.columnKey)
+                        && !workflowTableColumns.isLastColumn(workflowTableColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                const key = workflowTableColumns.headerContextMenu?.columnKey
+                                if (!key) return
+                                workflowTableColumns.moveColumnRight(key)
+                                workflowTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Move Column to Right
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onSelect={() => {
+                                const key = workflowTableColumns.headerContextMenu?.columnKey
+                                if (!key) return
+                                workflowTableColumns.moveColumnToLast(key)
+                                workflowTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Move Column to Last Position
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                        {workflowTableColumns.headerContextMenu?.columnKey
+                        && workflowTableColumns.isThirdColumnOrLater(workflowTableColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            {(() => {
+                              const key = workflowTableColumns.headerContextMenu.columnKey
+                              const columnIndex = workflowTableColumns.getColumnIndex(key)
+                              const canMoveEarlier = columnIndex > 1
+                              const canMoveLater = columnIndex >= 0 && columnIndex < workflowTableColumns.columnOrder.length - 1
+                              return (
+                                <>
+                                  {canMoveEarlier ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        workflowTableColumns.moveColumnToFirst(key)
+                                        workflowTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ArrowLeftToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to First Position
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveEarlier ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        workflowTableColumns.moveColumnLeft(key)
+                                        workflowTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Left
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveLater ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        workflowTableColumns.moveColumnRight(key)
+                                        workflowTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Right
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveLater ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        workflowTableColumns.moveColumnToLast(key)
+                                        workflowTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Last Position
+                                    </ContextMenuItem>
+                                  ) : null}
+                                </>
+                              )
+                            })()}
+                          </>
+                        ) : null}
+                        {workflowTableColumns.headerContextMenu?.columnKey
+                        && workflowTableColumns.isFirstColumn(workflowTableColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                workflowTableColumns.setFreezeFirstColumn((v) => !v)
+                                workflowTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <Pin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Freeze Column
+                              <span className="ml-auto text-xs text-muted-foreground">
+                                {workflowTableColumns.freezeFirstColumn ? 'On' : 'Off'}
+                              </span>
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                      </ContextMenu>
+
+                      <ContextMenu
+                        open={rowMenu !== null}
+                        x={rowMenu?.x ?? 0}
+                        y={rowMenu?.y ?? 0}
+                        onClose={() => setRowMenu(null)}
+                      >
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (rowMenu) setBuilder({ open: true, workflowId: rowMenu.id })
+                            setRowMenu(null)
+                          }}
+                        >
+                          <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Open in Builder
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (rowMenu) duplicateWorkflow(rowMenu.id)
+                            setRowMenu(null)
+                          }}
+                        >
+                          <Copy className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Duplicate
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (rowMenu) deleteWorkflow(rowMenu.id)
+                            setRowMenu(null)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+                          <span className="text-rose-600">Delete</span>
+                        </ContextMenuItem>
+                      </ContextMenu>
+
+                      <EnterpriseColumnWidthModal
+                        open={workflowTableColumns.columnWidthDialog?.open ?? false}
+                        onClose={() => workflowTableColumns.setColumnWidthDialog(null)}
+                        columnLabel={
+                          workflowTableColumns.columnWidthDialog
+                            ? workflowTableColumnLabel(workflowTableColumns.columnWidthDialog.columnKey)
+                            : '—'
+                        }
+                        valuePx={workflowTableColumns.columnWidthDialog?.valuePx ?? ''}
+                        onValuePxChange={(value) =>
+                          workflowTableColumns.setColumnWidthDialog((prev) => (prev ? { ...prev, valuePx: value } : prev))
+                        }
+                        onApply={(widthPx) => {
+                          if (!workflowTableColumns.columnWidthDialog) return
+                          const key = workflowTableColumns.columnWidthDialog.columnKey
+                          workflowTableColumns.setColumnWidthsWithSnapshot((prev) => {
+                            if (widthPx == null) {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            }
+                            return { ...prev, [key]: widthPx }
+                          }, workflowTableRef.current)
+                          workflowTableColumns.setColumnWidthDialog(null)
+                        }}
+                        dialogTitleId="workflow-table-column-width-dialog-title"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center">
+                      <Workflow className="mb-3 h-8 w-8 text-slate-300" strokeWidth={1.75} />
+                      <p className="text-sm font-medium text-slate-500">No workflows match the current filters</p>
+                      <p className="mt-1 text-xs text-slate-400">{workflowCatalogState === 'error' ? 'Workflow service is unavailable. No local seed data is shown.' : 'Adjust the search or column filters to see workflows.'}</p>
+                    </div>
+                  )}
             </Panel>
           ) : null}
 
           {activePanel === 'automation' ? (
-            <Panel title="Rule-Based Automation Panel" description="Trigger-condition-action control and rule status for workflow runtime.">
-              <div className="space-y-3">
-                {[
-                  'Overrun alert with owner reassignment',
-                  'Approval completion task fan-out',
-                  'Webhook incident fallback',
-                ].map((rule) => (
-                  <div key={rule} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-semibold text-slate-900">{rule}</div>
-                      <Badge className="rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700">Enabled</Badge>
-                    </div>
-                    <div className="mt-1 text-xs text-slate-600">Trigger - Condition - Action flow with observability and failover policy.</div>
-                  </div>
-                ))}
+            <Panel
+              title="Automation Control Room"
+              description="Visual map of operational shortcuts that connect project events to saved workflows."
+              headerIcon={<Bot className="h-5 w-5" />}
+              panelRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              bodyClassName="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              right={<Badge variant="outline" className={cn('text-[10px] font-semibold', automationRulesState === 'backend' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : automationRulesState === 'loading' ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-rose-200 bg-rose-50 text-rose-700')}>{automationRulesState === 'backend' ? 'Backend data' : automationRulesState === 'loading' ? 'Loading backend' : 'Backend unavailable'}</Badge>}
+            >
+              <div className="space-y-4">
+                {ruleEditor ? (
+                  <Card className="border-sky-200 bg-sky-50/40 rounded-2xl">
+                    <CardContent className="space-y-4 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">Configure operational rule</p>
+                          <p className="text-xs text-slate-500">Define a small When → If → Then shortcut and link it to a saved workflow.</p>
+                        </div>
+                        <button type="button" onClick={() => setRuleEditor(null)} className="text-xs font-medium text-slate-500 hover:text-slate-900">Cancel</button>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <label className="space-y-1.5 text-xs font-medium text-slate-600">Rule name<Input value={ruleEditor.name} onChange={(event) => setRuleEditor((current) => current ? { ...current, name: event.target.value } : current)} /></label>
+                        <label className="space-y-1.5 text-xs font-medium text-slate-600">Owner<Select value={ruleEditor.ownerId} onChange={(event) => setRuleEditor((current) => current ? { ...current, ownerId: event.target.value } : current)}><SelectItem value="">Unassigned</SelectItem>{workflowOwnerOptions.map((owner) => <SelectItem key={owner.id} value={owner.id}>{owner.name}</SelectItem>)}</Select></label>
+                        <label className="space-y-1.5 text-xs font-medium text-slate-600">Trigger type<Select value={ruleEditor.trigger} onChange={(event) => setRuleEditor((current) => current ? { ...current, trigger: event.target.value as AutomationRuleTrigger } : current)}><SelectItem value="Event">Event</SelectItem><SelectItem value="Schedule">Schedule</SelectItem><SelectItem value="Webhook">Webhook</SelectItem><SelectItem value="Manual">Manual</SelectItem></Select></label>
+                        <label className="space-y-1.5 text-xs font-medium text-slate-600">When / event key<Input value={ruleEditor.triggerEvent} onChange={(event) => setRuleEditor((current) => current ? { ...current, triggerEvent: event.target.value } : current)} placeholder="approval.completed" /></label>
+                        <label className="space-y-1.5 text-xs font-medium text-slate-600">If / condition<Input value={ruleEditor.condition} onChange={(event) => setRuleEditor((current) => current ? { ...current, condition: event.target.value } : current)} placeholder="Approval status = Approved" /></label>
+                        <label className="space-y-1.5 text-xs font-medium text-slate-600">Then / action<Input value={ruleEditor.action} onChange={(event) => setRuleEditor((current) => current ? { ...current, action: event.target.value } : current)} placeholder="Create follow-up tasks" /></label>
+                        <label className="space-y-1.5 text-xs font-medium text-slate-600 md:col-span-2 xl:col-span-3">Linked workflow<Select value={ruleEditor.linkedWorkflowId} onChange={(event) => setRuleEditor((current) => current ? { ...current, linkedWorkflowId: event.target.value } : current)}><SelectItem value="">No linked workflow</SelectItem>{workflows.map((workflow) => <SelectItem key={workflow.id} value={workflow.id}>{workflow.name}</SelectItem>)}</Select></label>
+                      </div>
+                      <div className="flex justify-end"><Button type="button" size="sm" onClick={saveAutomationRuleEditor}><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Save rule</Button></div>
+                    </CardContent>
+                  </Card>
+                ) : null}
+                <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl">
+                  <table className="w-full border-collapse text-xs">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="text-left text-muted-foreground">
+                        {[
+                          { label: 'Rule', icon: Zap },
+                          { label: 'Condition', icon: Filter },
+                          { label: 'Action', icon: Workflow },
+                          { label: 'Runs', icon: Activity },
+                          { label: 'Last Triggered', icon: Clock3 },
+                          { label: 'Status', icon: ShieldCheck },
+                        ].map(({ label, icon: HeaderIcon }) => (
+                          <th
+                            key={label}
+                            className="select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90"
+                          >
+                            <span className="inline-flex items-center gap-1.5">
+                              <HeaderIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" aria-hidden />
+                              {label}
+                            </span>
+                          </th>
+                        ))}
+                        <th className="w-12 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {automationRuleGroups.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="border-t border-slate-100 px-4 py-10 text-center text-sm text-slate-500">
+                            No operational rules match your search.
+                          </td>
+                        </tr>
+                      ) : (
+                        automationRuleGroups.map(([group, rules]) => (
+                          <Fragment key={group}>
+                            <tr>
+                              <td colSpan={7} className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                                {group} · {rules.length}
+                              </td>
+                            </tr>
+                            {rules.map((rule) => {
+                              const linkedWorkflow = workflows.find((workflow) => workflow.id === rule.linkedWorkflowId)
+                              const TriggerIcon = TRIGGER_ICONS[rule.trigger]
+                              const cellClass = cn(
+                                'border-b border-slate-200/60 px-3 py-3.5 align-middle transition-colors dark:border-slate-700/20 group-hover:bg-sky-50/40',
+                                !rule.enabled && 'opacity-60',
+                              )
+                              return (
+                                <tr key={rule.id} className="group transition-colors">
+                                  <td className={cellClass} style={{ boxShadow: `inset 3px 0 0 ${rule.enabled ? '#10b981' : '#94a3b8'}` }}>
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2 truncate text-sm font-semibold text-slate-900">
+                                        <TriggerIcon className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
+                                        <span className="truncate">{rule.name}</span>
+                                      </div>
+                                      <div className="mt-0.5 truncate pl-5 font-mono text-[10px] uppercase tracking-wide text-slate-400">
+                                        {rule.triggerEvent || rule.trigger}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className={cellClass}>
+                                    <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                      {rule.condition}
+                                    </span>
+                                  </td>
+                                  <td className={cellClass}>
+                                    <button
+                                      type="button"
+                                      onClick={() => linkedWorkflow && setBuilder({ open: true, workflowId: linkedWorkflow.id })}
+                                      className="text-left"
+                                    >
+                                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                        {rule.action}
+                                      </span>
+                                      <div className="mt-1 truncate text-[10px] text-slate-500 transition hover:text-sky-600">
+                                        {linkedWorkflow?.name ?? 'No workflow linked'}
+                                      </div>
+                                    </button>
+                                  </td>
+                                  <td className={cn(cellClass, 'tabular-nums text-slate-700')}>{rule.triggerCount.toLocaleString()}</td>
+                                  <td className={cn(cellClass, 'text-slate-500')}>{rule.lastTriggered}</td>
+                                  <td className={cellClass}>
+                                    <div className="flex items-center gap-2">
+                                      <Switch
+                                        checked={rule.enabled}
+                                        onCheckedChange={() => toggleAutomationRule(rule.id)}
+                                        aria-label={rule.enabled ? 'Disable rule' : 'Enable rule'}
+                                      />
+                                      <Badge
+                                        className={cn(
+                                          'rounded-full border',
+                                          rule.enabled
+                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                            : 'border-slate-200 bg-slate-100 text-slate-500',
+                                        )}
+                                      >
+                                        {rule.enabled ? 'Enabled' : 'Disabled'}
+                                      </Badge>
+                                    </div>
+                                  </td>
+                                  <td className={cn(cellClass, 'w-12 text-right')}>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 data-[open=true]:opacity-100"
+                                      data-open={ruleMenu?.id === rule.id}
+                                      aria-label={`Actions for ${rule.name}`}
+                                      onClick={(event) =>
+                                        setRuleMenu(ruleMenu?.id === rule.id ? null : { id: rule.id, x: event.clientX, y: event.clientY })
+                                      }
+                                    >
+                                      <MoreVertical className="h-4 w-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </Fragment>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
+
+              <ContextMenu open={ruleMenu !== null} x={ruleMenu?.x ?? 0} y={ruleMenu?.y ?? 0} onClose={() => setRuleMenu(null)}>
+                <ContextMenuItem onSelect={() => { const rule = ruleMenu ? automationRules.find((item) => item.id === ruleMenu.id) : null; if (rule) openAutomationRuleEditor(rule) }}>
+                  <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /> Edit rule
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (ruleMenu) duplicateAutomationRule(ruleMenu.id)
+                    setRuleMenu(null)
+                  }}
+                >
+                  <Copy className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /> Duplicate
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => {
+                    if (ruleMenu) deleteAutomationRule(ruleMenu.id)
+                    setRuleMenu(null)
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 shrink-0 text-rose-500" aria-hidden /> <span className="text-rose-600">Delete</span>
+                </ContextMenuItem>
+              </ContextMenu>
             </Panel>
           ) : null}
 
           {activePanel === 'monitoring' ? (
-            <Panel title="Automation Monitoring & Execution Log Panel" description="Execution monitoring, runtime incidents, and automation health across workflows.">
+            <Panel
+              title="Automation Monitoring & Execution Log Panel"
+              description="Execution monitoring, runtime incidents, and automation health across workflows."
+              headerIcon={<Activity className="h-5 w-5" />}
+              panelRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              bodyClassName="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            >
               <Card className="border-emerald-200 bg-emerald-50/80 rounded-2xl">
                 <CardContent className="flex items-center gap-2 py-3 text-xs text-emerald-800">
                   <CheckCircle2 className="h-4 w-4" />
@@ -1198,6 +2648,18 @@ export function WorkflowAutomationEnginePage() {
         </div>
       </div>
       </div>
+
+      <WorkflowBuilderCanvas
+        open={builder.open}
+        workflowId={builder.workflowId}
+        workflowName={builder.workflowId ? workflows.find((item) => item.id === builder.workflowId)?.name ?? null : null}
+        workspaceMembers={workflowOwnerOptions}
+        onWorkflowCreated={(created) => {
+          setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current, 0), ...current.filter((item) => item.id !== created.id)])
+          setBuilder({ open: true, workflowId: created.id })
+        }}
+        onClose={() => setBuilder({ open: false, workflowId: null })}
+      />
     </div>
   )
 }

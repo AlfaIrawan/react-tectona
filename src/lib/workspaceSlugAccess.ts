@@ -11,6 +11,7 @@ import {
 import { canActivateWorkspaceAsTenant } from '@/lib/corporateWorkspaceAccess'
 import { isConsumerEmail } from '@/lib/onboardingFeature'
 import {
+  isOrganizationHomeWorkspace,
   isWorkspaceDirectoryManagedRole,
   isWorkspaceOwnedBySubject,
 } from '@/lib/workspaceOwnershipVisibility'
@@ -50,6 +51,27 @@ export async function evaluateWorkspaceSlugAccess(slug: string): Promise<Workspa
   const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles(), session?.user.role)
   const email = session.user.email?.trim().toLowerCase() ?? ''
   const isCorporateUser = Boolean(email) && !isConsumerEmail(email)
+
+  // Platform admins/root are allowed to open any workspace route. Do not run
+  // membership and directory lookups for them: those checks are unnecessary
+  // and can leave the route in a pending loop when admin-scoped APIs reject or
+  // return incomplete data.
+  if (isPlatformAdmin) {
+    return {
+      allowed: true,
+      slug: resolved,
+      workspace: {
+        id: resolved.workspace_id,
+        organization_id: resolved.org_id,
+        workspace_key: resolved.slug,
+        name: resolved.display_name,
+        slug: resolved.slug,
+        tenant_mode: resolved.tenant_mode,
+        metadata: {},
+      } as WorkspaceOrgWorkspaceDto,
+    }
+  }
+
   const subject = {
     id: subjectId,
     name: session.user.name,
@@ -99,6 +121,7 @@ export async function evaluateWorkspaceSlugAccess(slug: string): Promise<Workspa
     hasActiveMembership,
     membershipParticipationScopeCode: activeMembership?.participation_scope_code,
     isWorkspaceOwner: isOwner || hasDirectoryManagedRole,
+    isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
   })
 
   if (!allowed) {

@@ -15,7 +15,7 @@ export const PROJECT_LIST_DRAG_HANDLE_CLASS =
   'mt-0.5 inline-flex h-5 w-5 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground/70 transition hover:bg-muted/60 hover:text-foreground active:cursor-grabbing touch-none'
 
 export const PROJECT_LIST_TABLE_WRAPPER_CLASS =
-  'scroll-mt-24 glass-card flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/40 shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
+  'scroll-mt-24 liquid-glass-enterprise-panel flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/40 shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
 
 export const PROJECT_LIST_TABLE_PANEL_INNER_CLASS =
   'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5'

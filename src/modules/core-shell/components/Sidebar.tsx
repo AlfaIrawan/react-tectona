@@ -55,6 +55,7 @@ const navItems: NavItem[] = [
   { icon: BookOpenText, label: 'Document & Knowledge Management', path: '/document-knowledge-management', moduleId: 'document_knowledge' },
   { icon: ArrowRightLeft, label: 'Integration & API Platform', path: '/integration-api-platform', moduleId: 'integration_api' },
   { icon: Lock, label: 'Security & Access Control', path: '/security-access-control', caption: 'Operational governance', moduleId: 'security_access' },
+  { icon: Users, label: 'Identity-Lite Administration', path: '/identity-lite-management', caption: 'Identity directory & workspace repair', moduleId: 'identity_lite' },
   { icon: BrainCircuit, label: 'AI Project Intelligence', path: '/ai-project-intelligence', moduleId: 'ai_project' },
   { icon: Lightbulb, label: 'AI Idea & Prioritization Intelligence', path: '/ai-idea-prioritization-intelligence', moduleId: 'ai_idea' },
   { icon: Settings, label: 'Platform Settings & Administration', path: '/platform-settings-administration', caption: 'Foundation configuration', moduleId: 'platform_settings' },
@@ -167,6 +168,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             } else if (item.path === '/integration-api-platform' && appPath.startsWith('/integration-api-platform')) {
               isActive = true
             } else if (item.path === '/security-access-control' && appPath.startsWith('/security-access-control')) {
+              isActive = true
+            } else if (item.path === '/identity-lite-management' && appPath.startsWith('/identity-lite-management')) {
               isActive = true
             } else if (item.path === '/ai-project-intelligence' && appPath.startsWith('/ai-project-intelligence')) {
               isActive = true

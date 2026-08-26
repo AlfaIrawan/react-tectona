@@ -10,17 +10,18 @@ import {
 } from 'react'
 import { ensureFreshSession, getSession } from '@/auth/authService'
 import { onSessionActive, onSessionCleared, onSessionExpired } from '@/auth/sessionEvents'
-import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import {
+  canActivateWorkspaceAsTenant,
   isWorkspaceListedForUser,
   persistAccessibleWorkspaceIds,
 } from '@/lib/corporateWorkspaceAccess'
 import type { TenantMode } from '@/lib/onboardingFeature'
 import { isConsumerEmail } from '@/lib/onboardingFeature'
-import { fetchAllWorkspaceOrgWorkspaces, fetchIdentityWorkspaceOrgMemberships, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
+import { fetchAllWorkspaceOrgWorkspaces, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
 import { fetchSubjectMembershipsCached, invalidateSubjectMembershipsCache } from '@/lib/wacMembershipCache'
 import {
-  isWorkspaceDirectoryManagedRole,
+  isOrganizationHomeWorkspace,
   isWorkspaceOwnedBySubject,
 } from '@/lib/workspaceOwnershipVisibility'
 import {
@@ -73,7 +74,9 @@ function mapWorkspaceOption(
     workspaceName: workspace.name,
     organizationId: workspace.organization_id,
     organizationName: workspace.organization_name?.trim() || FALLBACK_ORG_NAME,
-    slug: workspace.slug ?? null,
+    // Legacy operational workspaces may predate the slug column. Their
+    // workspace key is stable and is accepted by the workspace-org resolver.
+    slug: workspace.slug ?? workspace.workspace_key ?? null,
     tenantMode: workspace.tenant_mode ?? null,
     parentWorkspaceId: parentId,
     parentWorkspaceName: parentWorkspace?.name?.trim() || null,
@@ -108,12 +111,15 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
         ? ['tectona_admin']
         : []
   const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles, session.user.role)
+  const isOrganizationAdmin = hasOrganizationAdminAccess(sessionRoles)
   const email = session.user.email?.trim().toLowerCase() ?? ''
   const isCorporateUser = Boolean(email) && !isConsumerEmail(email)
 
-  const [memberships, workspaces, directoryMemberships] = await Promise.all([
+  const [memberships, workspaces] = await Promise.all([
     withTimeout(
-      fetchSubjectMembershipsCached(session.user.id, { activeOnly: true }),
+      // Workspace switching is an access boundary; do not reuse a stale WAC
+      // membership snapshot after an admin grants or revokes access.
+      fetchSubjectMembershipsCached(session.user.id, { activeOnly: true, force: true }),
       WORKSPACE_OPTIONS_FETCH_TIMEOUT_MS,
       'Workspace memberships',
     ).catch(() => ({ items: [] as Awaited<ReturnType<typeof fetchSubjectMembershipsCached>>['items'] })),
@@ -122,19 +128,13 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
       WORKSPACE_OPTIONS_FETCH_TIMEOUT_MS,
       'Workspace directory',
     ).catch(() => [] as WorkspaceOrgWorkspaceDto[]),
-    fetchIdentityWorkspaceOrgMemberships(session.user.id).catch(
-      () => [] as Awaited<ReturnType<typeof fetchIdentityWorkspaceOrgMemberships>>,
-    ),
   ])
 
-  const managedDirectoryWorkspaceIds = new Set(
-    directoryMemberships
-      .filter((row) => isWorkspaceDirectoryManagedRole(row.role_code))
-      .map((row) => row.workspace_id)
-      .filter(Boolean),
-  )
-
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
+  // fetchAllWorkspaceOrgWorkspaces() includes archived rows (the Directory
+  // tree needs them for parent resolution) -- keep them in workspaceById for
+  // name lookups, but never offer an archived workspace as a switchable option.
+  const activeWorkspaces = workspaces.filter((workspace) => workspace.status_code !== 'archived')
   const seen = new Set<string>()
   const next: UserWorkspaceOption[] = []
 
@@ -144,80 +144,109 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
     next.push(mapWorkspaceOption(workspace, workspaceById))
   }
 
-  if (isPlatformAdmin) {
-    for (const workspace of workspaces) {
-      pushWorkspace(workspace)
+  const subject = {
+    id: session.user.id,
+    name: session.user.name,
+    email: session.user.email,
+  }
+  const isOwnedBySubject = (workspace: WorkspaceOrgWorkspaceDto): boolean => {
+    const metadata = workspace.metadata && typeof workspace.metadata === 'object' ? workspace.metadata : {}
+    const metadataString = (key: string): string | null => {
+      const value = metadata[key]
+      return typeof value === 'string' && value.trim() ? value.trim() : null
     }
-  } else {
-    for (const membership of memberships.items ?? []) {
-      const workspaceId = membership.workspace_id
-      if (!workspaceId || seen.has(workspaceId)) continue
+    return isWorkspaceOwnedBySubject(
+      {
+        id: workspace.id,
+        metadata,
+        createdBy: workspace.created_by ?? null,
+        owner: metadataString('tectona_owner'),
+        businessOwner: metadataString('tectona_business_owner'),
+        technicalOwner: metadataString('tectona_technical_owner'),
+        ownerIdentityRef: metadataString('tectona_owner_identity_ref'),
+        createdByIdentityRef: metadataString('tectona_created_by_identity_ref'),
+        tenantMode: workspace.tenant_mode ?? null,
+      },
+      subject,
+    )
+  }
 
-      const workspace = workspaceById.get(workspaceId)
-      if (
-        workspace &&
-        !isWorkspaceListedForUser(workspace.tenant_mode ?? null, {
-          isPlatformAdmin,
-          isCorporateUser,
+  // Root/platform administrators operate the directory itself and may not
+  // have WAC membership rows. Keep their workspace picker complete while
+  // leaving the membership/ownership rules below intact for regular users.
+  if (isPlatformAdmin || isOrganizationAdmin) {
+    const visibleWorkspaces = isPlatformAdmin
+      ? activeWorkspaces
+      : activeWorkspaces.filter((workspace) =>
+          (workspace.tenant_mode !== 'personal' || isOwnedBySubject(workspace))
+          && (workspace.organization_id === '00000000-0000-0000-0000-000000000001'
+            || workspace.organization_name?.toLowerCase().includes('adira'))
+        )
+    for (const workspace of visibleWorkspaces) pushWorkspace(workspace)
+  }
+
+  for (const membership of memberships.items ?? []) {
+    const workspaceId = membership.workspace_id
+    if (!workspaceId || seen.has(workspaceId)) continue
+
+    const workspace = workspaceById.get(workspaceId)
+    if (workspace?.status_code === 'archived') continue
+    if (isOrganizationAdmin && workspace?.tenant_mode === 'personal' && !isOwnedBySubject(workspace)) continue
+    if (
+      workspace &&
+      !isWorkspaceListedForUser(workspace.tenant_mode ?? null, {
+        isPlatformAdmin,
+        isOrganizationAdmin,
+        isCorporateUser,
           hasActiveMembership: true,
           membershipParticipationScopeCode: membership.participation_scope_code,
-        })
-      ) {
-        continue
-      }
-
-      seen.add(workspaceId)
-
-      if (workspace) {
-        next.push(mapWorkspaceOption(workspace, workspaceById))
-        continue
-      }
-
-      next.push({
-        workspaceId,
-        workspaceName: workspaceId.slice(0, 8),
-        organizationId: '',
-        organizationName: FALLBACK_ORG_NAME,
-        slug: null,
-        tenantMode: null,
-        parentWorkspaceId: null,
-        parentWorkspaceName: null,
-        isNestedOrgPersonal: false,
-        personalOrgScope: null,
+          isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
       })
+    ) {
+      continue
     }
 
-    const subject = {
-      id: session.user.id,
-      name: session.user.name,
-      email: session.user.email,
-    }
-    for (const workspace of workspaces) {
-      if (seen.has(workspace.id)) continue
-      const isOwner = isWorkspaceOwnedBySubject(
-        {
-          id: workspace.id,
-          metadata: workspace.metadata,
-          tenantMode: workspace.tenant_mode ?? null,
-        },
-        subject,
-      )
-      const hasDirectoryRole = managedDirectoryWorkspaceIds.has(workspace.id)
-      if (!isOwner && !hasDirectoryRole) continue
+    seen.add(workspaceId)
 
-      if (
-        !isWorkspaceListedForUser(workspace.tenant_mode ?? null, {
-          isPlatformAdmin,
-          isCorporateUser,
-          hasActiveMembership: hasDirectoryRole,
-          isWorkspaceOwner: isOwner,
-        })
-      ) {
-        continue
-      }
-
-      pushWorkspace(workspace)
+    if (workspace) {
+      next.push(mapWorkspaceOption(workspace, workspaceById))
+      continue
     }
+
+    next.push({
+      workspaceId,
+      workspaceName: workspaceId.slice(0, 8),
+      organizationId: '',
+      organizationName: FALLBACK_ORG_NAME,
+      slug: null,
+      tenantMode: null,
+      parentWorkspaceId: null,
+      parentWorkspaceName: null,
+      isNestedOrgPersonal: false,
+      personalOrgScope: null,
+    })
+  }
+
+  for (const workspace of activeWorkspaces) {
+    if (seen.has(workspace.id)) continue
+    if (isOrganizationAdmin && workspace.tenant_mode === 'personal' && !isOwnedBySubject(workspace)) continue
+    const isOwner = isOwnedBySubject(workspace)
+    if (!isOwner) continue
+
+    if (
+      !canActivateWorkspaceAsTenant(workspace.tenant_mode ?? null, {
+        isPlatformAdmin,
+        isOrganizationAdmin,
+        isCorporateUser,
+        hasActiveMembership: false,
+        isWorkspaceOwner: isOwner,
+        isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
+      })
+    ) {
+      continue
+    }
+
+    pushWorkspace(workspace)
   }
 
   next.sort((left, right) => {

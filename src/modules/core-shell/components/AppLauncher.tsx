@@ -43,22 +43,18 @@ interface AppLauncherItem {
 }
 
 const PLATFORM_ADMIN_LAUNCHER_COLUMNS = 3
+const END_USER_LAUNCHER_COLUMNS = 2
 
 function launcherItemButtonClass(opts: {
   isActive: boolean
-  isLast: boolean
   isLastColumn: boolean
   isLastRow: boolean
-  useAdminGrid: boolean
 }): string {
   return cn(
-    'flex items-start gap-4 transition-all duration-200',
+    'flex items-start gap-4 p-5 h-full transition-all duration-200',
     'text-left group relative',
-    opts.useAdminGrid ? 'p-5 h-full' : 'p-4 w-full',
-    opts.useAdminGrid
-      ? !opts.isLastRow && 'border-b border-gray-100'
-      : !opts.isLast && 'border-b border-gray-100',
-    opts.useAdminGrid && !opts.isLastColumn && 'border-r border-gray-200/60',
+    !opts.isLastRow && 'border-b border-gray-100',
+    !opts.isLastColumn && 'border-r border-gray-200/60',
     'hover:bg-gradient-to-r hover:from-blue-50/50 hover:to-transparent',
     opts.isActive && 'bg-gradient-to-r from-blue-50 to-transparent',
   )
@@ -166,6 +162,13 @@ const existingNavItems: AppLauncherItem[] = [
     moduleId: 'security_access',
   },
   {
+    icon: Users,
+    label: 'Identity-Lite Administration',
+    description: 'Manage Identity-Lite users and repair accounts missing their onboarding workspace',
+    path: '/identity-lite-management',
+    moduleId: 'identity_lite',
+  },
+  {
     icon: BrainCircuit,
     label: 'AI Project Intelligence',
     description: 'AI-native execution cockpit for task generation, predictive delivery intelligence, next best actions, resource recommendations, explainability, and governed AI approvals',
@@ -217,6 +220,7 @@ export function AppLauncher() {
     (path === '/document-knowledge-management' && appPath.startsWith('/document-knowledge-management')) ||
     (path === '/integration-api-platform' && appPath.startsWith('/integration-api-platform')) ||
     (path === '/security-access-control' && appPath.startsWith('/security-access-control')) ||
+    (path === '/identity-lite-management' && appPath.startsWith('/identity-lite-management')) ||
     (path === '/ai-project-intelligence' && appPath.startsWith('/ai-project-intelligence')) ||
     (path === '/ai-idea-prioritization-intelligence' && appPath.startsWith('/ai-idea-prioritization-intelligence')) ||
     (path === '/platform-settings-administration' &&
@@ -226,18 +230,22 @@ export function AppLauncher() {
     // Non–platform-admin end users: fixed GA menu (matches product screenshot).
     if (!access.isPlatformAdmin) {
       const byId = new Map(existingNavItems.map((item) => [item.moduleId, item]))
-      return END_USER_GA_MODULE_IDS.map((moduleId) => byId.get(moduleId))
+      const gaItems = END_USER_GA_MODULE_IDS.map((moduleId) => byId.get(moduleId))
         .filter((item): item is AppLauncherItem => Boolean(item))
         .filter((item) => access.canAccess(item.moduleId))
+      const securityItem = byId.get('security_access')
+      return securityItem && access.canAccess('security_access')
+        ? [...gaItems, securityItem]
+        : gaItems
     }
     return existingNavItems.filter((i) => access.canAccess(i.moduleId))
   }, [access.canAccess, access.isPlatformAdmin, tenant?.uiProfile.hiddenModuleIds, tenant?.tenantMode])
 
   const useAdminGrid = access.isPlatformAdmin
+  const columns = useAdminGrid ? PLATFORM_ADMIN_LAUNCHER_COLUMNS : END_USER_LAUNCHER_COLUMNS
   const lastRowStartIndex =
-    useAdminGrid && visibleItems.length > PLATFORM_ADMIN_LAUNCHER_COLUMNS
-      ? Math.floor((visibleItems.length - 1) / PLATFORM_ADMIN_LAUNCHER_COLUMNS) *
-        PLATFORM_ADMIN_LAUNCHER_COLUMNS
+    visibleItems.length > columns
+      ? Math.floor((visibleItems.length - 1) / columns) * columns
       : 0
 
   return (
@@ -257,8 +265,8 @@ export function AppLauncher() {
         className={cn(
           useAdminGrid
             ? 'w-[960px] max-w-[calc(100vw-2rem)]'
-            : 'w-[min(420px,calc(100vw-2rem))] max-h-[min(70vh,640px)] overflow-y-auto',
-          'p-0 !glass-card app-launcher-content',
+            : 'w-[min(680px,calc(100vw-2rem))]',
+          'p-0 liquid-glass-enterprise-panel app-launcher-content',
           '!border border-gray-200/80 !shadow-2xl rounded-xl',
           'mt-2 right-0 overflow-hidden',
           '!backdrop-blur-xl !bg-white',
@@ -269,14 +277,12 @@ export function AppLauncher() {
           backdropFilter: 'none',
         }}
       >
-        <div className={cn(useAdminGrid ? 'grid grid-cols-3 gap-0' : 'flex flex-col')}>
+        <div className={cn('grid gap-0', useAdminGrid ? 'grid-cols-3' : 'grid-cols-2')}>
           {visibleItems.map((item, index) => {
             const Icon = item.icon
             const isActive = isItemActive(item.path)
-            const isLast = index === visibleItems.length - 1
-            const isLastColumn =
-              useAdminGrid && index % PLATFORM_ADMIN_LAUNCHER_COLUMNS === PLATFORM_ADMIN_LAUNCHER_COLUMNS - 1
-            const isLastRow = useAdminGrid && index >= lastRowStartIndex
+            const isLastColumn = index % columns === columns - 1
+            const isLastRow = index >= lastRowStartIndex
 
             return (
               <button
@@ -284,10 +290,8 @@ export function AppLauncher() {
                 onClick={() => handleItemClick(item.path)}
                 className={launcherItemButtonClass({
                   isActive,
-                  isLast,
                   isLastColumn,
                   isLastRow,
-                  useAdminGrid,
                 })}
               >
                 {isActive && (

@@ -379,13 +379,14 @@ export function buildDefaultIntegrationArchitecture(): {
 }
 
 export function normalizeIntegrationNodesForCanvas(nodes: Node<ArchimateNodeData>[]): Node<ArchimateNodeData>[] {
-  return nodes.map((node) => {
+  const normalized = nodes.map((node) => {
     if (node.type === 'archimateLegend') {
       return { ...node, draggable: false, selectable: false, connectable: false }
     }
     if (node.type === 'archimateElement') {
       return {
         ...node,
+        extent: undefined,
         draggable: true,
         selectable: true,
         connectable: true,
@@ -394,6 +395,99 @@ export function normalizeIntegrationNodesForCanvas(nodes: Node<ArchimateNodeData
     }
     return { ...node, draggable: true, selectable: true, connectable: false }
   })
+
+  const originalById = new Map(normalized.map((node) => [node.id, node]))
+  const absoluteFromOriginal = (node: Node<ArchimateNodeData>, visited = new Set<string>()): { x: number; y: number } => {
+    if (!node.parentNode || visited.has(node.id)) return node.position
+    const parent = originalById.get(node.parentNode)
+    if (!parent) return node.position
+    const nextVisited = new Set(visited).add(node.id)
+    const parentPosition = absoluteFromOriginal(parent, nextVisited)
+    return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
+  }
+
+  let repaired = normalized.map((node) => {
+    if (!node.parentNode) return node
+    const parent = originalById.get(node.parentNode)
+    if (parent && isIntegrationNodeContainable(parent)) return node
+    return {
+      ...node,
+      parentNode: undefined,
+      extent: undefined,
+      position: absoluteFromOriginal(node),
+    }
+  })
+
+  let repairedById = new Map(repaired.map((node) => [node.id, node]))
+  const absolutePosition = (node: Node<ArchimateNodeData>, visited = new Set<string>()): { x: number; y: number } => {
+    if (!node.parentNode || visited.has(node.id)) return node.position
+    const parent = repairedById.get(node.parentNode)
+    if (!parent) return node.position
+    const nextVisited = new Set(visited).add(node.id)
+    const parentPosition = absolutePosition(parent, nextVisited)
+    return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
+  }
+  const dimensions = (node: Node<ArchimateNodeData>) => ({
+    width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 200),
+    height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 90),
+  })
+
+  for (const candidateChild of repaired) {
+    if (candidateChild.type !== 'archimateElement' || candidateChild.parentNode) continue
+    const childPosition = absolutePosition(candidateChild)
+    const childSize = dimensions(candidateChild)
+    const center = {
+      x: childPosition.x + childSize.width / 2,
+      y: childPosition.y + childSize.height / 2,
+    }
+    const target = repaired
+      .filter((candidate) => candidate.id !== candidateChild.id && isIntegrationNodeContainable(candidate))
+      .map((candidate) => {
+        const position = absolutePosition(candidate)
+        const size = dimensions(candidate)
+        return { candidate, position, size }
+      })
+      .filter(({ position, size }) =>
+        center.x >= position.x &&
+        center.x <= position.x + size.width &&
+        center.y >= position.y &&
+        center.y <= position.y + size.height,
+      )
+      .sort((a, b) => a.size.width * a.size.height - b.size.width * b.size.height)[0]
+    if (!target) continue
+
+    repaired = repaired.map((node) =>
+      node.id === candidateChild.id
+        ? {
+            ...node,
+            parentNode: target.candidate.id,
+            extent: undefined,
+            position: {
+              x: childPosition.x - target.position.x,
+              y: childPosition.y - target.position.y,
+            },
+          }
+        : node,
+    )
+    repairedById = new Map(repaired.map((node) => [node.id, node]))
+  }
+
+  const originalOrder = new Map(repaired.map((node, index) => [node.id, index]))
+  const depth = (node: Node<ArchimateNodeData>, visited = new Set<string>()): number => {
+    if (!node.parentNode || visited.has(node.id)) return 0
+    const parent = repairedById.get(node.parentNode)
+    if (!parent) return 0
+    return 1 + depth(parent, new Set(visited).add(node.id))
+  }
+  return [...repaired].sort(
+    (left, right) => depth(left) - depth(right) || (originalOrder.get(left.id) ?? 0) - (originalOrder.get(right.id) ?? 0),
+  )
+}
+
+export function isIntegrationNodeContainable(node: Node<ArchimateNodeData>): boolean {
+  if (node.type === 'archimateBoundary') return node.data.arrange?.containable !== false
+  if (node.type === 'archimateElement') return node.data.arrange?.containable === true
+  return false
 }
 
 export function cloneDefaultIntegrationArchitecture() {

@@ -3,7 +3,7 @@ import type { GovernanceTemplateDto } from '@/lib/api/governanceConfigurationApi
 
 export function GovernanceTemplateRegistry({ templates }: { templates: GovernanceTemplateDto[] }) {
   return (
-    <Card className="p-4">
+    <Card className="liquid-glass-enterprise-panel p-4">
       <h2 className="text-sm font-semibold text-foreground">Governance Template Registry</h2>
       <p className="mt-1 text-xs text-muted-foreground">Bundle default policy references; status versioning per baris.</p>
       <table className="mt-3 w-full text-xs">

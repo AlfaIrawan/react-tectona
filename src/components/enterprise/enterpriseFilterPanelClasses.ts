@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 
 /** Search & filter panel shell — matches Workspace Management. */
 export const enterpriseFilterPanelClass = cn(
-  'glass-card mb-0 shrink-0 space-y-3 rounded-2xl p-4',
+  'liquid-glass-enterprise-panel mb-0 shrink-0 space-y-3 rounded-2xl p-4',
   'border border-white/40 dark:border-white/10',
   'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
   'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',

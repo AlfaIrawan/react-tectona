@@ -15,9 +15,18 @@ export type TemplateUploadDuplicateVerdict = {
 export function parseTemplateVersionNumber(label: string | null | undefined): number {
   const normalized = normalizeBrdVersionLabel(label)
   if (!normalized) return 0
-  const match = normalized.match(/^V(\d+(?:\.\d+)?)$/i)
+  // (?:\.\d+)? only matched ONE decimal segment — a genuine multi-segment version like "V0.2.5"
+  // failed the ^...$ anchor entirely and silently returned 0 (i.e. "older than V0.1"), which
+  // inverts revision ordering for exactly the documents this comparison exists to get right.
+  const match = normalized.match(/^V(\d+(?:\.\d+)*)$/i)
   if (!match) return 0
-  return Number.parseFloat(match[1])
+  // Weight each segment so an earlier (more significant) segment always outweighs any value in a
+  // later one — e.g. "1.0" must compare greater than "0.999" — assuming no single segment
+  // realistically exceeds 999.
+  return match[1]
+    .split('.')
+    .map((segment) => Number.parseInt(segment, 10))
+    .reduce((total, segment, index) => total + segment / 1000 ** index, 0)
 }
 
 export function formatTemplateVersionLabel(versionNumber: number): string {

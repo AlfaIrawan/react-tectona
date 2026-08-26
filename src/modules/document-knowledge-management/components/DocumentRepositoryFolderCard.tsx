@@ -57,7 +57,7 @@ export function DocumentRepositoryFolderCard({
       className={cn(
         folderCardStyles.folderCard,
         compactStyles.compactCard,
-        'group/folder',
+        'group/folder shrink-0',
         isProjectFolder && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         isDragOver && folderCardStyles.dragOver,

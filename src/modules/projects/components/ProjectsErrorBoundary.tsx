@@ -28,7 +28,7 @@ export class ProjectsErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="glass-card rounded-2xl p-10">
+        <div className="liquid-glass-enterprise-panel rounded-2xl p-10">
           <EmptyState
             title="Projects page error"
             description={

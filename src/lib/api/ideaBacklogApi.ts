@@ -7,6 +7,10 @@
 import {
   getIdeaDraftJob,
   startIdeaDraftJob,
+  getIdeaExtractionJob,
+  startIdeaExtractionJob,
+  type IdeaExtractionCandidate,
+  type IdeaExtractionDocumentContext,
   type RuntimeChatResponse,
 } from '@/lib/api/tectonaAgentRuntimeApi'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
@@ -149,6 +153,7 @@ export interface IdeaApi {
   tags: string[]
   owner_id?: string | null
   assignee_id?: string | null
+  folder_id?: string | null
   status_code: BackendIdeaStatus
   delivery_id?: string | null
   work_item_id?: string | null
@@ -266,6 +271,103 @@ export async function upsertPersistentIdeaSummary(
   return handleResponse<IdeaSummaryPersistent>(res)
 }
 
+export type IdeaSectionKey =
+  | 'summary'
+  | 'scoring'
+  | 'impact'
+  | 'integration'
+  | 'process'
+  | 'costBenefit'
+  | 'conversion'
+  | 'document'
+
+export type IdeaSectionRevisionStatus =
+  | 'proposed'
+  | 'accepted'
+  | 'rejected'
+  | 'approved'
+  | 'superseded'
+
+export interface IdeaSectionRevisionApi {
+  id: string
+  idea_id: string
+  section_key: IdeaSectionKey
+  revision_number: number
+  base_idea_version: number
+  content_json: Record<string, unknown>
+  source: 'human' | 'ai'
+  status: IdeaSectionRevisionStatus
+  author_id: string
+  approved_by?: string | null
+  model_id?: string | null
+  confidence_score?: number | null
+  evidence_json: Array<Record<string, unknown>>
+  source_session_id?: string | null
+  approved_at?: string | null
+  created_date: string
+  updated_date?: string | null
+}
+
+export async function listIdeaSectionRevisions(
+  ideaId: string,
+  sectionKey: IdeaSectionKey,
+): Promise<IdeaSectionRevisionApi[]> {
+  const res = await apiFetch(
+    `${BASE_URL}/v1/ideas/${ideaId}/sections/${sectionKey}/revisions`,
+    { headers: defaultHeaders() },
+  )
+  return handleResponse<IdeaSectionRevisionApi[]>(res)
+}
+
+export async function getActiveIdeaSectionRevision(
+  ideaId: string,
+  sectionKey: IdeaSectionKey,
+): Promise<IdeaSectionRevisionApi | null> {
+  const res = await apiFetch(
+    `${BASE_URL}/v1/ideas/${ideaId}/sections/${sectionKey}/active`,
+    { headers: defaultHeaders() },
+  )
+  if (res.status === 204 || res.status === 404) return null
+  return handleResponse<IdeaSectionRevisionApi>(res)
+}
+
+export async function createIdeaSectionRevision(
+  ideaId: string,
+  sectionKey: IdeaSectionKey,
+  body: {
+    content_json: Record<string, unknown>
+    source: 'human' | 'ai'
+    base_idea_version?: number
+    model_id?: string | null
+    confidence_score?: number | null
+    evidence_json?: Array<Record<string, unknown>>
+    source_session_id?: string | null
+  },
+): Promise<IdeaSectionRevisionApi> {
+  const res = await apiFetch(
+    `${BASE_URL}/v1/ideas/${ideaId}/sections/${sectionKey}/revisions`,
+    {
+      method: 'POST',
+      headers: defaultHeaders(),
+      body: JSON.stringify(body),
+    },
+  )
+  return handleResponse<IdeaSectionRevisionApi>(res)
+}
+
+export async function transitionIdeaSectionRevision(
+  ideaId: string,
+  sectionKey: IdeaSectionKey,
+  revisionId: string,
+  transition: 'accept' | 'reject' | 'approve',
+): Promise<IdeaSectionRevisionApi> {
+  const res = await apiFetch(
+    `${BASE_URL}/v1/ideas/${ideaId}/sections/${sectionKey}/revisions/${revisionId}/${transition}`,
+    { method: 'POST', headers: defaultHeaders() },
+  )
+  return handleResponse<IdeaSectionRevisionApi>(res)
+}
+
 export interface IdeaIntegrationPersistent {
   id: string
   idea_id: string
@@ -306,6 +408,98 @@ export async function upsertPersistentIdeaIntegration(
   return handleResponse<IdeaIntegrationPersistent>(res)
 }
 
+export type C4ArchitectureLevel = 'L1' | 'L2'
+
+export interface IdeaC4ArchitecturePersistent {
+  id: string
+  idea_id: string
+  level: C4ArchitectureLevel
+  c4_json: Record<string, unknown>
+  status: 'ok' | 'insufficient_data' | 'draft' | string
+  confidence_score: number
+  generated_at: string
+  generated_by: string
+  source_correlation_id?: string | null
+  version: number
+  created_date: string
+  updated_date?: string | null
+}
+
+export async function getPersistentIdeaC4Architecture(
+  ideaId: string,
+  level: C4ArchitectureLevel,
+): Promise<IdeaC4ArchitecturePersistent | null> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/c4-architecture/${level}`, { headers: defaultHeaders() })
+  // 204 = intentionally empty (no diagram saved yet for this level); 404 kept for older backends.
+  if (res.status === 204 || res.status === 404) return null
+  return handleResponse<IdeaC4ArchitecturePersistent>(res)
+}
+
+export async function upsertPersistentIdeaC4Architecture(
+  ideaId: string,
+  level: C4ArchitectureLevel,
+  body: {
+    c4_json: Record<string, unknown>
+    status: 'ok' | 'insufficient_data' | 'draft'
+    confidence_score: number
+    generated_by: string
+    source_correlation_id?: string | null
+    version: number
+  },
+): Promise<IdeaC4ArchitecturePersistent> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/c4-architecture/${level}`, {
+    method: 'PUT',
+    headers: defaultHeaders(),
+    body: JSON.stringify(body),
+  })
+  return handleResponse<IdeaC4ArchitecturePersistent>(res)
+}
+
+export interface IdeaProcessDiagramPersistent {
+  id: string
+  idea_id: string
+  process_key: string
+  process_json: Record<string, unknown>
+  status: 'ok' | 'insufficient_data' | 'draft' | string
+  confidence_score: number
+  generated_at: string
+  generated_by: string
+  source_correlation_id?: string | null
+  version: number
+  created_date: string
+  updated_date?: string | null
+}
+
+export async function getPersistentIdeaProcessDiagram(
+  ideaId: string,
+  processKey: string,
+): Promise<IdeaProcessDiagramPersistent | null> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/process-diagram/${processKey}`, { headers: defaultHeaders() })
+  // 204 = intentionally empty (no diagram saved yet for this key); 404 kept for older backends.
+  if (res.status === 204 || res.status === 404) return null
+  return handleResponse<IdeaProcessDiagramPersistent>(res)
+}
+
+export async function upsertPersistentIdeaProcessDiagram(
+  ideaId: string,
+  processKey: string,
+  body: {
+    process_json: Record<string, unknown>
+    status: 'ok' | 'insufficient_data' | 'draft'
+    confidence_score: number
+    generated_by: string
+    source_correlation_id?: string | null
+    version: number
+  },
+): Promise<IdeaProcessDiagramPersistent> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/process-diagram/${processKey}`, {
+    method: 'PUT',
+    headers: defaultHeaders(),
+    body: JSON.stringify(body),
+  })
+  return handleResponse<IdeaProcessDiagramPersistent>(res)
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export async function getIdeaById(ideaId: string): Promise<IdeaApi> {
@@ -319,6 +513,7 @@ export async function listIdeas(params?: {
   status?: BackendIdeaStatus
   workspace_id?: string
   project_id?: string
+  folder_id?: string | null
   q?: string
   tag?: string
   page?: number
@@ -328,6 +523,9 @@ export async function listIdeas(params?: {
   if (params?.status) qs.set('status', params.status)
   if (params?.workspace_id) qs.set('workspace_id', params.workspace_id)
   if (params?.project_id) qs.set('project_id', params.project_id)
+  if (params?.folder_id !== undefined) {
+    qs.set('folder_id', params.folder_id === null ? 'null' : params.folder_id)
+  }
   if (params?.q) qs.set('q', params.q)
   if (params?.tag) qs.set('tag', params.tag)
   if (params?.page !== undefined) qs.set('page', String(params.page))
@@ -349,6 +547,7 @@ export async function createIdea(body: {
   workspace_id?: string
   owner_id?: string
   assignee_id?: string
+  folder_id?: string | null
   status_code?: BackendIdeaStatus
 }): Promise<IdeaApi> {
   const res = await apiFetch(`${BASE_URL}/v1/ideas`, {
@@ -373,6 +572,7 @@ export async function patchIdea(
     tags?: string[]
     workspace_id?: string
     project_id?: string | null
+    folder_id?: string | null
     version: number
   }
 ): Promise<IdeaApi> {
@@ -446,6 +646,41 @@ export async function generateIdeaDraftFromTitle(
   }
 
   throw new Error('Generate Draft is still running. Please try again shortly.')
+}
+
+export interface ExtractIdeaCandidatesOptions {
+  workspace_id?: string
+  user_id?: string
+  session_id?: string
+}
+
+/**
+ * Convenience wrapper around the staged Idea Extraction job API — extracts one or more Idea
+ * candidates from an already-extracted document text (see `IdeaUploadReviewPanel`).
+ * Prefer `startIdeaExtractionJob` + polling in UI when live progress must be shown.
+ */
+export async function extractIdeaCandidatesFromDocument(
+  document: IdeaExtractionDocumentContext,
+  options: ExtractIdeaCandidatesOptions = {},
+): Promise<IdeaExtractionCandidate[]> {
+  const started = await startIdeaExtractionJob({
+    document,
+    context: {
+      workspace_id: options.workspace_id ?? null,
+      user_id: options.user_id ?? null,
+      session_id: options.session_id ?? null,
+    },
+  })
+
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const status = await getIdeaExtractionJob(started.job_id)
+    if (status.status === 'completed') return status.result?.candidates ?? []
+    if (status.status === 'failed') throw new Error(status.error_message || 'Idea extraction failed.')
+    if (status.status === 'cancelled') throw new Error('Idea extraction was cancelled.')
+    await new Promise<void>((resolve) => setTimeout(resolve, 1250))
+  }
+
+  throw new Error('Idea extraction is still running. Please try again shortly.')
 }
 
 /**

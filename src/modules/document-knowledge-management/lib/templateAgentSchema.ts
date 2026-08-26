@@ -15,6 +15,7 @@ export function emptyTemplateAgentSchema(): TemplateAgentSchema {
     document_kind: 'general',
     placeholders: [],
     sections: [],
+    repeaters: [],
   }
 }
 
@@ -28,6 +29,9 @@ export function parseTemplateAgentSchema(metadata: Record<string, unknown> | und
     typeof obj.document_kind === 'string' && obj.document_kind.trim()
       ? obj.document_kind.trim()
       : 'general'
+  const compiler = obj.compiler && typeof obj.compiler === 'object' && !Array.isArray(obj.compiler)
+    ? obj.compiler as TemplateAgentSchema['compiler']
+    : undefined
 
   const placeholders = Array.isArray(obj.placeholders)
     ? obj.placeholders
@@ -61,7 +65,25 @@ export function parseTemplateAgentSchema(metadata: Record<string, unknown> | und
         .filter((item) => item.id.length > 0)
     : []
 
-  return { document_kind, placeholders, sections }
+  const repeaters = Array.isArray(obj.repeaters)
+    ? obj.repeaters
+        .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+        .map((item) => ({
+          id: String(item.id ?? '').trim(),
+          collection: String(item.collection ?? item.id ?? '').trim(),
+          kind: typeof item.kind === 'string' ? item.kind : 'row',
+          fields: Array.isArray(item.fields) ? item.fields.map(String).filter(Boolean) : [],
+          image_fields: Array.isArray(item.image_fields) ? item.image_fields.map(String).filter(Boolean) : [],
+          marker: typeof item.marker === 'string' ? item.marker : null,
+          start_marker: typeof item.start_marker === 'string' ? item.start_marker : null,
+          end_marker: typeof item.end_marker === 'string' ? item.end_marker : null,
+          numbering_prefix: typeof item.numbering_prefix === 'string' ? item.numbering_prefix : null,
+          parent_collection: typeof item.parent_collection === 'string' ? item.parent_collection : null,
+        }))
+        .filter((item) => item.id.length > 0 && item.collection.length > 0)
+    : []
+
+  return { document_kind, compiler, placeholders, sections, repeaters }
 }
 
 export function mergeAgentSchemaIntoMetadata(
@@ -75,6 +97,7 @@ export function mergeAgentSchemaIntoMetadata(
     ...extras,
     agent_schema: {
       document_kind: schema.document_kind ?? 'general',
+      compiler: schema.compiler,
       placeholders: (schema.placeholders ?? []).map((item) => ({
         key: item.key,
         label: item.label ?? item.key,
@@ -88,6 +111,18 @@ export function mergeAgentSchemaIntoMetadata(
         heading: item.heading ?? item.id,
         kind: item.kind ?? 'paragraph',
         min_paragraphs: item.min_paragraphs ?? 1,
+      })),
+      repeaters: (schema.repeaters ?? []).map((item) => ({
+        id: item.id,
+        collection: item.collection,
+        kind: item.kind,
+        fields: item.fields ?? [],
+        image_fields: item.image_fields ?? [],
+        marker: item.marker ?? null,
+        start_marker: item.start_marker ?? null,
+        end_marker: item.end_marker ?? null,
+        numbering_prefix: item.numbering_prefix ?? null,
+        parent_collection: item.parent_collection ?? null,
       })),
     },
   }

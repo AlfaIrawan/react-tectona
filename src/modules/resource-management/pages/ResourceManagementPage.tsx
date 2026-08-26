@@ -1,8 +1,12 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react'
+import { Fragment, useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react'
+import { DndContext } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import {
   Activity,
   AlertTriangle,
   BarChart3,
+  Briefcase,
+  Building2,
   CalendarClock,
   CheckCircle2,
   ChevronLeft,
@@ -11,7 +15,9 @@ import {
   Download,
   Gauge,
   Info,
+  LayoutGrid,
   Layers,
+  PanelLeft,
   Search,
   ShieldCheck,
   Sparkles,
@@ -19,7 +25,7 @@ import {
   TrendingUp,
   Users,
   Wand2,
-  X,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   Area,
@@ -43,12 +49,19 @@ import {
 } from 'recharts'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { EnterpriseInfoCallout } from '@/components/layout/EnterpriseInfoCallout'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectItem } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { useEnterpriseSortableColumns } from '@/components/enterprise/useEnterpriseSortableColumns'
+import { EnterpriseSortableHeaderCell } from '@/components/enterprise/EnterpriseSortableHeaderCell'
+import { EnterpriseColumnFilterDropdown } from '@/components/enterprise/EnterpriseColumnFilterDropdown'
+import { EnterpriseGroupByControl } from '@/components/enterprise/EnterpriseGroupByControl'
+import { EnterpriseSelectionToggle } from '@/components/enterprise/EnterpriseSelectionToggle'
+import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/EnterpriseColumnVisibilityControl'
+import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
 import {
   computeWorkspaceMainPanelViewportHeightPx,
   isWorkspaceNavDocked,
@@ -65,6 +78,7 @@ import { usePreferencesStore } from '@/stores/preferences-store'
 
 type AvailabilityStatus = 'Available' | 'Partially Allocated' | 'Fully Allocated' | 'Unavailable'
 type PanelId = 'overview' | 'directory' | 'capacity' | 'insight' | 'activity'
+type ResourceTableGroupByKey = 'team' | 'workspace' | 'availability'
 
 type ResourceRecord = {
   id: string
@@ -186,6 +200,107 @@ function AvailabilityBadge({ value }: { value: AvailabilityStatus }) {
   return <Badge className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', tone)}>{value}</Badge>
 }
 
+function resourceCode(record: ResourceRecord): string {
+  return `${record.team}-${record.role}-${record.name}`.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toUpperCase()
+}
+
+function resourceGroupLabel(item: ResourceRecord, groupBy: ResourceTableGroupByKey): string {
+  if (groupBy === 'team') return item.team
+  if (groupBy === 'workspace') return item.workspace
+  return item.availabilityStatus
+}
+
+function availabilityAccentColor(status: AvailabilityStatus): string {
+  if (status === 'Available') return '#10b981'
+  if (status === 'Partially Allocated') return '#f59e0b'
+  if (status === 'Fully Allocated') return '#ef4444'
+  return '#94a3b8'
+}
+
+function recommendedResourceAction(item: ResourceRecord): { label: string; className: string } {
+  if (item.allocation > 100 || item.utilization > 92) {
+    return { label: 'Rebalance load', className: 'border-rose-200 bg-rose-50 text-rose-700' }
+  }
+  if (item.availabilityStatus === 'Available' && item.utilization < 75) {
+    return { label: 'Ready to assign', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+  }
+  if (item.availabilityStatus === 'Partially Allocated') {
+    return { label: 'Monitor capacity', className: 'border-amber-200 bg-amber-50 text-amber-700' }
+  }
+  return { label: 'Review fit', className: 'border-slate-200 bg-slate-50 text-slate-600' }
+}
+
+function metricTone(value: number, criticalAt: number): string {
+  if (value >= criticalAt) return 'bg-rose-500'
+  if (value >= 80) return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+function ResourceMetricBar({ value, criticalAt = 100 }: { value: number; criticalAt?: number }) {
+  return (
+    <div className="flex min-w-[132px] items-center gap-2">
+      <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-100">
+        <div className={cn('h-full rounded-full', metricTone(value, criticalAt))} style={{ width: `${Math.min(value, 100)}%` }} />
+      </div>
+      <span className="w-9 text-right font-semibold tabular-nums text-slate-700">{value}%</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Operational Resource Directory enterprise data-table (mirrors the Workflow &
+// Automation Directory table: drag-reorder / resize columns, 3-state sort,
+// per-column filters, group-by, selection, column visibility, paging).
+// ---------------------------------------------------------------------------
+type ResourceTableColumnKey = 'name' | 'role' | 'team' | 'workspace' | 'allocation' | 'utilization' | 'availability' | 'action'
+
+const RESOURCE_TABLE_PINNED_FIRST_COLUMN: ResourceTableColumnKey = 'name'
+const RESOURCE_TABLE_DEFAULT_COLUMN_ORDER: ResourceTableColumnKey[] = [
+  'name',
+  'role',
+  'team',
+  'workspace',
+  'allocation',
+  'utilization',
+  'availability',
+  'action',
+]
+
+function resourceTableColumnLabel(key: ResourceTableColumnKey): string {
+  switch (key) {
+    case 'name': return 'Resource'
+    case 'role': return 'Delivery Role'
+    case 'team': return 'Operational Team'
+    case 'workspace': return 'Assigned Workspace'
+    case 'allocation': return 'Allocation'
+    case 'utilization': return 'Utilization'
+    case 'availability': return 'Availability'
+    case 'action': return 'Recommended Action'
+  }
+}
+
+function resourceTableColumnHeaderIcon(key: ResourceTableColumnKey): LucideIcon {
+  switch (key) {
+    case 'name': return Users
+    case 'role': return Briefcase
+    case 'team': return Building2
+    case 'workspace': return Layers
+    case 'allocation': return Gauge
+    case 'utilization': return Activity
+    case 'availability': return ShieldCheck
+    case 'action': return Target
+  }
+}
+
+const RESOURCE_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: ResourceTableColumnKey; label: string }[] =
+  RESOURCE_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: resourceTableColumnLabel(key) }))
+
+const RESOURCE_TABLE_GROUP_BY_OPTIONS: readonly { key: ResourceTableGroupByKey; label: string }[] = [
+  { key: 'team', label: 'Team' },
+  { key: 'workspace', label: 'Workspace' },
+  { key: 'availability', label: 'Availability' },
+]
+
 function Panel({
   id,
   title,
@@ -219,7 +334,7 @@ function Panel({
       ref={outerRef}
       style={style}
       className={cn(
-        'rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
+        'rounded-3xl border liquid-glass-enterprise-panel transition-all',
         highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80',
         scrollBody && 'flex min-h-0 w-full flex-col overflow-hidden',
         className
@@ -995,34 +1110,246 @@ export function ResourceManagementPage() {
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState(resourceSeed[0].id)
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [showKpiCards, setShowKpiCards] = useState(true)
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
   const [showFiltersPanel, setShowFiltersPanel] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<string>('All')
-  const [teamFilter, setTeamFilter] = useState<string>('All')
-  const [workspaceFilter, setWorkspaceFilter] = useState<string>('All')
+  const [resourceGroupBy, setResourceGroupBy] = useState<ResourceTableGroupByKey | null>(null)
+  const [resourcePageSize, setResourcePageSize] = useState(10)
+  const [resourcePage, setResourcePage] = useState(1)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   const isOverviewSectionActive = activePanel === 'overview'
-  const teams = useMemo(() => Array.from(new Set(resources.map((r) => r.team))), [resources])
-  const workspaces = useMemo(() => Array.from(new Set(resources.map((r) => r.workspace))), [resources])
 
   const filtered = useMemo(
     () =>
-      resources.filter((item) => {
-        const matchSearch = [item.name, item.role, item.team, item.workspace].join(' ').toLowerCase().includes(search.toLowerCase())
-        const matchStatus = statusFilter === 'All' || item.availabilityStatus === statusFilter
-        const matchTeam = teamFilter === 'All' || item.team === teamFilter
-        const matchWorkspace = workspaceFilter === 'All' || item.workspace === workspaceFilter
-        return matchSearch && matchStatus && matchTeam && matchWorkspace
-      }),
-    [resources, search, statusFilter, teamFilter, workspaceFilter]
+      resources.filter((item) =>
+        [item.name, item.role, item.team, item.workspace].join(' ').toLowerCase().includes(search.toLowerCase())
+      ),
+    [resources, search]
   )
   const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0]
 
+  // --- Operational Resource Directory enterprise table state ---------------
+  const [resourceTableSort, setResourceTableSort] = useState<{ key: ResourceTableColumnKey; dir: 'asc' | 'desc' } | null>(null)
+  const [showResourceTableSelection, setShowResourceTableSelection] = useState(false)
+  const [resourceTableSelectedIds, setResourceTableSelectedIds] = useState<string[]>([])
+  const [resourceFilterRole, setResourceFilterRole] = useState<Set<string>>(new Set())
+  const [resourceFilterTeam, setResourceFilterTeam] = useState<Set<string>>(new Set())
+  const [resourceFilterWorkspace, setResourceFilterWorkspace] = useState<Set<string>>(new Set())
+  const [resourceFilterAvailability, setResourceFilterAvailability] = useState<Set<string>>(new Set())
+
+  const toggleResourceFilterValue = useCallback(
+    (setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string) => {
+      setter((prev) => {
+        const next = new Set(prev)
+        if (next.has(value)) next.delete(value)
+        else next.add(value)
+        return next
+      })
+    },
+    []
+  )
+
+  const buildResourceFilterOptions = useCallback(
+    (accessor: (item: ResourceRecord) => string) => {
+      const counts = new Map<string, number>()
+      filtered.forEach((item) => {
+        const value = accessor(item)
+        counts.set(value, (counts.get(value) ?? 0) + 1)
+      })
+      return Array.from(counts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([value, count]) => ({ value, count }))
+    },
+    [filtered]
+  )
+
+  const resourceRoleFilterOptions = useMemo(() => buildResourceFilterOptions((item) => item.role), [buildResourceFilterOptions])
+  const resourceTeamFilterOptions = useMemo(() => buildResourceFilterOptions((item) => item.team), [buildResourceFilterOptions])
+  const resourceWorkspaceFilterOptions = useMemo(() => buildResourceFilterOptions((item) => item.workspace), [buildResourceFilterOptions])
+  const resourceAvailabilityFilterOptions = useMemo(() => buildResourceFilterOptions((item) => item.availabilityStatus), [buildResourceFilterOptions])
+
+  const columnFilteredResources = useMemo(() => {
+    return filtered.filter((item) => {
+      if (resourceFilterRole.size > 0 && !resourceFilterRole.has(item.role)) return false
+      if (resourceFilterTeam.size > 0 && !resourceFilterTeam.has(item.team)) return false
+      if (resourceFilterWorkspace.size > 0 && !resourceFilterWorkspace.has(item.workspace)) return false
+      if (resourceFilterAvailability.size > 0 && !resourceFilterAvailability.has(item.availabilityStatus)) return false
+      return true
+    })
+  }, [filtered, resourceFilterRole, resourceFilterTeam, resourceFilterWorkspace, resourceFilterAvailability])
+
+  const toggleResourceTableSort = useCallback((key: ResourceTableColumnKey) => {
+    setResourceTableSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }, [])
+
+  const sortedResources = useMemo(() => {
+    if (!resourceTableSort) return columnFilteredResources
+    const { key, dir } = resourceTableSort
+    const mul = dir === 'asc' ? 1 : -1
+    const valueByKey = (item: ResourceRecord): string | number => {
+      switch (key) {
+        case 'name': return item.name
+        case 'role': return item.role
+        case 'team': return item.team
+        case 'workspace': return item.workspace
+        case 'allocation': return item.allocation
+        case 'utilization': return item.utilization
+        case 'availability': return item.availabilityStatus
+        case 'action': return recommendedResourceAction(item).label
+      }
+    }
+    return [...columnFilteredResources].sort((a, b) => {
+      const left = valueByKey(a)
+      const right = valueByKey(b)
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * mul
+      return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' }) * mul
+    })
+  }, [columnFilteredResources, resourceTableSort])
+
+  const resourceFlatRows = useMemo(() => {
+    if (resourceGroupBy) {
+      const grouped = [...sortedResources].sort((a, b) =>
+        resourceGroupLabel(a, resourceGroupBy).localeCompare(resourceGroupLabel(b, resourceGroupBy), undefined, { sensitivity: 'base' })
+      )
+      return grouped.map((item) => ({ item, groupLabel: resourceGroupLabel(item, resourceGroupBy) as string | null }))
+    }
+    return sortedResources.map((item) => ({ item, groupLabel: null as string | null }))
+  }, [sortedResources, resourceGroupBy])
+  const resourceTotalPages = Math.max(1, Math.ceil(resourceFlatRows.length / resourcePageSize))
+  const resourcePageSafe = Math.min(resourcePage, resourceTotalPages)
+  const resourceStart = resourceFlatRows.length === 0 ? 0 : (resourcePageSafe - 1) * resourcePageSize + 1
+  const resourceEnd = Math.min(resourceFlatRows.length, resourcePageSafe * resourcePageSize)
+  const pagedResourceRows = resourceFlatRows.slice(resourceStart === 0 ? 0 : resourceStart - 1, resourceEnd)
+  const resetResourceFilters = () => {
+    setSearch('')
+    setResourceFilterRole(new Set())
+    setResourceFilterTeam(new Set())
+    setResourceFilterWorkspace(new Set())
+    setResourceFilterAvailability(new Set())
+    setResourceGroupBy(null)
+    setResourcePage(1)
+  }
   const resourceHealthPct = useMemo(
     () => (resources.length === 0 ? 0 : Math.round(resources.reduce((sum, item) => sum + item.utilization, 0) / resources.length)),
     [resources]
   )
+
+  const { tableRef: resourceTableRef, ...resourceTableColumns } = useEnterpriseSortableColumns<ResourceTableColumnKey>({
+    initialOrder: RESOURCE_TABLE_DEFAULT_COLUMN_ORDER,
+    pinnedFirstKey: RESOURCE_TABLE_PINNED_FIRST_COLUMN,
+    hasSelectionColumn: showResourceTableSelection,
+    onColumnHidden: (key) => {
+      if (resourceGroupBy && (key as string) === resourceGroupBy) setResourceGroupBy(null)
+    },
+  })
+
+  const toggleResourceTableRowSelection = useCallback((id: string) => {
+    setResourceTableSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }, [])
+
+  const setShowResourceTableSelectionSafe = useCallback((checked: boolean) => {
+    setShowResourceTableSelection(checked)
+    if (!checked) setResourceTableSelectedIds([])
+  }, [])
+
+  const renderResourceTableCell = (item: ResourceRecord, key: ResourceTableColumnKey) => {
+    switch (key) {
+      case 'name':
+        return (
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-slate-900">{item.name}</div>
+            <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{resourceCode(item)}</div>
+          </div>
+        )
+      case 'role':
+        return <span className="text-slate-600">{item.role}</span>
+      case 'team':
+        return <span className="text-slate-600">{item.team}</span>
+      case 'workspace':
+        return <span className="text-slate-600">{item.workspace}</span>
+      case 'allocation':
+        return <ResourceMetricBar value={item.allocation} />
+      case 'utilization':
+        return <ResourceMetricBar value={item.utilization} criticalAt={92} />
+      case 'availability':
+        return <AvailabilityBadge value={item.availabilityStatus} />
+      case 'action': {
+        const action = recommendedResourceAction(item)
+        return (
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', action.className)}>{action.label}</Badge>
+            <button
+              type="button"
+              className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:border-blue-300 hover:text-blue-700"
+              onClick={(event) => {
+                event.stopPropagation()
+                setSelectedId(item.id)
+                setDrawerOpen(true)
+              }}
+            >
+              Open
+            </button>
+          </div>
+        )
+      }
+    }
+  }
+
+  const renderResourceFilterSlot = (key: ResourceTableColumnKey) => {
+    switch (key) {
+      case 'role':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Role"
+            ariaLabel="Filter by delivery role"
+            options={resourceRoleFilterOptions}
+            selected={resourceFilterRole}
+            onToggleOption={(value) => toggleResourceFilterValue(setResourceFilterRole, value)}
+            onShowAll={() => setResourceFilterRole(new Set())}
+          />
+        )
+      case 'team':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Team"
+            ariaLabel="Filter by operational team"
+            options={resourceTeamFilterOptions}
+            selected={resourceFilterTeam}
+            onToggleOption={(value) => toggleResourceFilterValue(setResourceFilterTeam, value)}
+            onShowAll={() => setResourceFilterTeam(new Set())}
+          />
+        )
+      case 'workspace':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Workspace"
+            ariaLabel="Filter by assigned workspace"
+            options={resourceWorkspaceFilterOptions}
+            selected={resourceFilterWorkspace}
+            onToggleOption={(value) => toggleResourceFilterValue(setResourceFilterWorkspace, value)}
+            onShowAll={() => setResourceFilterWorkspace(new Set())}
+          />
+        )
+      case 'availability':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Availability"
+            ariaLabel="Filter by availability"
+            options={resourceAvailabilityFilterOptions}
+            selected={resourceFilterAvailability}
+            onToggleOption={(value) => toggleResourceFilterValue(setResourceFilterAvailability, value)}
+            onShowAll={() => setResourceFilterAvailability(new Set())}
+          />
+        )
+      default:
+        return undefined
+    }
+  }
 
   const navPanelRef = useRef<HTMLDivElement | null>(null)
   const activeMainPanelRef = useRef<HTMLElement | null>(null)
@@ -1030,7 +1357,13 @@ export function ResourceManagementPage() {
   const [mainPanelViewportHeightPx, setMainPanelViewportHeightPx] = useState<number | null>(null)
 
   useLayoutEffect(() => {
-    if (activePanel !== 'overview') {
+    if (
+      activePanel !== 'overview'
+      && activePanel !== 'directory'
+      && activePanel !== 'capacity'
+      && activePanel !== 'insight'
+      && activePanel !== 'activity'
+    ) {
       setMainPanelViewportHeightPx(null)
       return
     }
@@ -1073,7 +1406,14 @@ export function ResourceManagementPage() {
       const navEl = navPanelRef.current
       if (!navEl) return
 
-      const mainPanelEl = activePanel === 'overview' ? activeMainPanelRef.current : null
+      const mainPanelEl =
+        activePanel === 'overview'
+        || activePanel === 'directory'
+        || activePanel === 'capacity'
+        || activePanel === 'insight'
+        || activePanel === 'activity'
+          ? activeMainPanelRef.current
+          : null
       const viewportCap = computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top)
 
       if (mainPanelEl) {
@@ -1187,27 +1527,51 @@ export function ResourceManagementPage() {
           description="Operational staffing, allocation, and utilization across delivery teams—complements workspace membership without replacing platform authorization."
           right={
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/75 p-1.5 shadow-sm backdrop-blur-sm">
+              <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm flex-nowrap shrink-0">
                 <button
                   type="button"
-                  className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm"
+                  onClick={() => setShowKpiCards((current) => !current)}
+                  className={cn(
+                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                    showKpiCards && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                  )}
+                  aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                  title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                >
+                  <LayoutGrid className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsWorkspaceCollapsed((current) => !current)}
+                  className={cn(
+                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                    !isWorkspaceCollapsed && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                  )}
+                  aria-label={isWorkspaceCollapsed ? 'Show enterprise navigation' : 'Hide enterprise navigation'}
+                  title={isWorkspaceCollapsed ? 'Show enterprise navigation' : 'Hide enterprise navigation'}
+                >
+                  <PanelLeft className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm"
                   aria-label="Export resource snapshot"
                   title="Export resource snapshot"
                 >
-                  <Download className="h-5 w-5" strokeWidth={2} />
+                  <Download className="w-5 h-5" />
                 </button>
                 {!isOverviewSectionActive ? (
                   <button
                     type="button"
                     onClick={() => setShowFiltersPanel((current) => !current)}
                     className={cn(
-                      'flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm',
-                      showFiltersPanel && 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                      'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                      showFiltersPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
                     )}
                     aria-label={showFiltersPanel ? 'Hide filters panel' : 'Show filters panel'}
                     title={showFiltersPanel ? 'Hide filters panel' : 'Show filters panel'}
                   >
-                    <Target className="h-5 w-5" strokeWidth={2} />
+                    <Target className="w-5 h-5" />
                   </button>
                 ) : null}
               </div>
@@ -1215,36 +1579,38 @@ export function ResourceManagementPage() {
           }
         />
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
-          {kpis.map((item) => (
-            <button key={item.label} type="button" className="group text-left">
-              <Card className={kpiCardChrome(item.id)}>
-                <div className="pointer-events-none absolute -right-3 -bottom-4 opacity-[0.08] transition-all duration-500 group-hover:scale-110 group-hover:opacity-[0.12]">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/60 text-slate-700/80 ring-1 ring-white/50 backdrop-blur-sm">
-                    <item.icon className="h-7 w-7" />
+        {showKpiCards ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+            {kpis.map((item) => (
+              <button key={item.label} type="button" className="group text-left">
+                <Card className={kpiCardChrome(item.id)}>
+                  <div className="pointer-events-none absolute -right-3 -bottom-4 opacity-[0.08] transition-all duration-500 group-hover:scale-110 group-hover:opacity-[0.12]">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/60 text-slate-700/80 ring-1 ring-white/50 backdrop-blur-sm">
+                      <item.icon className="h-7 w-7" />
+                    </div>
                   </div>
-                </div>
 
-                <div className="text-xs text-slate-500">{item.label}</div>
-                <div className="mt-1 flex items-center gap-3">
-                  <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{item.value}</div>
-                  <div className="h-10 min-w-0 flex-1">
-                    <KpiSparkline data={item.trendSeries} color={item.trendColor} />
+                  <div className="text-xs text-slate-500">{item.label}</div>
+                  <div className="mt-1 flex items-center gap-3">
+                    <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{item.value}</div>
+                    <div className="h-10 min-w-0 flex-1">
+                      <KpiSparkline data={item.trendSeries} color={item.trendColor} />
+                    </div>
                   </div>
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                  <span className="inline-flex min-w-0 items-center gap-2">
-                    <item.icon className="h-3.5 w-3.5 shrink-0 text-slate-600" />
-                    <span className="truncate">{item.subtext}</span>
-                  </span>
-                  <span className={cn('shrink-0 font-semibold', item.trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
-                    {item.trend}
-                  </span>
-                </div>
-              </Card>
-            </button>
-          ))}
-        </div>
+                  <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      <item.icon className="h-3.5 w-3.5 shrink-0 text-slate-600" />
+                      <span className="truncate">{item.subtext}</span>
+                    </span>
+                    <span className={cn('shrink-0 font-semibold', item.trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
+                      {item.trend}
+                    </span>
+                  </div>
+                </Card>
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div
           className={cn(
@@ -1399,32 +1765,24 @@ export function ResourceManagementPage() {
           </div>
         </aside>
 
-        <div className={workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)}>
+        <div
+          className={workspaceMainColumnClass(false, isWorkspaceCollapsed, enterpriseNavLayoutVariant)}
+        >
+          {/* Outer wrapper already applies workspaceDockedContentInsetClass — pass docked=false
+              to avoid double left padding that narrows the panel when Fixed Sidebar is off. */}
           {!isOverviewSectionActive && showFiltersPanel ? (
-            <Card className="rounded-2xl p-4">
-              <div className="mb-2 flex justify-end">
-                <button onClick={() => setShowFiltersPanel(false)} className="rounded-md p-1 text-slate-500 hover:bg-slate-100"><X className="h-4 w-4" /></button>
-              </div>
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input value={search} onChange={(event) => setSearch(event.target.value)} className="h-11 rounded-2xl border-slate-200 bg-white pl-9 text-sm" placeholder="Search resource, role, team, or workspace" />
-                </div>
-                <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm">
-                  <option value="All">All Team</option>
-                  {teams.map((team) => <option key={team} value={team}>{team}</option>)}
-                </select>
-                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm">
-                  <option value="All">All Availability</option>
-                  <option value="Available">Available</option>
-                  <option value="Partially Allocated">Partially Allocated</option>
-                  <option value="Fully Allocated">Fully Allocated</option>
-                  <option value="Unavailable">Unavailable</option>
-                </select>
-                <select value={workspaceFilter} onChange={(e) => setWorkspaceFilter(e.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm">
-                  <option value="All">All Workspace</option>
-                  {workspaces.map((workspace) => <option key={workspace} value={workspace}>{workspace}</option>)}
-                </select>
+            <Card className="liquid-glass-enterprise-panel rounded-2xl p-4">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value)
+                    setResourcePage(1)
+                  }}
+                  className="h-11 rounded-2xl border-slate-200 bg-white pl-9 text-sm"
+                  placeholder="Search resource, role, team, or workspace"
+                />
               </div>
             </Card>
           ) : null}
@@ -1455,59 +1813,205 @@ export function ResourceManagementPage() {
           {activePanel === 'directory' ? (
             <Panel
               id="directory"
-              title="Operational Resource Directory"
-              description="Delivery staffing and allocation directory with quick actions for assign and reassign."
+              title="Operational Resource Directory Panel"
+              description="Resource staffing catalog with availability, utilization, allocation load, and quick operational actions."
               highlight={activePanel === 'directory'}
-              right={<Badge className="border-blue-200 bg-blue-50 text-blue-700">{filtered.length} resources</Badge>}
+              headerIcon={<Users className="h-5 w-5" />}
+              showDivider={false}
+              right={
+                <div className="flex flex-wrap items-center justify-end gap-3 py-1 text-xs text-muted-foreground">
+                  <EnterpriseGroupByControl
+                    options={RESOURCE_TABLE_GROUP_BY_OPTIONS}
+                    value={resourceGroupBy}
+                    onChange={(key) => {
+                      setResourceGroupBy(key)
+                      setResourcePage(1)
+                    }}
+                  />
+                  <EnterpriseSelectionToggle checked={showResourceTableSelection} onChange={setShowResourceTableSelectionSafe} />
+                  <EnterpriseColumnVisibilityControl
+                    columns={RESOURCE_TABLE_COLUMN_VISIBILITY_OPTIONS}
+                    hidden={resourceTableColumns.hiddenColumns}
+                    visibleCount={resourceTableColumns.visibleColumnOrder.length}
+                    onToggle={resourceTableColumns.toggleColumnVisibility}
+                    onShowAll={resourceTableColumns.showAllColumns}
+                    canEnable={resourceTableColumns.canShowColumn}
+                  />
+                  <p>
+                    Showing <span className="font-semibold text-foreground">{resourceStart}</span>-<span className="font-semibold text-foreground">{resourceEnd}</span> of <span className="font-semibold text-foreground">{resourceFlatRows.length}</span>
+                  </p>
+                  <span>Rows:</span>
+                  <Select
+                    value={String(resourcePageSize)}
+                    onChange={(event) => {
+                      setResourcePageSize(parseInt(event.target.value, 10))
+                      setResourcePage(1)
+                    }}
+                    className="h-10 w-[84px] text-sm"
+                  >
+                    <SelectItem value="5">5</SelectItem>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="15">15</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                  </Select>
+                  <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                    <button
+                      type="button"
+                      className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                      onClick={() => setResourcePage((prev) => Math.max(1, prev - 1))}
+                      disabled={resourcePageSafe <= 1}
+                    >
+                      Previous
+                    </button>
+                    <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">{resourcePageSafe} / {resourceTotalPages}</div>
+                    <button
+                      type="button"
+                      className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                      onClick={() => setResourcePage((prev) => Math.min(resourceTotalPages, prev + 1))}
+                      disabled={resourcePageSafe >= resourceTotalPages}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              }
+              outerRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn(mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              scrollBody={mainPanelViewportHeightPx != null}
             >
-              <EnterpriseInfoCallout className="mb-4" title="Separation of concerns">
-                Operational resource directory for delivery staffing and allocation. This complements workspace membership in{' '}
-                <a href="/workspace-management" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
-                  Workspace Management
-                </a>{' '}
-                and does not replace RBAC in{' '}
-                <a href="/security-access-control" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
-                  Security &amp; Access Control
-                </a>
-                .
-              </EnterpriseInfoCallout>
-              <div>
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-900">Operational Resource Directory</div>
-                  <Badge className="border-blue-200 bg-blue-50 text-blue-700">{filtered.length} resources</Badge>
-                </div>
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                  <table className="min-w-[900px] w-full text-xs">
-                    <thead className="bg-slate-50/95 text-slate-600">
-                      <tr>
-                        {['Name', 'Delivery Role', 'Operational Team', 'Assigned Workspace', 'Allocation', 'Utilization', 'Availability', 'Actions'].map((head) => (
-                          <th key={head} className="px-3 py-3 text-left font-semibold">{head}</th>
+              {resourceFlatRows.length > 0 ? (
+                <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl">
+                  <DndContext sensors={resourceTableColumns.dndSensors} onDragEnd={resourceTableColumns.handleColumnDragEnd}>
+                    <table
+                      ref={resourceTableRef}
+                      className={cn(
+                        'border-collapse text-xs select-none',
+                        resourceTableColumns.hasAnyCustomWidth || resourceTableColumns.resizingKey ? 'table-fixed w-full' : 'w-full min-w-[1100px]'
+                      )}
+                    >
+                      <colgroup>
+                        {showResourceTableSelection ? <col className="w-10" /> : null}
+                        {resourceTableColumns.visibleColumnOrder.map((key) => (
+                          <col key={key} style={resourceTableColumns.columnWidthStyle(key)} />
                         ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map((row) => (
-                        <tr key={row.id} onClick={() => { setSelectedId(row.id); setDrawerOpen(true) }} className={cn('cursor-pointer border-t border-slate-100', selected?.id === row.id ? 'bg-blue-50/40' : 'bg-white')}>
-                          <td className="px-3 py-3 font-semibold text-slate-900">{row.name}</td>
-                          <td className="px-3 py-3 text-slate-700">{row.role}</td>
-                          <td className="px-3 py-3 text-slate-700">{row.team}</td>
-                          <td className="px-3 py-3 text-slate-700">{row.workspace}</td>
-                          <td className="px-3 py-3 text-slate-700">{row.allocation}%</td>
-                          <td className="px-3 py-3 text-slate-700">{row.utilization}%</td>
-                          <td className="px-3 py-3"><AvailabilityBadge value={row.availabilityStatus} /></td>
-                          <td className="px-3 py-3">
-                            <div className="flex flex-wrap gap-1">
-                              {['Open', 'Allocate', 'Reassign'].map((a) => (
-                                <button key={a} className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-blue-300 hover:text-blue-700">{a}</button>
-                              ))}
-                            </div>
-                          </td>
+                      </colgroup>
+                      <thead className="sticky top-0 z-10">
+                        <tr className="text-left text-muted-foreground">
+                          {showResourceTableSelection ? (
+                            <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                              <input
+                                type="checkbox"
+                                id="resource-table-select-all"
+                                name="resource-table-select-all"
+                                checked={resourceTableSelectedIds.length > 0 && resourceTableSelectedIds.length === pagedResourceRows.length}
+                                onChange={() =>
+                                  setResourceTableSelectedIds(
+                                    resourceTableSelectedIds.length === pagedResourceRows.length ? [] : pagedResourceRows.map(({ item }) => item.id)
+                                  )
+                                }
+                                aria-label="Select all rows on this page"
+                              />
+                            </th>
+                          ) : null}
+                          <SortableContext items={resourceTableColumns.visibleColumnOrder} strategy={rectSortingStrategy}>
+                            {resourceTableColumns.visibleColumnOrder.map((key) => (
+                              <EnterpriseSortableHeaderCell
+                                key={key}
+                                columnKey={key}
+                                label={resourceTableColumnLabel(key)}
+                                icon={resourceTableColumnHeaderIcon(key)}
+                                isPinned={resourceTableColumns.isPinnedColumn(key)}
+                                isFirstColumn={resourceTableColumns.isFirstColumn(key)}
+                                isLastColumn={resourceTableColumns.isLastColumn(key)}
+                                widthStyle={resourceTableColumns.columnWidthStyle(key)}
+                                sortDir={resourceTableSort?.key === key ? resourceTableSort.dir : null}
+                                onToggleSort={toggleResourceTableSort}
+                                filterSlot={renderResourceFilterSlot(key)}
+                                frozenColumnClass={resourceTableColumns.frozenColumnHeaderClass}
+                                firstColumnTintClass={resourceTableColumns.firstColumnTintHeaderClass}
+                                isResizing={resourceTableColumns.resizingKey === key}
+                                onBeginResize={resourceTableColumns.beginColumnResize}
+                                onContextMenu={() => {}}
+                              />
+                            ))}
+                          </SortableContext>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {pagedResourceRows.map(({ item, groupLabel }, rowIndex) => {
+                          const previousGroupLabel = pagedResourceRows[rowIndex - 1]?.groupLabel ?? null
+                          const showGroupHeader = resourceGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                          const groupTint = resourceGroupBy && groupLabel ? getEnterpriseGroupTint(resourceGroupBy, groupLabel) : null
+                          const isChecked = showResourceTableSelection && resourceTableSelectedIds.includes(item.id)
+                          const rowBackground = isChecked
+                            ? 'bg-primary/10'
+                            : groupTint
+                              ? groupTint.row
+                              : selected?.id === item.id
+                                ? 'bg-blue-50/50'
+                                : 'bg-white/70'
+                          const cellClass = 'border-b border-slate-100 px-3 py-3 align-middle transition-colors group-hover:bg-sky-50/40'
+                          return (
+                            <Fragment key={item.id}>
+                              {showGroupHeader ? (
+                                <tr key={`${groupLabel}-group`}>
+                                  <td
+                                    colSpan={resourceTableColumns.visibleColumnOrder.length + (showResourceTableSelection ? 1 : 0)}
+                                    className={cn('px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground', groupTint?.first ?? 'bg-slate-50/80')}
+                                  >
+                                    {RESOURCE_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === resourceGroupBy)?.label}: {groupLabel}
+                                  </td>
+                                </tr>
+                              ) : null}
+                              <tr
+                                onClick={() => {
+                                  setSelectedId(item.id)
+                                  setDrawerOpen(true)
+                                }}
+                                className={cn('group cursor-pointer transition-colors', rowBackground)}
+                              >
+                                {showResourceTableSelection ? (
+                                  <td className={cn(cellClass, 'w-10')} onClick={(event) => event.stopPropagation()}>
+                                    <input
+                                      type="checkbox"
+                                      id={`resource-table-select-${item.id}`}
+                                      name={`resource-table-select-${item.id}`}
+                                      checked={resourceTableSelectedIds.includes(item.id)}
+                                      onChange={() => toggleResourceTableRowSelection(item.id)}
+                                      aria-label={`Select ${item.name}`}
+                                    />
+                                  </td>
+                                ) : null}
+                                {resourceTableColumns.visibleColumnOrder.map((key) => (
+                                  <td
+                                    key={key}
+                                    className={cellClass}
+                                    style={{
+                                      ...(resourceTableColumns.columnWidthStyle(key) ?? {}),
+                                      ...(key === 'name' ? { boxShadow: `inset 3px 0 0 ${availabilityAccentColor(item.availabilityStatus)}` } : {}),
+                                    }}
+                                  >
+                                    {renderResourceTableCell(item, key)}
+                                  </td>
+                                ))}
+                              </tr>
+                            </Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </DndContext>
                 </div>
-              </div>
+              ) : (
+                <div className="flex min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/60 px-4 text-center">
+                  <p className="text-sm font-medium text-slate-500">No resources match the current search</p>
+                  <p className="mt-1 text-xs text-slate-400">Adjust the search to see resources.</p>
+                  <Button type="button" variant="outline" className="mt-4 h-9 rounded-lg text-xs" onClick={resetResourceFilters}>
+                    Reset filters
+                  </Button>
+                </div>
+              )}
             </Panel>
           ) : null}
 
@@ -1517,6 +2021,10 @@ export function ResourceManagementPage() {
               title="Capacity Planning Panel"
               description="Capacity summary for resource allocation planning."
               highlight={activePanel === 'capacity'}
+              outerRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn(mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              scrollBody={mainPanelViewportHeightPx != null}
             >
               <div className="space-y-4">
                 <div className="text-sm font-semibold text-slate-900">Capacity Planning Panel</div>
@@ -1543,6 +2051,10 @@ export function ResourceManagementPage() {
               title="Utilization Insight Panel"
               description="Resource utilization insight for overload and underload detection."
               highlight={activePanel === 'insight'}
+              outerRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn(mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              scrollBody={mainPanelViewportHeightPx != null}
             >
               <div className="space-y-4">
                 <div className="text-sm font-semibold text-slate-900">Utilization Insight Panel</div>
@@ -1569,6 +2081,10 @@ export function ResourceManagementPage() {
               title="Activity Log & History Panel"
               description="Riwayat aktivitas perubahan alokasi resource."
               highlight={activePanel === 'activity'}
+              outerRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn(mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              scrollBody={mainPanelViewportHeightPx != null}
             >
               <div className="space-y-3">
                 <div className="text-sm font-semibold text-slate-900">Activity Log & History Panel</div>

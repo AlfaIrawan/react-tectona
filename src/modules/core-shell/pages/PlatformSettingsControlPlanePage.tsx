@@ -1248,12 +1248,12 @@ export function PlatformSettingsControlPlanePage() {
   }, [])
 
   const sidebarCardClass = cn(
-    'glass-card rounded-2xl border border-border/40 overflow-hidden',
+    'liquid-glass-enterprise-panel rounded-2xl border border-border/40 overflow-hidden',
     'shadow-[0_16px_44px_rgba(15,23,42,0.08)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.32)]'
   )
 
   const mainSurfaceClass = cn(
-    'glass-card rounded-2xl border border-border/40 overflow-hidden',
+    'liquid-glass-enterprise-panel rounded-2xl border border-border/40 overflow-hidden',
     'bg-gradient-to-b from-background/95 via-background/90 to-muted/15',
     'shadow-[0_16px_44px_rgba(15,23,42,0.08)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.32)]'
   )

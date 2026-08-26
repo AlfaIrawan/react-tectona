@@ -59,7 +59,7 @@ export function PlatformHealthCards({ services, loading, salixBaseUrl }: Platfor
             })}
       </div>
 
-      <div className="rounded-xl border border-dashed border-border/70 bg-muted/30 p-4 text-xs text-muted-foreground">
+      <div className="liquid-glass-enterprise-panel rounded-xl border border-dashed border-border/70 p-4 text-xs text-muted-foreground">
         <p>
           This is a read-only status summary for services relevant to Tectona — not a log explorer or metrics
           dashboard. For request-level logs, traces, and historical incidents, use Salix (Central Log Management)

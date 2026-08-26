@@ -570,7 +570,11 @@ export function IntegrationNodePropertiesPanel({
       <div className="space-y-2">
         <CheckboxRow
           label="Containable"
-          checked={Boolean(arrange.containable)}
+          checked={
+            selectedNode.type === 'archimateBoundary'
+              ? arrange.containable !== false
+              : arrange.containable === true
+          }
           onChange={(containable) => patchArrange({ containable })}
         />
         <CheckboxRow

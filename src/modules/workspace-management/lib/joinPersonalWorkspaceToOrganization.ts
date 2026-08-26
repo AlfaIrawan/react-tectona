@@ -1,4 +1,5 @@
 import {
+  completePersonalWorkspaceAfterAdminApproval,
   linkPersonalWorkspaceToOrgTree,
   patchWorkspaceOrgWorkspace,
   type WorkspaceOrgWorkspaceDto,
@@ -183,7 +184,7 @@ async function patchOperationalWorkspaceOrgDirectoryJoined(
   orgWorkspaceId: string,
   actorId: string,
 ): Promise<WorkspaceOrgWorkspaceDto> {
-  const metadata = {
+  const metadata: Record<string, unknown> = {
     ...(workspace.metadata && typeof workspace.metadata === 'object' ? workspace.metadata : {}),
     tectona_org_directory_joined: true,
     tectona_admin_approval_pending: false,
@@ -383,12 +384,14 @@ export async function completeApprovedDirectoryJoinRequest(input: {
     )
   }
 
-  return linkPersonalWorkspaceToOrgTree(
-    input.orgWorkspaceId,
-    {
-      identity_ref: input.subjectId,
-      personal_workspace_id: input.workspaceId,
-    },
+  // Approval completion must use the dedicated endpoint. It resolves the
+  // organization captured during the approval request and clears the pending
+  // metadata atomically before linking the personal workspace into the tree.
+  // The direct link endpoint remains reserved for an explicit "Join
+  // organization tree" action.
+  return completePersonalWorkspaceAfterAdminApproval(
+    input.workspaceId,
+    { identity_ref: input.subjectId },
     { actorId: input.actorId },
   )
 }

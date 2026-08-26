@@ -66,6 +66,17 @@ export type WacMemberListResponse = {
   total: number
 }
 
+export type WacRoleDto = {
+  id: string
+  role_code: string
+  display_name: string
+  version?: number
+}
+
+export type WacRoleListResponse = {
+  items: WacRoleDto[]
+}
+
 export type WacMembershipCreatePayload = {
   subject_id: string
   role_code: string
@@ -194,6 +205,18 @@ export async function fetchWorkspaceMembers(
   }
 }
 
+/** RBAC role catalog for one platform/workspace. Role definitions remain owned by WAC. */
+export async function fetchWorkspaceRoles(
+  appId: string,
+  workspaceId: string,
+): Promise<WacRoleListResponse> {
+  const res = await apiFetch(
+    wacUrl(`/v1/apps/${encodeURIComponent(appId)}/workspaces/${encodeURIComponent(workspaceId)}/roles`),
+    { headers: tectonaServiceHeaders() },
+  )
+  return handleJson<WacRoleListResponse>(res)
+}
+
 export async function fetchSubjectMemberships(
   appId: string,
   subjectId: string,
@@ -230,6 +253,34 @@ export async function createWorkspaceMembership(
         program_scope_refs: payload.program_scope_refs ?? [],
       }),
     }
+  )
+  return handleJson<WacMembershipDto>(res)
+}
+
+/**
+ * Bootstrap the authenticated subject's membership for a workspace they just
+ * created. Unlike the regular membership endpoint, this avoids the circular
+ * requirement that the creator must already administer the new workspace.
+ */
+export async function provisionOwnWorkspaceMembership(
+  appId: string,
+  workspaceId: string,
+  payload: Pick<WacMembershipCreatePayload, 'subject_id' | 'role_code' | 'status_code'>,
+  opts?: { actorId?: string },
+): Promise<WacMembershipDto> {
+  const res = await apiFetch(
+    wacUrl(`/v1/apps/${encodeURIComponent(appId)}/onboarding/provision-membership`),
+    {
+      method: 'POST',
+      headers: mutationHeaders(opts),
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        subject_id: payload.subject_id,
+        role_code: payload.role_code,
+        membership_status: payload.status_code ?? 'active',
+        onboarding_status: 'active',
+      }),
+    },
   )
   return handleJson<WacMembershipDto>(res)
 }

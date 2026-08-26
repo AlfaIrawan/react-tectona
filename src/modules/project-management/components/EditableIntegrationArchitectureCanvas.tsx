@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { GripVertical, Layers, PencilLine, Sparkles, Trash2 } from 'lucide-react'
+import { ChevronsLeft, ChevronsRight, GripVertical, Layers, PencilLine, Sparkles, Trash2 } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
@@ -32,6 +32,7 @@ import { ArchimateNotationPalette } from '@/modules/project-management/component
 import { IntegrationNodePropertiesPanel } from '@/modules/project-management/components/IntegrationNodePropertiesPanel'
 import {
   cloneDefaultIntegrationArchitecture,
+  isIntegrationNodeContainable,
   normalizeIntegrationNodesForCanvas,
 } from '@/modules/project-management/lib/integrationArchitectureDefaults'
 import {
@@ -43,6 +44,7 @@ import { DEFAULT_INTEGRATION_PLANTUML } from '@/modules/project-management/lib/i
 import {
   integrationGraphToPlantUml,
   parsePlantUmlToIntegrationGraph,
+  pickHandleSides,
 } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import {
   ARCHIMATE_GENERAL_PALETTE_ITEMS,
@@ -146,6 +148,7 @@ function EditableIntegrationArchitectureCanvasInner({
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>('source')
   const [studioPanelPosition, setStudioPanelPosition] = useState(STUDIO_PANEL_DEFAULT_POSITION)
   const [isStudioPanelDragging, setIsStudioPanelDragging] = useState(false)
+  const [isStudioPanelCollapsed, setIsStudioPanelCollapsed] = useState(false)
   const [propertiesPanelPosition, setPropertiesPanelPosition] = useState<{ x: number; y: number } | null>(null)
   const [isPropertiesPanelDragging, setIsPropertiesPanelDragging] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -193,16 +196,19 @@ function EditableIntegrationArchitectureCanvasInner({
     setViewMode('canvas')
     setSidebarPanel('source')
     setStudioPanelPosition(STUDIO_PANEL_DEFAULT_POSITION)
+    setIsStudioPanelCollapsed(false)
   }, [ideaId, defaultGraph, setEdges, setNodes])
 
   useEffect(() => {
     if (!bootstrapRecord) return
     skipNextSaveRef.current = true
     skipSourceApplyRef.current = true
-    if (bootstrapRecord.nodes.length > 0) {
-      setNodes(normalizeIntegrationNodesForCanvas(bootstrapRecord.nodes))
-      setEdges(bootstrapRecord.edges)
-    }
+    // Always sync from the backend-confirmed record, even when it's genuinely empty (e.g. AI
+    // returned insufficient_data) — skipping the update here left whatever the mount-time
+    // localStorage/default fallback had rendered untouched, so a fresh empty result could never
+    // clear out stale (possibly pre-bugfix, possibly unrelated) cached content.
+    setNodes(normalizeIntegrationNodesForCanvas(bootstrapRecord.nodes))
+    setEdges(bootstrapRecord.edges)
     setPlantumlSource(bootstrapRecord.plantumlSource ?? DEFAULT_INTEGRATION_PLANTUML)
     setUserCustomized(bootstrapRecord.userCustomized)
     setSelectedNodeId(null)
@@ -266,11 +272,39 @@ function EditableIntegrationArchitectureCanvasInner({
     (patch: Record<string, unknown>) => {
       if (!selectedNodeId) return
       markCustomized()
-      setNodes((current) =>
-        current.map((node) =>
-          node.id === selectedNodeId ? { ...node, data: { ...node.data, ...patch } as ArchimateNodeData } : node,
-        ),
-      )
+      setNodes((current) => {
+        const selected = current.find((node) => node.id === selectedNodeId)
+        if (!selected) return current
+
+        const nextSelected = { ...selected, data: { ...selected.data, ...patch } as ArchimateNodeData }
+        const containable = patch.arrange?.containable
+        if (typeof containable !== 'boolean') {
+          return current.map((node) => (node.id === selectedNodeId ? nextSelected : node))
+        }
+
+        if (containable) {
+          return normalizeIntegrationNodesForCanvas(
+            current.map((node) => (node.id === selectedNodeId ? nextSelected : node)),
+          )
+        }
+
+        const absolutePosition = (node: typeof selected): { x: number; y: number } => {
+          if (!node.parentNode) return node.position
+          const parent = current.find((candidate) => candidate.id === node.parentNode)
+          if (!parent) return node.position
+          const parentPosition = absolutePosition(parent)
+          return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
+        }
+
+        const detachedChildren = new Set(
+          current.filter((node) => node.parentNode === selectedNodeId).map((node) => node.id),
+        )
+        return normalizeIntegrationNodesForCanvas(current.map((node) => {
+          if (node.id === selectedNodeId) return nextSelected
+          if (!detachedChildren.has(node.id)) return node
+          return { ...node, parentNode: undefined, extent: undefined, position: absolutePosition(node) }
+        }))
+      })
     },
     [markCustomized, selectedNodeId, setNodes],
   )
@@ -501,6 +535,125 @@ function EditableIntegrationArchitectureCanvasInner({
     ],
   )
 
+  const handleNodeDragStop = useCallback(
+    (_event: React.MouseEvent, draggedNode: Node<ArchimateNodeData>) => {
+      if (draggedNode.type === 'archimateLegend') return
+
+      let nextNodes: Node<ArchimateNodeData>[] = []
+      setNodes((current) => {
+        const currentNode = current.find((node) => node.id === draggedNode.id)
+        if (!currentNode) return current
+        const nodeById = new Map(current.map((node) => [node.id, node]))
+        const absolutePosition = (node: Node<ArchimateNodeData>): { x: number; y: number } => {
+          if (!node.parentNode) return node.position
+          const parent = nodeById.get(node.parentNode)
+          if (!parent) return node.position
+          const parentPosition = absolutePosition(parent)
+          return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
+        }
+        const dimensions = (node: Node<ArchimateNodeData>) => ({
+          width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 0),
+          height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 0),
+        })
+        const isDescendant = (candidateId: string, ancestorId: string) => {
+          let candidate = nodeById.get(candidateId)
+          const visited = new Set<string>()
+          while (candidate?.parentNode && !visited.has(candidate.id)) {
+            if (candidate.parentNode === ancestorId) return true
+            visited.add(candidate.id)
+            candidate = nodeById.get(candidate.parentNode)
+          }
+          return false
+        }
+
+        const movedAbsolute = draggedNode.positionAbsolute ?? absolutePosition(currentNode)
+        const movedSize = dimensions(currentNode)
+        const center = {
+          x: movedAbsolute.x + movedSize.width / 2,
+          y: movedAbsolute.y + movedSize.height / 2,
+        }
+        const target = current
+          .filter((node) => node.id !== currentNode.id && !isDescendant(node.id, currentNode.id))
+          .filter(isIntegrationNodeContainable)
+          .map((node) => {
+            const position = absolutePosition(node)
+            const size = dimensions(node)
+            return { node, position, size }
+          })
+          .filter(({ position, size }) =>
+            center.x >= position.x &&
+            center.x <= position.x + size.width &&
+            center.y >= position.y &&
+            center.y <= position.y + size.height,
+          )
+          .sort((a, b) => a.size.width * a.size.height - b.size.width * b.size.height)[0]?.node
+
+        markCustomized()
+        if (!target) {
+          nextNodes = current.map((node) =>
+            node.id === currentNode.id
+              ? {
+                  ...node,
+                  parentNode: undefined,
+                  extent: undefined,
+                  position: movedAbsolute,
+                }
+              : node,
+          )
+          return nextNodes
+        }
+
+        const targetAbsolute = absolutePosition(target)
+        nextNodes = current.map((node) =>
+            node.id === currentNode.id
+            ? {
+                ...node,
+                parentNode: target.id,
+                extent: undefined,
+                position: { x: movedAbsolute.x - targetAbsolute.x, y: movedAbsolute.y - targetAbsolute.y },
+              }
+            : node,
+        )
+        return nextNodes
+      })
+
+      // A fixed sourceHandle/targetHandle chosen when the diagram was first laid out keeps pointing
+      // at whichever side used to face the other node — after a manual drag that side can easily be
+      // wrong (the classic "arrow leaves from the back instead of the front" complaint). Refresh the
+      // handle choice for every edge touching the node that just moved, using its POST-drag position.
+      setEdges((current) => {
+        if (nextNodes.length === 0) return current
+        const nodeById = new Map(nextNodes.map((node) => [node.id, node]))
+        const absolutePosition = (node: Node<ArchimateNodeData>): { x: number; y: number } => {
+          if (!node.parentNode) return node.position
+          const parent = nodeById.get(node.parentNode)
+          if (!parent) return node.position
+          const parentPosition = absolutePosition(parent)
+          return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
+        }
+        const geometry = (nodeId: string) => {
+          const node = nodeById.get(nodeId)
+          if (!node) return null
+          const position = absolutePosition(node)
+          const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? 0)
+          const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? 0)
+          if (!width || !height) return null
+          return { x: position.x, y: position.y, width, height }
+        }
+
+        return current.map((edge) => {
+          if (edge.source !== draggedNode.id && edge.target !== draggedNode.id) return edge
+          const sourceGeometry = geometry(edge.source)
+          const targetGeometry = geometry(edge.target)
+          if (!sourceGeometry || !targetGeometry) return edge
+          const handles = pickHandleSides(sourceGeometry, targetGeometry)
+          return { ...edge, sourceHandle: handles.sourceHandle, targetHandle: handles.targetHandle }
+        })
+      })
+    },
+    [markCustomized, setNodes, setEdges],
+  )
+
   const applyPlantUmlSourceToCanvas = useCallback(
     (source: string) => {
       try {
@@ -599,7 +752,51 @@ function EditableIntegrationArchitectureCanvasInner({
       )
 
       markCustomized()
-      setNodes((current) => [...current, newNode])
+      setNodes((current) => {
+        const nodeById = new Map(current.map((node) => [node.id, node]))
+        const absolutePosition = (node: Node<ArchimateNodeData>): { x: number; y: number } => {
+          if (!node.parentNode) return node.position
+          const parent = nodeById.get(node.parentNode)
+          if (!parent) return node.position
+          const parentPosition = absolutePosition(parent)
+          return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
+        }
+        const dimensions = (node: Node<ArchimateNodeData>) => ({
+          width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 200),
+          height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 90),
+        })
+        const newSize = dimensions(newNode)
+        const center = {
+          x: position.x + newSize.width / 2,
+          y: position.y + newSize.height / 2,
+        }
+        const target = current
+          .filter(isIntegrationNodeContainable)
+          .map((node) => {
+            const targetPosition = absolutePosition(node)
+            const targetSize = dimensions(node)
+            return { node, position: targetPosition, size: targetSize }
+          })
+          .filter(({ position: targetPosition, size: targetSize }) =>
+            center.x >= targetPosition.x &&
+            center.x <= targetPosition.x + targetSize.width &&
+            center.y >= targetPosition.y &&
+            center.y <= targetPosition.y + targetSize.height,
+          )
+          .sort((a, b) => a.size.width * a.size.height - b.size.width * b.size.height)[0]
+
+        if (!target) return [...current, newNode]
+        const targetPosition = target.position
+        return [
+          ...current,
+          {
+            ...newNode,
+            parentNode: target.node.id,
+            extent: undefined,
+            position: { x: position.x - targetPosition.x, y: position.y - targetPosition.y },
+          },
+        ]
+      })
       setSelectedNodeId(newNode.id)
       setSelectedEdgeId(null)
       if (fillHeight) setSidebarPanel('source')
@@ -702,6 +899,7 @@ function EditableIntegrationArchitectureCanvasInner({
       nodes={nodes}
       edges={edges}
       onNodesChange={handleNodesChange}
+      onNodeDragStop={handleNodeDragStop}
       onEdgesChange={handleEdgesChange}
       onConnect={onConnect}
       onSelectionChange={handleSelectionChange}
@@ -757,7 +955,7 @@ function EditableIntegrationArchitectureCanvasInner({
   )
 
   const canvasSurfaceClass =
-    'bg-[radial-gradient(circle_at_1px_1px,rgba(148,163,184,0.22)_1px,transparent_1px),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.96))] [background-size:22px_22px]'
+    'rounded-2xl border border-white/60 bg-white/75 backdrop-blur-xl'
 
   const studioFloatingPanelShellClass =
     'pointer-events-none absolute z-30 w-[min(420px,36%)] max-w-[460px]'
@@ -828,7 +1026,7 @@ function EditableIntegrationArchitectureCanvasInner({
           <div ref={canvasZoneRef} className="relative min-h-0 flex-1 overflow-hidden">
             <div
               ref={reactFlowWrapperRef}
-              className={cn('absolute inset-0 overflow-hidden', canvasSurfaceClass)}
+              className={cn('absolute inset-0 overflow-hidden rounded-2xl', canvasSurfaceClass)}
               onDragOver={handleCanvasDragOver}
               onDrop={handleCanvasDrop}
             >
@@ -847,11 +1045,14 @@ function EditableIntegrationArchitectureCanvasInner({
               style={{
                 left: studioPanelPosition.x,
                 top: studioPanelPosition.y,
-                height: `calc(100% - ${STUDIO_PANEL_MARGIN_PX * 2}px)`,
+                height: isStudioPanelCollapsed ? 44 : `calc(100% - ${STUDIO_PANEL_MARGIN_PX * 2}px)`,
+                maxHeight: isStudioPanelCollapsed ? 44 : undefined,
+                width: isStudioPanelCollapsed ? 140 : undefined,
+                maxWidth: isStudioPanelCollapsed ? 140 : undefined,
               }}
             >
-              <aside className={studioFloatingPanelClass}>
-                <div className="flex shrink-0 border-b border-white/35 bg-white/15">
+              <aside className={cn(studioFloatingPanelClass, 'transition-[width] duration-200 ease-out')}>
+                <div className="relative flex shrink-0 border-b border-white/35 bg-white/15">
                   <div
                     role="button"
                     tabIndex={0}
@@ -867,24 +1068,45 @@ function EditableIntegrationArchitectureCanvasInner({
                   >
                     <GripVertical className="h-4 w-4 text-slate-500" />
                   </div>
-                  {studioSidebarTabs.map((tab) => {
-                    const Icon = tab.icon
-                    const active = sidebarPanel === tab.id
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        className={studioPanelTabClass(active)}
-                        onClick={() => setSidebarPanel(tab.id)}
-                      >
-                        <Icon className="h-3.5 w-3.5" />
-                        {tab.label}
-                      </button>
-                    )
-                  })}
+                  {isStudioPanelCollapsed ? (
+                    <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 truncate px-2 text-xs font-semibold text-slate-700">
+                      Menu
+                    </span>
+                  ) : null}
+                  {!isStudioPanelCollapsed
+                    ? studioSidebarTabs.map((tab) => {
+                        const Icon = tab.icon
+                        const active = sidebarPanel === tab.id
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            className={studioPanelTabClass(active)}
+                            onClick={() => setSidebarPanel(tab.id)}
+                          >
+                            <Icon className="h-3.5 w-3.5" />
+                            {tab.label}
+                          </button>
+                        )
+                      })
+                    : null}
+                  <button
+                    type="button"
+                    className="ml-auto inline-flex h-10 w-10 shrink-0 items-center justify-center text-slate-500 transition hover:bg-white/25 hover:text-slate-800"
+                    onClick={() => setIsStudioPanelCollapsed((current) => !current)}
+                    aria-expanded={!isStudioPanelCollapsed}
+                    aria-label={isStudioPanelCollapsed ? 'Expand Source and ArchiMate panel' : 'Collapse Source and ArchiMate panel'}
+                    title={isStudioPanelCollapsed ? 'Expand editor panel' : 'Collapse editor panel'}
+                  >
+                    {isStudioPanelCollapsed ? (
+                      <ChevronsRight className="h-3.5 w-3.5" aria-hidden />
+                    ) : (
+                      <ChevronsLeft className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                  </button>
                 </div>
 
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {!isStudioPanelCollapsed ? <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   {sidebarPanel === 'source' ? (
                     <>
                       <Textarea
@@ -904,13 +1126,10 @@ function EditableIntegrationArchitectureCanvasInner({
                   ) : (
                     notationPanelBody
                   )}
-                </div>
+                </div> : null}
 
-                {(toolbarExtra || sidebarPanel === 'source') ? (
-                  <div className={STUDIO_FOOTER_ACTIONS_CLASS}>
-                    {toolbarExtra}
-                    {sidebarPanel === 'source' ? sourceActionButtons : null}
-                  </div>
+                {!isStudioPanelCollapsed && toolbarExtra ? (
+                  <div className={STUDIO_FOOTER_ACTIONS_CLASS}>{toolbarExtra}</div>
                 ) : null}
               </aside>
             </div>
@@ -988,7 +1207,7 @@ function EditableIntegrationArchitectureCanvasInner({
             className={cn(
               'rounded-[22px] border border-slate-200/80 overflow-hidden',
               canvasSurfaceClass,
-              fillHeight ? 'min-h-0 flex-1' : 'h-[620px]',
+              fillHeight ? 'min-h-[420px] flex-1' : 'h-[620px]',
             )}
             onDragOver={handleCanvasDragOver}
             onDrop={handleCanvasDrop}

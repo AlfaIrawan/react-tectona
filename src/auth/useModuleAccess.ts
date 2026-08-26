@@ -11,6 +11,8 @@ import {
   fetchSubjectMembershipsCached,
   peekCachedSubjectMemberships,
 } from '@/lib/wacMembershipCache'
+import { fetchAllWorkspaceOrgWorkspaces, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
+import { isOrganizationHomeWorkspace, isWorkspaceOwnedBySubject } from '@/lib/workspaceOwnershipVisibility'
 
 export type ModuleId =
   | 'workspace'
@@ -26,6 +28,7 @@ export type ModuleId =
   | 'document_knowledge'
   | 'integration_api'
   | 'security_access'
+  | 'identity_lite'
   | 'ai_project'
   | 'ai_idea'
   | 'platform_settings'
@@ -35,6 +38,7 @@ export type ModuleAccessState = {
   loading: boolean
   isPlatformAdmin: boolean
   maxWorkspaceRole: 'Admin' | 'Manager' | 'Member' | 'Viewer' | 'None'
+  canAccessSecurityAccess: boolean
   canAccess: (moduleId: ModuleId) => boolean
 }
 
@@ -79,13 +83,57 @@ function maxRoleInMemberships(
   return max
 }
 
+function hasAdminMembership(
+  memberships: WacMembershipDto[],
+  workspaceIds: ReadonlySet<string>,
+): boolean {
+  return memberships.some(
+    (membership) => workspaceIds.has(membership.workspace_id) && wacRoleCodeToUiRole(membership.role_code) === 'Admin',
+  )
+}
+
+function ownedPersonalWorkspaceRoot(
+  workspace: WorkspaceOrgWorkspaceDto,
+  workspaces: ReadonlyArray<WorkspaceOrgWorkspaceDto>,
+  subject: { id?: string; name?: string | null; email?: string | null },
+): WorkspaceOrgWorkspaceDto | null {
+  const byId = new Map(workspaces.map((item) => [item.id, item]))
+  let current: WorkspaceOrgWorkspaceDto | undefined = workspace
+  let rootPersonal: WorkspaceOrgWorkspaceDto | undefined
+
+  while (current) {
+    if (current.tenant_mode === 'personal') {
+      rootPersonal = current
+      break
+    }
+    const parentId = typeof current.metadata?.parent_workspace_id === 'string'
+      ? current.metadata.parent_workspace_id.trim()
+      : ''
+    current = parentId ? byId.get(parentId) : undefined
+  }
+
+  if (!rootPersonal) return null
+  return isWorkspaceOwnedBySubject(
+      {
+        id: rootPersonal.id,
+        metadata: rootPersonal.metadata,
+        createdBy: rootPersonal.created_by ?? null,
+        tenantMode: rootPersonal.tenant_mode ?? null,
+      },
+      subject,
+    )
+    ? rootPersonal
+    : null
+}
+
 /**
  * Module access policy (production-like default):
  * - Root/Administrator bypass everything (platform admin).
  * - All other modules require at least one active WAC membership (AppAccessGate already enforces this).
  * - End-user GA launcher always includes Workspace + Document (see END_USER_GA_MODULE_IDS).
  * - Workspace module stays available in multi-select scope; WM page aggregates selected workspaces.
- * - Security & Access Control + Platform Settings require platform admin only.
+ * - Security & Access Control is available to standalone users, organization admins,
+ *   and creator/admin users within their personal workspace tree.
  * - GA-pending modules hidden via tenantUiProfile.
  */
 export function useModuleAccess(): ModuleAccessState {
@@ -101,7 +149,7 @@ export function useModuleAccess(): ModuleAccessState {
   const cachedMemberships = subjectId ? peekCachedSubjectMemberships(subjectId) : null
 
   const [loading, setLoading] = useState(
-    !isPlatformAdmin && Boolean(subjectId) && !cachedMemberships,
+    !isPlatformAdmin && Boolean(subjectId),
   )
   const [maxWorkspaceRole, setMaxWorkspaceRole] = useState<ModuleAccessState['maxWorkspaceRole']>(() => {
     if (!cachedMemberships || !subjectId) return 'None'
@@ -111,6 +159,7 @@ export function useModuleAccess(): ModuleAccessState {
     }
     return role
   })
+  const [canAccessSecurityAccess, setCanAccessSecurityAccess] = useState(isPlatformAdmin)
 
   const activeWorkspaceId = tenant?.workspaceId ?? null
 
@@ -118,13 +167,16 @@ export function useModuleAccess(): ModuleAccessState {
     if (isPlatformAdmin || !subjectId) {
       setLoading(false)
       setMaxWorkspaceRole('None')
+      setCanAccessSecurityAccess(isPlatformAdmin)
       return
     }
     let cancelled = false
-    const warm = peekCachedSubjectMemberships(subjectId)
-    if (!warm) setLoading(true)
-    void fetchSubjectMembershipsCached(subjectId, { activeOnly: true })
-      .then((res) => {
+    setLoading(true)
+    void Promise.all([
+      fetchSubjectMembershipsCached(subjectId, { activeOnly: true }),
+      fetchAllWorkspaceOrgWorkspaces().catch(() => [] as WorkspaceOrgWorkspaceDto[]),
+    ])
+      .then(([res, workspaces]) => {
         if (cancelled) return
         const items = res.items ?? []
         let role = maxRoleInMemberships(items, activeWorkspaceId)
@@ -132,22 +184,54 @@ export function useModuleAccess(): ModuleAccessState {
           role = maxRoleInMemberships(items, null)
         }
         setMaxWorkspaceRole(role)
+        const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId)
+        const isNonOrganizationUser = tenant?.tenantMode !== 'organization'
+        const organizationWorkspaceIds = new Set(
+          workspaces.filter((workspace) => isOrganizationHomeWorkspace(workspace)).map((workspace) => workspace.id),
+        )
+        const hasOrganizationAdmin = hasAdminMembership(items, organizationWorkspaceIds)
+        const personalRoot = activeWorkspace && !isOrganizationHomeWorkspace(activeWorkspace)
+          ? ownedPersonalWorkspaceRoot(activeWorkspace, workspaces, {
+              id: subjectId,
+              name: session?.user.name,
+              email: session?.user.email,
+            })
+          : null
+        const personalScopeIds = new Set(
+          [activeWorkspace?.id, personalRoot?.id].filter((id): id is string => Boolean(id)),
+        )
+        const hasPersonalAdminScope = Boolean(
+          activeWorkspace
+          && !isOrganizationHomeWorkspace(activeWorkspace)
+          && personalRoot
+          && hasAdminMembership(items, personalScopeIds),
+        )
+        setCanAccessSecurityAccess(isNonOrganizationUser || hasOrganizationAdmin || hasPersonalAdminScope)
         setLoading(false)
       })
       .catch(() => {
         if (cancelled) return
         setMaxWorkspaceRole('None')
+        setCanAccessSecurityAccess(false)
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [isPlatformAdmin, subjectId, activeWorkspaceId])
+  }, [
+    isPlatformAdmin,
+    subjectId,
+    activeWorkspaceId,
+    tenant?.tenantMode,
+    session?.user.name,
+    session?.user.email,
+  ])
 
   const canAccess = useMemo(() => {
     return (moduleId: ModuleId) => {
       if (isPlatformAdmin) return true
-      if (moduleId === 'security_access' || moduleId === 'platform_settings') return false
+      if (moduleId === 'security_access' || moduleId === 'identity_lite') return canAccessSecurityAccess
+      if (moduleId === 'platform_settings') return false
 
       if (moduleId === 'workspace' && tenant?.uiProfile.hideWorkspaceModule) return false
 
@@ -167,6 +251,7 @@ export function useModuleAccess(): ModuleAccessState {
     }
   }, [
     isPlatformAdmin,
+    canAccessSecurityAccess,
     tenant?.workspaceId,
     tenant?.uiProfile.hideWorkspaceModule,
     tenant?.uiProfile.hiddenModuleIds,
@@ -176,6 +261,7 @@ export function useModuleAccess(): ModuleAccessState {
     loading,
     isPlatformAdmin,
     maxWorkspaceRole,
+    canAccessSecurityAccess,
     canAccess,
   }
 }

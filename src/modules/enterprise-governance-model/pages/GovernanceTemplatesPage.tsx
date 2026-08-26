@@ -125,7 +125,7 @@ export function GovernanceTemplatesPage() {
         {cards.map((t) => (
           <div
             key={t.name}
-            className="flex flex-col rounded-2xl border border-border/60 bg-gradient-to-br from-background via-background to-muted/15 p-4 shadow-sm lg:flex-row"
+            className="flex flex-col rounded-2xl border border-border/60 liquid-glass-enterprise-panel p-4 shadow-sm lg:flex-row"
           >
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">

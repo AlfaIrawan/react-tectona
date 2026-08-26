@@ -701,15 +701,15 @@ function IntegrationSyncToolbarButton({
         }}
         disabled={syncing}
         className={cn(
-          'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
-          open && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+          'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
+          open && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
         )}
         aria-label="Sync integrations"
         aria-expanded={open}
         aria-haspopup="menu"
         title="Sync"
       >
-        <RefreshCw className={cn('h-[18px] w-[18px]', syncing && 'animate-spin')} strokeWidth={1.8} />
+        <RefreshCw className={cn('w-5 h-5', syncing && 'animate-spin')} />
       </button>
 
       {open && anchor && typeof document !== 'undefined'
@@ -2469,7 +2469,7 @@ function Panel({
       ref={outerRef}
       style={style}
       className={cn(
-        'w-full min-w-0 rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
+        'w-full min-w-0 rounded-3xl border liquid-glass-enterprise-panel transition-all',
         highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80',
         scrollBody && 'flex min-h-0 flex-col overflow-hidden',
         className
@@ -3411,14 +3411,23 @@ export function TaskWorkManagementPage() {
 
   useLayoutEffect(() => {
     if (!shellReady) return
-    if (activePanel !== 'overview' && activePanel !== 'directory') {
+    if (
+      activePanel !== 'overview'
+      && activePanel !== 'directory'
+      && activePanel !== 'structure'
+      && activePanel !== 'dependencies'
+      && activePanel !== 'workflow'
+      && activePanel !== 'ownership'
+      && activePanel !== 'time'
+      && activePanel !== 'activity'
+    ) {
       setMainPanelViewportHeightPx(null)
       return
     }
 
     const compute = () => {
       const el =
-        activePanel === 'overview' ? activeMainPanelRef.current : directoryPanelRef.current
+        activePanel === 'directory' ? directoryPanelRef.current : activeMainPanelRef.current
       if (!el) return
       setMainPanelViewportHeightPx(computeWorkspaceMainPanelViewportHeightPx(el.getBoundingClientRect().top))
     }
@@ -3467,10 +3476,16 @@ export function TaskWorkManagementPage() {
       if (!navEl) return
 
       const mainPanelEl =
-        activePanel === 'overview'
-          ? activeMainPanelRef.current
-          : activePanel === 'directory'
-            ? directoryPanelRef.current
+        activePanel === 'directory'
+          ? directoryPanelRef.current
+          : activePanel === 'overview'
+              || activePanel === 'structure'
+              || activePanel === 'dependencies'
+              || activePanel === 'workflow'
+              || activePanel === 'ownership'
+              || activePanel === 'time'
+              || activePanel === 'activity'
+            ? activeMainPanelRef.current
             : null
       const viewportCap = computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top)
 
@@ -4041,7 +4056,7 @@ export function TaskWorkManagementPage() {
         label: 'Total Work Items',
         value: String(summary.total),
         subtext: 'All active execution records in scope',
-        trend: '—',
+        trend: '0',
         icon: LayoutList,
         trendColor: '#0ea5e9',
         trendSeries: Array.from({ length: 8 }, () => summary.total),
@@ -4051,7 +4066,7 @@ export function TaskWorkManagementPage() {
         label: 'Open Tasks',
         value: String(summary.openTasks),
         subtext: 'Operational items not yet done',
-        trend: '—',
+        trend: '0',
         icon: Briefcase,
         trendColor: '#6366f1',
         trendSeries: Array.from({ length: 8 }, () => summary.openTasks),
@@ -4061,7 +4076,7 @@ export function TaskWorkManagementPage() {
         label: 'Execution Health',
         value: `${summary.executionHealth}%`,
         subtext: 'Composite health across flow and blockers',
-        trend: '—',
+        trend: '0%',
         icon: Signal,
         trendColor: '#10b981',
         trendSeries: Array.from({ length: 8 }, () => summary.executionHealth),
@@ -4071,7 +4086,7 @@ export function TaskWorkManagementPage() {
         label: 'Backlog Items',
         value: String(summary.backlog),
         subtext: 'Queued work not yet in active flow',
-        trend: '—',
+        trend: '0',
         icon: Inbox,
         trendColor: '#8b5cf6',
         trendSeries: Array.from({ length: 8 }, () => summary.backlog),
@@ -4081,7 +4096,7 @@ export function TaskWorkManagementPage() {
         label: 'Overdue Items',
         value: String(summary.overdue),
         subtext: 'Due-date breach requiring escalation',
-        trend: '—',
+        trend: '0',
         icon: CalendarClock,
         trendColor: '#f97316',
         trendSeries: Array.from({ length: 8 }, () => summary.overdue),
@@ -4091,7 +4106,7 @@ export function TaskWorkManagementPage() {
         label: 'Completed',
         value: String(summary.completed),
         subtext: 'Delivery outcomes logged to history',
-        trend: '—',
+        trend: '0',
         icon: CheckCircle2,
         trendColor: '#06b6d4',
         trendSeries: Array.from({ length: 8 }, () => summary.completed),
@@ -5254,67 +5269,59 @@ export function TaskWorkManagementPage() {
         title="Task & Work Management"
         description="Manage execution work items, ownership, dependencies, workflow, and delivery activity"
         right={(
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-px rounded-2xl border border-slate-200/80 bg-white/80 p-1 shadow-[0_2px_12px_rgba(15,23,42,0.07)] ring-1 ring-white/60 backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/70 dark:ring-slate-700/30">
+          <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm flex-nowrap shrink-0">
+            <IntegrationSyncToolbarButton
+              mondaySyncing={mondaySyncing}
+              jiraSyncing={jiraSyncing}
+              onSyncMonday={() => void handleSyncMonday()}
+              onSyncJira={() => void handleSyncJira()}
+            />
+            <button
+              type="button"
+              onClick={() => setShowKpiCards((value) => !value)}
+              className={cn(
+                'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                showKpiCards && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+              )}
+              aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+              title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+            >
+              <LayoutGrid className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowEnterpriseNavPanel((visible) => !visible)}
+              className={cn(
+                'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                showEnterpriseNavPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+              )}
+              aria-label={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+              title={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+            >
+              <PanelLeft className="w-5 h-5" />
+            </button>
+            {!isOverviewSectionActive ? (
               <button
                 type="button"
-                onClick={() => setShowKpiCards((value) => !value)}
+                onClick={() => setShowFiltersPanel((current) => !current)}
                 className={cn(
-                  'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
-                  showKpiCards && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+                  'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                  showFiltersPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
                 )}
-                aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
-                title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                aria-label={showFiltersPanel ? 'Hide filters' : 'Show filters'}
+                title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
               >
-                <LayoutGrid className="h-[18px] w-[18px]" strokeWidth={1.8} />
+                <Filter className="w-5 h-5" />
               </button>
-              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
-              <IntegrationSyncToolbarButton
-                mondaySyncing={mondaySyncing}
-                jiraSyncing={jiraSyncing}
-                onSyncMonday={() => void handleSyncMonday()}
-                onSyncJira={() => void handleSyncJira()}
-              />
-              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
-              <button
-                type="button"
-                className="group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200"
-                aria-label="Export task snapshot"
-                title="Export task snapshot"
-              >
-                <ArrowDownToLine className="h-[18px] w-[18px]" strokeWidth={1.8} />
-              </button>
-              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
-              <button
-                type="button"
-                onClick={() => setShowEnterpriseNavPanel((visible) => !visible)}
-                className={cn(
-                  'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
-                  showEnterpriseNavPanel && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
-                )}
-                aria-label={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
-                title={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
-              >
-                <PanelLeft className="h-[18px] w-[18px]" strokeWidth={1.8} />
-              </button>
-              {!isOverviewSectionActive ? (
-                <>
-                  <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
-                  <button
-                    type="button"
-                    onClick={() => setShowFiltersPanel((current) => !current)}
-                    className={cn(
-                      'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
-                      showFiltersPanel && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
-                    )}
-                    aria-label={showFiltersPanel ? 'Hide filters' : 'Show filters'}
-                    title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
-                  >
-                    <Filter className="h-[18px] w-[18px]" strokeWidth={1.8} />
-                  </button>
-                </>
-              ) : null}
-            </div>
+            ) : null}
+            <button
+              type="button"
+              className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm"
+              aria-label="Export task snapshot"
+              title="Export task snapshot"
+            >
+              <ArrowDownToLine className="w-5 h-5" />
+            </button>
           </div>
         )}
       />
@@ -5529,7 +5536,7 @@ export function TaskWorkManagementPage() {
             <Card
               ref={taskMainFiltersRef}
               className={cn(
-                'glass-card mb-0 shrink-0 space-y-3 rounded-2xl p-4',
+                'liquid-glass-enterprise-panel mb-0 shrink-0 space-y-3 rounded-2xl p-4',
                 'border border-white/40 dark:border-white/10',
                 'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
                 'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
@@ -5955,7 +5962,7 @@ export function TaskWorkManagementPage() {
               id="directory"
               ref={directoryPanelRef}
               className={cn(
-                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
                 'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
               )}
               style={directoryPanelHeightStyle}
@@ -7034,6 +7041,8 @@ export function TaskWorkManagementPage() {
                 description="Stage distribution, bottleneck indicators, and compact execution swimlanes for workflow visibility."
                 highlight={activePanel === 'workflow'}
                 outerRef={activeMainPanelRef}
+                style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+                scrollBody
               >
                 <div className="grid grid-cols-1 gap-3">
                   {workflowDistribution.map((stage) => (
@@ -7064,7 +7073,7 @@ export function TaskWorkManagementPage() {
                 id="ownership"
                 ref={activeMainPanelRef}
                 className={cn(
-                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                  'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
                   'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
                 )}
                 style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
@@ -7101,7 +7110,7 @@ export function TaskWorkManagementPage() {
                 id="structure"
                 ref={activeMainPanelRef}
                 className={cn(
-                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                  'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
                   'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
                 )}
                 style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
@@ -7142,7 +7151,7 @@ export function TaskWorkManagementPage() {
                 id="dependencies"
                 ref={activeMainPanelRef}
                 className={cn(
-                  'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                  'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
                   'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
                 )}
                 style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
@@ -7175,6 +7184,8 @@ export function TaskWorkManagementPage() {
                 description="Planned vs actual effort, remaining hours, variance, and recent worklogs."
                 highlight={activePanel === 'time'}
                 outerRef={activeMainPanelRef}
+                style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+                scrollBody
               >
                 <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Estimated</div><div className="mt-2 text-2xl font-bold text-slate-900">{timeSummary.estimated}h</div></div>
@@ -7221,6 +7232,8 @@ export function TaskWorkManagementPage() {
                 description="Audit-friendly execution history across task creation, assignment changes, status movement, dependency changes, and time logging."
                 highlight={activePanel === 'activity'}
                 outerRef={activeMainPanelRef}
+                style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+                scrollBody
               >
                 <div className="space-y-3">
                   {ACTIVITIES.map((entry) => (

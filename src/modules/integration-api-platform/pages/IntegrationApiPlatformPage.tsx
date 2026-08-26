@@ -1311,7 +1311,7 @@ export function IntegrationApiPlatformPage() {
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_420px]">
           <div className="space-y-4">
             {activePanel === 'overview' ? (
-            <Card id="overview" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.28)]">
+            <Card id="overview" className="rounded-[28px] liquid-glass-enterprise-panel">
               <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                 <div>
                   <CardTitle className="text-sm font-semibold text-slate-900">Integration Overview</CardTitle>
@@ -1340,7 +1340,7 @@ export function IntegrationApiPlatformPage() {
                 </div>
 
                 <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
+                  <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <h3 className="text-sm font-semibold text-slate-900">Connectivity health widget</h3>
@@ -1361,7 +1361,7 @@ export function IntegrationApiPlatformPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                  <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <h3 className="text-sm font-semibold text-slate-900">Integration distribution</h3>
@@ -1385,7 +1385,7 @@ export function IntegrationApiPlatformPage() {
             ) : null}
 
             {activePanel === 'catalog' ? (
-            <Card id="catalog" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+            <Card id="catalog" className="rounded-[28px] liquid-glass-enterprise-panel">
               <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                 <div>
                   <CardTitle className="text-sm font-semibold text-slate-900">API Catalog</CardTitle>
@@ -1462,7 +1462,7 @@ export function IntegrationApiPlatformPage() {
             ) : null}
 
             {activePanel === 'webhooks' ? (
-              <Card id="webhooks" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card id="webhooks" className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">Webhook Management</CardTitle>
@@ -1524,7 +1524,7 @@ export function IntegrationApiPlatformPage() {
             ) : null}
 
             {activePanel === 'systems' ? (
-              <Card id="systems" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card id="systems" className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">External System Integration</CardTitle>
@@ -1540,7 +1540,7 @@ export function IntegrationApiPlatformPage() {
                     <SkeletonRows rows={3} />
                   ) : (
                     Object.entries(groupedExternalSystems).map(([group, items]) => (
-                      <div key={group} className="rounded-3xl border border-slate-200 bg-slate-50/70 p-3">
+                      <div key={group} className="liquid-glass-enterprise-panel rounded-3xl border p-3">
                         <div className="mb-3 flex items-center justify-between gap-3">
                           <div>
                             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{filters.groupBy}</p>
@@ -1594,7 +1594,7 @@ export function IntegrationApiPlatformPage() {
             {activePanel === 'streams' || activePanel === 'monitoring' ? (
             <div className="grid gap-4 2xl:grid-cols-2">
               {activePanel === 'streams' ? (
-              <Card id="streams" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card id="streams" className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">Email & Calendar Integration</CardTitle>
@@ -1607,7 +1607,7 @@ export function IntegrationApiPlatformPage() {
                 </CardHeader>
                 <CardContent className="space-y-3 p-4 pt-4">
                   {emailCalendarItems.map((item) => (
-                    <div key={item.id} className="rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div key={item.id} className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="text-sm font-semibold text-slate-900">{item.provider}</h3>
@@ -1639,7 +1639,7 @@ export function IntegrationApiPlatformPage() {
               ) : null}
 
               {activePanel === 'monitoring' ? (
-              <Card id="monitoring" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card id="monitoring" className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">Dev Tools Integration</CardTitle>
@@ -1652,7 +1652,7 @@ export function IntegrationApiPlatformPage() {
                 </CardHeader>
                 <CardContent className="space-y-3 p-4 pt-4">
                   {devToolItems.map((item) => (
-                    <div key={item.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div key={item.id} className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="flex items-center gap-2">
@@ -1691,7 +1691,7 @@ export function IntegrationApiPlatformPage() {
             {activePanel === 'security' || activePanel === 'mapping' ? (
             <div className="grid gap-4 2xl:grid-cols-2">
               {activePanel === 'security' ? (
-              <Card id="security" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card id="security" className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">Event Streaming</CardTitle>
@@ -1748,7 +1748,7 @@ export function IntegrationApiPlatformPage() {
               ) : null}
 
               {activePanel === 'mapping' ? (
-              <Card id="mapping" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card id="mapping" className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">Integration Monitoring</CardTitle>
@@ -1780,7 +1780,7 @@ export function IntegrationApiPlatformPage() {
                         ))}
                       </div>
 
-                      <div className="rounded-3xl border border-slate-200 bg-slate-50/75 p-4">
+                      <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">Monitoring trend</h3>
@@ -1795,7 +1795,7 @@ export function IntegrationApiPlatformPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                      <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">Top failing integrations</h3>
@@ -1831,7 +1831,7 @@ export function IntegrationApiPlatformPage() {
             ) : null}
 
             <div className="grid gap-4 2xl:grid-cols-2">
-              <Card className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">API & Integration Security</CardTitle>
@@ -1844,7 +1844,7 @@ export function IntegrationApiPlatformPage() {
                 </CardHeader>
                 <CardContent className="space-y-3 p-4 pt-4">
                   {securityItems.map((item) => (
-                    <div key={item.id} className="rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div key={item.id} className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="flex items-center gap-2">
@@ -1878,7 +1878,7 @@ export function IntegrationApiPlatformPage() {
                 </CardContent>
               </Card>
 
-              <Card className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+              <Card className="rounded-[28px] liquid-glass-enterprise-panel">
                 <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <CardTitle className="text-sm font-semibold text-slate-900">Mapping & Payload Configuration</CardTitle>
@@ -1890,7 +1890,7 @@ export function IntegrationApiPlatformPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 p-4 pt-4">
-                  <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+                  <div className="liquid-glass-enterprise-panel overflow-hidden rounded-3xl border">
                     <div className="grid grid-cols-[1fr_1fr_1.15fr_0.8fr_0.75fr] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                       <span>Source field</span>
                       <span>Target field</span>
@@ -1921,7 +1921,7 @@ export function IntegrationApiPlatformPage() {
             </div>
 
             {activePanel === 'audit' ? (
-            <Card id="audit" className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+            <Card id="audit" className="rounded-[28px] liquid-glass-enterprise-panel">
               <CardHeader className="flex flex-col gap-3 border-b border-slate-100/90 pb-4 md:flex-row md:items-start md:justify-between">
                 <div>
                   <CardTitle className="text-sm font-semibold text-slate-900">Integration Activity & Audit</CardTitle>
@@ -1933,7 +1933,7 @@ export function IntegrationApiPlatformPage() {
                 </div>
               </CardHeader>
               <CardContent className="p-4 pt-4">
-                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+                <div className="liquid-glass-enterprise-panel overflow-hidden rounded-3xl border">
                   <div className="grid grid-cols-[0.9fr_0.9fr_1.1fr_1fr_0.7fr] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                     <span>Timestamp</span>
                     <span>Actor / system</span>
@@ -1959,7 +1959,7 @@ export function IntegrationApiPlatformPage() {
           </div>
 
           <div className="space-y-4">
-            <Card id="detail" className="sticky top-20 rounded-[30px] border-slate-200/90 bg-white/90 shadow-[0_24px_60px_-28px_rgba(15,23,42,0.36)] backdrop-blur">
+            <Card id="detail" className="sticky top-20 rounded-[30px] liquid-glass-enterprise-panel">
               <CardHeader className="border-b border-slate-100/90 pb-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -1992,22 +1992,22 @@ export function IntegrationApiPlatformPage() {
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                   <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-slate-500" /><h4 className="text-sm font-semibold text-slate-900">Security posture</h4></div>
                   <p className="mt-2 text-xs leading-6 text-slate-600">{selectedDetail.securityStatus}</p>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                   <div className="flex items-center gap-2"><TableProperties className="h-4 w-4 text-slate-500" /><h4 className="text-sm font-semibold text-slate-900">Mapping configuration</h4></div>
                   <p className="mt-2 text-xs leading-6 text-slate-600">{selectedDetail.mappingConfiguration}</p>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                   <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-slate-500" /><h4 className="text-sm font-semibold text-slate-900">Monitoring summary</h4></div>
                   <p className="mt-2 text-xs leading-6 text-slate-600">{selectedDetail.monitoringSummary}</p>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                   <h4 className="text-sm font-semibold text-slate-900">Recent executions</h4>
                   <div className="mt-3 space-y-3">
                     {selectedDetail.recentExecutions.map((item) => (
@@ -2023,7 +2023,7 @@ export function IntegrationApiPlatformPage() {
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                <div className="liquid-glass-enterprise-panel rounded-3xl border p-4">
                   <h4 className="text-sm font-semibold text-slate-900">Error history</h4>
                   <div className="mt-3 space-y-3">
                     {selectedDetail.errorHistory.map((item) => (
@@ -2052,7 +2052,7 @@ export function IntegrationApiPlatformPage() {
               </CardContent>
             </Card>
 
-            <Card className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-[0_20px_50px_-24px_rgba(15,23,42,0.24)]">
+            <Card className="rounded-[28px] liquid-glass-enterprise-panel">
               <CardHeader className="border-b border-slate-100/90 pb-4">
                 <CardTitle className="text-sm font-semibold text-slate-900">Quick actions</CardTitle>
                 <CardDescription className="mt-1 text-xs text-slate-500">Inline controls for status, environment, retry, mapping, and token actions.</CardDescription>

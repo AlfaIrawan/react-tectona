@@ -14,7 +14,7 @@ interface SelectionActionBarProps {
   selectedFolderCount: number
   onMoveToFolder: (folderId: string | null) => void
   className?: string
-  /** Saat true, render di dalam panel search (tanpa sticky/glass-card). */
+  /** Saat true, render di dalam panel search (tanpa sticky/liquid-glass-enterprise-panel). */
   inline?: boolean
 }
 
@@ -37,7 +37,7 @@ export function SelectionActionBar({
       className={cn(
         inline
           ? 'flex items-center gap-2 shrink-0'
-          : 'sticky bottom-4 z-40 glass-card rounded-xl p-4 shadow-lg border-2 border-primary/20',
+          : 'sticky bottom-4 z-40 liquid-glass-enterprise-panel rounded-xl p-4 shadow-lg border-2 border-primary/20',
         className
       )}
     >

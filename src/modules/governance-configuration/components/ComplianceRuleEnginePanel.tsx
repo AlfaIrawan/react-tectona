@@ -3,7 +3,7 @@ import type { ComplianceRuleDto } from '@/lib/api/governanceConfigurationApi'
 
 export function ComplianceRuleEnginePanel({ rules }: { rules: ComplianceRuleDto[] }) {
   return (
-    <Card className="p-4">
+    <Card className="liquid-glass-enterprise-panel p-4">
       <h2 className="text-sm font-semibold text-foreground">Compliance Rule Engine</h2>
       <p className="mt-1 text-xs text-muted-foreground">
         List of rules (read-only) used by the server to calculate the score; there is no free-form input here.

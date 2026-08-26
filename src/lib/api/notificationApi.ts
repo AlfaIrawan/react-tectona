@@ -80,11 +80,27 @@ export interface UnreadCountResponse {
   unread_count: number
 }
 
+function humanizeNotificationBody(body: string | null): string {
+  const raw = body?.trim() ?? ''
+  if (!raw) return ''
+  const cleaned = raw
+    .replace(/\s*\[(?:personal_workspace_id|operational_workspace_id)=[^\]]+\]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (/^corporate onboarding complete\s*[—-]\s*awaiting admin approval\.?$/i.test(cleaned)) {
+    return 'Corporate onboarding is complete and awaiting admin approval.'
+  }
+  if (/^request to join organization directory\.?$/i.test(cleaned)) {
+    return 'A workspace access request is waiting for admin approval.'
+  }
+  return cleaned
+}
+
 function mapBackendToFrontend(n: NotificationApiBackend): NotificationApi {
   return {
     id: n.id,
     title: n.title,
-    message: n.body ?? '',
+    message: humanizeNotificationBody(n.body),
     type: typeCodeToUi(n.type_code),
     read: n.is_read,
     created_at: n.created_date,

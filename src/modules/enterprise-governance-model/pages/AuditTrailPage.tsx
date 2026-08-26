@@ -9,7 +9,7 @@ export function AuditTrailPage() {
     <div className="space-y-6">
       <ul className="space-y-2">
         {AUDIT.map((a) => (
-          <li key={a.ts + a.action} className="rounded-xl border border-border/60 bg-background/80 px-3 py-2 text-xs shadow-sm">
+          <li key={a.ts + a.action} className="rounded-xl border border-border/60 liquid-glass-enterprise-panel px-3 py-2 text-xs shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-mono text-[11px] text-muted-foreground">{a.ts}</span>
               <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{a.action}</span>

@@ -23,7 +23,7 @@ export function NoWorkspaceAccessPage() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="glass-card rounded-lg shadow-2xl p-8 space-y-6">
+        <div className="liquid-glass-enterprise-panel rounded-lg p-8 space-y-6">
 
           {/* Header — selaras dengan LoginPage */}
           <div className="space-y-2 text-center">

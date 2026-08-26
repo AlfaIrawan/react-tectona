@@ -18,11 +18,8 @@ type ParsedOption = {
 
 function isOptionElement(child: React.ReactElement): boolean {
   if (child.type === 'option') return true
-  if (typeof child.type === 'function') {
-    const named = child.type as { displayName?: string }
-    return named.displayName === 'SelectItem'
-  }
-  return false
+  const named = child.type as { displayName?: string }
+  return named.displayName === 'SelectItem'
 }
 
 function parseSelectChildren(children: React.ReactNode): {
@@ -297,7 +294,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                 'animate-in fade-in-0 zoom-in-95 duration-150',
               )}
             >
-              <div className="max-h-[inherit] overflow-y-auto overscroll-contain p-1.5">
+              <div className="max-h-[inherit] overflow-y-auto overscroll-contain p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {options.length === 0 ? (
                   <div className="px-3 py-2 text-xs text-muted-foreground">No options</div>
                 ) : (

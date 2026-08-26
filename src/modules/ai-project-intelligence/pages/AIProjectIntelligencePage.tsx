@@ -1272,7 +1272,7 @@ export function AIProjectIntelligencePage() {
         <div className={cn('min-w-0', workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavWidthVariant))}>
           <section id="overview" className="scroll-mt-24">
             <div className="grid gap-4 xl:grid-cols-12">
-          <Card className="xl:col-span-8 rounded-[28px] border-slate-200/80 bg-white/90 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card className="xl:col-span-8 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={BrainCircuit}
@@ -1378,7 +1378,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="assistant" className="xl:col-span-4 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="assistant" className="xl:col-span-4 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={Bot}
@@ -1450,7 +1450,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="breakdown" className="xl:col-span-7 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="breakdown" className="xl:col-span-7 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={GitBranch}
@@ -1525,7 +1525,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="scheduling" className="xl:col-span-5 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="scheduling" className="xl:col-span-5 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={CalendarClock}
@@ -1576,7 +1576,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="delay" className="xl:col-span-6 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="delay" className="xl:col-span-6 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={TrendingUp}
@@ -1632,7 +1632,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="risk" className="xl:col-span-6 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="risk" className="xl:col-span-6 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={ShieldAlert}
@@ -1692,7 +1692,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="resources" className="xl:col-span-5 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="resources" className="xl:col-span-5 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={UserRoundPlus}
@@ -1747,7 +1747,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="actions" className="xl:col-span-7 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="actions" className="xl:col-span-7 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={Zap}
@@ -1782,7 +1782,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="meetings" className="xl:col-span-6 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="meetings" className="xl:col-span-6 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={MessageSquareText}
@@ -1835,7 +1835,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="explainability" className="xl:col-span-6 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="explainability" className="xl:col-span-6 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={Target}
@@ -1881,7 +1881,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="queue" className="xl:col-span-5 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="queue" className="xl:col-span-5 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={WandSparkles}
@@ -1921,7 +1921,7 @@ export function AIProjectIntelligencePage() {
             </CardContent>
           </Card>
 
-          <Card id="audit" className="xl:col-span-7 scroll-mt-24 rounded-[28px] border-slate-200/80 bg-white/92 shadow-[0_24px_48px_-36px_rgba(15,23,42,0.35)]">
+          <Card id="audit" className="xl:col-span-7 scroll-mt-24 rounded-[28px] liquid-glass-enterprise-panel">
             <CardHeader className="p-5 pb-0">
               <SectionHeader
                 icon={Clock3}

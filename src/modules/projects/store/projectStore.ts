@@ -16,6 +16,7 @@ import {
   resolveWorkspaceIdForWrite,
 } from '@/lib/tenantWorkspaceScope'
 import {
+  deleteProjectDocumentFolder,
   ensureProjectDocumentFolder,
   syncProjectDocumentFolderName,
 } from '../lib/ensureProjectDocumentFolder'
@@ -222,12 +223,24 @@ export const useProjectStore = create<ProjectState>()(
 
       deleteProject: async (id) => {
         await deleteProjectApi(id)
+        try {
+          await deleteProjectDocumentFolder(id)
+        } catch {
+          // Project deletion is complete; repository cleanup can be retried independently.
+        }
         await get().fetchProjects()
       },
 
       deleteProjects: async (ids) => {
         if (ids.length === 0) return
-        await Promise.all(ids.map((id) => deleteProjectApi(id)))
+        await Promise.all(ids.map(async (id) => {
+          await deleteProjectApi(id)
+          try {
+            await deleteProjectDocumentFolder(id)
+          } catch {
+            // Project deletion is complete; repository cleanup can be retried independently.
+          }
+        }))
         await get().fetchProjects()
       },
 

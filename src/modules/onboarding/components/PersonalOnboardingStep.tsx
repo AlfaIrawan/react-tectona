@@ -172,7 +172,7 @@ export function PersonalOnboardingStep({
     }
   }, [email])
 
-  const completeAfterJoinStep = async () => {
+  const completeAfterJoinStep = async (orgWorkspaceId?: string) => {
     const subjectId = getSession()?.user.id
     if (!subjectId) throw new Error('Session expired. Sign in again.')
 
@@ -181,6 +181,7 @@ export function PersonalOnboardingStep({
         email,
         subjectId,
         workspaceId: readActiveWorkspaceId(),
+        orgWorkspaceId,
         message: 'Corporate onboarding complete — awaiting admin approval.',
       })
       onAdminApprovalPending()
@@ -208,10 +209,13 @@ export function PersonalOnboardingStep({
   const handleOptionalContinue = async () => {
     setLocalError('')
     setFinalizing(true)
-    const subjectId = getSession()?.user.id
-    if (subjectId) markCorporateJoinStepCompleted(subjectId)
     try {
+      // Consumer/personal onboarding has no organization workspace to join.
+      // Never reference a non-existent form input here; continue with the
+      // personal workspace already stored in the active tenant.
       await completeAfterJoinStep()
+      const subjectId = getSession()?.user.id
+      if (subjectId) markCorporateJoinStepCompleted(subjectId)
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Failed to continue onboarding.')
     } finally {
@@ -227,8 +231,6 @@ export function PersonalOnboardingStep({
   }) => {
     setLocalError('')
     setFinalizing(true)
-    const subjectId = getSession()?.user.id
-    if (subjectId) markCorporateJoinStepCompleted(subjectId)
     try {
       await onJoinSubmit(input)
     } catch (err) {
@@ -238,7 +240,12 @@ export function PersonalOnboardingStep({
     }
 
     try {
-      await completeAfterJoinStep()
+      // Keep the selected organization workspace attached to the approval
+      // request; this is what allows the personal workspace to enter the tree
+      // after approval.
+      await completeAfterJoinStep(input.workspaceId)
+      const subjectId = getSession()?.user.id
+      if (subjectId) markCorporateJoinStepCompleted(subjectId)
     } catch (err) {
       setLocalError(
         err instanceof Error ? err.message : 'Join request sent, but onboarding could not be completed.',
@@ -280,6 +287,8 @@ export function PersonalOnboardingStep({
       <StepLayout currentStepIndex={currentStepIndex} errorMessage={bannerError}>
         <CorporateOptionalJoinStep
           consumerPersonal
+          finishMethod="admin"
+          onFinishMethodChange={() => undefined}
           onJoinBySlug={() => setPhase('join')}
           onContinue={handleOptionalContinue}
           submitting={busy}

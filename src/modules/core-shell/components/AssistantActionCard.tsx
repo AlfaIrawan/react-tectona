@@ -825,6 +825,8 @@ export function AssistantActionCard({
                   </>
                 ) : isNavigate ? (
                   'Open'
+                ) : action.action_code === 'idea.section.revision' ? (
+                  action.payload.transition === 'reject' ? 'Reject' : 'Accept'
                 ) : isHighRisk ? (
                   'Yes, delete'
                 ) : (

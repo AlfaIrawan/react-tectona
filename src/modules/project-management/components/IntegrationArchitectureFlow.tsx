@@ -1,6 +1,8 @@
-import { memo } from 'react'
+import { memo, useMemo, type MouseEvent } from 'react'
 import {
   Background,
+  BackgroundVariant,
+  ConnectionMode,
   Controls,
   MiniMap,
   ReactFlow,
@@ -42,6 +44,7 @@ type IntegrationArchitectureFlowProps = {
   nodes: Node<ArchimateNodeData>[]
   edges: Edge[]
   onNodesChange: OnNodesChange
+  onNodeDragStop?: (event: MouseEvent, node: Node<ArchimateNodeData>, nodes: Node<ArchimateNodeData>[]) => void
   onEdgesChange: OnEdgesChange
   onConnect: (connection: Connection) => void
   onSelectionChange: OnSelectionChangeFunc
@@ -51,25 +54,56 @@ function IntegrationArchitectureFlowInner({
   nodes,
   edges,
   onNodesChange,
+  onNodeDragStop,
   onEdgesChange,
   onConnect,
   onSelectionChange,
 }: IntegrationArchitectureFlowProps) {
+  const visibleEdges = useMemo(
+    () =>
+      edges.map((edge) => {
+        if (!edge.selected) return edge
+        const markerEnd =
+          edge.markerEnd && typeof edge.markerEnd === 'object'
+            ? { ...edge.markerEnd, color: '#0284c7' }
+            : edge.markerEnd
+        const markerStart =
+          edge.markerStart && typeof edge.markerStart === 'object'
+            ? { ...edge.markerStart, color: '#0284c7' }
+            : edge.markerStart
+        return {
+          ...edge,
+          markerEnd,
+          markerStart,
+          style: {
+            ...edge.style,
+            stroke: '#0284c7',
+            strokeWidth: 3.25,
+            filter: 'drop-shadow(0 0 3px rgba(14, 165, 233, 0.45))',
+          },
+        }
+      }),
+    [edges],
+  )
+
   return (
     <ReactFlow
       className="h-full w-full"
       nodes={nodes}
-      edges={edges}
+      edges={visibleEdges}
       nodeTypes={integrationArchimateNodeTypes}
       edgeTypes={INTEGRATION_EDGE_TYPES}
       onNodesChange={onNodesChange}
+      onNodeDragStop={onNodeDragStop}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
       onSelectionChange={onSelectionChange}
       onError={handleReactFlowError}
+      connectionMode={ConnectionMode.Loose}
       fitView
       fitViewOptions={INTEGRATION_FLOW_FIT_VIEW_OPTIONS}
       nodesDraggable
+      selectNodesOnDrag
       nodesConnectable
       elementsSelectable
       panOnDrag
@@ -88,7 +122,20 @@ function IntegrationArchitectureFlowInner({
         className="!bg-white/95 !border !border-slate-200"
       />
       <Controls showInteractive />
-      <Background color="#d7dee8" gap={22} />
+      <Background
+        id="integration-minor-grid"
+        variant={BackgroundVariant.Lines}
+        color="#edf1f5"
+        gap={20}
+        size={1}
+      />
+      <Background
+        id="integration-major-grid"
+        variant={BackgroundVariant.Lines}
+        color="#d8e0e8"
+        gap={100}
+        size={1.25}
+      />
     </ReactFlow>
   )
 }

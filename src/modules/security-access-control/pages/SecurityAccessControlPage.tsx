@@ -1,21 +1,56 @@
-import { startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Ref,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
+  ArrowLeftToLine,
+  ArrowRightToLine,
   BadgeCheck,
+  Ban,
+  BarChart3,
   BellRing,
-  CheckCircle2,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Copy,
   Download,
+  FileText,
   Filter,
+  History,
+  KeyRound,
   LayoutGrid,
+  MoreVertical,
   Network,
-  PanelLeftClose,
-  PanelLeftOpen,
+  PanelLeft,
+  Pencil,
+  Pin,
   Plus,
+  RotateCcw,
+  Ruler,
   Search,
   ShieldCheck,
   Target,
+  Trash2,
+  UnfoldHorizontal,
+  User,
+  UserPlus,
+  Users,
+  X,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   Area,
@@ -25,33 +60,86 @@ import {
   Cell,
   Pie,
   PieChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
+import { DndContext } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
+import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
+import { useEnterpriseSortableColumns } from '@/components/enterprise/useEnterpriseSortableColumns'
+import { EnterpriseSortableHeaderCell } from '@/components/enterprise/EnterpriseSortableHeaderCell'
+import { EnterpriseColumnFilterDropdown } from '@/components/enterprise/EnterpriseColumnFilterDropdown'
+import { EnterpriseGroupByControl } from '@/components/enterprise/EnterpriseGroupByControl'
+import { EnterpriseSelectionToggle } from '@/components/enterprise/EnterpriseSelectionToggle'
+import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/EnterpriseColumnVisibilityControl'
+import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
+import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { useToast } from '@/components/ui/toast'
+import {
+  createAuthzAssignment,
+  createAuthzRole,
+  deleteAuthzRole,
+  getAuthzEffectivePermissions,
+  getAuthzSecurityMatrix,
+  listAuthzAssignments,
+  listAuthzPermissions,
+  listAuthzRoles,
+  putAuthzRolePermissions,
+  updateAuthzRole,
+  type AuthzEffectivePermissionRow,
+  type AuthzAssignmentDto,
+  type AuthzPermissionDto,
+  type AuthzRoleDto,
+  type AuthzSecurityMatrixCell,
+} from '@/lib/api/authzApi'
+import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import {
+  createWorkspaceMembership,
+  fetchWorkspaceMembers,
+  TECTONA_WAC_APP_ID,
+  type WacMembershipDto,
+} from '@/lib/api/workspaceAccessControlApi'
+import { fetchAllWorkspaceOrgWorkspaces, ensureWorkspaceDirectoryMembership, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
+import { PARTICIPATION_SCOPE_CODE } from '@/lib/participationScopeRules'
+import { Tooltip as UiTooltip } from '@/components/ui/tooltip'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EnterpriseInfoCallout } from '@/components/layout/EnterpriseInfoCallout'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectItem } from '@/components/ui/select'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import {
+  enterpriseCyanGradientActionButtonClass,
+  enterpriseIndigoGradientActionButtonClass,
+  enterpriseSecondaryButtonClass,
+} from '@/lib/enterpriseButtonClasses'
+import {
+  computeWorkspaceMainPanelViewportHeightPx,
   isWorkspaceNavDocked,
   workspaceAsideClass,
   workspaceDockedContentInsetClass,
   workspaceMainColumnClass,
+  workspaceMainPanelViewportHeightStyle,
   workspaceNavInnerClass,
   workspaceNavMenuScrollClass,
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { getSession } from '@/auth/authService'
+import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { readStoredTenantSelection } from '@/lib/tenantWorkspaceScope'
+import { MeasuredResponsiveContainer } from '@/components/charts/MeasuredResponsiveContainer'
 
 type RoleItem = {
   id: string
+  roleCode: string
   name: string
   description: string
   accessScope: string
@@ -59,11 +147,6 @@ type RoleItem = {
   privilege: 'Privileged' | 'Standard' | 'Elevated'
   status: 'Active' | 'Review' | 'Disabled'
   lastUpdated: string
-}
-
-type PermissionMatrixRow = {
-  entity: string
-  states: Array<'Allow' | 'Conditional' | 'Deny'>
 }
 
 type ScopedAccessItem = {
@@ -164,9 +247,11 @@ type DetailDrawer = {
   complianceNotes: string[]
 }
 
-const roles: RoleItem[] = [
+/** Shown immediately and kept as a fallback if the authorization-policy backend is unreachable. */
+const FALLBACK_ROLES: RoleItem[] = [
   {
     id: 'role-01',
+    roleCode: 'tectona.workspace_admin',
     name: 'Workspace Admin',
     description: 'Controls workspace settings, member access, and high-trust governance actions.',
     accessScope: 'Workspace',
@@ -177,6 +262,7 @@ const roles: RoleItem[] = [
   },
   {
     id: 'role-02',
+    roleCode: 'tectona.project_manager',
     name: 'Project Manager',
     description: 'Manages project execution, approvals, delivery plans, and scoped assignments.',
     accessScope: 'Project',
@@ -187,6 +273,7 @@ const roles: RoleItem[] = [
   },
   {
     id: 'role-03',
+    roleCode: 'tectona.security_reviewer',
     name: 'Security Reviewer',
     description: 'Reviews privileged access, exceptions, compliance drift, and audit anomalies.',
     accessScope: 'Organization',
@@ -197,6 +284,7 @@ const roles: RoleItem[] = [
   },
   {
     id: 'role-04',
+    roleCode: 'tectona.integration_operator',
     name: 'Integration Admin',
     description: 'Owns identity-linked integrations, service accounts, API scopes, and secrets posture.',
     accessScope: 'Integration',
@@ -207,6 +295,7 @@ const roles: RoleItem[] = [
   },
   {
     id: 'role-05',
+    roleCode: 'tectona.external_reviewer',
     name: 'External Reviewer',
     description: 'Temporary project-level read and review access for third-party oversight.',
     accessScope: 'Project',
@@ -217,14 +306,128 @@ const roles: RoleItem[] = [
   },
 ]
 
-const permissionMatrix: PermissionMatrixRow[] = [
-  { entity: 'Organization', states: ['Allow', 'Conditional', 'Conditional', 'Deny', 'Allow', 'Conditional', 'Allow'] },
-  { entity: 'Workspace', states: ['Allow', 'Allow', 'Allow', 'Conditional', 'Allow', 'Allow', 'Allow'] },
-  { entity: 'Project', states: ['Allow', 'Allow', 'Allow', 'Conditional', 'Allow', 'Allow', 'Allow'] },
-  { entity: 'Task', states: ['Allow', 'Allow', 'Allow', 'Conditional', 'Conditional', 'Conditional', 'Conditional'] },
-  { entity: 'Document', states: ['Allow', 'Conditional', 'Allow', 'Conditional', 'Allow', 'Allow', 'Conditional'] },
-  { entity: 'Integration', states: ['Allow', 'Allow', 'Conditional', 'Deny', 'Conditional', 'Allow', 'Allow'] },
+function formatRoleLastUpdated(isoTimestamp: string): string {
+  const parsed = new Date(isoTimestamp)
+  if (Number.isNaN(parsed.getTime())) return isoTimestamp
+  return parsed.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function mapAuthzRoleDtoToRoleItem(dto: AuthzRoleDto): RoleItem {
+  const privilege: RoleItem['privilege'] =
+    dto.privilege === 'Privileged' || dto.privilege === 'Elevated' ? dto.privilege : 'Standard'
+  const status: RoleItem['status'] = dto.status === 'Review' || dto.status === 'Disabled' ? dto.status : 'Active'
+  return {
+    id: dto.id,
+    roleCode: dto.role_code,
+    name: dto.role_code === 'tectona.personal_workspace_admin' ? 'Platform Admin Personal' : dto.display_name,
+    description: dto.description ?? '',
+    accessScope: dto.access_scope,
+    assignedUsers: dto.assigned_users,
+    privilege,
+    status,
+    lastUpdated: formatRoleLastUpdated(dto.last_updated),
+  }
+}
+
+// Role directory enterprise data-table (mirrors the Workflow & Automation Directory table): drag
+// reorder / resize / freeze columns, 3-state sort, per-column filters, group-by, selection, paging.
+type RoleTableColumnKey = 'name' | 'accessScope' | 'assignedUsers' | 'privilege' | 'status' | 'lastUpdated'
+
+const ROLE_TABLE_PINNED_FIRST_COLUMN: RoleTableColumnKey = 'name'
+const ROLE_TABLE_DEFAULT_COLUMN_ORDER: RoleTableColumnKey[] = [
+  'name',
+  'accessScope',
+  'assignedUsers',
+  'privilege',
+  'status',
+  'lastUpdated',
 ]
+
+function roleTableColumnLabel(key: RoleTableColumnKey): string {
+  switch (key) {
+    case 'name': return 'Role'
+    case 'accessScope': return 'Scope'
+    case 'assignedUsers': return 'Assigned Users'
+    case 'privilege': return 'Privilege'
+    case 'status': return 'Status'
+    case 'lastUpdated': return 'Last Updated'
+  }
+}
+
+function roleTableColumnHeaderIcon(key: RoleTableColumnKey): LucideIcon {
+  switch (key) {
+    case 'name': return ShieldCheck
+    case 'accessScope': return Target
+    case 'assignedUsers': return Users
+    case 'privilege': return BadgeCheck
+    case 'status': return Activity
+    case 'lastUpdated': return Clock3
+  }
+}
+
+const ROLE_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: RoleTableColumnKey; label: string }[] =
+  ROLE_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: roleTableColumnLabel(key) }))
+
+type RoleTableGroupByKey = 'accessScope' | 'privilege' | 'status'
+const ROLE_TABLE_GROUP_BY_OPTIONS: readonly { key: RoleTableGroupByKey; label: string }[] = [
+  { key: 'accessScope', label: 'Scope' },
+  { key: 'privilege', label: 'Privilege' },
+  { key: 'status', label: 'Status' },
+]
+
+function roleTableGroupLabel(item: RoleItem, groupBy: RoleTableGroupByKey): string {
+  if (groupBy === 'accessScope') return item.accessScope
+  if (groupBy === 'privilege') return item.privilege
+  return item.status
+}
+
+function roleStatusAccentColor(status: RoleItem['status']): string {
+  if (status === 'Active') return '#10b981'
+  if (status === 'Review') return '#f59e0b'
+  return '#e11d48'
+}
+
+function resourceTypeIcon(resourceType: string): LucideIcon {
+  switch (resourceType) {
+    case 'workspace': return LayoutGrid
+    case 'organization': return Network
+    case 'governance': return ShieldCheck
+    case 'security_matrix': return KeyRound
+    case 'project': return Target
+    case 'idea_backlog': return FileText
+    case 'knowledge_base': return BadgeCheck
+    case 'portfolio': return BarChart3
+    default: return LayoutGrid
+  }
+}
+
+function userInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+// Deterministic per-user avatar color — mirrors the Workflow Directory table's owner chips.
+const USER_AVATAR_TONES = [
+  'bg-orange-500',
+  'bg-pink-500',
+  'bg-blue-500',
+  'bg-emerald-500',
+  'bg-violet-500',
+  'bg-cyan-500',
+] as const
+
+function userAvatarTone(seed: string): string {
+  const sum = seed.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
+  return USER_AVATAR_TONES[sum % USER_AVATAR_TONES.length]
+}
 
 const scopedAccessItems: ScopedAccessItem[] = [
   {
@@ -575,8 +778,6 @@ const reviewTrend = [
   { label: 'Fri', reviews: 95, violations: 2 },
 ]
 
-const permissionColumns = ['View', 'Create', 'Edit', 'Delete', 'Approve', 'Export', 'Manage Access']
-
 function badgeClass(value: string) {
   if (['Active', 'Healthy', 'Low', 'Direct', 'Success', 'Allow'].includes(value)) {
     return 'border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -590,17 +791,20 @@ function badgeClass(value: string) {
   return 'border-slate-200 bg-slate-100 text-slate-700'
 }
 
-function metricCardAccent(index: number) {
-  const accents = [
-    'from-slate-950 via-slate-800 to-slate-700',
-    'from-blue-700 via-blue-600 to-cyan-500',
-    'from-emerald-700 via-teal-600 to-cyan-500',
-    'from-amber-700 via-orange-600 to-yellow-500',
-    'from-rose-700 via-red-600 to-orange-500',
-    'from-violet-700 via-fuchsia-600 to-pink-500',
-  ]
+const ALL_ROLE_PRIVILEGES: RoleItem['privilege'][] = ['Privileged', 'Elevated', 'Standard']
 
-  return accents[index % accents.length]
+function privilegeTagChrome(privilege: RoleItem['privilege'], active: boolean): string {
+  const base = 'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-all'
+  const on = 'ring-2 ring-offset-1 ring-offset-background hover:brightness-95'
+  const off = 'border-slate-200 bg-white/65 text-slate-500 hover:bg-white hover:text-slate-900'
+  if (!active) return cn(base, off)
+  if (privilege === 'Privileged') {
+    return cn(base, on, 'border-rose-300/60 bg-gradient-to-r from-rose-500/15 to-red-500/15 text-rose-900 ring-rose-500/25')
+  }
+  if (privilege === 'Elevated') {
+    return cn(base, on, 'border-amber-300/60 bg-gradient-to-r from-amber-500/15 to-orange-500/15 text-amber-900 ring-amber-500/25')
+  }
+  return cn(base, on, 'border-slate-300/60 bg-gradient-to-r from-slate-400/15 to-slate-500/15 text-slate-900 ring-slate-500/25')
 }
 
 function kpiCardChrome(cardId: string): string {
@@ -619,7 +823,7 @@ function KpiSparkline({ data, color }: { data: number[]; color: string }) {
   const chartData = data.map((value, index) => ({ idx: index, value }))
 
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <MeasuredResponsiveContainer>
       <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
         <defs>
           <linearGradient id={`tectona-security-kpi-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
@@ -636,7 +840,139 @@ function KpiSparkline({ data, color }: { data: number[]; color: string }) {
           isAnimationActive={false}
         />
       </AreaChart>
-    </ResponsiveContainer>
+    </MeasuredResponsiveContainer>
+  )
+}
+
+// Matches Resource Execution Overview's chart-panel design system (Resource Management page):
+// glass card with a colored top accent bar + icon chip next to the title.
+const OVERVIEW_PANEL_TONES = {
+  emerald: { accent: 'from-emerald-300 via-emerald-400 to-teal-400', iconBg: 'bg-emerald-50 ring-1 ring-emerald-100', iconColor: 'text-emerald-500' },
+  sky: { accent: 'from-sky-300 via-blue-400 to-indigo-400', iconBg: 'bg-sky-50 ring-1 ring-sky-100', iconColor: 'text-sky-500' },
+  violet: { accent: 'from-indigo-300 via-violet-400 to-fuchsia-400', iconBg: 'bg-violet-50 ring-1 ring-violet-100', iconColor: 'text-violet-500' },
+} as const
+type OverviewTone = keyof typeof OVERVIEW_PANEL_TONES
+
+function OverviewChartPanel({
+  title,
+  description,
+  icon: Icon,
+  tone,
+  right,
+  children,
+}: {
+  title: string
+  description: string
+  icon: React.ComponentType<{ className?: string }>
+  tone: OverviewTone
+  right?: React.ReactNode
+  children: React.ReactNode
+}) {
+  const t = OVERVIEW_PANEL_TONES[tone]
+  return (
+    <div
+      className={cn(
+        'relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200/90 p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]',
+        'bg-[linear-gradient(160deg,rgba(255,255,255,0.94),rgba(248,250,252,0.90))]'
+      )}
+    >
+      <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-[2px] rounded-t-2xl bg-gradient-to-r opacity-85', t.accent)} />
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={cn('inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl', t.iconBg)}>
+              <Icon className={cn('h-4 w-4', t.iconColor)} />
+            </span>
+            <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-500">{description}</p>
+        </div>
+        {right}
+      </div>
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  )
+}
+
+/** Right-anchored slide-over drawer — mirrors Document & Knowledge Management's "Add Knowledge Base
+ * reference" drawer chrome (backdrop + sliding panel + icon/title/description header + scrollable
+ * body + sticky footer) so create/edit flows read as one system across the app. */
+function SecurityDrawer({
+  open,
+  onClose,
+  icon: Icon,
+  title,
+  description,
+  children,
+  footer,
+  showOverlay = true,
+}: {
+  open: boolean
+  onClose: () => void
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  description: string
+  children: React.ReactNode
+  footer: React.ReactNode
+  showOverlay?: boolean
+}) {
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
+    <>
+      {showOverlay ? (
+        <div
+          className={cn(
+            'fixed inset-0 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity',
+            open ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+          )}
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      ) : null}
+      <div
+        className={cn(
+          'fixed top-0 right-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] transform flex-col transition-all duration-300',
+          'border-l border-border bg-background/95 backdrop-blur-xl shadow-2xl',
+          open ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'
+        )}
+        style={{ boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)' }}
+      >
+        <div className="flex shrink-0 items-start justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
+          <div className="pr-3">
+            <h2 className="flex items-center gap-2 text-xl font-semibold text-foreground">
+              <Icon className="h-5 w-5 text-primary" />
+              {title}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label={`Close ${title}`}>
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+        <div
+          className={cn(
+            'min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-5 py-5',
+            '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
+          )}
+        >
+          {children}
+        </div>
+        <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">{footer}</div>
+      </div>
+    </>,
+    document.body
   )
 }
 
@@ -654,7 +990,7 @@ function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
   URL.revokeObjectURL(url)
 }
 
-function buildRoleDetail(role: RoleItem): DetailDrawer {
+function buildRoleDetail(role: RoleItem, assignedUsers: string[] = []): DetailDrawer {
   return {
     title: role.name,
     subtitle: `${role.accessScope} role • ${role.description}`,
@@ -666,7 +1002,7 @@ function buildRoleDetail(role: RoleItem): DetailDrawer {
       { label: 'Privilege level', value: role.privilege },
     ],
     summary: 'This role anchors privileged access decisions, scoped inheritance, and audit-ready approval chains across workspace, project, task, and integration surfaces.',
-    assignedUsers: ['Nadia Kusuma', 'Rani Adiputra', 'PMO Delivery Guild', 'Identity Operations'],
+    assignedUsers,
     permissions: ['Manage Access', 'Approve', 'Export', 'Edit policies'],
     relatedPolicies: ['Quarterly privileged review', 'External reviewer boundary policy', 'Sensitive access exception policy'],
     auditHistory: [
@@ -860,6 +1196,12 @@ function Panel({
   description,
   highlight,
   right,
+  outerRef,
+  style,
+  className,
+  scrollBody = false,
+  headerIcon,
+  showDivider = true,
   children,
 }: {
   id: string
@@ -867,24 +1209,51 @@ function Panel({
   description: string
   highlight: boolean
   right?: React.ReactNode
+  outerRef?: Ref<HTMLElement>
+  style?: CSSProperties
+  className?: string
+  scrollBody?: boolean
+  headerIcon?: React.ReactNode
+  showDivider?: boolean
   children: React.ReactNode
 }) {
   return (
     <section
       id={id}
+      ref={outerRef}
+      style={style}
       className={cn(
-        'rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
-        highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80'
+        'rounded-3xl border liquid-glass-enterprise-panel transition-all',
+        highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80',
+        scrollBody && 'flex min-h-0 w-full flex-col overflow-hidden',
+        className
       )}
     >
-      <div className="flex items-start justify-between gap-4 border-b border-slate-200/80 px-5 py-4">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-          <p className="mt-1 text-xs text-slate-600">{description}</p>
+      <div
+        className={cn(
+          'flex shrink-0 items-start justify-between gap-4',
+          headerIcon ? 'p-4 pb-0 lg:p-5 lg:pb-0' : 'px-5 py-4',
+          showDivider && 'border-b border-slate-200/80'
+        )}
+      >
+        <div className="min-w-0 shrink-0">
+          <div className="flex min-w-0 items-center gap-2">
+            {headerIcon ? <span className="shrink-0 text-slate-900">{headerIcon}</span> : null}
+            <h2 className={cn('min-w-0 truncate font-semibold text-slate-900', headerIcon ? 'text-lg' : 'text-sm')}>{title}</h2>
+          </div>
+          <p className={cn('text-slate-600', headerIcon ? 'mt-0.5 text-[11px]' : 'mt-1 text-xs')}>{description}</p>
         </div>
         {right}
       </div>
-      <div className="p-5">{children}</div>
+      <div
+        className={cn(
+          headerIcon ? 'px-4 pb-4 pt-3 lg:px-5 lg:pb-5' : 'p-5',
+          scrollBody &&
+            'min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
+        )}
+      >
+        {children}
+      </div>
     </section>
   )
 }
@@ -1037,6 +1406,15 @@ const PANEL_GROUPS: Array<{ group: PanelItem['group']; items: PanelItem[] }> = [
 ]
 
 export function SecurityAccessControlPage() {
+  const { addToast } = useToast()
+  const sessionUser = getSession()?.user
+  const activeTenant = readStoredTenantSelection()
+  const isPersonalWorkspaceContext = activeTenant?.tenantMode === 'personal'
+  const isOrganizationAdminContext = activeTenant?.tenantMode === 'organization'
+    && hasOrganizationAdminAccess(sessionUser?.roles)
+  const canEditPermissionMatrix = hasPlatformAdminAccess(sessionUser?.roles, sessionUser?.role)
+    || isPersonalWorkspaceContext
+    || isOrganizationAdminContext
   const [searchInput, setSearchInput] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
   const [scopeFilter, setScopeFilter] = useState('all')
@@ -1047,7 +1425,10 @@ export function SecurityAccessControlPage() {
   const [projectFilter, setProjectFilter] = useState('all')
   const [teamFilter, setTeamFilter] = useState('all')
   const [userTypeFilter, setUserTypeFilter] = useState('all')
+  const [privilegeChipFilter, setPrivilegeChipFilter] = useState<Set<RoleItem['privilege']>>(new Set(ALL_ROLE_PRIVILEGES))
   const [groupBy, setGroupBy] = useState<'Role' | 'Team' | 'Workspace' | 'Project' | 'Compliance'>('Role')
+  const [roles, setRoles] = useState<RoleItem[]>(FALLBACK_ROLES)
+  const [rolesLoading, setRolesLoading] = useState(true)
   const [selectedMatrixRole, setSelectedMatrixRole] = useState(roles[0].name)
   const [spotlightSection, setSpotlightSection] = useState<string | null>('overview')
   const [detailDrawer, setDetailDrawer] = useState<DetailDrawer>(buildRoleDetail(roles[0]))
@@ -1056,6 +1437,8 @@ export function SecurityAccessControlPage() {
   const [auditLoading, setAuditLoading] = useState(true)
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
   const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [showKpiCards, setShowKpiCards] = useState(true)
+  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useState(true)
   const [activePanel, setActivePanel] = useState<(typeof PANEL_ITEMS)[number]['id']>('overview')
 
   const deferredSearch = useDeferredValue(searchInput)
@@ -1069,6 +1452,7 @@ export function SecurityAccessControlPage() {
   const fixedSidebarUiOn = !sidebarFixed
   const enterpriseNavUltra = fixedSidebarUiOn && sidebarMini && enterpriseNavTitlesOnly && enterpriseNavSimpleList
   const enterpriseNavWidthVariant = enterpriseNavUltra ? 'ultra' : enterpriseNavCompact ? 'compact' : 'default'
+  const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
 
   const navPanelRef = useRef<HTMLDivElement | null>(null)
   const [navPanelHeightPx, setNavPanelHeightPx] = useState<number | null>(null)
@@ -1127,19 +1511,997 @@ export function SecurityAccessControlPage() {
     permissionMatrixLoading,
     accessReviewLoading,
     auditLoading,
+    showKpiCards,
+    showEnterpriseNavPanel,
   ])
 
+  const activeMainPanelRef = useRef<HTMLElement | null>(null)
+  const [mainPanelViewportHeightPx, setMainPanelViewportHeightPx] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    if (activePanel !== 'overview' && activePanel !== 'rbac' && activePanel !== 'permissions') {
+      setMainPanelViewportHeightPx(null)
+      return
+    }
+
+    const compute = () => {
+      const el = activeMainPanelRef.current
+      if (!el) return
+      setMainPanelViewportHeightPx(computeWorkspaceMainPanelViewportHeightPx(el.getBoundingClientRect().top))
+    }
+
+    compute()
+    const raf = window.requestAnimationFrame(() => {
+      compute()
+      window.requestAnimationFrame(compute)
+    })
+    const t1 = window.setTimeout(compute, 80)
+    const t2 = window.setTimeout(compute, 360)
+    window.addEventListener('resize', compute, { passive: true })
+
+    const ro = new ResizeObserver(compute)
+    if (activeMainPanelRef.current) ro.observe(activeMainPanelRef.current)
+    if (navPanelRef.current) ro.observe(navPanelRef.current)
+
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      window.removeEventListener('resize', compute)
+      ro.disconnect()
+    }
+  }, [activePanel, isWorkspaceCollapsed, showFiltersPanel, sidebarFixed, showKpiCards, showEnterpriseNavPanel])
+
   useEffect(() => {
-    const permissionTimer = window.setTimeout(() => setPermissionMatrixLoading(false), 650)
     const reviewTimer = window.setTimeout(() => setAccessReviewLoading(false), 900)
     const auditTimer = window.setTimeout(() => setAuditLoading(false), 1200)
 
     return () => {
-      window.clearTimeout(permissionTimer)
       window.clearTimeout(reviewTimer)
       window.clearTimeout(auditTimer)
     }
   }, [])
+
+  const fetchRoles = useCallback(async () => {
+    setRolesLoading(true)
+    try {
+      const items = await listAuthzRoles()
+      if (items.length > 0) setRoles(items.map(mapAuthzRoleDtoToRoleItem))
+      return true
+    } catch {
+      addToast({
+        variant: 'warning',
+        title: 'Showing sample roles',
+        description: 'Could not reach the authorization-policy backend — displaying local sample data.',
+      })
+      return false
+    } finally {
+      setRolesLoading(false)
+    }
+  }, [addToast])
+
+  useEffect(() => {
+    void fetchRoles()
+  }, [fetchRoles])
+
+  useEffect(() => {
+    const preferredRoleCode = isPersonalWorkspaceContext
+      ? 'tectona.personal_workspace_admin'
+      : isOrganizationAdminContext
+        ? 'tectona.organization_admin'
+        : null
+    if (!preferredRoleCode) return
+    const preferredRole = roles.find((role) => role.roleCode === preferredRoleCode)
+    if (preferredRole && selectedMatrixRole !== preferredRole.name) {
+      setSelectedMatrixRole(preferredRole.name)
+    }
+  }, [isOrganizationAdminContext, isPersonalWorkspaceContext, roles, selectedMatrixRole])
+
+  // --- Permission Matrix (backed by authorization-policy's permission catalog + security matrix) ---
+  const [authzPermissions, setAuthzPermissions] = useState<AuthzPermissionDto[]>([])
+  const [securityMatrixCells, setSecurityMatrixCells] = useState<AuthzSecurityMatrixCell[]>([])
+  const [permissionMatrixError, setPermissionMatrixError] = useState(false)
+  const [matrixCellSubmitting, setMatrixCellSubmitting] = useState<string | null>(null)
+
+  const fetchPermissionMatrix = useCallback(async () => {
+    setPermissionMatrixLoading(true)
+    try {
+      const [permissionsResult, cells] = await Promise.all([listAuthzPermissions(), getAuthzSecurityMatrix()])
+      setAuthzPermissions(permissionsResult)
+      setSecurityMatrixCells(cells)
+      setPermissionMatrixError(false)
+    } catch {
+      setPermissionMatrixError(true)
+      addToast({
+        variant: 'warning',
+        title: 'Permission matrix unavailable',
+        description: 'Could not reach the authorization-policy backend.',
+      })
+    } finally {
+      setPermissionMatrixLoading(false)
+    }
+  }, [addToast])
+
+  useEffect(() => {
+    void fetchPermissionMatrix()
+  }, [fetchPermissionMatrix])
+
+  const matrixResourceTypes = useMemo(
+    () => Array.from(new Set(authzPermissions.map((p) => p.resource_type))).sort(),
+    [authzPermissions]
+  )
+  const matrixActions = useMemo(
+    () => Array.from(new Set(authzPermissions.map((p) => p.action))).sort(),
+    [authzPermissions]
+  )
+  const permissionIdByCell = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const permission of authzPermissions) map.set(`${permission.resource_type}:${permission.action}`, permission.id)
+    return map
+  }, [authzPermissions])
+
+  const grantedCellsForRoleCode = useCallback(
+    (roleCode: string) => {
+      const set = new Set<string>()
+      for (const cell of securityMatrixCells) {
+        if (cell.role_code === roleCode) set.add(`${cell.resource_type}:${cell.action}`)
+      }
+      return set
+    },
+    [securityMatrixCells]
+  )
+
+  const matrixRows = useMemo(() => authzPermissions.map(permissionMatrixHierarchy), [authzPermissions])
+  const matrixModules = useMemo(
+    () => Array.from(new Set(matrixRows.map((row) => row.module))).sort(),
+    [matrixRows]
+  )
+
+  // --- Permission Matrix tree state (Module > Section > Resource) -----------
+  const matrixAugmentedRows = useMemo(() => {
+    const matrixRole = roles.find((role) => role.name === selectedMatrixRole) ?? roles[0]
+    const granted = matrixRole ? grantedCellsForRoleCode(matrixRole.roleCode) : new Set<string>()
+    return matrixRows.map((row) => {
+      const isGranted = granted.has(`${row.resource_type}:${row.action}`)
+      return { ...row, granted: isGranted, statusLabel: isGranted ? 'Granted' : 'Not granted', sourceLabel: isGranted ? 'Role grant' : '—' }
+    })
+  }, [grantedCellsForRoleCode, matrixRows, roles, selectedMatrixRole])
+
+  const matrixColumnFilteredRows = useMemo(() => {
+    const query = deferredSearch.trim().toLowerCase()
+    if (!query) return matrixAugmentedRows
+    return matrixAugmentedRows.filter((row) =>
+      [row.module, row.section, row.resourceLabel, row.resource_type, row.action, row.permission_code, row.description ?? '']
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    )
+  }, [deferredSearch, matrixAugmentedRows])
+
+  type MatrixTreeAction = { action: string; permission_code: string; description: string | null; granted: boolean }
+  type MatrixTreeResource = { key: string; resource_type: string; resourceLabel: string; actions: MatrixTreeAction[] }
+  type MatrixTreeSection = { key: string; section: string; resources: MatrixTreeResource[] }
+  type MatrixTreeModule = { key: string; module: string; sections: MatrixTreeSection[]; resourceCount: number }
+
+  const matrixTree = useMemo<MatrixTreeModule[]>(() => {
+    const byModule = new Map<string, Map<string, Map<string, MatrixTreeResource>>>()
+    for (const row of matrixColumnFilteredRows) {
+      const bySection = byModule.get(row.module) ?? new Map<string, Map<string, MatrixTreeResource>>()
+      byModule.set(row.module, bySection)
+      const byResource = bySection.get(row.section) ?? new Map<string, MatrixTreeResource>()
+      bySection.set(row.section, byResource)
+      const resource = byResource.get(row.resource_type) ?? {
+        key: `${row.module}::${row.section}::${row.resource_type}`,
+        resource_type: row.resource_type,
+        resourceLabel: row.resourceLabel,
+        actions: [],
+      }
+      resource.actions.push({ action: row.action, permission_code: row.permission_code, description: row.description, granted: row.granted })
+      byResource.set(row.resource_type, resource)
+    }
+    return Array.from(byModule.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([module, bySection]) => {
+        const sections = Array.from(bySection.entries())
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([section, byResource]) => ({
+            key: `${module}::${section}`,
+            section,
+            resources: Array.from(byResource.values()).sort((a, b) => a.resourceLabel.localeCompare(b.resourceLabel)),
+          }))
+        const resourceCount = sections.reduce((sum, s) => sum + s.resources.length, 0)
+        return { key: module, module, sections, resourceCount }
+      })
+  }, [matrixColumnFilteredRows])
+
+  const [expandedMatrixModules, setExpandedMatrixModules] = useState<Set<string>>(new Set())
+  const [expandedMatrixSections, setExpandedMatrixSections] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!deferredSearch.trim()) return
+    setExpandedMatrixModules(new Set(matrixTree.map((m) => m.key)))
+    setExpandedMatrixSections(new Set(matrixTree.flatMap((m) => m.sections.map((s) => s.key))))
+  }, [deferredSearch, matrixTree])
+
+  const toggleMatrixModuleExpanded = useCallback((key: string) => {
+    setExpandedMatrixModules((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const toggleMatrixSectionExpanded = useCallback((key: string) => {
+    setExpandedMatrixSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const toggleMatrixCell = useCallback(
+    async (role: RoleItem, resourceType: string, action: string) => {
+      if (!canEditPermissionMatrix) {
+        addToast({
+          variant: 'warning',
+          title: 'Read-only permission matrix',
+          description: isPersonalWorkspaceContext
+            ? 'Only the Personal Workspace owner can change role permission grants in this workspace.'
+            : 'Only a Platform Admin Global can change role permission grants.',
+        })
+        return
+      }
+      const cellKey = `${resourceType}:${action}`
+      const permissionId = permissionIdByCell.get(cellKey)
+      if (!permissionId) return
+
+      const grantedCodes = new Set(
+        securityMatrixCells.filter((cell) => cell.role_code === role.roleCode).map((cell) => cell.permission_code)
+      )
+      const currentIds = authzPermissions.filter((p) => grantedCodes.has(p.permission_code)).map((p) => p.id)
+      const isGranted = grantedCellsForRoleCode(role.roleCode).has(cellKey)
+      const nextIds = isGranted ? currentIds.filter((id) => id !== permissionId) : [...currentIds, permissionId]
+
+      setMatrixCellSubmitting(`${role.id}:${cellKey}`)
+      try {
+        await putAuthzRolePermissions(role.id, nextIds)
+        await fetchPermissionMatrix()
+      } catch (error) {
+        addToast({
+          variant: 'error',
+          title: 'Failed to update permission',
+          description: error instanceof Error ? error.message : 'Unknown error',
+        })
+      } finally {
+        setMatrixCellSubmitting(null)
+      }
+    },
+    [addToast, authzPermissions, canEditPermissionMatrix, fetchPermissionMatrix, grantedCellsForRoleCode, isPersonalWorkspaceContext, permissionIdByCell, securityMatrixCells]
+  )
+
+  // Shared identity-lite user directory (used by both the Assign User drawer and the
+  // Permission Matrix "By User" effective-permissions view).
+  const [identityUsers, setIdentityUsers] = useState<IdentityUserDto[]>([])
+  const [identityUsersLoading, setIdentityUsersLoading] = useState(false)
+  const [authzAssignments, setAuthzAssignments] = useState<AuthzAssignmentDto[]>([])
+  const [wacMemberships, setWacMemberships] = useState<Array<{ workspaceId: string; workspaceName: string; membership: WacMembershipDto }>>([])
+  const [scopedWorkspaceDirectory, setScopedWorkspaceDirectory] = useState<WorkspaceOrgWorkspaceDto[]>([])
+  const [scopedAccessLoading, setScopedAccessLoading] = useState(false)
+  const [scopedAccessRefreshKey, setScopedAccessRefreshKey] = useState(0)
+
+  const identityBySubject = useMemo(
+    () => new Map(identityUsers.map((user) => [user.id, user])),
+    [identityUsers]
+  )
+  const currentSessionUser = getSession()?.user
+
+  const assignedUserNamesForRole = useCallback(
+    (role: RoleItem) =>
+      authzAssignments
+        .filter((assignment) => assignment.role_id === role.id || assignment.role_code === role.roleCode)
+        .map((assignment) => {
+          const identity = identityBySubject.get(assignment.principal_sub)
+          return identity?.display_name?.trim() || identity?.email?.trim() ||
+            (assignment.principal_sub === currentSessionUser?.id ? currentSessionUser.name : null) ||
+            assignment.principal_sub
+        })
+        .filter((name, index, names) => names.indexOf(name) === index),
+    [authzAssignments, currentSessionUser?.id, currentSessionUser?.name, identityBySubject]
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.allSettled([listAuthzAssignments(), fetchIdentityUsers({ limit: 200 })]).then(([assignmentsResult, usersResult]) => {
+      if (cancelled) return
+      if (assignmentsResult.status === 'fulfilled') setAuthzAssignments(assignmentsResult.value)
+      if (usersResult.status === 'fulfilled') setIdentityUsers(usersResult.value.items)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Scoped Access is a read model composed from the two authoritative sources:
+  // AuthZ assignments (what a role can do) and WAC memberships (where the user
+  // can enter and participate). Keep the current panel backed by live data.
+  useEffect(() => {
+    let cancelled = false
+    setScopedAccessLoading(true)
+    void fetchAllWorkspaceOrgWorkspaces()
+      .then(async (workspaces) => {
+        if (!cancelled) setScopedWorkspaceDirectory(workspaces)
+        const results = await Promise.allSettled(
+          workspaces.map(async (workspace) => {
+            const response = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspace.id)
+            return response.items.map((membership) => ({ workspaceId: workspace.id, workspaceName: workspace.name, membership }))
+          }),
+        )
+        if (cancelled) return
+        setWacMemberships(results.flatMap((result) => result.status === 'fulfilled' ? result.value : []))
+      })
+      .catch(() => {
+        if (!cancelled) setWacMemberships([])
+      })
+      .finally(() => {
+        if (!cancelled) setScopedAccessLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTenant?.workspaceId, scopedAccessRefreshKey])
+
+  const liveScopedAccessItems = useMemo<ScopedAccessItem[]>(() => {
+    const workspaceNames = new Map<string, string>()
+    for (const membership of wacMemberships) {
+      if (!workspaceNames.has(membership.workspaceId)) workspaceNames.set(membership.workspaceId, membership.workspaceName)
+    }
+
+    const rows: ScopedAccessItem[] = authzAssignments.map((assignment) => {
+      const role = roles.find((item) => item.id === assignment.role_id || item.roleCode === assignment.role_code)
+      const scopeType = assignment.scope_type_code === 'global'
+        ? 'Global'
+        : assignment.scope_type_code.charAt(0).toUpperCase() + assignment.scope_type_code.slice(1)
+      const scopeName = assignment.scope_id
+        ? workspaceNames.get(assignment.scope_id) ?? assignment.scope_id
+        : 'All authorized workspaces'
+      return {
+        id: `authz:${assignment.id}`,
+        subject: identityBySubject.get(assignment.principal_sub)?.display_name
+          || identityBySubject.get(assignment.principal_sub)?.email
+          || assignment.principal_sub,
+        role: role?.name ?? assignment.role_name,
+        scopeType,
+        scopeName,
+        accessLevel: role?.privilege ?? 'Assigned role access',
+        assignmentType: 'Direct',
+        status: role?.status === 'Review' ? 'Pending Review' : role?.status === 'Disabled' ? 'Exception' : 'Active',
+      }
+    })
+
+    for (const { workspaceId, membership } of wacMemberships) {
+      const key = `wac:${membership.id}`
+      rows.push({
+        id: key,
+        subject: identityBySubject.get(membership.subject_id)?.display_name
+          || identityBySubject.get(membership.subject_id)?.email
+          || membership.subject_id,
+        role: membership.role_display_name ?? membership.role_code,
+        scopeType: 'Workspace',
+        scopeName: workspaceNames.get(workspaceId) ?? workspaceId,
+        accessLevel: membership.participation_scope_display_name ?? membership.participation_scope_code ?? 'Workspace access',
+        assignmentType: 'Direct',
+        status: membership.status_code === 'active' ? 'Active' : 'Exception',
+      })
+    }
+
+    return rows
+  }, [authzAssignments, identityBySubject, roles, wacMemberships])
+
+  const [scopedAccessOpen, setScopedAccessOpen] = useState(false)
+  const [scopedAccessSubmitting, setScopedAccessSubmitting] = useState(false)
+  const [scopedAccessPrincipal, setScopedAccessPrincipal] = useState('')
+  const [scopedAccessRoleId, setScopedAccessRoleId] = useState('')
+  const [scopedAccessScopeType, setScopedAccessScopeType] = useState<'global' | 'workspace' | 'project'>('workspace')
+  const [scopedAccessScopeId, setScopedAccessScopeId] = useState('')
+
+  const openScopedAccessDrawer = useCallback(() => {
+    setScopedAccessPrincipal('')
+    setScopedAccessRoleId(roles[0]?.id ?? '')
+    setScopedAccessScopeType('workspace')
+    setScopedAccessScopeId(activeTenant?.tenantMode === 'organization' ? activeTenant.workspaceId : scopedWorkspaceDirectory[0]?.id ?? '')
+    setScopedAccessOpen(true)
+    if (identityUsers.length === 0 && !identityUsersLoading) {
+      setIdentityUsersLoading(true)
+      fetchIdentityUsers({ limit: 200 })
+        .then((response) => setIdentityUsers(response.items))
+        .catch(() => addToast({ variant: 'warning', title: 'Could not load user directory', description: 'identity-lite is unreachable.' }))
+        .finally(() => setIdentityUsersLoading(false))
+    }
+  }, [activeTenant?.tenantMode, activeTenant?.workspaceId, addToast, identityUsers.length, identityUsersLoading, roles, scopedWorkspaceDirectory])
+
+  const handleCreateScopedAccess = useCallback(async () => {
+    if (!scopedAccessPrincipal || !scopedAccessRoleId || (scopedAccessScopeType !== 'global' && !scopedAccessScopeId)) return
+    setScopedAccessSubmitting(true)
+    const role = roles.find((item) => item.id === scopedAccessRoleId)
+    const scope = scopedAccessScopeType === 'global' ? 'global' : `${scopedAccessScopeType}:${scopedAccessScopeId}`
+    try {
+      await createAuthzAssignment({ principal_sub: scopedAccessPrincipal, role_id: scopedAccessRoleId, scope })
+      let wacFailed = false
+      if (scopedAccessScopeType === 'workspace') {
+        try {
+          await createWorkspaceMembership(
+            TECTONA_WAC_APP_ID,
+            scopedAccessScopeId,
+            {
+              subject_id: scopedAccessPrincipal,
+              role_code: role?.name.toLowerCase().includes('admin') ? 'admin' : 'member',
+              status_code: 'active',
+              participation_scope_code: PARTICIPATION_SCOPE_CODE.ALL,
+              participation_duration_code: 'permanent',
+            },
+            { actorId: getSession()?.user.id },
+          )
+        } catch {
+          wacFailed = true
+        }
+      }
+      addToast({
+        variant: wacFailed ? 'warning' : 'success',
+        title: wacFailed ? 'Scoped role assigned with workspace warning' : 'Scoped access assigned',
+        description: wacFailed
+          ? 'The AuthZ assignment was created, but Workspace membership could not be synchronized.'
+          : `${role?.name ?? 'Role'} assigned at ${scopedAccessScopeType} scope.`,
+      })
+      setScopedAccessOpen(false)
+      setScopedAccessRefreshKey((value) => value + 1)
+      const assignments = await listAuthzAssignments()
+      setAuthzAssignments(assignments)
+    } catch (error) {
+      addToast({ variant: 'error', title: 'Failed to assign scoped access', description: error instanceof Error ? error.message : 'Unknown error' })
+    } finally {
+      setScopedAccessSubmitting(false)
+    }
+  }, [addToast, roles, scopedAccessPrincipal, scopedAccessRoleId, scopedAccessScopeId, scopedAccessScopeType])
+
+  const permissionDescriptionByCell = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const permission of authzPermissions) {
+      map.set(`${permission.resource_type}:${permission.action}`, permission.description || permission.permission_code)
+    }
+    return map
+  }, [authzPermissions])
+
+  // --- Permission Matrix: "By Role" vs "By User" (effective permissions) view -----
+  const [matrixViewMode, setMatrixViewMode] = useState<'role' | 'user'>('role')
+  const [effectiveUserSearch, setEffectiveUserSearch] = useState('')
+  const [effectiveUserId, setEffectiveUserId] = useState<string | null>(null)
+  const [effectiveUserPickerOpen, setEffectiveUserPickerOpen] = useState(false)
+  const [effectivePermissions, setEffectivePermissions] = useState<AuthzEffectivePermissionRow[]>([])
+  const [effectivePermissionsLoading, setEffectivePermissionsLoading] = useState(false)
+
+  const switchToUserMatrixView = useCallback(() => {
+    setMatrixViewMode('user')
+    if (identityUsers.length === 0 && !identityUsersLoading) {
+      setIdentityUsersLoading(true)
+      fetchIdentityUsers({ limit: 200 })
+        .then((res) => setIdentityUsers(res.items))
+        .catch(() => {
+          addToast({
+            variant: 'warning',
+            title: 'Could not load user directory',
+            description: 'identity-lite is unreachable.',
+          })
+        })
+        .finally(() => setIdentityUsersLoading(false))
+    }
+  }, [addToast, identityUsers.length, identityUsersLoading])
+
+  const filteredEffectiveUsers = useMemo(() => {
+    const query = effectiveUserSearch.trim().toLowerCase()
+    if (!query) return identityUsers
+    return identityUsers.filter(
+      (user) => user.display_name.toLowerCase().includes(query) || user.email.toLowerCase().includes(query)
+    )
+  }, [identityUsers, effectiveUserSearch])
+
+  const selectEffectiveUser = useCallback((user: IdentityUserDto) => {
+    setEffectiveUserId(user.id)
+    setEffectiveUserSearch(user.display_name)
+    setEffectiveUserPickerOpen(false)
+    setEffectivePermissionsLoading(true)
+    const scope = activeTenant?.workspaceId && activeTenant.workspaceId !== '__all__'
+      ? `workspace:${activeTenant.workspaceId}`
+      : 'global'
+    getAuthzEffectivePermissions(user.id, scope)
+      .then((rows) => setEffectivePermissions(rows))
+      .catch(() => {
+        setEffectivePermissions([])
+        addToast({
+          variant: 'error',
+          title: 'Failed to load effective permissions',
+          description: `Could not compute access for "${user.display_name}".`,
+        })
+      })
+      .finally(() => setEffectivePermissionsLoading(false))
+  }, [activeTenant?.workspaceId, addToast])
+
+  const selectedEffectiveUser = useMemo(
+    () => identityUsers.find((user) => user.id === effectiveUserId) ?? null,
+    [effectiveUserId, identityUsers],
+  )
+
+  const effectiveUserAssignments = useMemo(() => {
+    if (!effectiveUserId) return []
+    return authzAssignments
+      .filter((assignment) => assignment.principal_sub === effectiveUserId)
+      .map((assignment) => ({
+        ...assignment,
+        role: roles.find((role) => role.id === assignment.role_id),
+      }))
+  }, [authzAssignments, effectiveUserId, roles])
+
+  const userAssignmentSummary = useMemo(() => {
+    const summary = new Map<string, { roles: number; permissions: number }>()
+    for (const assignment of authzAssignments) {
+      const current = summary.get(assignment.principal_sub) ?? { roles: 0, permissions: 0 }
+      current.roles += 1
+      summary.set(assignment.principal_sub, current)
+    }
+    return summary
+  }, [authzAssignments])
+
+  const effectiveUserRoles = useMemo(() => {
+    const codes = new Set(effectivePermissions.map((row) => row.role_code))
+    return roles.filter((role) => codes.has(role.roleCode))
+  }, [effectivePermissions, roles])
+
+  const effectivePermissionsByResource = useMemo(() => {
+    const map = new Map<string, Map<string, Array<{ resourceType: string; action: string; permissionCode: string; roleCodes: string[] }>>>()
+    for (const row of effectivePermissions) {
+      const catalog = authzPermissions.find((permission) => permission.permission_code === row.permission_code)
+      const moduleName = catalog?.ui_module || 'Other permissions'
+      const sectionName = catalog?.ui_section || 'General'
+      const sections = map.get(moduleName) ?? new Map<string, Array<{ resourceType: string; action: string; permissionCode: string; roleCodes: string[] }>>()
+      const list = sections.get(sectionName) ?? []
+      const existing = list.find((entry) => entry.resourceType === row.resource_type && entry.action === row.action)
+      if (existing) {
+        if (!existing.roleCodes.includes(row.role_code)) existing.roleCodes.push(row.role_code)
+      } else {
+        list.push({ resourceType: row.resource_type, action: row.action, permissionCode: row.permission_code, roleCodes: [row.role_code] })
+      }
+      sections.set(sectionName, list)
+      map.set(moduleName, sections)
+    }
+    return map
+  }, [authzPermissions, effectivePermissions])
+
+  const effectiveMatrixTree = useMemo<MatrixTreeModule[]>(() => {
+    const granted = new Set(effectivePermissions.map((row) => `${row.resource_type}:${row.action}`))
+    const sourceRoles = new Map<string, string[]>()
+    for (const row of effectivePermissions) {
+      const key = `${row.resource_type}:${row.action}`
+      const sources = sourceRoles.get(key) ?? []
+      if (!sources.includes(row.role_code)) sources.push(row.role_code)
+      sourceRoles.set(key, sources)
+    }
+    const byModule = new Map<string, Map<string, Map<string, MatrixTreeResource & { actions: Array<MatrixTreeAction & { sourceRoles: string[] }> }>>>()
+    for (const row of matrixRows) {
+      const bySection = byModule.get(row.module) ?? new Map()
+      byModule.set(row.module, bySection)
+      const byResource = bySection.get(row.section) ?? new Map()
+      bySection.set(row.section, byResource)
+      const resource = byResource.get(row.resource_type) ?? {
+        key: `${row.module}::${row.section}::${row.resource_type}`,
+        resource_type: row.resource_type,
+        resourceLabel: row.resourceLabel,
+        actions: [],
+      }
+      const cellKey = `${row.resource_type}:${row.action}`
+      resource.actions.push({
+        action: row.action,
+        permission_code: row.permission_code,
+        description: row.description,
+        granted: granted.has(cellKey),
+        sourceRoles: sourceRoles.get(cellKey) ?? [],
+      })
+      byResource.set(row.resource_type, resource)
+    }
+    return Array.from(byModule.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([module, bySection]) => {
+      const sections = Array.from(bySection.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([section, byResource]) => ({
+        key: `${module}::${section}`,
+        section,
+        resources: Array.from(byResource.values()).sort((a, b) => a.resourceLabel.localeCompare(b.resourceLabel)),
+      }))
+      return { key: module, module, sections, resourceCount: sections.reduce((sum, section) => sum + section.resources.length, 0) }
+    })
+  }, [effectivePermissions, matrixRows])
+
+  // --- Add / Edit Role drawer --------------------------------------------------
+  const [addRoleOpen, setAddRoleOpen] = useState(false)
+  const [addRoleSubmitting, setAddRoleSubmitting] = useState(false)
+  const [editingRole, setEditingRole] = useState<RoleItem | null>(null)
+  const [addRoleForm, setAddRoleForm] = useState({
+    displayName: '',
+    description: '',
+    accessScope: 'Workspace',
+    privilege: 'Standard' as RoleItem['privilege'],
+  })
+
+  const resetAddRoleForm = useCallback(() => {
+    setAddRoleForm({ displayName: '', description: '', accessScope: 'Workspace', privilege: 'Standard' })
+  }, [])
+
+  const openAddRoleDrawer = useCallback(() => {
+    setEditingRole(null)
+    resetAddRoleForm()
+    setAddRoleOpen(true)
+  }, [resetAddRoleForm])
+
+  const openEditRoleDrawer = useCallback((role: RoleItem) => {
+    if (!role.roleCode.startsWith('tectona.custom_')) {
+      addToast({
+        variant: 'warning',
+        title: 'System role is locked',
+        description: 'Access scope and privilege are managed by the platform policy.',
+      })
+      return
+    }
+    setEditingRole(role)
+    setAddRoleForm({
+      displayName: role.name,
+      description: role.description,
+      accessScope: role.accessScope,
+      privilege: role.privilege,
+    })
+    setRoleDetailOpen(false)
+    setAddRoleOpen(true)
+  }, [addToast])
+
+  const handleCreateRole = useCallback(async () => {
+    const displayName = addRoleForm.displayName.trim()
+    if (!displayName) return
+    setAddRoleSubmitting(true)
+    try {
+      if (editingRole) {
+        await updateAuthzRole(editingRole.id, {
+          display_name: displayName,
+          description: addRoleForm.description.trim() || undefined,
+          access_scope: addRoleForm.accessScope,
+          privilege: addRoleForm.privilege,
+          status: editingRole.status,
+        })
+        addToast({ variant: 'success', title: 'Role updated', description: `"${displayName}" was saved.` })
+      } else {
+        const slug = displayName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+        await createAuthzRole({
+          role_code: `tectona.custom_${slug || 'role'}_${Date.now().toString(36)}`,
+          display_name: displayName,
+          description: addRoleForm.description.trim() || undefined,
+          access_scope: addRoleForm.accessScope,
+          privilege: addRoleForm.privilege,
+          status: addRoleForm.privilege === 'Standard' ? 'Active' : 'Review',
+        })
+        addToast({ variant: 'success', title: 'Role created', description: `"${displayName}" was added to the role directory.` })
+      }
+      setAddRoleOpen(false)
+      setEditingRole(null)
+      resetAddRoleForm()
+      await fetchRoles()
+    } catch (error) {
+      addToast({
+        variant: 'error',
+        title: editingRole ? 'Failed to update role' : 'Failed to create role',
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setAddRoleSubmitting(false)
+    }
+  }, [addRoleForm, addToast, editingRole, fetchRoles, resetAddRoleForm])
+
+  const handleDuplicateRole = useCallback(
+    async (role: RoleItem) => {
+      try {
+        const slug = role.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+        await createAuthzRole({
+          role_code: `tectona.custom_${slug || 'role'}_${Date.now().toString(36)}`,
+          display_name: `${role.name} (Copy)`,
+          description: role.description,
+          access_scope: role.accessScope,
+          privilege: role.privilege,
+        })
+        addToast({ variant: 'success', title: 'Role duplicated', description: `Created "${role.name} (Copy)".` })
+        await fetchRoles()
+      } catch (error) {
+        addToast({
+          variant: 'error',
+          title: 'Failed to duplicate role',
+          description: error instanceof Error ? error.message : 'Unknown error',
+        })
+      }
+    },
+    [addToast, fetchRoles]
+  )
+
+  const handleToggleRoleStatus = useCallback(
+    async (role: RoleItem) => {
+      const nextStatus: RoleItem['status'] = role.status === 'Disabled' ? 'Active' : 'Disabled'
+      try {
+        await updateAuthzRole(role.id, {
+          display_name: role.name,
+          description: role.description,
+          access_scope: role.accessScope,
+          privilege: role.privilege,
+          status: nextStatus,
+        })
+        addToast({
+          variant: 'success',
+          title: nextStatus === 'Disabled' ? 'Role disabled' : 'Role enabled',
+          description: `"${role.name}" is now ${nextStatus.toLowerCase()}.`,
+        })
+        await fetchRoles()
+      } catch (error) {
+        addToast({
+          variant: 'error',
+          title: 'Failed to update role status',
+          description: error instanceof Error ? error.message : 'Unknown error',
+        })
+      }
+    },
+    [addToast, fetchRoles]
+  )
+
+  // --- Inline rename (row context menu) ---------------------------------------
+  const [renamingRoleId, setRenamingRoleId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameSubmitting, setRenameSubmitting] = useState(false)
+
+  const startRenameRole = useCallback((role: RoleItem) => {
+    setRenamingRoleId(role.id)
+    setRenameValue(role.name)
+  }, [])
+
+  const cancelRenameRole = useCallback(() => {
+    setRenamingRoleId(null)
+    setRenameValue('')
+  }, [])
+
+  const commitRenameRole = useCallback(
+    async (role: RoleItem) => {
+      const nextName = renameValue.trim()
+      if (!nextName || nextName === role.name) {
+        cancelRenameRole()
+        return
+      }
+      setRenameSubmitting(true)
+      try {
+        await updateAuthzRole(role.id, {
+          display_name: nextName,
+          description: role.description,
+          access_scope: role.accessScope,
+          privilege: role.privilege,
+          status: role.status,
+        })
+        addToast({ variant: 'success', title: 'Role renamed', description: `"${role.name}" is now "${nextName}".` })
+        cancelRenameRole()
+        await fetchRoles()
+      } catch (error) {
+        addToast({
+          variant: 'error',
+          title: 'Failed to rename role',
+          description: error instanceof Error ? error.message : 'Unknown error',
+        })
+      } finally {
+        setRenameSubmitting(false)
+      }
+    },
+    [addToast, cancelRenameRole, fetchRoles, renameValue]
+  )
+
+  // --- Role detail drawer ------------------------------------------------------
+  const [roleDetailOpen, setRoleDetailOpen] = useState(false)
+  const [roleDetailRoleId, setRoleDetailRoleId] = useState<string | null>(null)
+
+  const openRoleDetail = useCallback((role: RoleItem) => {
+    setDetailDrawer(buildRoleDetail(role, assignedUserNamesForRole(role)))
+    setRoleDetailRoleId(role.id)
+    setRoleDetailOpen(true)
+  }, [assignedUserNamesForRole])
+
+  // --- Delete Role confirmation ----------------------------------------------
+  const [deleteRoleTarget, setDeleteRoleTarget] = useState<RoleItem | null>(null)
+  const [deleteRoleSubmitting, setDeleteRoleSubmitting] = useState(false)
+
+  const handleDeleteRole = useCallback(async () => {
+    if (!deleteRoleTarget) return
+    setDeleteRoleSubmitting(true)
+    try {
+      await deleteAuthzRole(deleteRoleTarget.id)
+      addToast({ variant: 'success', title: 'Role deleted', description: `"${deleteRoleTarget.name}" was removed.` })
+      setDeleteRoleTarget(null)
+      await fetchRoles()
+    } catch (error) {
+      addToast({
+        variant: 'error',
+        title: 'Failed to delete role',
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setDeleteRoleSubmitting(false)
+    }
+  }, [addToast, deleteRoleTarget, fetchRoles])
+
+  // --- Assign User modal ------------------------------------------------------
+  const [assignUserOpen, setAssignUserOpen] = useState(false)
+  const [assignUserSubmitting, setAssignUserSubmitting] = useState(false)
+  const [assignUserRoleId, setAssignUserRoleId] = useState('')
+  const [assignUserPrincipals, setAssignUserPrincipals] = useState<Set<string>>(new Set())
+  const [assignUserSearch, setAssignUserSearch] = useState('')
+  const [assignUserManualId, setAssignUserManualId] = useState('')
+
+  const openAssignUserModal = useCallback(
+    (roleId?: string) => {
+      setAssignUserRoleId(roleId ?? roles[0]?.id ?? '')
+      setAssignUserPrincipals(new Set())
+      setAssignUserSearch('')
+      setAssignUserManualId('')
+      setAssignUserOpen(true)
+      if (identityUsers.length === 0 && !identityUsersLoading) {
+        setIdentityUsersLoading(true)
+        fetchIdentityUsers({ limit: 200 })
+          .then((res) => setIdentityUsers(res.items))
+          .catch(() => {
+            addToast({
+              variant: 'warning',
+              title: 'Could not load user directory',
+              description: 'identity-lite is unreachable — enter a principal ID manually instead.',
+            })
+          })
+          .finally(() => setIdentityUsersLoading(false))
+      }
+    },
+    [addToast, identityUsers.length, identityUsersLoading, roles]
+  )
+
+  const toggleAssignUserPrincipal = useCallback((id: string) => {
+    setAssignUserPrincipals((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const addManualAssignUserPrincipal = useCallback(() => {
+    const id = assignUserManualId.trim()
+    if (!id) return
+    setAssignUserPrincipals((prev) => new Set(prev).add(id))
+    setAssignUserManualId('')
+  }, [assignUserManualId])
+
+  const filteredAssignUsers = useMemo(() => {
+    const query = assignUserSearch.trim().toLowerCase()
+    if (!query) return identityUsers
+    return identityUsers.filter(
+      (user) => user.display_name.toLowerCase().includes(query) || user.email.toLowerCase().includes(query)
+    )
+  }, [identityUsers, assignUserSearch])
+
+  const handleCreateAssignment = useCallback(async () => {
+    if (!assignUserRoleId || assignUserPrincipals.size === 0) return
+    setAssignUserSubmitting(true)
+    const role = roles.find((r) => r.id === assignUserRoleId)
+    const principals = Array.from(assignUserPrincipals)
+    const isOrganizationAdminRole = role?.roleCode === 'tectona.organization_admin'
+    const isPersonalAdminRole = role?.roleCode === 'tectona.personal_workspace_admin'
+    let organizationWorkspaceId = activeTenant?.tenantMode === 'organization'
+      ? activeTenant.workspaceId
+      : undefined
+
+    // Organization Admin is an organization-level role. Resolve the organization
+    // home workspace instead of accidentally scoping it to the administrator's
+    // currently selected personal workspace.
+    if (isOrganizationAdminRole && activeTenant?.orgId) {
+      try {
+        const workspaces = await fetchAllWorkspaceOrgWorkspaces()
+        const isRoot = (workspace: (typeof workspaces)[number]) => {
+          const metadata = workspace.metadata && typeof workspace.metadata === 'object' ? workspace.metadata : {}
+          const parentId = metadata.parent_workspace_id
+          return workspace.organization_id === activeTenant.orgId
+            && workspace.tenant_mode !== 'personal'
+            && !(typeof parentId === 'string' && parentId.trim())
+        }
+        organizationWorkspaceId = workspaces.find(isRoot)?.id ?? organizationWorkspaceId
+      } catch {
+        // The authorization assignment remains useful even if the directory is
+        // temporarily unavailable; WAC membership is attempted below when possible.
+      }
+    }
+
+    const scopedRole = isPersonalAdminRole || isOrganizationAdminRole
+    const assignmentScope = scopedRole && (isOrganizationAdminRole ? organizationWorkspaceId : activeTenant?.workspaceId)
+      ? `workspace:${isOrganizationAdminRole ? organizationWorkspaceId : activeTenant?.workspaceId}`
+      : 'global'
+    const actorId = getSession()?.user.id
+    const results = await Promise.allSettled(
+      principals.map((principalSub) =>
+        createAuthzAssignment({ principal_sub: principalSub, role_id: assignUserRoleId, scope: assignmentScope })
+      )
+    )
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length
+    const failed = results.length - succeeded
+    let wacFailed = 0
+    const authzAssignmentsAlreadyExist = results.length > 0 && results.every((result) =>
+      result.status === 'rejected'
+      && /already exists|already assigned|duplicate|conflict|409/i.test(
+        result.reason instanceof Error ? result.reason.message : String(result.reason),
+      )
+    )
+
+    // The workspace switcher is backed by WAC memberships, not AuthZ role
+    // assignments. Keep both sources in sync for Organization Admin grants.
+    if (isOrganizationAdminRole && organizationWorkspaceId && (succeeded > 0 || authzAssignmentsAlreadyExist)) {
+      const wacResults = await Promise.allSettled(
+        principals.map(async (principalSub) => {
+          await createWorkspaceMembership(
+            TECTONA_WAC_APP_ID,
+            organizationWorkspaceId,
+            {
+              subject_id: principalSub,
+              role_code: 'admin',
+              status_code: 'active',
+              participation_scope_code: PARTICIPATION_SCOPE_CODE.ALL,
+              participation_duration_code: 'permanent',
+            },
+            { actorId },
+          )
+          try {
+            await ensureWorkspaceDirectoryMembership(
+              organizationWorkspaceId,
+              { identity_ref: principalSub, role_code: 'admin', status_code: 'active' },
+              { actorId },
+            )
+          } catch {
+            // WAC is authoritative; directory enrichment is best effort.
+          }
+        }),
+      )
+      wacFailed = wacResults.filter((r) => r.status === 'rejected').length
+    }
+    if (succeeded > 0) {
+      addToast({
+        variant: failed > 0 || wacFailed > 0 ? 'warning' : 'success',
+        title: failed > 0 || wacFailed > 0 ? 'Assignment partially completed' : 'User(s) assigned',
+        description:
+          failed > 0 || wacFailed > 0
+            ? `${succeeded} AuthZ assignment(s) created${wacFailed > 0 ? `, ${wacFailed} Workspace access grant(s) failed` : ''}.`
+            : `${succeeded} user${succeeded === 1 ? '' : 's'} assigned to "${role?.name ?? 'role'}".`,
+      })
+      setAssignUserOpen(false)
+      await fetchRoles()
+    } else {
+      addToast({ variant: 'error', title: 'Failed to assign user(s)', description: 'No assignments were created.' })
+    }
+    setAssignUserSubmitting(false)
+  }, [activeTenant?.orgId, activeTenant?.tenantMode, activeTenant?.workspaceId, assignUserPrincipals, assignUserRoleId, addToast, fetchRoles, roles])
+
+  const normalizedPrivilegeFilter = useMemo(() => {
+    return privilegeChipFilter.size > 0 ? privilegeChipFilter : new Set(ALL_ROLE_PRIVILEGES)
+  }, [privilegeChipFilter])
+
+  const rolePrivilegeCounts = useMemo(() => {
+    const map = new Map<RoleItem['privilege'], number>()
+    for (const privilege of ALL_ROLE_PRIVILEGES) map.set(privilege, 0)
+    for (const role of roles) map.set(role.privilege, (map.get(role.privilege) ?? 0) + 1)
+    return map
+  }, [roles])
 
   const filteredRoles = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase()
@@ -1155,15 +2517,223 @@ export function SecurityAccessControlPage() {
       const matchesRole = roleFilter === 'all' || role.name === roleFilter
       const matchesScope = scopeFilter === 'all' || role.accessScope === scopeFilter
       const matchesPermissionStatus = permissionStatusFilter === 'all' || role.status === permissionStatusFilter
+      const matchesPrivilege = normalizedPrivilegeFilter.has(role.privilege)
 
-      return matchesQuery && matchesRole && matchesScope && matchesPermissionStatus
+      return matchesQuery && matchesRole && matchesScope && matchesPermissionStatus && matchesPrivilege
     })
-  }, [deferredSearch, permissionStatusFilter, roleFilter, scopeFilter])
+  }, [deferredSearch, normalizedPrivilegeFilter, permissionStatusFilter, roleFilter, roles, scopeFilter])
+
+  // --- Role directory enterprise table state --------------------------------
+  const [roleTableSort, setRoleTableSort] = useState<{ key: RoleTableColumnKey; dir: 'asc' | 'desc' } | null>(null)
+  const [roleTableGroupBy, setRoleTableGroupBy] = useState<RoleTableGroupByKey | null>(null)
+  const [showRoleTableSelection, setShowRoleTableSelection] = useState(false)
+  const [roleTableSelectedIds, setRoleTableSelectedIds] = useState<string[]>([])
+  const [rolePage, setRolePage] = useState(1)
+  const [rolePageSize, setRolePageSize] = useState(10)
+  const [roleColumnFilterScope, setRoleColumnFilterScope] = useState<Set<string>>(new Set())
+  const [roleColumnFilterStatus, setRoleColumnFilterStatus] = useState<Set<string>>(new Set())
+  const [roleRowMenu, setRoleRowMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+
+  const [showSeparationOfConcernsNotice, setShowSeparationOfConcernsNotice] = useState(true)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowSeparationOfConcernsNotice(false), 5000)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  const toggleRoleFilterValue = useCallback(
+    (setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string) => {
+      setter((prev) => {
+        const next = new Set(prev)
+        if (next.has(value)) next.delete(value)
+        else next.add(value)
+        return next
+      })
+    },
+    []
+  )
+
+  const buildRoleFilterOptions = useCallback(
+    (accessor: (item: RoleItem) => string) => {
+      const counts = new Map<string, number>()
+      filteredRoles.forEach((item) => {
+        const value = accessor(item)
+        counts.set(value, (counts.get(value) ?? 0) + 1)
+      })
+      return Array.from(counts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([value, count]) => ({ value, count }))
+    },
+    [filteredRoles]
+  )
+
+  const roleScopeFilterOptions = useMemo(() => buildRoleFilterOptions((item) => item.accessScope), [buildRoleFilterOptions])
+  const roleStatusFilterOptions = useMemo(() => buildRoleFilterOptions((item) => item.status), [buildRoleFilterOptions])
+
+  const columnFilteredRoles = useMemo(() => {
+    return filteredRoles.filter((item) => {
+      if (roleColumnFilterScope.size > 0 && !roleColumnFilterScope.has(item.accessScope)) return false
+      if (roleColumnFilterStatus.size > 0 && !roleColumnFilterStatus.has(item.status)) return false
+      return true
+    })
+  }, [filteredRoles, roleColumnFilterScope, roleColumnFilterStatus])
+
+  const toggleRoleTableSort = useCallback((key: RoleTableColumnKey) => {
+    setRoleTableSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }, [])
+
+  const sortedRoleRows = useMemo(() => {
+    if (!roleTableSort) return columnFilteredRoles
+    const { key, dir } = roleTableSort
+    const mul = dir === 'asc' ? 1 : -1
+    const valueByKey = (item: RoleItem): string | number => {
+      switch (key) {
+        case 'name': return item.name
+        case 'accessScope': return item.accessScope
+        case 'assignedUsers': return item.assignedUsers
+        case 'privilege': return item.privilege
+        case 'status': return item.status
+        case 'lastUpdated': return item.lastUpdated
+      }
+    }
+    return [...columnFilteredRoles].sort((a, b) => {
+      const left = valueByKey(a)
+      const right = valueByKey(b)
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * mul
+      return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' }) * mul
+    })
+  }, [columnFilteredRoles, roleTableSort])
+
+  const roleFlatRows = useMemo(() => {
+    if (roleTableGroupBy) {
+      const grouped = [...sortedRoleRows].sort((a, b) =>
+        roleTableGroupLabel(a, roleTableGroupBy).localeCompare(roleTableGroupLabel(b, roleTableGroupBy), undefined, {
+          sensitivity: 'base',
+        })
+      )
+      return grouped.map((item) => ({ item, groupLabel: roleTableGroupLabel(item, roleTableGroupBy) }))
+    }
+    return sortedRoleRows.map((item) => ({ item, groupLabel: null as string | null }))
+  }, [sortedRoleRows, roleTableGroupBy])
+
+  const roleTotalPages = Math.max(1, Math.ceil(roleFlatRows.length / rolePageSize))
+  const rolePageSafe = Math.min(rolePage, roleTotalPages)
+  const roleStart = roleFlatRows.length === 0 ? 0 : (rolePageSafe - 1) * rolePageSize + 1
+  const roleEnd = Math.min(roleFlatRows.length, rolePageSafe * rolePageSize)
+  const pagedRoleRows = roleFlatRows.slice(roleStart === 0 ? 0 : roleStart - 1, roleEnd)
+
+  const { tableRef: roleTableRef, ...roleTableColumns } = useEnterpriseSortableColumns<RoleTableColumnKey>({
+    initialOrder: ROLE_TABLE_DEFAULT_COLUMN_ORDER,
+    pinnedFirstKey: ROLE_TABLE_PINNED_FIRST_COLUMN,
+    hasSelectionColumn: showRoleTableSelection,
+    onColumnHidden: (key) => {
+      if (roleTableGroupBy && (key as string) === roleTableGroupBy) setRoleTableGroupBy(null)
+    },
+  })
+
+  const toggleRoleTableRowSelection = useCallback((id: string) => {
+    setRoleTableSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }, [])
+
+  const setShowRoleTableSelectionSafe = useCallback((checked: boolean) => {
+    setShowRoleTableSelection(checked)
+    if (!checked) setRoleTableSelectedIds([])
+  }, [])
+
+  const renderRoleTableCell = (item: RoleItem, key: RoleTableColumnKey) => {
+    switch (key) {
+      case 'name':
+        if (renamingRoleId === item.id) {
+          return (
+            <div className="min-w-0" onClick={(event) => event.stopPropagation()}>
+              <Input
+                autoFocus
+                value={renameValue}
+                disabled={renameSubmitting}
+                onChange={(event) => setRenameValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void commitRenameRole(item)
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelRenameRole()
+                  }
+                }}
+                onBlur={() => void commitRenameRole(item)}
+                className="h-8 text-sm font-semibold"
+              />
+              <div className="mt-0.5 truncate text-[11px] leading-5 text-slate-500">{item.description}</div>
+            </div>
+          )
+        }
+        return (
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-slate-900">{item.name}</div>
+            <div className="mt-0.5 truncate text-[11px] leading-5 text-slate-500">{item.description}</div>
+          </div>
+        )
+      case 'accessScope':
+        return (
+          <Badge variant="outline" className={badgeClass(item.accessScope)}>
+            {item.accessScope}
+          </Badge>
+        )
+      case 'assignedUsers':
+        return <span className="tabular-nums text-slate-700">{item.assignedUsers}</span>
+      case 'privilege':
+        return (
+          <Badge variant="outline" className={badgeClass(item.privilege)}>
+            {item.privilege}
+          </Badge>
+        )
+      case 'status':
+        return (
+          <Badge variant="outline" className={badgeClass(item.status)}>
+            {item.status}
+          </Badge>
+        )
+      case 'lastUpdated':
+        return <span className="text-slate-500">{item.lastUpdated}</span>
+    }
+  }
+
+  const renderRoleFilterSlot = (key: RoleTableColumnKey) => {
+    switch (key) {
+      case 'accessScope':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Scope"
+            ariaLabel="Filter by scope"
+            options={roleScopeFilterOptions}
+            selected={roleColumnFilterScope}
+            onToggleOption={(value) => toggleRoleFilterValue(setRoleColumnFilterScope, value)}
+            onShowAll={() => setRoleColumnFilterScope(new Set())}
+          />
+        )
+      case 'status':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Status"
+            ariaLabel="Filter by status"
+            options={roleStatusFilterOptions}
+            selected={roleColumnFilterStatus}
+            onToggleOption={(value) => toggleRoleFilterValue(setRoleColumnFilterStatus, value)}
+            onShowAll={() => setRoleColumnFilterStatus(new Set())}
+          />
+        )
+      default:
+        return undefined
+    }
+  }
 
   const filteredScopedAccess = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase()
 
-    return scopedAccessItems.filter((item) => {
+    return liveScopedAccessItems.filter((item) => {
       const matchesQuery =
         !query ||
         [item.subject, item.role, item.scopeType, item.scopeName, item.status, item.accessLevel]
@@ -1181,7 +2751,7 @@ export function SecurityAccessControlPage() {
 
       return matchesQuery && matchesRole && matchesScope && matchesWorkspace && matchesProject && matchesTeam && matchesUserType
     })
-  }, [deferredSearch, projectFilter, roleFilter, scopeFilter, teamFilter, userTypeFilter, workspaceFilter])
+  }, [deferredSearch, liveScopedAccessItems, projectFilter, roleFilter, scopeFilter, teamFilter, userTypeFilter, workspaceFilter])
 
   const filteredProviders = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase()
@@ -1248,19 +2818,85 @@ export function SecurityAccessControlPage() {
 
   const overviewCards = useMemo(
     () => [
-      { label: 'Total Roles', value: `${roles.length}`, detail: 'Reusable access profiles across platform scopes', section: 'rbac' },
-      { label: 'Active Users', value: '226', detail: 'Identities with current platform access', section: 'reviews' },
-      { label: 'SSO / federated users', value: '187', detail: 'Identities federated via enterprise IdP connections', section: 'identity' },
-      { label: 'Privileged Roles', value: `${roles.filter((role) => role.privilege === 'Privileged').length}`, detail: 'Roles with elevated or administrative impact', section: 'rbac' },
-      { label: 'Policy Violations', value: '12', detail: 'Open issues across reviews, exceptions, and sync drift', section: 'compliance' },
-      { label: 'Audit Events Today', value: `${auditEvents.length}`, detail: 'Security-relevant events visible for export', section: 'audit' },
+      {
+        label: 'Total Roles',
+        value: `${roles.length}`,
+        detail: 'Reusable access profiles across platform scopes',
+        trend: '+1',
+        icon: ShieldCheck,
+        trendColor: '#0ea5e9',
+        section: 'rbac',
+      },
+      {
+        label: 'Active Users',
+        value: '226',
+        detail: 'Identities with current platform access',
+        trend: '+12',
+        icon: Users,
+        trendColor: '#6366f1',
+        section: 'reviews',
+      },
+      {
+        label: 'SSO / federated users',
+        value: '187',
+        detail: 'Identities federated via enterprise IdP connections',
+        trend: '+4',
+        icon: Network,
+        trendColor: '#10b981',
+        section: 'identity',
+      },
+      {
+        label: 'Privileged Roles',
+        value: `${roles.filter((role) => role.privilege === 'Privileged').length}`,
+        detail: 'Roles with elevated or administrative impact',
+        trend: '0',
+        icon: BadgeCheck,
+        trendColor: '#f59e0b',
+        section: 'rbac',
+      },
+      {
+        label: 'Policy Violations',
+        value: '12',
+        detail: 'Open issues across reviews, exceptions, and sync drift',
+        trend: '-3',
+        icon: AlertTriangle,
+        trendColor: '#a855f7',
+        section: 'compliance',
+      },
+      {
+        label: 'Audit Events Today',
+        value: `${auditEvents.length}`,
+        detail: 'Security-relevant events visible for export',
+        trend: '+6',
+        icon: Activity,
+        trendColor: '#06b6d4',
+        section: 'audit',
+      },
     ],
-    []
+    [roles]
   )
 
   const currentMatrixRole = useMemo(
     () => roles.find((role) => role.name === selectedMatrixRole) ?? roles[0],
-    [selectedMatrixRole]
+    [roles, selectedMatrixRole]
+  )
+  const matrixRoleOptions = useMemo(
+    () => [...roles].sort((left, right) => {
+      const leftCustom = left.roleCode.startsWith('tectona.custom_') ? 1 : 0
+      const rightCustom = right.roleCode.startsWith('tectona.custom_') ? 1 : 0
+      const leftPreferred = isPersonalWorkspaceContext
+        ? left.roleCode === 'tectona.personal_workspace_admin' ? -2 : 0
+        : isOrganizationAdminContext
+          ? left.roleCode === 'tectona.organization_admin' ? -2 : 0
+          : 0
+      const rightPreferred = isPersonalWorkspaceContext
+        ? right.roleCode === 'tectona.personal_workspace_admin' ? -2 : 0
+        : isOrganizationAdminContext
+          ? right.roleCode === 'tectona.organization_admin' ? -2 : 0
+          : 0
+      return leftPreferred - rightPreferred || leftCustom - rightCustom || left.name.localeCompare(right.name)
+    }),
+    [isOrganizationAdminContext, isPersonalWorkspaceContext, roles]
   )
 
   const accessSummary = useMemo(() => {
@@ -1280,15 +2916,27 @@ export function SecurityAccessControlPage() {
     downloadCsv('tectona-security-access-report.csv', [
       ['Type', 'Name', 'Scope', 'Status'],
       ...roles.map((role) => ['Role', role.name, role.accessScope, role.status]),
-      ...scopedAccessItems.map((item) => ['Scoped Access', item.subject, item.scopeName, item.status]),
+      ...liveScopedAccessItems.map((item) => ['Scoped Access', item.subject, item.scopeName, item.status]),
     ])
   }
 
   const isOverviewSectionActive = activePanel === 'overview'
 
+  const accessDistributionTotal = accessDistribution.reduce((sum, item) => sum + item.value, 0)
+  const accessDistributionByShare = [...accessDistribution].sort((a, b) => a.value - b.value)
+  const accessBroadRole = accessDistributionByShare[accessDistributionByShare.length - 1]
+  const accessBroadSharePct = accessDistributionTotal > 0 ? Math.round((accessBroadRole.value / accessDistributionTotal) * 100) : 0
+  const accessElevatedRoles = accessDistributionByShare.slice(0, 2)
+  const accessElevatedSharePct =
+    accessDistributionTotal > 0
+      ? Math.round((accessElevatedRoles.reduce((sum, item) => sum + item.value, 0) / accessDistributionTotal) * 100)
+      : 0
+  const accessConcentrationSignal =
+    accessBroadSharePct >= 50 ? 'Broad Access Prevails' : accessBroadSharePct >= 30 ? 'Balanced Distribution' : 'Concentrated Access'
+
   return (
     <div className="space-y-6 pb-10 text-slate-900">
-      <div className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked, isWorkspaceCollapsed, enterpriseNavWidthVariant))}>
+      <div className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked && showEnterpriseNavPanel, showEnterpriseNavPanel && isWorkspaceCollapsed, enterpriseNavLayoutVariant))}>
         <Breadcrumb items={[{ label: 'Security & Access Control' }]} />
 
         <PageHeader
@@ -1296,68 +2944,62 @@ export function SecurityAccessControlPage() {
           description="Operational security governance for the platform—roles, permissions, scoped access, identity posture, data protection, and compliance readiness. Connector infrastructure and IAM engine configuration are maintained in Platform Settings & Administration."
           right={
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/75 p-1.5 shadow-sm backdrop-blur-sm">
+              <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm flex-nowrap shrink-0">
                 <button
                   type="button"
-                  className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm"
-                  aria-label="Export access report"
-                  title="Export access report"
-                  onClick={exportAccessReport}
+                  onClick={() => setShowKpiCards((current) => !current)}
+                  className={cn(
+                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                    showKpiCards && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                  )}
+                  aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                  title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
                 >
-                  <Download className="h-5 w-5" strokeWidth={2} />
+                  <LayoutGrid className="h-5 w-5" strokeWidth={2} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEnterpriseNavPanel((visible) => !visible)}
+                  className={cn(
+                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                    showEnterpriseNavPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                  )}
+                  aria-label={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+                  title={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
+                >
+                  <PanelLeft className="h-5 w-5" strokeWidth={2} />
                 </button>
                 {!isOverviewSectionActive ? (
                   <button
                     type="button"
                     onClick={() => setShowFiltersPanel((current) => !current)}
                     className={cn(
-                      'flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm',
-                      showFiltersPanel && 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                      'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                      showFiltersPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
                     )}
                     aria-label={showFiltersPanel ? 'Hide filters panel' : 'Show filters panel'}
                     title={showFiltersPanel ? 'Hide filters panel' : 'Show filters panel'}
                   >
-                    <Target className="h-5 w-5" strokeWidth={2} />
+                    <Filter className="h-5 w-5" strokeWidth={2} />
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm"
+                  aria-label="Export access report"
+                  title="Export access report"
+                  onClick={exportAccessReport}
+                >
+                  <Download className="h-5 w-5" strokeWidth={2} />
+                </button>
               </div>
-
-              <Button
-                className="h-10 rounded-xl px-4"
-                onClick={() => {
-                  setSpotlightSection('rbac')
-                  setDetailDrawer(buildTemplateDetail(templates[0]))
-                }}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Create Role
-              </Button>
-              <Link
-                to="/platform-settings-administration?section=access"
-                className={cn(buttonVariants({ variant: 'outline' }), 'h-10 rounded-xl px-4 no-underline')}
-              >
-                <span className="inline-flex items-center">
-                  <Network className="mr-2 h-4 w-4" />
-                  Open IAM control plane
-                </span>
-              </Link>
-              <Button
-                variant="outline"
-                className="h-10 rounded-xl px-4"
-                onClick={() => {
-                  setSpotlightSection('compliance')
-                  setDetailDrawer(buildComplianceDetail(complianceItems[1]))
-                }}
-              >
-                <ShieldCheck className="mr-2 h-4 w-4" />
-                Security Policy Settings
-              </Button>
             </div>
           }
         />
 
+        {showKpiCards ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-          {overviewCards.map((card, index) => (
+          {overviewCards.map((card) => (
             <button
               key={card.label}
               type="button"
@@ -1375,7 +3017,7 @@ export function SecurityAccessControlPage() {
               <Card className={kpiCardChrome(card.section)}>
                 <div className="pointer-events-none absolute -right-3 -bottom-4 opacity-[0.08] transition-all duration-500 group-hover:scale-110 group-hover:opacity-[0.12]">
                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/60 text-slate-700/80 ring-1 ring-white/50 backdrop-blur-sm">
-                    <LayoutGrid className="h-7 w-7" />
+                    <card.icon className="h-7 w-7" />
                   </div>
                 </div>
 
@@ -1383,29 +3025,47 @@ export function SecurityAccessControlPage() {
                 <div className="mt-1 flex items-center gap-3">
                   <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{card.value}</div>
                   <div className="h-10 min-w-0 flex-1">
-                    <KpiSparkline data={[10, 12, 11, 13, 12, 14, 14, 15]} color={index % 2 === 0 ? '#2563eb' : '#10b981'} />
+                    <KpiSparkline data={[10, 12, 11, 13, 12, 14, 14, 15]} color={card.trendColor} />
                   </div>
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                  <span className="min-w-0 truncate">{card.detail}</span>
-                  <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full bg-gradient-to-r', metricCardAccent(index))} />
+                  <span className="inline-flex min-w-0 items-center gap-2">
+                    <card.icon className="h-3.5 w-3.5 shrink-0 text-slate-600" />
+                    <span className="truncate">{card.detail}</span>
+                  </span>
+                  <span className={cn('shrink-0 font-semibold', card.trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
+                    {card.trend}
+                  </span>
                 </div>
               </Card>
             </button>
           ))}
         </div>
+        ) : null}
       </div>
 
-      <div className={workspaceOuterGridClass(sidebarFixed, isWorkspaceCollapsed, enterpriseNavWidthVariant)}>
-        <aside className={workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavWidthVariant)}>
+      <div
+        className={cn(
+          showEnterpriseNavPanel
+            ? workspaceOuterGridClass(sidebarFixed, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
+            : 'relative'
+        )}
+      >
+        {showEnterpriseNavPanel ? (
+        <aside className={workspaceAsideClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)}>
           <div
             ref={navPanelRef}
-            className={cn(workspaceNavInnerClass(navDocked, sidebarFixed, isWorkspaceCollapsed), !navDocked && 'overflow-hidden')}
+            className={cn(
+              workspaceNavInnerClass(navDocked, sidebarFixed, isWorkspaceCollapsed),
+              // Match Document & Knowledge Management's Enterprise Navigation panel corner radius (rounded-2xl, not rounded-[28px]).
+              'rounded-2xl xl:rounded-r-2xl',
+              !navDocked && 'overflow-hidden'
+            )}
             style={!navDocked && navPanelHeightPx ? { height: navPanelHeightPx, maxHeight: navPanelHeightPx } : undefined}
             aria-label="Security workspace navigation"
           >
             <div className="shrink-0">
-              <div className="mb-3 flex items-center justify-between">
+              <div className={cn('flex items-center', isWorkspaceCollapsed ? 'mb-2 justify-center' : 'mb-3 justify-between')}>
                 {!isWorkspaceCollapsed ? (
                   <span className="px-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Enterprise Navigation</span>
                 ) : null}
@@ -1413,12 +3073,19 @@ export function SecurityAccessControlPage() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9 shrink-0 rounded-xl border border-slate-200/70 bg-white/75 text-slate-600 shadow-sm hover:bg-white hover:text-slate-900"
+                  className={cn(
+                    'shrink-0 rounded-xl border border-slate-200/70 bg-white/75 text-slate-600 shadow-sm hover:bg-white hover:text-slate-900',
+                    isWorkspaceCollapsed ? 'h-8 w-8 rounded-full' : 'h-9 w-9'
+                  )}
                   aria-label={isWorkspaceCollapsed ? 'Expand security workspace navigation' : 'Collapse security workspace navigation'}
                   title={isWorkspaceCollapsed ? 'Expand security workspace navigation' : 'Collapse security workspace navigation'}
                   onClick={() => setIsWorkspaceCollapsed((current) => !current)}
                 >
-                  {isWorkspaceCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+                  {isWorkspaceCollapsed ? (
+                    <ChevronRight className="h-4 w-4" strokeWidth={2.5} />
+                  ) : (
+                    <ChevronLeft className="h-5 w-5" strokeWidth={2.5} />
+                  )}
                 </Button>
               </div>
 
@@ -1431,10 +3098,20 @@ export function SecurityAccessControlPage() {
             </div>
 
             <div className={workspaceNavMenuScrollClass()}>
+              {isWorkspaceCollapsed ? (
+                <EnterpriseNavIconRail
+                  items={PANEL_ITEMS}
+                  activeId={activePanel}
+                  onSelect={(id) => {
+                    setActivePanel(id)
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                  }}
+                />
+              ) : (
               <div className={cn(enterpriseNavUltra ? 'space-y-1.5' : enterpriseNavCompact ? 'space-y-2' : 'space-y-4')}>
                 {PANEL_GROUPS.map(({ group, items }) => (
                   <div key={group} className="space-y-1.5">
-                    {!isWorkspaceCollapsed && !enterpriseNavCompact ? (
+                    {!enterpriseNavCompact ? (
                       <div className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{group}</div>
                     ) : null}
                     {items.map((panel) => {
@@ -1450,14 +3127,12 @@ export function SecurityAccessControlPage() {
                           }}
                           className={cn(
                             'group relative flex w-full overflow-hidden border text-left transition-all duration-200',
-                            isWorkspaceCollapsed
-                              ? 'items-center justify-center rounded-2xl px-2 py-3'
-                              : enterpriseNavCompact
-                                ? cn(
-                                    'items-center gap-3 px-3',
-                                    enterpriseNavUltra ? 'rounded-[14px] py-1.5' : 'rounded-[18px] py-2.5'
-                                  )
-                                : 'items-start gap-3 rounded-[20px] px-3.5 py-3',
+                            enterpriseNavCompact
+                              ? cn(
+                                  'items-center gap-3 px-3',
+                                  enterpriseNavUltra ? 'rounded-[14px] py-1.5' : 'rounded-[18px] py-2.5'
+                                )
+                              : 'items-start gap-3 rounded-[20px] px-3.5 py-3',
                             active
                               ? cn(
                                   'border-slate-300/90 bg-[linear-gradient(145deg,rgba(255,255,255,0.98),rgba(241,245,249,0.92))] text-slate-950',
@@ -1483,38 +3158,34 @@ export function SecurityAccessControlPage() {
                             )}
                           >
                             <Icon
-                              className={cn(
-                                'shrink-0',
-                                isWorkspaceCollapsed ? 'h-5 w-5' : enterpriseNavCompact ? 'h-3.5 w-3.5' : 'h-4 w-4'
-                              )}
+                              className={cn('shrink-0', enterpriseNavCompact ? 'h-3.5 w-3.5' : 'h-4 w-4')}
                             />
                           </span>
-                          {!isWorkspaceCollapsed ? (
-                            <span className="min-w-0 flex-1">
-                              <span className={cn('flex justify-between gap-2', enterpriseNavCompact ? 'items-center' : 'items-start')}>
-                                <span className="block truncate text-sm font-semibold text-slate-900">{panel.label}</span>
-                                {!enterpriseNavCompact ? (
-                                  <span
-                                    className={cn(
-                                      'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]',
-                                      active ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
-                                    )}
-                                  >
-                                    {panel.badge}
-                                  </span>
-                                ) : null}
-                              </span>
+                          <span className="min-w-0 flex-1">
+                            <span className={cn('flex justify-between gap-2', enterpriseNavCompact ? 'items-center' : 'items-start')}>
+                              <span className="block truncate text-sm font-semibold text-slate-900">{panel.label}</span>
                               {!enterpriseNavCompact ? (
-                                <span className="mt-1 block text-[11px] leading-4 text-slate-500">{panel.description}</span>
+                                <span
+                                  className={cn(
+                                    'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]',
+                                    active ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
+                                  )}
+                                >
+                                  {panel.badge}
+                                </span>
                               ) : null}
                             </span>
-                          ) : null}
+                            {!enterpriseNavCompact ? (
+                              <span className="mt-1 block text-[11px] leading-4 text-slate-500">{panel.description}</span>
+                            ) : null}
+                          </span>
                         </button>
                       )
                     })}
                   </div>
                 ))}
               </div>
+              )}
 
               <div className={cn('mt-4 space-y-4', isWorkspaceCollapsed && 'hidden')}>
                 <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-3">
@@ -1539,89 +3210,216 @@ export function SecurityAccessControlPage() {
             </div>
           </div>
         </aside>
+        ) : null}
 
-        <div className={cn('min-w-0', workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavWidthVariant))}>
+        <div
+          className={cn(
+            'min-w-0',
+            showEnterpriseNavPanel
+              ? workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant)
+              : 'w-full max-w-full space-y-4'
+          )}
+        >
           {!isOverviewSectionActive && showFiltersPanel ? (
-            <Card className="rounded-2xl p-4">
-              <div className="grid gap-3 xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    type="search"
-                    value={searchInput}
-                    onChange={(event) => handleSearchChange(event.target.value)}
-                    placeholder="Search role name, user, team, workspace, project, or policy"
-                    className="h-11 rounded-2xl border-slate-200 bg-white pl-9"
-                  />
-                </div>
-
-                <Select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                  <SelectItem value="all">Role: All</SelectItem>
-                  {roles.map((role) => (
-                    <SelectItem key={role.id} value={role.name}>
-                      {role.name}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Select value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)}>
-                  <SelectItem value="all">Access scope: All</SelectItem>
-                  {['Organization', 'Workspace', 'Project', 'Task', 'Document', 'Integration'].map((scope) => (
-                    <SelectItem key={scope} value={scope}>
-                      {scope}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Select value={identityFilter} onChange={(event) => setIdentityFilter(event.target.value)}>
-                  <SelectItem value="all">Identity provider: All</SelectItem>
-                  {identityProviders.map((provider) => (
-                    <SelectItem key={provider.id} value={provider.name}>
-                      {provider.name}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Select value={permissionStatusFilter} onChange={(event) => setPermissionStatusFilter(event.target.value)}>
-                  <SelectItem value="all">Permission status: All</SelectItem>
-                  {['Active', 'Review', 'Disabled'].map((item) => (
-                    <SelectItem key={item} value={item}>
-                      {item}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Select value={complianceStatusFilter} onChange={(event) => setComplianceStatusFilter(event.target.value)}>
-                  <SelectItem value="all">Compliance status: All</SelectItem>
-                  {['Healthy', 'At Risk', 'Critical'].map((item) => (
-                    <SelectItem key={item} value={item}>
-                      {item}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Select value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}>
-                  <SelectItem value="all">Workspace: All</SelectItem>
-                  <SelectItem value="Enterprise Delivery Office">Enterprise Delivery Office</SelectItem>
-                  <SelectItem value="Loan Platform">Loan Platform</SelectItem>
-                </Select>
-                <Select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
-                  <SelectItem value="all">Project: All</SelectItem>
-                  <SelectItem value="ERP Modernization">ERP Modernization</SelectItem>
-                  <SelectItem value="Loan Platform Consolidation">Loan Platform Consolidation</SelectItem>
-                </Select>
-                <Select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}>
-                  <SelectItem value="all">Team: All</SelectItem>
-                  <SelectItem value="PMO">PMO</SelectItem>
-                  <SelectItem value="Integration">Integration</SelectItem>
-                  <SelectItem value="Quality">Quality</SelectItem>
-                </Select>
-                <Select value={userTypeFilter} onChange={(event) => setUserTypeFilter(event.target.value)}>
-                  <SelectItem value="all">User type: All</SelectItem>
-                  <SelectItem value="Employee">Employee</SelectItem>
-                  <SelectItem value="External">External</SelectItem>
-                  <SelectItem value="Service Account">Service Account</SelectItem>
-                </Select>
+            <Card className="liquid-glass-enterprise-panel relative z-40 overflow-visible rounded-2xl p-4">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  type="search"
+                  value={searchInput}
+                  onChange={(event) => handleSearchChange(event.target.value)}
+                  placeholder={
+                    activePanel === 'permissions'
+                      ? 'Search permission, module, section, resource, or action'
+                      : 'Search role name, user, team, workspace, project, or policy'
+                  }
+                  className="h-11 rounded-2xl border-slate-200 bg-white pl-9 text-sm"
+                />
               </div>
+
+              {activePanel === 'rbac' ? (
+                <div className="relative pt-3">
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_0%,hsl(var(--border)/0.2)_18%,hsl(var(--border)/0.75)_50%,hsl(var(--border)/0.2)_82%,transparent_100%)]"
+                  />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openAddRoleDrawer()}
+                        className={enterpriseIndigoGradientActionButtonClass()}
+                      >
+                        <Plus className="h-4 w-4" strokeWidth={2.5} />
+                        Add Role
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openAssignUserModal()}
+                        className={enterpriseCyanGradientActionButtonClass()}
+                      >
+                        <UserPlus className="h-4 w-4" strokeWidth={2.5} />
+                        Assign User
+                      </button>
+                    </div>
+
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 lg:ml-auto">
+                      <span className="shrink-0 text-xs text-slate-500">
+                        Privilege <span className="tabular-nums">({roles.length})</span>
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {ALL_ROLE_PRIVILEGES.map((privilege) => {
+                          const on = normalizedPrivilegeFilter.has(privilege)
+                          const count = rolePrivilegeCounts.get(privilege) ?? 0
+                          return (
+                            <button
+                              key={privilege}
+                              type="button"
+                              onClick={() => {
+                                setPrivilegeChipFilter((prev) => {
+                                  const allowed = new Set(ALL_ROLE_PRIVILEGES)
+                                  const next = new Set<RoleItem['privilege']>()
+                                  for (const v of prev) if (allowed.has(v)) next.add(v)
+                                  if (next.has(privilege)) next.delete(privilege)
+                                  else next.add(privilege)
+                                  if (next.size === 0) return new Set(ALL_ROLE_PRIVILEGES)
+                                  return next
+                                })
+                              }}
+                              className={privilegeTagChrome(privilege, on)}
+                              aria-pressed={on}
+                              title={on ? `Hide ${privilege}` : `Show ${privilege}`}
+                            >
+                              <span>{privilege}</span>
+                              <span className={cn('tabular-nums text-[10px]', on ? 'opacity-80' : 'opacity-60')}>{count}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {activePanel === 'scoped-access' ? (
+                <div className="relative pt-3">
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_0%,hsl(var(--border)/0.2)_18%,hsl(var(--border)/0.75)_50%,hsl(var(--border)/0.2)_82%,transparent_100%)]"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={openScopedAccessDrawer} className={enterpriseCyanGradientActionButtonClass()}>
+                      <Plus className="h-4 w-4" strokeWidth={2.5} />
+                      Assign Access
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {activePanel === 'permissions' ? (
+                <div className="relative pt-3">
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_0%,hsl(var(--border)/0.2)_18%,hsl(var(--border)/0.75)_50%,hsl(var(--border)/0.2)_82%,transparent_100%)]"
+                  />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 lg:ml-auto">
+                      {matrixViewMode === 'user' ? (
+                        <div className="relative min-w-[280px]">
+                          <div className="relative">
+                            <User className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                            <Input
+                              value={selectedEffectiveUser ? selectedEffectiveUser.display_name : effectiveUserSearch}
+                              onChange={(event) => {
+                                setEffectiveUserId(null)
+                                setEffectiveUserSearch(event.target.value)
+                                setEffectiveUserPickerOpen(true)
+                              }}
+                              onFocus={() => setEffectiveUserPickerOpen(true)}
+                              placeholder="Search user by name or email…"
+                              className="h-9 rounded-lg border-slate-200 bg-white pl-9 pr-3 text-xs"
+                            />
+                          </div>
+                          {effectiveUserPickerOpen ? (
+                            <div className="absolute right-0 z-[100] mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-2xl">
+                              {identityUsersLoading ? <LoadingSkeleton rows={3} /> : filteredEffectiveUsers.length === 0 ? (
+                                <p className="px-3 py-4 text-center text-xs text-slate-500">No users found.</p>
+                              ) : filteredEffectiveUsers.map((user) => (
+                                <button key={user.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => selectEffectiveUser(user)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-blue-50">
+                                  <span className={cn('inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white', userAvatarTone(user.display_name))}>{userInitials(user.display_name)}</span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-xs font-semibold text-slate-800">{user.display_name}</span>
+                                    <span className="block truncate text-[10px] text-slate-500">{user.email}</span>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {matrixViewMode === 'role' ? (
+                        <>
+                          <Select value={selectedMatrixRole} onChange={(event) => setSelectedMatrixRole(event.target.value)} className="min-w-[180px]">
+                            {matrixRoleOptions.map((role) => (
+                              <SelectItem key={role.id} value={role.name}>
+                                <span className="flex items-center gap-2">
+                                  <span>{role.roleCode.startsWith('tectona.custom_') ? 'Custom · ' : 'System · '}{role.name}</span>
+                                  {!role.roleCode.startsWith('tectona.custom_') ? (
+                                    <Badge variant="outline" className="border-violet-200 bg-violet-50 px-1.5 py-0 text-[9px] font-semibold text-violet-700">
+                                      {isPersonalWorkspaceContext
+                                        ? role.roleCode === 'tectona.personal_workspace_admin' ? 'Platform Admin Personal' : 'Workspace Role'
+                                        : isOrganizationAdminContext && role.roleCode === 'tectona.organization_admin'
+                                          ? 'Organization Admin'
+                                          : 'Global Admin Only'}
+                                    </Badge>
+                                  ) : null}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </Select>
+                          {!currentMatrixRole.roleCode.startsWith('tectona.custom_') ? (
+                            <Badge variant="outline" className="border-violet-200 bg-violet-50 text-[10px] font-semibold text-violet-700">
+                              {isPersonalWorkspaceContext
+                                ? currentMatrixRole.roleCode === 'tectona.personal_workspace_admin' ? 'Platform Admin Personal' : 'Workspace Role'
+                                : isOrganizationAdminContext && currentMatrixRole.roleCode === 'tectona.organization_admin'
+                                  ? 'Organization Admin'
+                                  : 'Global Admin Only'}
+                            </Badge>
+                          ) : null}
+                        </>
+                      ) : null}
+                      <div className="inline-flex items-center gap-1 rounded-xl border border-border/60 bg-muted/30 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setMatrixViewMode('role')}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
+                            matrixViewMode === 'role' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          By Role
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => switchToUserMatrixView()}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
+                            matrixViewMode === 'user' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          <User className="h-3.5 w-3.5" />
+                          By User
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </Card>
           ) : null}
 
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr),360px]">
+          <div className="grid gap-6">
             <div className="space-y-6">
               {activePanel === 'overview' ? (
                 <Panel
@@ -1629,21 +3427,26 @@ export function SecurityAccessControlPage() {
                   title="Security Overview"
                   description={`Enterprise control center for role governance, federated identity, and policy clarity. Current view grouped by ${groupBy.toLowerCase()}.`}
                   highlight={activePanel === 'overview'}
+                  headerIcon={<ShieldCheck className="h-5 w-5" />}
+                  showDivider={false}
+                  outerRef={activeMainPanelRef}
+                  style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+                  className={cn(mainPanelViewportHeightPx != null && 'overflow-hidden')}
+                  scrollBody={mainPanelViewportHeightPx != null}
                 >
-                  <div className="grid gap-5 xl:grid-cols-[1.15fr,0.85fr]">
-                    <div className="rounded-[22px] border border-slate-200/70 bg-slate-50/70 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">Security posture widget</p>
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            Compact control view across identity, privileged reviews, policy enforcement, and exception closure.
-                          </p>
-                        </div>
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <OverviewChartPanel
+                      title="Security posture widget"
+                      description="Compact control view across identity, privileged reviews, policy enforcement, and exception closure."
+                      icon={ShieldCheck}
+                      tone="emerald"
+                      right={
                         <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
                           Overall posture 89%
                         </Badge>
-                      </div>
-                      <div className="mt-4 space-y-3">
+                      }
+                    >
+                      <div className="space-y-3">
                         {postureSeries.map((entry) => (
                           <button
                             key={entry.label}
@@ -1668,40 +3471,164 @@ export function SecurityAccessControlPage() {
                           </button>
                         ))}
                       </div>
-                    </div>
 
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
-                      <div className="rounded-[22px] border border-slate-200/70 bg-white p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900">Access distribution</p>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              Distribution by role and scope to surface concentration of elevated access.
-                            </p>
-                          </div>
-                          <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
-                            Role weighted
-                          </Badge>
+                      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/75 to-slate-100/80 px-3 py-2 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Adoption</div>
+                          <div className="mt-1 text-sm font-semibold text-slate-900">{accessSummary.adoption}</div>
                         </div>
-                        <div className="mt-4 h-52">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                              <Pie data={accessDistribution} dataKey="value" nameKey="name" innerRadius={46} outerRadius={72} paddingAngle={3}>
-                                {accessDistribution.map((entry) => (
-                                  <Cell key={entry.name} fill={entry.color} />
-                                ))}
-                              </Pie>
-                              <Tooltip />
-                            </PieChart>
-                          </ResponsiveContainer>
+                        <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(16,185,129,0.10)]">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-500">Privileged Coverage</div>
+                          <div className="mt-1 text-sm font-semibold text-emerald-700">{accessSummary.privilegedCoverage}</div>
+                        </div>
+                        <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(245,158,11,0.10)]">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-500">Exception Aging</div>
+                          <div className="mt-1 text-sm font-semibold text-amber-700">{accessSummary.exceptionAging}</div>
+                        </div>
+                        <div className="rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-500">Sync Issues</div>
+                          <div className="mt-1 text-sm font-semibold text-rose-700">{accessSummary.syncIssues}</div>
                         </div>
                       </div>
 
-                      <div className="rounded-[22px] border border-slate-200/70 bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-900">Review cadence</p>
-                        <p className="mt-1 text-[11px] text-slate-500">Access review completion versus violations this week.</p>
-                        <div className="mt-4 h-44">
-                          <ResponsiveContainer width="100%" height="100%">
+                      <div className="mt-4 rounded-[18px] border border-slate-200/80 bg-slate-50/70 p-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Top privileged roles</p>
+                        <div className="mt-2 space-y-2">
+                          {roles
+                            .filter((role) => role.privilege === 'Privileged')
+                            .slice(0, 3)
+                            .map((role) => (
+                              <button
+                                key={role.id}
+                                type="button"
+                                onClick={() => openRoleDetail(role)}
+                                className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:border-slate-300"
+                              >
+                                <span className="min-w-0 truncate text-xs font-semibold text-slate-800">{role.name}</span>
+                                <span className="shrink-0 text-[11px] text-slate-500">{role.assignedUsers} users</span>
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    </OverviewChartPanel>
+
+                    <div className="grid gap-4">
+                      <OverviewChartPanel
+                        title="Access distribution"
+                        description="Distribution by role and scope to surface concentration of elevated access."
+                        icon={Activity}
+                        tone="sky"
+                        right={
+                          <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                            Role weighted
+                          </Badge>
+                        }
+                      >
+                        <div className="grid gap-5 lg:grid-cols-[176px,1fr] lg:items-center">
+                          <div className="relative mx-auto h-44 w-44">
+                            <div
+                              className="pointer-events-none absolute -inset-3 rounded-full"
+                              style={{
+                                background:
+                                  'conic-gradient(from 220deg, rgba(37,99,235,0.15), rgba(124,58,237,0.13), rgba(217,119,6,0.11), rgba(37,99,235,0.15))',
+                                filter: 'blur(1px)',
+                              }}
+                            />
+                            <div className="pointer-events-none absolute inset-2 rounded-full border border-white/90 bg-gradient-to-br from-white/95 via-slate-50/95 to-slate-100/85 shadow-[0_14px_32px_rgba(15,23,42,0.10)]" />
+                            <div className="pointer-events-none absolute left-1/2 top-1 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-sky-200/80 bg-sky-50/95 px-2.5 py-1 text-[10px] font-semibold text-sky-700 shadow-sm">
+                              Role Concentration
+                            </div>
+                            <div className="absolute inset-0">
+                              <MeasuredResponsiveContainer>
+                                <PieChart>
+                                  <defs>
+                                    {accessDistribution.map((entry) => (
+                                      <linearGradient key={entry.name} id={`access-dist-${entry.name.replace(/\s+/g, '-')}`} x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stopColor={entry.color} stopOpacity={1} />
+                                        <stop offset="100%" stopColor={entry.color} stopOpacity={0.8} />
+                                      </linearGradient>
+                                    ))}
+                                  </defs>
+                                  <Pie
+                                    data={accessDistribution}
+                                    dataKey="value"
+                                    nameKey="name"
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={46}
+                                    outerRadius={68}
+                                    cornerRadius={6}
+                                    paddingAngle={2.5}
+                                    stroke="white"
+                                    strokeWidth={1.5}
+                                  >
+                                    {accessDistribution.map((entry) => (
+                                      <Cell key={entry.name} fill={`url(#access-dist-${entry.name.replace(/\s+/g, '-')})`} />
+                                    ))}
+                                  </Pie>
+                                  <Tooltip formatter={(value: number, name: string) => [`${value} identities`, name]} contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }} />
+                                </PieChart>
+                              </MeasuredResponsiveContainer>
+                            </div>
+                            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                              <div className="rounded-2xl border border-white/90 px-4 py-2 text-center backdrop-blur-sm" style={{ background: 'rgba(255,255,255,0.88)', boxShadow: '0 8px 22px rgba(15,23,42,0.10)' }}>
+                                <div className="text-2xl font-bold leading-none tracking-tight text-slate-900">{accessDistributionTotal}</div>
+                                <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Identities</div>
+                              </div>
+                            </div>
+                            <div className="pointer-events-none absolute bottom-1 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-slate-200/80 bg-white/95 px-3 py-1 text-[10px] font-semibold text-slate-600 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+                              {accessDistribution.length} roles tracked
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/75 to-slate-100/80 px-3 py-2 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+                                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Executive Signal</div>
+                                <div className="mt-1 text-sm font-semibold text-slate-900">{accessConcentrationSignal}</div>
+                              </div>
+                              <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(16,185,129,0.10)]">
+                                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-500">Elevated Coverage</div>
+                                <div className="mt-1 text-sm font-semibold text-emerald-700">{accessElevatedSharePct}% of pool</div>
+                              </div>
+                              <div className="rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
+                                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500">Broad Exposure</div>
+                                <div className="mt-1 text-sm font-semibold text-rose-700">{accessBroadSharePct}% of pool</div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              {accessDistribution.map((item) => {
+                                const ratio = accessDistributionTotal > 0 ? Math.round((item.value / accessDistributionTotal) * 100) : 0
+                                return (
+                                  <div
+                                    key={item.name}
+                                    className="flex items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-3 py-2 transition-all duration-200 hover:border-slate-300 hover:bg-white"
+                                  >
+                                    <div className="flex min-w-0 items-center gap-2.5">
+                                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: item.color }} />
+                                      <span className="text-sm font-medium text-slate-700">{item.name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <span className="w-6 text-right text-sm font-semibold text-slate-900">{item.value}</span>
+                                      <span className="w-11 text-right text-xs font-semibold text-slate-500">{ratio}%</span>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </OverviewChartPanel>
+
+                      <OverviewChartPanel
+                        title="Review cadence"
+                        description="Access review completion versus violations this week."
+                        icon={BarChart3}
+                        tone="violet"
+                      >
+                        <div className="h-44">
+                          <MeasuredResponsiveContainer>
                             <AreaChart data={reviewTrend}>
                               <defs>
                                 <linearGradient id="reviewArea" x1="0" x2="0" y1="0" y2="1">
@@ -1716,9 +3643,9 @@ export function SecurityAccessControlPage() {
                               <Area type="monotone" dataKey="reviews" stroke="#2563eb" fill="url(#reviewArea)" strokeWidth={2.5} />
                               <Bar dataKey="violations" fill="#f59e0b" radius={[6, 6, 0, 0]} />
                             </AreaChart>
-                          </ResponsiveContainer>
+                          </MeasuredResponsiveContainer>
                         </div>
-                      </div>
+                      </OverviewChartPanel>
                     </div>
                   </div>
                 </Panel>
@@ -1727,75 +3654,547 @@ export function SecurityAccessControlPage() {
               {activePanel === 'rbac' ? (
                 <Panel
                   id="rbac"
-                  title="Role-Based Access Control"
-                  description="Authorization roles with privilege level, scope, status, and inline assignment controls—the system of record for who may do what on the platform."
+                  title="Role Directory Panel"
+                  description="List of roles with privilege, scope, status, and quick operational actions."
                   highlight={activePanel === 'rbac'}
-                  right={<ActionPills labels={['Open Role', 'Edit Role', 'Duplicate Role', 'Disable Role', 'Assign Users']} />}
+                  headerIcon={<ShieldCheck className="h-5 w-5" />}
+                  showDivider={false}
+                  outerRef={activeMainPanelRef}
+                  style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+                  className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+                  scrollBody={mainPanelViewportHeightPx != null}
+                  right={
+                    <div className="flex flex-wrap items-center justify-end gap-3 py-1 text-xs text-muted-foreground">
+                      <EnterpriseGroupByControl
+                        options={ROLE_TABLE_GROUP_BY_OPTIONS}
+                        value={roleTableGroupBy}
+                        onChange={(key) => setRoleTableGroupBy(key)}
+                      />
+                      <EnterpriseSelectionToggle checked={showRoleTableSelection} onChange={setShowRoleTableSelectionSafe} />
+                      <EnterpriseColumnVisibilityControl
+                        columns={ROLE_TABLE_COLUMN_VISIBILITY_OPTIONS}
+                        hidden={roleTableColumns.hiddenColumns}
+                        visibleCount={roleTableColumns.visibleColumnOrder.length}
+                        onToggle={roleTableColumns.toggleColumnVisibility}
+                        onShowAll={roleTableColumns.showAllColumns}
+                        canEnable={roleTableColumns.canShowColumn}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Showing <span className="font-semibold text-foreground">{roleStart}</span>-
+                        <span className="font-semibold text-foreground">{roleEnd}</span> of{' '}
+                        <span className="font-semibold text-foreground">{roleFlatRows.length}</span>
+                      </p>
+                      <span className="text-xs text-muted-foreground">Rows:</span>
+                      <Select
+                        value={String(rolePageSize)}
+                        onChange={(e) => {
+                          setRolePageSize(parseInt(e.target.value, 10))
+                          setRolePage(1)
+                        }}
+                        className="h-10 w-[84px] text-sm"
+                      >
+                        <SelectItem value="5">5</SelectItem>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="15">15</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                      </Select>
+                      <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                        <button
+                          type="button"
+                          className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                          onClick={() => setRolePage((prev) => Math.max(1, prev - 1))}
+                          disabled={rolePageSafe <= 1}
+                        >
+                          Previous
+                        </button>
+                        <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">
+                          {rolePageSafe} / {roleTotalPages}
+                        </div>
+                        <button
+                          type="button"
+                          className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                          onClick={() => setRolePage((prev) => Math.min(roleTotalPages, prev + 1))}
+                          disabled={rolePageSafe >= roleTotalPages}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  }
                 >
-                  <EnterpriseInfoCallout className="mb-4" title="Separation of concerns">
-                    Role definitions and permission assignments here are the system of record for platform authorization.
-                    Workspace membership and participation are managed in{' '}
-                    <a href="/workspace-management" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
-                      Workspace Management
-                    </a>
-                    ; operational staffing and allocation live in{' '}
-                    <a href="/resource-management" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
-                      Resource Management
-                    </a>
-                    .
-                  </EnterpriseInfoCallout>
-                  <div className="overflow-hidden rounded-[20px] border border-slate-200/80">
-                    <table className="min-w-full text-left text-xs">
-                      <thead className="bg-slate-50/90 text-slate-500">
-                        <tr>
-                          {['Role', 'Scope', 'Assigned Users', 'Privilege', 'Status', 'Last Updated', 'Actions'].map((header) => (
-                            <th key={header} className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                              {header}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredRoles.map((role) => (
-                          <tr key={role.id} className="border-t border-slate-100 bg-white transition-colors hover:bg-blue-50/35">
-                            <td className="px-4 py-4 align-top">
-                              <button type="button" className="text-left" onClick={() => setDetailDrawer(buildRoleDetail(role))}>
-                                <div className="font-semibold text-slate-900">{role.name}</div>
-                                <div className="mt-1 text-[11px] leading-5 text-slate-500">{role.description}</div>
-                              </button>
-                            </td>
-                            <td className="px-4 py-4 align-top">
-                              <Badge variant="outline" className={badgeClass(role.accessScope)}>
-                                {role.accessScope}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-4 align-top text-slate-700">{role.assignedUsers}</td>
-                            <td className="px-4 py-4 align-top">
-                              <Badge variant="outline" className={badgeClass(role.privilege)}>
-                                {role.privilege}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-4 align-top">
-                              <Badge variant="outline" className={badgeClass(role.status)}>
-                                {role.status}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-4 align-top text-slate-700">{role.lastUpdated}</td>
-                            <td className="px-4 py-4 align-top">
-                              <div className="flex flex-wrap gap-2">
-                                <Button variant="outline" className="h-8 rounded-xl px-3" onClick={() => setDetailDrawer(buildRoleDetail(role))}>
-                                  Open Role
-                                </Button>
-                                <Button variant="ghost" className="h-8 rounded-xl px-3 text-slate-600">
-                                  Assign Users
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div
+                    className={cn(
+                      'shrink-0 overflow-hidden transition-all duration-500 ease-out',
+                      showSeparationOfConcernsNotice ? 'mb-4 max-h-40 opacity-100' : 'mb-0 max-h-0 opacity-0'
+                    )}
+                  >
+                    <EnterpriseInfoCallout title="Separation of concerns">
+                      Role definitions and permission assignments here are the system of record for platform authorization.
+                      Workspace membership and participation are managed in{' '}
+                      <a href="/workspace-management" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
+                        Workspace Management
+                      </a>
+                      ; operational staffing and allocation live in{' '}
+                      <a href="/resource-management" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
+                        Resource Management
+                      </a>
+                      .
+                    </EnterpriseInfoCallout>
                   </div>
+
+                  {roleFlatRows.length > 0 ? (
+                    <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl">
+                      <DndContext sensors={roleTableColumns.dndSensors} onDragEnd={roleTableColumns.handleColumnDragEnd}>
+                        <table
+                          ref={roleTableRef}
+                          className={cn(
+                            'border-collapse text-xs select-none',
+                            roleTableColumns.hasAnyCustomWidth || roleTableColumns.resizingKey ? 'table-fixed w-full' : 'w-full'
+                          )}
+                        >
+                          <colgroup>
+                            {showRoleTableSelection ? <col className="w-10" /> : null}
+                            {roleTableColumns.visibleColumnOrder.map((key) => (
+                              <col key={key} style={roleTableColumns.columnWidthStyle(key)} />
+                            ))}
+                            <col className="w-12" />
+                          </colgroup>
+                          <thead className="sticky top-0 z-10">
+                            <tr className="text-left text-muted-foreground">
+                              {showRoleTableSelection ? (
+                                <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                  <input
+                                    type="checkbox"
+                                    id="role-table-select-all"
+                                    name="role-table-select-all"
+                                    checked={
+                                      roleTableSelectedIds.length > 0 && roleTableSelectedIds.length === pagedRoleRows.length
+                                    }
+                                    onChange={() =>
+                                      setRoleTableSelectedIds(
+                                        roleTableSelectedIds.length === pagedRoleRows.length
+                                          ? []
+                                          : pagedRoleRows.map(({ item }) => item.id)
+                                      )
+                                    }
+                                    aria-label="Select all rows on this page"
+                                  />
+                                </th>
+                              ) : null}
+                              <SortableContext items={roleTableColumns.visibleColumnOrder} strategy={rectSortingStrategy}>
+                                {roleTableColumns.visibleColumnOrder.map((key) => (
+                                  <EnterpriseSortableHeaderCell
+                                    key={key}
+                                    columnKey={key}
+                                    label={roleTableColumnLabel(key)}
+                                    icon={roleTableColumnHeaderIcon(key)}
+                                    isPinned={roleTableColumns.isPinnedColumn(key)}
+                                    isFirstColumn={roleTableColumns.isFirstColumn(key)}
+                                    isLastColumn={roleTableColumns.isLastColumn(key)}
+                                    widthStyle={roleTableColumns.columnWidthStyle(key)}
+                                    sortDir={roleTableSort?.key === key ? roleTableSort.dir : null}
+                                    onToggleSort={toggleRoleTableSort}
+                                    filterSlot={renderRoleFilterSlot(key)}
+                                    frozenColumnClass={roleTableColumns.frozenColumnHeaderClass}
+                                    firstColumnTintClass={roleTableColumns.firstColumnTintHeaderClass}
+                                    isResizing={roleTableColumns.resizingKey === key}
+                                    onBeginResize={roleTableColumns.beginColumnResize}
+                                    onContextMenu={(event, columnKey) =>
+                                      roleTableColumns.setHeaderContextMenu({ x: event.clientX, y: event.clientY, columnKey })
+                                    }
+                                  />
+                                ))}
+                              </SortableContext>
+                              <th className="w-12 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                <span className="sr-only">Actions</span>
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedRoleRows.map(({ item, groupLabel }, rowIndex) => {
+                              const previousGroupLabel = pagedRoleRows[rowIndex - 1]?.groupLabel ?? null
+                              const showGroupHeader = roleTableGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                              const groupTint = roleTableGroupBy && groupLabel ? getEnterpriseGroupTint(roleTableGroupBy, groupLabel) : null
+                              const isSelected = showRoleTableSelection && roleTableSelectedIds.includes(item.id)
+                              const resolveBodyCellBackground = (isFirstColumn: boolean) => {
+                                if (isSelected) return ''
+                                const stickyFirstClass =
+                                  roleTableColumns.freezeFirstColumn && isFirstColumn
+                                    ? 'sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+                                    : ''
+                                if (groupTint) {
+                                  return cn(isFirstColumn ? groupTint.first : groupTint.row, stickyFirstClass)
+                                }
+                                if (roleTableColumns.freezeFirstColumn && isFirstColumn) return roleTableColumns.frozenColumnBodyClass
+                                if (isFirstColumn) return roleTableColumns.firstColumnTintBodyClass
+                                return ''
+                              }
+                              const cellClass = cn(
+                                'border-b border-slate-200/60 px-3 py-3.5 align-middle transition-colors dark:border-slate-700/20',
+                                isSelected
+                                  ? 'bg-primary/10'
+                                  : groupTint
+                                    ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
+                                    : 'group-hover:bg-sky-50/40'
+                              )
+                              return (
+                                <Fragment key={item.id}>
+                                  {showGroupHeader ? (
+                                    <tr>
+                                      <td
+                                        colSpan={roleTableColumns.visibleColumnOrder.length + (showRoleTableSelection ? 1 : 0) + 1}
+                                        className={cn(
+                                          'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                          groupTint?.first
+                                        )}
+                                      >
+                                        {ROLE_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === roleTableGroupBy)?.label}: {groupLabel}
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                  <tr
+                                    onClick={() => openRoleDetail(item)}
+                                    onContextMenu={(event) => {
+                                      event.preventDefault()
+                                      setRoleRowMenu({ id: item.id, x: event.clientX, y: event.clientY })
+                                    }}
+                                    className="group cursor-pointer transition-colors"
+                                  >
+                                    {showRoleTableSelection ? (
+                                      <td
+                                        className={cn(cellClass, 'w-10', resolveBodyCellBackground(false))}
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          id={`role-table-select-${item.id}`}
+                                          name={`role-table-select-${item.id}`}
+                                          checked={roleTableSelectedIds.includes(item.id)}
+                                          onChange={() => toggleRoleTableRowSelection(item.id)}
+                                          aria-label={`Select ${item.name}`}
+                                        />
+                                      </td>
+                                    ) : null}
+                                    {roleTableColumns.visibleColumnOrder.map((key) => {
+                                      const isFirstCol = roleTableColumns.visibleColumnOrder[0] === key
+                                      return (
+                                        <td
+                                          key={key}
+                                          className={cn(cellClass, resolveBodyCellBackground(isFirstCol))}
+                                          style={{
+                                            ...(roleTableColumns.columnWidthStyle(key) ?? {}),
+                                            ...(key === 'name' ? { boxShadow: `inset 3px 0 0 ${roleStatusAccentColor(item.status)}` } : {}),
+                                          }}
+                                        >
+                                          {renderRoleTableCell(item, key)}
+                                        </td>
+                                      )
+                                    })}
+                                    <td className={cn(cellClass, 'w-12 text-right')} onClick={(event) => event.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 data-[open=true]:opacity-100"
+                                        data-open={roleRowMenu?.id === item.id}
+                                        aria-label={`Actions for ${item.name}`}
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          setRoleRowMenu(
+                                            roleRowMenu?.id === item.id ? null : { id: item.id, x: event.clientX, y: event.clientY }
+                                          )
+                                        }}
+                                      >
+                                        <MoreVertical className="h-4 w-4" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                </Fragment>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </DndContext>
+
+                      <ContextMenu
+                        open={roleTableColumns.headerContextMenu !== null}
+                        x={roleTableColumns.headerContextMenu?.x ?? 0}
+                        y={roleTableColumns.headerContextMenu?.y ?? 0}
+                        onClose={() => roleTableColumns.setHeaderContextMenu(null)}
+                      >
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = roleTableColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            roleTableColumns.autoResizeColumn(key)
+                            roleTableColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <UnfoldHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Auto Resize Column
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = roleTableColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            roleTableColumns.setColumnWidthDialog({ open: true, columnKey: key, valuePx: '' })
+                            roleTableColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <Ruler className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Column Width...
+                        </ContextMenuItem>
+                        {roleTableColumns.hasAnyCustomWidth ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                roleTableColumns.resetAllColumnWidths()
+                                roleTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <RotateCcw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Reset Column Width
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                        {roleTableColumns.headerContextMenu?.columnKey &&
+                        roleTableColumns.isThirdColumnOrLater(roleTableColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            {(() => {
+                              const key = roleTableColumns.headerContextMenu.columnKey
+                              const columnIndex = roleTableColumns.getColumnIndex(key)
+                              const canMoveEarlier = columnIndex > 1
+                              const canMoveLater = columnIndex >= 0 && columnIndex < roleTableColumns.columnOrder.length - 1
+                              return (
+                                <>
+                                  {canMoveEarlier ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        roleTableColumns.moveColumnToFirst(key)
+                                        roleTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ArrowLeftToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to First Position
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveEarlier ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        roleTableColumns.moveColumnLeft(key)
+                                        roleTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Left
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveLater ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        roleTableColumns.moveColumnRight(key)
+                                        roleTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Right
+                                    </ContextMenuItem>
+                                  ) : null}
+                                  {canMoveLater ? (
+                                    <ContextMenuItem
+                                      onSelect={() => {
+                                        roleTableColumns.moveColumnToLast(key)
+                                        roleTableColumns.setHeaderContextMenu(null)
+                                      }}
+                                    >
+                                      <ArrowRightToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                      Move Column to Last Position
+                                    </ContextMenuItem>
+                                  ) : null}
+                                </>
+                              )
+                            })()}
+                          </>
+                        ) : null}
+                        {roleTableColumns.headerContextMenu?.columnKey &&
+                        roleTableColumns.isFirstColumn(roleTableColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                roleTableColumns.setFreezeFirstColumn((v) => !v)
+                                roleTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <Pin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Freeze Column
+                              <span className="ml-auto text-xs text-muted-foreground">
+                                {roleTableColumns.freezeFirstColumn ? 'On' : 'Off'}
+                              </span>
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                      </ContextMenu>
+
+                      <ContextMenu
+                        open={roleRowMenu !== null}
+                        x={roleRowMenu?.x ?? 0}
+                        y={roleRowMenu?.y ?? 0}
+                        onClose={() => setRoleRowMenu(null)}
+                      >
+                        <ContextMenuItem
+                          onSelect={() => {
+                            openAddRoleDrawer()
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <Plus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Add Role
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const role = roles.find((r) => r.id === roleRowMenu?.id)
+                            if (role) openRoleDetail(role)
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <ShieldCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Open Role
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const role = roles.find((r) => r.id === roleRowMenu?.id)
+                            if (role) startRenameRole(role)
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Rename
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            openAssignUserModal(roleRowMenu?.id)
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <UserPlus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Assign Users
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const role = roles.find((r) => r.id === roleRowMenu?.id)
+                            if (role) {
+                              setSelectedMatrixRole(role.name)
+                              setActivePanel('permissions')
+                            }
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <LayoutGrid className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          View Permission Matrix
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            setActivePanel('audit')
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <Activity className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          View Audit History
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const role = roles.find((r) => r.id === roleRowMenu?.id)
+                            if (role) void handleDuplicateRole(role)
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <Copy className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Duplicate Role
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const role = roles.find((r) => r.id === roleRowMenu?.id)
+                            if (role) {
+                              downloadCsv(`tectona-role-${role.id}.csv`, [
+                                ['Field', 'Value'],
+                                ['Role', role.name],
+                                ['Description', role.description],
+                                ['Scope', role.accessScope],
+                                ['Assigned Users', role.assignedUsers],
+                                ['Privilege', role.privilege],
+                                ['Status', role.status],
+                                ['Last Updated', role.lastUpdated],
+                              ])
+                            }
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <Download className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Export Role Details
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const role = roles.find((r) => r.id === roleRowMenu?.id)
+                            if (role) void handleToggleRoleStatus(role)
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <Ban className="h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+                          <span className="text-rose-600">
+                            {roles.find((r) => r.id === roleRowMenu?.id)?.status === 'Disabled' ? 'Enable Role' : 'Disable Role'}
+                          </span>
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const role = roles.find((r) => r.id === roleRowMenu?.id)
+                            if (role) setDeleteRoleTarget(role)
+                            setRoleRowMenu(null)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+                          <span className="text-rose-600">Delete Role</span>
+                        </ContextMenuItem>
+                      </ContextMenu>
+
+                      <EnterpriseColumnWidthModal
+                        open={roleTableColumns.columnWidthDialog?.open ?? false}
+                        onClose={() => roleTableColumns.setColumnWidthDialog(null)}
+                        columnLabel={
+                          roleTableColumns.columnWidthDialog ? roleTableColumnLabel(roleTableColumns.columnWidthDialog.columnKey) : '—'
+                        }
+                        valuePx={roleTableColumns.columnWidthDialog?.valuePx ?? ''}
+                        onValuePxChange={(value) =>
+                          roleTableColumns.setColumnWidthDialog((prev) => (prev ? { ...prev, valuePx: value } : prev))
+                        }
+                        onApply={(widthPx) => {
+                          if (!roleTableColumns.columnWidthDialog) return
+                          const key = roleTableColumns.columnWidthDialog.columnKey
+                          roleTableColumns.setColumnWidthsWithSnapshot((prev) => {
+                            if (widthPx == null) {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            }
+                            return { ...prev, [key]: widthPx }
+                          }, roleTableRef.current)
+                          roleTableColumns.setColumnWidthDialog(null)
+                        }}
+                        dialogTitleId="role-table-column-width-dialog-title"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center">
+                      <ShieldCheck className="mb-3 h-8 w-8 text-slate-300" strokeWidth={1.75} />
+                      <p className="text-sm font-medium text-slate-500">No roles match the current filters</p>
+                      <p className="mt-1 text-xs text-slate-400">Adjust the search or column filters to see roles.</p>
+                    </div>
+                  )}
                 </Panel>
               ) : null}
 
@@ -1803,69 +4202,381 @@ export function SecurityAccessControlPage() {
                 <Panel
                   id="permissions"
                   title="Permission Matrix"
-                  description="Fine-grained permission grid across organization, workspace, project, task, document, and integration entities."
+                  description="Live view of what each role can actually do — sourced from authorization-policy's permission catalog and role↔permission grants."
                   highlight={activePanel === 'permissions'}
+                  headerIcon={<KeyRound className="h-5 w-5" />}
+                  showDivider={false}
+                  outerRef={activeMainPanelRef}
+                  style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+                  className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+                  scrollBody={mainPanelViewportHeightPx != null}
                   right={
-                    <div className="flex items-center gap-2">
-                      <Select value={selectedMatrixRole} onChange={(event) => setSelectedMatrixRole(event.target.value)} className="min-w-[180px]">
-                        {roles.map((role) => (
-                          <SelectItem key={role.id} value={role.name}>
-                            {role.name}
-                          </SelectItem>
-                        ))}
-                      </Select>
-                      <ActionPills labels={['Edit Permissions', 'Apply Template', 'Compare Roles']} />
+                    <div className="flex flex-wrap items-center justify-end gap-2 py-1 text-xs text-muted-foreground">
+                      {matrixViewMode === 'role' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedMatrixModules(new Set(matrixTree.map((m) => m.key)))}
+                            className="h-9 rounded-lg border border-border bg-background/80 px-3 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/40 hover:text-foreground"
+                          >
+                            Expand All
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedMatrixModules(new Set())
+                              setExpandedMatrixSections(new Set())
+                            }}
+                            className="h-9 rounded-lg border border-border bg-background/80 px-3 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/40 hover:text-foreground"
+                          >
+                            Collapse All
+                          </button>
+                        </>
+                      ) : null}
                     </div>
-                  }
+                }
                 >
-                  {permissionMatrixLoading ? (
-                    <LoadingSkeleton rows={5} />
+                  {!canEditPermissionMatrix ? (
+                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                      Read-only view. {isPersonalWorkspaceContext
+                        ? 'Permission grants are owned by this Personal Workspace and can only be changed through workspace-scoped administration.'
+                        : isOrganizationAdminContext
+                          ? 'Permission grants are owned by this Organization and can be changed by its Organization Admin.'
+                        : 'Permission grants can only be changed by a Platform Admin Global.'}
+                    </div>
+                  ) : null}
+                  {matrixViewMode === 'user' ? (
+                    !effectiveUserId ? (
+                      <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/60 px-4 py-12 text-center">
+                        <div>
+                          <User className="mx-auto mb-3 h-8 w-8 text-slate-300" strokeWidth={1.75} />
+                          <p className="text-sm font-semibold text-slate-600">Select a user to inspect access</p>
+                          <p className="mt-1 text-xs text-slate-400">Use the user search in the Search &amp; Filter panel above.</p>
+                        </div>
+                      </div>
+                    ) : effectivePermissionsLoading ? (
+                      <LoadingSkeleton rows={6} />
+                    ) : (
+                      <div className="min-h-0 overflow-auto rounded-xl border border-slate-200/80">
+                        {effectivePermissions.length === 0 ? (
+                          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+                            No permissions are granted to {selectedEffectiveUser?.display_name ?? 'this user'} in the selected scope.
+                          </div>
+                        ) : null}
+                        {effectiveMatrixTree.map((moduleNode) => {
+                          const moduleExpanded = expandedMatrixModules.has(moduleNode.key)
+                          return (
+                            <div key={moduleNode.key} className="border-b border-slate-100 last:border-b-0">
+                              <button type="button" onClick={() => toggleMatrixModuleExpanded(moduleNode.key)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-slate-50">
+                                <ChevronRight className={cn('h-3.5 w-3.5 text-slate-400 transition-transform', moduleExpanded && 'rotate-90')} />
+                                <LayoutGrid className="h-3.5 w-3.5 text-slate-500" />
+                                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">{moduleNode.module}</span>
+                                <span className="ml-auto text-[10px] text-slate-400">{moduleNode.resourceCount} resources</span>
+                              </button>
+                              {moduleExpanded ? moduleNode.sections.map((sectionNode) => (
+                                <div key={sectionNode.key} className="border-t border-slate-100/80">
+                                  <button type="button" onClick={() => toggleMatrixSectionExpanded(sectionNode.key)} className="flex w-full items-center gap-2 py-2 pl-9 pr-4 text-left hover:bg-blue-50/30">
+                                    <ChevronRight className={cn('h-3 w-3 text-blue-400 transition-transform', expandedMatrixSections.has(sectionNode.key) && 'rotate-90')} />
+                                    <FileText className="h-3 w-3 text-blue-500" />
+                                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-700">{sectionNode.section}</span>
+                                    <span className="ml-auto text-[10px] text-blue-400">{sectionNode.resources.length}</span>
+                                  </button>
+                                  {expandedMatrixSections.has(sectionNode.key) ? sectionNode.resources.map((resourceNode) => (
+                                    <div key={resourceNode.key} className="border-t border-slate-100 px-4 py-3 pl-14">
+                                      <div className="mb-2 flex items-center gap-2">
+                                        {(() => { const ResourceIcon = resourceTypeIcon(resourceNode.resource_type); return <ResourceIcon className="h-3.5 w-3.5 text-slate-400" /> })()}
+                                        <span className="text-xs font-semibold text-slate-800">{resourceNode.resourceLabel}</span>
+                                        <span className="font-mono text-[10px] text-slate-400">{resourceNode.resource_type}</span>
+                                      </div>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {resourceNode.actions.map((action) => (
+                                          <UiTooltip key={action.action} content={action.description ?? action.permission_code} size="compact">
+                                            <Badge variant="outline" className={badgeClass(action.granted ? 'Allow' : 'Deny')}>{action.action} {action.granted ? '✓' : '—'}</Badge>
+                                          </UiTooltip>
+                                        ))}
+                                      </div>
+                                      {resourceNode.actions.some((action) => action.granted) ? (
+                                        <div className="mt-2 flex flex-wrap gap-1">
+                                          {Array.from(new Set(resourceNode.actions.flatMap((action) => action.sourceRoles))).map((roleCode) => <span key={roleCode} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">Source: {roles.find((role) => role.roleCode === roleCode)?.name ?? roleCode}</span>)}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  )) : null}
+                                </div>
+                              )) : null}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  ) : null}
+                  {matrixViewMode === 'role' ? (
+                    permissionMatrixLoading ? (
+                      <LoadingSkeleton rows={5} />
+                    ) : permissionMatrixError ? (
+                      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center">
+                        <KeyRound className="mb-3 h-8 w-8 text-slate-300" strokeWidth={1.75} />
+                        <p className="text-sm font-medium text-slate-500">Could not load the permission matrix</p>
+                        <p className="mt-1 text-xs text-slate-400">The authorization-policy backend is unreachable.</p>
+                      </div>
+                    ) : (
+                      <div className="min-h-0 w-full flex-1 overflow-auto">
+                        {matrixTree.map((moduleNode) => {
+                          const moduleExpanded = expandedMatrixModules.has(moduleNode.key)
+                          return (
+                            <div key={moduleNode.key} className="border-b border-slate-100 last:border-b-0">
+                              <button
+                                type="button"
+                                onClick={() => toggleMatrixModuleExpanded(moduleNode.key)}
+                                className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors"
+                              >
+                                <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform', moduleExpanded && 'rotate-90')} />
+                                <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">{moduleNode.module}</span>
+                                <span className="ml-auto shrink-0 text-[10px] font-medium tabular-nums text-slate-400">{moduleNode.resourceCount} resources</span>
+                              </button>
+                              {moduleExpanded
+                                ? moduleNode.sections.map((sectionNode) => {
+                                    const sectionExpanded = expandedMatrixSections.has(sectionNode.key)
+                                    return (
+                                      <div key={sectionNode.key} className="border-t border-slate-100/80">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleMatrixSectionExpanded(sectionNode.key)}
+                                          className="flex w-full items-center gap-2 py-2 pl-9 pr-4 text-left transition-colors"
+                                        >
+                                          <ChevronRight className={cn('h-3 w-3 shrink-0 text-blue-400 transition-transform', sectionExpanded && 'rotate-90')} />
+                                          <FileText className="h-3 w-3 shrink-0 text-blue-500" />
+                                          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-700">{sectionNode.section}</span>
+                                          <span className="ml-auto shrink-0 text-[10px] font-medium tabular-nums text-blue-400">{sectionNode.resources.length}</span>
+                                        </button>
+                                        {sectionExpanded
+                                          ? sectionNode.resources.map((resourceNode) => {
+                                              const ResourceIcon = resourceTypeIcon(resourceNode.resource_type)
+                                              const grantedCount = resourceNode.actions.filter((a) => a.granted).length
+                                              return (
+                                                <div
+                                                  key={resourceNode.key}
+                                                  className="flex flex-wrap items-start gap-3 border-t border-slate-100 py-3 pl-14 pr-4 transition-colors"
+                                                  style={{ boxShadow: `inset 3px 0 0 ${grantedCount > 0 ? '#10b981' : '#94a3b8'}` }}
+                                                >
+                                                  <div className="flex min-w-[180px] items-start gap-2.5">
+                                                    <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                                                      <ResourceIcon className="h-3.5 w-3.5" />
+                                                    </span>
+                                                    <span className="min-w-0">
+                                                      <span className="block truncate font-semibold capitalize text-slate-900">{resourceNode.resourceLabel}</span>
+                                                      <span className="mt-0.5 block truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{resourceNode.resource_type}</span>
+                                                    </span>
+                                                  </div>
+                                                  <div className="flex flex-1 flex-wrap items-center gap-1.5 pt-0.5">
+                                                    {resourceNode.actions.map((action) => {
+                                                      const isSubmitting = matrixCellSubmitting === `${currentMatrixRole.id}:${resourceNode.resource_type}:${action.action}`
+                                                      return (
+                                                        <UiTooltip key={action.action} content={action.description ?? action.permission_code} size="compact">
+                                                          <button
+                                                            type="button"
+                                                            disabled={isSubmitting || !canEditPermissionMatrix}
+                                                            title={canEditPermissionMatrix ? undefined : isPersonalWorkspaceContext
+                                                              ? 'Only the Personal Workspace owner can change permission grants'
+                                                              : 'Only a Platform Admin Global can change permission grants'}
+                                                            onClick={() => void toggleMatrixCell(currentMatrixRole, resourceNode.resource_type, action.action)}
+                                                            className={cn(
+                                                              'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold capitalize transition-opacity disabled:opacity-50',
+                                                              badgeClass(action.granted ? 'Allow' : 'Deny')
+                                                            )}
+                                                          >
+                                                            {action.action}
+                                                            {isSubmitting ? '…' : action.granted ? ' ✓' : ' —'}
+                                                          </button>
+                                                        </UiTooltip>
+                                                      )
+                                                    })}
+                                                  </div>
+                                                </div>
+                                              )
+                                            })
+                                          : null}
+                                      </div>
+                                    )
+                                  })
+                                : null}
+                            </div>
+                          )
+                        })}
+                        {matrixTree.length === 0 ? <p className="px-4 py-8 text-center text-xs text-muted-foreground">No permissions match the current filters.</p> : null}
+                      </div>
+                    )
                   ) : (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between rounded-[18px] border border-blue-200 bg-blue-50/70 px-4 py-3 text-xs text-blue-800">
-                        <span>{currentMatrixRole.name} permission profile</span>
-                        <span>
-                          {currentMatrixRole.privilege} • {currentMatrixRole.accessScope}
-                        </span>
+                    <div className="hidden">
+                      <div className="relative rounded-xl border border-border/70 bg-muted/20">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <input
+                          value={effectiveUserSearch}
+                          onChange={(event) => setEffectiveUserSearch(event.target.value)}
+                          placeholder="Search by name or email…"
+                          className="h-10 w-full bg-transparent pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground"
+                        />
                       </div>
-                      <div className="overflow-hidden rounded-[20px] border border-slate-200/80">
-                        <table className="min-w-full text-center text-xs">
-                          <thead className="bg-slate-50/90 text-slate-500">
-                            <tr>
-                              <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.16em]">Entity</th>
-                              {permissionColumns.map((column) => (
-                                <th key={column} className="px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                                  {column}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {permissionMatrix.map((row) => (
-                              <tr key={row.entity} className="border-t border-slate-100 bg-white hover:bg-blue-50/35">
-                                <td className="px-4 py-4 text-left font-semibold text-slate-900">{row.entity}</td>
-                                {row.states.map((state, index) => (
-                                  <td key={`${row.entity}-${permissionColumns[index]}`} className="px-3 py-4">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setDetailDrawer(buildRoleDetail(currentMatrixRole))
-                                        setSpotlightSection('permissions')
-                                      }}
-                                      className={cn(
-                                        'inline-flex min-w-[82px] items-center justify-center rounded-full border px-2.5 py-1.5 text-[11px] font-semibold',
-                                        badgeClass(state)
-                                      )}
-                                    >
-                                      {state}
-                                    </button>
-                                  </td>
+
+                      {identityUsersLoading ? (
+                        <LoadingSkeleton rows={3} />
+                      ) : !effectiveUserId ? (
+                        <div className="max-h-80 overflow-y-auto rounded-xl border border-border/70 p-1.5">
+                          {filteredEffectiveUsers.length === 0 ? (
+                            <p className="px-3 py-4 text-center text-xs text-muted-foreground">No users found.</p>
+                          ) : (
+                            filteredEffectiveUsers.map((user) => (
+                              <button
+                                key={user.id}
+                                type="button"
+                                onClick={() => selectEffectiveUser(user)}
+                                className="flex w-full items-center gap-3 rounded-lg border-b border-border/40 px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-blue-50/50"
+                              >
+                                <span
+                                  className={cn(
+                                    'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white',
+                                    userAvatarTone(user.display_name)
+                                  )}
+                                >
+                                  {userInitials(user.display_name)}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-medium text-foreground">{user.display_name}</span>
+                                  <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
+                                </span>
+                                <span className="shrink-0 text-right">
+                                  <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                    {userAssignmentSummary.get(user.id)?.roles ?? 0} role{(userAssignmentSummary.get(user.id)?.roles ?? 0) === 1 ? '' : 's'}
+                                  </span>
+                                  <span className="block text-[10px] text-slate-400">View access</span>
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between rounded-[18px] border border-blue-200 bg-blue-50/70 px-4 py-3 text-xs text-blue-800">
+                            <span className="flex items-center gap-2 font-semibold">
+                              {(() => {
+                                const user = identityUsers.find((u) => u.id === effectiveUserId)
+                                return user ? (
+                                  <>
+                                    <span className={cn('inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white', userAvatarTone(user.display_name))}>
+                                      {userInitials(user.display_name)}
+                                    </span>
+                                    {user.display_name}
+                                  </>
+                                ) : null
+                              })()}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-blue-700 hover:underline"
+                              onClick={() => {
+                                setEffectiveUserId(null)
+                                setEffectivePermissions([])
+                              }}
+                            >
+                              Change user
+                            </button>
+                          </div>
+
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Assigned roles</span>
+                              <span className="text-lg font-semibold text-slate-900">{effectiveUserAssignments.length}</span>
+                            </div>
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-3 py-2">
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-emerald-600">Effective permissions</span>
+                              <span className="text-lg font-semibold text-emerald-800">{effectivePermissions.length}</span>
+                            </div>
+                            <div className="rounded-xl border border-blue-200 bg-blue-50/50 px-3 py-2">
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-blue-600">Evaluation scope</span>
+                              <span className="block truncate text-xs font-semibold text-blue-900" title={activeTenant?.displayName ?? undefined}>
+                                {activeTenant?.displayName || 'All accessible workspaces'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {effectiveUserAssignments.length > 0 ? (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Role assignments</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {effectiveUserAssignments.map((assignment) => (
+                                  <Badge key={assignment.id} variant="outline" className={badgeClass(assignment.role?.privilege ?? 'Standard')}>
+                                    {assignment.role?.name ?? assignment.role_name}
+                                    <span className="ml-1 opacity-60">· {assignment.scope_type_code}</span>
+                                  </Badge>
                                 ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {effectivePermissionsLoading ? (
+                            <LoadingSkeleton rows={4} />
+                          ) : (
+                            <div className="min-h-0 overflow-auto rounded-xl border border-slate-200/80">
+                              {effectivePermissions.length === 0 ? (
+                                <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                                  <span className="font-semibold">No effective permissions in this scope.</span>{' '}
+                                  The matrix below shows the complete catalog; every action is currently not granted to this user.
+                                </div>
+                              ) : null}
+                              {effectiveMatrixTree.map((moduleNode) => {
+                                const moduleExpanded = expandedMatrixModules.has(moduleNode.key)
+                                return (
+                                  <div key={moduleNode.key} className="border-b border-slate-100 last:border-b-0">
+                                    <button type="button" onClick={() => toggleMatrixModuleExpanded(moduleNode.key)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-slate-50">
+                                      <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform', moduleExpanded && 'rotate-90')} />
+                                      <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                                      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">{moduleNode.module}</span>
+                                      <span className="ml-auto text-[10px] text-slate-400">{moduleNode.resourceCount} resources</span>
+                                    </button>
+                                    {moduleExpanded ? moduleNode.sections.map((sectionNode) => (
+                                      <div key={sectionNode.key} className="border-t border-slate-100/80">
+                                        <button type="button" onClick={() => toggleMatrixSectionExpanded(sectionNode.key)} className="flex w-full items-center gap-2 py-2 pl-9 pr-4 text-left hover:bg-blue-50/30">
+                                          <ChevronRight className={cn('h-3 w-3 text-blue-400 transition-transform', expandedMatrixSections.has(sectionNode.key) && 'rotate-90')} />
+                                          <FileText className="h-3 w-3 text-blue-500" />
+                                          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-700">{sectionNode.section}</span>
+                                          <span className="ml-auto text-[10px] text-blue-400">{sectionNode.resources.length}</span>
+                                        </button>
+                                        {expandedMatrixSections.has(sectionNode.key) ? sectionNode.resources.map((resourceNode) => (
+                                          <div key={resourceNode.key} className="border-t border-slate-100 px-4 py-3 pl-14">
+                                            <div className="mb-2 flex items-center gap-2">
+                                              {(() => { const ResourceIcon = resourceTypeIcon(resourceNode.resource_type); return <ResourceIcon className="h-3.5 w-3.5 text-slate-400" /> })()}
+                                              <span className="text-xs font-semibold text-slate-800">{resourceNode.resourceLabel}</span>
+                                              <span className="font-mono text-[10px] text-slate-400">{resourceNode.resource_type}</span>
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                              {resourceNode.actions.map((action) => (
+                                                <UiTooltip key={action.action} content={action.description ?? action.permission_code} size="compact">
+                                                  <Badge variant="outline" className={badgeClass(action.granted ? 'Allow' : 'Deny')}>
+                                                    {action.action} {action.granted ? '✓' : '—'}
+                                                  </Badge>
+                                                </UiTooltip>
+                                              ))}
+                                            </div>
+                                            {resourceNode.actions.some((action) => action.granted) ? (
+                                              <div className="mt-2 flex flex-wrap gap-1">
+                                                {Array.from(new Set(resourceNode.actions.flatMap((action) => action.sourceRoles))).map((roleCode) => {
+                                                  const role = roles.find((item) => item.roleCode === roleCode)
+                                                  return <span key={roleCode} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">Source: {role?.name ?? roleCode}</span>
+                                                })}
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        )) : null}
+                                      </div>
+                                    )) : null}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </Panel>
@@ -1877,10 +4588,22 @@ export function SecurityAccessControlPage() {
                   title="Scoped Access Management"
                   description="Assignments by workspace, project, task, document, and integration scope with inheritance visibility."
                   highlight={activePanel === 'scoped-access'}
-                  right={<ActionPills labels={['Assign Access', 'Remove Access', 'Change Scope', 'Review Inheritance']} />}
+                  headerIcon={<Target className="h-5 w-5" />}
+                  showDivider={false}
+                  outerRef={activeMainPanelRef}
+                  style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+                  className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+                  scrollBody={mainPanelViewportHeightPx != null}
+                  right={
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-400" title="Available in the next scoped access phase">Remove Access</button>
+                      <button type="button" disabled className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-400" title="Available in the next scoped access phase">Change Scope</button>
+                      <button type="button" disabled className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-400" title="Available in the next scoped access phase">Review Inheritance</button>
+                    </div>
+                  }
                 >
                   <div className="space-y-3">
-                    {filteredScopedAccess.map((item) => (
+                    {scopedAccessLoading ? <LoadingSkeleton rows={5} /> : filteredScopedAccess.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-[20px] border border-slate-200/80 bg-white p-4 transition-colors hover:border-blue-200 hover:bg-blue-50/30"
@@ -1917,6 +4640,13 @@ export function SecurityAccessControlPage() {
                         </div>
                       </div>
                     ))}
+                    {!scopedAccessLoading && filteredScopedAccess.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center">
+                        <Target className="mx-auto mb-3 h-8 w-8 text-slate-300" strokeWidth={1.75} />
+                        <p className="text-sm font-medium text-slate-500">No scoped access found</p>
+                        <p className="mt-1 text-xs text-slate-400">No live AuthZ assignment or Workspace membership matches the current filters.</p>
+                      </div>
+                    ) : null}
                   </div>
                 </Panel>
               ) : null}
@@ -2267,181 +4997,615 @@ export function SecurityAccessControlPage() {
                 </Panel>
               ) : null}
             </div>
-
-            <aside className="space-y-4">
-              {activePanel === 'identity' ? (
-                <section className="sticky top-20 rounded-[24px] border border-slate-200/80 bg-white/95 p-5 shadow-[0_22px_55px_rgba(15,23,42,0.08)]">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Identity governance summary</p>
-                      <h2 className="mt-2 text-lg font-semibold text-slate-950">Cross-provider operational posture</h2>
-                      <p className="mt-1 text-sm leading-6 text-slate-600">
-                        Consolidated telemetry for identity operations. Adjust connectors and engine defaults in Platform Settings &amp; Administration.
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
-                      <ShieldCheck className="h-4 w-4 text-slate-600" />
-                    </div>
-                  </div>
-
-                  <div className="mt-5 grid gap-3">
-                    {[
-                      { label: 'Total connected providers', value: String(identityProviders.length) },
-                      { label: 'IAM deployment mode', value: 'External Authentication Only' },
-                      { label: 'MFA coverage', value: '91% (rolling 30 days)' },
-                      { label: 'Authentication drift', value: '1 provider pending reconciliation' },
-                      { label: 'Authorization drift', value: 'Within tolerance (policy v3.2)' },
-                      { label: 'Sync failure trend', value: 'Increasing on partner domain' },
-                      { label: 'Identity risk score', value: 'Low–Medium (72/100)' },
-                      { label: 'Orphan accounts', value: '14 open' },
-                      { label: 'Pending reviews', value: '6 in queue' },
-                      { label: 'Compliance status', value: 'Audit-ready — exceptions tracked' },
-                    ].map((row) => (
-                      <div key={row.label} className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3">
-                        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{row.label}</p>
-                        <p className="mt-1 text-sm font-medium text-slate-900">{row.value}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-5 rounded-[20px] border border-blue-200 bg-blue-50/70 p-4">
-                    <p className="text-sm font-semibold text-blue-900">Governance narrative</p>
-                    <p className="mt-2 text-sm leading-6 text-blue-900/90">
-                      Federation is healthy for the primary workforce tenant; partner and B2B channels require closer mapping review. Escalate sustained lag through the access review workflow.
-                    </p>
-                  </div>
-
-                  <div className="mt-5 grid grid-cols-2 gap-2">
-                    {['Open full report', 'Export evidence pack', 'Notify owners', 'Schedule review'].map((action) => (
-                      <Button key={action} variant="outline" className="h-9 rounded-xl px-3" type="button">
-                        {action}
-                      </Button>
-                    ))}
-                  </div>
-                </section>
-              ) : (
-                <section className="sticky top-20 rounded-[24px] border border-slate-200/80 bg-white/95 p-5 shadow-[0_22px_55px_rgba(15,23,42,0.08)]">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Authorization Profile</p>
-                      <h2 className="mt-2 text-lg font-semibold text-slate-950">{detailDrawer.title}</h2>
-                      <p className="mt-1 text-sm leading-6 text-slate-600">{detailDrawer.subtitle}</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
-                      <LayoutGrid className="h-4 w-4 text-slate-600" />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {detailDrawer.badges.map((badge) => (
-                      <Badge key={badge} variant="outline" className={badgeClass(badge)}>
-                        {badge}
-                      </Badge>
-                    ))}
-                  </div>
-
-                  <div className="mt-5 grid gap-3">
-                    {detailDrawer.metrics.map((metric) => (
-                      <div key={metric.label} className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3">
-                        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{metric.label}</p>
-                        <p className="mt-1 text-sm font-medium text-slate-900">{metric.value}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-5 rounded-[20px] border border-blue-200 bg-blue-50/70 p-4">
-                    <p className="text-sm font-semibold text-blue-900">Summary</p>
-                    <p className="mt-2 text-sm leading-6 text-blue-900/90">{detailDrawer.summary}</p>
-                  </div>
-
-                  <div className="mt-5 space-y-4">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Assigned users</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {detailDrawer.assignedUsers.map((user) => (
-                          <span key={user} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
-                            {user}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Permissions</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {detailDrawer.permissions.map((permission) => (
-                          <span key={permission} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700">
-                            {permission}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Related policies</p>
-                      <div className="mt-3 space-y-2">
-                        {detailDrawer.relatedPolicies.map((policy) => (
-                          <div key={policy} className="rounded-[16px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                            {policy}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Audit history</p>
-                      <div className="mt-3 space-y-2">
-                        {detailDrawer.auditHistory.map((entry) => (
-                          <div key={`${entry.label}-${entry.detail}`} className="rounded-[16px] border border-slate-200 bg-white px-3 py-3">
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{entry.label}</div>
-                            <div className="mt-1 text-sm text-slate-700">{entry.detail}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Compliance notes</p>
-                      <div className="mt-3 space-y-2">
-                        {detailDrawer.complianceNotes.map((note) => (
-                          <div key={note} className="rounded-[16px] border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
-                            {note}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 grid grid-cols-2 gap-2">
-                    {['Edit', 'Assign', 'Remove', 'Compare', 'Export Detail'].map((action) => (
-                      <Button
-                        key={action}
-                        variant={action === 'Edit' ? 'default' : 'outline'}
-                        className="h-9 rounded-xl px-3"
-                        type="button"
-                        onClick={() => {
-                          if (action === 'Export Detail') {
-                            downloadCsv('tectona-security-detail.csv', [
-                              ['Title', detailDrawer.title],
-                              ['Subtitle', detailDrawer.subtitle],
-                              ...detailDrawer.metrics.map((metric) => [metric.label, metric.value]),
-                            ])
-                          }
-                        }}
-                      >
-                        {action}
-                      </Button>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </aside>
           </div>
         </div>
       </div>
 
-      <Card className="rounded-2xl border-emerald-200 bg-emerald-50/80">
-        <CardContent className="flex items-center gap-2 py-3 text-xs text-emerald-800">
-          <CheckCircle2 className="h-4 w-4" />
-          Latest security workspace refresh completed successfully. Role governance, policy controls, and audit streams are up to date.
-        </CardContent>
-      </Card>
+      <SecurityDrawer
+        open={addRoleOpen}
+        onClose={() => setAddRoleOpen(false)}
+        icon={Plus}
+        title={editingRole ? 'Edit Role' : 'Add Role'}
+        description={
+          editingRole
+            ? `Update details for "${editingRole.name}" in the authorization-policy registry.`
+            : 'Create a new role in the authorization-policy registry.'
+        }
+        footer={
+          <div className="flex w-full items-stretch">
+            <Button
+              type="button"
+              className={cn(enterpriseIndigoGradientActionButtonClass(), 'w-full justify-center gap-2')}
+              onClick={() => void handleCreateRole()}
+              disabled={addRoleSubmitting || !addRoleForm.displayName.trim()}
+            >
+              <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
+              {addRoleSubmitting ? (editingRole ? 'Saving…' : 'Creating…') : editingRole ? 'Save Changes' : 'Create Role'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="add-role-name" className="text-xs text-muted-foreground">
+            Display name
+          </Label>
+          <Input
+            id="add-role-name"
+            value={addRoleForm.displayName}
+            onChange={(event) => setAddRoleForm((prev) => ({ ...prev, displayName: event.target.value }))}
+            placeholder="e.g. Compliance Auditor"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="add-role-description" className="text-xs text-muted-foreground">
+            Description
+          </Label>
+          <Textarea
+            id="add-role-description"
+            value={addRoleForm.description}
+            onChange={(event) => setAddRoleForm((prev) => ({ ...prev, description: event.target.value }))}
+            placeholder="What can this role do?"
+            rows={3}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Access scope</Label>
+            <Select
+              value={addRoleForm.accessScope}
+              onChange={(event) => setAddRoleForm((prev) => ({ ...prev, accessScope: event.target.value }))}
+            >
+              <SelectItem value="Organization">Organization</SelectItem>
+              <SelectItem value="Personal Workspace">Personal Workspace</SelectItem>
+              <SelectItem value="Workspace">Workspace</SelectItem>
+              <SelectItem value="Project">Project</SelectItem>
+              <SelectItem value="Task">Task</SelectItem>
+              <SelectItem value="Integration">Integration</SelectItem>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Privilege</Label>
+            <Select
+              value={addRoleForm.privilege}
+              onChange={(event) =>
+                setAddRoleForm((prev) => ({ ...prev, privilege: event.target.value as RoleItem['privilege'] }))
+              }
+            >
+              <SelectItem value="Privileged">Privileged</SelectItem>
+              <SelectItem value="Elevated">Elevated</SelectItem>
+              <SelectItem value="Standard">Standard</SelectItem>
+            </Select>
+          </div>
+        </div>
+        {addRoleForm.privilege !== 'Standard' ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+            Elevated and Privileged custom roles are created in Review status and require governance approval before activation.
+          </div>
+        ) : null}
+      </SecurityDrawer>
+
+      <SecurityDrawer
+        open={assignUserOpen}
+        onClose={() => setAssignUserOpen(false)}
+        icon={UserPlus}
+        title="Assign User"
+        description={activeTenant?.workspaceId
+          ? 'Grant a role to one or more users at the active workspace scope.'
+          : 'Grant a role to one or more users at global scope.'}
+        footer={
+          <div className="flex w-full items-stretch">
+            <Button
+              type="button"
+              className={cn(enterpriseCyanGradientActionButtonClass(), 'w-full justify-center gap-2')}
+              onClick={() => void handleCreateAssignment()}
+              disabled={assignUserSubmitting || !assignUserRoleId || assignUserPrincipals.size === 0}
+            >
+              <UserPlus className="h-4 w-4 shrink-0" aria-hidden />
+              {assignUserSubmitting
+                ? 'Assigning…'
+                : assignUserPrincipals.size > 0
+                  ? `Assign (${assignUserPrincipals.size})`
+                  : 'Assign'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex h-full min-h-0 flex-col gap-4">
+          <div className="shrink-0 space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Role</Label>
+            <Select value={assignUserRoleId} onChange={(event) => setAssignUserRoleId(event.target.value)}>
+              {roles.map((role) => (
+                <SelectItem key={role.id} value={role.id}>
+                  {role.name}
+                </SelectItem>
+              ))}
+            </Select>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
+            <div className="flex shrink-0 items-center justify-between">
+              <Label className="text-xs text-muted-foreground">Users</Label>
+              {assignUserPrincipals.size > 0 ? (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setAssignUserPrincipals(new Set())}
+                >
+                  Clear all
+                </button>
+              ) : null}
+            </div>
+
+            {assignUserPrincipals.size > 0 ? (
+              <div className="flex shrink-0 flex-wrap gap-1.5 rounded-xl border border-border/70 bg-muted/20 p-2">
+                {Array.from(assignUserPrincipals).map((id) => {
+                  const user = identityUsers.find((u) => u.id === id)
+                  const label = user ? user.display_name : id
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background py-1 pl-1 pr-2 text-xs font-medium text-foreground shadow-sm"
+                    >
+                      <span
+                        className={cn(
+                          'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white',
+                          userAvatarTone(label)
+                        )}
+                      >
+                        {userInitials(label)}
+                      </span>
+                      <span className="max-w-[160px] truncate">{label}</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleAssignUserPrincipal(id)}
+                        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label={`Remove ${label}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            {identityUsersLoading ? (
+              <p className="text-xs text-slate-500">Loading user directory…</p>
+            ) : identityUsers.length > 0 ? (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/70">
+                <div className="relative shrink-0 border-b border-border/70 bg-muted/20">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={assignUserSearch}
+                    onChange={(event) => setAssignUserSearch(event.target.value)}
+                    placeholder="Search by name or email…"
+                    className="h-10 w-full bg-transparent pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground"
+                  />
+                </div>
+                <div
+                  className={cn(
+                    'min-h-0 flex-1 overflow-y-auto',
+                    '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
+                  )}
+                >
+                  {filteredAssignUsers.length === 0 ? (
+                    <p className="px-3 py-4 text-center text-xs text-muted-foreground">No users match "{assignUserSearch}".</p>
+                  ) : (
+                    filteredAssignUsers.map((user) => {
+                      const checked = assignUserPrincipals.has(user.id)
+                      return (
+                        <button
+                          key={user.id}
+                          type="button"
+                          onClick={() => toggleAssignUserPrincipal(user.id)}
+                          className={cn(
+                            'flex w-full items-center gap-3 border-b border-border/40 px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-muted/40',
+                            checked && 'bg-sky-50 hover:bg-sky-50 dark:bg-sky-950/30'
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white',
+                              userAvatarTone(user.display_name)
+                            )}
+                          >
+                            {userInitials(user.display_name)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-foreground">{user.display_name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
+                          </span>
+                          <span
+                            className={cn(
+                              'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
+                              checked ? 'border-sky-500 bg-sky-500 text-white' : 'border-border text-transparent'
+                            )}
+                          >
+                            <Check className="h-3 w-3" strokeWidth={3} />
+                          </span>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex shrink-0 gap-2">
+                <Input
+                  value={assignUserManualId}
+                  onChange={(event) => setAssignUserManualId(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      addManualAssignUserPrincipal()
+                    }
+                  }}
+                  placeholder="Principal ID (identity-lite user UUID)"
+                />
+                <Button type="button" variant="outline" onClick={addManualAssignUserPrincipal} disabled={!assignUserManualId.trim()}>
+                  Add
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </SecurityDrawer>
+
+      <SecurityDrawer
+        open={scopedAccessOpen}
+        onClose={() => setScopedAccessOpen(false)}
+        icon={Target}
+        title="Assign Scoped Access"
+        description="Assign a role to one principal at a specific authorization scope."
+        footer={
+          <Button
+            type="button"
+            className={cn(enterpriseCyanGradientActionButtonClass(), 'w-full justify-center gap-2')}
+            onClick={() => void handleCreateScopedAccess()}
+            disabled={scopedAccessSubmitting || !scopedAccessPrincipal || !scopedAccessRoleId || (scopedAccessScopeType !== 'global' && !scopedAccessScopeId)}
+          >
+            <Target className="h-4 w-4" />
+            {scopedAccessSubmitting ? 'Assigning…' : 'Assign Scoped Access'}
+          </Button>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">User</Label>
+          <Select value={scopedAccessPrincipal} onChange={(event) => setScopedAccessPrincipal(event.target.value)}>
+            <SelectItem value="" disabled>Select a user</SelectItem>
+            {identityUsers.map((user) => <SelectItem key={user.id} value={user.id}>{user.display_name} · {user.email}</SelectItem>)}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Role</Label>
+          <Select value={scopedAccessRoleId} onChange={(event) => setScopedAccessRoleId(event.target.value)}>
+            {roles.map((role) => <SelectItem key={role.id} value={role.id}>{role.name} · {role.accessScope}</SelectItem>)}
+          </Select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Scope type</Label>
+            <Select value={scopedAccessScopeType} onChange={(event) => {
+              const value = event.target.value as 'global' | 'workspace' | 'project'
+              setScopedAccessScopeType(value)
+              if (value === 'global') setScopedAccessScopeId('')
+              else if (value === 'workspace' && !scopedAccessScopeId) setScopedAccessScopeId(scopedWorkspaceDirectory[0]?.id ?? '')
+            }}>
+              <SelectItem value="global">Global</SelectItem>
+              <SelectItem value="workspace">Workspace</SelectItem>
+              <SelectItem value="project">Project</SelectItem>
+            </Select>
+          </div>
+          {scopedAccessScopeType === 'workspace' ? (
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Workspace</Label>
+              <Select value={scopedAccessScopeId} onChange={(event) => setScopedAccessScopeId(event.target.value)}>
+                {scopedWorkspaceDirectory.map((workspace) => <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>)}
+              </Select>
+            </div>
+          ) : scopedAccessScopeType === 'project' ? (
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Project ID</Label>
+              <Input value={scopedAccessScopeId} onChange={(event) => setScopedAccessScopeId(event.target.value)} placeholder="Project UUID" />
+            </div>
+          ) : null}
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">
+          Workspace assignments synchronize AuthZ with Workspace Access Control. Project assignments currently update AuthZ only; WAC project membership remains governed by the workspace membership flow.
+        </div>
+      </SecurityDrawer>
+
+      <SecurityDrawer
+        open={roleDetailOpen}
+        onClose={() => setRoleDetailOpen(false)}
+        icon={ShieldCheck}
+        title={detailDrawer.title}
+        description={detailDrawer.subtitle}
+        showOverlay={false}
+        footer={
+          <div className="flex w-full items-stretch gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+              onClick={() => {
+                const role = roles.find((r) => r.id === roleDetailRoleId)
+                if (role) openEditRoleDrawer(role)
+              }}
+            >
+              <Pencil className="h-4 w-4 shrink-0" aria-hidden />
+              Edit
+            </Button>
+            <Button
+              type="button"
+              className={cn(enterpriseCyanGradientActionButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+              onClick={() => {
+                setRoleDetailOpen(false)
+                openAssignUserModal(roleDetailRoleId ?? undefined)
+              }}
+            >
+              <UserPlus className="h-4 w-4 shrink-0" aria-hidden />
+              Assign User
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex flex-wrap gap-2">
+          {detailDrawer.badges.map((badge) => (
+            <Badge
+              key={badge}
+              variant="outline"
+              className={cn(badgeClass(badge), 'rounded-full px-3 py-1 text-[11px] font-semibold shadow-sm')}
+            >
+              {badge}
+            </Badge>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          {detailDrawer.metrics.map((metric, index) => (
+            <div
+              key={metric.label}
+              className={cn(
+                'relative overflow-hidden rounded-2xl border border-white/60 p-3.5 shadow-[0_10px_28px_rgba(15,23,42,0.08)]',
+                'bg-[linear-gradient(160deg,rgba(255,255,255,0.95),rgba(248,250,252,0.85))]',
+                'dark:border-white/10 dark:bg-[linear-gradient(160deg,rgba(30,41,59,0.85),rgba(15,23,42,0.7))]'
+              )}
+            >
+              <div
+                className={cn(
+                  'pointer-events-none absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r opacity-85',
+                  index % 2 === 0 ? 'from-sky-300 via-blue-400 to-indigo-400' : 'from-emerald-300 via-teal-400 to-cyan-400'
+                )}
+              />
+              <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{metric.label}</p>
+              <p className="mt-1.5 text-base font-bold tracking-tight text-foreground">{metric.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="relative overflow-hidden rounded-2xl border border-sky-200/70 bg-gradient-to-br from-sky-50 via-white to-blue-50/60 p-4 shadow-[0_10px_28px_rgba(14,165,233,0.10)] dark:border-sky-900/40 dark:from-sky-950/30 dark:via-background dark:to-blue-950/20">
+          <div className="flex items-start gap-2.5">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-600 dark:text-sky-300">
+              <BadgeCheck className="h-4 w-4" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.1em] text-sky-900 dark:text-sky-200">Executive Summary</p>
+              <p className="mt-1 text-xs leading-5 text-sky-900/85 dark:text-sky-100/80">{detailDrawer.summary}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <User className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <Label className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Assigned users</Label>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {detailDrawer.assignedUsers.length > 0 ? detailDrawer.assignedUsers.map((user) => (
+              <span
+                key={user}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-gradient-to-br from-background to-muted/40 py-1 pl-1 pr-3 text-xs font-medium text-foreground shadow-sm"
+              >
+                <span className={cn('inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white', userAvatarTone(user))}>
+                  {userInitials(user)}
+                </span>
+                {user}
+              </span>
+            )) : (
+              <span className="text-xs text-muted-foreground">No active assignments in this scope.</span>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <KeyRound className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <Label className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Permissions</Label>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {detailDrawer.permissions.map((permission) => (
+              <span
+                key={permission}
+                className="inline-flex items-center gap-1.5 rounded-full border border-violet-200/70 bg-gradient-to-r from-violet-50 to-fuchsia-50 px-3 py-1 text-xs font-medium text-violet-800 shadow-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:to-fuchsia-950/20 dark:text-violet-200"
+              >
+                <KeyRound className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                {permission}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <FileText className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <Label className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Related policies</Label>
+          </div>
+          <div className="space-y-2">
+            {detailDrawer.relatedPolicies.map((policy) => (
+              <div
+                key={policy}
+                className="group flex items-center gap-2.5 rounded-xl border border-border/70 bg-gradient-to-r from-background to-muted/20 px-3.5 py-2.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-sky-200 hover:from-sky-50/50"
+              >
+                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 group-hover:bg-sky-100 group-hover:text-sky-600 dark:bg-slate-800 dark:text-slate-400">
+                  <FileText className="h-3.5 w-3.5" aria-hidden />
+                </span>
+                {policy}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <History className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <Label className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Audit history</Label>
+          </div>
+          <div className="relative space-y-4 pl-4">
+            <div className="absolute bottom-1 left-[7px] top-1 w-px bg-gradient-to-b from-sky-300 via-border to-transparent" aria-hidden />
+            {detailDrawer.auditHistory.map((entry) => (
+              <div key={`${entry.label}-${entry.detail}`} className="relative">
+                <span className="absolute -left-4 top-0.5 h-3 w-3 rounded-full border-2 border-background bg-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.15)]" aria-hidden />
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">{entry.label}</div>
+                <div className="mt-0.5 text-xs leading-5 text-foreground">{entry.detail}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {detailDrawer.complianceNotes.length > 0 ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-hidden />
+              <Label className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Compliance notes</Label>
+            </div>
+            <div className="space-y-2">
+              {detailDrawer.complianceNotes.map((note) => (
+                <div
+                  key={note}
+                  className="flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-gradient-to-br from-amber-50 to-orange-50/60 px-3.5 py-2.5 text-xs leading-5 text-amber-900 shadow-sm dark:border-amber-900/40 dark:from-amber-950/30 dark:to-orange-950/20 dark:text-amber-200"
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+                  {note}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </SecurityDrawer>
+
+      {deleteRoleTarget && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close delete confirmation"
+                disabled={deleteRoleSubmitting}
+                onClick={() => {
+                  if (!deleteRoleSubmitting) setDeleteRoleTarget(null)
+                }}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="role-delete-dialog-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/12 text-red-700 ring-1 ring-red-500/25">
+                      <Trash2 className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="role-delete-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Delete Role
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        This action permanently removes the role and cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 px-6 py-5">
+                  <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Role</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-foreground">{deleteRoleTarget.name}</p>
+                  </div>
+                  {deleteRoleTarget.assignedUsers > 0 ? (
+                    <p className="text-xs text-amber-600">
+                      {deleteRoleTarget.assignedUsers} user{deleteRoleTarget.assignedUsers === 1 ? '' : 's'} currently
+                      assigned to this role will lose the permissions it grants.
+                    </p>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">
+                    This will permanently delete the role from the authorization-policy registry.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    disabled={deleteRoleSubmitting}
+                    onClick={() => setDeleteRoleTarget(null)}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="min-w-0 basis-0 flex-1 justify-center gap-2 bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500"
+                    disabled={deleteRoleSubmitting}
+                    onClick={() => void handleDeleteRole()}
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                    {deleteRoleSubmitting ? 'Deleting…' : 'Delete role'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   )
+}
+
+type PermissionMatrixRow = AuthzPermissionDto & {
+  module: string
+  section: string
+  resourceLabel: string
+}
+
+function permissionMatrixHierarchy(permission: AuthzPermissionDto): PermissionMatrixRow {
+  const moduleByResource: Record<string, string> = {
+    workspace: 'Workspace Management',
+    organization: 'Workspace Management',
+    governance: 'Governance & Compliance',
+    security_matrix: 'Security & Access Control',
+    project: 'Project Management',
+    idea_backlog: 'Idea Backlog',
+    knowledge_base: 'Knowledge Base',
+    portfolio: 'Portfolio Governance',
+  }
+  const sectionByResource: Record<string, string> = {
+    workspace: 'Workspace Directory',
+    organization: 'Workspace Directory',
+    governance: 'Policy & Governance',
+    security_matrix: 'Permission Matrix',
+    project: 'Project Delivery',
+    idea_backlog: 'Demand & Intake',
+    knowledge_base: 'Knowledge Base',
+    portfolio: 'Portfolio Planning',
+  }
+  return {
+    ...permission,
+    module: permission.ui_module || moduleByResource[permission.resource_type] || 'Other Platform Services',
+    section: permission.ui_section || sectionByResource[permission.resource_type] || 'General Access',
+    resourceLabel: permission.resource_type.replace(/_/g, ' '),
+  }
 }

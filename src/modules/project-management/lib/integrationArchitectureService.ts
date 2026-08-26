@@ -1,7 +1,6 @@
 import type { AnalyzeIdeaIntegrationResponse } from '@/lib/api/tectonaAgentRuntimeApi'
 import type { IdeaIntegrationPersistent } from '@/lib/api/ideaBacklogApi'
 import { normalizeIntegrationNodesForCanvas } from '@/modules/project-management/lib/integrationArchitectureDefaults'
-import { DEFAULT_INTEGRATION_PLANTUML } from '@/modules/project-management/lib/integrationPlantUmlDefaults'
 import type { IntegrationGraphRecord } from '@/modules/project-management/lib/integrationGraphStorage'
 import { parsePlantUmlToIntegrationGraph } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import type { Edge, Node } from 'reactflow'
@@ -24,7 +23,11 @@ export const EMPTY_RUNTIME_INTEGRATION_ANALYSIS: RuntimeIntegrationAnalysis = {
   status: 'insufficient_data',
   summaryTitle: 'Integration recommendation not generated yet',
   executiveBrief: 'Run AI integration analysis to produce architecture recommendations from idea evidence and KB.',
-  plantumlSource: DEFAULT_INTEGRATION_PLANTUML,
+  // Deliberately empty, NOT a fallback sample diagram — a populated-looking diagram here would be
+  // indistinguishable from a real AI result and mask genuine `insufficient_data` outcomes (this
+  // masking was the root cause of a real bug: the static example diagram in
+  // `integrationPlantUmlDefaults.ts` was rendering as if it were a real AI-generated result).
+  plantumlSource: '',
   integrationPatterns: [],
   recommendedSystems: [],
   missingEvidence: [],
@@ -40,7 +43,9 @@ export function runtimeIntegrationFromAgentResponse(
     status: response.status,
     summaryTitle: response.summary_title,
     executiveBrief: response.executive_brief,
-    plantumlSource: response.plantuml_source || DEFAULT_INTEGRATION_PLANTUML,
+    // Empty when the LLM returned `insufficient_data` (plantuml_source is only populated on
+    // success) — never substitute the static sample diagram here, see EMPTY_RUNTIME_INTEGRATION_ANALYSIS.
+    plantumlSource: response.plantuml_source || '',
     integrationPatterns: response.integration_patterns ?? [],
     recommendedSystems: response.recommended_systems ?? [],
     missingEvidence: response.missing_evidence ?? [],
@@ -78,21 +83,21 @@ export function graphRecordFromIntegrationAnalysis(
 
 export function graphRecordFromPersistentIntegration(
   persistent: IdeaIntegrationPersistent,
-): IntegrationGraphRecord | null {
+): IntegrationGraphRecord {
   const json = persistent.integration_json
   const nodes = Array.isArray(json.nodes) ? (json.nodes as Node<ArchimateNodeData>[]) : null
   const edges = Array.isArray(json.edges) ? (json.edges as Edge[]) : null
-  const plantumlSource =
-    typeof json.plantuml_source === 'string' && json.plantuml_source.trim()
-      ? json.plantuml_source
-      : DEFAULT_INTEGRATION_PLANTUML
+  // Empty (not the static sample diagram) when nothing was actually persisted — see
+  // EMPTY_RUNTIME_INTEGRATION_ANALYSIS for why substituting a fallback here would be misleading.
+  const plantumlSource = typeof json.plantuml_source === 'string' ? json.plantuml_source : ''
+  const userCustomized = Boolean(json.user_customized)
 
   if (nodes?.length) {
     return {
       nodes: normalizeIntegrationNodesForCanvas(nodes),
       edges: edges ?? [],
       plantumlSource,
-      userCustomized: Boolean(json.user_customized),
+      userCustomized,
       savedAt: persistent.generated_at,
     }
   }
@@ -104,15 +109,26 @@ export function graphRecordFromPersistentIntegration(
         nodes: parsed.nodes,
         edges: parsed.edges,
         plantumlSource,
-        userCustomized: Boolean(json.user_customized),
+        userCustomized,
         savedAt: persistent.generated_at,
       }
     } catch {
-      return null
+      // Falls through to the empty record below — an unparseable source is still a genuine
+      // "here's the current state" signal (nothing to show), not "we don't know yet".
     }
   }
 
-  return null
+  // Never return null: an empty-but-real record is what tells the canvas "the fetch completed,
+  // there's genuinely nothing here" — returning null here previously meant the canvas's own
+  // stale localStorage/default content just stayed on screen forever, because nothing ever
+  // arrived to say otherwise.
+  return {
+    nodes: [],
+    edges: [],
+    plantumlSource,
+    userCustomized,
+    savedAt: persistent.generated_at,
+  }
 }
 
 export function buildPersistentIntegrationPayload(
@@ -158,10 +174,8 @@ export function runtimeIntegrationFromPersistent(
         : 'insufficient_data',
     summaryTitle: typeof json.summary_title === 'string' ? json.summary_title : '',
     executiveBrief: typeof json.executive_brief === 'string' ? json.executive_brief : '',
-    plantumlSource:
-      typeof json.plantuml_source === 'string' && json.plantuml_source.trim()
-        ? json.plantuml_source
-        : DEFAULT_INTEGRATION_PLANTUML,
+    // Empty (not the static sample diagram) when nothing was actually persisted.
+    plantumlSource: typeof json.plantuml_source === 'string' ? json.plantuml_source : '',
     integrationPatterns: Array.isArray(json.integration_patterns)
       ? json.integration_patterns.filter((item): item is string => typeof item === 'string')
       : [],

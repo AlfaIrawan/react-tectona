@@ -46,7 +46,7 @@ export function ProjectSectionEmptyPanel({ panelKey }: { panelKey: ProjectPanelK
       }
       className={cn(
         'scroll-mt-24',
-        'glass-card flex min-h-0 flex-col overflow-hidden border border-border/40',
+        'liquid-glass-enterprise-panel flex min-h-0 flex-col overflow-hidden border border-border/40',
         'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
         'rounded-2xl',
       )}

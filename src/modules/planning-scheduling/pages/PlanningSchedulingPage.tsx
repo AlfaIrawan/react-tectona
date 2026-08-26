@@ -11,7 +11,6 @@ import {
   ChevronRight,
   Clock3,
   Download,
-  Filter,
   Flag,
   GitBranch,
   GripVertical,
@@ -20,22 +19,19 @@ import {
   CheckCircle2,
   MoreVertical,
   Network,
+  PanelLeft,
   Plus,
   Search,
-  Settings2,
   X,
   ShieldAlert,
   ShieldCheck,
   Signal,
   Sparkles,
-  Sun,
   Target,
   TrendingDown,
   TrendingUp,
-  Upload,
   Users,
   Zap,
-  type LucideIcon,
 } from 'lucide-react'
 import {
   CartesianGrid,
@@ -80,19 +76,15 @@ import { getSession } from '@/auth/authService'
 import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { usePreferencesStore } from '@/stores/preferences-store'
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
-import { PlanningSvarGantt, type PlanningGanttItem } from '@/modules/planning-scheduling/components/PlanningSvarGantt'
-import { PLANNING_TIMELINE_GANTT_COLUMNS } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
+import {
+  usePlanningTimelineDirectory,
+  PlanningTimelineDirectoryToolbar,
+  PlanningTimelineDirectoryTable,
+} from '@/modules/planning-scheduling/components/PlanningTimelineDirectory'
 import { mapWorkItemsToPlanningGantt } from '@/modules/planning-scheduling/utils/mapWorkItemsToPlanningGantt'
 import { listWorkItems, type WorkItemApiModel } from '@/lib/api/workApi'
 import { fetchAllWorkspaceOrgWorkspaces, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
 
-type ZoomLevel = 'Day' | 'Week' | 'Month' | 'Quarter'
-const ZOOM_LEVEL_OPTIONS: { level: ZoomLevel; icon: LucideIcon }[] = [
-  { level: 'Day', icon: Sun },
-  { level: 'Week', icon: CalendarRange },
-  { level: 'Month', icon: CalendarClock },
-  { level: 'Quarter', icon: LayoutGrid },
-]
 type CalendarMode = 'Month' | 'Week' | 'Agenda'
 type CapacityView = 'Team' | 'Individual' | 'Sprint' | 'Project'
 type PlanningPanelId = 'overview' | 'timeline' | 'sprint' | 'calendar' | 'capacity' | 'deadline' | 'resource' | 'baseline' | 'insight'
@@ -516,7 +508,7 @@ function PlanningPanelSection({
       ref={outerRef}
       style={style}
       className={cn(
-        'glass-card flex min-h-0 w-full min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-2xl border border-border/40 p-4 shadow-[0_14px_40px_rgba(15,23,42,0.06)] transition-all lg:p-5 dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+        'liquid-glass-enterprise-panel flex min-h-0 w-full min-w-0 max-w-none flex-col gap-3 overflow-hidden rounded-2xl border border-border/40 p-4 transition-all lg:p-5',
         highlight ? 'border-blue-300 ring-2 ring-blue-100' : null,
         (scrollBody || bodyFill) && 'flex min-h-0 flex-col overflow-hidden',
         className
@@ -607,13 +599,13 @@ export function PlanningSchedulingPage() {
   const [workItemsLoading, setWorkItemsLoading] = useState(true)
   const [timelineLoadError, setTimelineLoadError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('Month')
   const [calendarMode, setCalendarMode] = useState<CalendarMode>('Month')
   const [capacityView, setCapacityView] = useState<CapacityView>('Team')
   const [selectedItemId, setSelectedItemId] = useState('')
   const [activePanel, setActivePanel] = useState<PlanningPanelId>('overview')
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
   const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [showKpiCards, setShowKpiCards] = useState(true)
 
   const setPlanningPanel = (panel: PlanningPanelId) => {
     setActivePanel(panel)
@@ -801,6 +793,8 @@ export function PlanningSchedulingPage() {
       .includes(normalizedQuery)
   })
 
+  const timelineDirectoryState = usePlanningTimelineDirectory(visibleTimelineItems, timelineWorkspaceOrder)
+
   /**
    * Demo/mock planning datasets stay off until real sprint/KPI APIs exist.
    * Do not re-enable them just because Timeline has work items (e.g. Monday sync).
@@ -870,37 +864,9 @@ export function PlanningSchedulingPage() {
       case 'overview':
         return <Badge className="border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-700">Control Layer</Badge>
       case 'timeline':
-        return (
-          <div
-            className="inline-flex items-center rounded-xl border border-slate-200/70 bg-gradient-to-b from-slate-50/90 via-white to-slate-100/40 p-0.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] ring-1 ring-black/[0.03]"
-            role="group"
-            aria-label="Timeline zoom level"
-          >
-            {ZOOM_LEVEL_OPTIONS.map(({ level, icon: Icon }) => {
-              const active = zoomLevel === level
-              return (
-                <button
-                  key={level}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setZoomLevel(level)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-[11px] font-semibold tracking-[0.02em] transition-all duration-200',
-                    active
-                      ? 'bg-gradient-to-r from-slate-800 via-slate-900 to-slate-800 text-white shadow-[0_2px_10px_rgba(15,23,42,0.2)]'
-                      : 'text-slate-500 hover:bg-white/90 hover:text-slate-800'
-                  )}
-                >
-                  <Icon
-                    className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-white/90' : 'text-slate-400')}
-                    strokeWidth={active ? 2.25 : 2}
-                  />
-                  {level}
-                </button>
-              )
-            })}
-          </div>
-        )
+        // Zoom now lives inside each timeline's full-screen Gantt overlay — the directory list
+        // itself shows the same toolbar as the Workflow & Automation Directory Panel instead.
+        return <PlanningTimelineDirectoryToolbar state={timelineDirectoryState} />
       case 'calendar':
         return (
           <div className="flex gap-2">
@@ -948,7 +914,7 @@ export function PlanningSchedulingPage() {
       default:
         return null
     }
-  }, [activePanel, zoomLevel, calendarMode, capacityView, hasPlanningData])
+  }, [activePanel, calendarMode, capacityView, hasPlanningData, timelineDirectoryState])
 
   return (
     <div className="min-h-0 space-y-6 pb-0">
@@ -959,38 +925,40 @@ export function PlanningSchedulingPage() {
           description="Manage timelines, sprints, calendars, capacity, deadlines, and delivery schedules"
           right={
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/75 p-1.5 shadow-sm backdrop-blur-sm">
-                <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm" aria-label="Create plan" title="Create plan">
-                  <Plus className="h-5 w-5" strokeWidth={2} />
+              <div className="flex shrink-0 flex-nowrap items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setShowKpiCards((current) => !current)}
+                  className={cn(
+                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                    showKpiCards && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                  )}
+                  aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                  title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
+                >
+                  <LayoutGrid className="h-5 w-5" />
                 </button>
-                <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm" aria-label="Import schedule" title="Import schedule">
-                  <Upload className="h-5 w-5" strokeWidth={2} />
+                <button
+                  type="button"
+                  onClick={() => setIsWorkspaceCollapsed((current) => !current)}
+                  className={cn(
+                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                    !isWorkspaceCollapsed && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                  )}
+                  aria-label={isWorkspaceCollapsed ? 'Show enterprise navigation' : 'Hide enterprise navigation'}
+                  title={isWorkspaceCollapsed ? 'Show enterprise navigation' : 'Hide enterprise navigation'}
+                >
+                  <PanelLeft className="h-5 w-5" />
                 </button>
-                <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm" aria-label="Export plan" title="Export plan">
-                  <Download className="h-5 w-5" strokeWidth={2} />
+                <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm" aria-label="Export plan" title="Export plan">
+                  <Download className="h-5 w-5" />
                 </button>
-                <button type="button" className="flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm" aria-label="Configure calendar" title="Configure calendar">
-                  <Settings2 className="h-5 w-5" strokeWidth={2} />
-                </button>
-                {activePanel !== 'overview' ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowFiltersPanel((current) => !current)}
-                    className={cn(
-                      'flex items-center justify-center rounded-lg p-2.5 text-slate-500 transition-all duration-200 hover:bg-white hover:text-slate-900 hover:shadow-sm',
-                      showFiltersPanel && 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                    )}
-                    aria-label={showFiltersPanel ? 'Hide filters panel' : 'Show filters panel'}
-                    title={showFiltersPanel ? 'Hide filters panel' : 'Show filters panel'}
-                  >
-                    <Filter className="h-5 w-5" strokeWidth={2} />
-                  </button>
-                ) : null}
               </div>
             </div>
           }
         />
 
+        {showKpiCards ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
           {kpiCards.map((item) => (
             <button key={item.label} type="button" className="group text-left">
@@ -1018,6 +986,7 @@ export function PlanningSchedulingPage() {
             </button>
           ))}
         </div>
+        ) : null}
 
       <div
         className={cn(
@@ -1192,7 +1161,7 @@ export function PlanningSchedulingPage() {
             <Card
               ref={mainPanelFiltersRef}
               className={cn(
-                'glass-card mb-0 shrink-0 space-y-3 rounded-2xl p-4',
+                'liquid-glass-enterprise-panel mb-0 shrink-0 space-y-3 rounded-2xl p-4',
                 'border border-white/40 dark:border-white/10',
                 'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
                 'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
@@ -1598,14 +1567,7 @@ export function PlanningSchedulingPage() {
                   <p className="mt-2 max-w-md text-xs leading-relaxed text-rose-800/90">{timelineLoadError}</p>
                 </div>
               ) : (
-                <PlanningSvarGantt
-                  items={visibleTimelineItems}
-                  workspaceOrder={timelineWorkspaceOrder}
-                  columns={PLANNING_TIMELINE_GANTT_COLUMNS}
-                  zoomLevel={zoomLevel}
-                  selectedId={selectedItemId}
-                  onSelect={setSelectedItemId}
-                />
+                <PlanningTimelineDirectoryTable state={timelineDirectoryState} />
               )}
             </div>
           ) : null}

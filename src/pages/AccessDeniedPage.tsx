@@ -1,4 +1,4 @@
-import { ShieldAlert, ArrowLeft } from 'lucide-react'
+import { ShieldAlert, ArrowLeft, RotateCw, Settings } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 
@@ -12,11 +12,18 @@ export function AccessDeniedPage() {
     typeof (location.state as { from?: string }).from === 'string'
       ? (location.state as { from: string }).from
       : null
+  const platformSettingsDenied = Boolean(
+    fromPath?.includes('/platform-settings-administration'),
+  )
+  const workspacePrefix = fromPath?.match(/^\/w\/[^/]+/)?.[0]
+  const workspaceSettingsPath = workspacePrefix
+    ? `${workspacePrefix}/workspace-management`
+    : '/workspace-management'
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="glass-card rounded-lg shadow-2xl p-8 space-y-6">
+        <div className="liquid-glass-enterprise-panel rounded-lg p-8 space-y-6">
           <div className="space-y-2 text-center">
             <img
               src="/images/logo.png"
@@ -30,8 +37,9 @@ export function AccessDeniedPage() {
             <div className="space-y-1 text-sm">
               <p className="font-semibold text-foreground">Access denied</p>
               <p className="text-muted-foreground leading-relaxed">
-                You don’t have permission to access this module. If you believe this is a mistake,
-                contact your workspace administrator.
+                {platformSettingsDenied
+                  ? 'Platform Settings & Administration is restricted to platform administrators. Workspace owners can manage their workspace from Workspace Settings.'
+                  : 'You don’t have permission to access this module. If you believe this is a mistake, contact your workspace administrator.'}
               </p>
             </div>
           </div>
@@ -43,15 +51,34 @@ export function AccessDeniedPage() {
             </p>
           ) : null}
 
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full gap-2"
-            onClick={() => navigate(-1)}
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Go back
-          </Button>
+          <div className={fromPath ? 'grid grid-cols-2 gap-2' : undefined}>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full gap-2"
+              onClick={() => navigate(-1)}
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+              Go back
+            </Button>
+            {fromPath ? (
+              <Button
+                type="button"
+                className="w-full gap-2"
+                onClick={() => navigate(
+                  platformSettingsDenied ? workspaceSettingsPath : fromPath,
+                  { replace: true },
+                )}
+              >
+                {platformSettingsDenied ? (
+                  <Settings className="h-4 w-4" aria-hidden />
+                ) : (
+                  <RotateCw className="h-4 w-4" aria-hidden />
+                )}
+                {platformSettingsDenied ? 'Workspace settings' : 'Retry access'}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

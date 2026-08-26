@@ -12,7 +12,13 @@ import {
   fetchTemplateOnlyOfficeEditorConfig,
 } from '@/lib/api/documentKnowledgeApi'
 
-export type DocEditorInstance = { destroyEditor?: () => void }
+export type DocEditorInstance = {
+  destroyEditor?: () => void
+  // Hands over the "second" document for Review > Compare Documents — but only meaningfully
+  // callable in response to the onRequestSelectDocument event; OnlyOffice has no config field
+  // that pre-loads compare mode on open (there's no automatable, zero-click path).
+  setRequestedDocument?: (payload: { c: string; fileType: string; url: string; token: string }) => void
+}
 export type DocsApi = { DocEditor: new (placeholderId: string, config: Record<string, unknown>) => DocEditorInstance }
 
 declare global {
@@ -57,7 +63,7 @@ function extractOnlyOfficeError(code: unknown): { code: number | null; descripti
   return { code: null, description: null }
 }
 
-function describeOnlyOfficeError(code: unknown): string {
+export function describeOnlyOfficeError(code: unknown): string {
   const { code: num, description } = extractOnlyOfficeError(code)
   if (description) {
     const lower = description.toLowerCase()

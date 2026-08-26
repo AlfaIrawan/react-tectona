@@ -187,7 +187,7 @@ export function ProjectsSection({
 
       {/* Projects Grid / List (table-style when list) */}
       {layout === 'list' ? (
-        <div className="glass-card rounded-xl border border-border/50 overflow-hidden">
+        <div className="liquid-glass-enterprise-panel rounded-xl border border-border/50 overflow-hidden">
           {/* Table-style list: header row (columns match row: [checkbox?] grip, Name, Description, Date, Status) */}
           <div
             className="grid gap-2 px-4 py-3 text-xs font-medium text-muted-foreground border-b bg-muted/30 items-center"

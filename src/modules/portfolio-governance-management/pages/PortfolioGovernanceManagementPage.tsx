@@ -877,7 +877,7 @@ export function PortfolioGovernanceManagementPage() {
         id={id}
         ref={panelRef}
         className={cn(
-          'rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
+          'rounded-3xl border liquid-glass-enterprise-panel transition-all',
           activePanel === (id as typeof activePanel) ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80'
         )}
       >
@@ -1065,7 +1065,7 @@ export function PortfolioGovernanceManagementPage() {
   )
 
   const filtersCard = (
-    <Card className="glass-card rounded-2xl border-slate-200/80 bg-white/80 p-4 shadow-sm">
+    <Card className="liquid-glass-enterprise-panel rounded-2xl border-slate-200/80 bg-white/80 p-4 shadow-sm">
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.7fr)_repeat(6,minmax(0,1fr))]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

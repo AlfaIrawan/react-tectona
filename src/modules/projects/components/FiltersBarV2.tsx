@@ -39,7 +39,7 @@ export function FiltersBarV2({
   return (
     <div className="space-y-3">
       {/* Type Filter - Card Style */}
-      <div className="glass-card rounded-xl p-4 border border-border/50">
+      <div className="liquid-glass-enterprise-panel rounded-xl p-4 border border-border/50">
         <div className="flex items-center gap-3 mb-3">
           <Filter className="w-4 h-4 text-muted-foreground" />
           <span className="text-sm font-semibold text-foreground">Filter by Type</span>
@@ -126,7 +126,7 @@ export function FiltersBarV2({
       </div>
 
       {/* Status Filter - Horizontal Pills */}
-      <div className="glass-card rounded-xl p-4 border border-border/50">
+      <div className="liquid-glass-enterprise-panel rounded-xl p-4 border border-border/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-muted-foreground" />

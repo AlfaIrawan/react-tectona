@@ -4,9 +4,10 @@
 
 import { getClientEnvironmentHintsAsync } from '@/lib/clientEnvironment'
 import { FetchTimeoutError, fetchWithTimeout } from '@/lib/fetchWithTimeout'
-import { IDENTITY_API_BASE, TECTONA_OIDC_CLIENT_ID } from './gatewayBase'
+import { IDENTITY_API_BASE, TECTONA_OIDC_CLIENT_ID, serviceApiBase } from './gatewayBase'
 import { formatAuthErrorMessage } from '@/lib/authErrorMessages'
 import { SessionConflictError, SessionRevokedError } from '@/lib/sessionConflict'
+import type { TokenTelemetryEvent } from '@/lib/tokenTelemetry'
 
 /** Thrown when identity-lite does not respond (timeout / network). */
 export class IdentityServiceUnavailableError extends Error {
@@ -44,6 +45,59 @@ export interface SsoBootstrapTokenResponse {
   access_token: string
   expires_in: number
   refresh_token?: string
+}
+
+export async function fetchTokenAudit(accessToken: string, limit = 80, userId?: string): Promise<TokenTelemetryEvent[]> {
+  const runtimeBase = serviceApiBase(
+    '/api/tectona-agent-runtime',
+    import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL,
+  )
+  const res = await identityFetch(
+    `${runtimeBase}/v1/agent/llm-usage?limit=${encodeURIComponent(String(limit))}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`,
+    { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } },
+  )
+  if (!res.ok) throw new Error(`LLM usage audit failed (${res.status})`)
+  const data = (await res.json()) as {
+    events?: Array<{
+      id: string
+      source?: 'user' | 'system'
+      event?: string
+      trigger?: string
+      context?: string
+      model?: string
+      provider?: string
+      vendor?: string
+      input_cost_idr?: number
+      output_cost_idr?: number
+      total_cost_idr?: number
+      latency_ms?: number
+      input_tokens?: number
+      output_tokens?: number
+      total_tokens?: number
+      occurred_at: string
+    }>
+  }
+  return (data.events ?? []).map((entry) => ({
+    id: entry.id,
+    source: entry.source ?? 'system',
+    kind: 'used',
+    event: entry.event ?? 'AI/LLM completion',
+    trigger: entry.trigger ?? 'LLM completion',
+    context: entry.context,
+    category: 'llm',
+    model: entry.model,
+    provider: entry.provider,
+    vendor: entry.vendor,
+    inputCostIdr: entry.input_cost_idr,
+    outputCostIdr: entry.output_cost_idr,
+    totalCostIdr: entry.total_cost_idr,
+    latencyMs: entry.latency_ms,
+    inputTokens: entry.input_tokens,
+    outputTokens: entry.output_tokens,
+    totalTokens: entry.total_tokens,
+    occurredAt: entry.occurred_at,
+    tokenPreview: `${entry.total_tokens ?? 0} LLM tokens`,
+  }))
 }
 
 /**
@@ -102,6 +156,11 @@ export interface OidcTokenResponse {
 export interface OidcUserInfo {
   sub: string
   email?: string
+  display_name?: string | null
+  job_title?: string | null
+  organizational_unit?: string | null
+  account_status?: string | null
+  created_at?: string | null
   email_verified?: boolean
   roles?: string[]
 }

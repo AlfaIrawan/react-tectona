@@ -162,6 +162,11 @@ export function parseApiErrorMessage(body: string, fallback = 'Request failed'):
       }
       if (typeof record.message === 'string') return record.message
       if (typeof record.error === 'string') return record.error
+      const nestedError = record.error
+      if (nestedError && typeof nestedError === 'object') {
+        const nestedMessage = (nestedError as { message?: unknown }).message
+        if (typeof nestedMessage === 'string' && nestedMessage.trim()) return nestedMessage
+      }
     }
   } catch {
     // not JSON — use raw body below

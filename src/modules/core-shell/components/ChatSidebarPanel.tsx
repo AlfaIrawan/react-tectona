@@ -1,9 +1,10 @@
 import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import type { CSSProperties, RefObject } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { getSession } from '@/auth/authService'
 import { randomUuid } from '@/lib/randomId'
+import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import {
   DndContext,
   DragOverlay,
@@ -208,6 +209,14 @@ import {
 } from '@/lib/api/collaborationContextApi'
 import { useChatPanelStore } from '@/stores/chat-panel-store'
 import { useChatNotificationTargetStore } from '@/stores/chat-notification-target-store'
+import { findGenAiConversationForIdea, titlesMatchIdeaSession } from '@/lib/chat/ideaDiscussSession'
+import {
+  ideaDiscussComposerPrefill,
+  ideaDiscussSessionId,
+  useIdeaDiscussChatStore,
+  buildIdeaDiscussExtraNotes,
+  type IdeaDiscussChatBinding,
+} from '@/stores/idea-discuss-chat-store'
 import { useChatNavigationStore, type OpenChatThreadRequest } from '@/stores/chat-navigation-store'
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
 import { pushGlobalToast } from '@/components/ui/toast'
@@ -579,6 +588,9 @@ interface Conversation {
   hasChatLockPassword?: boolean
   isBlurred?: boolean
   isBlocked?: boolean
+  /** Local-only pointer row for a resumable "Generate Draft" brainstorm (idea-draft-job). */
+  isBrainstormPointer?: boolean
+  brainstormJobId?: string
 }
 
 function formatMessageTime(ts: number): string {
@@ -856,6 +868,40 @@ function mergeCollaborationInbox(existing: Conversation[], apiConversations: Con
   }
 
   return merged
+}
+
+function buildIdeaSectionRevisionChatActions(
+  binding: IdeaDiscussChatBinding,
+  content: string,
+): TectonaProposedAction[] {
+  const proposal = content.trim()
+  if (!proposal) return []
+  const basePayload = {
+    idea_id: binding.ideaId,
+    section_key: binding.sectionKey,
+    section_label: binding.sectionLabel,
+    content: proposal,
+    source_session_id: binding.conversationId,
+    is_impact_section: binding.isImpactSection,
+  }
+  return [
+    {
+      action_id: `idea-section-accept-${binding.conversationId}-${Date.now()}`,
+      action_code: 'idea.section.revision',
+      summary: `Accept this reply as the ${binding.sectionLabel} revision`,
+      payload: { ...basePayload, transition: 'accept' },
+      risk_level: 'medium',
+      requires_confirmation: true,
+    },
+    {
+      action_id: `idea-section-reject-${binding.conversationId}-${Date.now()}`,
+      action_code: 'idea.section.revision',
+      summary: `Reject this ${binding.sectionLabel} proposal`,
+      payload: { ...basePayload, transition: 'reject' },
+      risk_level: 'low',
+      requires_confirmation: true,
+    },
+  ]
 }
 
 function genAiSessionToConversation(
@@ -1299,6 +1345,7 @@ type ChatSidebarPanelProps = {
 
 export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelProps = {}) {
   const location = useLocation()
+  const navigate = useNavigate()
   const close = () => useChatPanelStore.getState().setOpen(false)
   const setActiveChannelId = useChatNotificationTargetStore((s) => s.setActiveChannelId)
   const pendingChatOpen = useChatNavigationStore((s) => s.pendingOpen)
@@ -2124,6 +2171,35 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       cancelled = true
     }
   }, [aiFolderLabelByKey])
+
+  // Mirror the active "Generate Draft" brainstorm (if any) into the AI
+  // sessions list as a local-only row, so it stays resumable even after the
+  // Create Idea modal is closed. Clicking it (see openConversation) reopens
+  // the modal instead of a normal thread. Backend genai-session reconciliation
+  // above already preserves local-only genai rows, so this survives polling.
+  const brainstormPointer = useIdeaDraftBrainstormPointerStore((s) => s.pointer)
+  useEffect(() => {
+    setConversations((prev) => {
+      const withoutPointer = prev.filter((c) => !c.isBrainstormPointer)
+      if (!brainstormPointer) return withoutPointer
+      const synthetic: Conversation = {
+        id: `idea-draft-brainstorm-${brainstormPointer.jobId}`,
+        mode: 'genai',
+        title: brainstormPointer.title,
+        preview: 'Brainstorm in progress — tap to reopen',
+        updatedAt: brainstormPointer.updatedAt,
+        unreadCount: 0,
+        archived: false,
+        isFavorite: false,
+        isLocked: false,
+        isBlurred: false,
+        isBlocked: false,
+        isBrainstormPointer: true,
+        brainstormJobId: brainstormPointer.jobId,
+      }
+      return [synthetic, ...withoutPointer].sort((a, b) => b.updatedAt - a.updatedAt)
+    })
+  }, [brainstormPointer])
 
   useEffect(() => {
     const conv =
@@ -3411,6 +3487,12 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const openConversation = (id: string) => {
     const current = conversations.find((x) => x.id === id)
+    if (current?.isBrainstormPointer && current.brainstormJobId) {
+      const jobId = current.brainstormJobId
+      close()
+      navigate('/idea-backlog', { state: { resumeBrainstormJobId: jobId } })
+      return
+    }
     if (current?.isBlocked) return
     if (current && isConversationChatLockActive(current)) {
       if (activeConversationId === id && screen === 'thread') return
@@ -3641,6 +3723,87 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       unhideOpenChatRequest(request)
       setHiddenChatRevision((v) => v + 1)
 
+      if (request.genAi) {
+        const idea = request.genAi
+        const ideaTitle = idea.ideaTitle.trim() || 'Untitled idea'
+        const preferredId = ideaDiscussSessionId(idea.ideaId)
+        let match = findGenAiConversationForIdea(conversationsRef.current, idea.ideaId, ideaTitle)
+        if (!match) {
+          try {
+            const sessions = await listGenAiChatSessions(TECTONA_CHAT_WORKSPACE_ID)
+            const row = sessions.find(
+              (session) =>
+                session.session_id === preferredId
+                || titlesMatchIdeaSession(session.title ?? '', ideaTitle),
+            )
+            if (row) {
+              const mapped = {
+                ...apiGenAiSessionToConversation(row, aiFolderLabelByKey[row.session_id]),
+                mode: 'genai' as const,
+                unreadCount: 0,
+              }
+              match = mapped
+            }
+          } catch {
+            match = undefined
+          }
+        }
+
+        const conversationId = match?.id ?? preferredId
+        const conversation: Conversation = match
+          ? {
+              ...match,
+              mode: 'genai',
+              title: ideaTitle,
+              unreadCount: 0,
+              archived: false,
+            }
+          : {
+              id: conversationId,
+              mode: 'genai',
+              title: ideaTitle,
+              preview: 'No messages yet',
+              updatedAt: Date.now(),
+              unreadCount: 0,
+              archived: false,
+              isFavorite: false,
+              isLocked: false,
+              isBlurred: false,
+              isBlocked: false,
+            }
+
+        setConversations((prev) => {
+          const without = prev.filter((c) => c.id !== conversation.id)
+          const next = [conversation, ...without].sort((a, b) => b.updatedAt - a.updatedAt)
+          conversationsRef.current = next
+          return next
+        })
+        setMessagesById((prev) => (
+          prev[conversation.id] ? prev : { ...prev, [conversation.id]: [] }
+        ))
+        setFilterAi(true)
+        setAiAccordionOpen(true)
+        setActiveConversationId(conversation.id)
+        setScreen('thread')
+        setDraft(ideaDiscussComposerPrefill(idea.sectionLabel))
+        setSearchQuery('')
+        setContactSearchQuery('')
+        clearSelection()
+        useIdeaDiscussChatStore.getState().setBinding({
+          conversationId: conversation.id,
+          ideaId: idea.ideaId,
+          ideaTitle,
+          sectionKey: idea.sectionKey,
+          sectionLabel: idea.sectionLabel,
+          ideaDescription: idea.ideaDescription,
+          currentSectionContent: idea.currentSectionContent,
+          workspaceId: idea.workspaceId,
+          userId: idea.userId,
+          isImpactSection: Boolean(idea.isImpactSection),
+        })
+        return true
+      }
+
       let contacts = chatContactsRef.current
       if (contacts.length <= 1) {
         try {
@@ -3727,7 +3890,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
       return false
     },
-    [findConversationForOpenRequest],
+    [findConversationForOpenRequest, aiFolderLabelByKey, clearSelection],
   )
 
   useEffect(() => {
@@ -4424,7 +4587,19 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         }
         // Auto-ran actions must NOT also render a confirmation card.
         const autoRunIds = new Set(autoRunActions.map((action) => action.action_id))
-        const cardActions = proposedActions.filter((action) => !autoRunIds.has(action.action_id))
+        let cardActions = proposedActions.filter((action) => !autoRunIds.has(action.action_id))
+        const ideaBinding = useIdeaDiscussChatStore.getState().binding
+        if (
+          ideaBinding
+          && ideaBinding.conversationId === conversationId
+          && runtime.answer.trim()
+          && !cardActions.some((action) => action.action_code === 'idea.section.revision')
+        ) {
+          cardActions = [
+            ...cardActions,
+            ...buildIdeaSectionRevisionChatActions(ideaBinding, runtime.answer),
+          ]
+        }
 
         setMessagesById((prev) => ({
           ...prev,
@@ -4453,12 +4628,16 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         }
 
         if (runtime.session_title && runtime.session_title.trim()) {
+          const boundIdea = useIdeaDiscussChatStore.getState().binding
+          const keepIdeaTitle = Boolean(
+            boundIdea && boundIdea.conversationId === conversationId && boundIdea.ideaTitle.trim(),
+          )
           setConversations((prev) =>
             prev.map((c) =>
               c.id === conversationId
                 ? {
                     ...c,
-                    title: runtime.session_title!.trim(),
+                    title: keepIdeaTitle ? boundIdea!.ideaTitle.trim() : runtime.session_title!.trim(),
                     updatedAt: Date.now(),
                   }
                 : c

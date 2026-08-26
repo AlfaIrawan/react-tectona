@@ -37,13 +37,15 @@ export default defineConfig({
       },
     },
     VitePWA({
+      // Activate a newly deployed worker automatically. Prompt mode left the
+      // previous worker active indefinitely, so browsers could keep serving an
+      // old hashed JS bundle after a deployment.
       registerType: 'autoUpdate',
       injectRegister: null,
       includeAssets: [
         'vite.svg',
         'images/logo.png',
         'images/logo-white.png',
-        'images/background-1.png',
         'images/background-1.mp4',
         'ui-manifest.json',
       ],
@@ -81,14 +83,18 @@ export default defineConfig({
         ],
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2,json,webmanifest,png,webp}'],
         // Large illustration packs stay network-first via runtime rule scope (/images/ only).
         globIgnores: [
           '**/images/project-templates/**',
           '**/images/project-templates-section/**',
+          // This 6.84 MiB hero image is served through the image runtime cache,
+          // not precached into the service worker manifest.
+          '**/images/background-1.png',
         ],
         additionalManifestEntries: [
-          { url: '/images/background-1.png', revision: null },
           { url: '/images/background-1.mp4', revision: null },
         ],
         // Main app chunk can exceed 3 MiB after feature growth; Workbox default is 2 MiB.
@@ -231,9 +237,14 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
-      // NOTE: '/api/work-integration' MUST come before '/api/work' — Vite matches
-      // proxy keys by prefix in order, and '/api/work' would otherwise capture
-      // '/api/work-integration/*' and send it to 8432 (wrong service → 404).
+      // NOTE: '/api/work-integration' and '/api/workflow-automation' MUST come before
+      // '/api/work' — Vite matches proxy keys by prefix in order, and '/api/work' would
+      // otherwise capture '/api/work-integration/*' and '/api/workflow-automation/*'
+      // and send them to 8432 (wrong service → 404).
+      '/api/workflow-automation': {
+        target: 'http://localhost:8521',
+        changeOrigin: true,
+      },
       '/api/work-integration': {
         target: 'http://localhost:8433',
         changeOrigin: true,
@@ -270,7 +281,11 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/api/plantuml': {
-        target: 'http://127.0.0.1:8090',
+        // plantuml-server's actual published host port is 8091 (see
+        // ops/ubuntu-dev/compose/tectona-images.yml and infra-dev-domains.md) — this proxy
+        // previously pointed at 8090, which nothing listens on, so every PlantUML PNG render
+        // (C4 diagrams) silently 500'd.
+        target: 'http://127.0.0.1:8091',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/plantuml/, ''),
       },

@@ -61,7 +61,7 @@ function Panel({
   return (
     <div
       className={cn(
-        'rounded-2xl border border-border/60 bg-gradient-to-br from-background via-background to-muted/20 p-4 shadow-sm',
+        'rounded-2xl border liquid-glass-enterprise-panel p-4',
         className
       )}
     >

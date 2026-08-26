@@ -65,7 +65,10 @@ export function normalizeBrdVersionLabel(value: string | null | undefined): stri
   if (typeof value !== 'string') return null
   const trimmed = value.trim().replace(/\([^)]*\)/g, '').trim()
   if (!trimmed) return null
-  const numeric = trimmed.match(/^(?:v(?:ersion)?\s*)?(\d+(?:\.\d+)?)$/i)?.[1]
+  // (?:\.\d+)? only allowed ONE decimal segment — with the required ^...$ full-string match, a
+  // multi-segment value like "0.2.5" failed to match at all (the trailing ".5" broke the anchor),
+  // silently falling through to returning it WITHOUT the "V" prefix instead of normalizing it.
+  const numeric = trimmed.match(/^(?:v(?:ersion)?\s*)?(\d+(?:\.\d+)*)$/i)?.[1]
   if (numeric) return `V${numeric}`
   if (/^v\d/i.test(trimmed)) return trimmed.toUpperCase()
   return trimmed
@@ -79,7 +82,12 @@ export function parseStructuredDocumentName(value: string): BrdStructuredNamePar
   if (tokens.length < 5) return null
   const yyyymmdd = tokens[tokens.length - 1]
   const version = tokens[tokens.length - 2]
-  if (!/^\d{8}$/.test(yyyymmdd) || !/^V\d+(?:\.\d+)?$/i.test(version)) return null
+  // (?:\.\d+)? only allowed ONE decimal segment — "V0.2.5" failed this gate entirely, so the
+  // WHOLE structured-name parse returned null for that file. Since sameFamily() short-circuits to
+  // false whenever either side's `structured` is null, that silently broke "same family, offer
+  // save-as-new-version" duplicate detection for any multi-segment version — not just its own
+  // display formatting, but the whole revision-linking feature for that upload.
+  if (!/^\d{8}$/.test(yyyymmdd) || !/^V\d+(?:\.\d+)*$/i.test(version)) return null
   const middle = tokens.slice(1, -2)
   if (middle.length < 2) return null
   return {
@@ -99,18 +107,29 @@ export function parseBrdStructuredName(value: string): BrdStructuredNameParts | 
 export function detectBrdVersionFromName(value: string): string {
   const structured = parseBrdStructuredName(value)
   if (structured?.version) return structured.version
-  const match = value.match(/(?:^|[\s_.-])v(?:ersion)?[.\s_-]*([0-9]+(?:\.[0-9]+)?)/i)
-  return match?.[1] ? `V${match[1]}` : 'V1'
+  // Regression: the old pattern captured only the FIRST digit group after "v" and stopped at the
+  // next space, so "v 0 2" and "v 0 2.5" (a common human naming convention — spaces standing in
+  // for dots between version segments) both collapsed to "V0", masking two genuinely different
+  // revisions as if they were the same version. Capture the full run of digit groups joined by
+  // spaces/dots/dashes/underscores, then normalize the separators to dots.
+  const match = value.match(/(?:^|[\s_.-])v(?:ersion)?[\s_.-]*([0-9](?:[0-9\s_.-]*[0-9])?)/i)
+  if (!match?.[1]) return 'V1'
+  const parts = match[1].split(/[\s_.-]+/).filter(Boolean)
+  return `V${parts.join('.')}`
 }
 
 export function extractBrdVersionFromDocumentText(text: string): string | null {
   const source = text.replace(/\r/g, '\n').slice(0, 6000)
   if (!source.trim()) return null
 
+  // (?:\.\d+)? only allows ONE decimal segment, so an explicit "Version: 0.2.5" in the document
+  // body truncated to "V0.2" — the same class of bug fixed in detectBrdVersionFromName above, but
+  // here it takes priority OVER the (already-correct) file-name detection, since document-body
+  // text is checked first. (?:\.\d+)* allows any number of segments.
   const patterns = [
-    /\b(?:document\s+)?version\s*(?:no\.?|number)?\s*[:\-]\s*([vV]?\d+(?:\.\d+)?)/i,
-    /\bversi\s*(?:dokumen)?\s*[:\-]\s*([vV]?\d+(?:\.\d+)?)/i,
-    /\bversion\s*[:\-]\s*([vV]?\d+(?:\.\d+)?)/i,
+    /\b(?:document\s+)?version\s*(?:no\.?|number)?\s*[:\-]\s*([vV]?\d+(?:\.\d+)*)/i,
+    /\bversi\s*(?:dokumen)?\s*[:\-]\s*([vV]?\d+(?:\.\d+)*)/i,
+    /\bversion\s*[:\-]\s*([vV]?\d+(?:\.\d+)*)/i,
   ]
 
   for (const pattern of patterns) {
@@ -209,6 +228,10 @@ const BRD_STAKEHOLDER_LABEL_WORDS = new Set([
   'operational', 'related', 'directorate', 'copyright', 'notice', 'revision', 'history',
   'contents', 'requirement', 'document', 'business', 'process', 'management', 'information',
   'technology', 'finance', 'helpdesk', 'aplikasi', 'pt', 'dinamika', 'multifinance',
+  // Section/document heading words that can be mistaken for a person's name when a table row
+  // pairs a heading with a role (e.g. "Overview ... Head of IT" got parsed as name="Overview").
+  'overview', 'summary', 'description', 'objective', 'background', 'scope', 'conclusion',
+  'introduction', 'purpose', 'appendix', 'attachment',
 ])
 
 const BRD_STAKEHOLDER_NOISE_PHRASE = /\b(?:business requirement document|table of contents|revision history|copyright notice|sign off|full sign|confirm brd|nama user|nama urep|nama it|process owner|product owner|dept\.?\s*head|div\.?\s*head|key user|risk management|business process|information technology)\b/i
@@ -666,6 +689,7 @@ function extractApprovalTableStakeholders(source: string, target: Map<string, Br
 
 function normalizeStakeholderRole(value: string): string {
   return value
+    .replace(/\*/g, '')
     .replace(/\s+/g, ' ')
     .replace(/^OK+\s*/i, '')
     .replace(/\bOK+\b/gi, '')
@@ -710,7 +734,7 @@ function dedupeStakeholderEntries(stakeholders: BrdStakeholderEntry[]): BrdStake
 }
 
 function pushApprovalStakeholder(target: Map<string, BrdStakeholderEntry>, name: string, role: string) {
-  const cleanedName = name.replace(/["'`]/g, '').replace(/\s+/g, ' ').trim()
+  const cleanedName = name.replace(/["'`*]/g, '').replace(/\s+/g, ' ').trim()
   const cleanedRole = normalizeStakeholderRole(role)
   if (!looksLikeApprovalPersonName(cleanedName)) return
   if (!looksLikeBrdRole(cleanedRole)) return
@@ -781,8 +805,10 @@ export function sanitizeDetectedStakeholdersForRuntimeApi(stakeholders: BrdStake
 }
 
 function pushStakeholder(target: Map<string, BrdStakeholderEntry>, name: string, role: string) {
-  const cleanedName = name.replace(/["'`]/g, '').replace(/\s+/g, ' ').trim()
-  const cleanedRole = role.replace(/\s+/g, ' ').trim()
+  // Strip stray markdown bold markers ("**Head of IT**") that survive from LLM output or source
+  // text into the name/role text — they render literally instead of as bold.
+  const cleanedName = name.replace(/["'`*]/g, '').replace(/\s+/g, ' ').trim()
+  const cleanedRole = role.replace(/\*/g, '').replace(/\s+/g, ' ').trim()
   if (!looksLikeBrdPersonName(cleanedName)) return
   if (!looksLikeBrdRole(cleanedRole)) return
   const key = cleanedName.toLowerCase()
@@ -1279,6 +1305,31 @@ export function ensureBrdKbStandardContent(
   return parts.join('')
 }
 
+// Client-side port of the backend's `sanitize_kb_content_noise` (repository_kb_toc_assembler.py).
+// This is the same fallback assembly used when the server-side one fails/is skipped (e.g. the
+// backend couldn't reach the KB standard entry), so the two classes of BRD-template noise it
+// guards against — Table-of-Contents lines leaking into a section's body ("II. User Requirements
+// 7", or several concatenated: "III. MI/SOP 8 IV. BCP 9 V. Approval 10") and unfilled form/dropdown
+// instruction text ("Pilih salah satu atau lebih kategori di bawah: ...") — must be stripped here
+// too, independent of whether the backend ever ran its own copy.
+const TOC_LEAK_RE = /^(?:[IVXLCDM]+\.\s+[A-Za-z][\w/&,()-]*(?:\s+[A-Za-z][\w/&,()-]*){0,8}\s+\d{1,3}\s*)+$/
+const UNFILLED_FORM_INSTRUCTION_RE = /pilih\s+salah\s+satu(?:\s+atau\s+lebih)?\s+(?:kategori|opsi|pilihan)|choose\s+one\s+or\s+more|select\s+one\s+or\s+more/i
+
+function looksLikeTocLeakage(text: string): boolean {
+  const stripped = text.trim()
+  if (!stripped || !/^[IVXLCDM]+\.\s/.test(stripped)) return false
+  return TOC_LEAK_RE.test(stripped)
+}
+
+function sanitizeKbContentNoise(html: string): string {
+  return html.replace(/(<(?:p|li)[^>]*>)([\s\S]*?)(<\/(?:p|li)>)/gi, (match, openTag, inner, closeTag) => {
+    const plain = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    if (looksLikeTocLeakage(plain) || UNFILLED_FORM_INSTRUCTION_RE.test(plain)) return ''
+    const cleanedInner = inner.includes('**') ? inner.replace(/\*\*/g, '') : inner
+    return `${openTag}${cleanedInner}${closeTag}`
+  })
+}
+
 /** Bersihkan artefak generate KB: blok stakeholder sampah dari ekstraksi agresif. */
 export function scrubKbGeneratedContent(contentHtml: string): string {
   let result = contentHtml
@@ -1286,6 +1337,7 @@ export function scrubKbGeneratedContent(contentHtml: string): string {
   result = result.replace(/<h3>\s*Stakeholder tambahan \(ekstraksi dokumen\)\s*<\/h3>\s*<ul>[\s\S]*?<\/ul>/gi, '')
   result = result.replace(/<li>\s*<strong>[^<]+<\/strong>\s*[—-]\s*Peran belum teridentifikasi\s*<\/li>/gi, '')
   result = result.replace(/<li>\s*<strong>[^<]+<\/strong>\s*[—-]\s*Ok+Key[^<]*<\/li>/gi, '')
+  result = sanitizeKbContentNoise(result)
   return removeLeadingOrphanStakeholderLists(result)
 }
 

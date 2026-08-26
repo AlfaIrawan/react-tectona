@@ -2,6 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react'
 import { Navigate, Route } from 'react-router-dom'
 import { PlatformRouteLoadingFallback } from '@/components/loading'
 import { ModuleRouteGuard } from '@/auth/ModuleRouteGuard'
+import { useModuleAccess } from '@/auth/useModuleAccess'
 import { GovernanceConfigurationCenterPage } from '@/modules/governance-configuration/pages/GovernanceConfigurationCenterPage'
 import { EnterpriseGovernanceModelLayout } from '@/modules/enterprise-governance-model/components/EnterpriseGovernanceModelLayout'
 import { GovernanceOverviewPage } from '@/modules/enterprise-governance-model/pages/GovernanceOverviewPage'
@@ -23,6 +24,7 @@ import { PortfolioGovernanceManagementPage } from '@/modules/portfolio-governanc
 import { ReportingAnalyticsPage } from '@/modules/reporting-analytics/pages/ReportingAnalyticsPage'
 import { IntegrationApiPlatformPage } from '@/modules/integration-api-platform/pages/IntegrationApiPlatformPage'
 import { SecurityAccessControlPage } from '@/modules/security-access-control/pages/SecurityAccessControlPage'
+import { IdentityLiteManagementPage } from '@/modules/identity-lite/pages/IdentityLiteManagementPage'
 import { AIProjectIntelligencePage } from '@/modules/ai-project-intelligence/pages/AIProjectIntelligencePage'
 import { AIIdeaPrioritizationIntelligencePage } from '@/modules/ai-idea-prioritization-intelligence/pages/AIIdeaPrioritizationIntelligencePage'
 import { PlatformSettingsControlPlanePage } from '@/modules/core-shell/pages/PlatformSettingsControlPlanePage'
@@ -64,6 +66,25 @@ function LazyPage({ children }: { children: ReactNode }) {
 function routePath(mode: 'absolute' | 'nested', segment: string): string {
   if (mode === 'nested') return segment.replace(/^\//, '')
   return segment.startsWith('/') ? segment : `/${segment}`
+}
+
+function SettingsRouteRedirect({ mode }: { mode: 'absolute' | 'nested' }) {
+  const access = useModuleAccess()
+
+  if (access.loading) {
+    return <PlatformRouteLoadingFallback title="Checking settings access..." />
+  }
+
+  const destination = access.isPlatformAdmin
+    ? '/platform-settings-administration'
+    : '/workspace-management'
+
+  return (
+    <Navigate
+      to={mode === 'nested' ? `..${destination}` : destination}
+      replace
+    />
+  )
 }
 
 /** Shared application routes — use as `{renderTectonaShellRoutes('absolute')}` inside `<Route>` (not as a component). */
@@ -157,6 +178,9 @@ export function renderTectonaShellRoutes(mode: 'absolute' | 'nested' = 'absolute
       <Route element={<ModuleRouteGuard moduleId="security_access" />}>
         <Route path={p('/security-access-control')} element={<SecurityAccessControlPage />} />
       </Route>
+      <Route element={<ModuleRouteGuard moduleId="identity_lite" />}>
+        <Route path={p('/identity-lite-management')} element={<IdentityLiteManagementPage />} />
+      </Route>
       <Route element={<ModuleRouteGuard moduleId="ai_project" />}>
         <Route path={p('/ai-project-intelligence')} element={<AIProjectIntelligencePage />} />
       </Route>
@@ -190,12 +214,7 @@ export function renderTectonaShellRoutes(mode: 'absolute' | 'nested' = 'absolute
       />
       <Route
         path={p('/settings')}
-        element={
-          <Navigate
-            to={mode === 'nested' ? '../platform-settings-administration' : '/platform-settings-administration'}
-            replace
-          />
-        }
+        element={<SettingsRouteRedirect mode={mode} />}
       />
     </>
   )

@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  isWorkspaceOwnedBySubject,
   resolveDirectoryAccessBadgesForViewer,
   subjectHasDirectoryWacMemberBadge,
 } from './workspaceOwnershipVisibility'
+
+describe('isWorkspaceOwnedBySubject', () => {
+  it('recognizes legacy creator display names for the matching subject', () => {
+    expect(
+      isWorkspaceOwnedBySubject(
+        { id: 'it-ws', createdBy: 'Ricky Gunawan' },
+        { id: 'ricky-id', name: 'Ricky Gunawan', email: 'ricky.gunawan@example.com' },
+      ),
+    ).toBe(true)
+  })
+})
 
 describe('subjectHasDirectoryWacMemberBadge', () => {
   const orgId = 'org-adira'

@@ -99,7 +99,7 @@ export function ContextMenu({
       <div
         ref={ref}
         className={cn(
-          'fixed w-56 rounded-xl glass-card shadow-2xl py-2',
+          'fixed w-56 rounded-xl liquid-glass-enterprise-panel shadow-2xl py-2',
           'border border-border/50 backdrop-blur-xl',
           'animate-in fade-in-0 zoom-in-95 duration-150',
           className
@@ -248,7 +248,7 @@ function ContextMenuSubmenu({ trigger, children, className }: ContextMenuSubmenu
           role="menu"
           data-context-menu-submenu
           className={cn(
-            'fixed rounded-xl glass-card shadow-2xl py-2 min-w-[8rem]',
+            'fixed rounded-xl liquid-glass-enterprise-panel shadow-2xl py-2 min-w-[8rem]',
             'border border-border/50 backdrop-blur-xl',
             'animate-in fade-in-0 zoom-in-95 duration-150'
           )}

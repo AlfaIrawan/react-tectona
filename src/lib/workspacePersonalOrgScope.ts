@@ -142,18 +142,25 @@ export function buildDirectoryTreeParentById(
       continue
     }
 
+    const orgHomeId = orgHomeByOrgId.get(workspace.primaryOrganizationId) ?? null
+
+    // An explicit parent pointing at some *other* workspace in the tree (not the org
+    // home) reflects a deliberate placement choice -- Create Child Workspace, or moving
+    // a personal workspace under someone's operational workspace -- and always wins
+    // over the heuristics below, regardless of org-directory-join status.
+    const explicitParent = workspace.parentWorkspaceId?.trim() || null
+    if (explicitParent && explicitParent !== orgHomeId && byId.has(explicitParent)) {
+      result.set(workspace.id, explicitParent)
+      continue
+    }
+
     if (!workspace.isPersonalWorkspace) {
       if (!isOperationalInOrgDirectoryTree(workspace)) {
         result.set(workspace.id, null)
         continue
       }
 
-      const orgHomeId = orgHomeByOrgId.get(workspace.primaryOrganizationId) ?? null
-      const anchor =
-        workspace.provisionedUnderWorkspaceId?.trim()
-        || orgHomeId
-        || workspace.parentWorkspaceId?.trim()
-        || null
+      const anchor = workspace.provisionedUnderWorkspaceId?.trim() || orgHomeId || null
       result.set(workspace.id, anchor && byId.has(anchor) ? anchor : null)
       continue
     }
@@ -163,21 +170,30 @@ export function buildDirectoryTreeParentById(
       continue
     }
 
-    const orgHomeId = orgHomeByOrgId.get(workspace.primaryOrganizationId) ?? null
-    const joinedOperationalCandidates = workspaces.filter(
-      (candidate) =>
-        candidate.id !== workspace.id
-        && candidate.primaryOrganizationId === workspace.primaryOrganizationId
-        && isOperationalInOrgDirectoryTree(candidate),
-    )
-    const ownerRef = workspace.ownerIdentityRef?.trim()
-    if (ownerRef && joinedOperationalCandidates.length > 0) {
-      const ownedOperational = joinedOperationalCandidates.find(
-        (candidate) => candidate.ownerIdentityRef?.trim() === ownerRef,
+    // The same-owner guess below is the default for workspaces with no parent, or with
+    // the standard org-home parent every org-tree personal workspace gets at onboarding.
+    // It must not kick in when a *different*, deliberately-chosen parent (Create Child
+    // Workspace / an explicit move) was set but isn't resolvable right now (e.g.
+    // archived) -- that would silently reassign the workspace to an unrelated place
+    // instead of honestly falling back to org home.
+    const hasUnresolvedDeliberateParent =
+      explicitParent !== null && explicitParent !== orgHomeId && !byId.has(explicitParent)
+    if (!hasUnresolvedDeliberateParent) {
+      const joinedOperationalCandidates = workspaces.filter(
+        (candidate) =>
+          candidate.id !== workspace.id
+          && candidate.primaryOrganizationId === workspace.primaryOrganizationId
+          && isOperationalInOrgDirectoryTree(candidate),
       )
-      if (ownedOperational) {
-        result.set(workspace.id, ownedOperational.id)
-        continue
+      const ownerRef = workspace.ownerIdentityRef?.trim()
+      if (ownerRef && joinedOperationalCandidates.length > 0) {
+        const ownedOperational = joinedOperationalCandidates.find(
+          (candidate) => candidate.ownerIdentityRef?.trim() === ownerRef,
+        )
+        if (ownedOperational) {
+          result.set(workspace.id, ownedOperational.id)
+          continue
+        }
       }
     }
 

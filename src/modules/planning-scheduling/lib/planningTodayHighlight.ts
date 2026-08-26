@@ -183,19 +183,17 @@ export function syncTodayColumnHighlight(
 ): void {
   if (!host || !api) return
 
-  host
-    .querySelectorAll(TIMELINE_COLUMN_OVERLAY_CLASSES.map((c) => `.${c}`).join(','))
-    .forEach((el) => el.remove())
-
   const scales = api.getState()._scales
   if (!scales?.rows?.length) return
 
   const columns = buildTimelineColumnLayouts(scales, overrides, fallbackWidth)
   if (columns.length === 0) return
 
-  const today = todayLocalMidnight()
   const area = host.querySelector('.wx-chart .wx-area')
   if (!area) return
+
+  const today = todayLocalMidnight()
+  const desiredOverlays: Array<{ className: string; left: number; width: number }> = []
 
   let offsetX = 0
   for (const column of columns) {
@@ -213,18 +211,40 @@ export function syncTodayColumnHighlight(
     }
 
     if (overlayClass) {
-      const overlay = document.createElement('div')
-      overlay.className = overlayClass
-      overlay.style.position = 'absolute'
-      overlay.style.top = '0'
-      overlay.style.height = '100%'
-      overlay.style.left = `${Math.round(offsetX)}px`
-      overlay.style.width = `${Math.round(column.width)}px`
-      overlay.style.pointerEvents = 'none'
-      area.appendChild(overlay)
+      desiredOverlays.push({
+        className: overlayClass,
+        left: Math.round(offsetX),
+        width: Math.round(column.width),
+      })
     }
     offsetX += column.width
   }
+
+  const existingOverlays = Array.from(
+    area.querySelectorAll<HTMLElement>(
+      TIMELINE_COLUMN_OVERLAY_CLASSES.map((className) => `.${className}`).join(','),
+    ),
+  )
+
+  while (existingOverlays.length > desiredOverlays.length) {
+    existingOverlays.pop()?.remove()
+  }
+
+  desiredOverlays.forEach((spec, index) => {
+    let overlay = existingOverlays[index]
+    if (!overlay) {
+      overlay = document.createElement('div')
+      overlay.style.position = 'absolute'
+      overlay.style.top = '0'
+      overlay.style.height = '100%'
+      overlay.style.pointerEvents = 'none'
+      area.appendChild(overlay)
+    }
+
+    overlay.className = spec.className
+    overlay.style.left = `${spec.left}px`
+    overlay.style.width = `${spec.width}px`
+  })
 }
 
 export function todayMarkerForZoom(

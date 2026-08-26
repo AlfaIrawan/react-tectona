@@ -109,7 +109,11 @@ export function AppLayout({ children }: AppLayoutProps) {
       offsetX: e.clientX - rect.left,
       offsetY: e.clientY - rect.top,
     }
-    e.currentTarget.setPointerCapture(e.pointerId)
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // pointer capture is a best-effort affordance; dragging still works without it
+    }
   }, [])
 
   const onFloatingHandlePointerMove = useCallback(
@@ -310,6 +314,18 @@ export function AppLayout({ children }: AppLayoutProps) {
     remeasureKey: commPanelOpen ? commPanelWidthPct : 0,
   })
 
+  // Re-clamp at RENDER time, not just reactively in effects. `floatingChatPosition` can go stale
+  // relative to the CURRENT viewport in ways the effects above don't all catch — e.g. it was
+  // computed on an earlier, wider window (or a previous SPA navigation where the panel was also
+  // floating) and the viewport later shrank (DevTools docking to a side panel, browser resize)
+  // without a `resize` event arriving in time to correct it. Rendering the raw stored value
+  // directly (as before) could place the panel fully outside the visible viewport — appearing as
+  // "the chat button does nothing" since nothing on-screen ever changes. Clamping here guarantees
+  // the panel is always within bounds of whatever the viewport is *right now*, regardless of how
+  // the stored position became stale.
+  const renderedFloatingChatPosition =
+    useFloatingChatPanel && floatingChatPosition ? clampFloatingChatPosition(floatingChatPosition) : floatingChatPosition
+
   return (
     <div className="relative flex h-[100dvh] min-h-0 flex-col pt-12">
       <Topbar
@@ -357,12 +373,32 @@ export function AppLayout({ children }: AppLayoutProps) {
           style={
             useFloatingChatPanel
               ? {
-                  left: floatingChatPosition?.x ?? 0,
-                  top: floatingChatPosition?.y ?? 0,
+                  // `.liquid-glass-chat-panel` (index.css) hardcodes `position: relative` for its
+                  // own glass-effect layering (needed in docked mode, where no Tailwind position
+                  // utility is applied) and — depending on CSS layer/source order — that rule can
+                  // win over the `fixed` utility class applied here for floating mode. When that
+                  // happens the browser renders this element as `position: relative` instead of
+                  // `fixed`, so `left`/`top` (computed as viewport-fixed coordinates) get applied
+                  // as an offset from the element's normal in-flow position instead — landing the
+                  // panel far outside the visible viewport with no visual sign it's "open" at all.
+                  // An inline `position` always wins over any class regardless of cascade order,
+                  // so pin it explicitly here rather than relying on the `fixed` utility class.
+                  position: 'fixed',
+                  left: renderedFloatingChatPosition?.x ?? 0,
+                  top: renderedFloatingChatPosition?.y ?? 0,
                   width: 'min(34rem, calc(100vw - 1rem))',
                   height: 'min(44rem, calc(100dvh - 4rem))',
                 }
               : {
+                  // Docked mode (always used for email; used for chat whenever no right-side
+                  // drawer forces floating) is a plain flex sibling with no stacking elevation of
+                  // its own — a same-page `fixed` fullscreen panel (e.g. an idea's Summary/Scoring
+                  // view) has no reason to know this exists and will simply paint over it. A
+                  // small explicit z-index (well below true modals/drawers at 1050+, but above a
+                  // typical page-level fullscreen panel's z-50) keeps it visible without fighting
+                  // the flex layout — `position: relative` doesn't affect flex sizing at all.
+                  position: 'relative',
+                  zIndex: 55,
                   flexGrow: 0,
                   flexShrink: 0,
                   flexBasis: commPanelDockedOpen ? `${commPanelWidthPct}%` : '0%',
@@ -377,6 +413,16 @@ export function AppLayout({ children }: AppLayoutProps) {
               type="button"
               aria-label="Drag chat panel"
               className="absolute left-1/2 top-2 z-10 -translate-x-1/2 cursor-move rounded-full border border-border/70 bg-background/95 px-3 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur"
+              // `.liquid-glass-chat-panel > *` (index.css) forces every direct child of this panel
+              // to `position: relative; z-index: 1` (so panel content stacks above the decorative
+              // glass-shine ::before layer) — which breaks this handle's intended `absolute`
+              // positioning AND its `z-10` elevation: no longer taken out of flow, it becomes a
+              // normal flex item stretched to the panel's full height, and its z-index is capped at
+              // 1 — tying it with the sibling `<aside>` content below, which then wins the paint
+              // order (later in DOM) and swallows every pointer event meant for this button. Pin
+              // both `position` and `zIndex` inline, which always win over any class regardless of
+              // cascade order.
+              style={{ position: 'absolute', zIndex: 10 }}
               onPointerDown={onFloatingHandlePointerDown}
               onPointerMove={onFloatingHandlePointerMove}
               onPointerUp={onFloatingHandlePointerUp}
@@ -400,6 +446,12 @@ export function AppLayout({ children }: AppLayoutProps) {
                 'hover:bg-muted/20 dark:hover:bg-muted/15',
                 !commPanelDockedOpen && 'pointer-events-none'
               )}
+              // Same `.liquid-glass-chat-panel > *` cascade issue as the floating drag handle above
+              // — pin `position: absolute` and `zIndex` inline so this resize strip is actually
+              // taken out of flow, pinned to the panel's left edge, and stacked above the sibling
+              // `<aside>` content instead of losing the z-index tie to it (both would otherwise be
+              // capped at z-index: 1 by the class rule).
+              style={{ position: 'absolute', zIndex: 10 }}
               onPointerDown={onCommResizePointerDown}
             >
               <div className="pointer-events-none absolute inset-y-0 right-0 flex w-px items-stretch justify-center py-24">

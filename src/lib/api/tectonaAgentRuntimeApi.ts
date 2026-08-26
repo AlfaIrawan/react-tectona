@@ -6,6 +6,7 @@
 import { getSession } from '@/auth/authService'
 import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
+import type { LlmUsagePayload } from '@/lib/tokenTelemetry'
 
 /** Default workspace slug for sidebar Gen AI sessions until workspace context is wired from shell. */
 export const TECTONA_CHAT_WORKSPACE_ID = 'react-tectona'
@@ -294,6 +295,106 @@ export interface AnalyzeIdeaIntegrationResponse {
   correlation_id: string
 }
 
+export type C4ArchitectureLevel = 'L1' | 'L2'
+
+export interface AnalyzeIdeaC4ArchitectureRequest {
+  idea_id: string
+  level: C4ArchitectureLevel
+  context: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  idea: {
+    id: string
+    title: string
+    description?: string | null
+    business_objective?: string | null
+    scope_summary?: string | null
+    risk_summary?: string | null
+    status: string
+    tags: string[]
+  }
+}
+
+export interface C4ArchitectureElement {
+  name: string
+  role: string
+  source: 'kb' | 'inferred' | ''
+}
+
+export interface AnalyzeIdeaC4ArchitectureResponse {
+  status: 'ok' | 'insufficient_data'
+  level: C4ArchitectureLevel
+  summary_title: string
+  executive_brief: string
+  plantuml_source: string
+  elements: C4ArchitectureElement[]
+  missing_evidence: string[]
+  confidence_score: number
+  warnings: string[]
+  correlation_id: string
+}
+
+export interface AnalyzeIdeaProcessRequest {
+  idea_id: string
+  context: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  idea: {
+    id: string
+    title: string
+    description?: string | null
+    business_objective?: string | null
+    scope_summary?: string | null
+    risk_summary?: string | null
+    status: string
+    tags: string[]
+  }
+}
+
+export interface ProcessSubTask {
+  key: string
+  label: string
+}
+
+export interface AnalyzeIdeaProcessResponse {
+  status: 'ok' | 'insufficient_data'
+  summary_title: string
+  executive_brief: string
+  bpmn_xml: string
+  rendered_png_base64: string | null
+  sub_processes: ProcessSubTask[]
+  missing_evidence: string[]
+  confidence_score: number
+  warnings: string[]
+  correlation_id: string
+}
+
+export interface AnalyzeIdeaProcessDetailRequest {
+  idea_id: string
+  context: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  idea: {
+    id: string
+    title: string
+    description?: string | null
+    business_objective?: string | null
+    scope_summary?: string | null
+    risk_summary?: string | null
+    status: string
+    tags: string[]
+  }
+  task_key: string
+  task_label: string
+  high_level_bpmn_xml: string
+}
+
 export interface GenerateBenefitAnalysisRequest {
   idea_id: string
   title: string
@@ -394,6 +495,7 @@ export interface GenerateIdeaConversionRequest {
   context?: {
     workspace_id?: string | null
     user_id?: string | null
+    user_name?: string | null
     session_id?: string | null
   }
   allow_llm?: boolean
@@ -441,7 +543,7 @@ export interface IdeaDraftPlanStep {
 }
 
 export interface IdeaDraftSimilarItem {
-  kind: 'idea' | 'brd'
+  kind: 'idea' | 'brd' | 'document'
   id: string
   title: string
   similarity_score: number
@@ -462,12 +564,17 @@ export interface IdeaDraftEvidenceSummary {
 }
 
 export type IdeaDraftChecklistItemStatus = 'pending' | 'asked' | 'answered' | 'skipped'
+export type IdeaDraftEvidenceStatus = 'missing' | 'inferred' | 'partial' | 'confirmed'
 
 export interface IdeaDraftChecklistItem {
   id: string
   prompt: string
   required?: boolean
   status?: IdeaDraftChecklistItemStatus
+  // Additive — how good the answer actually is, separate from `status` (workflow position).
+  // See the backend IdeaDraftChecklistItem model docstring for what each value means.
+  evidence_status?: IdeaDraftEvidenceStatus
+  evidence_text?: string | null
 }
 
 export interface IdeaDraftEvidenceProgress {
@@ -476,6 +583,13 @@ export interface IdeaDraftEvidenceProgress {
   required_total: number
   required_answered: number
   items: IdeaDraftChecklistItem[]
+}
+
+// Stage 5 (explainable readiness): how many deep-discovery dimensions (the post-checklist
+// "Continue Discovery" loop) have been covered so far — just a count, not which ones.
+export interface IdeaDraftDiscoveryProgress {
+  covered: number
+  total: number
 }
 
 export interface IdeaDraftBrainstormMessage {
@@ -489,6 +603,7 @@ export interface IdeaDraftBrainstormResponse {
   remaining_gaps: string[]
   intake_checklist?: IdeaDraftChecklistItem[]
   evidence_progress?: IdeaDraftEvidenceProgress
+  discovery_progress?: IdeaDraftDiscoveryProgress
   confidence_percent?: number
   offer_generate_anyway?: boolean
 }
@@ -531,6 +646,7 @@ export interface IdeaDraftJobStatusResponse {
   brainstorm_remaining_gaps?: string[]
   intake_checklist?: IdeaDraftChecklistItem[]
   evidence_progress?: IdeaDraftEvidenceProgress
+  discovery_progress?: IdeaDraftDiscoveryProgress
   confidence_percent?: number
   offer_generate_anyway?: boolean
   correlation_id: string
@@ -659,6 +775,8 @@ export interface RuntimeChatResponse {
   handoff_available?: boolean
   handoff_from_session_id?: string | null
   context_usage?: ContextUsageReport | null
+  usage?: LlmUsagePayload | null
+  llm_usage?: LlmUsagePayload | null
   pending_document_edit?: RuntimePendingDocumentEdit | null
 }
 
@@ -961,9 +1079,11 @@ export interface RepositoryKbDetectedAttachmentEntry {
 }
 
 export interface GenerateRepositoryKbRequest {
+  usage_source?: 'user' | 'system'
   context?: {
     workspace_id?: string | null
     user_id?: string | null
+    user_name?: string | null
     session_id?: string | null
   }
   document: GenerateRepositoryKbDocumentContext
@@ -1101,6 +1221,38 @@ export async function extractRepositoryPdfText(
   }
 }
 
+export interface ExtractRepositoryPptxResponse {
+  text: string
+  toc_entries: string[]
+}
+
+/**
+ * Parse PowerPoint uploads server-side (python-pptx): slide titles/body/notes/tables.
+ * Supports `.pptx` only.
+ */
+export async function extractRepositoryPptxStructure(
+  file: File,
+  timeoutMs: number = 60_000,
+): Promise<ExtractRepositoryPptxResponse> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const headers = new Headers(tectonaServiceHeaders())
+    headers.delete('Content-Type')
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE_URL}/v1/agent/extract-repository-pptx`, {
+      method: 'POST',
+      headers,
+      body: form,
+      signal: controller.signal,
+    })
+    return handleResponse<ExtractRepositoryPptxResponse>(res)
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 export interface DescribeImageResponse {
   text: string
 }
@@ -1150,6 +1302,7 @@ export async function generateRepositoryKbFromDocument(
 export interface FillDkmTemplatePayload {
   fills?: Record<string, string>
   sections?: Record<string, string>
+  collections?: Record<string, Array<Record<string, unknown>>>
   summary?: string
 }
 
@@ -1218,8 +1371,32 @@ export interface TemplateSchemaSectionRecommendation {
   reason?: string
 }
 
+export interface TemplateSchemaRepeaterRecommendation {
+  id: string
+  collection: string
+  kind: 'row' | 'section' | 'table_row' | string
+  fields?: string[]
+  image_fields?: string[]
+  marker?: string | null
+  start_marker?: string | null
+  end_marker?: string | null
+  numbering_prefix?: string | null
+  parent_collection?: string | null
+  source?: string
+  confidence?: number
+  reason?: string
+  /** Set only for a CANDIDATE repeater (source === 'table_row_repeat_candidate') that has no
+   * marker in the document yet — a table shaped like "header row + exactly one data row".
+   * Tells the DKM service exactly which table/row to mark once the user confirms it. */
+  location?: { table_index?: number; row_index?: number } | null
+  /** Human-readable column header text for a table_row candidate, shown in the review UI
+   * alongside `fields` (the slugged key form used as the actual marker/schema key). */
+  field_labels?: string[]
+}
+
 export interface AnalyzeDkmTemplateSchemaRequest {
   template_id: string
+  usage_source?: 'user' | 'system'
   document_text?: string
   toc_entries?: string[]
   context?: {
@@ -1238,6 +1415,8 @@ export interface AnalyzeDkmTemplateSchemaResponse {
   summary: string
   placeholders: TemplateSchemaPlaceholderRecommendation[]
   sections: TemplateSchemaSectionRecommendation[]
+  repeaters: TemplateSchemaRepeaterRecommendation[]
+  compiler: import('@/lib/api/documentKnowledgeApi').TemplateSchemaCompilerResult
   heuristics?: Record<string, unknown>
   warnings: string[]
   correlation_id: string
@@ -1350,6 +1529,51 @@ export async function analyzeIdeaIntegration(
   return handleResponse<AnalyzeIdeaIntegrationResponse>(res)
 }
 
+export async function analyzeIdeaC4Architecture(
+  payload: AnalyzeIdeaC4ArchitectureRequest,
+  timeoutMs: number = 150_000,
+): Promise<AnalyzeIdeaC4ArchitectureResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/analyze-idea-c4-architecture`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  )
+  return handleResponse<AnalyzeIdeaC4ArchitectureResponse>(res)
+}
+
+export async function analyzeIdeaProcess(
+  payload: AnalyzeIdeaProcessRequest,
+  timeoutMs: number = 180_000,
+): Promise<AnalyzeIdeaProcessResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/analyze-idea-process`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  )
+  return handleResponse<AnalyzeIdeaProcessResponse>(res)
+}
+
+export async function analyzeIdeaProcessDetail(
+  payload: AnalyzeIdeaProcessDetailRequest,
+  timeoutMs: number = 180_000,
+): Promise<AnalyzeIdeaProcessResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/analyze-idea-process-detail`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  )
+  return handleResponse<AnalyzeIdeaProcessResponse>(res)
+}
+
 export async function generateBenefitAnalysis(
   payload: GenerateBenefitAnalysisRequest,
   timeoutMs: number = 150_000,
@@ -1404,7 +1628,11 @@ export async function startIdeaDraftJob(
       method: 'POST',
       body: JSON.stringify(payload),
     },
-    30_000,
+    // Job creation should normally be immediate, but the gateway/runtime can be
+    // briefly busy while the request is authenticated and queued. Keep this
+    // above the old 30s cutoff so the UI does not abort a valid draft request
+    // before polling can begin.
+    120_000,
   )
   return handleResponse<CreateIdeaDraftJobResponse>(res)
 }
@@ -1429,6 +1657,95 @@ export async function cancelIdeaDraftJob(
     15_000,
   )
   return handleResponse<IdeaDraftJobStatusResponse>(res)
+}
+
+// ── Idea extraction from an uploaded document (Upload Idea) ──────────────────
+
+export type IdeaExtractionCategory = 'Innovation' | 'Improvement' | 'Request' | 'Transformation'
+
+export interface IdeaExtractionCandidate {
+  title: string
+  category: IdeaExtractionCategory
+  description: string
+  tags: string[]
+  confidence: number
+  source_excerpt: string
+}
+
+export interface IdeaExtractionDocumentContext {
+  file_name: string
+  file_type?: string
+  file_size?: number
+  extract_method?: string
+  document_text: string
+}
+
+export interface GenerateIdeaExtractionRequest {
+  context?: {
+    workspace_id?: string | null
+    user_id?: string | null
+    session_id?: string | null
+  }
+  document: IdeaExtractionDocumentContext
+}
+
+export interface GenerateIdeaExtractionResponse {
+  candidates: IdeaExtractionCandidate[]
+  warnings: string[]
+  correlation_id: string
+}
+
+export type IdeaExtractionJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface IdeaExtractionPlanStep {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  detail: string
+}
+
+export interface CreateIdeaExtractionJobResponse {
+  job_id: string
+  status: IdeaExtractionJobStatus
+  progress_percent: number
+  correlation_id: string
+}
+
+export interface IdeaExtractionJobStatusResponse {
+  job_id: string
+  status: IdeaExtractionJobStatus
+  progress_percent: number
+  current_step?: string | null
+  plan: IdeaExtractionPlanStep[]
+  result?: GenerateIdeaExtractionResponse | null
+  error_message?: string | null
+  warnings: string[]
+  correlation_id: string
+}
+
+export async function startIdeaExtractionJob(
+  payload: GenerateIdeaExtractionRequest,
+): Promise<CreateIdeaExtractionJobResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-extraction-jobs`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    30_000,
+  )
+  return handleResponse<CreateIdeaExtractionJobResponse>(res)
+}
+
+export async function getIdeaExtractionJob(
+  jobId: string,
+): Promise<IdeaExtractionJobStatusResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-extraction-jobs/${encodeURIComponent(jobId)}`,
+    { method: 'GET' },
+    15_000,
+  )
+  return handleResponse<IdeaExtractionJobStatusResponse>(res)
 }
 
 export async function brainstormIdeaDraftJob(
@@ -1558,7 +1875,8 @@ export async function chatWithTectonaAgentRuntime(
     },
     timeoutMs,
   )
-  return handleResponse<RuntimeChatResponse>(res)
+  const data = await handleResponse<RuntimeChatResponse>(res)
+  return data
 }
 
 /** Sidebar chat — uses apiFetch for auth headers and gateway dev routing. */
@@ -1589,7 +1907,8 @@ export async function sendTectonaAgentRuntimeMessage(
     throw new Error(parseErrorMessage(errPayload) || `Runtime request failed (HTTP ${res.status})`)
   }
 
-  return res.json() as Promise<RuntimeChatResponse>
+  const data = (await res.json()) as RuntimeChatResponse
+  return data
 }
 
 /** Live context budget preview for Gen AI composer (ring + detail panel). */

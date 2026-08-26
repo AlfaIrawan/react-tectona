@@ -2,7 +2,10 @@ import { onCLS, onINP, onLCP } from 'web-vitals'
 
 const DEFAULT_SERVICE_ID = 'frontend-tectona'
 /** Production / preview default; in Vite dev use same-origin + `/api/registry` proxy. */
-const DEFAULT_REGISTRY_BASE_URL = 'http://localhost:8405'
+// Browser production builds must never default to localhost: that points to
+// the end user's machine, not the Ubuntu host. Nginx exposes the registry
+// under the same-origin /api/registry path.
+const DEFAULT_REGISTRY_BASE_URL = ''
 const FLUSH_INTERVAL_MS = 15_000
 const MAX_REASONABLE_LCP_MS = 60_000
 const MAX_REASONABLE_INP_MS = 60_000

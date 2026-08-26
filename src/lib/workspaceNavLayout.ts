@@ -46,7 +46,11 @@ export function workspaceMainPanelViewportHeightStyle(viewportPx: number | null)
   return {
     height: viewportPx,
     maxHeight: viewportPx,
-    minHeight: 0,
+    // Locked to the same value as height/maxHeight (not 0): these panels are flex children with
+    // flex-basis:0% (Tailwind's flex-1), so without an explicit minHeight the flexbox algorithm
+    // shrinks them to fit their content instead of holding the computed viewport height — the
+    // panel would hug a short list instead of filling down to match Document Repository's frame.
+    minHeight: viewportPx,
   }
 }
 

@@ -11,8 +11,23 @@ import { ensureProjectDocumentFolder } from './ensureProjectDocumentFolder'
 
 export type ProjectDocumentUploadResult = {
   uploadedCount: number
-  /** Files skipped because their content is identical to an already-uploaded document. */
+  revisedCount: number
+  /** Files skipped because the same content or source filename already exists in this project's Docs. */
   duplicates: { fileName: string; existingTitle: string }[]
+}
+
+export type ProjectDocumentRevisionConflict = {
+  fileName: string
+  existingTitle: string
+  existingVersion: number
+}
+
+function normalizeDocumentName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\.[^/.]+$/, '')
+    .replace(/\s+/g, ' ')
 }
 
 async function loadExistingProjectDocsForDuplicateCheck(
@@ -28,6 +43,8 @@ async function loadExistingProjectDocsForDuplicateCheck(
       projectName: project.name,
       contentSha256: typeof doc.metadata?.content_sha256 === 'string' ? doc.metadata.content_sha256 : '',
       structured: null,
+      version: doc.version,
+      metadata: doc.metadata,
     }))
   } catch {
     // Duplicate scan is best-effort; never block uploads because the scan failed.
@@ -38,9 +55,12 @@ async function loadExistingProjectDocsForDuplicateCheck(
 export async function uploadFilesToProjectDocumentFolder(
   project: { id: string; name: string },
   files: File[],
-  options?: { ideaId?: string | null },
+  options?: {
+    ideaId?: string | null
+    onRevisionConflict?: (conflict: ProjectDocumentRevisionConflict) => Promise<boolean>
+  },
 ): Promise<ProjectDocumentUploadResult> {
-  if (files.length === 0) return { uploadedCount: 0, duplicates: [] }
+  if (files.length === 0) return { uploadedCount: 0, revisedCount: 0, duplicates: [] }
 
   const folderId = await ensureProjectDocumentFolder(project)
   const session = getSession()
@@ -48,6 +68,7 @@ export async function uploadFilesToProjectDocumentFolder(
 
   const duplicates: ProjectDocumentUploadResult['duplicates'] = []
   let uploadedCount = 0
+  let revisedCount = 0
 
   for (const file of files) {
     const title = file.name.replace(/\.[^/.]+$/, '').trim() || file.name
@@ -66,6 +87,48 @@ export async function uploadFilesToProjectDocumentFolder(
         duplicates.push({ fileName: file.name, existingTitle: exact.title })
         continue
       }
+    }
+
+    // Older project documents may not have a content fingerprint yet. Keep the
+    // upload guard effective for those records by also matching the original
+    // source filename/title before creating a new repository document.
+    const normalizedFileName = normalizeDocumentName(file.name)
+    const sameSource = existingDocs.find((doc) => {
+      const existingSource = normalizeDocumentName(doc.fileName || doc.title)
+      return existingSource === normalizedFileName
+    })
+    if (sameSource) {
+      const proceed = options?.onRevisionConflict
+        ? await options.onRevisionConflict({
+          fileName: file.name,
+          existingTitle: sameSource.title,
+          existingVersion: Number(sameSource.version ?? 1),
+        })
+        : false
+      if (!proceed) {
+        duplicates.push({ fileName: file.name, existingTitle: sameSource.title })
+        continue
+      }
+
+      const attachment = await uploadDocumentAttachment(sameSource.id, file, {
+        source: 'project-docs-ui-revision',
+        original_file_name: file.name,
+        version_notes: `Uploaded revision from project docs${fingerprint ? ' with updated content' : ''}`,
+        ...(fingerprint ? { content_sha256: fingerprint } : {}),
+      })
+      await patchDocument(sameSource.id, {
+        version: Number(sameSource.version ?? 1),
+        metadata: {
+          ...sameSource.metadata,
+          original_file_name: file.name,
+          primary_attachment_id: attachment.id,
+          ...(fingerprint ? { content_sha256: fingerprint } : {}),
+          revision_source: 'project-docs-upload-confirmed',
+        },
+        version_notes: `Revision uploaded from Project Docs (source: ${file.name})`,
+      })
+      revisedCount += 1
+      continue
     }
 
     const created = await createProjectDocument(project.id, {
@@ -126,10 +189,12 @@ export async function uploadFilesToProjectDocumentFolder(
         projectName: project.name,
         contentSha256: fingerprint,
         structured: null,
+        version: created.version,
+        metadata: created.metadata,
       })
     }
     uploadedCount += 1
   }
 
-  return { uploadedCount, duplicates }
+  return { uploadedCount, revisedCount, duplicates }
 }

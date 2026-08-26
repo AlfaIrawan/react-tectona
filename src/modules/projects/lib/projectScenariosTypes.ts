@@ -6,6 +6,18 @@ export type ScenarioPriority = 'P1' | 'P2' | 'P3'
 
 export type ScenarioCatalogStatus = 'draft' | 'reviewed' | 'ready'
 
+export type ScenarioSourceType = 'ai_generated' | 'manual' | 'uploaded_document' | 'template_generated'
+
+export type ScenarioExecutionStatus = 'not_run' | 'passed' | 'failed' | 'blocked' | 'skipped'
+
+export type ScenarioExecution = {
+  status: ScenarioExecutionStatus
+  actual_result?: string
+  executed_by?: string
+  executed_at?: string
+  evidence_urls?: string[]
+}
+
 export type ScenarioTraceabilityRef = {
   document_id: string
   document_title?: string | null
@@ -39,6 +51,8 @@ export type ScenarioPlanScenario = {
   steps: string[]
   expected_result: string
   traceability: ScenarioTraceabilityRef[]
+  source_type?: ScenarioSourceType
+  source_label?: string
 }
 
 export type ScenarioPlanGroup = {
@@ -60,6 +74,7 @@ export type ScenarioCatalogItem = ScenarioPlanScenario & {
   group_name: string
   status: ScenarioCatalogStatus
   work_item_id?: string | null
+  execution?: ScenarioExecution
 }
 
 export type ProjectScenarioAnalysisResult = {

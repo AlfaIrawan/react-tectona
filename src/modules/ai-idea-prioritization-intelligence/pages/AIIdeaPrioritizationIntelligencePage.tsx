@@ -326,7 +326,7 @@ function Panel({
     <section
       id={id}
       className={cn(
-        'rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
+        'rounded-3xl border liquid-glass-enterprise-panel transition-all',
         highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80'
       )}
     >
@@ -1494,7 +1494,7 @@ export function AIIdeaPrioritizationIntelligencePage() {
 
         <div className={cn('min-w-0', workspaceMainColumnClass(navDocked, isWorkspaceCollapsed, enterpriseNavWidthVariant))}>
           {activePanel !== 'overview' && showFiltersPanel ? (
-            <Card className="glass-card rounded-2xl p-4">
+            <Card className="liquid-glass-enterprise-panel rounded-2xl p-4">
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

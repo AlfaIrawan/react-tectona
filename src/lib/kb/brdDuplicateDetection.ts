@@ -18,6 +18,9 @@ export type ExistingBrdDoc = {
   projectName: string
   contentSha256: string
   structured: ReturnType<typeof parseBrdStructuredName>
+  /** Optional repository fields used when a duplicate is promoted to a revision. */
+  version?: number
+  metadata?: Record<string, unknown>
 }
 
 export type BrdPurposeMatch = {
@@ -76,13 +79,45 @@ export async function computeContentFingerprint(text: string): Promise<string> {
   return `c53_${cyrb53(normalized, 1).toString(16)}${cyrb53(normalized, 2).toString(16)}`
 }
 
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0
+  if (!a) return b.length
+  if (!b) return a.length
+  const prevRow = new Array(b.length + 1)
+  for (let j = 0; j <= b.length; j += 1) prevRow[j] = j
+  for (let i = 1; i <= a.length; i += 1) {
+    let prevDiagonal = prevRow[0]
+    prevRow[0] = i
+    for (let j = 1; j <= b.length; j += 1) {
+      const temp = prevRow[j]
+      prevRow[j] = a[i - 1] === b[j - 1]
+        ? prevDiagonal
+        : 1 + Math.min(prevDiagonal, prevRow[j], prevRow[j - 1])
+      prevDiagonal = temp
+    }
+  }
+  return prevRow[b.length]
+}
+
+/** Real uploads carry small naming drift between revisions — a stray trailing digit, a typo — that
+ * an exact-string family match misses entirely, silently letting genuine duplicates through with
+ * no prompt at all. Tolerate a small edit distance (both an absolute cap and a relative-to-length
+ * cap, so short segments don't get matched too loosely) instead of requiring byte-for-byte equality. */
+function nearlyEqualSegment(a: string, b: string): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const distance = levenshteinDistance(a, b)
+  const maxLength = Math.max(a.length, b.length)
+  return distance <= 2 && distance / maxLength <= 0.15
+}
+
 function sameFamily(a: ExistingBrdDoc['structured'], b: ExistingBrdDoc['structured']): boolean {
   if (!a || !b) return false
   const proj = (a.projectOrInitiativeName || '').trim().toLowerCase()
   const mod = (a.moduleOrFeatureName || '').trim().toLowerCase()
   if (!proj && !mod) return false
-  return proj === (b.projectOrInitiativeName || '').trim().toLowerCase()
-    && mod === (b.moduleOrFeatureName || '').trim().toLowerCase()
+  return nearlyEqualSegment(proj, (b.projectOrInitiativeName || '').trim().toLowerCase())
+    && nearlyEqualSegment(mod, (b.moduleOrFeatureName || '').trim().toLowerCase())
 }
 
 /** Find an existing doc with identical content fingerprint. */

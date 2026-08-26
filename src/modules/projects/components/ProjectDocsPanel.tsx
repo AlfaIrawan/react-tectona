@@ -496,7 +496,7 @@ export function ProjectDocsPanel({
       }
       className={cn(
         'scroll-mt-24',
-        'glass-card flex min-h-0 flex-col overflow-hidden border border-border/40',
+        'liquid-glass-enterprise-panel flex min-h-0 flex-col overflow-hidden border border-border/40',
         'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
         isFullscreen
           ? 'fixed inset-x-0 top-12 bottom-0 z-50 rounded-none border-0 bg-background'

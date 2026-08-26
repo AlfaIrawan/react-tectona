@@ -41,7 +41,6 @@ import {
   normalizeParticipationScopeCode,
 } from '@/lib/participationScopeRules'
 import {
-  defaultParticipationScopeCodeForUiRole,
   filterCanonicalParticipationScopeOptions,
   mapWacParticipationScopeDto,
   type ParticipationScopeOption,
@@ -51,7 +50,6 @@ import {
   buildInviteMemberGovernancePosture,
   type InviteWorkspaceGovernanceSnapshot,
 } from '@/modules/workspace-management/lib/inviteMemberGovernancePosture'
-import { displayNameFromEmail, isValidInviteEmail } from '@/lib/appAccessGate'
 import {
   DIRECTORY_PICKER_LIST_ATTR,
   directoryPickerListOpen,
@@ -63,10 +61,8 @@ import {
   retainFocusForDirectoryPicker,
 } from '@/modules/workspace-management/lib/directoryPickerKeyboard'
 
-const EMPLOYMENT_TYPES = ['Internal Employee', 'Contractor', 'External Partner', 'Vendor'] as const
-const WORKSPACE_ROLES = ['Admin', 'Manager', 'Member', 'Viewer'] as const
-type EmploymentType = (typeof EMPLOYMENT_TYPES)[number] | ''
-type WorkspaceParticipationRole = (typeof WORKSPACE_ROLES)[number] | ''
+export type WorkspaceRoleOption = { code: string; label: string }
+type WorkspaceParticipationRole = string
 type ParticipationDuration = 'Permanent' | 'Temporary' | ''
 
 export type EmployeeDirectoryEntry = {
@@ -95,58 +91,9 @@ function employeeFromDirectoryExactMatch(
   return matches.length === 1 ? matches[0] : null
 }
 
-const EMPLOYEE_DIRECTORY: EmployeeDirectoryEntry[] = [
-  {
-    id: 'emp-1',
-    name: 'Clara Jennings',
-    email: 'clara.jennings@adira.co.id',
-    directoryId: 'DIR-10482',
-    initials: 'CJ',
-    organizationalUnit: 'PMO Office — Enterprise Delivery',
-    manager: 'Portfolio Executive Council',
-  },
-  {
-    id: 'emp-2',
-    name: 'Rahul Patel',
-    email: 'rahul.patel@adira.co.id',
-    directoryId: 'DIR-10831',
-    initials: 'RP',
-    organizationalUnit: 'Program Delivery — Retail Banking',
-    manager: 'Clara Jennings',
-  },
-  {
-    id: 'emp-3',
-    name: 'Mina Alvarez',
-    email: 'mina.alvarez@adira.co.id',
-    directoryId: 'DIR-11002',
-    initials: 'MA',
-    organizationalUnit: 'Product Delivery — Digital Channels',
-    manager: 'Rahul Patel',
-  },
-  {
-    id: 'emp-4',
-    name: 'Daniel Ito',
-    email: 'daniel.ito@adira.co.id',
-    directoryId: 'DIR-11219',
-    initials: 'DI',
-    organizationalUnit: 'Operations — Platform Services',
-    manager: 'Mina Alvarez',
-  },
-  {
-    id: 'emp-5',
-    name: 'Iris Novik',
-    email: 'iris.novik@adira.co.id',
-    directoryId: 'DIR-11407',
-    initials: 'IN',
-    organizationalUnit: 'Governance — Enterprise Controls',
-    manager: 'Clara Jennings',
-  },
-]
-
 export type InviteWorkspaceMemberFormState = {
   employeeId: string | null
   workspaceIds: string[]
-  employmentType: EmploymentType
   workspaceRole: WorkspaceParticipationRole
   operationalTeams: string[]
   participationScope: string
@@ -169,7 +116,6 @@ const INVITE_NOTIFICATION_PREFERENCES_ENABLED = false
 const DEFAULT_FORM: InviteWorkspaceMemberFormState = {
   employeeId: null,
   workspaceIds: [],
-  employmentType: '',
   workspaceRole: '',
   operationalTeams: [],
   participationScope: '',
@@ -188,7 +134,7 @@ function DrawerSectionCard({ title, children }: { title: string; children: React
   return (
     <section className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-[0_8px_24px_-18px_rgba(15,23,42,0.12)] dark:border-slate-800/80 dark:bg-slate-950/50">
       <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
-      <div className="mt-3 space-y-3">{children}</div>
+      <div className="mt-3 flex flex-col space-y-3">{children}</div>
     </section>
   )
 }
@@ -225,9 +171,9 @@ function FieldLabel({
   )
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
+function ReadOnlyField({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
-    <div className="space-y-1.5">
+    <div className={cn('space-y-1.5', className)}>
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-sm text-foreground/90">{value || '—'}</div>
     </div>
@@ -439,6 +385,9 @@ export type InviteWorkspaceMemberDrawerProps = {
   submitting?: boolean
   /** When set, replaces built-in mock employee directory (e.g. identity-lite users). */
   employees?: EmployeeDirectoryEntry[]
+  /** RBAC roles returned by WAC for the selected Tectona workspace. */
+  workspaceRoles?: WorkspaceRoleOption[]
+  workspaceRolesLoading?: boolean
   onInvite?: (
     payload: InviteWorkspaceMemberFormState & {
       employee: EmployeeDirectoryEntry | null
@@ -458,10 +407,11 @@ export function InviteWorkspaceMemberDrawer({
   workspaces,
   submitting = false,
   employees,
+  workspaceRoles = [],
+  workspaceRolesLoading = false,
   onInvite,
 }: InviteWorkspaceMemberDrawerProps) {
-  const employeeDirectory = employees ?? EMPLOYEE_DIRECTORY
-  const workspaceOptions = workspaces ?? []
+  const workspaceOptions = useMemo(() => workspaces ?? [], [workspaces])
   const [form, setForm] = useState<InviteWorkspaceMemberFormState>(DEFAULT_FORM)
   const [employeeQuery, setEmployeeQuery] = useState('')
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false)
@@ -480,6 +430,10 @@ export function InviteWorkspaceMemberDrawer({
   const inviteMemberDrawerRef = useRef<HTMLDivElement>(null)
   const employeeSearchRevertRef = useRef<{ employeeId: string | null; employeeQuery: string } | null>(null)
   const employeePickerSkipBlurRef = useRef(false)
+  const employeeDirectory = useMemo(
+    () => employees ?? [],
+    [employees],
+  )
 
   const reloadOperationalTeams = useCallback(async () => {
     setTeamsLoading(true)
@@ -580,14 +534,7 @@ export function InviteWorkspaceMemberDrawer({
     )
   }, [employeeDirectory, employeeQuery])
 
-  const emailInviteCandidate = useMemo(() => {
-    const raw = employeeQuery.trim()
-    if (!raw || selectedEmployee) return null
-    if (!isValidInviteEmail(raw)) return null
-    const lower = raw.toLowerCase()
-    if (employeeDirectory.some((e) => e.email.toLowerCase() === lower)) return null
-    return { email: lower, displayName: displayNameFromEmail(lower) }
-  }, [employeeDirectory, employeeQuery, selectedEmployee])
+  const emailInviteCandidate = null
 
   const markEmployeePickerFocusMovingToList = useCallback(() => {
     employeePickerSkipBlurRef.current = true
@@ -673,7 +620,6 @@ export function InviteWorkspaceMemberDrawer({
     () => ({
       selectedWorkspaces: selectedWorkspaceGovernance,
       workspaceRole: form.workspaceRole,
-      employmentType: form.employmentType,
       participationDuration: form.participationDuration,
       participationScopeCode: form.participationScope,
       participationScopeOptions,
@@ -682,7 +628,6 @@ export function InviteWorkspaceMemberDrawer({
     [
       selectedWorkspaceGovernance,
       form.workspaceRole,
-      form.employmentType,
       form.participationDuration,
       form.participationScope,
       participationScopeOptions,
@@ -912,15 +857,15 @@ export function InviteWorkspaceMemberDrawer({
             </EnterpriseInfoCallout>
 
             <DrawerSectionCard title="Member Identity">
-              <div className="space-y-1.5">
+              <div className="order-2 space-y-1.5">
                 {selectedEmployee ? (
                   <span className="text-xs font-medium text-muted-foreground">
-                    Search employee
+                    Search organization member
                     <RequiredMark />
                   </span>
                 ) : (
                 <FieldLabel htmlFor="invite-member-search" required>
-                  Search employee
+                  Search organization member
                 </FieldLabel>
                 )}
                 {selectedEmployee ? (
@@ -992,12 +937,15 @@ export function InviteWorkspaceMemberDrawer({
                           employeeQuery,
                           filteredEmployees.length
                         )}
-                        placeholder="Search employee name, email, or directory ID"
+                        placeholder="Search organization member name, email, or directory ID"
                         className="h-10 pl-9 text-sm"
                         disabled={submitting}
                         autoComplete="off"
                       />
                     </div>
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      Only active organization members who are not already in this workspace are listed.
+                    </p>
                     {employeePickerOpen && employeeQuery.trim().length > 0 ? (
                       <div
                         id="invite-member-employee-listbox"
@@ -1061,28 +1009,8 @@ export function InviteWorkspaceMemberDrawer({
                 )}
               </div>
 
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="invite-employment-type" required>
-                  Employment type
-                </FieldLabel>
-                <Select
-                  id="invite-employment-type"
-                  value={form.employmentType}
-                  onChange={(e) => setForm((prev) => ({ ...prev, employmentType: e.target.value as EmploymentType }))}
-                  disabled={submitting}
-                  className="h-10 w-full text-sm"
-                >
-                  <option value="">Select employment type</option>
-                  {EMPLOYMENT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-
-              <ReadOnlyField label="Organizational Unit" value={selectedEmployee?.organizationalUnit ?? ''} />
-              <ReadOnlyField label="Manager" value={selectedEmployee?.manager ?? ''} />
+              <ReadOnlyField className="order-3" label="Organizational Unit" value={selectedEmployee?.organizationalUnit ?? ''} />
+              <ReadOnlyField className="order-3" label="Manager" value={selectedEmployee?.manager ?? ''} />
             </DrawerSectionCard>
 
             <DrawerSectionCard title="Workspace Participation">
@@ -1099,30 +1027,26 @@ export function InviteWorkspaceMemberDrawer({
                       if (!workspaceRole) {
                         return { ...prev, workspaceRole: '' }
                       }
-                      const scopeCode = defaultParticipationScopeCodeForUiRole(workspaceRole)
                       return {
                         ...prev,
                         workspaceRole,
-                        participationScope:
-                          !prev.participationScope
-                          && participationScopeOptions.some((s) => s.value === scopeCode)
-                            ? scopeCode
-                            : prev.participationScope,
                       }
                     })
                   }}
-                  disabled={submitting}
+                  disabled={submitting || workspaceRolesLoading || workspaceRoles.length === 0}
                   className="h-10 w-full text-sm"
                 >
                   <option value="">Select workspace role</option>
-                  {WORKSPACE_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
+                  {workspaceRolesLoading ? <option value="">Loading RBAC roles…</option> : null}
+                  {!workspaceRolesLoading && workspaceRoles.length === 0 ? <option value="">No RBAC roles available</option> : null}
+                  {workspaceRoles.map((role) => (
+                    <option key={role.code} value={role.code}>
+                      {role.label}
                     </option>
                   ))}
                 </Select>
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  Workspace roles define operational participation only.
+                  Roles are provided by Tectona RBAC. Participation scope controls operational coverage separately.
                 </p>
               </div>
 
@@ -1448,7 +1372,6 @@ export function InviteWorkspaceMemberDrawer({
               disabled={
                 submitting ||
                 (!selectedEmployee && !emailInviteCandidate) ||
-                !form.employmentType ||
                 !form.workspaceRole ||
                 form.operationalTeams.length === 0 ||
                 !form.participationScope ||

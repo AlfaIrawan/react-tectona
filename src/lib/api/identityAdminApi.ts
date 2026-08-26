@@ -46,6 +46,17 @@ export async function fetchIdentityUsers(params?: {
   return handleJson<IdentityUserListResponse>(res)
 }
 
+/** Fetch one canonical identity for workspace/app-scoped directory enrichment. */
+export async function fetchIdentityUser(identityRef: string): Promise<IdentityUserDto> {
+  const ref = identityRef.trim()
+  if (!ref) throw new Error('Identity reference is required.')
+  const base = IDENTITY_API_BASE.replace(/\/$/, '')
+  const res = await apiFetch(`${base}/v1/users/${encodeURIComponent(ref)}`, {
+    headers: tectonaServiceHeaders(),
+  })
+  return handleJson<IdentityUserDto>(res)
+}
+
 export type IdentityUserProvisionResponse = {
   id: string
   email: string

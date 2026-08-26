@@ -23,6 +23,7 @@ export function OnboardingStatusPage() {
   const subjectId = session?.user.id ?? ''
   const reason = searchParams.get('reason')
   const pendingEmailFromNavigation = reason === 'email_verify_pending'
+  const pendingJoinFromNavigation = reason === 'join_pending'
   const {
     loading,
     bypass,
@@ -39,7 +40,14 @@ export function OnboardingStatusPage() {
   const [switchingToAdmin, setSwitchingToAdmin] = useState(false)
   const [switchError, setSwitchError] = useState('')
 
-  if (!loading && !bypass && shouldShowOnboardingWizard && !shouldShowOnboardingStatus && !pendingEmailFromNavigation) {
+  if (
+    !loading &&
+    !bypass &&
+    shouldShowOnboardingWizard &&
+    !shouldShowOnboardingStatus &&
+    !pendingEmailFromNavigation &&
+    !pendingJoinFromNavigation
+  ) {
     return <Navigate to="/onboarding" replace />
   }
 
@@ -122,7 +130,7 @@ export function OnboardingStatusPage() {
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4">
       <div className="w-full max-w-md mx-auto">
-        <div className="glass-card rounded-lg shadow-2xl p-8 space-y-6">
+        <div className="liquid-glass-enterprise-panel rounded-lg p-8 space-y-6">
           <div className="space-y-2 text-center">
             <img src="/images/logo.png" alt="Tectona" className="mx-auto h-24 w-auto object-contain" />
           </div>

@@ -2,11 +2,24 @@ import { create } from 'zustand'
 
 import { useChatPanelStore } from '@/stores/chat-panel-store'
 
+export type OpenIdeaDiscussChatRequest = {
+  ideaId: string
+  ideaTitle: string
+  sectionKey: string
+  sectionLabel: string
+  ideaDescription: string
+  currentSectionContent: string
+  workspaceId?: string | null
+  userId?: string | null
+  isImpactSection?: boolean
+}
+
 export type OpenChatThreadRequest = {
-  channelId: string
+  channelId?: string
   senderUserId?: string
   channelType?: string
   channelTitle?: string | null
+  genAi?: OpenIdeaDiscussChatRequest
 }
 
 type ChatNavigationState = {
@@ -26,4 +39,8 @@ export const useChatNavigationStore = create<ChatNavigationState>((set) => ({
 
 export function requestOpenChatThread(request: OpenChatThreadRequest): void {
   useChatNavigationStore.getState().requestOpen(request)
+}
+
+export function requestOpenIdeaDiscussChat(request: OpenIdeaDiscussChatRequest): void {
+  useChatNavigationStore.getState().requestOpen({ genAi: request })
 }

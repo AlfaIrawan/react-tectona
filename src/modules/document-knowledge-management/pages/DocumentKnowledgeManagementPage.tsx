@@ -64,6 +64,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Globe,
   ClipboardList,
   Clock3,
   Code2,
@@ -75,7 +76,6 @@ import {
   FileStack,
   FileText,
   FileType,
-  Filter,
   FolderKanban,
   GitBranch,
   Highlighter,
@@ -173,9 +173,9 @@ import {
   type DocEditorInstance,
 } from '@/modules/document-knowledge-management/components/DocumentOnlyOfficeEditor'
 import {
-  TemplateDuplicateCompareEditor,
-  type TemplateDuplicateCompareSession,
-} from '@/modules/document-knowledge-management/components/TemplateDuplicateCompareEditor'
+  TemplateOnlyOfficeCompareEditor,
+  type OnlyOfficeCompareSession,
+} from '@/modules/document-knowledge-management/components/TemplateOnlyOfficeCompareEditor'
 import { KbStyleRichTextEditor } from '@/modules/document-knowledge-management/components/KbStyleRichTextEditor'
 import {
   isRepositoryNativePdfPreview,
@@ -205,7 +205,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectItem } from '@/components/ui/select'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Tooltip as UiTooltip } from '@/components/ui/tooltip'
-import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { DndContext } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
@@ -402,7 +402,8 @@ import {
   fetchWorkspaceGovernanceAssignments,
   type WorkspaceGovernanceAssignmentDto,
 } from '@/lib/api/workspaceGovernanceApi'
-import { fetchProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { fetchAllProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { parseProjectIdFromDocumentFolderDescription } from '@/modules/projects/lib/projectDocumentFolder'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import {
   createProjectDocument,
@@ -436,6 +437,7 @@ import {
   type DocumentCapabilityLookupItem,
   type DocumentNoteResponse,
   type DocumentResponse,
+  type TemplateAttachmentResponse,
   type DocumentTemplateResponse,
 } from '@/lib/api/documentKnowledgeApi'
 import {
@@ -452,7 +454,11 @@ import { useToast } from '@/components/ui/toast'
 import { MeetingVoiceOnlinePeersPanel } from '@/modules/document-knowledge-management/components/MeetingVoiceOnlinePeersPanel'
 import { TemplateAgentSchemaPanel } from '@/modules/document-knowledge-management/components/TemplateAgentSchemaPanel'
 import { buildTemplateInstantiateNamingPlan, buildTemplateUploadNamingPlan } from '@/modules/document-knowledge-management/lib/templateInstantiateNaming'
-import { belongsToDkmTemplateScope } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
+import {
+  belongsToDkmTemplateScope,
+  resolveTemplateWorkspaceId,
+  type TemplateWorkspaceCandidate,
+} from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
 import { gatherExistingTemplateDocs, pickTemplateRevisionTargetId, resolveNextTemplateVersionLabelForFamily, formatTemplateVersionForDisplay, resolveTemplateVersionLabelFromResponse, type TemplateUploadDuplicateVerdict } from '@/modules/document-knowledge-management/lib/templateDuplicateDetection'
 import { extractCompareDocumentText } from '@/modules/document-knowledge-management/lib/templateCompareText'
 import {
@@ -828,7 +834,13 @@ function deriveKbTitleFromBrdStandard(params: {
     case 'capability':
       return normalizeKbTitleForSubmit(`${trimDuplicateTokenPrefix(primary, secondary)} Capability`)
     default: {
-      const fallback = normalizeKbTitleForSubmit(params.fallbackTitle ?? '')
+      // The LLM's own kb_title is trusted mostly as-is (unlike primary/secondary above, which
+      // always go through humanizeSemanticName) — but it occasionally comes back with words
+      // mashed together with no separators at all (e.g. "BRDProjectActionMs2Penambahan",
+      // inspired by the source file name), which looked fine to the model but reads as broken to
+      // a person. Run it through the same camelCase-splitting normalization first; this is a
+      // no-op on an already-well-spaced title.
+      const fallback = normalizeKbTitleForSubmit(splitCamelCaseWords(params.fallbackTitle ?? ''))
       if (fallback) return fallback
       return normalizeKbTitleForSubmit(`${trimDuplicateTokenPrefix(primary, secondary)} Capability`)
     }
@@ -1208,6 +1220,14 @@ function splitKbRunOnLineByKnownPhrases(value: string): string[] {
 }
 
 function formatKbShortSummary(content: string, maxChars = 110): string {
+  const structuredQuestions = parseKbQuestionEditModel(content)
+  if (structuredQuestions) {
+    const firstPrompt = structuredQuestions.questions[0]?.prompt?.trim() ?? ''
+    const prefix = `${structuredQuestions.questions.length} structured questions`
+    if (!firstPrompt) return prefix
+    const summary = `${prefix}. ${firstPrompt}`
+    return summary.length <= maxChars ? summary : `${summary.slice(0, maxChars).trimEnd()}...`
+  }
   const plainText = kbExtractPlainText(content ?? '').replace(/\s+/g, ' ').trim()
   if (!plainText) return 'No summary available.'
 
@@ -1709,11 +1729,168 @@ function KbDetailHtmlWithColumnLimits({
   )
 }
 
+const SYSTEM_KB_TITLE_PATTERNS = [
+  /^idea intake checklist(?: \(default\))?$/i,
+]
+
+function isSystemKbEntryTitle(title: string): boolean {
+  return SYSTEM_KB_TITLE_PATTERNS.some((pattern) => pattern.test(title.trim()))
+}
+
+function humanizeKbJsonKey(value: string): string {
+  const labels: Record<string, string> = {
+    questions: 'Questions',
+    prompt: 'Question',
+    required: 'Required',
+  }
+  if (labels[value]) return labels[value]
+  return value
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+function parseKbStructuredJson(content: string): unknown | null {
+  const trimmed = content.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+type KbQuestionEditModel = {
+  version: number
+  questions: Array<{ id: string; prompt: string; required: boolean }>
+}
+
+function parseKbQuestionEditModel(content: string): KbQuestionEditModel | null {
+  const parsed = parseKbStructuredJson(content)
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return null
+  const record = parsed as Record<string, unknown>
+  if (!Array.isArray(record.questions)) return null
+  const questions = record.questions.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+    const question = item as Record<string, unknown>
+    const prompt = typeof question.prompt === 'string'
+      ? question.prompt
+      : typeof question.question === 'string' ? question.question : ''
+    if (!prompt.trim()) return null
+    return {
+      id: typeof question.id === 'string' && question.id.trim() ? question.id : `question_${index + 1}`,
+      prompt,
+      required: question.required === true,
+    }
+  })
+  if (questions.some((question): question is null => question === null)) return null
+  return {
+    version: typeof record.version === 'number' ? record.version : 1,
+    questions: questions as Array<{ id: string; prompt: string; required: boolean }>,
+  }
+}
+
+function serializeKbQuestionEditModel(model: KbQuestionEditModel): string {
+  return JSON.stringify(model, null, 2)
+}
+
+function KbStructuredValue({
+  value,
+  depth = 0,
+}: {
+  value: unknown
+  depth?: number
+}): ReactNode {
+  if (value === null || value === undefined || value === '') {
+    return <span className="text-muted-foreground">-</span>
+  }
+  if (typeof value === 'boolean') {
+    return (
+      <span className={cn(
+        'inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium',
+        value
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          : 'border-slate-200 bg-slate-50 text-slate-600',
+      )}
+      >{value ? 'Ya' : 'Tidak'}</span>
+    )
+  }
+  if (typeof value !== 'object') return <span>{String(value)}</span>
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-muted-foreground">Tidak ada data</span>
+    return (
+      <div className="space-y-2">
+        {value.map((item, index) => (
+          <div key={`${depth}-${index}`} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+            <KbStructuredValue value={item} depth={depth + 1} />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const record = value as Record<string, unknown>
+  const isQuestionRecord = typeof record.prompt === 'string' || typeof record.question === 'string'
+  const entries = Object.entries(record)
+    .filter(([key]) => key !== 'version' && !(isQuestionRecord && key === 'id'))
+  return (
+    <div className="space-y-2">
+      {entries.map(([key, item]) => {
+        const isQuestion = key === 'prompt' || key === 'question'
+        const isRequired = key === 'required'
+        return (
+          <div key={`${depth}-${key}`} className={cn(isQuestion && 'rounded-md bg-slate-50/80 px-2.5 py-2')}>
+            <div className="flex items-start justify-between gap-3">
+              <span className={cn(
+                'text-xs font-medium text-foreground',
+                isQuestion && 'text-sm font-semibold',
+              )}>{humanizeKbJsonKey(key)}</span>
+              {isRequired && typeof item === 'boolean' ? <KbStructuredValue value={item} depth={depth + 1} /> : null}
+            </div>
+            {!isRequired ? (
+              <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                <KbStructuredValue value={item} depth={depth + 1} />
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function KbStructuredJsonContent({ content }: { content: string }) {
+  const parsed = useMemo(() => parseKbStructuredJson(content), [content])
+  if (!parsed) return null
+  const rootEntries = !Array.isArray(parsed) && typeof parsed === 'object'
+    ? Object.entries(parsed as Record<string, unknown>).filter(([key]) => key !== 'version')
+    : null
+
+  return (
+    <div className="space-y-4 px-3 py-3 font-sans">
+      {rootEntries ? rootEntries.map(([key, value]) => (
+        <section key={key} className="space-y-2">
+          <h2 className="text-sm font-semibold text-foreground">{humanizeKbJsonKey(key)}</h2>
+          <KbStructuredValue value={value} />
+        </section>
+      )) : <KbStructuredValue value={parsed} />}
+    </div>
+  )
+}
+
 function renderKbDetailContent(
   content: string,
   workspaces: WorkspaceOrgWorkspaceDto[] = [],
   densityMode: 'maximize' | 'minimize' = 'minimize',
 ): ReactNode {
+  const structuredJson = parseKbStructuredJson(content)
+  if (structuredJson) {
+    return <KbStructuredJsonContent content={content} />
+  }
   const preparedContent = prepareKbRichHtmlContent(content)
   if (kbLooksLikeHtml(preparedContent)) {
     const plainProbe = kbExtractPlainText(sanitizeKbRichHtml(preparedContent)).trim()
@@ -3331,6 +3508,24 @@ function buildTemplateDetail(template: DocumentTemplateResponse): DetailEntry {
   }
 }
 
+function hasTemplateAttachment(template: DocumentTemplateResponse): boolean {
+  return Boolean(template.has_attachment || template.latest_attachment_id || template.latest_file_name)
+}
+
+function hasValidTemplateAgentSchema(template: DocumentTemplateResponse): boolean {
+  const schema = template.metadata?.agent_schema
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return false
+  const schemaRecord = schema as Record<string, unknown>
+  const compiler = schemaRecord.compiler
+  const hasExecutableMapping = ['placeholders', 'sections', 'repeaters'].some((key) => {
+    const value = schemaRecord[key]
+    return Array.isArray(value) && value.length > 0
+  })
+  return template.metadata?.agent_schema_status === 'valid'
+    && hasExecutableMapping
+    && Boolean(compiler && typeof compiler === 'object' && !Array.isArray(compiler) && (compiler as Record<string, unknown>).valid === true)
+}
+
 function mapAuditToRecentActivity(auditRows: DocumentAuditEntryResponse[]): DetailEntry['recentActivity'] {
   return auditRows.slice(0, 6).map((row) => ({
     action: humanizeCode(row.action_code),
@@ -3653,11 +3848,12 @@ const REPOSITORY_TABLE_DEFAULT_HIDDEN_COLUMNS: RepositoryTableColumnKey[] = ['li
 const REPOSITORY_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: RepositoryTableColumnKey; label: string }[] =
   REPOSITORY_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: repositoryTableColumnLabel(key) }))
 
-type RepositoryTableGroupByKey = 'type' | 'capability' | 'status'
+type RepositoryTableGroupByKey = 'type' | 'capability' | 'status' | 'folder'
 const REPOSITORY_TABLE_GROUP_BY_OPTIONS: readonly { key: RepositoryTableGroupByKey; label: string }[] = [
   { key: 'type', label: 'Type' },
   { key: 'capability', label: 'Capability' },
   { key: 'status', label: 'Status' },
+  { key: 'folder', label: 'Folder' },
 ]
 
 function repositoryTableColumnLabel(key: RepositoryTableColumnKey): string {
@@ -3689,11 +3885,13 @@ function repositoryTableColumnHeaderIcon(key: RepositoryTableColumnKey): LucideI
 }
 
 function repositoryTableGroupLabel(
-  item: { type: string; capability: string; status: string },
+  item: { type: string; capability: string; status: string; folderId: string | null },
   groupBy: RepositoryTableGroupByKey,
+  folderNames?: Map<string, string>,
 ): string {
   if (groupBy === 'type') return item.type
   if (groupBy === 'capability') return item.capability
+  if (groupBy === 'folder') return item.folderId ? (folderNames?.get(item.folderId) ?? 'Unknown folder') : 'Root'
   return item.status
 }
 
@@ -4535,8 +4733,7 @@ function DocPanelSection({
         id={id}
         ref={sectionRef}
         className={cn(
-          'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
-          'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
+          'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
           highlight ? 'border-blue-300 ring-2 ring-blue-100' : ''
         )}
         style={style}
@@ -4578,7 +4775,7 @@ function DocPanelSection({
         id={id}
         ref={sectionRef}
         className={cn(
-          'glass-card flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-[0_16px_44px_rgba(15,23,42,0.10)] ring-1 ring-slate-900/[0.04] transition-all',
+          'liquid-glass-enterprise-panel flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200/80 transition-all',
           highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80'
         )}
         style={style}
@@ -4608,7 +4805,7 @@ function DocPanelSection({
     <section
       id={id}
       className={cn(
-        'rounded-3xl border bg-white/90 shadow-[0_16px_50px_rgba(15,23,42,0.08)] transition-all',
+        'rounded-3xl border liquid-glass-enterprise-panel transition-all',
         highlight ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80'
       )}
     >
@@ -4743,6 +4940,7 @@ export function DocumentKnowledgeManagementPage() {
   const [repositoryPageSize, setRepositoryPageSize] = useState(10)
   const [repositoryTableSort, setRepositoryTableSort] = useState<{ key: RepositoryTableColumnKey; dir: 'asc' | 'desc' } | null>(null)
   const [repositoryTableGroupBy, setRepositoryTableGroupBy] = useState<RepositoryTableGroupByKey | null>(null)
+  const [repositoryCollapsedGroups, setRepositoryCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [showRepositoryTableSelection, setShowRepositoryTableSelection] = useState(false)
   const [repositoryTableSelectedIds, setRepositoryTableSelectedIds] = useState<string[]>([])
   const [activityPage, setActivityPage] = useState(1)
@@ -4862,11 +5060,21 @@ export function DocumentKnowledgeManagementPage() {
   const [repositoryDetailError, setRepositoryDetailError] = useState<string | null>(null)
   const [repositoryDownloadBusyId, setRepositoryDownloadBusyId] = useState<string | null>(null)
   const [repositoryDeleteBusyId, setRepositoryDeleteBusyId] = useState<string | null>(null)
+  const [repositoryBulkActionBusy, setRepositoryBulkActionBusy] = useState(false)
+  const [repositoryBulkDeleteConfirmOpen, setRepositoryBulkDeleteConfirmOpen] = useState(false)
   const [repositoryProjects, setRepositoryProjects] = useState<Array<{ id: string; name: string }>>([])
   const [repositoryUploadBusy, setRepositoryUploadBusy] = useState(false)
   // --- Document repository folders (Stage 3) ---
   const [repositoryFolders, setRepositoryFolders] = useState<DocumentFolder[]>([])
   const [repositoryCurrentFolderId, setRepositoryCurrentFolderId] = useState<string | null>(null)
+  const [repositoryViewMode, setRepositoryViewMode] = useState<'folders' | 'split' | 'grouped'>(() => {
+    try {
+      const stored = localStorage.getItem('tectona-repository-view-mode')
+      return stored === 'split' || stored === 'grouped' ? stored : 'folders'
+    } catch {
+      return 'folders'
+    }
+  })
   const [repositoryFolderBusy, setRepositoryFolderBusy] = useState(false)
   const [repositoryFolderRenameId, setRepositoryFolderRenameId] = useState<string | null>(null)
   // Drag-and-drop: which folder drop target is currently hovered ('root' = move out to root).
@@ -4884,6 +5092,11 @@ export function DocumentKnowledgeManagementPage() {
   const [isTemplateDragActive, setIsTemplateDragActive] = useState(false)
   const repositoryUploadInputRef = useRef<HTMLInputElement | null>(null)
   const repositoryUploadTargetFolderIdRef = useRef<string | null>(null)
+  const repositoryFolderSliderRef = useRef<HTMLDivElement | null>(null)
+  const [repositoryFolderSliderPosition, setRepositoryFolderSliderPosition] = useState({
+    canPrev: false,
+    canNext: false,
+  })
 
   const [kbApiItems, setKbApiItems] = useState<KbEntryResponse[]>([])
   const [kbLoading, setKbLoading] = useState(true)
@@ -4936,6 +5149,7 @@ export function DocumentKnowledgeManagementPage() {
   const [kbFormCategory, setKbFormCategory] = useState<string>('')
   const [kbFormTitle, setKbFormTitle] = useState('')
   const [kbFormContent, setKbFormContent] = useState('')
+  const [kbStructuredEdit, setKbStructuredEdit] = useState<KbQuestionEditModel | null>(null)
   const [kbTableInsertOpen, setKbTableInsertOpen] = useState(false)
   const [kbTableInsertHover, setKbTableInsertHover] = useState({ rows: 0, cols: 0 })
   const [kbTableInsertOptions, setKbTableInsertOptions] = useState<KbTableInsertOptions>(
@@ -5037,11 +5251,8 @@ export function DocumentKnowledgeManagementPage() {
   const kbAiStickySentinelRef = useRef<HTMLDivElement | null>(null)
   const kbInlineRenameInputRef = useRef<HTMLInputElement | null>(null)
   const kbInlineRenameCursorRef = useRef<number | null>(null)
-  const kbContextMenuRef = useRef<HTMLDivElement | null>(null)
   const kbEditorTableMenuRef = useRef<HTMLDivElement | null>(null)
   const kbEditorTableMenuTargetRef = useRef<KbTableCellContext | null>(null)
-  const repositoryContextMenuRef = useRef<HTMLDivElement | null>(null)
-  const repositoryFolderContextMenuRef = useRef<HTMLDivElement | null>(null)
   const kbWorkspaceAliasMigrationRef = useRef<Set<string>>(new Set())
   const [kbTitleOverrides, setKbTitleOverrides] = useState<Record<string, string>>({})
   const [kbInlineRename, setKbInlineRename] = useState<{ entryId: string; value: string } | null>(null)
@@ -5056,17 +5267,15 @@ export function DocumentKnowledgeManagementPage() {
   const [templateRowContextMenu, setTemplateRowContextMenu] = useState<{ templateId: string; x: number; y: number } | null>(null)
   const [templateDownloadBusyId, setTemplateDownloadBusyId] = useState<string | null>(null)
   const [templateStatusBusyId, setTemplateStatusBusyId] = useState<string | null>(null)
+  const [templateSharingBusyId, setTemplateSharingBusyId] = useState<string | null>(null)
   const [templateDeleteBusyId, setTemplateDeleteBusyId] = useState<string | null>(null)
   const [templateDeleteTarget, setTemplateDeleteTarget] = useState<{ id: string; name: string } | null>(null)
-  const kbContextMenuPos = useFlippedMenuPosition(kbContextMenuRef, !!kbRowContextMenu, kbRowContextMenu?.x ?? 0, kbRowContextMenu?.y ?? 0)
   const kbEditorTableMenuPos = useFlippedMenuPosition(
     kbEditorTableMenuRef,
     !!kbEditorTableMenu,
     kbEditorTableMenu?.x ?? 0,
     kbEditorTableMenu?.y ?? 0,
   )
-  const repositoryContextMenuPos = useFlippedMenuPosition(repositoryContextMenuRef, !!repositoryRowContextMenu, repositoryRowContextMenu?.x ?? 0, repositoryRowContextMenu?.y ?? 0)
-  const repositoryFolderContextMenuPos = useFlippedMenuPosition(repositoryFolderContextMenuRef, !!repositoryFolderContextMenu, repositoryFolderContextMenu?.x ?? 0, repositoryFolderContextMenu?.y ?? 0)
   const [repositoryDeleteTarget, setRepositoryDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [kbDeleteTarget, setKbDeleteTarget] = useState<{ id: string; title: string } | null>(null)
   const [kbDeleteBusy, setKbDeleteBusy] = useState(false)
@@ -5145,6 +5354,7 @@ export function DocumentKnowledgeManagementPage() {
   function resetKbAddDrawerState() {
     setKbFormTitle('')
     setKbFormContent('')
+    setKbStructuredEdit(null)
     setKbFormPriority(10)
     setKbFormWorkspace('')
     setKbFormDepartmentId('')
@@ -5659,6 +5869,18 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [])
 
+  const kbOrganizationWorkspaceOptions = useMemo(() => {
+    const activeWorkspace = resolveKbWorkspaceOption(
+      activeWorkspaceApiId ?? tenant?.workspaceId,
+      kbWorkspaceOptions,
+    )
+    const organizationId = activeWorkspace?.organization_id
+    return kbWorkspaceOptions.filter((workspace) => {
+      if (workspace.tenant_mode === 'personal') return false
+      return !organizationId || workspace.organization_id === organizationId
+    })
+  }, [activeWorkspaceApiId, kbWorkspaceOptions, tenant?.workspaceId])
+
   useEffect(() => {
     void loadKnowledgeBaseEntries()
   }, [loadKnowledgeBaseEntries, workspaceScopeKey])
@@ -5912,13 +6134,9 @@ export function DocumentKnowledgeManagementPage() {
       } catch {
         // Keep local fallback labels when lookup endpoint is unavailable.
       }
-      const projectList = await fetchProjects({
-        page: 1,
-        page_size: 100,
-        app_id: TECTONA_PROJECT_APP_ID,
-      })
-      setRepositoryProjects(projectList.projects.map((project) => ({ id: project.id, name: project.name })))
-      const nameByProjectId = new Map(projectList.projects.map((project) => [project.id, project.name]))
+      const projectList = await fetchAllProjects({ app_id: TECTONA_PROJECT_APP_ID })
+      setRepositoryProjects(projectList.map((project) => ({ id: project.id, name: project.name })))
+      const nameByProjectId = new Map(projectList.map((project) => [project.id, project.name]))
 
       const allDocs: DocumentResponse[] = []
       let page = 1
@@ -5968,17 +6186,28 @@ export function DocumentKnowledgeManagementPage() {
       const folders = await fetchAllDocumentFolders()
       const session = getSession()
       const currentOwnerId = session?.user.id || session?.user.email || null
-      setRepositoryFolders(
-        filterDkmFoldersForRepositoryScope(
-          folders,
-          repositoryItems.map((item) => item.folderId),
-          currentOwnerId,
-        ),
+      const scopedFolders = filterDkmFoldersForRepositoryScope(
+        folders,
+        repositoryItems.map((item) => item.folderId),
+        currentOwnerId,
       )
+      const activeProjectIds = new Set(repositoryProjects.map((project) => project.id))
+      const folderById = new Map(scopedFolders.map((folder) => [folder.id, folder]))
+      setRepositoryFolders(scopedFolders.filter((folder) => {
+        let cursor: DocumentFolder | undefined = folder
+        let guard = 0
+        while (cursor && guard < 64) {
+          const linkedProjectId = parseProjectIdFromDocumentFolderDescription(cursor.description)
+          if (linkedProjectId) return activeProjectIds.has(linkedProjectId)
+          cursor = cursor.parent_id ? folderById.get(cursor.parent_id) : undefined
+          guard += 1
+        }
+        return true
+      }))
     } catch {
       setRepositoryFolders([])
     }
-  }, [repositoryItems])
+  }, [repositoryItems, repositoryProjects])
 
   useEffect(() => {
     void loadRepositoryFolders()
@@ -6042,6 +6271,33 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [addToast, loadRepositoryItems, loadRepositoryFolders])
 
+  const handleRepositoryBulkMoveToFolder = useCallback(async (itemIds: string[], folderId: string | null) => {
+    if (itemIds.length === 0) return
+    setRepositoryBulkActionBusy(true)
+    try {
+      const results = await Promise.allSettled(
+        itemIds.map(async (itemId) => {
+          const doc = await getDocument(itemId)
+          if ((doc.folder_id ?? null) === folderId) return
+          await patchDocument(itemId, { version: doc.version, folder_id: folderId })
+        }),
+      )
+      const failed = results.filter((r) => r.status === 'rejected').length
+      await loadRepositoryItems()
+      await loadRepositoryFolders()
+      setRepositoryTableSelectedIds([])
+      addToast({
+        title: failed > 0 ? 'Some documents could not be moved' : (folderId ? 'Moved to folder' : 'Moved to root'),
+        description: failed > 0
+          ? `${itemIds.length - failed} of ${itemIds.length} document(s) moved; ${failed} failed.`
+          : `${itemIds.length} document(s) moved.`,
+        variant: failed > 0 ? 'error' : 'success',
+      })
+    } finally {
+      setRepositoryBulkActionBusy(false)
+    }
+  }, [addToast, loadRepositoryItems, loadRepositoryFolders])
+
   const handleMoveFolderToParent = useCallback(async (folder: DocumentFolder, parentId: string | null) => {
     if ((folder.parent_id ?? null) === parentId) return
     if (parentId && isDocumentFolderDescendant(repositoryFolders, folder.id, parentId)) {
@@ -6068,6 +6324,46 @@ export function DocumentKnowledgeManagementPage() {
       .sort((a, b) => a.name.localeCompare(b.name)),
     [repositoryFolders, repositoryCurrentFolderId],
   )
+
+  const updateRepositoryFolderSliderPosition = useCallback(() => {
+    const slider = repositoryFolderSliderRef.current
+    if (!slider) return
+    const maxScrollLeft = Math.max(0, slider.scrollWidth - slider.clientWidth)
+    setRepositoryFolderSliderPosition({
+      canPrev: slider.scrollLeft > 1,
+      canNext: slider.scrollLeft < maxScrollLeft - 1,
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    updateRepositoryFolderSliderPosition()
+    const slider = repositoryFolderSliderRef.current
+    if (!slider) return
+    const resizeObserver = new ResizeObserver(updateRepositoryFolderSliderPosition)
+    resizeObserver.observe(slider)
+    slider.addEventListener('scroll', updateRepositoryFolderSliderPosition, { passive: true })
+    return () => {
+      resizeObserver.disconnect()
+      slider.removeEventListener('scroll', updateRepositoryFolderSliderPosition)
+    }
+  }, [repositoryCurrentFolderId, repositorySubfolders.length, updateRepositoryFolderSliderPosition])
+
+  const scrollRepositoryFolders = useCallback((direction: 'previous' | 'next') => {
+    const slider = repositoryFolderSliderRef.current
+    if (!slider) return
+    const distance = Math.max(slider.clientWidth * 0.82, 240)
+    slider.scrollBy({ left: direction === 'next' ? distance : -distance, behavior: 'smooth' })
+  }, [])
+
+  const changeRepositoryViewMode = useCallback((mode: 'folders' | 'split' | 'grouped') => {
+    setRepositoryViewMode(mode)
+    try {
+      localStorage.setItem('tectona-repository-view-mode', mode)
+    } catch {
+      // Ignore storage failures; the view still changes for this session.
+    }
+  }, [])
+
 
   const repositoryFolderBreadcrumb = useMemo(() => {
     const byId = new Map(repositoryFolders.map((folder) => [folder.id, folder]))
@@ -6320,8 +6616,9 @@ export function DocumentKnowledgeManagementPage() {
     documentSummary: string
     documentVersionNo?: number
     documentVersionLabel?: string | null
+    usageSource?: 'user' | 'system'
   }) => {
-    const { file, projectId, projectName, documentId, documentTitle, documentSummary, documentVersionNo, documentVersionLabel } = params
+    const { file, projectId, projectName, documentId, documentTitle, documentSummary, documentVersionNo, documentVersionLabel, usageSource = 'user' } = params
     let kbItemsSnapshot = kbApiItems
     const ensuredContentStandard = await ensureBrdToKbContentStandardEntry(kbItemsSnapshot)
     if (ensuredContentStandard && !kbItemsSnapshot.some((entry) => entry.id === ensuredContentStandard.id)) {
@@ -6451,8 +6748,11 @@ export function DocumentKnowledgeManagementPage() {
     const memoContentStandard = parseMemoInternalToKbContentStandard(memoContentStandardEntry?.content)
 
     const generated = await generateRepositoryKbFromDocument({
+      usage_source: usageSource,
       context: {
         workspace_id: activeWorkspaceApiId,
+        user_id: getSession()?.user.id || getSession()?.user.email || null,
+        user_name: getSession()?.user.name || getSession()?.user.email || null,
         session_id: `repository-upload-kb-${documentId}`,
       },
       document_kind: isMemoInternal ? 'memo_internal' : 'brd',
@@ -6703,6 +7003,7 @@ export function DocumentKnowledgeManagementPage() {
     documentSummary: string
     documentVersionNo?: number
     documentVersionLabel?: string | null
+    usageSource?: 'user' | 'system'
   }) => {
     const { documentId } = params
     const current = repositoryKbProcessByDocumentId[documentId]
@@ -6936,6 +7237,66 @@ export function DocumentKnowledgeManagementPage() {
       setRepositoryDeleteBusyId(null)
     }
   }, [addToast, closeRepositoryDocumentPreview, deleteRepositoryGeneratedKbEntries, repositoryDeleteTarget, repositoryPreviewItem, selectedDetailId])
+
+  const handleRepositoryBulkDeleteConfirm = useCallback(async () => {
+    const itemIds = repositoryTableSelectedIds
+    if (itemIds.length === 0) {
+      setRepositoryBulkDeleteConfirmOpen(false)
+      return
+    }
+    const itemsById = new Map(repositoryItems.map((item) => [item.id, item]))
+    setRepositoryBulkActionBusy(true)
+    try {
+      const results = await Promise.allSettled(
+        itemIds.map(async (itemId) => {
+          await deleteDocument(itemId)
+          await deleteRepositoryGeneratedKbEntries({
+            documentId: itemId,
+            documentTitle: itemsById.get(itemId)?.name ?? itemId,
+          })
+        }),
+      )
+      const deletedIds = new Set(itemIds.filter((_, index) => results[index].status === 'fulfilled'))
+      const failed = itemIds.length - deletedIds.size
+
+      setRepositoryItems((prev) => prev.filter((entry) => !deletedIds.has(entry.id)))
+      setRepositoryDetailsById((prev) => {
+        const next = { ...prev }
+        deletedIds.forEach((id) => delete next[id])
+        return next
+      })
+      setRepositoryKbProcessByDocumentId((prev) => {
+        const next = { ...prev }
+        deletedIds.forEach((id) => delete next[id])
+        return next
+      })
+      setRepositoryUploadFileByDocumentId((prev) => {
+        const next = { ...prev }
+        deletedIds.forEach((id) => delete next[id])
+        return next
+      })
+      if (selectedDetailId && deletedIds.has(selectedDetailId)) {
+        setDetailDrawerOpen(false)
+        setSelectedDetailId('knowledge')
+      }
+      if (repositoryPreviewItem && deletedIds.has(repositoryPreviewItem.id)) {
+        closeRepositoryDocumentPreview()
+      }
+      setRepositoryTableSelectedIds((prev) => prev.filter((id) => !deletedIds.has(id)))
+      setRepositoryBulkDeleteConfirmOpen(false)
+
+      addToast({
+        title: failed > 0 ? 'Some documents could not be deleted' : 'Documents deleted',
+        description: failed > 0
+          ? `${deletedIds.size} of ${itemIds.length} document(s) deleted; ${failed} failed.`
+          : `${deletedIds.size} document(s) deleted.`,
+        variant: failed > 0 ? 'error' : 'success',
+      })
+    } finally {
+      setRepositoryBulkActionBusy(false)
+    }
+  }, [addToast, closeRepositoryDocumentPreview, deleteRepositoryGeneratedKbEntries, repositoryItems, repositoryPreviewItem, repositoryTableSelectedIds, selectedDetailId])
+
   const resolveRepositoryUploadNamingRule = useCallback(async (): Promise<RepositoryUploadNamingRule | null> => {
     let catalogs: Awaited<ReturnType<typeof fetchGovernanceCatalogSnapshot>> | null = null
     let workspaces: Awaited<ReturnType<typeof fetchAllWorkspaceOrgWorkspaces>> = []
@@ -7091,9 +7452,11 @@ export function DocumentKnowledgeManagementPage() {
   type RepositoryDuplicateMatch = { id: string; title: string; projectName: string; kbGenerated: boolean; reason?: string }
   type RepositoryDuplicatePrompt = {
     fileName: string
+    pendingFile: File
+    revisionTargetId: string | null
     nameMatches: RepositoryDuplicateMatch[]
     samePurpose: RepositoryDuplicateMatch[]
-    resolve: (proceed: boolean) => void
+    resolve: (action: 'cancel' | 'upload_new' | 'new_version') => void
   }
   const [repositoryDuplicatePrompt, setRepositoryDuplicatePrompt] = useState<RepositoryDuplicatePrompt | null>(null)
   type TemplateDuplicateMatch = { id: string; title: string; workspaceName: string; reason?: string }
@@ -7107,7 +7470,8 @@ export function DocumentKnowledgeManagementPage() {
     resolve: (proceed: boolean) => void
   }
   const [templateDuplicatePrompt, setTemplateDuplicatePrompt] = useState<TemplateDuplicatePrompt | null>(null)
-  const [templateCompareSession, setTemplateCompareSession] = useState<TemplateDuplicateCompareSession | null>(null)
+  const [templateCompareSession, setTemplateCompareSession] = useState<OnlyOfficeCompareSession | null>(null)
+  const [repositoryCompareSession, setRepositoryCompareSession] = useState<OnlyOfficeCompareSession | null>(null)
   type UploadWorkspacePickerState = {
     purpose: 'repository-document' | 'template-upload' | 'template-create'
     candidates: Array<{ id: string; name: string }>
@@ -7122,11 +7486,22 @@ export function DocumentKnowledgeManagementPage() {
     summaryById: Map<string, string>
     kbContents: string[]
   }> => {
-    const projectList = await fetchProjects({ page: 1, page_size: 100, app_id: TECTONA_PROJECT_APP_ID })
+    // Duplicate detection is only as good as its coverage — a single page (100 projects / 100
+    // documents per project) silently missed anything beyond that cap, letting exact-duplicate
+    // uploads through undetected once a project/tenant grew past it. Page through everything.
+    const allProjects = await fetchAllProjects({ app_id: TECTONA_PROJECT_APP_ID })
     const perProject = await Promise.allSettled(
-      projectList.projects.map(async (project) => {
-        const res = await listProjectDocuments(project.id, { page: 1, page_size: 100 })
-        return res.items.map((doc) => ({ doc, fallbackProjectName: project.name }))
+      allProjects.map(async (project) => {
+        const items: DocumentResponse[] = []
+        let page = 1
+        const pageSize = 100
+        while (true) {
+          const res = await listProjectDocuments(project.id, { page, page_size: pageSize })
+          items.push(...res.items)
+          if (res.items.length === 0 || items.length >= res.total) break
+          page += 1
+        }
+        return items.map((doc) => ({ doc, fallbackProjectName: project.name }))
       }),
     )
     const docs: ExistingBrdDoc[] = []
@@ -7135,10 +7510,17 @@ export function DocumentKnowledgeManagementPage() {
       if (result.status !== 'fulfilled') continue
       for (const { doc, fallbackProjectName } of result.value) {
         const meta = (doc.metadata ?? {}) as Record<string, unknown>
-        const fileName = typeof meta.original_file_name === 'string' && meta.original_file_name.trim()
-          ? meta.original_file_name.trim()
-          : typeof meta.repository_file_name === 'string' && meta.repository_file_name.trim()
-            ? meta.repository_file_name.trim()
+        // Prefer repository_file_name (the standardized "BRD_<project>_<module>_V<n>_<date>" name
+        // produced by auto-rename) over original_file_name (the raw, human-typed upload name) —
+        // this value feeds parseBrdStructuredName() below for same-family duplicate detection,
+        // which only recognizes the standardized format. Falling back to the raw original name
+        // first meant it almost never parsed (real uploads rarely arrive pre-formatted), so
+        // existing documents silently never matched as "same family" as a new upload — the
+        // "Save as new version" prompt could never fire against them.
+        const fileName = typeof meta.repository_file_name === 'string' && meta.repository_file_name.trim()
+          ? meta.repository_file_name.trim()
+          : typeof meta.original_file_name === 'string' && meta.original_file_name.trim()
+            ? meta.original_file_name.trim()
             : doc.title
         const storageProjectName = typeof meta.storage_project_name === 'string' && meta.storage_project_name.trim()
           ? meta.storage_project_name.trim()
@@ -7163,12 +7545,13 @@ export function DocumentKnowledgeManagementPage() {
     fileName: string,
     extractText: string,
     fingerprint: string,
-  ): Promise<{ proceed: boolean }> => {
+    pendingFile: File,
+  ): Promise<{ proceed: boolean; revisionTargetId: string | null }> => {
     let existing: { docs: ExistingBrdDoc[]; summaryById: Map<string, string>; kbContents: string[] }
     try {
       existing = await gatherExistingBrdDocs()
     } catch {
-      return { proceed: true } // never block the upload because the duplicate scan failed
+      return { proceed: true, revisionTargetId: null } // never block the upload because the duplicate scan failed
     }
     const { docs, summaryById, kbContents } = existing
 
@@ -7180,7 +7563,7 @@ export function DocumentKnowledgeManagementPage() {
         description: `Identical content to "${exact.title}" (project: ${exact.projectName || '—'}). KB: ${kbGenerated ? 'already generated' : 'not generated yet'}.`,
         variant: 'error',
       })
-      return { proceed: false }
+      return { proceed: false, revisionTargetId: null }
     }
 
     const subject: ExistingBrdDoc = {
@@ -7207,18 +7590,24 @@ export function DocumentKnowledgeManagementPage() {
       }
     }
 
-    if (nameMatches.length === 0 && samePurpose.length === 0) return { proceed: true }
+    if (nameMatches.length === 0 && samePurpose.length === 0) return { proceed: true, revisionTargetId: null }
 
     const kbGen = findKbGeneratedDocIds(
       [...nameMatches.map((d) => d.id), ...samePurpose.map((s) => s.doc.id)],
       kbContents,
     )
-    return new Promise<{ proceed: boolean }>((resolve) => {
+    const revisionTargetId = pickTemplateRevisionTargetId(nameMatches, samePurpose)
+    return new Promise<{ proceed: boolean; revisionTargetId: string | null }>((resolve) => {
       setRepositoryDuplicatePrompt({
         fileName,
+        pendingFile,
+        revisionTargetId,
         nameMatches: nameMatches.map((d) => ({ id: d.id, title: d.title, projectName: d.projectName, kbGenerated: kbGen.has(d.id) })),
         samePurpose: samePurpose.map((s) => ({ id: s.doc.id, title: s.doc.title, projectName: s.doc.projectName, kbGenerated: kbGen.has(s.doc.id), reason: s.reason })),
-        resolve: (proceed) => { setRepositoryDuplicatePrompt(null); resolve({ proceed }) },
+        resolve: (action) => {
+          setRepositoryDuplicatePrompt(null)
+          resolve({ proceed: action !== 'cancel', revisionTargetId: action === 'new_version' ? revisionTargetId : null })
+        },
       })
     })
   }, [addToast, gatherExistingBrdDocs])
@@ -7320,9 +7709,96 @@ export function DocumentKnowledgeManagementPage() {
 
     // Duplicate detection: block on identical content, prompt on same-family / same-purpose.
     const contentFingerprint = await computeContentFingerprint(extract.text)
-    const duplicateVerdict = await checkUploadForDuplicates(effectiveFileName, extract.text, contentFingerprint)
+    const duplicateVerdict = await checkUploadForDuplicates(effectiveFileName, extract.text, contentFingerprint, uploadFile)
     if (!duplicateVerdict.proceed) {
       repositoryUploadTargetFolderIdRef.current = null
+      return
+    }
+
+    if (duplicateVerdict.revisionTargetId) {
+      const revisionTargetId = duplicateVerdict.revisionTargetId
+      setRepositoryUploadBusy(true)
+      try {
+        const latest = await getDocument(revisionTargetId)
+        const updated = await patchDocument(revisionTargetId, {
+          version: latest.version,
+          content: `Attachment uploaded from frontend: ${effectiveFileName}`,
+          version_notes: `Revised via Document Repository upload: ${effectiveFileName}`,
+          metadata: {
+            ...latest.metadata,
+            repository_file_name: effectiveFileName,
+            original_file_name: file.name,
+            auto_renamed_by_standard: uploadAutoRenamed,
+            content_sha256: contentFingerprint,
+            document_version_label: documentVersionLabel,
+            document_version_source: versionFromContent ? 'content' : parsedOriginal?.version ? 'filename' : 'default',
+            file_properties: fileProperties,
+          },
+        })
+
+        let finalDoc = updated
+        try {
+          const attachment = await uploadDocumentAttachment(revisionTargetId, uploadFile, {
+            source: 'document-repository-ui-revision',
+            original_file_name: file.name,
+            repository_file_name: effectiveFileName,
+            auto_renamed_by_standard: uploadAutoRenamed,
+            version_notes: `Revised to ${documentVersionLabel}`,
+          })
+          try {
+            finalDoc = await patchDocument(revisionTargetId, {
+              version: updated.version,
+              metadata: { ...updated.metadata, primary_attachment_id: attachment.id },
+            })
+          } catch {
+            /* attachment exists even if metadata patch fails */
+          }
+        } catch (attachmentError) {
+          throw new Error(
+            `Failed to upload the file to storage; the version update was not completed. ${attachmentError instanceof Error ? attachmentError.message : ''}`.trim(),
+          )
+        }
+
+        const mapped = mapDocumentToRepositoryItem(finalDoc, targetProject.name)
+        setRepositoryItems((prev) => {
+          const next = [mapped, ...prev.filter((entry) => entry.id !== mapped.id)]
+          return next.sort((a, b) => a.name.localeCompare(b.name))
+        })
+        setRepositoryError(null)
+        await loadRepositoryItems()
+        void loadRepositoryFolders()
+        setSelectedDetailId(finalDoc.id)
+        setRepositoryUploadFileByDocumentId((prev) => ({ ...prev, [finalDoc.id]: uploadFile }))
+
+        addToast({
+          title: 'Saved as new version',
+          description: `${effectiveFileName} was added as a new version of "${finalDoc.title}".`,
+          variant: 'success',
+        })
+
+        if (repositoryAutoGenerateKb) {
+          void runRepositoryKbGeneration({
+            usageSource: 'system',
+            file: uploadFile,
+            projectId: hasExplicitProjectSelection ? targetProject.id : '',
+            projectName: hasExplicitProjectSelection ? targetProject.name : '',
+            documentId: finalDoc.id,
+            documentTitle: finalDoc.title,
+            documentSummary: finalDoc.summary?.trim() || '',
+            documentVersionNo: finalDoc.current_version_no,
+            documentVersionLabel,
+          })
+        }
+      } catch (error) {
+        addToast({
+          title: 'Failed to save new version',
+          description: error instanceof Error ? error.message : 'Unable to save the new document version.',
+          variant: 'error',
+        })
+      } finally {
+        repositoryUploadTargetFolderIdRef.current = null
+        setRepositoryUploadBusy(false)
+      }
       return
     }
 
@@ -7456,6 +7932,7 @@ export function DocumentKnowledgeManagementPage() {
 
       if (repositoryAutoGenerateKb) {
         void runRepositoryKbGeneration({
+          usageSource: 'system',
           file: uploadFile,
           // Unassigned upload (no explicit project) → leave the KB "Project" empty rather than
           // surfacing the storage bucket fallback.
@@ -7537,26 +8014,48 @@ export function DocumentKnowledgeManagementPage() {
     userWorkspaceOptions,
   ])
 
-  const resolveTemplateWorkspaceCandidates = useCallback((): Array<{ id: string; name: string }> => {
+  const resolveTemplateWorkspaceCandidates = useCallback((): TemplateWorkspaceCandidate[] => {
     const resolved = resolveRepositoryUploadWorkspaceCandidates()
     if (resolved.mode === 'choose') return resolved.candidates
     if (resolved.workspaceId) {
+      const option = userWorkspaceOptions.find((item) => item.workspaceId === resolved.workspaceId)
       return [{
         id: resolved.workspaceId,
         name:
           formatKbWorkspaceLabel(resolved.workspaceId, kbWorkspaceOptions)
-          || userWorkspaceOptions.find((option) => option.workspaceId === resolved.workspaceId)?.workspaceName
+          || option?.workspaceName
           || resolved.workspaceId,
+        organizationId: option?.organizationId,
+        tenantMode: option?.tenantMode,
       }]
     }
-    return (readAccessibleWorkspaceIds() ?? []).map((id) => ({
-      id,
-      name:
-        formatKbWorkspaceLabel(id, kbWorkspaceOptions)
-        || userWorkspaceOptions.find((option) => option.workspaceId === id)?.workspaceName
-        || id,
-    }))
+    return (readAccessibleWorkspaceIds() ?? []).map((id) => {
+      const option = userWorkspaceOptions.find((item) => item.workspaceId === id)
+      return {
+        id,
+        name: formatKbWorkspaceLabel(id, kbWorkspaceOptions) || option?.workspaceName || id,
+        organizationId: option?.organizationId,
+        tenantMode: option?.tenantMode,
+      }
+    })
   }, [kbWorkspaceOptions, resolveRepositoryUploadWorkspaceCandidates, userWorkspaceOptions])
+
+  /** ALL workspaces the user can access, unconditionally — unlike resolveTemplateWorkspaceCandidates
+   * (whose "mode !== choose" branch deliberately collapses to just the single current workspace,
+   * since it exists to pick an upload TARGET), callers that need to see every sibling workspace
+   * (e.g. the "Share with workspaces…" picker) must not go through that collapsing logic — after
+   * excluding the current workspace, a single-item list always filters down to nothing. */
+  const resolveAllAccessibleWorkspaceCandidates = useCallback((): TemplateWorkspaceCandidate[] => {
+    return (readAccessibleWorkspaceIds() ?? []).map((id) => {
+      const option = userWorkspaceOptions.find((item) => item.workspaceId === id)
+      return {
+        id,
+        name: formatKbWorkspaceLabel(id, kbWorkspaceOptions) || option?.workspaceName || id,
+        organizationId: option?.organizationId,
+        tenantMode: option?.tenantMode,
+      }
+    })
+  }, [kbWorkspaceOptions, userWorkspaceOptions])
 
   const loadMasterTemplates = useCallback(async () => {
     setTemplateLoading(true)
@@ -7670,13 +8169,22 @@ export function DocumentKnowledgeManagementPage() {
   const openTemplateDuplicateCompare = useCallback((templateId: string, templateTitle: string) => {
     if (!templateDuplicatePrompt) return
     setTemplateCompareSession({
-      templateId,
-      templateTitle,
+      kind: 'template',
+      entityId: templateId,
+      entityTitle: templateTitle,
       pendingFile: templateDuplicatePrompt.pendingFile,
-      serverLabel: templateTitle,
-      uploadLabel: templateDuplicatePrompt.fileName,
     })
   }, [templateDuplicatePrompt])
+
+  const openRepositoryDuplicateCompare = useCallback((documentId: string, documentTitle: string) => {
+    if (!repositoryDuplicatePrompt) return
+    setRepositoryCompareSession({
+      kind: 'document',
+      entityId: documentId,
+      entityTitle: documentTitle,
+      pendingFile: repositoryDuplicatePrompt.pendingFile,
+    })
+  }, [repositoryDuplicatePrompt])
 
   useEffect(() => {
     void loadMasterTemplates()
@@ -8099,45 +8607,6 @@ export function DocumentKnowledgeManagementPage() {
   }, [kbAddOpen, kbSaving, kbCategoryOptions, kbManageCatOpen, kbAddFullscreen])
 
   useEffect(() => {
-    if (!kbRowContextMenu) return
-
-    const closeContextMenu = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (target && kbContextMenuRef.current?.contains(target)) return
-      setKbRowContextMenu(null)
-    }
-
-    const closeContextMenuWithoutTarget = () => {
-      setKbRowContextMenu(null)
-    }
-
-    // Scrolling inside the menu (e.g. the folder list) must NOT close it; only outside scrolls do.
-    const closeContextMenuOnScroll = (event: Event) => {
-      const target = event.target as Node | null
-      if (target && kbContextMenuRef.current?.contains(target)) return
-      setKbRowContextMenu(null)
-    }
-
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setKbRowContextMenu(null)
-      }
-    }
-
-    window.addEventListener('pointerdown', closeContextMenu)
-    window.addEventListener('resize', closeContextMenuWithoutTarget)
-    window.addEventListener('scroll', closeContextMenuOnScroll, true)
-    window.addEventListener('keydown', onWindowKeyDown)
-
-    return () => {
-      window.removeEventListener('pointerdown', closeContextMenu)
-      window.removeEventListener('resize', closeContextMenuWithoutTarget)
-      window.removeEventListener('scroll', closeContextMenuOnScroll, true)
-      window.removeEventListener('keydown', onWindowKeyDown)
-    }
-  }, [kbRowContextMenu])
-
-  useEffect(() => {
     if (!kbEditorTableMenu) return
 
     const closeContextMenu = (event: PointerEvent) => {
@@ -8171,84 +8640,6 @@ export function DocumentKnowledgeManagementPage() {
       window.removeEventListener('keydown', onWindowKeyDown)
     }
   }, [kbEditorTableMenu])
-
-  useEffect(() => {
-    if (!repositoryRowContextMenu) return
-
-    const closeContextMenu = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (target && repositoryContextMenuRef.current?.contains(target)) return
-      setRepositoryRowContextMenu(null)
-    }
-
-    const closeContextMenuWithoutTarget = () => {
-      setRepositoryRowContextMenu(null)
-    }
-
-    // Scrolling inside the menu (e.g. the folder list) must NOT close it; only outside scrolls do.
-    const closeContextMenuOnScroll = (event: Event) => {
-      const target = event.target as Node | null
-      if (target && repositoryContextMenuRef.current?.contains(target)) return
-      setRepositoryRowContextMenu(null)
-    }
-
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setRepositoryRowContextMenu(null)
-      }
-    }
-
-    window.addEventListener('pointerdown', closeContextMenu)
-    window.addEventListener('resize', closeContextMenuWithoutTarget)
-    window.addEventListener('scroll', closeContextMenuOnScroll, true)
-    window.addEventListener('keydown', onWindowKeyDown)
-
-    return () => {
-      window.removeEventListener('pointerdown', closeContextMenu)
-      window.removeEventListener('resize', closeContextMenuWithoutTarget)
-      window.removeEventListener('scroll', closeContextMenuOnScroll, true)
-      window.removeEventListener('keydown', onWindowKeyDown)
-    }
-  }, [repositoryRowContextMenu])
-
-  useEffect(() => {
-    if (!repositoryFolderContextMenu) return
-
-    const closeContextMenu = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (target && repositoryFolderContextMenuRef.current?.contains(target)) return
-      setRepositoryFolderContextMenu(null)
-    }
-
-    const closeContextMenuWithoutTarget = () => {
-      setRepositoryFolderContextMenu(null)
-    }
-
-    // Scrolling inside the menu (e.g. the folder list) must NOT close it; only outside scrolls do.
-    const closeContextMenuOnScroll = (event: Event) => {
-      const target = event.target as Node | null
-      if (target && repositoryFolderContextMenuRef.current?.contains(target)) return
-      setRepositoryFolderContextMenu(null)
-    }
-
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setRepositoryFolderContextMenu(null)
-      }
-    }
-
-    window.addEventListener('pointerdown', closeContextMenu)
-    window.addEventListener('resize', closeContextMenuWithoutTarget)
-    window.addEventListener('scroll', closeContextMenuOnScroll, true)
-    window.addEventListener('keydown', onWindowKeyDown)
-
-    return () => {
-      window.removeEventListener('pointerdown', closeContextMenu)
-      window.removeEventListener('resize', closeContextMenuWithoutTarget)
-      window.removeEventListener('scroll', closeContextMenuOnScroll, true)
-      window.removeEventListener('keydown', onWindowKeyDown)
-    }
-  }, [repositoryFolderContextMenu])
 
   useEffect(() => {
     if (!kbManageCatOpen) return
@@ -9085,11 +9476,14 @@ export function DocumentKnowledgeManagementPage() {
     setKbEditingEntryId(fullEntry.id)
     setKbFormCategory(fullEntry.category)
     setKbFormTitle(fullEntry.title)
+      const structuredEdit = parseKbQuestionEditModel(fullEntry.content)
+      setKbStructuredEdit(structuredEdit)
       const workspaceOrgHtml = convertKbWorkspaceOrgPlainToHtml(fullEntry.content)
       const rawEntryContent = workspaceOrgHtml ?? fullEntry.content
-      setKbFormContent(sanitizeKbRichHtml(prepareKbRichHtmlContent(rawEntryContent)))
+      setKbFormContent(structuredEdit ? fullEntry.content : sanitizeKbRichHtml(prepareKbRichHtmlContent(rawEntryContent)))
     setKbFormPriority(fullEntry.priority)
-    setKbFormWorkspace(canonicalizeKbWorkspaceId(fullEntry.workspace_id))
+    const entryWorkspace = resolveKbWorkspaceOption(fullEntry.workspace_id, kbOrganizationWorkspaceOptions)
+    setKbFormWorkspace(entryWorkspace ? canonicalizeKbWorkspaceId(fullEntry.workspace_id) : '')
     setKbFormDepartmentId(fullEntry.department_id ?? '')
     setKbFormDivisionId(fullEntry.division_id ?? '')
     setKbFormVisibilityScope(fullEntry.visibility_scope ?? 'internal')
@@ -9098,7 +9492,7 @@ export function DocumentKnowledgeManagementPage() {
       setKbEditorOpenSeed((seed) => seed + 1)
     setKbAddOpen(true)
     })()
-  }, [addToast, kbApiItems, kbCategoryOptions, kbLive])
+  }, [addToast, kbApiItems, kbCategoryOptions, kbLive, kbOrganizationWorkspaceOptions])
 
   const openKbRowContextMenu = useCallback((event: React.MouseEvent, entryId: string, detailId: string) => {
     event.preventDefault()
@@ -9229,7 +9623,10 @@ export function DocumentKnowledgeManagementPage() {
     })
   }, [displayedKbEntries, categoryColumnFilters, workspaceColumnFilters, relevanceColumnFilters])
 
-  const kbContentTextLength = useMemo(() => kbExtractPlainText(kbFormContent).length, [kbFormContent])
+  const kbContentTextLength = useMemo(() => {
+    if (kbStructuredEdit) return kbStructuredEdit.questions.map((question) => question.prompt).join('\n').length
+    return kbExtractPlainText(kbFormContent).length
+  }, [kbFormContent, kbStructuredEdit])
 
   const runKbAiAction = useCallback((action: KbAiActionKey, task: () => void | Promise<void>) => {
     if (kbAiActionLoading) return
@@ -9251,6 +9648,7 @@ export function DocumentKnowledgeManagementPage() {
 
   const setKbEditorHtml = useCallback((nextHtml: string) => {
     const sanitized = sanitizeKbRichHtml(nextHtml)
+    setKbStructuredEdit(null)
     setKbFormContent(sanitized)
     const editor = kbContentEditorRef.current
     if (editor && editor.innerHTML !== sanitized) {
@@ -9338,6 +9736,7 @@ export function DocumentKnowledgeManagementPage() {
         message: truncateRuntimeMessage(runtimeMessage, KB_RUNTIME_MESSAGE_MAX_CHARS),
         context: {
           workspace_id: canonicalizeKbWorkspaceId(kbFormWorkspace) || null,
+          user_id: getSession()?.user.id || getSession()?.user.email || null,
           session_id: 'kb-drawer-ai-assist',
         },
         options: {
@@ -10381,7 +10780,14 @@ export function DocumentKnowledgeManagementPage() {
                 className="h-8 rounded-lg text-sm font-semibold"
               />
             ) : (
-              <p className="text-sm font-semibold text-slate-900 line-clamp-1">{entry.title}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-semibold text-slate-900 line-clamp-1">{entry.title}</p>
+                {isSystemKbEntryTitle(entry.title) ? (
+                  <Badge variant="outline" className="shrink-0 rounded-full border-violet-200 bg-violet-50 px-2 py-0 text-[9px] font-semibold text-violet-700">
+                    System
+                  </Badge>
+                ) : null}
+              </div>
             )}
             <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-2">
               {entry.shortSummary?.trim() || `Category: ${entry.category} | Workspace: ${entry.linkedWorkspace}`}
@@ -10974,6 +11380,11 @@ export function DocumentKnowledgeManagementPage() {
   }
 
   function readKbEditorContentForSave(): string {
+    if (kbStructuredEdit) {
+      const structuredContent = serializeKbQuestionEditModel(kbStructuredEdit)
+      setKbFormContent(structuredContent)
+      return structuredContent
+    }
     const editor = kbContentEditorRef.current
     if (editor) {
       // Force-stamp every table's current visual column widths into width attrs.
@@ -11029,7 +11440,7 @@ export function DocumentKnowledgeManagementPage() {
     const normalizedWorkspaceId = canonicalizeKbWorkspaceId(kbFormWorkspace)
     const workspaceForSave = resolveWorkspaceIdForKbSave(kbFormWorkspace, kbWorkspaceOptions)
     if (normalizedWorkspaceId) {
-      const knownWorkspace = resolveKbWorkspaceOption(normalizedWorkspaceId, kbWorkspaceOptions)
+      const knownWorkspace = resolveKbWorkspaceOption(normalizedWorkspaceId, kbOrganizationWorkspaceOptions)
       if (!knownWorkspace) {
       try {
         const workspaceExists = await isWorkspaceIdRegistered(normalizedWorkspaceId)
@@ -11141,11 +11552,23 @@ export function DocumentKnowledgeManagementPage() {
 
   function handleKbDelete(id: string) {
     const deletingTitle = kbApiItems.find((item) => item.id === id)?.title ?? id
+    if (isSystemKbEntryTitle(deletingTitle)) {
+      addToast({
+        title: 'System entry cannot be deleted',
+        description: 'This Knowledge Base entry is managed by the system and is required for the workspace.',
+        variant: 'warning',
+      })
+      return
+    }
     setKbDeleteTarget({ id, title: deletingTitle })
   }
 
   async function handleKbDeleteConfirm() {
     if (!kbDeleteTarget) return
+    if (isSystemKbEntryTitle(kbDeleteTarget.title)) {
+      setKbDeleteTarget(null)
+      return
+    }
     const deletedTitle = kbDeleteTarget.title
     const deletedTitleShort = deletedTitle.length > 56 ? `${deletedTitle.slice(0, 56).trimEnd()}...` : deletedTitle
     setKbDeleteBusy(true)
@@ -11505,12 +11928,18 @@ export function DocumentKnowledgeManagementPage() {
     // folders (like search) so the user sees every project-less document at once.
     const matchesFolder =
       activePanel !== 'repository' ||
+      repositoryViewMode === 'grouped' ||
       deferredQuery.length > 0 ||
       filters.project === UNIDENTIFIED_PROJECT_LABEL ||
       (item.folderId ?? null) === repositoryCurrentFolderId
 
     return matchesQuery && matchesType && matchesCapability && matchesWorkspace && matchesProject && matchesTask && matchesOwner && matchesTag && matchesFolder
   })
+
+  const repositoryFolderNameById = useMemo(
+    () => new Map(repositoryFolders.map((folder) => [folder.id, folder.name])),
+    [repositoryFolders],
+  )
 
   useEffect(() => {
     setRepositoryPage(1)
@@ -11572,18 +12001,19 @@ export function DocumentKnowledgeManagementPage() {
   }, [filteredRepository, repositoryTableSort, repositoryKbProcessByDocumentId])
 
   const repositoryFlatRows = useMemo(() => {
-    if (repositoryTableGroupBy) {
+    const effectiveGroupBy = repositoryViewMode === 'grouped' ? 'folder' : repositoryTableGroupBy
+    if (effectiveGroupBy) {
       const grouped = [...sortedRepository].sort((a, b) =>
-        repositoryTableGroupLabel(a, repositoryTableGroupBy).localeCompare(
-          repositoryTableGroupLabel(b, repositoryTableGroupBy),
+        repositoryTableGroupLabel(a, effectiveGroupBy, repositoryFolderNameById).localeCompare(
+          repositoryTableGroupLabel(b, effectiveGroupBy, repositoryFolderNameById),
           undefined,
           { sensitivity: 'base' },
         ),
       )
-      return grouped.map((item) => ({ item, groupLabel: repositoryTableGroupLabel(item, repositoryTableGroupBy) }))
+      return grouped.map((item) => ({ item, groupLabel: repositoryTableGroupLabel(item, effectiveGroupBy, repositoryFolderNameById) }))
     }
     return sortedRepository.map((item) => ({ item, groupLabel: null as string | null }))
-  }, [sortedRepository, repositoryTableGroupBy])
+  }, [repositoryFolderNameById, repositoryTableGroupBy, repositoryViewMode, sortedRepository])
 
   const repositoryTotalPages = Math.max(1, Math.ceil(repositoryFlatRows.length / repositoryPageSize))
   const repositoryPageSafe = Math.min(repositoryPage, repositoryTotalPages)
@@ -11725,6 +12155,7 @@ export function DocumentKnowledgeManagementPage() {
     documentType: string
     hasAttachment: boolean
     fileName: string | null
+    sharedWorkspaceNames: string[]
   }
 
   const masterTemplateRows = useMemo<MasterTemplateRow[]>(() => {
@@ -11736,6 +12167,17 @@ export function DocumentKnowledgeManagementPage() {
 
     return templateApiItems.map((item) => {
       const usageCount = usageByTemplateId.get(item.id) ?? 0
+      const metadataFileName = typeof item.metadata?.repository_file_name === 'string'
+        ? item.metadata.repository_file_name.trim()
+        : ''
+      const fileName = item.latest_file_name?.trim() || metadataFileName || null
+      const sharedWorkspaceIds = Array.isArray(item.metadata?.shared_with_workspace_ids)
+        ? (item.metadata!.shared_with_workspace_ids as string[])
+        : []
+      const sharedWorkspaceNames = sharedWorkspaceIds.map((id) => {
+        const option = userWorkspaceOptions.find((entry) => entry.workspaceId === id)
+        return formatKbWorkspaceLabel(id, kbWorkspaceOptions) || option?.workspaceName || id
+      })
       return {
         id: item.id,
         kind: 'template' as const,
@@ -11748,11 +12190,12 @@ export function DocumentKnowledgeManagementPage() {
         updated: formatRelativeTimestamp(item.updated_date || item.created_date),
         templateCode: item.template_code,
         documentType: humanizeCode(item.document_type_code),
-        hasAttachment: Boolean(item.has_attachment),
-        fileName: item.latest_file_name ?? null,
+        hasAttachment: hasTemplateAttachment(item) || Boolean(fileName),
+        fileName,
+        sharedWorkspaceNames,
       }
     })
-  }, [templateApiItems, repositoryItems])
+  }, [templateApiItems, repositoryItems, userWorkspaceOptions, kbWorkspaceOptions])
 
   const templateById = useMemo(() => {
     const map = new Map<string, DocumentTemplateResponse>()
@@ -11763,6 +12206,39 @@ export function DocumentKnowledgeManagementPage() {
   const templateContextMenuItem = useMemo(
     () => (templateRowContextMenu ? templateById.get(templateRowContextMenu.templateId) ?? null : null),
     [templateById, templateRowContextMenu]
+  )
+
+  const [templateShareDialog, setTemplateShareDialog] = useState<{
+    templateId: string
+    selectedIds: Set<string>
+  } | null>(null)
+  const [templateShareSearchQuery, setTemplateShareSearchQuery] = useState('')
+  const [templateShareSearchOpen, setTemplateShareSearchOpen] = useState(false)
+
+  /** Sibling workspaces in the SAME organization as `template`'s own workspace — the only ones
+   * eligible to appear in the "Share with workspaces…" picker (excludes the template's own
+   * workspace itself). Returns an empty list if the template has no resolvable workspace. */
+  const getTemplateShareCandidates = useCallback((template: DocumentTemplateResponse) => {
+    const candidates = resolveAllAccessibleWorkspaceCandidates()
+    const workspaceId = resolveTemplateWorkspaceId(template, candidates)
+    if (!workspaceId) return { workspaceId: null as string | null, options: [] as TemplateWorkspaceCandidate[] }
+    const templateWorkspace = candidates.find((candidate) => candidate.id === workspaceId)
+    const options = templateWorkspace?.organizationId
+      ? candidates.filter(
+          (candidate) => candidate.id !== workspaceId && candidate.organizationId === templateWorkspace.organizationId,
+        )
+      : []
+    return { workspaceId, options }
+  }, [resolveAllAccessibleWorkspaceCandidates])
+
+  const templateShareDialogItem = useMemo(
+    () => (templateShareDialog ? templateById.get(templateShareDialog.templateId) ?? null : null),
+    [templateById, templateShareDialog],
+  )
+
+  const templateShareDialogOptions = useMemo(
+    () => (templateShareDialogItem ? getTemplateShareCandidates(templateShareDialogItem).options : []),
+    [getTemplateShareCandidates, templateShareDialogItem],
   )
 
   const openTemplateDetail = useCallback((templateId: string) => {
@@ -11802,28 +12278,21 @@ export function DocumentKnowledgeManagementPage() {
       })
       return
     }
+    if (!hasValidTemplateAgentSchema(template)) {
+      addToast({
+        title: 'Save a valid schema first',
+        description: 'Preview uses the saved agent schema to render every field and repeatable section.',
+        variant: 'error',
+      })
+      return
+    }
     setTemplatePreviewId(templateId)
     setTemplatePreviewBusy(true)
     setTemplatePreviewError(null)
     setTemplatePreviewConfig(null)
     try {
-      const filled = await fillDkmTemplate({
-        template_id: templateId,
-        source_text: '',
-        instructions:
-          'PREVIEW REQUEST: this template has no real source document yet. Invent realistic, clearly '
-          + 'fictional sample/mock content for every placeholder and section so a reviewer can see what '
-          + 'the finished document looks like (e.g. a plausible sample project/company name, sample dates, '
-          + 'illustrative descriptions). Do not leave anything blank or write that data is unavailable — '
-          + 'this is a demonstrative mock preview, not a real document.',
-        context: { workspace_id: activeWorkspaceApiId ?? null },
-        options: { allow_llm: true },
-      })
       const staged = await stageMasterTemplatePreview(templateId, {
-        fills: filled.payload.fills,
-        sections: filled.payload.sections,
-        diagrams: filled.rendered_diagrams,
-        agent_schema: filled.agent_schema,
+        mock_data: true,
       })
       const config = await fetchTemplatePreviewOnlyOfficeConfig(staged.staging_id)
       setTemplatePreviewConfig(config)
@@ -11834,7 +12303,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setTemplatePreviewBusy(false)
     }
-  }, [activeWorkspaceApiId, addToast, templateById])
+  }, [addToast, templateById])
 
   useEffect(() => {
     if (!templatePreviewConfig) return
@@ -11927,6 +12396,7 @@ export function DocumentKnowledgeManagementPage() {
         instructions: templateGenerateInstructions.trim().slice(0, 2000) || undefined,
         context: {
           workspace_id: activeWorkspaceApiId ?? null,
+          user_id: getSession()?.user.id || getSession()?.user.email || null,
         },
         options: { allow_llm: true },
       })
@@ -11967,6 +12437,7 @@ export function DocumentKnowledgeManagementPage() {
         version_notes: `AI-generated from template ${template.template_code}`,
         fills: filled.payload.fills ?? {},
         sections: filled.payload.sections ?? {},
+        collections: filled.payload.collections ?? {},
         agent_schema: filled.agent_schema,
         diagrams: filled.rendered_diagrams ?? {},
       })
@@ -12067,6 +12538,28 @@ export function DocumentKnowledgeManagementPage() {
       setTemplateStatusBusyId(null)
     }
   }, [addToast, loadMasterTemplates, templateStatusBusyId])
+
+  const handleSaveTemplateShare = useCallback(async () => {
+    if (!templateShareDialog || templateSharingBusyId) return
+    const { templateId, selectedIds } = templateShareDialog
+    setTemplateSharingBusyId(templateId)
+    try {
+      await patchTemplate(templateId, { metadata: { shared_with_workspace_ids: Array.from(selectedIds) } })
+      await loadMasterTemplates()
+      addToast({ title: 'Sharing updated', variant: 'success' })
+      setTemplateShareDialog(null)
+      setTemplateShareSearchQuery('')
+      setTemplateShareSearchOpen(false)
+    } catch (error) {
+      addToast({
+        title: 'Failed to update sharing',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setTemplateSharingBusyId(null)
+    }
+  }, [addToast, loadMasterTemplates, templateShareDialog, templateSharingBusyId])
 
   const handleTemplateDownload = useCallback(async (templateId: string) => {
     const template = templateById.get(templateId)
@@ -12213,22 +12706,23 @@ export function DocumentKnowledgeManagementPage() {
       namingRule = null
     }
 
+    let extractText = ''
+    try {
+      extractText = (await extractCompareDocumentText(file)).trim()
+    } catch {
+      /* duplicate scan is best-effort when text extraction fails */
+    }
+
     const namingPlan = buildTemplateUploadNamingPlan({
       fileName: file.name,
       workspaceName,
       namingRule,
       lastModified: file.lastModified,
+      documentText: extractText,
     })
     const uploadFile = namingPlan.autoRenamed
       ? new File([file], namingPlan.effectiveFileName, { type: file.type, lastModified: file.lastModified })
       : file
-
-    let extractText = ''
-    try {
-      extractText = (await extractCompareDocumentText(uploadFile)).trim()
-    } catch {
-      /* duplicate scan is best-effort when text extraction fails */
-    }
 
     const contentFingerprint = extractText ? await computeContentFingerprint(extractText) : ''
     const duplicateVerdict = await checkTemplateUploadForDuplicates(
@@ -12272,6 +12766,7 @@ export function DocumentKnowledgeManagementPage() {
         namingRule,
         lastModified: file.lastModified,
         versionOverride: nextVersionLabel,
+        documentText: extractText,
       })
       finalUploadFile = finalNamingPlan.autoRenamed
         ? new File([file], finalNamingPlan.effectiveFileName, { type: file.type, lastModified: file.lastModified })
@@ -12307,7 +12802,7 @@ export function DocumentKnowledgeManagementPage() {
             revised_from_template_id: revisionTarget.id,
           },
         })
-        await uploadTemplateAttachment(revisionTarget.id, finalUploadFile, {
+        const uploadedAttachment = await uploadTemplateAttachment(revisionTarget.id, finalUploadFile, {
           source: 'user-upload-revision',
           workspace_id: workspaceId.trim(),
           original_file_name: finalNamingPlan.sourceFileName,
@@ -12320,6 +12815,7 @@ export function DocumentKnowledgeManagementPage() {
           ...updated,
           workspace_id: updated.workspace_id ?? workspaceId.trim(),
           has_attachment: true,
+          latest_attachment_id: uploadedAttachment.id,
           latest_file_name: finalNamingPlan.effectiveFileName,
         }
         setTemplateApiItems((prev) => {
@@ -12356,17 +12852,30 @@ export function DocumentKnowledgeManagementPage() {
           ...finalNamingPlan.namingMetadata,
         },
       })
-      await uploadTemplateAttachment(created.id, finalUploadFile, {
-        source: 'user-upload',
-        workspace_id: workspaceId.trim(),
-        original_file_name: finalNamingPlan.sourceFileName,
-        repository_file_name: finalNamingPlan.effectiveFileName,
-        auto_renamed_by_standard: finalNamingPlan.autoRenamed,
-        ...(contentFingerprint ? { content_sha256: contentFingerprint } : {}),
-      })
+      let uploadedAttachment: TemplateAttachmentResponse
+      try {
+        uploadedAttachment = await uploadTemplateAttachment(created.id, finalUploadFile, {
+          source: 'user-upload',
+          workspace_id: workspaceId.trim(),
+          original_file_name: finalNamingPlan.sourceFileName,
+          repository_file_name: finalNamingPlan.effectiveFileName,
+          auto_renamed_by_standard: finalNamingPlan.autoRenamed,
+          ...(contentFingerprint ? { content_sha256: contentFingerprint } : {}),
+        })
+      } catch (error) {
+        try {
+          await deleteTemplate(created.id)
+        } catch {
+          // Preserve the original attachment error; backend cleanup can be retried from the library.
+        }
+        throw error
+      }
       const enrichedCreated: DocumentTemplateResponse = {
         ...created,
         workspace_id: created.workspace_id ?? workspaceId.trim(),
+        has_attachment: true,
+        latest_attachment_id: uploadedAttachment.id,
+        latest_file_name: uploadedAttachment.file_name || finalNamingPlan.effectiveFileName,
         metadata: {
           ...created.metadata,
           workspace_id: workspaceId.trim(),
@@ -12685,20 +13194,41 @@ export function DocumentKnowledgeManagementPage() {
         return (
           <button type="button" className="min-w-0 text-left" onClick={() => openTemplateDetail(row.id)}>
             <div className="flex items-start gap-3">
-              {row.hasAttachment ? (
-                <FileTypeIconImg fileName={row.fileName || `${row.name}.docx`} />
-              ) : (
-                <span className="mt-0.5 inline-flex size-14 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600">
-                  <FileStack className="h-6 w-6" />
-                </span>
-              )}
+              <FileTypeIconImg fileName={row.fileName || `${row.name}.docx`} />
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900 line-clamp-1">{row.name}</p>
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
                     {row.templateCode}
                   </Badge>
+                  {!row.hasAttachment ? (
+                    <Badge variant="outline" className="rounded-full border-amber-200 bg-amber-50 px-2 py-0 text-[10px] font-medium text-amber-700">
+                      No file
+                    </Badge>
+                  ) : null}
+                  {row.sharedWorkspaceNames.length > 0 ? (
+                    <Badge
+                      variant="outline"
+                      className="inline-flex items-center gap-1 rounded-full border-sky-200 bg-sky-50 px-2 py-0 text-[10px] font-medium text-sky-700"
+                      title={`Shared with: ${row.sharedWorkspaceNames.join(', ')}`}
+                    >
+                      <Globe className="h-2.5 w-2.5 shrink-0" aria-hidden />
+                      Shared
+                    </Badge>
+                  ) : null}
                 </div>
+                {row.sharedWorkspaceNames.length > 0 ? (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {row.sharedWorkspaceNames.map((name) => (
+                      <span
+                        key={name}
+                        className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-medium text-slate-600"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <p className="mt-0.5 text-[11px] text-slate-500">Updated {row.updated}</p>
               </div>
             </div>
@@ -12734,6 +13264,15 @@ export function DocumentKnowledgeManagementPage() {
   }, [openTemplateDetail])
 
   const selectedTemplateItem = templateById.get(selectedDetailId) ?? null
+  const selectedTemplateHasAttachment = selectedTemplateItem ? hasTemplateAttachment(selectedTemplateItem) : false
+  const selectedTemplatePreviewReady = selectedTemplateItem
+    ? selectedTemplateHasAttachment && hasValidTemplateAgentSchema(selectedTemplateItem)
+    : false
+  const selectedTemplateAiReady = selectedTemplateItem
+    ? selectedTemplateHasAttachment
+      && selectedTemplateItem.status_code === 'active'
+      && hasValidTemplateAgentSchema(selectedTemplateItem)
+    : false
   const selectedDetail = selectedRepositoryItem
     ? repositoryDetailsById[selectedRepositoryItem.id] ?? buildFallbackDetail(selectedRepositoryItem)
     : selectedTemplateItem
@@ -13937,67 +14476,41 @@ export function DocumentKnowledgeManagementPage() {
         description="Organize documents, templates, knowledge assets, and reusable content linked to projects and work execution"
         right={(
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-px rounded-2xl border border-slate-200/80 bg-white/80 p-1 shadow-[0_2px_12px_rgba(15,23,42,0.07)] ring-1 ring-white/60 backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/70 dark:ring-slate-700/30">
+            <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm flex-nowrap shrink-0">
               <button
                 type="button"
                 onClick={() => setShowKpiCards((v) => !v)}
                 className={cn(
-                  'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
-                  showKpiCards && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+                  'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                  showKpiCards && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
                 )}
                 aria-label={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
                 title={showKpiCards ? 'Hide KPI cards' : 'Show KPI cards'}
               >
-                <LayoutGrid className="h-[18px] w-[18px]" strokeWidth={1.8} />
+                <LayoutGrid className="w-5 h-5" />
               </button>
-              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
-              <Link
-                to="/platform-settings-administration?section=knowledge-base"
-                className="group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200"
-                aria-label="Knowledge settings"
-                title="Knowledge settings"
-              >
-                <Settings2 className="h-[18px] w-[18px]" strokeWidth={1.8} />
-              </Link>
-              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
-              <button
-                type="button"
-                className="group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200"
-                aria-label="Export library"
-                title="Export library"
-              >
-                <ArrowDownToLine className="h-[18px] w-[18px]" strokeWidth={1.8} />
-              </button>
-              <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
+
               <button
                 type="button"
                 onClick={() => setShowEnterpriseNavPanel((visible) => !visible)}
                 className={cn(
-                  'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
-                  showEnterpriseNavPanel && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+                  'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                  showEnterpriseNavPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
                 )}
                 aria-label={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
                 title={showEnterpriseNavPanel ? 'Hide enterprise navigation' : 'Show enterprise navigation'}
               >
-                <PanelLeft className="h-[18px] w-[18px]" strokeWidth={1.8} />
+                <PanelLeft className="w-5 h-5" />
               </button>
-              {!isOverviewSectionActive ? (
-                <>
-                  <div className="h-5 w-px bg-slate-200/70 dark:bg-slate-700/60" aria-hidden />
-                  <button
-                    type="button"
-                    onClick={() => setShowFiltersPanel((c) => !c)}
-                    className={cn(
-                      'group relative flex items-center justify-center rounded-xl p-2.5 text-slate-500 transition-all duration-200 hover:bg-slate-50 hover:text-slate-800 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-200',
-                      showFiltersPanel && 'bg-sky-50 text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(37,99,235,0.18)] hover:bg-sky-50 hover:text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
-                    )}
-                    aria-label={showFiltersPanel ? 'Hide filters' : 'Show filters'}
-                    title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
-                  >
-                    <Filter className="h-[18px] w-[18px]" strokeWidth={1.8} />
-                  </button>
-                </>
-              ) : null}
+
+              <button
+                type="button"
+                className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm"
+                aria-label="Export library"
+                title="Export library"
+              >
+                <ArrowDownToLine className="w-5 h-5" />
+              </button>
             </div>
           </div>
         )}
@@ -14218,7 +14731,7 @@ export function DocumentKnowledgeManagementPage() {
             <div
               ref={docMainFiltersRef}
               className={cn(
-                'glass-card mb-0 shrink-0 rounded-2xl p-4 space-y-3',
+                'liquid-glass-enterprise-panel mb-0 shrink-0 rounded-2xl p-4 space-y-3',
                 'border border-white/40 dark:border-white/10',
                 'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
                 'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
@@ -14254,7 +14767,9 @@ export function DocumentKnowledgeManagementPage() {
                 <div
                   className={cn(
                     'flex items-center gap-2 sm:gap-3',
-                    activePanel === 'artifacts' || activePanel === 'meetings' ? 'w-full flex-wrap justify-between' : 'flex-wrap',
+                    activePanel === 'repository' || activePanel === 'artifacts' || activePanel === 'meetings'
+                      ? 'w-full flex-wrap justify-between'
+                      : 'flex-wrap',
                   )}
                 >
                   {activePanel === 'repository' ? (
@@ -14309,6 +14824,53 @@ export function DocumentKnowledgeManagementPage() {
                             KB summary from document extraction (not a full BRD copy) + link to the repository
                           </p>
                         </div>
+                      </div>
+                      <div className="ml-auto flex h-10 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm sm:absolute sm:right-0 sm:top-3" role="group" aria-label="Repository view mode">
+                        <button
+                          type="button"
+                          aria-label="Folder card view"
+                          title="Folder card view"
+                          aria-pressed={repositoryViewMode === 'folders'}
+                          onClick={() => changeRepositoryViewMode('folders')}
+                          className={cn(
+                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                            repositoryViewMode === 'folders'
+                              ? 'bg-slate-900 text-white shadow-sm'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                          )}
+                        >
+                          <LayoutGrid className="h-4 w-4" aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Split folder view"
+                          title="Split folder view"
+                          aria-pressed={repositoryViewMode === 'split'}
+                          onClick={() => changeRepositoryViewMode('split')}
+                          className={cn(
+                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                            repositoryViewMode === 'split'
+                              ? 'bg-slate-900 text-white shadow-sm'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                          )}
+                        >
+                          <LayoutList className="h-4 w-4" aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Grouped table view"
+                          title="Grouped table view"
+                          aria-pressed={repositoryViewMode === 'grouped'}
+                          onClick={() => changeRepositoryViewMode('grouped')}
+                          className={cn(
+                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                            repositoryViewMode === 'grouped'
+                              ? 'bg-slate-900 text-white shadow-sm'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                          )}
+                        >
+                          <FolderKanban className="h-4 w-4" aria-hidden />
+                        </button>
                       </div>
 
                     </>
@@ -15455,8 +16017,11 @@ export function DocumentKnowledgeManagementPage() {
                 <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
                   <EnterpriseGroupByControl
                     options={REPOSITORY_TABLE_GROUP_BY_OPTIONS}
-                    value={repositoryTableGroupBy}
-                    onChange={setRepositoryTableGroupBy}
+                    value={repositoryViewMode === 'grouped' ? 'folder' : repositoryTableGroupBy}
+                    disabled={repositoryViewMode === 'grouped'}
+                    onChange={(value) => {
+                      if (repositoryViewMode !== 'grouped') setRepositoryTableGroupBy(value)
+                    }}
                   />
                   <EnterpriseSelectionToggle checked={showRepositoryTableSelection} onChange={setShowRepositoryTableSelection} />
                   <EnterpriseColumnVisibilityControl
@@ -15508,6 +16073,7 @@ export function DocumentKnowledgeManagementPage() {
               <div
                 className={cn(
                   'relative flex h-full min-h-0 flex-col gap-3 overflow-visible transition-all duration-200',
+                  repositoryViewMode === 'split' && 'grid grid-cols-[220px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]',
                   isRepositoryDragActive && 'rounded-xl bg-blue-50/30 ring-2 ring-inset ring-blue-400/70',
                 )}
                 onDragOver={handleRepositoryDragOver}
@@ -15522,7 +16088,72 @@ export function DocumentKnowledgeManagementPage() {
                     </div>
                   </div>
                 ) : null}
-                <div className="flex shrink-0 flex-col gap-3">
+                {showRepositoryTableSelection && repositoryTableSelectedIds.length > 0 ? (
+                  <div className={cn(
+                    'flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/80 px-4 py-2.5 text-sm dark:border-blue-900/60 dark:bg-blue-950/30',
+                    repositoryViewMode === 'split' && 'col-span-2',
+                  )}>
+                    <span className="font-semibold text-blue-900 dark:text-blue-200">
+                      {repositoryTableSelectedIds.length} selected
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                      <Select
+                        value=""
+                        disabled={repositoryBulkActionBusy}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          if (!value) return
+                          void handleRepositoryBulkMoveToFolder(
+                            repositoryTableSelectedIds,
+                            value === '__root__' ? null : value,
+                          )
+                          e.target.value = ''
+                        }}
+                        className="h-8 w-[180px] text-xs"
+                      >
+                        <option value="">Move to folder...</option>
+                        <option value="__root__">Root (no folder)</option>
+                        {repositoryFolders.map((folder) => (
+                          <option key={folder.id} value={folder.id}>{folder.name}</option>
+                        ))}
+                      </Select>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 border-red-300 text-red-700 hover:bg-red-50"
+                      disabled={repositoryBulkActionBusy}
+                      onClick={() => setRepositoryBulkDeleteConfirmOpen(true)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      Delete
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 text-muted-foreground"
+                      disabled={repositoryBulkActionBusy}
+                      onClick={() => setRepositoryTableSelectedIds([])}
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden />
+                      Clear selection
+                    </Button>
+                    {repositoryBulkActionBusy ? <Loader2 className="h-4 w-4 animate-spin text-blue-700" /> : null}
+                  </div>
+                ) : null}
+                <div className={cn(
+                  'flex shrink-0 flex-col gap-3',
+                  repositoryViewMode === 'grouped' && 'hidden',
+                  repositoryViewMode === 'split'
+                    ? cn(
+                        'col-start-1 min-h-0 overflow-hidden rounded-xl border border-border/70 bg-background/50 p-2',
+                        showRepositoryTableSelection && repositoryTableSelectedIds.length > 0 ? 'row-start-2' : 'row-start-1',
+                      )
+                    : null,
+                )}>
                 {repositoryError && filteredRepository.length === 0 ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                     Failed to load backend repository data: {repositoryError}
@@ -15572,30 +16203,96 @@ export function DocumentKnowledgeManagementPage() {
                         ))}
                       </div>
                     ) : null}
-                    {repositorySubfolders.length > 0 ? (
-                      <div className="flex shrink-0 flex-wrap gap-2 overflow-visible pt-2">
+                    {repositoryViewMode === 'split' ? (
+                      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto scrollbar-hide pt-1">
+                        <div className="flex items-center gap-2 px-2 pb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+                          Folders
+                        </div>
                         {repositorySubfolders.map((folder) => (
-                          <DocumentRepositoryFolderCard
+                          <button
                             key={folder.id}
-                            folder={folder}
-                            isRenaming={repositoryFolderRenameId === folder.id}
-                            isDragOver={repositoryDropTarget === folder.id}
-                            onOpen={() => setRepositoryCurrentFolderId(folder.id)}
-                            onStartRename={() => setRepositoryFolderRenameId(folder.id)}
-                            onRename={(name) => void handleRenameRepositoryFolder(folder.id, name)}
-                            onCancelRename={() => setRepositoryFolderRenameId(null)}
+                            type="button"
+                            className={cn(
+                              'group flex min-h-12 w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                              repositoryCurrentFolderId === folder.id
+                                ? 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-100'
+                                : 'border-border/70 bg-background/70 text-foreground hover:border-blue-200 hover:bg-blue-50/60 dark:hover:border-blue-900 dark:hover:bg-blue-950/30',
+                              repositoryDropTarget === folder.id && 'ring-2 ring-blue-400/70',
+                            )}
+                            onClick={() => setRepositoryCurrentFolderId(folder.id)}
                             onContextMenu={(event) => openRepositoryFolderContextMenu(event, folder)}
                             onDragOver={(event) => handleFolderDragOver(event, folder.id)}
                             onDragLeave={() => setRepositoryDropTarget((prev) => (prev === folder.id ? null : prev))}
                             onDrop={(event) => handleFolderDrop(event, folder.id)}
-                          />
+                          >
+                            <FolderOpen className="h-4 w-4 shrink-0 text-blue-500" aria-hidden />
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>
+                            <span className="shrink-0 text-[11px] text-muted-foreground">{folder.document_count} docs</span>
+                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
+                          </button>
                         ))}
+                        {repositorySubfolders.length === 0 ? (
+                          <p className="px-2 py-4 text-xs text-muted-foreground">No subfolders here.</p>
+                        ) : null}
+                      </div>
+                    ) : repositorySubfolders.length > 0 ? (
+                      <div className="flex min-w-0 shrink-0 items-center gap-2 pt-2">
+                        <button
+                          type="button"
+                          aria-label="Previous folders"
+                          title="Previous folders"
+                          disabled={!repositoryFolderSliderPosition.canPrev}
+                          onClick={() => scrollRepositoryFolders('previous')}
+                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background/80 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+                        >
+                          <ChevronLeft className="h-4 w-4" aria-hidden />
+                        </button>
+                        <div
+                          ref={repositoryFolderSliderRef}
+                          className="flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-hidden overflow-y-visible scrollbar-hide"
+                          onScroll={updateRepositoryFolderSliderPosition}
+                        >
+                          {repositorySubfolders.map((folder) => (
+                            <DocumentRepositoryFolderCard
+                              key={folder.id}
+                              folder={folder}
+                              isRenaming={repositoryFolderRenameId === folder.id}
+                              isDragOver={repositoryDropTarget === folder.id}
+                              onOpen={() => setRepositoryCurrentFolderId(folder.id)}
+                              onStartRename={() => setRepositoryFolderRenameId(folder.id)}
+                              onRename={(name) => void handleRenameRepositoryFolder(folder.id, name)}
+                              onCancelRename={() => setRepositoryFolderRenameId(null)}
+                              onContextMenu={(event) => openRepositoryFolderContextMenu(event, folder)}
+                              onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+                              onDragLeave={() => setRepositoryDropTarget((prev) => (prev === folder.id ? null : prev))}
+                              onDrop={(event) => handleFolderDrop(event, folder.id)}
+                            />
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          aria-label="Next folders"
+                          title="Next folders"
+                          disabled={!repositoryFolderSliderPosition.canNext}
+                          onClick={() => scrollRepositoryFolders('next')}
+                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background/80 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+                        >
+                          <ChevronRight className="h-4 w-4" aria-hidden />
+                        </button>
                       </div>
                     ) : null}
                   </>
                 ) : null}
                 </div>
-                <div className="flex min-h-0 flex-1 flex-col">
+                <div className={cn(
+                  'flex min-h-0 flex-1 flex-col',
+                  repositoryViewMode !== 'grouped' && 'min-h-[360px] md:min-h-[420px]',
+                  repositoryViewMode === 'split' && cn(
+                    'col-start-2 min-w-0',
+                    showRepositoryTableSelection && repositoryTableSelectedIds.length > 0 ? 'row-start-2' : 'row-start-1',
+                  ),
+                )}>
                 {filteredRepository.length > 0 ? (
                   <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl scrollbar-hide">
                     <DndContext sensors={repositoryTableColumns.dndSensors} onDragEnd={repositoryTableColumns.handleColumnDragEnd}>
@@ -15662,9 +16359,14 @@ export function DocumentKnowledgeManagementPage() {
                       </thead>
                       <tbody>
                           {pagedRepositoryRows.map(({ item, groupLabel }, rowIndex) => {
+                            const activeRepositoryGroupBy = repositoryViewMode === 'grouped' ? 'folder' : repositoryTableGroupBy
                             const previousGroupLabel = pagedRepositoryRows[rowIndex - 1]?.groupLabel ?? null
-                            const showGroupHeader = repositoryTableGroupBy && groupLabel && groupLabel !== previousGroupLabel
-                            const groupTint = repositoryTableGroupBy && groupLabel ? getEnterpriseGroupTint(repositoryTableGroupBy, groupLabel) : null
+                            const showGroupHeader = activeRepositoryGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                            const groupTint = activeRepositoryGroupBy && groupLabel ? getEnterpriseGroupTint(activeRepositoryGroupBy, groupLabel) : null
+                            const isGroupCollapsed = activeRepositoryGroupBy === 'folder' && groupLabel
+                              ? repositoryCollapsedGroups.has(groupLabel)
+                              : false
+                            const isContextMenuTarget = repositoryRowContextMenu?.documentId === item.id
                             const isSelected = showRepositoryTableSelection && repositoryTableSelectedIds.includes(item.id)
                             const resolveBodyCellBackground = (isFirstColumn: boolean) => {
                               if (isSelected) return ''
@@ -15681,7 +16383,9 @@ export function DocumentKnowledgeManagementPage() {
                             }
                             const cellClass = cn(
                               'border-b border-slate-200/20 px-3 py-2 align-top transition-colors dark:border-slate-700/20',
-                              isSelected
+                              isContextMenuTarget
+                                ? 'bg-blue-100/80 dark:bg-blue-950/40'
+                                : isSelected
                                 ? 'bg-primary/10'
                                 : groupTint
                                   ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
@@ -15695,18 +16399,43 @@ export function DocumentKnowledgeManagementPage() {
                                     <td
                                       colSpan={repositoryTableColumns.visibleColumnOrder.length + (showRepositoryTableSelection ? 1 : 0)}
                                       className={cn(
-                                        'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                        'px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground',
                                         groupTint?.first,
                                       )}
                                     >
-                                      {REPOSITORY_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === repositoryTableGroupBy)?.label}: {groupLabel}
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-background/60"
+                                        aria-expanded={!isGroupCollapsed}
+                                        onClick={() => {
+                                          if (!groupLabel) return
+                                          setRepositoryCollapsedGroups((current) => {
+                                            const next = new Set(current)
+                                            if (next.has(groupLabel)) next.delete(groupLabel)
+                                            else next.add(groupLabel)
+                                            return next
+                                          })
+                                        }}
+                                      >
+                                        {isGroupCollapsed ? (
+                                          <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        ) : (
+                                          <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                        )}
+                                        <span>{REPOSITORY_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === activeRepositoryGroupBy)?.label}: {groupLabel}</span>
+                                        <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', !isGroupCollapsed && 'rotate-90')} aria-hidden />
+                                      </button>
                                     </td>
                                   </tr>
                                 ) : null}
-                                <tr
+                                {!isGroupCollapsed ? <tr
                           draggable
                           onDragStart={(event) => handleDocumentDragStart(event, item.id)}
-                                  className="group cursor-grab transition-colors active:cursor-grabbing"
+                                  className={cn(
+                                    'group cursor-grab transition-colors active:cursor-grabbing',
+                                    isContextMenuTarget && 'relative z-[1] outline outline-2 outline-inset outline-blue-400/80',
+                                  )}
+                                  aria-selected={isContextMenuTarget || isSelected}
                           onContextMenu={(event) => openRepositoryRowContextMenu(event, item)}
                         >
                                   {showRepositoryTableSelection ? (
@@ -15736,7 +16465,7 @@ export function DocumentKnowledgeManagementPage() {
                           </td>
                                     )
                                   })}
-                        </tr>
+                        </tr> : null}
                               </Fragment>
                           )
                           })}
@@ -15925,11 +16654,11 @@ export function DocumentKnowledgeManagementPage() {
                     />
                   </div>
                 ) : repositoryLoading ? (
-                  <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10">
+                  <div className="flex h-full min-h-[360px] w-full flex-1 items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10 md:min-h-[420px]">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
-                  <div className="flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10 text-center">
+                  <div className="flex h-full min-h-[360px] w-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10 text-center md:min-h-[420px]">
                     <Upload className="mb-3 h-8 w-8 text-muted-foreground/60" strokeWidth={1.75} />
                     <p className="text-sm font-medium text-muted-foreground">Drag and drop documents anywhere in this panel to upload</p>
                     <p className="mt-1 text-xs text-muted-foreground/80">Or drop directly onto a folder · Or use Upload document repository above</p>
@@ -16166,7 +16895,7 @@ export function DocumentKnowledgeManagementPage() {
             <div
               ref={knowledgePanelRef}
               className={cn(
-                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
                 'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]'
               )}
               style={resolveWorkspacePanelHeightStyle(
@@ -16781,7 +17510,14 @@ export function DocumentKnowledgeManagementPage() {
                                             className="h-8 rounded-lg text-sm font-semibold"
                                           />
                                         ) : (
-                                          <h3 className="line-clamp-2 text-sm font-semibold leading-tight text-foreground">{entry.title}</h3>
+                                          <div className="flex items-center gap-1.5">
+                                            <h3 className="line-clamp-2 text-sm font-semibold leading-tight text-foreground">{entry.title}</h3>
+                                            {isSystemKbEntryTitle(entry.title) ? (
+                                              <Badge variant="outline" className="shrink-0 rounded-full border-violet-200 bg-violet-50 px-2 py-0 text-[9px] font-semibold text-violet-700">
+                                                System
+                                              </Badge>
+                                            ) : null}
+                                          </div>
                                         )}
                                       </div>
                                       <Badge className="flex-shrink-0 rounded-full border border-sky-200 bg-sky-100 px-2 py-0.5 text-[9px] font-semibold text-sky-700">
@@ -17924,7 +18660,7 @@ export function DocumentKnowledgeManagementPage() {
               id="activity"
               ref={activityPanelRef}
               className={cn(
-                'glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
+                'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40',
                 'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
               )}
               style={resolveWorkspacePanelHeightStyle(
@@ -18721,7 +19457,7 @@ export function DocumentKnowledgeManagementPage() {
                 <div className="space-y-2">
                   <h3 className="text-lg font-semibold text-foreground break-words">{selectedDetail.title}</h3>
                   <p className="text-xs text-muted-foreground">
-                    {selectedDetail.category} · {selectedDetail.linkedProject} · Version {selectedDetail.version} · {' '}
+                    {selectedDetail.category} · {selectedTemplateItem ? humanizeCode(selectedTemplateItem.document_type_code) : selectedDetail.linkedProject} · Version {selectedDetail.version} · {' '}
                     <span className="text-green-600">{selectedDetail.approval}</span>
                   </p>
                 </div>
@@ -18792,15 +19528,28 @@ export function DocumentKnowledgeManagementPage() {
                       <Badge variant="outline" className={cn('rounded-full px-3 py-1 text-[11px] font-medium', statusBadgeClass(selectedDetail.approval))}>{selectedDetail.approval}</Badge>
                       <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">{selectedDetail.type}</Badge>
                       <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">{selectedDetail.accessScope}</Badge>
+                      {selectedTemplateItem && !selectedTemplateHasAttachment ? (
+                        <Badge variant="outline" className="rounded-full border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-700">No attachment</Badge>
+                      ) : null}
                     </div>
 
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                      <h3 className="text-sm font-semibold text-slate-900">Document information</h3>
+                      <h3 className="text-sm font-semibold text-slate-900">{selectedTemplateItem ? 'Template information' : 'Document information'}</h3>
                       <div className="mt-3 grid gap-2 text-xs text-slate-600">
                         <div className="flex items-center justify-between gap-3"><span>Category</span><span className="font-medium text-slate-900">{selectedDetail.category}</span></div>
-                        <div className="flex items-center justify-between gap-3"><span>Linked project</span><span className="font-medium text-right text-slate-900">{selectedDetail.linkedProject}</span></div>
-                        <div className="flex items-center justify-between gap-3"><span>Linked task</span><span className="font-medium text-right text-slate-900">{selectedDetail.linkedTask}</span></div>
-                        <div className="flex items-center justify-between gap-3"><span>Owner</span><span className="font-medium text-slate-900">{selectedDetail.owner}</span></div>
+                        {selectedTemplateItem ? (
+                          <>
+                            <div className="flex items-center justify-between gap-3"><span>Document type</span><span className="font-medium text-right text-slate-900">{humanizeCode(selectedTemplateItem.document_type_code)}</span></div>
+                            <div className="flex items-center justify-between gap-3"><span>Template code</span><span className="max-w-[65%] break-all text-right font-medium text-slate-900">{selectedTemplateItem.template_code}</span></div>
+                            <div className="flex items-center justify-between gap-3"><span>File</span><span className="max-w-[65%] break-all text-right font-medium text-slate-900">{selectedTemplateItem.latest_file_name || 'No attachment'}</span></div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between gap-3"><span>Linked project</span><span className="font-medium text-right text-slate-900">{selectedDetail.linkedProject}</span></div>
+                            <div className="flex items-center justify-between gap-3"><span>Linked task</span><span className="font-medium text-right text-slate-900">{selectedDetail.linkedTask}</span></div>
+                            <div className="flex items-center justify-between gap-3"><span>Owner</span><span className="font-medium text-slate-900">{selectedDetail.owner}</span></div>
+                          </>
+                        )}
                         <div className="flex items-center justify-between gap-3"><span>Version</span><span className="font-medium text-slate-900">{selectedDetail.version}</span></div>
                       </div>
                     </div>
@@ -18872,7 +19621,7 @@ export function DocumentKnowledgeManagementPage() {
                   <TabsContent value="version" className="mt-0 space-y-2">
                     {selectedRepositoryItem ? (
                       <p className="text-[11px] leading-5 text-slate-500">
-                        File revisions for this document. View downloads a revision; Restore re-uploads it as the new current revision.
+                        File revisions for this document. View opens an inline preview; Restore re-uploads it as the new current revision.
                       </p>
                     ) : null}
                     {selectedDetail.versionHistory.length === 0 ? (
@@ -18893,7 +19642,7 @@ export function DocumentKnowledgeManagementPage() {
                           {item.attachmentId && selectedRepositoryItem ? (
                             <div className="mt-3 flex flex-wrap gap-2">
                               {panelActionButton('View revision', BookOpenText, () => {
-                                void handleViewDocumentAttachmentVersion(selectedRepositoryItem.id, item.attachmentId!)
+                                openVersionRevisionDrawer(selectedRepositoryItem, item, index === 0)
                               })}
                               {index > 0
                                 ? panelActionButton(
@@ -18962,7 +19711,8 @@ export function DocumentKnowledgeManagementPage() {
                       type="button"
                       variant="outline"
                       className="h-10 flex-1 justify-center gap-2 rounded-xl"
-                      disabled={templateBusy || templateGenerateBusy || !selectedTemplateItem.has_attachment}
+                      disabled={templateBusy || templateGenerateBusy || !selectedTemplatePreviewReady}
+                      title={!selectedTemplatePreviewReady ? 'Save a valid agent schema before previewing.' : undefined}
                       onClick={() => { void openTemplatePreview(selectedTemplateItem.id) }}
                     >
                       <Eye className="h-4 w-4 shrink-0" aria-hidden />
@@ -18971,7 +19721,8 @@ export function DocumentKnowledgeManagementPage() {
                     <Button
                       type="button"
                       className="h-10 flex-1 justify-center gap-2 rounded-xl"
-                      disabled={templateBusy || templateGenerateBusy || !selectedTemplateItem.has_attachment}
+                      disabled={templateBusy || templateGenerateBusy || !selectedTemplateAiReady}
+                      title={!selectedTemplateAiReady ? 'Publish a valid agent schema before generating with AI.' : undefined}
                       onClick={() => openGenerateFromMasterTemplate(selectedTemplateItem.id)}
                     >
                       <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
@@ -19143,7 +19894,7 @@ export function DocumentKnowledgeManagementPage() {
                         Template preview
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        AI-generated mock data — a demonstration only, not a real document.
+                        Schema-generated sample data — a demonstration only, not a real document.
                       </p>
                     </div>
                   </div>
@@ -19166,8 +19917,7 @@ export function DocumentKnowledgeManagementPage() {
                       <Loader2 className="h-6 w-6 animate-spin text-blue-600" aria-hidden />
                       <p className="text-sm font-medium text-foreground">Generating mock preview…</p>
                       <p className="max-w-xs text-xs text-muted-foreground">
-                        AI is filling the template with sample data, then opening it in the document editor.
-                        This can take up to a minute.
+                        Building a temporary sample document from the saved schema, then opening it read-only.
                       </p>
                     </div>
                   ) : templatePreviewError ? (
@@ -19357,7 +20107,7 @@ export function DocumentKnowledgeManagementPage() {
         }}
       />
 
-      <TemplateDuplicateCompareEditor
+      <TemplateOnlyOfficeCompareEditor
         open={!!templateCompareSession}
         session={templateCompareSession}
         onClose={() => setTemplateCompareSession(null)}
@@ -19579,60 +20329,135 @@ export function DocumentKnowledgeManagementPage() {
           )
         : null}
 
-      {repositoryDuplicatePrompt && typeof document !== 'undefined'
+      {repositoryDuplicatePrompt && !repositoryCompareSession && typeof document !== 'undefined'
         ? createPortal(
-            <div className="fixed inset-0 z-[1400] flex items-center justify-center bg-slate-950/50 p-4">
-              <div className="w-full max-w-lg rounded-xl bg-white shadow-xl">
-                <div className="border-b border-slate-200 px-5 py-4">
-                  <h3 className="text-base font-semibold text-slate-900">Possible duplicate document</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    "{repositoryDuplicatePrompt.fileName}" looks similar to documents already in the repository. Upload anyway?
-                  </p>
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close document duplicate confirmation"
+                onClick={() => repositoryDuplicatePrompt.resolve('cancel')}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="repository-duplicate-dialog-title"
+                className="relative z-[1401] w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/12 text-amber-700 ring-1 ring-amber-500/25">
+                      <FileStack className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="repository-duplicate-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Possible duplicate document
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        This file looks similar to documents already in the repository. What would you like to do?
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="max-h-[50vh] space-y-4 overflow-y-auto px-5 py-4 text-sm">
+
+                <div className="max-h-[50vh] space-y-4 overflow-y-auto px-6 py-5 text-sm">
+                  <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">File</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-foreground">{repositoryDuplicatePrompt.fileName}</p>
+                  </div>
+
                   {repositoryDuplicatePrompt.nameMatches.length > 0 ? (
                     <div>
-                      <div className="font-medium text-slate-800">Similar document (same name/version)</div>
-                      <ul className="mt-1 space-y-1">
+                      <div className="font-medium text-foreground">Similar document (same name/version)</div>
+                      <ul className="mt-2 space-y-2">
                         {repositoryDuplicatePrompt.nameMatches.map((m) => (
-                          <li key={m.id} className="text-slate-600">
-                            <span className="font-medium text-slate-800">{m.title}</span>
-                            {m.projectName ? ` — ${m.projectName}` : ''} · KB: {m.kbGenerated ? 'already generated' : 'not generated yet'}
+                          <li key={m.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <span className="font-medium text-foreground">{m.title}</span>
+                                {m.projectName ? ` · ${m.projectName}` : ''} · KB: {m.kbGenerated ? 'already generated' : 'not generated yet'}
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1.5 px-2 text-[11px]"
+                                onClick={() => openRepositoryDuplicateCompare(m.id, m.title)}
+                              >
+                                <ArrowRightLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                Compare versions
+                              </Button>
+                            </div>
                           </li>
                         ))}
                       </ul>
                     </div>
                   ) : null}
+
                   {repositoryDuplicatePrompt.samePurpose.length > 0 ? (
                     <div>
-                      <div className="font-medium text-slate-800">Similar purpose/content</div>
-                      <ul className="mt-1 space-y-1">
+                      <div className="font-medium text-foreground">Similar purpose/content</div>
+                      <ul className="mt-2 space-y-2">
                         {repositoryDuplicatePrompt.samePurpose.map((m) => (
-                          <li key={m.id} className="text-slate-600">
-                            <span className="font-medium text-slate-800">{m.title}</span>
-                            {m.projectName ? ` — ${m.projectName}` : ''} · KB: {m.kbGenerated ? 'already generated' : 'not generated yet'}
-                            {m.reason ? <div className="text-xs text-slate-400">{m.reason}</div> : null}
+                          <li key={m.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <span className="font-medium text-foreground">{m.title}</span>
+                                {m.projectName ? ` · ${m.projectName}` : ''} · KB: {m.kbGenerated ? 'already generated' : 'not generated yet'}
+                                {m.reason ? <div className="mt-1 text-xs text-muted-foreground/80">{m.reason}</div> : null}
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1.5 px-2 text-[11px]"
+                                onClick={() => openRepositoryDuplicateCompare(m.id, m.title)}
+                              >
+                                <ArrowRightLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                Compare versions
+                              </Button>
+                            </div>
                           </li>
                         ))}
                       </ul>
                     </div>
                   ) : null}
+
+                  <p className="text-xs text-muted-foreground">
+                    Guardrail: identical file content is always blocked. Save as new version attaches this file to the
+                    matched document as its next revision. Use Compare to review differences first.
+                  </p>
                 </div>
-                <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">
-                  <button
+
+                <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
                     type="button"
-                    className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-                    onClick={() => repositoryDuplicatePrompt.resolve(false)}
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    onClick={() => repositoryDuplicatePrompt.resolve('cancel')}
                   >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-                    onClick={() => repositoryDuplicatePrompt.resolve(true)}
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    onClick={() => repositoryDuplicatePrompt.resolve('upload_new')}
                   >
-                    Upload anyway
-                  </button>
+                    Upload as new document
+                  </Button>
+                  {repositoryDuplicatePrompt.revisionTargetId ? (
+                    <Button
+                      type="button"
+                      className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                      onClick={() => repositoryDuplicatePrompt.resolve('new_version')}
+                    >
+                      <Upload className="h-4 w-4 shrink-0" aria-hidden />
+                      Save as new version
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </div>,
@@ -19640,7 +20465,13 @@ export function DocumentKnowledgeManagementPage() {
           )
         : null}
 
-      {templateDuplicatePrompt && typeof document !== 'undefined'
+      <TemplateOnlyOfficeCompareEditor
+        open={!!repositoryCompareSession}
+        session={repositoryCompareSession}
+        onClose={() => setRepositoryCompareSession(null)}
+      />
+
+      {templateDuplicatePrompt && !templateCompareSession && typeof document !== 'undefined'
         ? createPortal(
             <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
               <button
@@ -19654,7 +20485,7 @@ export function DocumentKnowledgeManagementPage() {
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="template-duplicate-dialog-title"
-                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+                className="relative z-[1401] w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
               >
                 <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
                   <div className="flex items-start gap-4">
@@ -20049,7 +20880,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('generate', handleKbAiGenerateDraft)}
-                            disabled={kbAiActionLoading !== null}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
+                            title={kbStructuredEdit ? 'Generate Draft is unavailable while editing structured questions.' : undefined}
                           >
                             {kbAiActionLoading === 'generate' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Generate Draft
@@ -20060,7 +20892,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('improve', handleKbAiImproveWriting)}
-                            disabled={kbAiActionLoading !== null}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
+                            title={kbStructuredEdit ? 'Improve Writing is unavailable while editing structured questions.' : undefined}
                           >
                             {kbAiActionLoading === 'improve' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <PencilLine className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Improve Writing
@@ -20071,7 +20904,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('structure', handleKbAiStructure)}
-                            disabled={kbAiActionLoading !== null}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
+                            title={kbStructuredEdit ? 'Make Structured is unavailable while editing structured questions.' : undefined}
                           >
                             {kbAiActionLoading === 'structure' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <LayoutList className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Make Structured
@@ -20082,7 +20916,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('suggest', handleKbAiSuggestCategoryPriority)}
-                            disabled={kbAiActionLoading !== null}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
+                            title={kbStructuredEdit ? 'Suggest Category & Priority is unavailable while editing structured questions.' : undefined}
                           >
                             {kbAiActionLoading === 'suggest' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <Target className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Suggest Category & Priority
@@ -20100,7 +20935,70 @@ export function DocumentKnowledgeManagementPage() {
                           </Button>
                         </div>
                       </div>
+                      {kbStructuredEdit ? (
+                        <div className="space-y-3 rounded-xl border border-border bg-background/80 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-foreground">Questions</p>
+                              <p className="text-[11px] text-muted-foreground">Edit questions without touching the JSON format.</p>
+                            </div>
+                            <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] text-primary">Structured KB</span>
+                          </div>
+                          <div className="space-y-2">
+                            {kbStructuredEdit.questions.map((question, index) => (
+                              <div key={question.id} className="rounded-lg border border-border/70 bg-background px-3 py-2.5">
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                  <label htmlFor={`kb-question-${index}`} className="text-xs font-semibold text-foreground">Question {index + 1}</label>
+                                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                    <input
+                                      type="checkbox"
+                                      checked={question.required}
+                                      onChange={(event) => setKbStructuredEdit((current) => current
+                                        ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, required: event.target.checked } : item) }
+                                        : current)}
+                                      className="h-3.5 w-3.5 rounded border-slate-300 accent-sky-600"
+                                    />
+                                    Required
+                                  </label>
+                                </div>
+                                <textarea
+                                  id={`kb-question-${index}`}
+                                  value={question.prompt}
+                                  onChange={(event) => setKbStructuredEdit((current) => current
+                                    ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, prompt: event.target.value } : item) }
+                                    : current)}
+                                  rows={2}
+                                  className="w-full resize-y rounded-md border border-border/70 bg-background px-2.5 py-2 text-sm leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-center gap-1.5 text-xs"
+                            onClick={() => setKbStructuredEdit((current) => current
+                              ? {
+                                  ...current,
+                                  questions: [
+                                    ...current.questions,
+                                    {
+                                      id: `question_${current.questions.length + 1}`,
+                                      prompt: '',
+                                      required: false,
+                                    },
+                                  ],
+                                }
+                              : current)}
+                          >
+                            <Plus className="h-3.5 w-3.5" aria-hidden />
+                            Add question
+                          </Button>
+                        </div>
+                      ) : null}
                       <div
+                        hidden={Boolean(kbStructuredEdit)}
                         className={cn(
                           'min-w-0 rounded-xl border backdrop-blur transition-all duration-300 ease-out supports-[backdrop-filter]:bg-background/90',
                           kbAiStickyPinned
@@ -20525,7 +21423,7 @@ export function DocumentKnowledgeManagementPage() {
                         </div>
                       </div>
                       </div>
-                      <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-background/80">
+                      <div hidden={Boolean(kbStructuredEdit)} className="min-w-0 overflow-hidden rounded-xl border border-border bg-background/80">
                         <div className={cn('relative space-y-1 p-1', KB_RICH_TABLE_WRAPPER_CLASSES)}>
                           <KbEditorTableColumnLimits
                             editorRef={kbContentEditorRef}
@@ -20656,7 +21554,7 @@ export function DocumentKnowledgeManagementPage() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="kb-ws" className="text-xs text-muted-foreground">Workspace <span className="text-muted-foreground/50 font-normal">(optional)</span></Label>
+                        <Label htmlFor="kb-ws" className="text-xs text-muted-foreground">Workspace organization <span className="text-muted-foreground/50 font-normal">(optional)</span></Label>
                         <Select
                           id="kb-ws"
                           value={canonicalizeKbWorkspaceId(kbFormWorkspace)}
@@ -20664,16 +21562,11 @@ export function DocumentKnowledgeManagementPage() {
                           className="h-10 w-full text-sm"
                         >
                           <SelectItem value="">Global</SelectItem>
-                          {kbWorkspaceOptions.map((workspace) => (
+                          {kbOrganizationWorkspaceOptions.map((workspace) => (
                             <SelectItem key={workspace.id} value={formatWorkspaceKey(workspace.workspace_key)}>
                               {workspace.name}
                             </SelectItem>
                           ))}
-                          {kbFormWorkspace && !resolveKbWorkspaceOption(kbFormWorkspace, kbWorkspaceOptions) ? (
-                            <SelectItem value={canonicalizeKbWorkspaceId(kbFormWorkspace)}>
-                              {canonicalizeKbWorkspaceId(kbFormWorkspace)}
-                            </SelectItem>
-                          ) : null}
                         </Select>
                       </div>
                     </div>
@@ -20984,7 +21877,14 @@ export function DocumentKnowledgeManagementPage() {
               <>
                 {/* Title and Metadata */}
                 <div className="space-y-2">
-                  <h3 className="text-lg font-semibold text-foreground break-words">{kbViewEntry.title}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-lg font-semibold text-foreground break-words">{kbViewEntry.title}</h3>
+                    {isSystemKbEntryTitle(kbViewEntry.title) ? (
+                      <Badge variant="outline" className="rounded-full border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
+                        System
+                      </Badge>
+                    ) : null}
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {kbViewEntry.category.replace(/_/g, ' ')} · {' '}
                     {formatKbWorkspaceLabel(kbViewEntry.workspace_id, kbWorkspaceOptions)} · Priority {kbViewEntry.priority} · {' '}
@@ -21424,9 +22324,11 @@ export function DocumentKnowledgeManagementPage() {
                   variant="destructive"
                   className="h-10 rounded-xl w-full justify-center gap-2"
                   onClick={() => void handleKbDelete(kbViewEntry.id)}
+                  disabled={isSystemKbEntryTitle(kbViewEntry.title)}
+                  title={isSystemKbEntryTitle(kbViewEntry.title) ? 'System entries cannot be deleted.' : undefined}
                 >
                   <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
-                  Delete Entry
+                  {isSystemKbEntryTitle(kbViewEntry.title) ? 'System Entry' : 'Delete Entry'}
                 </Button>
               </div>
             </div>
@@ -21644,6 +22546,76 @@ export function DocumentKnowledgeManagementPage() {
                   >
                     <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
                     {repositoryDeleteBusyId === repositoryDeleteTarget.id ? 'Deleting...' : 'Delete document'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {repositoryBulkDeleteConfirmOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close bulk delete confirmation"
+                disabled={repositoryBulkActionBusy}
+                onClick={() => {
+                  if (!repositoryBulkActionBusy) setRepositoryBulkDeleteConfirmOpen(false)
+                }}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="repository-bulk-delete-dialog-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/12 text-red-700 ring-1 ring-red-500/25">
+                      <Trash2 className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="repository-bulk-delete-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Delete {repositoryTableSelectedIds.length} document{repositoryTableSelectedIds.length === 1 ? '' : 's'}
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        This action permanently removes the selected documents and cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 px-6 py-5">
+                  <p className="text-xs text-muted-foreground">
+                    Enterprise note: deleting these documents also cleans up auto-generated KB links for the same
+                    source files to prevent duplicates.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    disabled={repositoryBulkActionBusy}
+                    onClick={() => setRepositoryBulkDeleteConfirmOpen(false)}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2 bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500')}
+                    disabled={repositoryBulkActionBusy}
+                    onClick={() => void handleRepositoryBulkDeleteConfirm()}
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                    {repositoryBulkActionBusy ? 'Deleting...' : `Delete ${repositoryTableSelectedIds.length} document${repositoryTableSelectedIds.length === 1 ? '' : 's'}`}
                   </Button>
                 </div>
               </div>
@@ -21954,83 +22926,58 @@ export function DocumentKnowledgeManagementPage() {
           )
         : null}
 
-      {kbRowContextMenu && kbContextMenuEntry && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              ref={kbContextMenuRef}
-              role="menu"
-              aria-label={`Actions for ${kbContextMenuEntry.title}`}
-              className="fixed z-[1190] w-[220px] overflow-hidden rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm"
-              style={{ left: kbContextMenuPos.x, top: kbContextMenuPos.y }}
-              onClick={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.preventDefault()}
+      <ContextMenu
+        open={!!kbRowContextMenu && !!kbContextMenuEntry}
+        x={kbRowContextMenu?.x ?? 0}
+        y={kbRowContextMenu?.y ?? 0}
+        onClose={() => setKbRowContextMenu(null)}
+        zIndex={1190}
+        className="w-64"
+      >
+        {kbContextMenuEntry ? (
+          <>
+            <ContextMenuItem
+              onClick={() => {
+                setKbRowContextMenu(null)
+                openKbAddDrawer()
+              }}
             >
-              <button
-                type="button"
-                role="menuitem"
-                className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setKbRowContextMenu(null)
-                  openKbAddDrawer()
-                }}
-                title="Add knowledge entry"
-              >
-                <span className="flex items-center gap-2">
-                  <Plus className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span>Add knowledge entry</span>
-                </span>
-              </button>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <button
-                type="button"
-                role="menuitem"
-                className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setKbRowContextMenu(null)
-                  openKbEditDrawer(kbContextMenuEntry)
-                }}
-                title={`Edit ${kbContextMenuEntry.title}`}
-              >
-                <span className="flex items-center gap-2">
-                  <PencilLine className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span className="truncate">Edit {kbContextMenuEntry.title}</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setKbRowContextMenu(null)
-                  startKbInlineRename(kbContextMenuEntry)
-                }}
-                title={`Rename ${kbContextMenuEntry.title}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Type className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span className="truncate">Rename {kbContextMenuEntry.title}</span>
-                </span>
-              </button>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition-colors hover:bg-rose-50"
-                onClick={() => {
-                  setKbRowContextMenu(null)
-                  void deleteKbEntryFromTable(kbContextMenuEntry)
-                }}
-                title={`Delete ${kbContextMenuEntry.title}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Trash2 className="h-4 w-4 text-rose-500" aria-hidden />
-                  <span className="truncate">Delete {kbContextMenuEntry.title}</span>
-                </span>
-              </button>
-            </div>,
-            document.body
-          )
-        : null}
+              <Plus className="w-4 h-4 mr-2" />
+              Add knowledge entry
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={() => {
+                setKbRowContextMenu(null)
+                openKbEditDrawer(kbContextMenuEntry)
+              }}
+            >
+              <PencilLine className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Edit {kbContextMenuEntry.title}</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setKbRowContextMenu(null)
+                startKbInlineRename(kbContextMenuEntry)
+              }}
+            >
+              <Type className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Rename {kbContextMenuEntry.title}</span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              className="text-destructive"
+              onClick={() => {
+                setKbRowContextMenu(null)
+                void deleteKbEntryFromTable(kbContextMenuEntry)
+              }}
+            >
+              <Trash2 className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Delete {kbContextMenuEntry.title}</span>
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenu>
 
       {templateDeleteTarget && typeof document !== 'undefined'
         ? createPortal(
@@ -22112,7 +23059,8 @@ export function DocumentKnowledgeManagementPage() {
               x={templateRowContextMenu.x}
               y={templateRowContextMenu.y}
               onClose={() => setTemplateRowContextMenu(null)}
-              className="z-[1190] w-64"
+              zIndex={1190}
+              className="w-64"
             >
               <ContextMenuItem
                 onClick={() => {
@@ -22182,6 +23130,23 @@ export function DocumentKnowledgeManagementPage() {
                   </ContextMenuItem>
                 </>
               ) : null}
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className={cn(templateSharingBusyId === templateContextMenuItem.id && 'pointer-events-none opacity-50')}
+                onClick={() => {
+                  const target = templateContextMenuItem
+                  const shared = Array.isArray(target.metadata?.shared_with_workspace_ids)
+                    ? (target.metadata!.shared_with_workspace_ids as string[])
+                    : []
+                  setTemplateRowContextMenu(null)
+                  setTemplateShareDialog({ templateId: target.id, selectedIds: new Set(shared) })
+                  setTemplateShareSearchQuery('')
+                  setTemplateShareSearchOpen(false)
+                }}
+              >
+                <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                Share with workspaces…
+              </ContextMenuItem>
               {templateContextMenuItem.status_code !== 'deprecated' ? (
                 <>
                   <ContextMenuSeparator />
@@ -22229,306 +23194,413 @@ export function DocumentKnowledgeManagementPage() {
           )
         : null}
 
-      {repositoryRowContextMenu && repositoryContextMenuItem && typeof document !== 'undefined'
+      {templateShareDialog && templateShareDialogItem && typeof document !== 'undefined'
         ? createPortal(
-            <div
-              ref={repositoryContextMenuRef}
-              role="menu"
-              aria-label={`Actions for ${repositoryContextMenuItem.name}`}
-              className="fixed z-[1190] w-[240px] overflow-hidden rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm"
-              style={{ left: repositoryContextMenuPos.x, top: repositoryContextMenuPos.y }}
-              onClick={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.preventDefault()}
-            >
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
               <button
                 type="button"
-                role="menuitem"
-                className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close share dialog"
+                disabled={templateSharingBusyId === templateShareDialog.templateId}
                 onClick={() => {
-                  setRepositoryRowContextMenu(null)
-                  openKbAddDrawer()
+                  if (templateSharingBusyId !== templateShareDialog.templateId) {
+                    setTemplateShareDialog(null)
+                    setTemplateShareSearchQuery('')
+                    setTemplateShareSearchOpen(false)
+                  }
                 }}
-                title="Add knowledge entry"
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-share-dialog-title"
+                className="relative z-[1401] w-full max-w-lg rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
               >
-                <span className="flex items-center gap-2">
-                  <Plus className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span>Add knowledge entry</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setRepositoryRowContextMenu(null)
-                  openRepositoryUploadPicker()
-                }}
-                title="Upload document"
-              >
-                <span className="flex items-center gap-2">
-                  <Upload className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span>Upload document</span>
-                </span>
-              </button>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <button
-                type="button"
-                role="menuitem"
-                className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setRepositoryRowContextMenu(null)
-                  handleRepositoryViewDocument(repositoryContextMenuItem)
-                }}
-                title={`View ${repositoryContextMenuItem.name}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Eye className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span className="truncate">View {repositoryContextMenuItem.name}</span>
-                </span>
-              </button>
-              {repositoryContextMenuItem.fileName?.toLowerCase().endsWith('.docx') ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                  onClick={() => {
-                    const target = repositoryContextMenuItem
-                    setRepositoryRowContextMenu(null)
-                    handleRepositoryEditDocument(target)
-                  }}
-                  title={`Edit ${repositoryContextMenuItem.name}`}
-                >
-                  <span className="flex items-center gap-2">
-                    <PencilLine className="h-4 w-4 text-slate-500" aria-hidden />
-                    <span className="truncate">Edit {repositoryContextMenuItem.name}</span>
-                  </span>
-                </button>
-              ) : null}
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setRepositoryRowContextMenu(null)
-                  openDetail(repositoryContextMenuItem.detailId)
-                }}
-                title={`Open ${repositoryContextMenuItem.name}`}
-              >
-                <span className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span className="truncate">Open {repositoryContextMenuItem.name}</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={repositoryDownloadBusyId === repositoryContextMenuItem.id}
-                onClick={() => {
-                  setRepositoryRowContextMenu(null)
-                  void handleRepositoryDownload(repositoryContextMenuItem)
-                }}
-                title={`Download ${repositoryContextMenuItem.name}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Download className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span className="truncate">Download {repositoryContextMenuItem.name}</span>
-                </span>
-              </button>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-blue-700 transition-colors hover:bg-blue-50"
-                onClick={() => {
-                  setRepositoryRowContextMenu(null)
-                  void handleRepositoryManualGenerateKb(repositoryContextMenuItem)
-                }}
-                title={`Generate knowledge entry from ${repositoryContextMenuItem.name}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-blue-500" aria-hidden />
-                  <span className="truncate">Generate KB from {repositoryContextMenuItem.name}</span>
-                </span>
-              </button>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <div className="px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Move to folder</div>
-              <div className="max-h-40 overflow-y-auto">
-                {repositoryContextMenuItem.folderId ? (
-                  <button
+                <div className="rounded-t-2xl border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/12 text-sky-700 ring-1 ring-sky-500/25">
+                      <Globe className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="template-share-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Share with workspaces
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        Search a workspace and select it to let it use "{templateShareDialogItem.name}". Remove a badge to revoke access.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 px-6 py-5">
+                  {templateShareDialog.selectedIds.size > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {Array.from(templateShareDialog.selectedIds).map((selectedId) => {
+                        const option = templateShareDialogOptions.find((item) => item.id === selectedId)
+                        return (
+                          <span
+                            key={selectedId}
+                            className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-sky-400/30 bg-gradient-to-r from-sky-500/15 to-cyan-500/15 py-1 pl-3 pr-1.5 text-xs font-medium text-sky-950 ring-1 ring-sky-500/20 dark:text-sky-100"
+                          >
+                            <span className="truncate">{option?.name ?? selectedId}</span>
+                            <button
+                              type="button"
+                              className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-sky-900/70 hover:bg-sky-500/20 hover:text-sky-950 dark:text-sky-200/80 dark:hover:text-sky-50"
+                              aria-label={`Remove ${option?.name ?? selectedId}`}
+                              onClick={() => {
+                                setTemplateShareDialog((prev) => {
+                                  if (!prev) return prev
+                                  const next = new Set(prev.selectedIds)
+                                  next.delete(selectedId)
+                                  return { ...prev, selectedIds: next }
+                                })
+                              }}
+                            >
+                              <X className="h-3 w-3" aria-hidden />
+                            </button>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+
+                  {templateShareDialogOptions.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No other workspaces in this template's organization are available to share with.
+                    </p>
+                  ) : (
+                    <div className="relative">
+                      <div className="relative">
+                        <Search
+                          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <input
+                          type="text"
+                          value={templateShareSearchQuery}
+                          onChange={(event) => setTemplateShareSearchQuery(event.target.value)}
+                          onFocus={() => setTemplateShareSearchOpen(true)}
+                          onBlur={() => {
+                            window.setTimeout(() => setTemplateShareSearchOpen(false), 150)
+                          }}
+                          placeholder="Search workspaces…"
+                          className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                      </div>
+
+                      {templateShareSearchOpen ? (
+                        (() => {
+                          const query = templateShareSearchQuery.trim().toLowerCase()
+                          const filtered = templateShareDialogOptions.filter((option) => {
+                            if (templateShareDialog.selectedIds.has(option.id)) return false
+                            if (!query) return true
+                            return option.name.toLowerCase().includes(query)
+                          })
+                          return (
+                            <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg scrollbar-hide">
+                              {filtered.length === 0 ? (
+                                <p className="px-3 py-2.5 text-sm text-muted-foreground">
+                                  {query ? 'No matching workspaces.' : 'All workspaces are already selected.'}
+                                </p>
+                              ) : (
+                                filtered.map((option) => (
+                                  <button
+                                    key={option.id}
+                                    type="button"
+                                    className="flex w-full cursor-pointer items-center px-3 py-2.5 text-left text-sm text-foreground hover:bg-muted/40"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault()
+                                      setTemplateShareDialog((prev) => {
+                                        if (!prev) return prev
+                                        const next = new Set(prev.selectedIds)
+                                        next.add(option.id)
+                                        return { ...prev, selectedIds: next }
+                                      })
+                                      setTemplateShareSearchQuery('')
+                                    }}
+                                  >
+                                    {option.name}
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          )
+                        })()
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-3 rounded-b-2xl border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
                     type="button"
-                    role="menuitem"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    disabled={templateSharingBusyId === templateShareDialog.templateId}
+                    onClick={() => {
+                      setTemplateShareDialog(null)
+                      setTemplateShareSearchQuery('')
+                      setTemplateShareSearchOpen(false)
+                    }}
+                  >
+                    <X className="h-4 w-4 shrink-0" aria-hidden />
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                    disabled={templateSharingBusyId === templateShareDialog.templateId}
+                    onClick={() => void handleSaveTemplateShare()}
+                  >
+                    <Globe className="h-4 w-4 shrink-0" aria-hidden />
+                    {templateSharingBusyId === templateShareDialog.templateId ? 'Saving…' : 'Save sharing'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      <ContextMenu
+        open={!!repositoryRowContextMenu && !!repositoryContextMenuItem}
+        x={repositoryRowContextMenu?.x ?? 0}
+        y={repositoryRowContextMenu?.y ?? 0}
+        onClose={() => setRepositoryRowContextMenu(null)}
+        zIndex={1190}
+        className="w-64"
+      >
+        {repositoryContextMenuItem ? (
+          <>
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                openKbAddDrawer()
+              }}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add knowledge entry
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                openRepositoryUploadPicker()
+              }}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Upload document
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                handleRepositoryViewDocument(repositoryContextMenuItem)
+              }}
+            >
+              <Eye className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">View {repositoryContextMenuItem.name}</span>
+            </ContextMenuItem>
+            {repositoryContextMenuItem.fileName?.toLowerCase().endsWith('.docx') ? (
+              <ContextMenuItem
+                onClick={() => {
+                  const target = repositoryContextMenuItem
+                  setRepositoryRowContextMenu(null)
+                  handleRepositoryEditDocument(target)
+                }}
+              >
+                <PencilLine className="w-4 h-4 mr-2 shrink-0" />
+                <span className="min-w-0 truncate">Edit {repositoryContextMenuItem.name}</span>
+              </ContextMenuItem>
+            ) : null}
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                openDetail(repositoryContextMenuItem.detailId)
+              }}
+            >
+              <FileText className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Open {repositoryContextMenuItem.name}</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={cn(repositoryDownloadBusyId === repositoryContextMenuItem.id && 'pointer-events-none opacity-50')}
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                void handleRepositoryDownload(repositoryContextMenuItem)
+              }}
+            >
+              <Download className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">
+                {repositoryDownloadBusyId === repositoryContextMenuItem.id
+                  ? 'Downloading…'
+                  : `Download ${repositoryContextMenuItem.name}`}
+              </span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                void handleRepositoryManualGenerateKb(repositoryContextMenuItem)
+              }}
+            >
+              <Sparkles className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Generate KB from {repositoryContextMenuItem.name}</span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuSubmenu
+              trigger={
+                <>
+                  <Folder className="w-4 h-4 mr-2" />
+                  Move to folder
+                  <ChevronRight className="w-4 h-4 ml-auto" />
+                </>
+              }
+            >
+              <div className="max-h-56 min-w-[14rem] overflow-y-auto scrollbar-hide">
+                {repositoryContextMenuItem.folderId ? (
+                  <ContextMenuItem
                     onClick={() => {
                       const target = repositoryContextMenuItem
                       setRepositoryRowContextMenu(null)
                       void handleMoveDocumentToFolder(target, null)
                     }}
                   >
-                    <span className="flex items-center gap-2"><Folder className="h-4 w-4 text-slate-500" aria-hidden /><span>All documents (root)</span></span>
-                  </button>
+                    <Folder className="w-4 h-4 mr-2 shrink-0" />
+                    All documents (root)
+                  </ContextMenuItem>
                 ) : null}
-                {repositoryFolders.filter((folder) => folder.id !== repositoryContextMenuItem.folderId).map((folder) => (
-                  <button
-                    key={folder.id}
-                    type="button"
-                    role="menuitem"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                    onClick={() => {
-                      const target = repositoryContextMenuItem
-                      setRepositoryRowContextMenu(null)
-                      void handleMoveDocumentToFolder(target, folder.id)
-                    }}
-                  >
-                    <span className="flex items-center gap-2"><FolderOpen className="h-4 w-4 text-sky-600" aria-hidden /><span className="truncate">{folder.name}</span></span>
-                  </button>
-                ))}
+                {repositoryFolders
+                  .filter((folder) => folder.id !== repositoryContextMenuItem.folderId)
+                  .map((folder) => (
+                    <ContextMenuItem
+                      key={folder.id}
+                      onClick={() => {
+                        const target = repositoryContextMenuItem
+                        setRepositoryRowContextMenu(null)
+                        void handleMoveDocumentToFolder(target, folder.id)
+                      }}
+                    >
+                      <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
+                      <span className="min-w-0 truncate">{folder.name}</span>
+                    </ContextMenuItem>
+                  ))}
                 {repositoryFolders.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-slate-400">No folders yet — create one first.</p>
+                  <div className="px-4 py-2.5 text-sm text-muted-foreground">No folders yet — create one first.</div>
                 ) : null}
               </div>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={repositoryDeleteBusyId === repositoryContextMenuItem.id}
-                onClick={() => {
-                  setRepositoryRowContextMenu(null)
-                  void handleRepositoryDelete(repositoryContextMenuItem)
-                }}
-                title={`Delete ${repositoryContextMenuItem.name}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Trash2 className="h-4 w-4 text-rose-500" aria-hidden />
-                  <span className="truncate">Delete {repositoryContextMenuItem.name}</span>
-                </span>
-              </button>
-            </div>,
-            document.body
-          )
-        : null}
-
-      {repositoryFolderContextMenu && repositoryFolderContextMenuItem && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              ref={repositoryFolderContextMenuRef}
-              role="menu"
-              aria-label={`Actions for ${repositoryFolderContextMenuItem.name}`}
-              className="fixed z-[1190] w-[240px] overflow-hidden rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm"
-              style={{ left: repositoryFolderContextMenuPos.x, top: repositoryFolderContextMenuPos.y }}
-              onClick={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.preventDefault()}
+            </ContextMenuSubmenu>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              className={cn(
+                'text-destructive',
+                repositoryDeleteBusyId === repositoryContextMenuItem.id && 'pointer-events-none opacity-50',
+              )}
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                void handleRepositoryDelete(repositoryContextMenuItem)
+              }}
             >
-              <button
-                type="button"
-                role="menuitem"
-                className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setRepositoryFolderContextMenu(null)
-                  openKbAddDrawer()
-                }}
-                title="Add knowledge entry"
-              >
-                <span className="flex items-center gap-2">
-                  <Plus className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span>Add knowledge entry</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setRepositoryFolderContextMenu(null)
-                  openRepositoryUploadPicker(repositoryFolderContextMenuItem.id)
-                }}
-                title="Upload document"
-              >
-                <span className="flex items-center gap-2">
-                  <Upload className="h-4 w-4 text-slate-500" aria-hidden />
-                  <span>Upload document</span>
-                </span>
-              </button>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <button
-                type="button"
-                role="menuitem"
-                className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
-                onClick={() => {
-                  setRepositoryFolderContextMenu(null)
-                  setRepositoryCurrentFolderId(repositoryFolderContextMenuItem.id)
-                }}
-                title={`Open ${repositoryFolderContextMenuItem.name}`}
-              >
-                <span className="flex items-center gap-2">
-                  <FolderOpen className="h-4 w-4 text-sky-600" aria-hidden />
-                  <span className="truncate">Open {repositoryFolderContextMenuItem.name}</span>
-                </span>
-              </button>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <div className="px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Move to folder</div>
-              <div className="max-h-40 overflow-y-auto">
+              <Trash2 className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Delete {repositoryContextMenuItem.name}</span>
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenu>
+
+      <ContextMenu
+        open={!!repositoryFolderContextMenu && !!repositoryFolderContextMenuItem}
+        x={repositoryFolderContextMenu?.x ?? 0}
+        y={repositoryFolderContextMenu?.y ?? 0}
+        onClose={() => setRepositoryFolderContextMenu(null)}
+        zIndex={1190}
+        className="w-64"
+      >
+        {repositoryFolderContextMenuItem ? (
+          <>
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryFolderContextMenu(null)
+                openKbAddDrawer()
+              }}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add knowledge entry
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryFolderContextMenu(null)
+                openRepositoryUploadPicker(repositoryFolderContextMenuItem.id)
+              }}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Upload document
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryFolderContextMenu(null)
+                setRepositoryCurrentFolderId(repositoryFolderContextMenuItem.id)
+              }}
+            >
+              <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Open {repositoryFolderContextMenuItem.name}</span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuSubmenu
+              trigger={
+                <>
+                  <Folder className="w-4 h-4 mr-2" />
+                  Move to folder
+                  <ChevronRight className="w-4 h-4 ml-auto" />
+                </>
+              }
+            >
+              <div className="max-h-56 min-w-[14rem] overflow-y-auto">
                 {repositoryFolderContextMenuItem.parent_id ? (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
+                  <ContextMenuItem
                     onClick={() => {
                       const target = repositoryFolderContextMenuItem
                       setRepositoryFolderContextMenu(null)
                       void handleMoveFolderToParent(target, null)
                     }}
                   >
-                    <span className="flex items-center gap-2">
-                      <Folder className="h-4 w-4 text-slate-500" aria-hidden />
-                      <span>All documents (root)</span>
-                    </span>
-                  </button>
+                    <Folder className="w-4 h-4 mr-2 shrink-0" />
+                    All documents (root)
+                  </ContextMenuItem>
                 ) : null}
                 {repositoryFolderMoveTargets.map((folder) => (
-                  <button
+                  <ContextMenuItem
                     key={folder.id}
-                    type="button"
-                    role="menuitem"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100"
                     onClick={() => {
                       const target = repositoryFolderContextMenuItem
                       setRepositoryFolderContextMenu(null)
                       void handleMoveFolderToParent(target, folder.id)
                     }}
                   >
-                    <span className="flex items-center gap-2">
-                      <FolderOpen className="h-4 w-4 text-sky-600" aria-hidden />
-                      <span className="truncate">{folder.name}</span>
-                    </span>
-                  </button>
+                    <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
+                    <span className="min-w-0 truncate">{folder.name}</span>
+                  </ContextMenuItem>
                 ))}
                 {repositoryFolderMoveTargets.length === 0 && !repositoryFolderContextMenuItem.parent_id ? (
-                  <p className="px-3 py-2 text-xs text-slate-400">No other folders available.</p>
+                  <div className="px-4 py-2.5 text-sm text-muted-foreground">No other folders available.</div>
                 ) : null}
               </div>
-              <div className="my-1 border-t border-border/60" aria-hidden />
-              <button
-                type="button"
-                role="menuitem"
-                className="mt-0.5 w-full rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition-colors hover:bg-rose-50"
-                onClick={() => {
-                  const target = repositoryFolderContextMenuItem
-                  setRepositoryFolderContextMenu(null)
-                  void handleDeleteRepositoryFolder(target)
-                }}
-                title={`Delete ${repositoryFolderContextMenuItem.name}`}
-              >
-                <span className="flex items-center gap-2">
-                  <Trash2 className="h-4 w-4 text-rose-500" aria-hidden />
-                  <span className="truncate">Delete {repositoryFolderContextMenuItem.name}</span>
-                </span>
-              </button>
-            </div>,
-            document.body
-          )
-        : null}
+            </ContextMenuSubmenu>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              className="text-destructive"
+              onClick={() => {
+                const target = repositoryFolderContextMenuItem
+                setRepositoryFolderContextMenu(null)
+                void handleDeleteRepositoryFolder(target)
+              }}
+            >
+              <Trash2 className="w-4 h-4 mr-2 shrink-0" />
+              <span className="min-w-0 truncate">Delete {repositoryFolderContextMenuItem.name}</span>
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenu>
     </div>
   )
 }

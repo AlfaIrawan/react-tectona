@@ -12,6 +12,7 @@ export const TECTONA_AUTHZ_RESOURCES = {
 /** Default AuthZ role codes (authorization-policy bootstrap). */
 export const TECTONA_AUTHZ_ROLE_CODES = {
   platformAdmin: 'tectona.admin',
+  personalWorkspaceAdmin: 'tectona.personal_workspace_admin',
   workspaceAdmin: 'tectona.workspace_admin',
   governanceLead: 'tectona.governance_lead',
   projectManager: 'tectona.project_manager',
@@ -20,8 +21,14 @@ export const TECTONA_AUTHZ_ROLE_CODES = {
   integrationOperator: 'tectona.integration_operator',
   platformMember: 'tectona.platform_member',
   externalReviewer: 'tectona.external_reviewer',
-  businessPartnerHead: 'tectona.business_partner_head',
-  brmHead: 'tectona.brm_head',
+  solutionArchitect: 'tectona.solution_architect',
+  technologyArchitect: 'tectona.technology_architect',
+  dataArchitect: 'tectona.data_architect',
+  applicationArchitect: 'tectona.application_architect',
+  technicalLead: 'tectona.technical_lead',
+  developer: 'tectona.developer',
+  qa: 'tectona.qa',
+  systemAnalyst: 'tectona.system_analyst',
   businessAnalyst: 'tectona.business_analyst',
 } as const
 

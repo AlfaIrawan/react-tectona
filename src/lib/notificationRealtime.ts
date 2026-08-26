@@ -102,7 +102,7 @@ class NotificationRealtimeController {
             payload?: NotificationCreatedRealtimePayload
           }
           if (parsed.type === 'notification.created') {
-            emitNotificationsUpdated()
+            emitNotificationsUpdated(parsed.payload)
             // Skip the toast if this tab already showed one via notifyEvent() for the same
             // notification (see consumeSelfCreatedNotification) — avoids a double toast.
             const dedupeKey = parsed.payload?.metadata?.__client_dedupe_key

@@ -4,7 +4,13 @@ import '@svar-ui/react-gantt/all.css'
 import { cn } from '@/lib/utils'
 import { buildGanttSelectionColumnWithRefs, isSyntheticGanttSummaryId } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 import { syncVariableTimelineLayout } from '../lib/planningTimelineColumnLayout'
-import { useTimelineScrollExtension } from '../lib/planningGanttTimelineScroll'
+import {
+  findGanttChart,
+  shouldPublishTimelinePaging,
+  TIMELINE_SCROLL_EDGE_THRESHOLD_PX,
+  useTimelineScrollExtension,
+  type TimelinePagingViewportState,
+} from '../lib/planningGanttTimelineScroll'
 import {
   PLANNING_TODAY_HIGHLIGHT_STYLES,
   scalesForZoomWithTodayHighlight,
@@ -518,39 +524,38 @@ function computeGanttWindowFromTasks(tasks: ITask[]): { start: Date; end: Date }
 function padGanttWindowForZoom(
   window: { start: Date; end: Date },
   zoom: PlanningGanttZoomLevel,
+  extraPadding = false,
 ): { start: Date; end: Date } {
   const start = new Date(window.start)
   const end = new Date(window.end)
 
   switch (zoom) {
     case 'Day':
-      start.setUTCDate(start.getUTCDate() - 7)
-      end.setUTCDate(end.getUTCDate() + 14)
+      start.setUTCDate(start.getUTCDate() - (extraPadding ? 28 : 7))
+      end.setUTCDate(end.getUTCDate() + (extraPadding ? 56 : 14))
       break
     case 'Week':
-      start.setUTCDate(start.getUTCDate() - 14)
-      end.setUTCDate(end.getUTCDate() + 28)
+      start.setUTCDate(start.getUTCDate() - (extraPadding ? 84 : 14))
+      end.setUTCDate(end.getUTCDate() + (extraPadding ? 126 : 28))
       break
     case 'Month': {
       start.setUTCDate(1)
-      start.setUTCMonth(start.getUTCMonth() - 2)
+      start.setUTCMonth(start.getUTCMonth() - (extraPadding ? 4 : 2))
       const endYear = end.getUTCFullYear()
       const endMonth = end.getUTCMonth()
       return {
         start,
-        // Six months past the last task month for initial scroll room.
-        end: new Date(Date.UTC(endYear, endMonth + 7, 0)),
+        end: new Date(Date.UTC(endYear, endMonth + (extraPadding ? 10 : 7), 0)),
       }
     }
     case 'Quarter': {
       start.setUTCDate(1)
-      start.setUTCMonth(start.getUTCMonth() - 3)
+      start.setUTCMonth(start.getUTCMonth() - (extraPadding ? 6 : 3))
       const endYear = end.getUTCFullYear()
       const endMonth = end.getUTCMonth()
       return {
         start,
-        // Three extra quarter-columns (9 months) after the last task month.
-        end: new Date(Date.UTC(endYear, endMonth + 12, 0)),
+        end: new Date(Date.UTC(endYear, endMonth + (extraPadding ? 18 : 12), 0)),
       }
     }
     default:
@@ -558,6 +563,26 @@ function padGanttWindowForZoom(
   }
 
   return { start, end }
+}
+
+/** Paged timeline: small past buffer + at least `initialSpanMonths` forward from start. */
+function padGanttWindowPaged(
+  window: { start: Date; end: Date },
+  initialSpanMonths: number,
+): { start: Date; end: Date } {
+  const start = new Date(window.start)
+  start.setUTCDate(start.getUTCDate() - 14)
+
+  const minEndBySpan = new Date(start)
+  minEndBySpan.setUTCMonth(minEndBySpan.getUTCMonth() + initialSpanMonths)
+
+  const taskEnd = new Date(window.end)
+  taskEnd.setUTCDate(taskEnd.getUTCDate() + 14)
+
+  return {
+    start,
+    end: taskEnd.getTime() > minEndBySpan.getTime() ? taskEnd : minEndBySpan,
+  }
 }
 
 /** Parent-child tree — one row per work item, nested like List view. */
@@ -1062,7 +1087,7 @@ const GANTT_TRANSPARENT_SURFACE_STYLES = `
     --wx-gantt-link-marker-background: transparent;
   }
 
-  /* Body / chart — transparent so parent glass-card shows through. */
+  /* Body / chart — transparent so parent liquid-glass-enterprise-panel shows through. */
   .planning-svar-gantt-host--transparent .wx-gantt,
   .planning-svar-gantt-host--transparent .wx-willow-theme,
   .planning-svar-gantt-host--transparent .wx-table-container,
@@ -1079,7 +1104,7 @@ const GANTT_TRANSPARENT_SURFACE_STYLES = `
     background-color: transparent !important;
   }
 
-  /* Header only — same tone as glass-card panel (bg-white/75). */
+  /* Header only — same tone as liquid-glass-enterprise-panel (bg-white/75). */
   .planning-svar-gantt-host--transparent .wx-grid .wx-header,
   .planning-svar-gantt-host--transparent .wx-grid .wx-header .wx-row,
   .planning-svar-gantt-host--transparent .wx-grid .wx-header .wx-cell,
@@ -1160,14 +1185,28 @@ type PlanningSvarGanttProps = {
   onTaskGridEditCommit?: (event: PlanningGanttTaskGridEditEvent) => boolean | void
   /** Bump to rebuild the Gantt task tree from props (e.g. after rejected move). */
   taskStructureRevision?: number
-  /** `transparent` lets parent glass-card background show through (Project Timeline). */
+  /** `transparent` lets parent liquid-glass-enterprise-panel background show through (Project Timeline). */
   surface?: 'solid' | 'transparent'
   /** Allow drag-resize on timeline scale header (uniform cellWidth). Default true. */
   timelineScaleResize?: boolean
   /** Extend timeline when scrolling near chart edges. Disable for bounded readonly views. */
   enableTimelineScrollExtension?: boolean
+  /** `forward` extends only into the future — avoids left-edge scroll jolt/flicker. */
+  timelineScrollExtensionDirection?: 'both' | 'forward'
+  /** `month` loads +1 calendar month per right-edge scroll (paged timeline). */
+  timelineScrollExtensionStep?: 'default' | 'month'
+  /** Initial forward span when `timelineScrollExtensionStep` is `month`. Default 6. */
+  timelineInitialSpanMonths?: number
+  /** Extra start/end padding when scroll extension is disabled (bounded previews). */
+  boundedTimelinePadding?: boolean
+  /** Fixed timeline window — disables scroll-edge extension (Conversion paging). */
+  timelineWindowOverride?: { start: Date; end: Date }
   /** Scroll chart to the task date range once after mount (readonly previews). */
   scrollToTaskWindowOnMount?: boolean
+  /** Fired when chart scroll / timeline window changes (paged timeline UX). */
+  onTimelinePagingChange?: (state: TimelinePagingViewportState | null) => void
+  /** Imperative paging controls (e.g. toolbar “Next month”). */
+  onTimelinePagingApiReady?: (api: { extendForwardMonth: () => boolean } | null) => void
 }
 
 export function PlanningSvarGantt({
@@ -1191,7 +1230,14 @@ export function PlanningSvarGantt({
   surface = 'solid',
   timelineScaleResize = true,
   enableTimelineScrollExtension = true,
+  timelineScrollExtensionDirection = 'both',
+  timelineScrollExtensionStep = 'default',
+  timelineInitialSpanMonths = 6,
+  boundedTimelinePadding = false,
+  timelineWindowOverride,
   scrollToTaskWindowOnMount = false,
+  onTimelinePagingChange,
+  onTimelinePagingApiReady,
 }: PlanningSvarGanttProps) {
   const { tasks, links } = useMemo(() => {
     if (layout === 'flat') return buildFlatGanttModel(items)
@@ -1231,6 +1277,7 @@ export function PlanningSvarGantt({
   const onSelectedIdsChangeRef = useRef(onSelectedIdsChange)
   const selectableTaskIdsRef = useRef<string[]>([])
   const bindTimelineScrollRef = useRef<(() => void) | null>(null)
+  const bindPagingScrollRef = useRef<(() => void) | null>(null)
 
   const selectableTaskIds = useMemo(
     () => tasks.map((task) => String(task.id)).filter((id) => !isGanttSummaryId(id)),
@@ -1304,6 +1351,7 @@ export function PlanningSvarGantt({
       if (rowDragActiveRef.current || chartEditActiveRef.current) return
       runGanttVisualSync()
       bindTimelineScrollRef.current?.()
+      bindPagingScrollRef.current?.()
     })
   }, [runGanttVisualSync])
 
@@ -1574,16 +1622,126 @@ export function PlanningSvarGantt({
       layout === 'tree' || layout === 'project-tree'
         ? computeGanttWindowFromTasks(tasks)
         : computeGanttWindow(items)
-    return padGanttWindowForZoom(base, zoomLevel)
-  }, [items, layout, tasks, zoomLevel])
+    if (timelineScrollExtensionStep === 'month') {
+      return padGanttWindowPaged(base, timelineInitialSpanMonths)
+    }
+    return padGanttWindowForZoom(
+      base,
+      zoomLevel,
+      boundedTimelinePadding || timelineScrollExtensionDirection === 'forward',
+    )
+  }, [
+    boundedTimelinePadding,
+    items,
+    layout,
+    tasks,
+    timelineInitialSpanMonths,
+    timelineScrollExtensionDirection,
+    timelineScrollExtensionStep,
+    zoomLevel,
+  ])
 
-  const ganttWindow = useTimelineScrollExtension(
+  const {
+    activeWindow: extendedGanttWindow,
+    canExtendForward,
+    extendForwardMonth,
+  } = useTimelineScrollExtension(
     ganttInnerRef,
     baseGanttWindow,
     zoomLevel,
-    enableTimelineScrollExtension && tasks.length > 0,
+    enableTimelineScrollExtension && tasks.length > 0 && !timelineWindowOverride,
     bindTimelineScrollRef,
+    timelineScrollExtensionDirection,
+    timelineScrollExtensionStep,
   )
+
+  const ganttWindow = timelineWindowOverride ?? extendedGanttWindow
+  const ganttWindowRef = useRef(ganttWindow)
+  ganttWindowRef.current = ganttWindow
+
+  const extendForwardMonthRef = useRef(extendForwardMonth)
+  extendForwardMonthRef.current = extendForwardMonth
+  const onTimelinePagingApiReadyRef = useRef(onTimelinePagingApiReady)
+  onTimelinePagingApiReadyRef.current = onTimelinePagingApiReady
+
+  useEffect(() => {
+    if (!onTimelinePagingApiReadyRef.current || timelineWindowOverride) return undefined
+    onTimelinePagingApiReadyRef.current({
+      extendForwardMonth: () => extendForwardMonthRef.current(),
+    })
+    return () => onTimelinePagingApiReadyRef.current?.(null)
+  }, [canExtendForward, extendForwardMonth, timelineWindowOverride])
+
+  useEffect(() => {
+    if (!onTimelinePagingChange || timelineWindowOverride) return undefined
+
+    let chart: HTMLElement | null = null
+    let raf = 0
+    const lastPublishedRef = { current: null as TimelinePagingViewportState | null }
+
+    const publish = () => {
+      if (!chart) chart = findGanttChart(ganttInnerRef.current)
+      if (!chart || chart.scrollWidth === 0 || chart.clientWidth === 0) {
+        if (shouldPublishTimelinePaging(lastPublishedRef.current, null)) {
+          lastPublishedRef.current = null
+          startTransition(() => onTimelinePagingChange(null))
+        }
+        return
+      }
+
+      const windowStart = ganttWindow.start.getTime()
+      const windowEnd = ganttWindow.end.getTime()
+      const span = windowEnd - windowStart
+      if (span <= 0) {
+        if (shouldPublishTimelinePaging(lastPublishedRef.current, null)) {
+          lastPublishedRef.current = null
+          startTransition(() => onTimelinePagingChange(null))
+        }
+        return
+      }
+
+      const fractionStart = chart.scrollLeft / chart.scrollWidth
+      const fractionEnd = Math.min(1, (chart.scrollLeft + chart.clientWidth) / chart.scrollWidth)
+      const remaining = chart.scrollWidth - chart.scrollLeft - chart.clientWidth
+
+      const nextState: TimelinePagingViewportState = {
+        windowStart: ganttWindow.start,
+        windowEnd: ganttWindow.end,
+        viewportStart: new Date(windowStart + fractionStart * span),
+        viewportEnd: new Date(windowStart + fractionEnd * span),
+        canExtendForward,
+        atRightEdge: remaining <= TIMELINE_SCROLL_EDGE_THRESHOLD_PX,
+      }
+
+      if (!shouldPublishTimelinePaging(lastPublishedRef.current, nextState)) return
+      lastPublishedRef.current = nextState
+      startTransition(() => onTimelinePagingChange(nextState))
+    }
+
+    const schedulePublish = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(publish)
+    }
+
+    const bind = () => {
+      const next = findGanttChart(ganttInnerRef.current)
+      if (next === chart) return
+      if (chart) chart.removeEventListener('scroll', schedulePublish)
+      chart = next
+      chart?.addEventListener('scroll', schedulePublish, { passive: true })
+      schedulePublish()
+    }
+
+    bind()
+    schedulePublish()
+    bindPagingScrollRef.current = bind
+
+    return () => {
+      cancelAnimationFrame(raf)
+      bindPagingScrollRef.current = null
+      if (chart) chart.removeEventListener('scroll', schedulePublish)
+    }
+  }, [canExtendForward, ganttWindow.end, ganttWindow.start, onTimelinePagingChange])
 
   const initialScrollDoneRef = useRef(false)
 
@@ -1627,8 +1785,8 @@ export function PlanningSvarGantt({
       }
       if (!Number.isFinite(minMs)) return
 
-      const windowStart = ganttWindow.start.getTime()
-      const windowEnd = ganttWindow.end.getTime()
+      const windowStart = ganttWindowRef.current.start.getTime()
+      const windowEnd = ganttWindowRef.current.end.getTime()
       const span = windowEnd - windowStart
       if (span <= 0) return
 
@@ -1643,7 +1801,7 @@ export function PlanningSvarGantt({
       cancelled = true
       cancelAnimationFrame(raf)
     }
-  }, [ganttWindow.end, ganttWindow.start, scrollToTaskWindowOnMount, tasks])
+  }, [scrollToTaskWindowOnMount, taskStructureRevision, tasks, zoomLevel])
 
   useEffect(() => {
     scheduleGanttVisualSync()

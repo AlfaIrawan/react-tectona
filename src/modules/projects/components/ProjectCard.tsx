@@ -538,9 +538,9 @@ export function ProjectCard({
       {...(sortableMode ? {} : { ...listeners, ...attributes })}
       className={cn(
         // NOTE:
-        // `.glass-card` mendefinisikan `box-shadow` custom, jadi `ring-*`/`shadow-*` Tailwind bisa tidak terlihat.
+        // `.liquid-glass-enterprise-panel` mendefinisikan `box-shadow` custom, jadi `ring-*`/`shadow-*` Tailwind bisa tidak terlihat.
         // Untuk konsistensi dengan Base Models, indikator selected pakai inline `border` + `boxShadow`.
-        'glass-card rounded-xl p-4 transition-all cursor-pointer relative h-full flex flex-col select-none outline-none focus:outline-none',
+        'liquid-glass-enterprise-panel rounded-xl p-4 transition-all cursor-pointer relative h-full flex flex-col select-none outline-none focus:outline-none',
         // Keyboard focus indicator pakai outline agar tidak ketimpa `box-shadow`
         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
         project.status === 'archived' && 'opacity-60',

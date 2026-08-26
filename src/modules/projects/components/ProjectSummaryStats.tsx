@@ -26,7 +26,7 @@ export function ProjectSummaryStats({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
       {/* Datasets */}
-      <div className="glass-card rounded-xl p-3">
+      <div className="liquid-glass-enterprise-panel rounded-xl p-3">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 rounded-lg bg-primary/10">
             <Database className="w-4 h-4 text-primary" />
@@ -39,7 +39,7 @@ export function ProjectSummaryStats({
       </div>
 
       {/* Trainers */}
-      <div className="glass-card rounded-xl p-3">
+      <div className="liquid-glass-enterprise-panel rounded-xl p-3">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 rounded-lg bg-blue-500/10">
             <Brain className="w-4 h-4 text-blue-500" />
@@ -52,7 +52,7 @@ export function ProjectSummaryStats({
       </div>
 
       {/* Compute */}
-      <div className="glass-card rounded-xl p-3">
+      <div className="liquid-glass-enterprise-panel rounded-xl p-3">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 rounded-lg bg-green-500/10">
             <Server className="w-4 h-4 text-green-500" />
@@ -65,7 +65,7 @@ export function ProjectSummaryStats({
       </div>
 
       {/* Training Runs */}
-      <div className="glass-card rounded-xl p-3">
+      <div className="liquid-glass-enterprise-panel rounded-xl p-3">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 rounded-lg bg-purple-500/10">
             <Activity className="w-4 h-4 text-purple-500" />
@@ -78,7 +78,7 @@ export function ProjectSummaryStats({
       </div>
 
       {/* Last Activity */}
-      <div className="glass-card rounded-xl p-3">
+      <div className="liquid-glass-enterprise-panel rounded-xl p-3">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 rounded-lg bg-muted/30">
             <Clock className="w-4 h-4 text-muted-foreground" />

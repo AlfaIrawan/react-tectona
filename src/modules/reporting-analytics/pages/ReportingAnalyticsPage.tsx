@@ -635,7 +635,7 @@ function SectionCard({
   className?: string
 }) {
   return (
-    <Card className={cn('overflow-hidden rounded-[24px] border-slate-200/80 bg-white/95 shadow-[0_18px_48px_rgba(15,23,42,0.08)]', className)}>
+    <Card className={cn('overflow-hidden rounded-[24px] border liquid-glass-enterprise-panel', className)}>
       <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-white via-slate-50/80 to-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
