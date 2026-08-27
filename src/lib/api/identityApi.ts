@@ -492,7 +492,14 @@ export async function verifyEmailToken(token: string): Promise<VerifyEmailRespon
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(parseTokenError(res.status, text))
+    const payload = extractErrorPayload(text)
+    const code = typeof payload?.error === 'string' ? payload.error : typeof payload?.detail === 'string' ? payload.detail : ''
+    if (res.status === 400 || /invalid_or_expired_token/i.test(code) || /invalid_or_expired_token/i.test(text)) {
+      throw new Error(
+        'This confirmation link is invalid or has already been used. Request a new verification email from onboarding, then use the latest message.',
+      )
+    }
+    throw new Error('Email verification failed. Try the latest confirmation link, or sign in and resend the email.')
   }
   return res.json() as Promise<VerifyEmailResponse>
 }

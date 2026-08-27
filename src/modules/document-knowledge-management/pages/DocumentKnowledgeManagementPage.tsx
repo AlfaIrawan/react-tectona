@@ -6183,7 +6183,7 @@ export function DocumentKnowledgeManagementPage() {
 
   const loadRepositoryFolders = useCallback(async () => {
     try {
-      const folders = await fetchAllDocumentFolders()
+      const folders = await fetchAllDocumentFolders(activeWorkspaceApiId)
       const session = getSession()
       const currentOwnerId = session?.user.id || session?.user.email || null
       const scopedFolders = filterDkmFoldersForRepositoryScope(
@@ -6207,7 +6207,7 @@ export function DocumentKnowledgeManagementPage() {
     } catch {
       setRepositoryFolders([])
     }
-  }, [repositoryItems, repositoryProjects])
+  }, [repositoryItems, repositoryProjects, activeWorkspaceApiId])
 
   useEffect(() => {
     void loadRepositoryFolders()
@@ -6224,6 +6224,7 @@ export function DocumentKnowledgeManagementPage() {
         description: null,
         parent_id: repositoryCurrentFolderId,
         owner_id: session?.user.id || session?.user.email || null,
+        workspace_id: activeWorkspaceApiId,
       })
       await loadRepositoryFolders()
       setRepositoryFolderRenameId(created.id)
@@ -6232,7 +6233,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setRepositoryFolderBusy(false)
     }
-  }, [repositoryFolderBusy, repositoryFolders, repositoryCurrentFolderId, addToast, loadRepositoryFolders])
+  }, [repositoryFolderBusy, repositoryFolders, repositoryCurrentFolderId, addToast, loadRepositoryFolders, activeWorkspaceApiId])
 
   const handleRenameRepositoryFolder = useCallback(async (folderId: string, nextName: string) => {
     const name = nextName.trim()
@@ -14505,6 +14506,19 @@ export function DocumentKnowledgeManagementPage() {
 
               <button
                 type="button"
+                onClick={() => setShowFiltersPanel((visible) => !visible)}
+                className={cn(
+                  'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
+                  showFiltersPanel && 'bg-background text-primary shadow-sm ring-1 ring-border/50',
+                )}
+                aria-label={showFiltersPanel ? 'Hide filters' : 'Show filters'}
+                title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
+              >
+                <Funnel className="w-5 h-5" />
+              </button>
+
+              <button
+                type="button"
                 className="flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm"
                 aria-label="Export library"
                 title="Export library"
@@ -17836,7 +17850,7 @@ export function DocumentKnowledgeManagementPage() {
                   ) : null}
                 </div>
 
-                <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex min-h-[360px] flex-1 flex-col md:min-h-[420px]">
                   {filteredMasterTemplates.length > 0 ? (
                     <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl scrollbar-hide">
                       <DndContext sensors={templateColumns.dndSensors} onDragEnd={templateColumns.handleColumnDragEnd}>

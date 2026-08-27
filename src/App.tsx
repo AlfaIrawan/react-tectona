@@ -97,11 +97,12 @@ function App() {
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/login/oauth/callback" element={<OAuthCallbackPage />} />
                 <Route path="/register" element={<RegisterPage />} />
+                <Route path="/verify-email" element={<VerifyEmailPage />} />
+                <Route path="/verify_email" element={<VerifyEmailPage />} />
 
                 <Route element={<ProtectedRoute />}>
                   <Route path="/onboarding" element={<OnboardingPage />} />
                   <Route path="/onboarding/status" element={<OnboardingStatusPage />} />
-                  <Route path="/verify-email" element={<VerifyEmailPage />} />
                   <Route path="/t/:slug" element={<TenantDeepLinkPage />} />
                   <Route path="/profile" element={<ProfilePage />} />
                   <Route path="/no-workspace-access" element={<Navigate to="/onboarding" replace />} />

@@ -81,6 +81,7 @@ export function OnboardingPage() {
   if (
     !bypass &&
     canAccessMainApp &&
+    !shouldShowOnboardingWizard &&
     (!appAccess.gateEnabled || appAccess.hasAppAccess)
   ) {
     return <Navigate to="/projects" replace />
@@ -152,8 +153,8 @@ export function OnboardingPage() {
       if (session?.user.id) {
         markCorporatePersonalWorkspaceCreated(session.user.id)
       }
-      await queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
-      await queryClient.invalidateQueries({ queryKey: ['corporate-onboarding-progress'] })
+      // Defer status refetch until join/finish. Invalidating here remounts the
+      // wizard and bootstrap resets unmatched users back to Personal.
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create personal workspace.')
       const normalizedSlug = input.slug.trim().toLowerCase()
@@ -214,10 +215,8 @@ export function OnboardingPage() {
       markCorporateWizardComplete(subjectId)
       clearCorporateEmailVerificationPending(subjectId)
     }
-    void queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
-    void queryClient.invalidateQueries({ queryKey: ['corporate-onboarding-progress'] })
     await logoutAsync()
-    window.location.href = '/login'
+    window.location.replace('/login?reason=awaiting_admin_approval')
   }
 
   const handleEmailVerificationReady = async () => {
@@ -227,10 +226,8 @@ export function OnboardingPage() {
       markCorporateWizardComplete(subjectId)
       markCorporateEmailVerificationPending(subjectId)
     }
-    await queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
-    await queryClient.invalidateQueries({ queryKey: ['corporate-onboarding-progress'] })
     await logoutAsync()
-    window.location.href = '/login?reason=check_email'
+    window.location.replace('/login?reason=check_email')
   }
 
   const handleSignOut = async () => {

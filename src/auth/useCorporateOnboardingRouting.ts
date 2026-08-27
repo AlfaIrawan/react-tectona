@@ -51,7 +51,11 @@ export function useCorporateOnboardingRouting() {
   })
 
   const progress = progressQuery.data ?? null
-  const loading = onboarding.loading || (isCorporateEmail && progressQuery.isLoading)
+  // Do not treat background refetches as a full-page load: that unmounts the
+  // onboarding wizard and restarts it on step 1 after "Create and continue".
+  const loading =
+    (onboarding.loading && onboarding.status == null) ||
+    (isCorporateEmail && progressQuery.isPending && !progressQuery.isFetched)
   const emailVerificationRequired = isCorporateEmailVerificationRequired()
   const adminApprovalRequired = isCorporateAdminApprovalRequired()
   const emailVerificationPathActive = isEmailVerificationPathActive(

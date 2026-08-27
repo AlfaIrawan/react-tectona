@@ -8,6 +8,7 @@ export type LoginAuthNotice =
   | 'account_not_registered'
   | 'check_email'
   | 'email_verified'
+  | 'awaiting_admin_approval'
 
 /**
  * Resolve a safe in-app path after login. Strips nested /login?next=... chains from redirect loops.
@@ -82,6 +83,7 @@ export function parseLoginAuthNotice(raw: string | null | undefined): LoginAuthN
     || raw === 'account_not_registered'
     || raw === 'check_email'
     || raw === 'email_verified'
+    || raw === 'awaiting_admin_approval'
   ) {
     return raw
   }

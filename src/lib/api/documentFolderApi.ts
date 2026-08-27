@@ -11,6 +11,7 @@ export interface DocumentFolder {
   description: string | null
   parent_id: string | null
   owner_id: string
+  workspace_id: string | null
   document_count: number
   children_count: number
   created_date: string
@@ -38,6 +39,7 @@ export interface CreateDocumentFolderPayload {
   description?: string | null
   parent_id?: string | null
   owner_id?: string | null
+  workspace_id?: string | null
 }
 
 export interface UpdateDocumentFolderPayload {
@@ -81,6 +83,7 @@ export async function createDocumentFolder(payload: CreateDocumentFolderPayload)
       description: payload.description ?? null,
       parent_id: payload.parent_id ?? null,
       owner_id: payload.owner_id ?? null,
+      workspace_id: payload.workspace_id ?? null,
     }),
   })
   return handleJson<DocumentFolder>(res)
@@ -88,6 +91,7 @@ export async function createDocumentFolder(payload: CreateDocumentFolderPayload)
 
 export async function fetchDocumentFolders(params?: {
   owner_id?: string
+  workspace_id?: string | null
   parent_id?: string | null
   include_all?: boolean
   page?: number
@@ -95,6 +99,7 @@ export async function fetchDocumentFolders(params?: {
 }): Promise<DocumentFolderListResponse> {
   const sp = new URLSearchParams()
   if (params?.owner_id) sp.set('owner_id', params.owner_id)
+  if (params?.workspace_id) sp.set('workspace_id', params.workspace_id)
   if (params?.parent_id !== undefined) sp.set('parent_id', params.parent_id === null ? 'null' : params.parent_id)
   if (params?.include_all) sp.set('include_all', 'true')
   sp.set('page', String(params?.page ?? 1))
@@ -103,9 +108,11 @@ export async function fetchDocumentFolders(params?: {
   return handleJson<DocumentFolderListResponse>(res)
 }
 
-/** All folders (every level), for building a tree / grouping client-side. */
-export async function fetchAllDocumentFolders(): Promise<DocumentFolder[]> {
-  const res = await fetchDocumentFolders({ include_all: true, page: 1, page_size: 500 })
+/** All folders (every level) within a workspace, for building a tree / grouping client-side.
+ * `workspace_id` omitted/null fetches every folder regardless of workspace — callers that need
+ * workspace-scoped visibility (i.e. anything user-facing) must pass the active workspace id. */
+export async function fetchAllDocumentFolders(workspace_id?: string | null): Promise<DocumentFolder[]> {
+  const res = await fetchDocumentFolders({ workspace_id, include_all: true, page: 1, page_size: 500 })
   return res.folders
 }
 

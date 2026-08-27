@@ -87,3 +87,29 @@ export function isCorporateAdminFinishMethodSelected(subjectId: string | null | 
   if (!subjectId?.trim()) return false
   return getCorporateOnboardingFinishMethod(subjectId) === 'admin'
 }
+
+const PENDING_EMAIL_CONFIRM_KEY = 'tectona:pending-email-verified-onboarding'
+
+export type PendingEmailVerifiedOnboarding = {
+  appId: string
+  workspaceId: string
+  subjectId: string
+}
+
+export function storePendingEmailVerifiedOnboarding(payload: PendingEmailVerifiedOnboarding): void {
+  sessionStorage.setItem(PENDING_EMAIL_CONFIRM_KEY, JSON.stringify(payload))
+}
+
+export function takePendingEmailVerifiedOnboarding(): PendingEmailVerifiedOnboarding | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_EMAIL_CONFIRM_KEY)
+    sessionStorage.removeItem(PENDING_EMAIL_CONFIRM_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as PendingEmailVerifiedOnboarding
+    if (!parsed.appId || !parsed.workspaceId || !parsed.subjectId) return null
+    return parsed
+  } catch {
+    sessionStorage.removeItem(PENDING_EMAIL_CONFIRM_KEY)
+    return null
+  }
+}

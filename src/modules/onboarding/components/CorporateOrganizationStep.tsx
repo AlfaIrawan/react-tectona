@@ -193,34 +193,26 @@ export function CorporateOrganizationStep({
         setDomainInfo(resolved)
 
         const hasActivePersonalMembership =
-          onboardingStatus.onboarding_status === 'active' &&
+          (onboardingStatus.onboarding_status === 'active' ||
+            onboardingStatus.onboarding_status === 'corporate_setup_pending' ||
+            onboardingStatus.onboarding_status === 'join_pending') &&
           onboardingStatus.active_membership_count > 0
-
-        const setupStillRequired =
-          onboardingStatus.onboarding_status === 'corporate_setup_pending'
 
         if (hasActivePersonalMembership && subjectId) {
           markCorporatePersonalWorkspaceCreated(subjectId)
         }
 
-        if (
-          setupStillRequired &&
-          (hasActivePersonalMembership ||
-            Boolean(readActiveWorkspaceId()) ||
-            (progress.personal_workspace_created && progress.setup_phase !== 'none'))
-        ) {
-          setPhase('optional-join')
-          return
-        }
+        const personalAlreadyCreated =
+          Boolean(subjectId && isCorporatePersonalWorkspaceCreated(subjectId)) ||
+          Boolean(progress.personal_workspace_created) ||
+          Boolean(readActiveWorkspaceId()) ||
+          hasActivePersonalMembership
 
-        if (
-          setupStillRequired &&
-          !resolved.matched &&
-          subjectId &&
-          isCorporatePersonalWorkspaceCreated(subjectId) &&
-          !isCorporateJoinStepCompleted(subjectId) &&
-          !isCorporateWizardComplete(subjectId)
-        ) {
+        const wizardAlreadyComplete = Boolean(subjectId && isCorporateWizardComplete(subjectId))
+
+        // Status `none` vs `corporate_setup_pending` must not reset the wizard to
+        // Personal after the workspace was just created.
+        if (!wizardAlreadyComplete && personalAlreadyCreated) {
           setPhase('optional-join')
           return
         }
@@ -285,6 +277,30 @@ export function CorporateOrganizationStep({
     setLocalError('')
     try {
       await onCreateOrgPersonal(input)
+      const subjectId = getSession()?.user.id
+      if (subjectId) markCorporatePersonalWorkspaceCreated(subjectId)
+
+      // Unmatched corporate: no organization to join. Finish (admin/email) and
+      // send the user to login instead of bouncing back to Personal.
+      if (!orgMatched) {
+        setFinalizing(true)
+        try {
+          await completeAfterJoinStep()
+          if (subjectId) markCorporateJoinStepCompleted(subjectId)
+          return
+        } catch (finishErr) {
+          setLocalError(
+            finishErr instanceof Error
+              ? finishErr.message
+              : 'Workspace created, but onboarding could not be completed.',
+          )
+          setPhase('optional-join')
+          return
+        } finally {
+          setFinalizing(false)
+        }
+      }
+
       setPhase('optional-join')
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Failed to create personal workspace.')

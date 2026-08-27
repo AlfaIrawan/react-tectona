@@ -1,6 +1,7 @@
 export type TokenEventSource = 'user' | 'system'
 
 export type TokenEventKind = 'issued' | 'used' | 'refreshed' | 'revoked' | 'expired'
+export type AiPerformanceStatus = 'success' | 'failed' | 'timeout' | 'rate_limited'
 
 export interface TokenTelemetryEvent {
   id: string
@@ -17,6 +18,9 @@ export interface TokenTelemetryEvent {
   outputCostIdr?: number
   totalCostIdr?: number
   latencyMs?: number
+  performanceStatus?: AiPerformanceStatus
+  retryCount?: number
+  interactionType?: string
   inputTokens?: number
   outputTokens?: number
   totalTokens?: number

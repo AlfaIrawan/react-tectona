@@ -40,6 +40,8 @@ const LOGIN_NOTICE_COPY: Record<LoginAuthNotice, string> = {
     'We sent a confirmation link to your email. Verify your email before signing in — you cannot access Tectona until the link is confirmed.',
   email_verified:
     'Your email is verified and you have joined your organization. Sign in to continue.',
+  awaiting_admin_approval:
+    'Your workspace request is waiting for admin approval. Sign in again after you are approved.',
 }
 
 function readInitialAuthNotice(): LoginAuthNotice | null {

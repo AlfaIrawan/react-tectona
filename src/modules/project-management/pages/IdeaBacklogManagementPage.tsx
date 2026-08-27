@@ -98,6 +98,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import {
   enterpriseCyanGradientActionButtonClass,
+  enterpriseEmeraldGradientActionButtonClass,
   enterpriseIndigoGradientActionButtonClass,
   enterpriseRoseGradientActionButtonClass,
   enterpriseSecondaryButtonClass,
@@ -1603,10 +1604,6 @@ export function IdeaBacklogManagementPage() {
     foldersError,
   } = useIdeaFolderStore()
   const userWorkspaceOptions = useUserWorkspaceOptions()
-  const workspaceManagementPath = useMemo(
-    () => workspaceScopedPath(tenant?.slug ?? null, '/workspace-management', tenant?.workspaceId),
-    [tenant?.slug, tenant?.workspaceId],
-  )
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [projectNameById, setProjectNameById] = useState<Record<string, string>>({})
   const projectNameByIdRef = useRef(projectNameById)
@@ -3730,7 +3727,7 @@ export function IdeaBacklogManagementPage() {
 
   return (
     <div
-      className="space-y-6 pb-10"
+      className="space-y-6"
       onContextMenu={openContextMenu}
       onMouseDown={(event) => {
         if (event.button !== 0) return
@@ -3748,8 +3745,12 @@ export function IdeaBacklogManagementPage() {
     >
       <Breadcrumb
         items={[
-          { label: 'Workspace', href: workspaceManagementPath },
-          { label: 'Idea & Backlog', href: currentFolderId ? workspaceScopedPath(tenant?.slug ?? null, '/idea-backlog', tenant?.workspaceId) : undefined },
+          {
+            label: 'Idea & Backlog',
+            href: currentFolderId
+              ? workspaceScopedPath(tenant?.slug ?? null, '/idea-backlog', tenant?.workspaceId)
+              : undefined,
+          },
           ...folderAncestors.map((folder, index) => ({
             label: folder.name,
             href:
@@ -3760,7 +3761,7 @@ export function IdeaBacklogManagementPage() {
         ]}
       />
 
-      <style>{`
+      <style hidden>{`
         @keyframes ideaBarReveal {
           from {
             transform: scaleX(0);
@@ -4260,8 +4261,7 @@ export function IdeaBacklogManagementPage() {
         </section>
       )}
 
-      <section className="space-y-4">
-        {showFiltersPanel && (
+      {showFiltersPanel && (
           <div className={ideaBacklogLiquidGlassFilterPanelClass}>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -4307,7 +4307,7 @@ export function IdeaBacklogManagementPage() {
                 <button
                   type="button"
                   onClick={() => setIsUploadIdeaPanelOpen(true)}
-                  className={cn(enterpriseSecondaryButtonClass(), 'inline-flex items-center gap-2')}
+                  className={enterpriseEmeraldGradientActionButtonClass()}
                 >
                   <Upload className="h-4 w-4" strokeWidth={2.5} />
                   Upload Idea
@@ -4456,6 +4456,7 @@ export function IdeaBacklogManagementPage() {
           onDragOver={handleIdeaDragOver}
           onDragCancel={handleIdeaDragCancel}
         >
+        <div className="space-y-8">
         {showFoldersSection && (
           <IdeaBacklogFoldersSection
             folders={filteredFolders}
@@ -4536,6 +4537,7 @@ export function IdeaBacklogManagementPage() {
             </SortableContext>
         </div>
         )}
+        </div>
 
         <ProjectDragLayer
           activeId={activeDragId}
@@ -4545,7 +4547,6 @@ export function IdeaBacklogManagementPage() {
           pointer={dragPointer}
         />
         </DndContext>
-      </section>
 
       <ContextMenu
         open={!!contextMenu}

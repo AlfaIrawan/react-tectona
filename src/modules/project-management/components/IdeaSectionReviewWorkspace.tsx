@@ -1,15 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertCircle, Bot, Check, Clock3, History, Loader2, LockKeyhole, PencilLine, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { AlertCircle, Bot, Check, Clock3, History, Loader2, LockKeyhole, PencilLine, X, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import {
   createIdeaSectionRevision,
@@ -127,6 +120,88 @@ function stripImpactScoreFields(content: string) {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+function EnterpriseReviewDialogShell({
+  open,
+  onClose,
+  busy = false,
+  title,
+  description,
+  titleId,
+  icon: Icon,
+  iconContainerClassName,
+  children,
+  footer,
+}: {
+  open: boolean
+  onClose: () => void
+  busy?: boolean
+  title: string
+  description: string
+  titleId: string
+  icon: LucideIcon
+  iconContainerClassName: string
+  children: ReactNode
+  footer: ReactNode
+}) {
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || busy) return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [open, busy, onClose])
+
+  if (!open || typeof document === 'undefined') return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+      <button
+        type="button"
+        className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+        aria-label="Close dialog"
+        disabled={busy}
+        onClick={() => {
+          if (!busy) onClose()
+        }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+      >
+        <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+          <div className="flex items-start gap-4">
+            <div
+              className={cn(
+                'mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1',
+                iconContainerClassName,
+              )}
+            >
+              <Icon className="h-5 w-5" aria-hidden />
+            </div>
+            <div className="space-y-1">
+              <h3 id={titleId} className="text-base font-semibold tracking-tight text-foreground">
+                {title}
+              </h3>
+              <p className="text-sm text-muted-foreground">{description}</p>
+            </div>
+          </div>
+        </div>
+        <div className="space-y-3 px-6 py-5">{children}</div>
+        <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+          {footer}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
 }
 
 function buildImpactNarrativeDraft(content: string) {
@@ -382,145 +457,141 @@ export function IdeaSectionReviewWorkspace({
         ) : null}
       </div>
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="w-full max-w-3xl overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 p-0 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]">
-          <DialogHeader className="mb-0 border-b border-border/70 bg-muted/25 px-6 py-5">
-            <div className="flex items-start gap-4">
-              <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary ring-1 ring-primary/25">
-                <PencilLine className="h-5 w-5" aria-hidden />
-              </div>
-              <div className="space-y-1">
-                <DialogTitle className="text-base font-semibold tracking-tight">Edit {sectionLabel}</DialogTitle>
-                <DialogDescription className="text-sm">
-                  Create a human revision while preserving the original AI evidence and audit history.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-          <div className="space-y-3 px-6 py-5">
-            {isImpactSection ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <LockKeyhole className="h-4 w-4 text-slate-500" aria-hidden />
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                      Official scoring reference
-                    </p>
-                  </div>
-                  <Badge variant="outline" className="border-slate-200 bg-white text-[10px] text-slate-600">
-                    Read-only
-                  </Badge>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
-                  {([
-                    ['Business value', impactScoreReference.businessValue],
-                    ['Effort', impactScoreReference.effort],
-                    ['Risk', impactScoreReference.risk],
-                    ['ROI', impactScoreReference.roi],
-                  ] as const).map(([label, value]) => (
-                    <div key={label} className="border-l-2 border-slate-200 pl-3">
-                      <p className="text-[10px] font-medium uppercase text-muted-foreground">{label}</p>
-                      <p className="mt-0.5 text-sm font-semibold text-slate-900">{value}</p>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Score changes require reassessment against scoring evidence in the Scoring section.
-                </p>
-              </div>
-            ) : null}
-            <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                {isImpactSection ? 'Impact narrative revision' : `${sectionLabel} revision`}
-              </p>
-              <Textarea
-                value={editValue}
-                onChange={(event) => {
-                  setEditValue(event.target.value)
-                  setEditError(null)
-                }}
-                className={cn(
-                  'mt-3 min-h-[320px] resize-y border-border/80 bg-background text-sm leading-6 shadow-none focus-visible:ring-1',
-                  usesCodeFormatting && 'font-mono text-xs leading-5',
-                  editError && 'border-rose-300 focus-visible:ring-rose-300',
-                )}
-              />
-              {editError ? (
-                <div className="mt-3 flex gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                  <span>{editError}</span>
-                </div>
-              ) : null}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {isImpactSection
-                ? 'Enterprise note: saving updates the narrative only; official scoring and generated evidence remain unchanged.'
-                : 'Enterprise note: saving creates a new review version; it does not overwrite generated evidence.'}
-            </p>
-          </div>
-          <DialogFooter className="gap-3 border-t border-border/70 bg-muted/20 px-6 py-4 pt-4">
+      <EnterpriseReviewDialogShell
+        open={editOpen}
+        onClose={() => {
+          if (!recordBusy) setEditOpen(false)
+        }}
+        busy={recordBusy}
+        title={`Edit ${sectionLabel}`}
+        description="Create a human revision while preserving the original AI evidence and audit history."
+        titleId={`idea-section-edit-${sectionKey}`}
+        icon={PencilLine}
+        iconContainerClassName="bg-primary/12 text-primary ring-primary/25"
+        footer={
+          <>
             <Button
+              type="button"
               variant="outline"
               className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
               onClick={() => setEditOpen(false)}
               disabled={recordBusy}
             >
-              <X className="h-4 w-4" aria-hidden /> Cancel
+              <X className="h-4 w-4 shrink-0" aria-hidden />
+              Cancel
             </Button>
             <Button
+              type="button"
               className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
               onClick={() => void saveManualRevision()}
               disabled={!editValue.trim() || recordBusy}
             >
-              {recordBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {recordBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden /> : <Check className="h-4 w-4 shrink-0" aria-hidden />}
               {recordBusy ? 'Saving...' : 'Save revision'}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="w-full max-w-3xl overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 p-0 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]">
-          <DialogHeader className="mb-0 border-b border-border/70 bg-muted/25 px-6 py-5">
-            <div className="flex items-start gap-4">
-              <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-500/10 text-slate-700 ring-1 ring-slate-500/20">
-                <History className="h-5 w-5" aria-hidden />
-              </div>
-              <div className="space-y-1">
-                <DialogTitle className="text-base font-semibold tracking-tight">{sectionLabel} version history</DialogTitle>
-                <DialogDescription className="text-sm">Accepted, rejected, approved, and superseded revisions remain available for audit.</DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-          <div className="max-h-[60vh] space-y-3 overflow-y-auto px-6 py-5">
-            {record.versions.length === 0 ? (
-              <p className="rounded-xl border border-border bg-background/70 px-4 py-5 text-sm text-muted-foreground">No revisions yet.</p>
-            ) : record.versions.map((version, index) => (
-              <div key={version.id} className="rounded-xl border border-border bg-background/70 px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-                    <Clock3 className="h-3.5 w-3.5 text-slate-400" /> Version {record.versions.length - index}
-                    <Badge variant="outline" className="text-[10px]">{version.source === 'ai' ? 'AI' : 'Human'} · {version.status}</Badge>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">{version.author} · {new Date(version.createdAt).toLocaleString()}</span>
-                </div>
-                <p className="mt-2 line-clamp-5 whitespace-pre-wrap text-xs leading-5 text-slate-600">
-                  {normalizeLegacyStructuredReviewContent(sectionKey, version.content)}
+          </>
+        }
+      >
+        {isImpactSection ? (
+          <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <LockKeyhole className="h-4 w-4 text-muted-foreground" aria-hidden />
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Official scoring reference
                 </p>
               </div>
-            ))}
+              <Badge variant="outline" className="text-[10px]">
+                Read-only
+              </Badge>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+              {([
+                ['Business value', impactScoreReference.businessValue],
+                ['Effort', impactScoreReference.effort],
+                ['Risk', impactScoreReference.risk],
+                ['ROI', impactScoreReference.roi],
+              ] as const).map(([label, value]) => (
+                <div key={label} className="border-l-2 border-border pl-3">
+                  <p className="text-[10px] font-medium uppercase text-muted-foreground">{label}</p>
+                  <p className="mt-0.5 text-sm font-semibold text-foreground">{value}</p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Score changes require reassessment against scoring evidence in the Scoring section.
+            </p>
           </div>
-          <DialogFooter className="border-t border-border/70 bg-muted/20 px-6 py-4 pt-4">
-            <Button
-              variant="outline"
-              className={cn(enterpriseSecondaryButtonClass(), 'w-full justify-center gap-2')}
-              onClick={() => setHistoryOpen(false)}
-            >
-              <X className="h-4 w-4" aria-hidden /> Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        ) : null}
+        <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            {isImpactSection ? 'Impact narrative revision' : `${sectionLabel} revision`}
+          </p>
+          <Textarea
+            value={editValue}
+            onChange={(event) => {
+              setEditValue(event.target.value)
+              setEditError(null)
+            }}
+            className={cn(
+              'mt-3 min-h-[180px] max-h-[36vh] resize-y border-border/80 bg-background text-sm leading-6 shadow-none focus-visible:ring-1',
+              usesCodeFormatting && 'font-mono text-xs leading-5',
+              editError && 'border-rose-300 focus-visible:ring-rose-300',
+            )}
+          />
+          {editError ? (
+            <div className="mt-3 flex gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              <span>{editError}</span>
+            </div>
+          ) : null}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {isImpactSection
+            ? 'Enterprise note: saving updates the narrative only; official scoring and generated evidence remain unchanged.'
+            : 'Enterprise note: saving creates a new review version; it does not overwrite generated evidence.'}
+        </p>
+      </EnterpriseReviewDialogShell>
+
+      <EnterpriseReviewDialogShell
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        title={`${sectionLabel} version history`}
+        description="Accepted, rejected, approved, and superseded revisions remain available for audit."
+        titleId={`idea-section-history-${sectionKey}`}
+        icon={History}
+        iconContainerClassName="bg-slate-500/10 text-slate-700 ring-slate-500/20"
+        footer={
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(enterpriseSecondaryButtonClass(), 'w-full justify-center gap-2')}
+            onClick={() => setHistoryOpen(false)}
+          >
+            <X className="h-4 w-4 shrink-0" aria-hidden />
+            Close
+          </Button>
+        }
+      >
+        <div className="max-h-[48vh] space-y-3 overflow-y-auto">
+          {record.versions.length === 0 ? (
+            <p className="rounded-xl border border-border bg-background/70 px-4 py-5 text-sm text-muted-foreground">No revisions yet.</p>
+          ) : record.versions.map((version, index) => (
+            <div key={version.id} className="rounded-xl border border-border bg-background/70 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                  <Clock3 className="h-3.5 w-3.5 text-muted-foreground" /> Version {record.versions.length - index}
+                  <Badge variant="outline" className="text-[10px]">{version.source === 'ai' ? 'AI' : 'Human'} · {version.status}</Badge>
+                </div>
+                <span className="text-[10px] text-muted-foreground">{version.author} · {new Date(version.createdAt).toLocaleString()}</span>
+              </div>
+              <p className="mt-2 line-clamp-5 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
+                {normalizeLegacyStructuredReviewContent(sectionKey, version.content)}
+              </p>
+            </div>
+          ))}
+        </div>
+      </EnterpriseReviewDialogShell>
     </>
   )
 }

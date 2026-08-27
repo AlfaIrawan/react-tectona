@@ -325,6 +325,14 @@ async function completeLogin(
     .catch(() => undefined)
   emitSessionActive()
   useMyPresenceStore.getState().setStatus('online')
+  void import('@/lib/corporateOnboardingSession')
+    .then(async ({ takePendingEmailVerifiedOnboarding }) => {
+      const pending = takePendingEmailVerifiedOnboarding()
+      if (!pending || pending.subjectId !== session.user.id) return
+      const { confirmEmailVerifiedOnboarding } = await import('@/lib/api/onboardingApi')
+      await confirmEmailVerifiedOnboarding(pending)
+    })
+    .catch(() => undefined)
   return session
 }
 

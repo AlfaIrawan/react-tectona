@@ -273,7 +273,9 @@ export function shouldHideOperationalFromPersonalTenantDirectory(
   if (workspace.isPersonalWorkspace || workspace.type === 'Organization') return false
   if (ownedWorkspaceIds.has(workspace.id)) return false
   if (membershipWorkspaceIds.has(workspace.id)) return false
-  return workspace.orgDirectoryJoined === true
+  // Not-yet-joined workspaces are creator-private, not more visible -- hide
+  // unconditionally once ownership/membership is ruled out, joined or not.
+  return true
 }
 
 export function isNestedOrgPersonalTenantActiveWorkspace(input: {

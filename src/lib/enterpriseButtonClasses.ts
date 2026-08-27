@@ -59,6 +59,21 @@ export function enterpriseRoseGradientActionButtonClass(): string {
   )
 }
 
+/** Upload / positive action gradient — same CTA geometry with a distinct green palette. */
+export function enterpriseEmeraldGradientActionButtonClass(): string {
+  return cn(
+    'group relative inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
+    GRADIENT_ACTION_FOCUS,
+    'border border-emerald-200/80 bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-700',
+    'shadow-[0_6px_16px_rgba(20,184,166,0.24),0_0_0_1px_rgba(110,231,183,0.28)] ring-1 ring-emerald-300/35',
+    'transition-all duration-200',
+    'hover:from-emerald-400 hover:via-teal-500 hover:to-cyan-600',
+    'hover:shadow-[0_8px_18px_rgba(20,184,166,0.28),0_0_0_1px_rgba(110,231,183,0.38),0_0_18px_rgba(45,212,191,0.18)] hover:ring-emerald-300/45',
+    'active:scale-[0.98] active:shadow-[0_4px_10px_rgba(20,184,166,0.22),0_0_0_1px_rgba(110,231,183,0.24)]',
+    'focus-visible:ring-2 focus-visible:ring-emerald-400/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background'
+  )
+}
+
 /** Secondary / cancel — selaras Tilia `enterpriseSecondaryButtonClass`. */
 export function enterpriseSecondaryButtonClass(): string {
   return cn(

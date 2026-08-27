@@ -290,12 +290,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
                   <Settings className="w-4 h-4 mr-2" />
                   Platform Settings &amp; Administration
                 </DropdownMenuItem>
-              ) : (
-                <DropdownMenuItem onClick={() => workspaceNavigate('/workspace-management')}>
-                  <Settings className="w-4 h-4 mr-2" />
-                  Workspace Settings
-                </DropdownMenuItem>
-              )}
+              ) : null}
               <div className="border-t border-border/40 my-1" />
               <DropdownMenuItem
                 className="text-destructive"
