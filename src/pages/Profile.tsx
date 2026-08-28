@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { getSession, logoutAsync, requireAuth, registerPasskey, type Session } from '@/auth/authService'
 import { fetchTokenAudit, fetchUserInfo, type OidcUserInfo } from '@/lib/api/identityApi'
+import { listAuthzAssignments, type AuthzAssignmentDto } from '@/lib/api/authzApi'
 import { passkeyErrorMessage } from '@/lib/api/webauthnApi'
 import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
 import { authCardButtonClass } from '@/lib/authUiClasses'
@@ -167,6 +168,11 @@ function rbacRoleLabel(role: string): string {
     tectona_member: 'Member',
   }
   return labels[role] ?? role.replace(/^tectona[._-]?/i, '').replace(/[_-]/g, ' ')
+}
+
+function scopeTypeLabel(scopeTypeCode: string): string {
+  if (scopeTypeCode === 'global') return 'Global'
+  return scopeTypeCode.charAt(0).toUpperCase() + scopeTypeCode.slice(1).replace(/_/g, ' ')
 }
 
 function primaryRbacRole(roles: string[] | undefined, fallback: string): string {
@@ -761,6 +767,7 @@ export function ProfilePage() {
   const [tokenEventsError, setTokenEventsError] = useState(false)
   const [profileTab, setProfileTab] = useState<'account' | 'preferences' | 'security' | 'usage' | 'performance' | 'providers'>('account')
   const [identityProfile, setIdentityProfile] = useState<OidcUserInfo | null>(null)
+  const [authzAssignments, setAuthzAssignments] = useState<AuthzAssignmentDto[]>([])
   const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [passkeyMsg, setPasskeyMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
@@ -789,6 +796,7 @@ export function ProfilePage() {
     setProfilePrefs(preferences)
     setEditName(normalizeUserDisplayName(currentSession.user.name || preferences.displayName || currentSession.user.email))
     void fetchUserInfo(currentSession.token).then(setIdentityProfile).catch(() => undefined)
+    void listAuthzAssignments().then(setAuthzAssignments).catch(() => undefined)
     const localEvents = mergeTokenEvents([], readTokenTelemetry(currentSession.user.id))
     setTokenEvents(localEvents)
     void fetchTokenAudit(currentSession.token, 80, currentSession.user.id)
@@ -870,8 +878,14 @@ export function ProfilePage() {
 
   const displayName = normalizeUserDisplayName(identityProfile?.display_name || session.user.name || profilePrefs.displayName || session.user.email)
   const effectiveRoles = identityProfile?.roles?.length ? identityProfile.roles : session.user.roles
-  const platformRole = primaryRbacRole(effectiveRoles, session.user.role)
-  const rbacRoles = effectiveRoles ?? []
+  const userAuthzAssignments = authzAssignments.filter((assignment) => assignment.principal_sub === session.user.id)
+  const primaryAuthzAssignment =
+    userAuthzAssignments.find((assignment) => assignment.scope_type_code === 'organization') ?? userAuthzAssignments[0]
+  const platformRole = primaryAuthzAssignment ? primaryAuthzAssignment.role_code : primaryRbacRole(effectiveRoles, session.user.role)
+  const platformRoleLabel = primaryAuthzAssignment ? primaryAuthzAssignment.role_name : rbacRoleLabel(platformRole)
+  const rbacRoles = userAuthzAssignments.length
+    ? userAuthzAssignments.map((assignment) => `${assignment.role_name} (${scopeTypeLabel(assignment.scope_type_code)})`)
+    : (effectiveRoles ?? []).map(rbacRoleLabel)
   const initials = profileInitials(displayName, session.user.email)
 
   return (
@@ -903,7 +917,7 @@ export function ProfilePage() {
                 <p className="mt-1 truncate text-sm text-muted-foreground">{session.user.email}</p>
                 <div className="mt-3">
                   <Badge variant={getRoleBadgeVariant(platformRole)} className="text-xs font-medium">
-                    {rbacRoleLabel(platformRole)}
+                    {platformRoleLabel}
                   </Badge>
                 </div>
               </div>
@@ -952,8 +966,8 @@ export function ProfilePage() {
             <dl>
               <ProfileField label="Display name" value={displayName} />
               <ProfileField label="Email" value={session.user.email || '-'} />
-              <ProfileField label="Primary RBAC role" value={rbacRoleLabel(platformRole)} />
-              <ProfileField label="RBAC roles" value={rbacRoles.length ? rbacRoles.map(rbacRoleLabel).join(', ') : 'No role claims'} />
+              <ProfileField label="Primary RBAC role" value={platformRoleLabel} />
+              <ProfileField label="RBAC roles" value={rbacRoles.length ? rbacRoles.join(', ') : 'No role claims'} />
               <ProfileField label="Account ID" value={session.user.id} mono />
               <ProfileField label="Job title" value={identityProfile?.job_title || session.user.jobTitle || '-'} />
               <ProfileField label="Organizational unit" value={identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />

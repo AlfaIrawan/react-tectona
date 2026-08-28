@@ -241,6 +241,20 @@ export async function createAuthzAssignment(
   return res.json() as Promise<{ id: string }>
 }
 
+/** Remove a single principal's role assignment (unassign). */
+export async function deleteAuthzAssignment(
+  assignmentId: string,
+  appId: string = TECTONA_AUTHZ_APP_ID,
+): Promise<void> {
+  const res = await authzFetch(`${AUTHZ_BASE}/v1/apps/${appId}/assignments/${assignmentId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(parseApiErrorMessage(text, `Remove assignment failed (${res.status})`))
+  }
+}
+
 export interface AuthorizeRequest {
   app_id: string
   principal: { sub: string }

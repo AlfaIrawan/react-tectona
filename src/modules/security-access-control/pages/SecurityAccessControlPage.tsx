@@ -80,6 +80,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components
 import { useToast } from '@/components/ui/toast'
 import {
   createAuthzAssignment,
+  deleteAuthzAssignment,
   createAuthzRole,
   deleteAuthzRole,
   getAuthzEffectivePermissions,
@@ -1678,7 +1679,7 @@ export function SecurityAccessControlPage() {
     )
   }, [deferredSearch, matrixAugmentedRows])
 
-  type MatrixTreeAction = { action: string; permission_code: string; description: string | null; granted: boolean }
+  type MatrixTreeAction = { action: string; permission_code: string; description: string | null; granted: boolean; sourceRoles?: string[] }
   type MatrixTreeResource = { key: string; resource_type: string; resourceLabel: string; actions: MatrixTreeAction[] }
   type MatrixTreeSection = { key: string; section: string; resources: MatrixTreeResource[] }
   type MatrixTreeModule = { key: string; module: string; sections: MatrixTreeSection[]; resourceCount: number }
@@ -1808,6 +1809,20 @@ export function SecurityAccessControlPage() {
             assignment.principal_sub
         })
         .filter((name, index, names) => names.indexOf(name) === index),
+    [authzAssignments, currentSessionUser?.id, currentSessionUser?.name, identityBySubject]
+  )
+
+  const assignedAssignmentsForRole = useCallback(
+    (role: RoleItem) =>
+      authzAssignments
+        .filter((assignment) => assignment.role_id === role.id || assignment.role_code === role.roleCode)
+        .map((assignment) => {
+          const identity = identityBySubject.get(assignment.principal_sub)
+          const name = identity?.display_name?.trim() || identity?.email?.trim() ||
+            (assignment.principal_sub === currentSessionUser?.id ? currentSessionUser.name : null) ||
+            assignment.principal_sub
+          return { id: assignment.id, name }
+        }),
     [authzAssignments, currentSessionUser?.id, currentSessionUser?.name, identityBySubject]
   )
 
@@ -2314,6 +2329,38 @@ export function SecurityAccessControlPage() {
     setRoleDetailRoleId(role.id)
     setRoleDetailOpen(true)
   }, [assignedUserNamesForRole])
+
+  const [removingAssignmentId, setRemovingAssignmentId] = useState<string | null>(null)
+
+  const handleRemoveAssignment = useCallback(
+    async (assignmentId: string, userName: string) => {
+      setRemovingAssignmentId(assignmentId)
+      try {
+        await deleteAuthzAssignment(assignmentId)
+        const refreshed = await listAuthzAssignments()
+        setAuthzAssignments(refreshed)
+        const role = roles.find((r) => r.id === roleDetailRoleId)
+        if (role) {
+          const names = refreshed
+            .filter((assignment) => assignment.role_id === role.id || assignment.role_code === role.roleCode)
+            .map((assignment) => {
+              const identity = identityBySubject.get(assignment.principal_sub)
+              return identity?.display_name?.trim() || identity?.email?.trim() ||
+                (assignment.principal_sub === currentSessionUser?.id ? currentSessionUser.name : null) ||
+                assignment.principal_sub
+            })
+            .filter((name, index, list) => list.indexOf(name) === index)
+          setDetailDrawer(buildRoleDetail(role, names))
+        }
+        addToast({ variant: 'success', title: 'User removed', description: `${userName} no longer holds this role.` })
+      } catch (error) {
+        addToast({ variant: 'error', title: 'Failed to remove user', description: error instanceof Error ? error.message : 'Please try again.' })
+      } finally {
+        setRemovingAssignmentId(null)
+      }
+    },
+    [addToast, currentSessionUser?.id, currentSessionUser?.name, identityBySubject, roleDetailRoleId, roles]
+  )
 
   // --- Delete Role confirmation ----------------------------------------------
   const [deleteRoleTarget, setDeleteRoleTarget] = useState<RoleItem | null>(null)
@@ -4297,7 +4344,7 @@ export function SecurityAccessControlPage() {
                                       </div>
                                       {resourceNode.actions.some((action) => action.granted) ? (
                                         <div className="mt-2 flex flex-wrap gap-1">
-                                          {Array.from(new Set(resourceNode.actions.flatMap((action) => action.sourceRoles))).map((roleCode) => <span key={roleCode} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">Source: {roles.find((role) => role.roleCode === roleCode)?.name ?? roleCode}</span>)}
+                                          {Array.from(new Set(resourceNode.actions.flatMap((action) => (action.sourceRoles ?? [])))).map((roleCode) => <span key={roleCode} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">Source: {roles.find((role) => role.roleCode === roleCode)?.name ?? roleCode}</span>)}
                                         </div>
                                       ) : null}
                                     </div>
@@ -4560,7 +4607,7 @@ export function SecurityAccessControlPage() {
                                             </div>
                                             {resourceNode.actions.some((action) => action.granted) ? (
                                               <div className="mt-2 flex flex-wrap gap-1">
-                                                {Array.from(new Set(resourceNode.actions.flatMap((action) => action.sourceRoles))).map((roleCode) => {
+                                                {Array.from(new Set(resourceNode.actions.flatMap((action) => (action.sourceRoles ?? [])))).map((roleCode) => {
                                                   const role = roles.find((item) => item.roleCode === roleCode)
                                                   return <span key={roleCode} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">Source: {role?.name ?? roleCode}</span>
                                                 })}
@@ -5402,19 +5449,33 @@ export function SecurityAccessControlPage() {
             <Label className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Assigned users</Label>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {detailDrawer.assignedUsers.length > 0 ? detailDrawer.assignedUsers.map((user) => (
-              <span
-                key={user}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-gradient-to-br from-background to-muted/40 py-1 pl-1 pr-3 text-xs font-medium text-foreground shadow-sm"
-              >
-                <span className={cn('inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white', userAvatarTone(user))}>
-                  {userInitials(user)}
+            {(() => {
+              const role = roles.find((r) => r.id === roleDetailRoleId)
+              const entries = role ? assignedAssignmentsForRole(role) : []
+              if (entries.length === 0) {
+                return <span className="text-xs text-muted-foreground">No active assignments in this scope.</span>
+              }
+              return entries.map((entry) => (
+                <span
+                  key={entry.id}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-gradient-to-br from-background to-muted/40 py-1 pl-1 pr-1.5 text-xs font-medium text-foreground shadow-sm"
+                >
+                  <span className={cn('inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white', userAvatarTone(entry.name))}>
+                    {userInitials(entry.name)}
+                  </span>
+                  {entry.name}
+                  <button
+                    type="button"
+                    disabled={removingAssignmentId === entry.id}
+                    onClick={() => void handleRemoveAssignment(entry.id, entry.name)}
+                    aria-label={`Remove ${entry.name} from this role`}
+                    className="ml-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-rose-100 hover:text-rose-600 disabled:opacity-50 dark:hover:bg-rose-950/40"
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
                 </span>
-                {user}
-              </span>
-            )) : (
-              <span className="text-xs text-muted-foreground">No active assignments in this scope.</span>
-            )}
+              ))
+            })()}
           </div>
         </div>
 
