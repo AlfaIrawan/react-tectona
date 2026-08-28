@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { getSession } from '@/auth/authService'
-import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { clearTenantScopedClientData } from '@/lib/clearTenantScopedClientData'
 import {
   clearStoredUserWorkspaceContext,
@@ -135,6 +135,10 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     () => hasPlatformAdminAccess(sessionRoles(), session?.user.role),
     [session?.user.id, session?.user.role],
   )
+  const isOrganizationAdmin = useMemo(
+    () => hasOrganizationAdminAccess(sessionRoles()),
+    [session?.user.id],
+  )
 
   const [tenant, setTenant] = useState<StoredTenantSelection | null>(() => readStoredTenant())
   const [loading, setLoading] = useState(!tenant && Boolean(subjectId) && !isPlatformAdmin)
@@ -198,6 +202,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
                 if (!workspace) return true
                 return !isOrganizationWorkspaceHiddenByDefault(workspace.tenant_mode ?? null, {
                   isPlatformAdmin,
+                  isOrganizationAdmin,
                   isCorporateUser,
                   hasActiveMembership: true,
                   membershipParticipationScopeCode: row.participation_scope_code,
@@ -230,7 +235,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [tenant, isPlatformAdmin, isCorporateUser, subjectId, setActiveTenant])
+  }, [tenant, isPlatformAdmin, isOrganizationAdmin, isCorporateUser, subjectId, setActiveTenant])
 
   /** Legacy multi-workspace scope → collapse to a single active workspace. */
   useEffect(() => {
@@ -313,6 +318,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
         // and bounces forever while the URL still points at the original slug.
         const mayActivate = isPlatformAdmin || canActivateWorkspaceAsTenant(match.tenant_mode ?? null, {
           isPlatformAdmin,
+          isOrganizationAdmin,
           isCorporateUser,
           hasActiveMembership,
           membershipParticipationScopeCode: activeMembership?.participation_scope_code,
@@ -338,6 +344,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
               )
               return canActivateWorkspaceAsTenant(workspace.tenant_mode ?? null, {
                 isPlatformAdmin,
+                isOrganizationAdmin,
                 isCorporateUser,
                 hasActiveMembership: true,
                 membershipParticipationScopeCode: row.participation_scope_code,
@@ -397,7 +404,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [tenant, isPlatformAdmin, isCorporateUser, subjectId])
+  }, [tenant, isPlatformAdmin, isOrganizationAdmin, isCorporateUser, subjectId])
 
   /** Hydrate legacy tenant selections so legacy routes are redirected to `/w/:slug/*`. */
   useEffect(() => {

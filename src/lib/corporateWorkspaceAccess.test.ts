@@ -117,6 +117,31 @@ describe('canActivateWorkspaceAsTenant', () => {
       }),
     ).toBe(false)
   })
+
+  it('allows an organization admin to activate an organization workspace regardless of membership scope', () => {
+    expect(
+      canActivateWorkspaceAsTenant('organization', {
+        isPlatformAdmin: false,
+        isOrganizationAdmin: true,
+        isCorporateUser: true,
+        hasActiveMembership: true,
+        membershipParticipationScopeCode: 'project_only',
+        isWorkspaceOwner: false,
+      }),
+    ).toBe(true)
+  })
+
+  it('does not grant organization admin bypass for a personal tenant', () => {
+    expect(
+      canActivateWorkspaceAsTenant('personal', {
+        isPlatformAdmin: false,
+        isOrganizationAdmin: true,
+        isCorporateUser: true,
+        hasActiveMembership: false,
+        isWorkspaceOwner: false,
+      }),
+    ).toBe(false)
+  })
 })
 
 describe('isOrganizationWorkspaceHiddenByDefault', () => {

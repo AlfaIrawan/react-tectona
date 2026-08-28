@@ -1,5 +1,5 @@
 import { getSession } from '@/auth/authService'
-import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { fetchSubjectMemberships, TECTONA_WAC_APP_ID } from '@/lib/api/workspaceAccessControlApi'
 import {
   fetchAllWorkspaceOrgWorkspaces,
@@ -49,6 +49,7 @@ export async function evaluateWorkspaceSlugAccess(slug: string): Promise<Workspa
   }
 
   const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles(), session?.user.role)
+  const isOrganizationAdmin = hasOrganizationAdminAccess(sessionRoles())
   const email = session.user.email?.trim().toLowerCase() ?? ''
   const isCorporateUser = Boolean(email) && !isConsumerEmail(email)
 
@@ -117,6 +118,7 @@ export async function evaluateWorkspaceSlugAccess(slug: string): Promise<Workspa
 
   const allowed = canActivateWorkspaceAsTenant(resolved.tenant_mode ?? workspace.tenant_mode ?? null, {
     isPlatformAdmin,
+    isOrganizationAdmin,
     isCorporateUser,
     hasActiveMembership,
     membershipParticipationScopeCode: activeMembership?.participation_scope_code,
