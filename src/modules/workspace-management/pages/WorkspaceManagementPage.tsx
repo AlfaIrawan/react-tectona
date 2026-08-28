@@ -8619,7 +8619,12 @@ export function WorkspaceManagementPage() {
   const reloadWorkspacePendingAccessRequests = useCallback(async (workspaceId: string) => {
     const hasLoadedPendingAccess = workspacePendingAccessLoadedRef.current
     const canReviewPendingAccess =
-      wmAuth.isPlatformAdmin || myAdminMembershipWorkspaceIdSet.has(workspaceId)
+      wmAuth.isPlatformAdmin
+      || myAdminMembershipWorkspaceIdSet.has(workspaceId)
+      // wmAuth already grants full access to an Organization Admin operating in
+      // the org tenant it administers (see useWorkspaceManagementAuthorization);
+      // that scope matches this workspace when it's the currently active tenant.
+      || (wmAuth.canManageWorkspace && workspaceId === tenant?.workspaceId)
     if (!canReviewPendingAccess) {
       setWorkspacePendingAccessRequests([])
       setWorkspacePendingAccessError(
@@ -8644,7 +8649,7 @@ export function WorkspaceManagementPage() {
     } finally {
       setWorkspacePendingAccessLoading(false)
     }
-  }, [myAdminMembershipWorkspaceIdSet, wmAuth.isPlatformAdmin])
+  }, [myAdminMembershipWorkspaceIdSet, wmAuth.isPlatformAdmin, wmAuth.canManageWorkspace, tenant?.workspaceId])
 
   reloadWorkspacePendingAccessRequestsRef.current = reloadWorkspacePendingAccessRequests
 
