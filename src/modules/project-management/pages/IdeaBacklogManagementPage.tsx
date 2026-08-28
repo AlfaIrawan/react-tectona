@@ -661,10 +661,18 @@ function BrainstormEvidenceRail({
   // Stage 5 (explainable readiness): an evidence-quality-weighted version of the same bar — a
   // "confirmed" answer counts fully, a "partial" one only partially, so 5/5 items reaching
   // [answered] doesn't read as identical to 5/5 items with strong, specific evidence.
-  const evidenceQualityPercent = items.length > 0
+  const evidenceQualityItems = items.filter(
+    (item) => !String(item.id || '').startsWith('discovery_')
+      || item.status === 'answered'
+      || item.status === 'skipped',
+  )
+  const evidenceQualityPercent = evidenceQualityItems.length > 0
     ? Math.round(
-        (items.reduce((sum, item) => sum + (EVIDENCE_STATUS_WEIGHT[item.evidence_status ?? 'missing'] ?? 0), 0)
-          / items.length) * 100,
+        (evidenceQualityItems.reduce(
+          (sum, item) => sum + (EVIDENCE_STATUS_WEIGHT[item.evidence_status ?? 'missing'] ?? 0),
+          0,
+        )
+          / evidenceQualityItems.length) * 100,
       )
     : 0
   const discoveryCovered = discoveryProgress?.covered ?? 0
