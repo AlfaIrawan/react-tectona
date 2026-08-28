@@ -8241,6 +8241,21 @@ function WhatsAppChatBubble({
         )
       : undefined
 
+  const usesAssistantTypewriter =
+    !isPeople && m.role === 'assistant' && !showTyping && Boolean(m.text?.trim())
+  const typewriterInstant = resolvedTypingSpeed === 'instant'
+  const [assistantTextRevealComplete, setAssistantTextRevealComplete] = useState(
+    !usesAssistantTypewriter || typewriterInstant,
+  )
+
+  useEffect(() => {
+    if (!usesAssistantTypewriter || typewriterInstant) {
+      setAssistantTextRevealComplete(true)
+      return
+    }
+    setAssistantTextRevealComplete(false)
+  }, [m.id, m.text, usesAssistantTypewriter, typewriterInstant])
+
   const useBubbleShell = isPeople || isUser
 
   const bubble = (
@@ -8277,14 +8292,17 @@ function WhatsAppChatBubble({
                 renderMarkdown
                 emphasizeGreetingLead={emphasizeGreetingLead}
                 onTypingProgress={onAssistantTypingProgress}
-                onTypingComplete={onAssistantTypingComplete}
+                onTypingComplete={(messageId) => {
+                  setAssistantTextRevealComplete(true)
+                  onAssistantTypingComplete?.(messageId)
+                }}
                 choiceUiState={choiceUiState}
                 onChoiceSubmit={onChoiceSubmit}
               />
               <div className="flex justify-end">
                 <WhatsAppMetaRow time={time} isUser={isUser} deliveryStatus={deliveryStatus} />
               </div>
-              {m.evidence?.length ? (
+              {assistantTextRevealComplete && m.evidence?.length ? (
                 <AssistantEvidenceFootnotes evidence={m.evidence} />
               ) : null}
             </div>
@@ -8324,7 +8342,7 @@ function WhatsAppChatBubble({
           </div>
         ) : null}
 
-        {!isPeople && m.agentActionState?.actions.length
+        {assistantTextRevealComplete && !isPeople && m.agentActionState?.actions.length
           ? m.agentActionState.actions.map((action) => (
               <AssistantActionCard
                 key={action.action_id}
