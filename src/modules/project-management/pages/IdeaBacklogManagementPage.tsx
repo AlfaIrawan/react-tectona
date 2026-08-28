@@ -202,13 +202,14 @@ function formatBrainstormExploringNext(gaps: string[]): string {
   return gaps.slice(0, 3).map(formatBrainstormGapLabel).join(' · ')
 }
 
-function brainstormContinueDiscoveryMessage(messages: Array<{ role: string; text: string }>): string {
+function isBrainstormThreadIndonesian(messages: Array<{ role: string; text: string }>): boolean {
   const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant' && message.text.trim())
   const sample = lastAssistant?.text ?? ''
-  if (/(?:\baku\b|\bkamu\b|\byang\b|\bdengan\b|\buntuk\b|\bsudah\b|\bapakah\b|\bproses\b|\blanjut\b)/i.test(sample)) {
-    return 'Lanjut ditanya'
-  }
-  return 'Continue questions'
+  return /(?:\baku\b|\bkamu\b|\byang\b|\bdengan\b|\buntuk\b|\bsudah\b|\bapakah\b|\bproses\b|\blanjut\b)/i.test(sample)
+}
+
+function brainstormContinueDiscoveryMessage(messages: Array<{ role: string; text: string }>): string {
+  return isBrainstormThreadIndonesian(messages) ? 'Lanjut ditanya' : 'Continue questions'
 }
 
 function formatBrainstormTimestamp(iso?: string): string {
@@ -439,10 +440,19 @@ const INITIATIVE_LENS_BADGE_CLASS: Record<InitiativeLensId, string> = {
   roa: 'border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300',
 }
 
+const INITIATIVE_LENS_BAR_CLASS: Record<InitiativeLensId, string> = {
+  efficiency: 'bg-blue-500',
+  productivity: 'bg-violet-500',
+  revenue: 'bg-emerald-500',
+  cost_of_credit: 'bg-amber-500',
+  roa: 'bg-rose-500',
+}
+
 type InitiativeLensMatch = {
   id: InitiativeLensId
   label: string
   score: number
+  percent: number
 }
 
 const INITIATIVE_LENS_DEFINITIONS: Array<{
@@ -452,7 +462,7 @@ const INITIATIVE_LENS_DEFINITIONS: Array<{
 }> = [
   {
     id: 'efficiency',
-    label: 'Efisiensi',
+    label: 'Efficiency',
     patterns: [
       /\befisiensi\b/i,
       /\befficien/i,
@@ -465,7 +475,7 @@ const INITIATIVE_LENS_DEFINITIONS: Array<{
   },
   {
     id: 'productivity',
-    label: 'Produktivitas',
+    label: 'Productivity',
     patterns: [
       /\bproduktiv/i,
       /\bproductiv/i,
@@ -524,30 +534,57 @@ const INITIATIVE_LENS_DEFINITIONS: Array<{
   },
 ]
 
+function countInitiativePatternHits(text: string, patterns: RegExp[]): number {
+  if (!text.trim()) return 0
+  let hits = 0
+  for (const pattern of patterns) {
+    if (pattern.test(text)) hits += 1
+  }
+  return hits
+}
+
+function allocatePercents(weights: number[]): number[] {
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+  if (total <= 0) return weights.map(() => 0)
+  const raw = weights.map((weight) => (weight / total) * 100)
+  const floors = raw.map((value) => Math.floor(value))
+  let remain = 100 - floors.reduce((sum, value) => sum + value, 0)
+  const order = raw
+    .map((value, index) => ({ index, frac: value - Math.floor(value) }))
+    .sort((a, b) => b.frac - a.frac)
+  const out = [...floors]
+  for (let i = 0; i < remain; i += 1) {
+    out[order[i].index] += 1
+  }
+  return out
+}
+
 function inferInitiativeLens(
   title: string,
   tags: string[],
   messages: IdeaDraftBrainstormMessage[],
 ): InitiativeLensMatch[] {
-  const corpus = [
-    title,
-    ...tags,
-    ...messages.map((message) => message.text),
-  ]
+  const titleCorpus = [title, ...tags].join('\n').toLowerCase()
+  const evidenceCorpus = messages
+    .filter((message) => message.role === 'user')
+    .map((message) => message.text)
     .join('\n')
     .toLowerCase()
 
   const scored = INITIATIVE_LENS_DEFINITIONS.map((definition) => {
-    let score = 0
-    for (const pattern of definition.patterns) {
-      if (pattern.test(corpus)) score += 1
+    const titleScore = countInitiativePatternHits(titleCorpus, definition.patterns)
+    const evidenceScore = countInitiativePatternHits(evidenceCorpus, definition.patterns)
+    return {
+      id: definition.id,
+      label: definition.label,
+      score: titleScore + evidenceScore * 3,
     }
-    return { id: definition.id, label: definition.label, score }
-  })
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
+  }).filter((item) => item.score > 0)
 
-  return scored.slice(0, 2)
+  const percents = allocatePercents(scored.map((item) => item.score))
+  return scored
+    .map((item, index) => ({ ...item, percent: percents[index] ?? 0 }))
+    .sort((a, b) => b.percent - a.percent || b.score - a.score)
 }
 
 function resolveBrainstormConfidencePercent(
@@ -858,19 +895,31 @@ function BrainstormEvidenceRail({
                   Initiative direction
                 </p>
                 {initiativeMatches.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {initiativeMatches.map((match) => (
-                      <Badge
-                        key={match.id}
-                        variant="secondary"
-                        className={cn(
-                          'rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
-                          INITIATIVE_LENS_BADGE_CLASS[match.id],
-                        )}
-                      >
-                        {match.label}
-                      </Badge>
-                    ))}
+                  <div className="space-y-2">
+                    <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+                      {initiativeMatches.map((match) => (
+                        <div
+                          key={match.id}
+                          className={cn('h-full', INITIATIVE_LENS_BAR_CLASS[match.id])}
+                          style={{ width: `${match.percent}%` }}
+                          title={`${match.label} ${match.percent}%`}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {initiativeMatches.map((match) => (
+                        <Badge
+                          key={match.id}
+                          variant="secondary"
+                          className={cn(
+                            'rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
+                            INITIATIVE_LENS_BADGE_CLASS[match.id],
+                          )}
+                        >
+                          {match.label} {match.percent}%
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <p className="text-xs leading-5 text-muted-foreground">
@@ -878,7 +927,7 @@ function BrainstormEvidenceRail({
                   </p>
                 )}
                 <p className="text-[10px] leading-4 text-muted-foreground">
-                  Early indication from the title, tags, and brainstorming content - not a final scoring decision.
+                  Shares add up to 100% from title, tags, and your answers — not a final scoring decision.
                 </p>
               </div>
             </div>
@@ -5592,25 +5641,27 @@ export function IdeaBacklogManagementPage() {
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={isBrainstormSending || isDraftContinuing}
-                            className={cn(
-                              enterpriseCyanGradientActionButtonClass(),
-                              'hidden h-9 px-3 sm:inline-flex',
-                              'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
-                            )}
-                            onClick={() => void handleContinueIdeaDraft(
-                              brainstormReady ? 'use_brainstorm' : 'generate_anyway',
-                            )}
-                          >
-                            <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                            {isDraftContinuing
-                              ? 'Generating…'
-                              : brainstormReady
-                                ? 'Generate draft'
-                                : 'Generate anyway'}
-                          </button>
+                          {brainstormReady || !brainstormOfferGenerateAnyway ? (
+                            <button
+                              type="button"
+                              disabled={isBrainstormSending || isDraftContinuing}
+                              className={cn(
+                                enterpriseCyanGradientActionButtonClass(),
+                                'hidden h-9 px-3 sm:inline-flex',
+                                'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
+                              )}
+                              onClick={() => void handleContinueIdeaDraft(
+                                brainstormReady ? 'use_brainstorm' : 'generate_anyway',
+                              )}
+                            >
+                              <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
+                              {isDraftContinuing
+                                ? 'Generating…'
+                                : brainstormReady
+                                  ? 'Generate draft'
+                                  : 'Generate anyway'}
+                            </button>
+                          ) : null}
                           <Button
                             type="button"
                             variant="ghost"
@@ -5774,32 +5825,41 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           )}
                           {!brainstormReady && brainstormOfferGenerateAnyway && (
-                            <div className="flex flex-wrap gap-2 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3">
-                              <button
-                                type="button"
-                                disabled={isBrainstormSending || isDraftContinuing}
-                                className={cn(
-                                  enterpriseSecondaryButtonClass(),
-                                  'inline-flex h-9 items-center gap-2',
-                                  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm',
-                                )}
-                                onClick={() => void handleSendBrainstormMessage(brainstormContinueDiscoveryMessage(brainstormMessages))}
-                              >
-                                Continue Discovery
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isBrainstormSending || isDraftContinuing}
-                                className={cn(
-                                  enterpriseCyanGradientActionButtonClass(),
-                                  'h-9',
-                                  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
-                                )}
-                                onClick={() => void handleContinueIdeaDraft('generate_anyway')}
-                              >
-                                <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                                {isDraftContinuing ? 'Generating…' : 'Generate anyway'}
-                              </button>
+                            <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3">
+                              <p className="text-xs leading-5 text-muted-foreground">
+                                {isBrainstormThreadIndonesian(brainstormMessages)
+                                  ? 'Pilih salah satu. Bagian yang belum jelas akan ditandai sebagai asumsi jika kamu generate sekarang.'
+                                  : 'Choose one. Anything still unclear will be labeled as an assumption if you generate now.'}
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  className={cn(
+                                    enterpriseSecondaryButtonClass(),
+                                    'inline-flex h-9 items-center gap-2',
+                                    'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm',
+                                  )}
+                                  onClick={() => void handleSendBrainstormMessage(brainstormContinueDiscoveryMessage(brainstormMessages))}
+                                >
+                                  {isBrainstormThreadIndonesian(brainstormMessages) ? 'Lanjut ditanya' : 'Continue Discovery'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  className={cn(
+                                    enterpriseCyanGradientActionButtonClass(),
+                                    'h-9',
+                                    'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
+                                  )}
+                                  onClick={() => void handleContinueIdeaDraft('generate_anyway')}
+                                >
+                                  <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
+                                  {isDraftContinuing
+                                    ? (isBrainstormThreadIndonesian(brainstormMessages) ? 'Sedang generate…' : 'Generating…')
+                                    : (isBrainstormThreadIndonesian(brainstormMessages) ? 'Generate saja' : 'Generate anyway')}
+                                </button>
+                              </div>
                             </div>
                           )}
                           {!brainstormReady && !brainstormOfferGenerateAnyway && brainstormRemainingGaps.length > 0 && brainstormMessages.length > 0 && (
@@ -5820,7 +5880,13 @@ export function IdeaBacklogManagementPage() {
                                 ref={brainstormComposerRef}
                                 value={brainstormInput}
                                 onChange={(event) => setBrainstormInput(event.target.value)}
-                                placeholder="Ask Tectona Assistant"
+                                placeholder={
+                                  brainstormOfferGenerateAnyway
+                                    ? (isBrainstormThreadIndonesian(brainstormMessages)
+                                      ? 'Opsional: koreksi diagram atau tambah catatan'
+                                      : 'Optional: correct the diagram or add a note')
+                                    : 'Ask Tectona Assistant'
+                                }
                                 spellCheck={false}
                                 rows={1}
                                 className="block w-full resize-none border-0 bg-transparent px-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
@@ -5891,7 +5957,11 @@ export function IdeaBacklogManagementPage() {
                             </button>
                           )}
                           <p className="px-1 text-center text-[11px] text-muted-foreground">
-                            Enter to send · Shift+Enter for new line
+                            {brainstormOfferGenerateAnyway
+                              ? (isBrainstormThreadIndonesian(brainstormMessages)
+                                ? 'Pakai tombol di atas untuk pilih. Input hanya jika mau menambah konteks.'
+                                : 'Use the buttons above to choose. Type here only to add extra context.')
+                              : 'Enter to send · Shift+Enter for new line'}
                           </p>
                         </div>
                       </div>
