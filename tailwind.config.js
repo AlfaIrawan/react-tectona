@@ -6,6 +6,15 @@ export default {
     './src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
+    // Desktop breakpoint classes always on so a scaled 1920 canvas does not
+    // reflow into the 2-column / carousel layouts used under 1280px.
+    screens: {
+      sm: '1px',
+      md: '1px',
+      lg: '1px',
+      xl: '1px',
+      '2xl': '1px',
+    },
     extend: {
       colors: {
         border: 'hsl(var(--border))',
@@ -49,6 +58,24 @@ export default {
       },
       backdropBlur: {
         xs: '2px',
+      },
+      height: {
+        screen: 'var(--app-vh, 100vh)',
+      },
+      minHeight: {
+        screen: 'var(--app-vh, 100vh)',
+      },
+      maxHeight: {
+        screen: 'var(--app-vh, 100vh)',
+      },
+      width: {
+        screen: 'var(--app-vw, 100vw)',
+      },
+      minWidth: {
+        screen: 'var(--app-vw, 100vw)',
+      },
+      maxWidth: {
+        screen: 'var(--app-vw, 100vw)',
       },
     },
   },
