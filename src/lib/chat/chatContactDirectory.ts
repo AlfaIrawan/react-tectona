@@ -19,7 +19,6 @@ import {
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
-import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import {
   buildWorkspaceScopeFromTenant,
   readStoredTenantSelection,
@@ -114,6 +113,52 @@ export function resolveActiveWorkspaceMembershipRows(rows: WacMembershipDto[]): 
   return activeRows.length > 0 ? activeRows : rows
 }
 
+/** Membership workspace IDs for the signed-in subject (chat directory never lists catalog-wide). */
+async function fetchActiveMembershipWorkspaceIds(userId: string): Promise<string[]> {
+  const res = await fetchSubjectMemberships(TECTONA_WAC_APP_ID, userId, { activeOnly: true }).catch(
+    () => ({ items: [] as WacMembershipDto[] }),
+  )
+  return [
+    ...new Set(
+      (res.items ?? [])
+        .map((row) => row.workspace_id)
+        .filter((workspaceId): workspaceId is string => Boolean(workspaceId?.trim())),
+    ),
+  ]
+}
+
+/** Pure scope picker — only workspaces the subject belongs to (avoids gateway 403 on foreign workspaces). */
+export function pickChatDirectoryWorkspaceIds(input: {
+  scope: ReturnType<typeof buildWorkspaceScopeFromTenant>
+  membershipWorkspaceIds: string[]
+  orgWorkspaceIds?: string[] | null
+}): string[] {
+  const membership = new Set(input.membershipWorkspaceIds)
+  let workspaceIds: string[] = []
+
+  if (input.scope.mode === 'single') {
+    workspaceIds = membership.has(input.scope.workspaceId)
+      ? [input.scope.workspaceId]
+      : [input.scope.workspaceId]
+  } else {
+    const selected = (input.scope.mode === 'all' ? input.scope.workspaceIds : undefined)?.filter(Boolean)
+    if (selected?.length) {
+      workspaceIds = selected.filter((id) => membership.has(id))
+    } else {
+      workspaceIds = [...membership]
+    }
+  }
+
+  const orgIds = input.orgWorkspaceIds?.filter(Boolean)
+  if (orgIds?.length && workspaceIds.length > 0) {
+    const orgSet = new Set(orgIds)
+    const scoped = workspaceIds.filter((id) => orgSet.has(id))
+    if (scoped.length > 0) workspaceIds = scoped
+  }
+
+  return workspaceIds
+}
+
 /** Workspace IDs whose WAC members may appear in New chat / group pickers. */
 export async function resolveChatDirectoryWorkspaceIds(): Promise<string[]> {
   const session = getSession()
@@ -121,42 +166,21 @@ export async function resolveChatDirectoryWorkspaceIds(): Promise<string[]> {
 
   const tenant = readStoredTenantSelection()
   const scope = buildWorkspaceScopeFromTenant(tenant)
-  let workspaceIds: string[] = []
+  const membershipWorkspaceIds = await fetchActiveMembershipWorkspaceIds(session.user.id)
 
-  if (scope.mode === 'single') {
-    workspaceIds = [scope.workspaceId]
-  } else {
-    const selected = scope.workspaceIds?.length ? scope.workspaceIds : readAccessibleWorkspaceIds()
-    if (selected?.length) {
-      workspaceIds = [...selected]
-    } else {
-      const memberships = await fetchSubjectMemberships(TECTONA_WAC_APP_ID, session.user.id, {
-        activeOnly: true,
-      }).catch(() => ({ items: [] as WacMembershipDto[] }))
-      workspaceIds = [
-        ...new Set(
-          (memberships.items ?? [])
-            .map((row) => row.workspace_id)
-            .filter((workspaceId): workspaceId is string => Boolean(workspaceId?.trim())),
-        ),
-      ]
-    }
-  }
-
-  if (tenant?.orgId && workspaceIds.length > 0) {
+  let orgWorkspaceIds: string[] | null = null
+  if (tenant?.orgId) {
     const workspaces = await fetchAllWorkspaceOrgWorkspaces().catch(() => [])
-    const orgWorkspaceIds = new Set(
-      workspaces
-        .filter((workspace) => workspace.organization_id === tenant.orgId)
-        .map((workspace) => workspace.id),
-    )
-    if (orgWorkspaceIds.size > 0) {
-      const scoped = workspaceIds.filter((workspaceId) => orgWorkspaceIds.has(workspaceId))
-      if (scoped.length > 0) workspaceIds = scoped
-    }
+    orgWorkspaceIds = workspaces
+      .filter((workspace) => workspace.organization_id === tenant.orgId)
+      .map((workspace) => workspace.id)
   }
 
-  return workspaceIds
+  return pickChatDirectoryWorkspaceIds({
+    scope,
+    membershipWorkspaceIds,
+    orgWorkspaceIds,
+  })
 }
 
 export async function collectChatDirectorySubjectIds(workspaceIds: string[]): Promise<Set<string>> {
