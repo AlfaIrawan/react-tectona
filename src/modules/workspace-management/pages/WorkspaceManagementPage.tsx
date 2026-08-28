@@ -32,6 +32,7 @@ import {
   Archive,
   ArrowUpDown,
   ArrowLeftToLine,
+  ArrowRightLeft,
   ArrowRightToLine,
   BarChart3,
   Briefcase,
@@ -22783,22 +22784,23 @@ export function WorkspaceManagementPage() {
         dialogTitleId="unlink-org-tree-dialog-title"
       />
 
-      <Dialog
+      <EnterpriseActionConfirmModal
         open={moveDirectoryWorkspace !== null}
-        onOpenChange={(open) => {
-          if (!open && !moveDirectorySubmitting) setMoveDirectoryWorkspace(null)
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Move workspace</DialogTitle>
-            <DialogDescription>
-              Place {moveDirectoryWorkspace?.name ?? 'this workspace'} under another workspace in the same
-              organization. Members and access do not change.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-1">
-            <Label htmlFor="move-directory-parent" className="text-xs text-muted-foreground">
+        onClose={() => !moveDirectorySubmitting && setMoveDirectoryWorkspace(null)}
+        onConfirm={() => void submitMoveDirectoryWorkspace()}
+        busy={moveDirectorySubmitting}
+        title="Move Workspace"
+        description={
+          <>
+            Place {moveDirectoryWorkspace?.name ?? 'this workspace'} under another workspace in the same
+            organization. Members and access do not change.
+          </>
+        }
+        entityLabel="Workspace"
+        entityValue={moveDirectoryWorkspace?.name ?? '—'}
+        bodyContent={
+          <div className="space-y-2">
+            <Label htmlFor="move-directory-parent" className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               New parent
             </Label>
             <Select
@@ -22819,28 +22821,15 @@ export function WorkspaceManagementPage() {
               )}
             </Select>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={moveDirectorySubmitting}
-              onClick={() => setMoveDirectoryWorkspace(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={moveDirectorySubmitting || moveDirectoryParentOptions.length === 0}
-              onClick={() => void submitMoveDirectoryWorkspace()}
-            >
-              {moveDirectorySubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              ) : null}
-              {moveDirectorySubmitting ? 'Moving…' : 'Move'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        }
+        enterpriseNote="Enterprise note: moving a workspace changes only its position in the organization directory tree; memberships, access, and workspace data remain unchanged."
+        confirmLabel="Move workspace"
+        confirmBusyLabel="Moving..."
+        disableConfirm={moveDirectoryParentOptions.length === 0}
+        dialogTitleId="move-directory-workspace-dialog-title"
+        icon={ArrowRightLeft}
+        iconContainerClassName="bg-blue-500/12 text-blue-700 ring-blue-500/25"
+      />
 
       <EnterpriseDeleteConfirmModal
         open={confirmDeleteWorkspaceOpen}
