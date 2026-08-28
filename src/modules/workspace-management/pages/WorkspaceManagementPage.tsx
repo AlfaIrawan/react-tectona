@@ -182,6 +182,7 @@ import {
   purgeOwnedWorkspacesForIdentity,
   fetchAllWorkspaceOrgWorkspaces,
   fetchOrganizationDirectoryTree,
+  patchWorkspaceOrgDirectoryParent,
   fetchIdentityWorkspaceOrgMemberships,
   fetchWorkspaceOrgWorkspaceById,
   fetchWorkspaceOrgOrganizations,
@@ -326,6 +327,10 @@ import {
   type DirectoryTreeBuildOptions,
 } from '@/lib/workspacePersonalOrgScope'
 import { isCorporateOrganizationForPicker } from '@/lib/workspaceOrganizationPicker'
+import {
+  canReparentOperationalWorkspace,
+  listOperationalDirectoryReparentTargets,
+} from '@/lib/operationalDirectoryReparent'
 
 /** Organizational & execution boundary classification — not member/project counts. */
 type WorkspaceClassification = string
@@ -8525,6 +8530,9 @@ export function WorkspaceManagementPage() {
   const [linkingPersonalToOrgTree, setLinkingPersonalToOrgTree] = useState(false)
   const [unlinkPersonalFromOrgTreeOpen, setUnlinkPersonalFromOrgTreeOpen] = useState(false)
   const [unlinkingPersonalFromOrgTree, setUnlinkingPersonalFromOrgTree] = useState(false)
+  const [moveDirectoryWorkspace, setMoveDirectoryWorkspace] = useState<WorkspaceRecord | null>(null)
+  const [moveDirectoryParentId, setMoveDirectoryParentId] = useState('')
+  const [moveDirectorySubmitting, setMoveDirectorySubmitting] = useState(false)
   const editWorkspaceDrawerOpenRef = useRef(false)
   const editWorkspaceTargetIdRef = useRef<string | null>(null)
   editWorkspaceDrawerOpenRef.current = editWorkspaceDrawerOpen
@@ -8652,6 +8660,87 @@ export function WorkspaceManagementPage() {
       setUnlinkingPersonalFromOrgTree(false)
     }
   }, [addToast, editWorkspaceTarget, refreshWorkspaceOrgLists, unlinkingPersonalFromOrgTree])
+
+  const moveDirectoryParentOptions = useMemo(() => {
+    if (!moveDirectoryWorkspace) return []
+    return listOperationalDirectoryReparentTargets(moveDirectoryWorkspace, allWorkspacesForList)
+  }, [moveDirectoryWorkspace, allWorkspacesForList])
+
+  const openMoveDirectoryWorkspace = (workspace: WorkspaceRecord) => {
+    if (!canReparentOperationalWorkspace(workspace)) return
+    const currentParent = workspace.parentWorkspaceId?.trim() || ''
+    const orgHomeId =
+      allWorkspacesForList.find(
+        (row) =>
+          row.primaryOrganizationId === workspace.primaryOrganizationId
+          && row.type === 'Organization'
+          && !row.isPersonalWorkspace
+          && !row.parentWorkspaceId,
+      )?.id ?? ''
+    setMoveDirectoryWorkspace(workspace)
+    setMoveDirectoryParentId(currentParent || orgHomeId)
+  }
+
+  const submitMoveDirectoryWorkspace = useCallback(async () => {
+    if (!moveDirectoryWorkspace || moveDirectorySubmitting) return
+    const actorId = getSession()?.user?.id
+    if (!actorId) {
+      addToast({
+        variant: 'error',
+        title: 'Sign in required',
+        description: 'You must be signed in to move a workspace in Directory.',
+      })
+      return
+    }
+    const orgHomeId =
+      allWorkspacesForList.find(
+        (row) =>
+          row.primaryOrganizationId === moveDirectoryWorkspace.primaryOrganizationId
+          && row.type === 'Organization'
+          && !row.isPersonalWorkspace
+          && !row.parentWorkspaceId,
+      )?.id ?? null
+    const selected = moveDirectoryParentId.trim()
+    const parentId = !selected || selected === orgHomeId ? null : selected
+    setMoveDirectorySubmitting(true)
+    try {
+      const updated = await patchWorkspaceOrgDirectoryParent(
+        moveDirectoryWorkspace.id,
+        { parent_workspace_id: parentId, version: moveDirectoryWorkspace.version },
+        { actorId },
+      )
+      const mapped = mapWorkspaceOrgWorkspaceDtoToRecord(updated)
+      setDirectoryWorkspaces((prev) => prev.map((row) => (row.id === mapped.id ? mapped : row)))
+      const parentName =
+        parentId
+          ? (allWorkspacesForList.find((row) => row.id === parentId)?.name ?? 'the selected workspace')
+          : (allWorkspacesForList.find((row) => row.id === orgHomeId)?.name ?? 'organization home')
+      addToast({
+        variant: 'success',
+        title: 'Workspace moved',
+        description: `${mapped.name} now sits under ${parentName}.`,
+      })
+      setMoveDirectoryWorkspace(null)
+      emitWorkspaceDirectoryMutation('tectona:workspace-updated')
+      void refreshWorkspaceOrgLists()
+      void syncWorkspaceOrgEntryToKb(updated)
+    } catch (err) {
+      addToast({
+        variant: 'error',
+        title: 'Could not move workspace',
+        description: err instanceof Error ? err.message : 'Please try again.',
+      })
+    } finally {
+      setMoveDirectorySubmitting(false)
+    }
+  }, [
+    addToast,
+    allWorkspacesForList,
+    moveDirectoryParentId,
+    moveDirectorySubmitting,
+    moveDirectoryWorkspace,
+    refreshWorkspaceOrgLists,
+  ])
 
   const submitLinkPersonalWorkspaceToOrgTree = useCallback(async () => {
     if (!editWorkspaceTarget || !linkPersonalOrgHomeId.trim() || linkingPersonalToOrgTree) return
@@ -16239,6 +16328,17 @@ export function WorkspaceManagementPage() {
                   <Plus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   Create Child Workspace
                 </ContextMenuItem>
+                {rowContextMenu && canReparentOperationalWorkspace(rowContextMenu.workspace) ? (
+                  <ContextMenuItem
+                    onSelect={() => {
+                      if (rowContextMenu) openMoveDirectoryWorkspace(rowContextMenu.workspace)
+                      setRowContextMenu(null)
+                    }}
+                  >
+                    <CornerDownRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    Move under…
+                  </ContextMenuItem>
+                ) : null}
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   onSelect={() => {
@@ -22682,6 +22782,65 @@ export function WorkspaceManagementPage() {
         confirmBusyLabel="Leaving..."
         dialogTitleId="unlink-org-tree-dialog-title"
       />
+
+      <Dialog
+        open={moveDirectoryWorkspace !== null}
+        onOpenChange={(open) => {
+          if (!open && !moveDirectorySubmitting) setMoveDirectoryWorkspace(null)
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Move workspace</DialogTitle>
+            <DialogDescription>
+              Place {moveDirectoryWorkspace?.name ?? 'this workspace'} under another workspace in the same
+              organization. Members and access do not change.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <Label htmlFor="move-directory-parent" className="text-xs text-muted-foreground">
+              New parent
+            </Label>
+            <Select
+              id="move-directory-parent"
+              value={moveDirectoryParentId}
+              onChange={(event) => setMoveDirectoryParentId(event.target.value)}
+              className="h-10 w-full"
+              disabled={moveDirectorySubmitting || moveDirectoryParentOptions.length === 0}
+            >
+              {moveDirectoryParentOptions.length === 0 ? (
+                <option value="">No valid parent in this organization</option>
+              ) : (
+                moveDirectoryParentOptions.map((target) => (
+                  <option key={target.id ?? 'org-home'} value={target.id ?? ''}>
+                    {target.name}
+                  </option>
+                ))
+              )}
+            </Select>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={moveDirectorySubmitting}
+              onClick={() => setMoveDirectoryWorkspace(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={moveDirectorySubmitting || moveDirectoryParentOptions.length === 0}
+              onClick={() => void submitMoveDirectoryWorkspace()}
+            >
+              {moveDirectorySubmitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : null}
+              {moveDirectorySubmitting ? 'Moving…' : 'Move'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <EnterpriseDeleteConfirmModal
         open={confirmDeleteWorkspaceOpen}

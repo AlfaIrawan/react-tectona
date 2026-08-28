@@ -456,6 +456,22 @@ export async function patchWorkspaceOrgWorkspace(
   return handleJson<WorkspaceOrgWorkspaceDto>(res)
 }
 
+export async function patchWorkspaceOrgDirectoryParent(
+  workspaceId: string,
+  payload: { parent_workspace_id: string | null; version: number },
+  opts?: { actorId?: string },
+): Promise<WorkspaceOrgWorkspaceDto> {
+  const res = await apiFetch(
+    orgUrl(`/v1/workspaces/${encodeURIComponent(workspaceId)}/directory-parent`),
+    {
+      method: 'PATCH',
+      headers: mutationHeaders(opts),
+      body: JSON.stringify(payload),
+    },
+  )
+  return handleJson<WorkspaceOrgWorkspaceDto>(res)
+}
+
 export async function deleteWorkspaceOrgWorkspace(
   workspaceId: string,
   opts?: { actorId?: string; mode?: 'archive' | 'purge'; force?: boolean; version?: number },
