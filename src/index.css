@@ -266,22 +266,28 @@
     display: none;
   }
   html.ui-scale-lock {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: hsl(var(--background));
+  }
+  html.ui-scale-lock body {
+    position: absolute;
+    left: var(--ui-offset-x, 0px);
+    top: var(--ui-offset-y, 0px);
     width: var(--app-vw, 1920px);
-    height: var(--app-vh, 100dvh);
+    height: var(--app-vh, 1080px);
+    max-width: var(--app-vw, 1920px);
+    min-height: var(--app-vh, 1080px);
     overflow: hidden;
     transform: scale(var(--ui-scale, 1));
     transform-origin: top left;
   }
-  html.ui-scale-lock,
-  html.ui-scale-lock body,
   html.ui-scale-lock #root {
     width: var(--app-vw, 1920px);
-    height: var(--app-vh, 100dvh);
+    height: var(--app-vh, 1080px);
     max-width: var(--app-vw, 1920px);
-    min-height: var(--app-vh, 100dvh);
-  }
-  html.ui-scale-lock body,
-  html.ui-scale-lock #root {
+    min-height: var(--app-vh, 1080px);
     overflow: hidden;
   }
   body {
