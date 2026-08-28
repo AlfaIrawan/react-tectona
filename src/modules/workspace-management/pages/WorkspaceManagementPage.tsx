@@ -59,6 +59,7 @@ import {
   LayoutGrid,
   KeyRound,
   Layers,
+  Link2,
   Loader2,
   PanelLeft,
   Pin,
@@ -2063,7 +2064,8 @@ function workspaceDirectoryDepthFirst(
   workspaces: WorkspaceRecord[],
   treeOptions?: DirectoryTreeBuildOptions,
   allWorkspaces?: WorkspaceRecord[],
-): { workspace: WorkspaceRecord; depth: number }[] {
+  extraLinkedParentsByWorkspaceId?: ReadonlyMap<string, readonly string[]>,
+): { workspace: WorkspaceRecord; depth: number; isLinkedReference?: boolean }[] {
   const fullSet = allWorkspaces ?? workspaces
   const parentById = buildDirectoryTreeParentById(
     fullSet.map(toDirectoryTreeWorkspaceFromRecord),
@@ -2081,40 +2083,64 @@ function workspaceDirectoryDepthFirst(
     }
     return cursor
   }
-  const children = new Map<string | null, WorkspaceRecord[]>()
+  type ChildEntry = { workspace: WorkspaceRecord; isLinked: boolean }
+  const children = new Map<string | null, ChildEntry[]>()
+  const primaryParentByWorkspaceId = new Map<string, string | null>()
   for (const w of workspaces) {
     const treeParent = resolveVisibleParent(w.id)
     const parentId = treeParent && byId.has(treeParent) ? treeParent : null
+    primaryParentByWorkspaceId.set(w.id, parentId)
     const list = children.get(parentId) ?? []
-    list.push(w)
+    list.push({ workspace: w, isLinked: false })
     children.set(parentId, list)
   }
+
+  // Linked references: a personal workspace keeps exactly one canonical/primary
+  // placement (above), but can also show under other operational workspaces its
+  // owner actively participates in (e.g. invited there as Member) so their
+  // participation is visible without pretending they have multiple "real" parents.
+  if (extraLinkedParentsByWorkspaceId) {
+    for (const w of workspaces) {
+      const extraParents = extraLinkedParentsByWorkspaceId.get(w.id)
+      if (!extraParents || extraParents.length === 0) continue
+      const primaryParentId = primaryParentByWorkspaceId.get(w.id) ?? null
+      for (const parentId of extraParents) {
+        if (parentId === primaryParentId || !byId.has(parentId)) continue
+        const list = children.get(parentId) ?? []
+        list.push({ workspace: w, isLinked: true })
+        children.set(parentId, list)
+      }
+    }
+  }
+
   for (const list of children.values()) {
     list.sort((a, b) => {
-      const aOrder = a.directorySortOrder ?? Number.MAX_SAFE_INTEGER
-      const bOrder = b.directorySortOrder ?? Number.MAX_SAFE_INTEGER
+      const aOrder = a.workspace.directorySortOrder ?? Number.MAX_SAFE_INTEGER
+      const bOrder = b.workspace.directorySortOrder ?? Number.MAX_SAFE_INTEGER
       if (aOrder !== bOrder) return aOrder - bOrder
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      return a.workspace.name.localeCompare(b.workspace.name, undefined, { sensitivity: 'base' })
     })
   }
-  const out: { workspace: WorkspaceRecord; depth: number }[] = []
+  const out: { workspace: WorkspaceRecord; depth: number; isLinkedReference?: boolean }[] = []
   const walk = (pid: string | null, depth: number) => {
     const childList = children.get(pid) ?? []
     const sorted =
       pid === null
         ? [...childList].sort((a, b) => {
-            const aIsOrg = a.type === 'Organization' && !a.isPersonalWorkspace ? 0 : 1
-            const bIsOrg = b.type === 'Organization' && !b.isPersonalWorkspace ? 0 : 1
+            const aIsOrg = a.workspace.type === 'Organization' && !a.workspace.isPersonalWorkspace ? 0 : 1
+            const bIsOrg = b.workspace.type === 'Organization' && !b.workspace.isPersonalWorkspace ? 0 : 1
             if (aIsOrg !== bIsOrg) return aIsOrg - bIsOrg
-            const aOrder = a.directorySortOrder ?? Number.MAX_SAFE_INTEGER
-            const bOrder = b.directorySortOrder ?? Number.MAX_SAFE_INTEGER
+            const aOrder = a.workspace.directorySortOrder ?? Number.MAX_SAFE_INTEGER
+            const bOrder = b.workspace.directorySortOrder ?? Number.MAX_SAFE_INTEGER
             if (aOrder !== bOrder) return aOrder - bOrder
-            return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+            return a.workspace.name.localeCompare(b.workspace.name, undefined, { sensitivity: 'base' })
           })
         : childList
-    for (const w of sorted) {
-      out.push({ workspace: w, depth })
-      walk(w.id, depth + 1)
+    for (const entry of sorted) {
+      out.push({ workspace: entry.workspace, depth, isLinkedReference: entry.isLinked || undefined })
+      // Linked entries are references, not the canonical node -- do not re-walk
+      // their subtree a second time under every extra parent.
+      if (!entry.isLinked) walk(entry.workspace.id, depth + 1)
     }
   }
   walk(null, 0)
@@ -2122,8 +2148,8 @@ function workspaceDirectoryDepthFirst(
   // Keep the catalog lossless. A stale/missing parent reference must not make
   // a workspace disappear from the directory table while the KPI still counts
   // it. Render any unvisited records as top-level rows instead.
-  if (out.length !== workspaces.length) {
-    const emittedIds = new Set(out.map(({ workspace }) => workspace.id))
+  const emittedIds = new Set(out.map(({ workspace }) => workspace.id))
+  if (emittedIds.size !== workspaces.length) {
     for (const workspace of workspaces) {
       if (!emittedIds.has(workspace.id)) out.push({ workspace, depth: 0 })
     }
@@ -10384,6 +10410,33 @@ export function WorkspaceManagementPage() {
 
   const directoryTotalPages = Math.max(1, Math.ceil(sortedFilteredWorkspaces.length / directoryPageSize))
 
+  // A personal workspace keeps one canonical/primary tree placement, but its
+  // owner can be an active WAC member of other operational workspaces too --
+  // surface those as extra "linked" placements so participation isn't invisible
+  // just because the tree only has room for one real parent.
+  const extraLinkedParentsByWorkspaceId = useMemo(() => {
+    const workspaceById = new Map(allWorkspacesForList.map((w) => [w.id, w]))
+    const operationalWorkspaceIdsByOwnerIdentity = new Map<string, Set<string>>()
+    for (const member of workspaceMembers) {
+      const ws = workspaceById.get(member.workspaceId)
+      if (!ws || ws.isPersonalWorkspace || ws.type === 'Organization') continue
+      const ownerRef = member.subjectId?.trim()
+      if (!ownerRef) continue
+      const set = operationalWorkspaceIdsByOwnerIdentity.get(ownerRef) ?? new Set<string>()
+      set.add(member.workspaceId)
+      operationalWorkspaceIdsByOwnerIdentity.set(ownerRef, set)
+    }
+    const result = new Map<string, string[]>()
+    for (const workspace of allWorkspacesForList) {
+      if (!workspace.isPersonalWorkspace) continue
+      const ownerRef = workspace.ownerIdentityRef?.trim()
+      if (!ownerRef) continue
+      const memberOf = operationalWorkspaceIdsByOwnerIdentity.get(ownerRef)
+      if (memberOf && memberOf.size > 0) result.set(workspace.id, [...memberOf])
+    }
+    return result
+  }, [workspaceMembers, allWorkspacesForList])
+
   const directoryFlatRows = useMemo(() => {
     if (directoryGroupBy) {
       const grouped = [...sortedFilteredWorkspaces].sort((a, b) => {
@@ -10395,18 +10448,28 @@ export function WorkspaceManagementPage() {
         workspace,
         groupLabel: workspaceDirectoryGroupLabel(workspace, directoryGroupBy),
         depth: 0,
+        isLinkedReference: false as boolean | undefined,
       }))
     }
     return workspaceDirectoryDepthFirst(
       sortedFilteredWorkspaces,
       directoryTreeBuildOptions(myMembershipWorkspaceIds, myOwnedWorkspaceIds),
       allWorkspacesForList,
-    ).map(({ workspace, depth }) => ({
+      extraLinkedParentsByWorkspaceId,
+    ).map(({ workspace, depth, isLinkedReference }) => ({
       workspace,
       groupLabel: null as string | null,
       depth,
+      isLinkedReference,
     }))
-  }, [sortedFilteredWorkspaces, directoryGroupBy, myMembershipWorkspaceIds, myOwnedWorkspaceIds, allWorkspacesForList])
+  }, [
+    sortedFilteredWorkspaces,
+    directoryGroupBy,
+    myMembershipWorkspaceIds,
+    myOwnedWorkspaceIds,
+    allWorkspacesForList,
+    extraLinkedParentsByWorkspaceId,
+  ])
 
   const directoryTableRows = useMemo(() => {
     const start = (directoryPage - 1) * directoryPageSize
@@ -15417,6 +15480,7 @@ export function WorkspaceManagementPage() {
                           {directoryTableRows.map((row, rowIndex) => {
                             const workspace = row.workspace
                             const rowDepth = row.depth ?? 0
+                            const isLinkedReference = row.isLinkedReference === true
                             const rowGroupLabel = row.groupLabel
                             const previousGroupLabel = directoryTableRows[rowIndex - 1]?.groupLabel ?? null
                             const showGroupHeader =
@@ -15458,7 +15522,7 @@ export function WorkspaceManagementPage() {
                             )
 
                             return (
-                            <Fragment key={workspace.id}>
+                            <Fragment key={isLinkedReference ? `${workspace.id}:linked:${rowIndex}` : workspace.id}>
                               {showGroupHeader ? (
                                 <tr>
                                   <td
@@ -15475,18 +15539,19 @@ export function WorkspaceManagementPage() {
                             <tr
                               className={cn(
                                 'group cursor-pointer transition-colors',
-                                canReorderDirectoryRows && 'cursor-grab active:cursor-grabbing',
+                                canReorderDirectoryRows && !isLinkedReference && 'cursor-grab active:cursor-grabbing',
                                 directoryDraggingRowId === workspace.id && 'opacity-50',
+                                isLinkedReference && 'opacity-70',
                               )}
-                              draggable={canReorderDirectoryRows}
+                              draggable={canReorderDirectoryRows && !isLinkedReference}
                               onDragStart={(event) => {
-                                if (!canReorderDirectoryRows) return
+                                if (!canReorderDirectoryRows || isLinkedReference) return
                                 event.dataTransfer.effectAllowed = 'move'
                                 event.dataTransfer.setData('text/plain', workspace.id)
                                 setDirectoryDraggingRowId(workspace.id)
                               }}
                               onDragOver={(event) => {
-                                if (!canReorderDirectoryRows || !directoryDraggingRowId) return
+                                if (!canReorderDirectoryRows || !directoryDraggingRowId || isLinkedReference) return
                                 const draggedWorkspace = allWorkspacesForList.find((item) => item.id === directoryDraggingRowId)
                                 if (!draggedWorkspace) return
                                 if ((draggedWorkspace.parentWorkspaceId ?? null) !== (workspace.parentWorkspaceId ?? null)) return
@@ -15494,7 +15559,7 @@ export function WorkspaceManagementPage() {
                                 event.dataTransfer.dropEffect = 'move'
                               }}
                               onDrop={(event) => {
-                                if (!canReorderDirectoryRows) return
+                                if (!canReorderDirectoryRows || isLinkedReference) return
                                 event.preventDefault()
                                 void handleDirectoryRowDrop(workspace.id)
                               }}
@@ -15594,7 +15659,19 @@ export function WorkspaceManagementPage() {
                                     ) : null}
                                     <div className="min-w-0">
                                       <div className="flex flex-wrap items-center gap-1.5">
-                                        <span className="font-semibold text-foreground">{workspace.name}</span>
+                                        <span className={cn('font-semibold text-foreground', isLinkedReference && 'italic')}>
+                                          {workspace.name}
+                                        </span>
+                                        {isLinkedReference ? (
+                                          <Badge
+                                            variant="outline"
+                                            title={`${workspace.name} is a member here; its primary placement is elsewhere in the directory.`}
+                                            className="gap-1 border-sky-300/70 bg-sky-50/80 px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-200"
+                                          >
+                                            <Link2 className="h-2.5 w-2.5" aria-hidden />
+                                            Also here
+                                          </Badge>
+                                        ) : null}
                                         {workspaceShowsPendingAdminApproval(
                                           workspace,
                                           sessionOnboardingStatus,
