@@ -151,7 +151,6 @@ import { fetchAllProjects, updateProject, TECTONA_PROJECT_APP_ID, type ProjectAp
 import { useToast } from '@/components/ui/toast'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { notifyEvent } from '@/lib/api/notificationApi'
-import { listAuthzRoles } from '@/lib/api/authzApi'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { useWorkspaceManagementAuthorization } from '@/auth/useAuthorization'
 import { useTenantContextOptional } from '@/auth/TenantContext'
@@ -3877,6 +3876,17 @@ const workspacePanels: Array<{
   { id: 'activity', label: 'Activity & Audit', description: 'Your workspace activity with optional governance traceability context', badge: 'Audit', icon: ClipboardList },
 ]
 
+/** WAC membership role_code vocabulary for the Invite Member drawer -- distinct from
+ * (and not sourced from) the AuthZ RBAC role catalog, whose dotted codes like
+ * tectona.workspace_admin are not valid WAC role_code values. Order/labels mirror
+ * wacRoleCodeToUiRole / uiRoleToWacRoleCode in workspaceAccessControlApi.ts. */
+const WAC_MEMBER_INVITE_ROLE_OPTIONS: WorkspaceRoleOption[] = [
+  { code: 'member', label: 'Member' },
+  { code: 'editor', label: 'Manager' },
+  { code: 'admin', label: 'Admin' },
+  { code: 'viewer', label: 'Viewer' },
+]
+
 const workspacePanelGroups: Array<{
   group: string
   items: typeof workspacePanels
@@ -7229,8 +7239,7 @@ export function WorkspaceManagementPage() {
         // this members lookup -- fall back to empty instead of failing the
         // whole roster so one inaccessible workspace doesn't blank out everyone.
         const emptyMemberList: WacMemberListResponse = { items: [], total: 0 }
-        const [roleCatalog, orgMemberLists, wacMemberLists] = await Promise.all([
-          listAuthzRoles().catch(() => []),
+        const [orgMemberLists, wacMemberLists] = await Promise.all([
           Promise.all(
             orgWorkspaceIds.map((id) => fetchWorkspaceMembers(TECTONA_WAC_APP_ID, id).catch(() => emptyMemberList)),
           ),
@@ -7248,15 +7257,11 @@ export function WorkspaceManagementPage() {
         )
         if (cancelled) return
         setInviteScopedIdentityUsers(scopedUsers.filter((user): user is IdentityUserDto => Boolean(user)))
-        setInviteWorkspaceRoles(
-          roleCatalog
-            .filter((role) => role.status.trim().toLowerCase() === 'active')
-            .map((role) => ({
-              code: role.role_code.trim(),
-              label: role.display_name.trim() || role.role_code.trim(),
-            }))
-            .filter((role) => role.code && role.label),
-        )
+        // WAC membership role_code is its own small vocabulary (owner/admin/editor/
+        // member/viewer) -- NOT the AuthZ RBAC role catalog (listAuthzRoles(), dotted
+        // codes like tectona.workspace_admin). Sending an AuthZ role code here 404s
+        // the WAC create-membership call with "unknown role: tectona.workspace_admin".
+        setInviteWorkspaceRoles(WAC_MEMBER_INVITE_ROLE_OPTIONS)
         setInviteExistingTectonaIdentityIds(
           [...new Set(wacMemberLists.flatMap((response) => response.items.map((member) => member.subject_id).filter(Boolean)))],
         )
