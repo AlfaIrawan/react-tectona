@@ -8649,13 +8649,18 @@ export function WorkspaceManagementPage() {
 
   const reloadWorkspacePendingAccessRequests = useCallback(async (workspaceId: string) => {
     const hasLoadedPendingAccess = workspacePendingAccessLoadedRef.current
+    const targetWorkspace = allWorkspacesForList.find((w) => w.id === workspaceId)
     const canReviewPendingAccess =
       wmAuth.isPlatformAdmin
       || myAdminMembershipWorkspaceIdSet.has(workspaceId)
-      // wmAuth already grants full access to an Organization Admin operating in
-      // the org tenant it administers (see useWorkspaceManagementAuthorization);
-      // that scope matches this workspace when it's the currently active tenant.
+      // wmAuth.canManageWorkspace only reflects FULL_ACCESS while the workspace
+      // being reviewed is also the currently active tenant (e.g. a WAC admin/owner
+      // role scoped to that workspace).
       || (wmAuth.canManageWorkspace && workspaceId === tenant?.workspaceId)
+      // isOrganizationAdmin is a flat JWT claim, true regardless of which tenant
+      // is active in the switcher -- an Organization Admin manages every org-tree
+      // workspace, not just whichever one happens to be selected right now.
+      || (wmAuth.isOrganizationAdmin && targetWorkspace != null && !targetWorkspace.isPersonalWorkspace)
     if (!canReviewPendingAccess) {
       setWorkspacePendingAccessRequests([])
       setWorkspacePendingAccessError(
@@ -8680,7 +8685,14 @@ export function WorkspaceManagementPage() {
     } finally {
       setWorkspacePendingAccessLoading(false)
     }
-  }, [myAdminMembershipWorkspaceIdSet, wmAuth.isPlatformAdmin, wmAuth.canManageWorkspace, tenant?.workspaceId])
+  }, [
+    myAdminMembershipWorkspaceIdSet,
+    wmAuth.isPlatformAdmin,
+    wmAuth.canManageWorkspace,
+    wmAuth.isOrganizationAdmin,
+    tenant?.workspaceId,
+    allWorkspacesForList,
+  ])
 
   reloadWorkspacePendingAccessRequestsRef.current = reloadWorkspacePendingAccessRequests
 

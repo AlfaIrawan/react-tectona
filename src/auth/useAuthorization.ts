@@ -329,6 +329,10 @@ export function useWorkspaceManagementAuthorization(scopeOverride?: string): Wor
   return {
     ...access,
     isPlatformAdmin,
+    // Flat JWT claim (tectona.organization_admin) -- true regardless of which
+    // tenant is currently active in the switcher, unlike access.canManageWorkspace
+    // which only reflects FULL_ACCESS while the org tenant itself is active.
+    isOrganizationAdmin,
     loading,
     canAccessPanel,
     canMutate,
