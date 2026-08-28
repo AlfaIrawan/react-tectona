@@ -19802,6 +19802,8 @@ export function WorkspaceManagementPage() {
                       <Loader2 className="h-4 w-4 animate-spin text-indigo-500" aria-hidden />
                     Loading pending requests…
                   </div>
+                ) : workspacePendingAccessError ? (
+                    null
                 ) : workspacePendingAccessRequests.length === 0 ? (
                     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300/70 bg-white/40 px-4 py-8 text-center dark:border-slate-600/60 dark:bg-slate-900/25">
                       <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 ring-1 ring-slate-200/80 dark:bg-slate-800 dark:ring-slate-700">
