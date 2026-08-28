@@ -801,7 +801,7 @@ export function InviteWorkspaceMemberDrawer({
     <>
       <div
         className={cn(
-          'fixed inset-0 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity duration-300',
+          'fixed inset-0 z-[1050] bg-transparent transition-opacity duration-300',
           open ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
         onClick={handleClose}
