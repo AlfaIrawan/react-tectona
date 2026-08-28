@@ -273,21 +273,21 @@
   }
   html.ui-scale-lock body {
     position: absolute;
-    left: var(--ui-offset-x, 0px);
-    top: var(--ui-offset-y, 0px);
+    left: 0;
+    top: 0;
     width: var(--app-vw, 1920px);
-    height: var(--app-vh, 1080px);
+    height: var(--app-vh, 100dvh);
     max-width: var(--app-vw, 1920px);
-    min-height: var(--app-vh, 1080px);
+    min-height: var(--app-vh, 100dvh);
     overflow: hidden;
     transform: scale(var(--ui-scale, 1));
     transform-origin: top left;
   }
   html.ui-scale-lock #root {
     width: var(--app-vw, 1920px);
-    height: var(--app-vh, 1080px);
+    height: var(--app-vh, 100dvh);
     max-width: var(--app-vw, 1920px);
-    min-height: var(--app-vh, 1080px);
+    min-height: var(--app-vh, 100dvh);
     overflow: hidden;
   }
   body {

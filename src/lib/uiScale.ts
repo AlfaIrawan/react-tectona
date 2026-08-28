@@ -1,6 +1,5 @@
-/** Desktop design canvas. Every viewport is this layout, uniformly scaled to fit. */
+/** Desktop layout width. Scale = viewport width / this value so 1920 CSS px stays 1:1. */
 export const UI_DESIGN_WIDTH_PX = 1920
-export const UI_DESIGN_HEIGHT_PX = 1080
 
 const OPT_OUT_KEY = 'tectona:ui-scale-lock'
 
@@ -10,14 +9,6 @@ export function isUiScaleLockEnabled(): boolean {
   } catch {
     return true
   }
-}
-
-function viewportSize(): { width: number; height: number } {
-  const vv = window.visualViewport
-  if (vv && vv.width > 0 && vv.height > 0) {
-    return { width: vv.width, height: vv.height }
-  }
-  return { width: window.innerWidth, height: window.innerHeight }
 }
 
 export function syncUiScaleLock(): void {
@@ -34,23 +25,23 @@ export function syncUiScaleLock(): void {
     return
   }
 
-  const { width: vw, height: vh } = viewportSize()
-  const scale = Math.min(vw / UI_DESIGN_WIDTH_PX, vh / UI_DESIGN_HEIGHT_PX)
-  const offsetX = (vw - UI_DESIGN_WIDTH_PX * scale) / 2
-  const offsetY = (vh - UI_DESIGN_HEIGHT_PX * scale) / 2
+  // Use layout viewport (not visualViewport): device-mode / browser chrome
+  // often reports a smaller visual size and was shrinking 1920×1080 to a postage stamp.
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const scale = vw / UI_DESIGN_WIDTH_PX
+  const layoutHeight = vh / scale
 
   root.classList.add('ui-scale-lock')
   root.style.setProperty('--ui-scale', String(scale))
   root.style.setProperty('--app-vw', `${UI_DESIGN_WIDTH_PX}px`)
-  root.style.setProperty('--app-vh', `${UI_DESIGN_HEIGHT_PX}px`)
-  root.style.setProperty('--ui-offset-x', `${offsetX}px`)
-  root.style.setProperty('--ui-offset-y', `${offsetY}px`)
+  root.style.setProperty('--app-vh', `${layoutHeight}px`)
+  root.style.setProperty('--ui-offset-x', '0px')
+  root.style.setProperty('--ui-offset-y', '0px')
 }
 
 export function initUiScaleLock(): void {
   syncUiScaleLock()
   window.addEventListener('resize', syncUiScaleLock)
   window.addEventListener('orientationchange', syncUiScaleLock)
-  window.visualViewport?.addEventListener('resize', syncUiScaleLock)
-  window.visualViewport?.addEventListener('scroll', syncUiScaleLock)
 }
