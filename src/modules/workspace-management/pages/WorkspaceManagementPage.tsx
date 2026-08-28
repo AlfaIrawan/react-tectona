@@ -181,6 +181,7 @@ import {
   deleteWorkspaceOrgWorkspaceType,
   purgeOwnedWorkspacesForIdentity,
   fetchAllWorkspaceOrgWorkspaces,
+  fetchOrganizationDirectoryTree,
   fetchIdentityWorkspaceOrgMemberships,
   fetchWorkspaceOrgWorkspaceById,
   fetchWorkspaceOrgOrganizations,
@@ -194,6 +195,7 @@ import {
   resolveOrganizationByEmail,
   type VerifiedDomainEntry,
   type WorkspaceOrgWorkspaceDto,
+  type WorkspaceOrgDirectoryTreeDto,
 } from '@/lib/api/workspaceOrgApi'
 import {
   initWorkspaceDirectoryRealtime,
@@ -2068,12 +2070,18 @@ function workspaceDirectoryDepthFirst(
   treeOptions?: DirectoryTreeBuildOptions,
   allWorkspaces?: WorkspaceRecord[],
   extraLinkedParentsByWorkspaceId?: ReadonlyMap<string, ReadonlyArray<{ parentId: string; role: MemberRole }>>,
+  serverCanonicalParentById?: ReadonlyMap<string, string | null>,
 ): { workspace: WorkspaceRecord; depth: number; isLinkedReference?: boolean; linkedRole?: MemberRole }[] {
   const fullSet = allWorkspaces ?? workspaces
   const parentById = buildDirectoryTreeParentById(
     fullSet.map(toDirectoryTreeWorkspaceFromRecord),
     treeOptions,
   )
+  if (serverCanonicalParentById) {
+    for (const [workspaceId, parentId] of serverCanonicalParentById) {
+      parentById.set(workspaceId, parentId)
+    }
+  }
   const byId = new Map(workspaces.map((w) => [w.id, w]))
   const visibleIds = new Set(workspaces.map((w) => w.id))
   const resolveVisibleParent = (id: string): string | null => {
@@ -6085,6 +6093,60 @@ export function WorkspaceManagementPage() {
     myManagedWorkspaceIds,
     myOwnedWorkspaceIds,
   ])
+
+  const directoryOrgIdsKey = useMemo(
+    () =>
+      [...new Set(allWorkspacesForList.map((workspace) => workspace.primaryOrganizationId).filter(Boolean))]
+        .sort()
+        .join('|'),
+    [allWorkspacesForList],
+  )
+
+  const [directoryTreeByOrgId, setDirectoryTreeByOrgId] = useState<Map<string, WorkspaceOrgDirectoryTreeDto>>(
+    () => new Map(),
+  )
+
+  useEffect(() => {
+    const orgIds = directoryOrgIdsKey ? directoryOrgIdsKey.split('|').filter(Boolean) : []
+    if (orgIds.length === 0) {
+      setDirectoryTreeByOrgId(new Map())
+      return
+    }
+    let cancelled = false
+    void Promise.all(
+      orgIds.map(async (organizationId) => {
+        try {
+          const tree = await fetchOrganizationDirectoryTree(organizationId, {
+            includeArchived: true,
+            appId: TECTONA_WAC_APP_ID,
+          })
+          return [organizationId, tree] as const
+        } catch {
+          return [organizationId, null] as const
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return
+      const next = new Map<string, WorkspaceOrgDirectoryTreeDto>()
+      for (const [organizationId, tree] of entries) {
+        if (tree) next.set(organizationId, tree)
+      }
+      setDirectoryTreeByOrgId(next)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [directoryOrgIdsKey])
+
+  const directoryServerCanonicalParentById = useMemo(() => {
+    const merged = new Map<string, string | null>()
+    for (const tree of directoryTreeByOrgId.values()) {
+      for (const [workspaceId, parentId] of Object.entries(tree.canonical_parent_by_workspace_id ?? {})) {
+        merged.set(workspaceId, parentId)
+      }
+    }
+    return merged
+  }, [directoryTreeByOrgId])
 
   /** Full directory catalog for access-request join resolution (not tenant-filtered list view). */
   const accessRequestWorkspaceCatalog = useMemo(
@@ -10513,8 +10575,27 @@ export function WorkspaceManagementPage() {
         result.set(workspace.id, [...memberOf.entries()].map(([parentId, role]) => ({ parentId, role })))
       }
     }
+
+    for (const tree of directoryTreeByOrgId.values()) {
+      if (!tree.memberships_included) continue
+      const orgId = tree.organization_id
+      for (const workspace of allWorkspacesForList) {
+        if (workspace.primaryOrganizationId === orgId && workspace.isPersonalWorkspace) {
+          result.delete(workspace.id)
+        }
+      }
+      for (const link of tree.personal_links ?? []) {
+        result.set(
+          link.workspace_id,
+          (link.hosts ?? []).map((host) => ({
+            parentId: host.host_workspace_id,
+            role: wacRoleCodeToUiRole(host.role_code),
+          })),
+        )
+      }
+    }
     return result
-  }, [workspaceMembers, allWorkspacesForList])
+  }, [workspaceMembers, allWorkspacesForList, directoryTreeByOrgId])
 
   const directoryFlatRows = useMemo(() => {
     if (directoryGroupBy) {
@@ -10536,6 +10617,7 @@ export function WorkspaceManagementPage() {
       directoryTreeBuildOptions(myMembershipWorkspaceIds, myOwnedWorkspaceIds),
       allWorkspacesForList,
       extraLinkedParentsByWorkspaceId,
+      directoryServerCanonicalParentById.size > 0 ? directoryServerCanonicalParentById : undefined,
     ).map(({ workspace, depth, isLinkedReference, linkedRole }) => ({
       workspace,
       groupLabel: null as string | null,
@@ -10550,6 +10632,7 @@ export function WorkspaceManagementPage() {
     myOwnedWorkspaceIds,
     allWorkspacesForList,
     extraLinkedParentsByWorkspaceId,
+    directoryServerCanonicalParentById,
   ])
 
   const directoryTableRows = useMemo(() => {

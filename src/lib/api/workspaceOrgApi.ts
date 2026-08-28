@@ -134,6 +134,36 @@ export type WorkspaceOrgWorkspaceListResponse = {
   page_size?: number
 }
 
+export type WorkspaceOrgDirectoryTreePersonalHost = {
+  host_workspace_id: string
+  role_code: string
+}
+
+export type WorkspaceOrgDirectoryTreePersonalLink = {
+  workspace_id: string
+  hide_canonical: boolean
+  hosts: WorkspaceOrgDirectoryTreePersonalHost[]
+}
+
+export type WorkspaceOrgDirectoryTreeRow = {
+  workspace_id: string
+  workspace_key: string
+  name: string
+  depth: number
+  tree_parent_id?: string | null
+  kind: 'canonical' | 'membership'
+  role_code?: string | null
+}
+
+export type WorkspaceOrgDirectoryTreeDto = {
+  organization_id: string
+  app_id: string
+  memberships_included: boolean
+  canonical_parent_by_workspace_id: Record<string, string | null>
+  personal_links: WorkspaceOrgDirectoryTreePersonalLink[]
+  rows: WorkspaceOrgDirectoryTreeRow[]
+}
+
 export type WorkspaceOrgWorkspaceTypeDto = {
   id: string
   type_code: string
@@ -361,6 +391,22 @@ export async function fetchAllWorkspaceOrgWorkspaces(): Promise<WorkspaceOrgWork
     page += 1
   }
   return all
+}
+
+export async function fetchOrganizationDirectoryTree(
+  organizationId: string,
+  opts?: { includeArchived?: boolean; appId?: string },
+): Promise<WorkspaceOrgDirectoryTreeDto> {
+  const id = organizationId.trim()
+  const q = new URLSearchParams()
+  if (opts?.includeArchived) q.set('include_archived', 'true')
+  if (opts?.appId?.trim()) q.set('app_id', opts.appId.trim())
+  const suffix = q.toString() ? `?${q}` : ''
+  const res = await apiFetch(
+    orgUrl(`/v1/organizations/${encodeURIComponent(id)}/directory-tree${suffix}`),
+    { headers: tectonaServiceHeaders() },
+  )
+  return handleJson<WorkspaceOrgDirectoryTreeDto>(res)
 }
 
 export async function createWorkspaceOrgWorkspace(
