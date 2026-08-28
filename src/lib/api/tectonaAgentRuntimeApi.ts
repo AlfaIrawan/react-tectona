@@ -675,6 +675,13 @@ export interface RuntimeChatUiContext {
   data_summary?: string | null
   extra_notes?: string[]
   preferred_language?: string | null
+  platform_roles?: string[] | null
+  is_platform_admin?: boolean | null
+  workspace_role?: string | null
+  can_view_governance?: boolean | null
+  can_manage_workspace?: boolean | null
+  can_manage_governance?: boolean | null
+  can_manage_members?: boolean | null
 }
 
 export interface RuntimeChatAttachment {

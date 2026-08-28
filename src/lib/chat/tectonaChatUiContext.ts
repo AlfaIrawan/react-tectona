@@ -3,6 +3,7 @@
  */
 
 import { getSession } from '@/auth/authService'
+import { mergeRoleFieldsIntoUiContext } from '@/lib/chat/tectonaChatRoleContext'
 import { useActiveProjectStore } from '@/stores/active-project-store'
 import {
   useTectonaPageContextStore,
@@ -32,6 +33,15 @@ export type TectonaUiContextPayload = {
   data_summary?: string | null
   extra_notes?: string[]
   preferred_language?: string | null
+  /** JWT / platform roles from identity-lite session. */
+  platform_roles?: string[] | null
+  is_platform_admin?: boolean | null
+  /** WAC role on active workspace (Admin | Manager | Member | Viewer | None). */
+  workspace_role?: string | null
+  can_view_governance?: boolean | null
+  can_manage_workspace?: boolean | null
+  can_manage_governance?: boolean | null
+  can_manage_members?: boolean | null
 }
 
 type RouteEntry = {
@@ -228,5 +238,5 @@ export function buildTectonaUiContextForChat(options: {
     base.search = options.search.trim()
   }
 
-  return base
+  return mergeRoleFieldsIntoUiContext(base)
 }

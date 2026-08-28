@@ -12,6 +12,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import ThemeSettingsPanel from '@/components/settings/ThemeSettingsPanel'
 import { TodoListPanel } from './TodoListPanel'
 import { publishOfflinePresenceOnPageHide } from '@/auth/authService'
+import { useTectonaChatRoleSync } from '@/lib/chat/tectonaChatRoleContext'
 import { useCollaborationPresenceRealtime } from '@/lib/chat/useCollaborationPresenceRealtime'
 import { usePresenceAfkTracker } from '@/lib/chat/usePresenceAfkTracker'
 import { useCollaborationPresenceStore } from '@/stores/collaboration-presence-store'
@@ -159,6 +160,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const applyPresenceRealtime = useCollaborationPresenceStore((s) => s.applyRealtimeUpdate)
   useCollaborationPresenceRealtime(applyPresenceRealtime)
   usePresenceAfkTracker()
+  useTectonaChatRoleSync()
 
   useEffect(() => {
     const onPageHide = () => publishOfflinePresenceOnPageHide()
