@@ -14,7 +14,7 @@ import {
   TECTONA_AUTHZ_RESOURCES,
   type TectonaAuthzResource,
 } from '@/lib/constants/tectonaAuthz'
-import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import { isOrganizationHomeWorkspace, isWorkspaceOwnedBySubject } from '@/lib/workspaceOwnershipVisibility'
 
@@ -200,12 +200,25 @@ export function useWorkspaceManagementAuthorization(scopeOverride?: string): Wor
     () => hasPlatformAdminAccess(jwtRoles, uiRole),
     [jwtRoles, uiRole],
   )
+  const isOrganizationAdmin = useMemo(
+    () => hasOrganizationAdminAccess(jwtRoles),
+    [jwtRoles],
+  )
 
   const [loading, setLoading] = useState(!isPlatformAdmin)
   const [access, setAccess] = useState<AccessFlags>(FULL_ACCESS)
 
   useEffect(() => {
     if (isPlatformAdmin) {
+      setAccess(FULL_ACCESS)
+      setLoading(false)
+      return
+    }
+    // Organization Admin (AuthZ tectona.organization_admin, bridged into the
+    // JWT roles claim) manages the organization tenant itself regardless of
+    // their WAC membership scope there -- mirrors the bypass
+    // canActivateWorkspaceAsTenant already gives it for entering the tenant.
+    if (isOrganizationAdmin && tenant?.tenantMode === 'organization') {
       setAccess(FULL_ACCESS)
       setLoading(false)
       return
@@ -300,7 +313,7 @@ export function useWorkspaceManagementAuthorization(scopeOverride?: string): Wor
     return () => {
       cancelled = true
     }
-  }, [isPlatformAdmin, sub, authzScope, activeWorkspaceId])
+  }, [isPlatformAdmin, isOrganizationAdmin, tenant?.tenantMode, sub, authzScope, activeWorkspaceId])
 
   const canAccessPanel = useMemo(
     () => buildCanAccessPanel(access, isPlatformAdmin),

@@ -293,6 +293,7 @@ import {
 } from '@/lib/enterpriseButtonClasses'
 import { usePreferencesStore } from '@/stores/preferences-store'
 import { useRightDrawerStore } from '@/stores/right-drawer-store'
+import { hasOrganizationAdminAccess } from '@/lib/auth/platformAccess'
 import {
   isWorkspaceNavDocked,
   workspaceAsideClass,
@@ -5871,6 +5872,10 @@ export function WorkspaceManagementPage() {
     || currentSessionUserRole === 'admin'
     || currentSessionUserRole === 'administrator'
     || currentSessionUserRoles.some((role) => role === 'tectona_root' || role === 'tectona_admin' || role === 'root' || role === 'admin' || role === 'administrator')
+    // Organization Admin sees the full directory while operating in the
+    // organization tenant it administers -- same scoping as the org-admin
+    // bypass elsewhere (canActivateWorkspaceAsTenant, useWorkspaceManagementAuthorization).
+    || (tenant?.tenantMode === 'organization' && hasOrganizationAdminAccess(currentSessionUser?.roles))
 
   const myOwnedWorkspaceIds = useMemo(() => {
     if (!currentSessionUser?.id) return []
