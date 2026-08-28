@@ -7,9 +7,11 @@ import { initTelemetry } from './lib/tracing'
 import { initRum } from './lib/rum'
 import { selfRegisterWithRegistryCore } from './lib/selfRegister'
 import { initPwa } from './lib/pwa/initPwa'
+import { initUiScaleLock } from './lib/uiScale'
 
 // Ensure light mode is set immediately before React renders
 if (typeof window !== 'undefined') {
+  initUiScaleLock()
   // Check if user has a saved preference
   const savedTheme = localStorage.getItem('ai_monitor_theme')
   const themeData = savedTheme ? JSON.parse(savedTheme) : { state: { theme: 'light' } }
