@@ -2064,8 +2064,8 @@ function workspaceDirectoryDepthFirst(
   workspaces: WorkspaceRecord[],
   treeOptions?: DirectoryTreeBuildOptions,
   allWorkspaces?: WorkspaceRecord[],
-  extraLinkedParentsByWorkspaceId?: ReadonlyMap<string, readonly string[]>,
-): { workspace: WorkspaceRecord; depth: number; isLinkedReference?: boolean }[] {
+  extraLinkedParentsByWorkspaceId?: ReadonlyMap<string, ReadonlyArray<{ parentId: string; role: MemberRole }>>,
+): { workspace: WorkspaceRecord; depth: number; isLinkedReference?: boolean; linkedRole?: MemberRole }[] {
   const fullSet = allWorkspaces ?? workspaces
   const parentById = buildDirectoryTreeParentById(
     fullSet.map(toDirectoryTreeWorkspaceFromRecord),
@@ -2083,7 +2083,7 @@ function workspaceDirectoryDepthFirst(
     }
     return cursor
   }
-  type ChildEntry = { workspace: WorkspaceRecord; isLinked: boolean }
+  type ChildEntry = { workspace: WorkspaceRecord; isLinked: boolean; linkedRole?: MemberRole }
   const children = new Map<string | null, ChildEntry[]>()
   const primaryParentByWorkspaceId = new Map<string, string | null>()
   for (const w of workspaces) {
@@ -2104,10 +2104,10 @@ function workspaceDirectoryDepthFirst(
       const extraParents = extraLinkedParentsByWorkspaceId.get(w.id)
       if (!extraParents || extraParents.length === 0) continue
       const primaryParentId = primaryParentByWorkspaceId.get(w.id) ?? null
-      for (const parentId of extraParents) {
+      for (const { parentId, role } of extraParents) {
         if (parentId === primaryParentId || !byId.has(parentId)) continue
         const list = children.get(parentId) ?? []
-        list.push({ workspace: w, isLinked: true })
+        list.push({ workspace: w, isLinked: true, linkedRole: role })
         children.set(parentId, list)
       }
     }
@@ -2121,7 +2121,7 @@ function workspaceDirectoryDepthFirst(
       return a.workspace.name.localeCompare(b.workspace.name, undefined, { sensitivity: 'base' })
     })
   }
-  const out: { workspace: WorkspaceRecord; depth: number; isLinkedReference?: boolean }[] = []
+  const out: { workspace: WorkspaceRecord; depth: number; isLinkedReference?: boolean; linkedRole?: MemberRole }[] = []
   const walk = (pid: string | null, depth: number) => {
     const childList = children.get(pid) ?? []
     const sorted =
@@ -2137,7 +2137,12 @@ function workspaceDirectoryDepthFirst(
           })
         : childList
     for (const entry of sorted) {
-      out.push({ workspace: entry.workspace, depth, isLinkedReference: entry.isLinked || undefined })
+      out.push({
+        workspace: entry.workspace,
+        depth,
+        isLinkedReference: entry.isLinked || undefined,
+        linkedRole: entry.linkedRole,
+      })
       // Linked entries are references, not the canonical node -- do not re-walk
       // their subtree a second time under every extra parent.
       if (!entry.isLinked) walk(entry.workspace.id, depth + 1)
@@ -10416,23 +10421,25 @@ export function WorkspaceManagementPage() {
   // just because the tree only has room for one real parent.
   const extraLinkedParentsByWorkspaceId = useMemo(() => {
     const workspaceById = new Map(allWorkspacesForList.map((w) => [w.id, w]))
-    const operationalWorkspaceIdsByOwnerIdentity = new Map<string, Set<string>>()
+    const operationalMembershipsByOwnerIdentity = new Map<string, Map<string, MemberRole>>()
     for (const member of workspaceMembers) {
       const ws = workspaceById.get(member.workspaceId)
       if (!ws || ws.isPersonalWorkspace || ws.type === 'Organization') continue
       const ownerRef = member.subjectId?.trim()
       if (!ownerRef) continue
-      const set = operationalWorkspaceIdsByOwnerIdentity.get(ownerRef) ?? new Set<string>()
-      set.add(member.workspaceId)
-      operationalWorkspaceIdsByOwnerIdentity.set(ownerRef, set)
+      const map = operationalMembershipsByOwnerIdentity.get(ownerRef) ?? new Map<string, MemberRole>()
+      map.set(member.workspaceId, member.role)
+      operationalMembershipsByOwnerIdentity.set(ownerRef, map)
     }
-    const result = new Map<string, string[]>()
+    const result = new Map<string, Array<{ parentId: string; role: MemberRole }>>()
     for (const workspace of allWorkspacesForList) {
       if (!workspace.isPersonalWorkspace) continue
       const ownerRef = workspace.ownerIdentityRef?.trim()
       if (!ownerRef) continue
-      const memberOf = operationalWorkspaceIdsByOwnerIdentity.get(ownerRef)
-      if (memberOf && memberOf.size > 0) result.set(workspace.id, [...memberOf])
+      const memberOf = operationalMembershipsByOwnerIdentity.get(ownerRef)
+      if (memberOf && memberOf.size > 0) {
+        result.set(workspace.id, [...memberOf.entries()].map(([parentId, role]) => ({ parentId, role })))
+      }
     }
     return result
   }, [workspaceMembers, allWorkspacesForList])
@@ -10449,6 +10456,7 @@ export function WorkspaceManagementPage() {
         groupLabel: workspaceDirectoryGroupLabel(workspace, directoryGroupBy),
         depth: 0,
         isLinkedReference: false as boolean | undefined,
+        linkedRole: undefined as MemberRole | undefined,
       }))
     }
     return workspaceDirectoryDepthFirst(
@@ -10456,11 +10464,12 @@ export function WorkspaceManagementPage() {
       directoryTreeBuildOptions(myMembershipWorkspaceIds, myOwnedWorkspaceIds),
       allWorkspacesForList,
       extraLinkedParentsByWorkspaceId,
-    ).map(({ workspace, depth, isLinkedReference }) => ({
+    ).map(({ workspace, depth, isLinkedReference, linkedRole }) => ({
       workspace,
       groupLabel: null as string | null,
       depth,
       isLinkedReference,
+      linkedRole,
     }))
   }, [
     sortedFilteredWorkspaces,
@@ -15665,11 +15674,11 @@ export function WorkspaceManagementPage() {
                                         {isLinkedReference ? (
                                           <Badge
                                             variant="outline"
-                                            title={`${workspace.name} is a member here; its primary placement is elsewhere in the directory.`}
+                                            title={`${workspace.name} is a member here${row.linkedRole ? ` (${row.linkedRole})` : ''}; its primary placement is elsewhere in the directory.`}
                                             className="gap-1 border-sky-300/70 bg-sky-50/80 px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-200"
                                           >
                                             <Link2 className="h-2.5 w-2.5" aria-hidden />
-                                            Also here
+                                            {row.linkedRole ? `${row.linkedRole} here` : 'Also here'}
                                           </Badge>
                                         ) : null}
                                         {workspaceShowsPendingAdminApproval(
@@ -15684,7 +15693,11 @@ export function WorkspaceManagementPage() {
                                             {directoryPendingApprovalBadgeLabel()}
                                           </Badge>
                                         ) : null}
-                                        {directoryAccessSubject
+                                        {/* Creator/WAC-member badges describe the row's OWN workspace ownership,
+                                            not its relationship to whichever workspace it's linked under here --
+                                            showing them on a linked row reads as "Creator of the parent", which
+                                            is wrong. The role badge above already covers the linked context. */}
+                                        {directoryAccessSubject && !isLinkedReference
                                           ? resolveDirectoryAccessBadgesForViewer(
                                               workspace.id,
                                               {
