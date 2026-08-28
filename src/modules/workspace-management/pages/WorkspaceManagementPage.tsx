@@ -7003,7 +7003,7 @@ export function WorkspaceManagementPage() {
       await refreshLiveMembersPanelRef.current({ silent: true })
       const workspaceId = editWorkspaceTargetIdRef.current
       if (editWorkspaceDrawerOpenRef.current && workspaceId) {
-        await reloadWorkspacePendingAccessRequestsRef.current?.(workspaceId)
+        await reloadWorkspacePendingAccessRequestsRef.current?.(workspaceId, { silent: true })
       }
     })
     return () => setWorkspaceDirectoryRealtimeRefreshHandler(null)
@@ -8405,7 +8405,26 @@ export function WorkspaceManagementPage() {
   const [workspacePendingAccessLoading, setWorkspacePendingAccessLoading] = useState(false)
   const [workspacePendingAccessError, setWorkspacePendingAccessError] = useState<string | null>(null)
   const workspacePendingAccessLoadedRef = useRef(false)
-  const reloadWorkspacePendingAccessRequestsRef = useRef<((workspaceId: string) => Promise<void>) | null>(null)
+  const workspacePendingAccessRequestGenRef = useRef(0)
+  const reloadWorkspacePendingAccessRequestsRef = useRef<
+    ((workspaceId: string, options?: { silent?: boolean }) => Promise<void>) | null
+  >(null)
+  const pendingAccessAuthRef = useRef({
+    allWorkspacesForList,
+    myAdminMembershipWorkspaceIdSet,
+    isPlatformAdmin: wmAuth.isPlatformAdmin,
+    canManageWorkspace: wmAuth.canManageWorkspace,
+    isOrganizationAdmin: wmAuth.isOrganizationAdmin,
+    tenantWorkspaceId: tenant?.workspaceId,
+  })
+  pendingAccessAuthRef.current = {
+    allWorkspacesForList,
+    myAdminMembershipWorkspaceIdSet,
+    isPlatformAdmin: wmAuth.isPlatformAdmin,
+    canManageWorkspace: wmAuth.canManageWorkspace,
+    isOrganizationAdmin: wmAuth.isOrganizationAdmin,
+    tenantWorkspaceId: tenant?.workspaceId,
+  }
   const [decidingAccessRequestId, setDecidingAccessRequestId] = useState<string | null>(null)
   const [approveAccessDialogRequest, setApproveAccessDialogRequest] = useState<AccessRequestDto | null>(null)
   const [accessRequestWorkspaceNameOverrides, setAccessRequestWorkspaceNameOverrides] = useState<
@@ -8647,52 +8666,61 @@ export function WorkspaceManagementPage() {
     ownershipPickerSkipBlurCommitRef.current = false
   }
 
-  const reloadWorkspacePendingAccessRequests = useCallback(async (workspaceId: string) => {
+  const reloadWorkspacePendingAccessRequests = useCallback(async (
+    workspaceId: string,
+    options?: { silent?: boolean },
+  ) => {
+    const requestGen = workspacePendingAccessRequestGenRef.current + 1
+    workspacePendingAccessRequestGenRef.current = requestGen
     const hasLoadedPendingAccess = workspacePendingAccessLoadedRef.current
-    const targetWorkspace = allWorkspacesForList.find((w) => w.id === workspaceId)
+    const silent = options?.silent === true
+    const auth = pendingAccessAuthRef.current
+    const targetWorkspace = auth.allWorkspacesForList.find((w) => w.id === workspaceId)
     const canReviewPendingAccess =
-      wmAuth.isPlatformAdmin
-      || myAdminMembershipWorkspaceIdSet.has(workspaceId)
+      auth.isPlatformAdmin
+      || auth.myAdminMembershipWorkspaceIdSet.has(workspaceId)
       // wmAuth.canManageWorkspace only reflects FULL_ACCESS while the workspace
       // being reviewed is also the currently active tenant (e.g. a WAC admin/owner
       // role scoped to that workspace).
-      || (wmAuth.canManageWorkspace && workspaceId === tenant?.workspaceId)
+      || (auth.canManageWorkspace && workspaceId === auth.tenantWorkspaceId)
       // isOrganizationAdmin is a flat JWT claim, true regardless of which tenant
       // is active in the switcher -- an Organization Admin manages every org-tree
       // workspace, not just whichever one happens to be selected right now.
-      || (wmAuth.isOrganizationAdmin && targetWorkspace != null && !targetWorkspace.isPersonalWorkspace)
+      || (auth.isOrganizationAdmin && targetWorkspace != null && !targetWorkspace.isPersonalWorkspace)
     if (!canReviewPendingAccess) {
+      if (requestGen !== workspacePendingAccessRequestGenRef.current) return
       setWorkspacePendingAccessRequests([])
       setWorkspacePendingAccessError(
         'You need workspace admin access on this workspace to review pending join requests.',
       )
       setWorkspacePendingAccessLoading(false)
+      workspacePendingAccessLoadedRef.current = true
       return
     }
-    setWorkspacePendingAccessLoading(true)
-    setWorkspacePendingAccessError(null)
+    if (!silent) {
+      setWorkspacePendingAccessLoading(true)
+      if (!hasLoadedPendingAccess) setWorkspacePendingAccessError(null)
+    }
     try {
       const res = await fetchWorkspaceAccessRequests(TECTONA_WAC_APP_ID, workspaceId, {
         status_code: 'pending',
       })
+      if (requestGen !== workspacePendingAccessRequestGenRef.current) return
       setWorkspacePendingAccessRequests(res.items ?? [])
       workspacePendingAccessLoadedRef.current = true
+      setWorkspacePendingAccessError(null)
     } catch (err) {
+      if (requestGen !== workspacePendingAccessRequestGenRef.current) return
       if (!hasLoadedPendingAccess) setWorkspacePendingAccessRequests([])
       setWorkspacePendingAccessError(
         err instanceof Error ? err.message : 'Could not load pending access requests.',
       )
     } finally {
-      setWorkspacePendingAccessLoading(false)
+      if (requestGen === workspacePendingAccessRequestGenRef.current) {
+        setWorkspacePendingAccessLoading(false)
+      }
     }
-  }, [
-    myAdminMembershipWorkspaceIdSet,
-    wmAuth.isPlatformAdmin,
-    wmAuth.canManageWorkspace,
-    wmAuth.isOrganizationAdmin,
-    tenant?.workspaceId,
-    allWorkspacesForList,
-  ])
+  }, [])
 
   reloadWorkspacePendingAccessRequestsRef.current = reloadWorkspacePendingAccessRequests
 
@@ -8748,6 +8776,10 @@ export function WorkspaceManagementPage() {
 
   useEffect(() => {
     if (!editWorkspaceDrawerOpen || !editWorkspaceTarget?.id) return
+    workspacePendingAccessLoadedRef.current = false
+    workspacePendingAccessRequestGenRef.current += 1
+    setWorkspacePendingAccessRequests([])
+    setWorkspacePendingAccessError(null)
     void reloadWorkspacePendingAccessRequests(editWorkspaceTarget.id)
   }, [editWorkspaceDrawerOpen, editWorkspaceTarget?.id, reloadWorkspacePendingAccessRequests])
 
