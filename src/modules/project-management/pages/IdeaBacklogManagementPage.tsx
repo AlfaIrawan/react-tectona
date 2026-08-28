@@ -202,6 +202,15 @@ function formatBrainstormExploringNext(gaps: string[]): string {
   return gaps.slice(0, 3).map(formatBrainstormGapLabel).join(' · ')
 }
 
+function brainstormContinueDiscoveryMessage(messages: Array<{ role: string; text: string }>): string {
+  const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant' && message.text.trim())
+  const sample = lastAssistant?.text ?? ''
+  if (/(?:\baku\b|\bkamu\b|\byang\b|\bdengan\b|\buntuk\b|\bsudah\b|\bapakah\b|\bproses\b|\blanjut\b)/i.test(sample)) {
+    return 'Lanjut ditanya'
+  }
+  return 'Continue questions'
+}
+
 function formatBrainstormTimestamp(iso?: string): string {
   if (!iso) return ''
   try {
@@ -753,9 +762,8 @@ function BrainstormEvidenceRail({
                 {itemsTotal > 0 && itemsAnswered >= itemsTotal ? (
                   <>
                     <p className="shrink-0 text-[11px] leading-4 text-muted-foreground">
-                      Minimum intake complete — this means there is enough to start a draft, not
-                      that every requirement detail is confirmed. Draft Readiness above (
-                      {resolvedConfidence}%) tracks that separately.
+                      Minimum intake complete — continue discovery until evidence reaches 100%.
+                      Draft Readiness ({resolvedConfidence}%) tracks overall confidence separately.
                     </p>
                     <div className="shrink-0 space-y-2 rounded-lg border border-border/40 bg-muted/10 p-2">
                       <div>
@@ -5767,7 +5775,7 @@ export function IdeaBacklogManagementPage() {
                                   'inline-flex h-9 items-center gap-2',
                                   'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm',
                                 )}
-                                onClick={() => void handleSendBrainstormMessage('Continue questions')}
+                                onClick={() => void handleSendBrainstormMessage(brainstormContinueDiscoveryMessage(brainstormMessages))}
                               >
                                 Continue Discovery
                               </button>
