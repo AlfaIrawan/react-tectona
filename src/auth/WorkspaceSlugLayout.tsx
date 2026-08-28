@@ -5,7 +5,6 @@ import { useTenantContext } from '@/auth/TenantContext'
 import { evaluateWorkspaceSlugAccess } from '@/lib/workspaceSlugAccess'
 import {
   isAllWorkspacesRouteScope,
-  legacyAppPathFromLocation,
   workspaceScopedPath,
 } from '@/lib/workspaceRouting'
 
@@ -74,13 +73,7 @@ export function WorkspaceSlugLayout() {
     return <Navigate to="/access-denied" replace state={{ from: location.pathname }} />
   }
 
-  const outletKey = legacyAppPathFromLocation(
-    location.pathname,
-    location.search,
-    location.hash,
-  )
-
-  return <Outlet key={outletKey} />
+  return <Outlet />
 }
 
 /** Redirects legacy paths (`/projects`) to workspace-scoped URLs when a slug tenant is active. */

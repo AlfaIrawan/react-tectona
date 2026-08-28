@@ -28,10 +28,8 @@ import {
 } from '@/lib/corporateWorkspaceAccess'
 import { dispatchTenantChanged } from '@/lib/tenantEvents'
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
-import { fetchSubjectMemberships, TECTONA_WAC_APP_ID } from '@/lib/api/workspaceAccessControlApi'
-import {
-  fetchAllWorkspaceOrgWorkspaces,
-} from '@/lib/api/workspaceOrgApi'
+import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
+import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
 import {
   isOrganizationHomeWorkspace,
   isWorkspaceOwnedBySubject,
@@ -183,8 +181,8 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     setLoading(true)
 
     void Promise.all([
-      fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly: true }),
-      fetchAllWorkspaceOrgWorkspaces(),
+      fetchSubjectMembershipsCached(subjectId, { activeOnly: true }),
+      fetchAllWorkspaceOrgWorkspacesCached(),
     ])
       .then(([memberships, workspaces]) => {
         if (cancelled) return
@@ -246,7 +244,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     if (!tenant || !isAllWorkspacesSelection(tenant.workspaceId) || isPlatformAdmin) return
 
     let cancelled = false
-    void fetchAllWorkspaceOrgWorkspaces()
+    void fetchAllWorkspaceOrgWorkspacesCached()
       .then((workspaces) => {
         if (cancelled || workspaces.length === 0) return
         const selectedIds = (tenant.selectedWorkspaceIds ?? []).filter(Boolean)
@@ -289,8 +287,8 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     }
 
     void Promise.all([
-      fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly: true }),
-      fetchAllWorkspaceOrgWorkspaces(),
+      fetchSubjectMembershipsCached(subjectId, { activeOnly: true }),
+      fetchAllWorkspaceOrgWorkspacesCached(),
     ])
       .then(([memberships, workspaces]) => {
         if (cancelled) return
@@ -411,7 +409,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     if (!tenant || !tenant.workspaceId || isAllWorkspacesSelection(tenant.workspaceId) || tenant.slug?.trim()) return
 
     let cancelled = false
-    void fetchAllWorkspaceOrgWorkspaces()
+    void fetchAllWorkspaceOrgWorkspacesCached()
       .then((workspaces) => {
         if (cancelled) return
         const workspace = workspaces.find((item) => item.id === tenant.workspaceId)

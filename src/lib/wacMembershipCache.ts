@@ -17,10 +17,15 @@ type MembershipCacheEntry = {
 let membershipCache: MembershipCacheEntry | null = null
 let membershipInflight: Promise<WacMemberListResponse> | null = null
 
-export function peekCachedSubjectMemberships(subjectId: string): WacMemberListResponse | null {
+export function peekCachedSubjectMemberships(
+  subjectId: string,
+  options?: { allowStale?: boolean },
+): WacMemberListResponse | null {
   if (!membershipCache) return null
   if (membershipCache.subjectId !== subjectId) return null
-  if (Date.now() - membershipCache.fetchedAt > MEMBERSHIP_CACHE_TTL_MS) return null
+  if (!options?.allowStale && Date.now() - membershipCache.fetchedAt > MEMBERSHIP_CACHE_TTL_MS) {
+    return null
+  }
   return { items: membershipCache.items, total: membershipCache.total }
 }
 

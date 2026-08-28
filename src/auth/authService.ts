@@ -27,6 +27,8 @@ import {
 import { clearStoredUserWorkspaceContext } from '@/lib/storedUserWorkspaceContext'
 import { clearCorporateOnboardingSession } from '@/lib/corporateOnboardingSession'
 import { invalidateSubjectMembershipsCache } from '@/lib/wacMembershipCache'
+import { invalidateWorkspaceOrgDirectoryCache } from '@/lib/workspaceOrgDirectoryCache'
+import { invalidateModuleAccessSnapshot } from '@/lib/moduleAccessSnapshot'
 import { normalizeUserDisplayName } from '@/lib/userDisplayName'
 import { upsertWorkspacePresenceWithToken, sendOfflinePresenceBeacon } from '@/lib/api/collaborationContextApi'
 import { TECTONA_CHAT_WORKSPACE_ID } from '@/lib/api/tectonaAgentRuntimeApi'
@@ -433,6 +435,8 @@ async function publishOfflinePresence(
 function clearLocalSession(session: Session | null): void {
   refreshInFlight = null
   invalidateSubjectMembershipsCache()
+  invalidateWorkspaceOrgDirectoryCache()
+  invalidateModuleAccessSnapshot()
   void clearSensitiveRuntimeCaches()
   localStorage.removeItem(SESSION_KEY)
   useCollaborationPresenceStore.getState().clear()

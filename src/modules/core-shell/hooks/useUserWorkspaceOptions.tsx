@@ -18,8 +18,13 @@ import {
 } from '@/lib/corporateWorkspaceAccess'
 import type { TenantMode } from '@/lib/onboardingFeature'
 import { isConsumerEmail } from '@/lib/onboardingFeature'
-import { fetchAllWorkspaceOrgWorkspaces, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
+import { type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
 import { fetchSubjectMembershipsCached, invalidateSubjectMembershipsCache } from '@/lib/wacMembershipCache'
+import {
+  fetchAllWorkspaceOrgWorkspacesCached,
+  invalidateWorkspaceOrgDirectoryCache,
+} from '@/lib/workspaceOrgDirectoryCache'
+import { invalidateModuleAccessSnapshot } from '@/lib/moduleAccessSnapshot'
 import {
   isOrganizationHomeWorkspace,
   isWorkspaceOwnedBySubject,
@@ -124,7 +129,7 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
       'Workspace memberships',
     ).catch(() => ({ items: [] as Awaited<ReturnType<typeof fetchSubjectMembershipsCached>>['items'] })),
     withTimeout(
-      fetchAllWorkspaceOrgWorkspaces(),
+      fetchAllWorkspaceOrgWorkspacesCached(),
       WORKSPACE_OPTIONS_FETCH_TIMEOUT_MS,
       'Workspace directory',
     ).catch(() => [] as WorkspaceOrgWorkspaceDto[]),
@@ -344,6 +349,8 @@ export function UserWorkspaceOptionsProvider({ children }: { children: ReactNode
   useEffect(() => {
     void reload()
     const onWorkspaceDirectoryChanged = () => {
+      invalidateWorkspaceOrgDirectoryCache()
+      invalidateModuleAccessSnapshot()
       void reload()
     }
     window.addEventListener('tectona:workspace-created', onWorkspaceDirectoryChanged)
@@ -352,12 +359,16 @@ export function UserWorkspaceOptionsProvider({ children }: { children: ReactNode
     const stopActive = onSessionActive(() => void reload())
     const stopCleared = onSessionCleared(() => {
       invalidateSubjectMembershipsCache()
+      invalidateWorkspaceOrgDirectoryCache()
+      invalidateModuleAccessSnapshot()
       setOptions([])
       setLoading(false)
       setError(null)
     })
     const stopExpired = onSessionExpired(() => {
       invalidateSubjectMembershipsCache()
+      invalidateWorkspaceOrgDirectoryCache()
+      invalidateModuleAccessSnapshot()
       setOptions([])
       setLoading(false)
       setError(null)
