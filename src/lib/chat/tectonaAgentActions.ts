@@ -3,6 +3,7 @@
  */
 
 import { getSession } from '@/auth/authService'
+import { randomUuid } from '@/lib/randomId'
 import {
   getIdeaById,
   getPersistentIdeaSummary,
@@ -399,10 +400,7 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
         typeof payload.description === 'string' && payload.description.trim()
           ? payload.description.trim()
           : null
-      const idempotencyKey =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `idem-${Date.now()}`
+      const idempotencyKey = randomUuid()
 
       const metadata: Record<string, unknown> = {
         tectona_workspace_classification: workspaceType,
@@ -486,10 +484,7 @@ export async function executeTectonaAgentAction(action: TectonaProposedAction): 
       const subjectId = String(payload.subject_id ?? '').trim()
       if (!subjectId) throw new Error('subject_id is required — specify a user id or email already registered in identity.')
       const roleCode = String(payload.role_code ?? 'member').trim() || 'member'
-      const idempotencyKey =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `idem-${Date.now()}`
+      const idempotencyKey = randomUuid()
       await createWorkspaceMembership(
         TECTONA_WAC_APP_ID,
         ws.id,

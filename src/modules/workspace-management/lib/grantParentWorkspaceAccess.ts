@@ -7,6 +7,7 @@ import {
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { ensureWorkspaceDirectoryMembership } from '@/lib/api/workspaceOrgApi'
+import { randomUuid } from '@/lib/randomId'
 import { DEFAULT_OPERATIONAL_TEAM_VALUE } from '@/lib/workspaceOperationalTeams'
 import { defaultParticipationScopeCodeForUiRole } from '@/lib/workspaceParticipationScopes'
 import type { WorkspaceMemberUiRole } from '@/lib/workspaceParticipationScopes'
@@ -159,10 +160,7 @@ export async function grantParentWorkspaceAccess(
       },
       {
         actorId: opts.actorId,
-        idempotencyKey:
-          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-            ? crypto.randomUUID()
-            : `parent-grant-${Date.now()}-${subjectId}`,
+        idempotencyKey: randomUuid(),
       },
     )
 

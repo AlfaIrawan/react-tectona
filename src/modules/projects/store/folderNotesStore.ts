@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { randomUuid } from '@/lib/randomId'
 import { FOLDER_NOTE_BODY_MAX, FOLDER_NOTE_TITLE_MAX } from '../lib/folderNotesLimits'
 
 export interface FolderStickyNote {
@@ -64,7 +65,7 @@ export const useFolderNotesStore = create<FolderNotesState>()(
         }
         const now = new Date().toISOString()
         const note: FolderStickyNote = {
-          id: crypto.randomUUID(),
+          id: randomUuid(),
           folderId,
           title,
           body,
@@ -149,7 +150,7 @@ export const useFolderNotesStore = create<FolderNotesState>()(
         const now = new Date().toISOString()
         const copies = sourceNotes.map((note) => ({
           ...note,
-          id: crypto.randomUUID(),
+          id: randomUuid(),
           folderId: targetFolderId,
           createdAt: now,
           updatedAt: now,

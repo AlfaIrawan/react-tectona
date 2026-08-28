@@ -7,6 +7,7 @@
 
 import { getSession } from '@/auth/authService'
 import { emitNotificationsUpdated } from '@/lib/chat/chatRealtimeEvents'
+import { createClientUuid } from '@/lib/createClientUuid'
 import { apiFetch, authHeaders } from './httpClient'
 
 import { serviceApiBase } from './gatewayBase'
@@ -258,7 +259,7 @@ export interface CreateNotificationPayload {
 const selfCreatedDedupeKeys = new Set<string>()
 
 function registerSelfCreatedDedupeKey(): string {
-  const key = crypto.randomUUID()
+  const key = createClientUuid()
   selfCreatedDedupeKeys.add(key)
   window.setTimeout(() => selfCreatedDedupeKeys.delete(key), 10_000)
   return key
@@ -310,22 +311,26 @@ export function notifyEvent(params: {
   link_url?: string | null
   metadata?: Record<string, unknown> | null
 }): void {
-  const session = getSession()
-  if (!session?.user?.id) return
-  // Register the dedupe key before the request is sent — see selfCreatedDedupeKeys comment above.
-  const dedupeKey = registerSelfCreatedDedupeKey()
-  createNotification({
-    app_id: TECTONA_APP_ID,
-    user_id: session.user.id,
-    type_code: params.type_code,
-    title: params.title,
-    body: params.body ?? null,
-    link_url: params.link_url ?? null,
-    metadata: { ...params.metadata, __client_dedupe_key: dedupeKey },
-    created_from: 'tectona-frontend',
-  })
-    .then(() => emitNotificationsUpdated())
-    .catch(() => {
-      selfCreatedDedupeKeys.delete(dedupeKey)
+  try {
+    const session = getSession()
+    if (!session?.user?.id) return
+    // Register the dedupe key before the request is sent — see selfCreatedDedupeKeys comment above.
+    const dedupeKey = registerSelfCreatedDedupeKey()
+    createNotification({
+      app_id: TECTONA_APP_ID,
+      user_id: session.user.id,
+      type_code: params.type_code,
+      title: params.title,
+      body: params.body ?? null,
+      link_url: params.link_url ?? null,
+      metadata: { ...params.metadata, __client_dedupe_key: dedupeKey },
+      created_from: 'tectona-frontend',
     })
+      .then(() => emitNotificationsUpdated())
+      .catch(() => {
+        selfCreatedDedupeKeys.delete(dedupeKey)
+      })
+  } catch {
+    // Fan-out must never fail the caller (e.g. HTTP origins without crypto.randomUUID).
+  }
 }

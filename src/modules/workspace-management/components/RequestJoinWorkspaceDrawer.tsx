@@ -11,6 +11,7 @@ import {
   TECTONA_WAC_APP_ID,
 } from '@/lib/api/workspaceAccessControlApi'
 import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
+import { randomUuid } from '@/lib/randomId'
 import { cn } from '@/lib/utils'
 
 export type RequestJoinWorkspaceDrawerProps = {
@@ -100,10 +101,7 @@ export function RequestJoinWorkspaceDrawer({
         },
         {
           actorId: session.user.id,
-          idempotencyKey:
-            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-              ? crypto.randomUUID()
-              : `join-${Date.now().toString(36)}`,
+          idempotencyKey: randomUuid(),
         },
       )
       onSubmitted?.({

@@ -37,6 +37,7 @@ import type { WorkConflictResolution, WorkSyncActivityEvent, WorkSyncConflict, W
 import { WORK_CONFLICT_FIELD_LABELS } from './types'
 import { isWorkApiUnavailableError, isWorkDataOnline } from './workApiReachability'
 import { emitWorkSyncDataChanged, emitWorkSyncOpenConflict } from './workSyncEvents'
+import { randomUuid } from '@/lib/randomId'
 
 type StatusListener = (status: WorkSyncStatus) => void
 type ConflictListener = (conflicts: WorkSyncConflict[]) => void
@@ -60,7 +61,7 @@ const PROBE_OFFLINE_STREAK_THRESHOLD = 2
 const PROBE_ONLINE_STREAK_THRESHOLD = 1
 
 function createOpId(): string {
-  return crypto.randomUUID()
+  return randomUuid()
 }
 
 function isBrowserOnline(): boolean {

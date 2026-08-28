@@ -208,6 +208,76 @@ export function buildDirectoryTreeParentById(
   return result
 }
 
+/** True when `ancestorId` is a strict ancestor of `nodeId` in the directory parent map. */
+export function isStrictDirectoryTreeAncestor(
+  ancestorId: string,
+  nodeId: string,
+  parentById: ReadonlyMap<string, string | null>,
+): boolean {
+  let cursor = parentById.get(nodeId) ?? null
+  const guard = new Set<string>([nodeId])
+  while (cursor) {
+    if (cursor === ancestorId) return true
+    if (guard.has(cursor)) return false
+    guard.add(cursor)
+    cursor = parentById.get(cursor) ?? null
+  }
+  return false
+}
+
+/**
+ * Keep hosts that are not ancestors of another host in the same set.
+ * Membership on a department under a division drops the division host.
+ */
+export function dominantDirectoryHostIds(
+  hostIds: ReadonlyArray<string>,
+  parentById: ReadonlyMap<string, string | null>,
+): string[] {
+  const unique = [...new Set(hostIds.filter((id) => id.trim() !== ''))]
+  return unique.filter(
+    (id) => !unique.some((other) => other !== id && isStrictDirectoryTreeAncestor(id, other, parentById)),
+  )
+}
+
+/**
+ * Extra (linked) hosts for a personal workspace: operational memberships that are
+ * not ancestors of the canonical parent or of a more specific membership.
+ */
+export function selectPersonalDirectoryLinkedHostIds(input: {
+  primaryParentId: string | null
+  extraHostIds: ReadonlyArray<string>
+  parentById: ReadonlyMap<string, string | null>
+}): string[] {
+  const extras = [...new Set(input.extraHostIds.filter((id) => id.trim() !== ''))]
+  const combined = input.primaryParentId
+    ? [...new Set([input.primaryParentId, ...extras])]
+    : extras
+  const dominant = new Set(dominantDirectoryHostIds(combined, input.parentById))
+  return extras.filter((id) => dominant.has(id) && id !== input.primaryParentId)
+}
+
+/**
+ * Hide the canonical personal row when a more specific membership host already
+ * shows that person (child implies parent). Keep the canonical row when extra
+ * hosts are siblings of it (two divisions / two departments).
+ */
+export function shouldHideCanonicalPersonalDirectoryPlacement(input: {
+  isPersonalWorkspace: boolean
+  personalOrgScope: PersonalOrgScope | null
+  parentWorkspaceId?: string | null
+  primaryParentId: string | null
+  linkedHostIds: ReadonlyArray<string>
+  parentById: ReadonlyMap<string, string | null>
+}): boolean {
+  if (!input.isPersonalWorkspace) return false
+  if (!isNestedOrgPersonalScope(input.personalOrgScope, input.parentWorkspaceId)) return false
+  if (input.linkedHostIds.length === 0) return false
+  if (input.primaryParentId === null) return true
+  return input.linkedHostIds.some((hostId) =>
+    isStrictDirectoryTreeAncestor(input.primaryParentId!, hostId, input.parentById),
+  )
+}
+
 /** @deprecated Prefer buildDirectoryTreeParentById for multi-row tree layout. */
 export function directoryTreeParentWorkspaceId(input: {
   isPersonalWorkspace: boolean

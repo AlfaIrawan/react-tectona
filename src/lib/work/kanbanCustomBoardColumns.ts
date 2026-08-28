@@ -1,4 +1,5 @@
 import type { WorkStatus } from '@/lib/api/workApi'
+import { randomUuid } from '@/lib/randomId'
 import { WORK_STATUS_VALUES } from '@/lib/work/kanbanBoardColumnLabels'
 import type { KanbanColumnColorPreset } from '@/lib/work/kanbanBoardColumnTheme'
 
@@ -38,10 +39,7 @@ export function customBoardColumnKey(columnId: string): `custom:${string}` {
 }
 
 export function createCustomBoardColumn(label: string): KanbanCustomBoardColumn {
-  const id =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `col-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  const id = randomUuid()
   return { id, label: label.trim() || 'New board' }
 }
 

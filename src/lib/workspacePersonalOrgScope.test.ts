@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildDirectoryTreeParentById,
+  dominantDirectoryHostIds,
   isNestedOrgPersonalTenantActiveWorkspace,
+  isStrictDirectoryTreeAncestor,
+  selectPersonalDirectoryLinkedHostIds,
+  shouldHideCanonicalPersonalDirectoryPlacement,
   shouldHideOperationalFromPersonalTenantDirectory,
   shouldHideSiblingPersonalFromPersonalTenantDirectory,
   shouldHideStandalonePersonalFromOrgDirectory,
@@ -82,6 +86,122 @@ describe('buildDirectoryTreeParentById', () => {
     const parents = buildDirectoryTreeParentById(workspaces)
     expect(parents.get(HENRY_PERSONAL)).toBe(IT_BP)
     expect(parents.get(MANUEL_PERSONAL)).toBe(ORG_HOME)
+  })
+})
+
+describe('personal directory linked placements', () => {
+  const DEPT = 'ws-it-data-ai'
+  const DIV_A = 'ws-div-a'
+  const DIV_B = 'ws-div-b'
+  const CHRISTOPHE = 'ws-christophe-personal'
+
+  const parentById = new Map<string, string | null>([
+    [ORG_HOME, null],
+    [DEPT, ORG_HOME],
+    [DIV_A, ORG_HOME],
+    [DIV_B, ORG_HOME],
+    [IT_BP, ORG_HOME],
+    [CHRISTOPHE, ORG_HOME],
+  ])
+
+  it('treats org home as ancestor of a department', () => {
+    expect(isStrictDirectoryTreeAncestor(ORG_HOME, DEPT, parentById)).toBe(true)
+    expect(isStrictDirectoryTreeAncestor(DEPT, ORG_HOME, parentById)).toBe(false)
+  })
+
+  it('drops ancestor hosts when a descendant host is also present', () => {
+    expect(dominantDirectoryHostIds([ORG_HOME, DEPT, IT_BP], parentById).sort()).toEqual(
+      [DEPT, IT_BP].sort(),
+    )
+  })
+
+  it('keeps a single department membership and hides the org-home canonical row', () => {
+    const linked = selectPersonalDirectoryLinkedHostIds({
+      primaryParentId: ORG_HOME,
+      extraHostIds: [DEPT],
+      parentById,
+    })
+    expect(linked).toEqual([DEPT])
+    expect(
+      shouldHideCanonicalPersonalDirectoryPlacement({
+        isPersonalWorkspace: true,
+        personalOrgScope: 'organization_tree',
+        parentWorkspaceId: ORG_HOME,
+        primaryParentId: ORG_HOME,
+        linkedHostIds: linked,
+        parentById,
+      }),
+    ).toBe(true)
+  })
+
+  it('hides a false root row when org home is not visible but a child membership is', () => {
+    const linked = selectPersonalDirectoryLinkedHostIds({
+      primaryParentId: null,
+      extraHostIds: [DEPT],
+      parentById,
+    })
+    expect(linked).toEqual([DEPT])
+    expect(
+      shouldHideCanonicalPersonalDirectoryPlacement({
+        isPersonalWorkspace: true,
+        personalOrgScope: 'organization_tree',
+        parentWorkspaceId: ORG_HOME,
+        primaryParentId: null,
+        linkedHostIds: linked,
+        parentById,
+      }),
+    ).toBe(true)
+  })
+
+  it('keeps both sibling division memberships and hides org-home', () => {
+    const linked = selectPersonalDirectoryLinkedHostIds({
+      primaryParentId: ORG_HOME,
+      extraHostIds: [DIV_A, DIV_B],
+      parentById,
+    })
+    expect(linked.sort()).toEqual([DIV_A, DIV_B].sort())
+    expect(
+      shouldHideCanonicalPersonalDirectoryPlacement({
+        isPersonalWorkspace: true,
+        personalOrgScope: 'organization_tree',
+        parentWorkspaceId: ORG_HOME,
+        primaryParentId: ORG_HOME,
+        linkedHostIds: linked,
+        parentById,
+      }),
+    ).toBe(true)
+  })
+
+  it('keeps canonical under owned division plus a sibling division membership', () => {
+    const linked = selectPersonalDirectoryLinkedHostIds({
+      primaryParentId: DIV_A,
+      extraHostIds: [DIV_A, DIV_B],
+      parentById,
+    })
+    expect(linked).toEqual([DIV_B])
+    expect(
+      shouldHideCanonicalPersonalDirectoryPlacement({
+        isPersonalWorkspace: true,
+        personalOrgScope: 'organization_tree',
+        parentWorkspaceId: ORG_HOME,
+        primaryParentId: DIV_A,
+        linkedHostIds: linked,
+        parentById,
+      }),
+    ).toBe(false)
+  })
+
+  it('does not hide a standalone personal workspace at root', () => {
+    expect(
+      shouldHideCanonicalPersonalDirectoryPlacement({
+        isPersonalWorkspace: true,
+        personalOrgScope: 'standalone',
+        parentWorkspaceId: null,
+        primaryParentId: null,
+        linkedHostIds: [DEPT],
+        parentById,
+      }),
+    ).toBe(false)
   })
 })
 

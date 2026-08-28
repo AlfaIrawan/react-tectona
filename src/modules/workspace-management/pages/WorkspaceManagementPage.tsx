@@ -152,6 +152,7 @@ import { fetchAllProjects, updateProject, TECTONA_PROJECT_APP_ID, type ProjectAp
 import { useToast } from '@/components/ui/toast'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { notifyEvent } from '@/lib/api/notificationApi'
+import { createClientUuid } from '@/lib/createClientUuid'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { useWorkspaceManagementAuthorization } from '@/auth/useAuthorization'
 import { useTenantContextOptional } from '@/auth/TenantContext'
@@ -317,6 +318,8 @@ import {
   shouldHideStandalonePersonalFromOrgDirectory,
   toDirectoryTreeWorkspace,
   workspaceDirectoryTypeLabel,
+  selectPersonalDirectoryLinkedHostIds,
+  shouldHideCanonicalPersonalDirectoryPlacement,
   type PersonalOrgScope,
   type DirectoryTreeBuildOptions,
 } from '@/lib/workspacePersonalOrgScope'
@@ -2095,20 +2098,46 @@ function workspaceDirectoryDepthFirst(
     children.set(parentId, list)
   }
 
-  // Linked references: a personal workspace keeps exactly one canonical/primary
-  // placement (above), but can also show under other operational workspaces its
-  // owner actively participates in (e.g. invited there as Member) so their
-  // participation is visible without pretending they have multiple "real" parents.
+  // Linked references: a personal workspace keeps one canonical placement, plus
+  // extra rows under operational workspaces its owner participates in. Ancestor
+  // hosts are dropped (child membership already implies the parent). Sibling
+  // hosts (two divisions / two departments) stay so participation stays visible.
   if (extraLinkedParentsByWorkspaceId) {
+    const hideCanonicalIds = new Set<string>()
     for (const w of workspaces) {
       const extraParents = extraLinkedParentsByWorkspaceId.get(w.id)
       if (!extraParents || extraParents.length === 0) continue
       const primaryParentId = primaryParentByWorkspaceId.get(w.id) ?? null
-      for (const { parentId, role } of extraParents) {
-        if (parentId === primaryParentId || !byId.has(parentId)) continue
-        const list = children.get(parentId) ?? []
-        list.push({ workspace: w, isLinked: true, linkedRole: role })
-        children.set(parentId, list)
+      const roleByHostId = new Map(extraParents.map((entry) => [entry.parentId, entry.role]))
+      const linkedHostIds = selectPersonalDirectoryLinkedHostIds({
+        primaryParentId,
+        extraHostIds: extraParents.map((entry) => entry.parentId).filter((id) => byId.has(id)),
+        parentById,
+      })
+      if (
+        shouldHideCanonicalPersonalDirectoryPlacement({
+          isPersonalWorkspace: w.isPersonalWorkspace,
+          personalOrgScope: w.personalOrgScope,
+          parentWorkspaceId: w.parentWorkspaceId,
+          primaryParentId,
+          linkedHostIds,
+          parentById,
+        })
+      ) {
+        hideCanonicalIds.add(w.id)
+      }
+      for (const hostId of linkedHostIds) {
+        if (!byId.has(hostId)) continue
+        const list = children.get(hostId) ?? []
+        list.push({ workspace: w, isLinked: true, linkedRole: roleByHostId.get(hostId) })
+        children.set(hostId, list)
+      }
+    }
+    if (hideCanonicalIds.size > 0) {
+      for (const [parentId, list] of [...children.entries()]) {
+        const next = list.filter((entry) => entry.isLinked || !hideCanonicalIds.has(entry.workspace.id))
+        if (next.length === 0) children.delete(parentId)
+        else children.set(parentId, next)
       }
     }
   }
@@ -10459,10 +10488,9 @@ export function WorkspaceManagementPage() {
 
   const directoryTotalPages = Math.max(1, Math.ceil(sortedFilteredWorkspaces.length / directoryPageSize))
 
-  // A personal workspace keeps one canonical/primary tree placement, but its
-  // owner can be an active WAC member of other operational workspaces too --
-  // surface those as extra "linked" placements so participation isn't invisible
-  // just because the tree only has room for one real parent.
+  // Extra "linked" placements for personal workspaces whose owner is a WAC member
+  // of operational workspaces. Ancestor duplicates are collapsed later (member of
+  // a department under Adira Finance should not also sit at org-home/root).
   const extraLinkedParentsByWorkspaceId = useMemo(() => {
     const workspaceById = new Map(allWorkspacesForList.map((w) => [w.id, w]))
     const operationalMembershipsByOwnerIdentity = new Map<string, Map<string, MemberRole>>()
@@ -11839,10 +11867,7 @@ export function WorkspaceManagementPage() {
     }
 
     const session = getSession()
-    const idempotencyKey =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `idem-${Date.now().toString(36)}`
+    const idempotencyKey = createClientUuid()
 
     ;(async () => {
       try {
@@ -12089,16 +12114,20 @@ export function WorkspaceManagementPage() {
         title: 'Recommended next actions',
         description: 'Assign Governance Policy — Add Members — Link Projects — Configure Workflow — Open Workspace',
       })
-      notifyEvent({
-        type_code: 'project',
-        title: 'Workspace created',
-        body: `${name} (${workspaceCodeDisplay}) is registered in the workspace directory.`,
-        metadata: {
-          workspace_id: workspaceId,
-          workspace_code: workspaceCodeDisplay,
-          event: 'workspace_created',
-        },
-      })
+      try {
+        notifyEvent({
+          type_code: 'project',
+          title: 'Workspace created',
+          body: `${name} (${workspaceCodeDisplay}) is registered in the workspace directory.`,
+          metadata: {
+            workspace_id: workspaceId,
+            workspace_code: workspaceCodeDisplay,
+            event: 'workspace_created',
+          },
+        })
+      } catch {
+        // Notification fan-out must not surface as a create-workspace failure.
+      }
     }
 
     if (!workspaceOrgBackendConnected) {
@@ -12196,10 +12225,7 @@ export function WorkspaceManagementPage() {
         // server's response as the source of truth, rather than trusting local state.
         let created: Awaited<ReturnType<typeof createWorkspaceOrgWorkspace>> | null = null
         for (let codeAttempt = 0; codeAttempt < 5; codeAttempt += 1) {
-          const idempotencyKey =
-            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-              ? crypto.randomUUID()
-              : `idem-${Date.now().toString(36)}-${codeAttempt}`
+          const idempotencyKey = createClientUuid()
           try {
             created = await createWorkspaceOrgWorkspace(
               {
@@ -18285,10 +18311,7 @@ export function WorkspaceManagementPage() {
                 },
                 {
                   actorId: session?.user?.id,
-                  idempotencyKey:
-                    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-                      ? crypto.randomUUID()
-                        : `idem-${Date.now().toString(36)}-${workspaceId}`,
+                  idempotencyKey: createClientUuid(),
                   }
                 )
 

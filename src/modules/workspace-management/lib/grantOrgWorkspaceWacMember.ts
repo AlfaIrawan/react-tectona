@@ -9,6 +9,7 @@ import { ensureWorkspaceDirectoryMembership } from '@/lib/api/workspaceOrgApi'
 import { membershipGrantsOrganizationWorkspaceSwitcherAccess } from '@/lib/corporateWorkspaceAccess'
 import { PARTICIPATION_SCOPE_CODE } from '@/lib/participationScopeRules'
 import { DEFAULT_OPERATIONAL_TEAM_VALUE } from '@/lib/workspaceOperationalTeams'
+import { randomUuid } from '@/lib/randomId'
 import type { PersonalOrgScope } from '@/lib/workspacePersonalOrgScope'
 
 export type OrgWacMemberGrantTarget = {
@@ -291,10 +292,7 @@ export async function grantOrgWorkspaceWacMembership(
         },
         {
           actorId: opts.actorId,
-          idempotencyKey:
-            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-              ? crypto.randomUUID()
-              : `org-wac-grant-${Date.now()}-${subjectId}`,
+          idempotencyKey: randomUuid(),
         },
       )
     } else {
