@@ -329,7 +329,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     useFloatingChatPanel && floatingChatPosition ? clampFloatingChatPosition(floatingChatPosition) : floatingChatPosition
 
   return (
-    <div className="relative flex h-[var(--app-vh,100dvh)] min-h-0 flex-col pt-12">
+    <div className="relative flex h-[100dvh] min-h-0 flex-col pt-12">
       <Topbar
         sidebarCollapsed={false}
         accentColor={accentColor}
@@ -361,7 +361,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               ? 'fixed z-[1150] rounded-2xl border border-border/80 opacity-100 shadow-2xl ring-1 ring-black/[0.06] dark:ring-white/[0.08]'
               : cn(
                   'shrink-0 rounded-l-2xl',
-                  commPanelDockedOpen && 'h-[calc(var(--app-vh,100vh)-3rem)] max-h-[calc(var(--app-vh,100vh)-3rem)] self-start',
+                  commPanelDockedOpen && 'h-[calc(100vh-3rem)] max-h-[calc(100vh-3rem)] self-start',
                   commPanelDockedOpen &&
                     (isChatCommPanel
                       ? 'border border-white/45 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.14)] dark:border-white/12 dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55)] ring-1 ring-white/20 dark:ring-white/[0.06]'
@@ -389,7 +389,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                   left: renderedFloatingChatPosition?.x ?? 0,
                   top: renderedFloatingChatPosition?.y ?? 0,
                   width: 'min(34rem, calc(100vw - 1rem))',
-                  height: 'min(44rem, calc(var(--app-vh, 100dvh) - 4rem))',
+                  height: 'min(44rem, calc(100dvh - 4rem))',
                 }
               : {
                   // Docked mode (always used for email; used for chat whenever no right-side

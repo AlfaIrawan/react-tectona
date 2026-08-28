@@ -6,10 +6,9 @@ export const APP_MAIN_BODY_SELECTOR = '[data-app-main-body]'
 export const APP_MAIN_BODY_CONTENT_PADDING_X = 80
 
 function readMainBodyWidths(el: HTMLElement): { bodyWidth: number; contentWidth: number } {
-  // Layout box (offsetWidth), not getBoundingClientRect: an ancestor CSS
-  // transform/zoom (ui-scale-lock) shrinks the visual rect and would falsely
-  // trip the Workspace KPI carousel at 1024×768.
-  const bodyWidth = el.offsetWidth || el.clientWidth
+  // getBoundingClientRect lebih konsisten di Firefox untuk flex item daripada clientWidth saja.
+  const rectW = Math.round(el.getBoundingClientRect().width)
+  const bodyWidth = rectW > 0 ? rectW : el.clientWidth
   const contentWidth = Math.max(0, bodyWidth - APP_MAIN_BODY_CONTENT_PADDING_X)
   return { bodyWidth, contentWidth }
 }

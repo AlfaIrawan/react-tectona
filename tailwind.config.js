@@ -6,16 +6,6 @@ export default {
     './src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
-    // Always apply desktop breakpoint classes. The app is designed at 1920px
-    // and uniformly scaled to the window (see uiScale.ts). Viewport media
-    // queries would otherwise reflow at 1024×768 (KPI carousel, 2-col grid).
-    screens: {
-      sm: '1px',
-      md: '1px',
-      lg: '1px',
-      xl: '1px',
-      '2xl': '1px',
-    },
     extend: {
       colors: {
         border: 'hsl(var(--border))',
@@ -59,24 +49,6 @@ export default {
       },
       backdropBlur: {
         xs: '2px',
-      },
-      height: {
-        screen: 'var(--app-vh, 100vh)',
-      },
-      minHeight: {
-        screen: 'var(--app-vh, 100vh)',
-      },
-      maxHeight: {
-        screen: 'var(--app-vh, 100vh)',
-      },
-      width: {
-        screen: 'var(--app-vw, 100vw)',
-      },
-      minWidth: {
-        screen: 'var(--app-vw, 100vw)',
-      },
-      maxWidth: {
-        screen: 'var(--app-vw, 100vw)',
       },
     },
   },
