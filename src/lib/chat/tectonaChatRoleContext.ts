@@ -6,17 +6,23 @@ import { getSession } from '@/auth/authService'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import {
-  fetchSubjectMemberships,
-  TECTONA_WAC_APP_ID,
   wacRoleCodeToUiRole,
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
+import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
+import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 
 export type TectonaChatWacRole = 'Admin' | 'Manager' | 'Member' | 'Viewer' | 'None'
+
+export type TectonaAccessibleWorkspace = {
+  workspace_id: string
+  name: string
+  role: TectonaChatWacRole
+}
 
 export type TectonaChatRoleSnapshot = {
   platform_roles: string[]
@@ -27,6 +33,10 @@ export type TectonaChatRoleSnapshot = {
   can_manage_workspace: boolean
   can_manage_governance: boolean
   can_manage_members: boolean
+  active_tenant_workspace_id: string | null
+  active_tenant_workspace_name: string | null
+  accessible_workspaces: TectonaAccessibleWorkspace[]
+  accessible_workspaces_summary: string | null
 }
 
 type TectonaChatRoleStore = {
@@ -84,14 +94,66 @@ function maxRoleForWorkspace(
   return max
 }
 
+function buildAccessibleWorkspaces(
+  memberships: WacMembershipDto[],
+  nameById: Map<string, string>,
+): TectonaAccessibleWorkspace[] {
+  const byId = new Map<string, TectonaAccessibleWorkspace>()
+  for (const row of memberships) {
+    const role = wacRoleCodeToUiRole(row.role_code) as TectonaChatWacRole
+    const existing = byId.get(row.workspace_id)
+    if (!existing || roleRank(role) > roleRank(existing.role)) {
+      byId.set(row.workspace_id, {
+        workspace_id: row.workspace_id,
+        name: nameById.get(row.workspace_id) ?? row.workspace_id.slice(0, 8),
+        role,
+      })
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function buildAccessibleWorkspacesSummary(
+  entries: TectonaAccessibleWorkspace[],
+  activeName: string | null,
+): string | null {
+  if (entries.length === 0) return null
+  const list = entries
+    .slice(0, 10)
+    .map((entry) => `${entry.name} (${entry.role})`)
+    .join('; ')
+  const active = activeName ? `active=${activeName}; ` : ''
+  return `count=${entries.length}; ${active}list=${list}`
+}
+
 export function buildChatRoleSnapshot(input: {
   platformRoles: string[]
   uiRole?: string
   workspaceId: string | null
+  tenantDisplayName?: string | null
   memberships: WacMembershipDto[]
+  workspaceNameById?: Map<string, string>
 }): TectonaChatRoleSnapshot {
   const isPlatformAdmin = hasPlatformAdminAccess(input.platformRoles, input.uiRole)
   const workspaceRole = isPlatformAdmin ? 'Admin' : maxRoleForWorkspace(input.memberships, input.workspaceId)
+  const nameById = input.workspaceNameById ?? new Map<string, string>()
+  const accessibleWorkspaces = buildAccessibleWorkspaces(input.memberships, nameById)
+  const singleTenant = input.workspaceId && !isAllWorkspacesSelection(input.workspaceId)
+  const activeTenantWorkspaceId = singleTenant ? input.workspaceId : null
+  const activeTenantWorkspaceName = singleTenant
+    ? (input.tenantDisplayName?.trim() || nameById.get(input.workspaceId!) || null)
+    : null
+  const accessibleSummary = buildAccessibleWorkspacesSummary(
+    accessibleWorkspaces,
+    activeTenantWorkspaceName,
+  )
+
+  const scopeFields = {
+    active_tenant_workspace_id: activeTenantWorkspaceId,
+    active_tenant_workspace_name: activeTenantWorkspaceName,
+    accessible_workspaces: accessibleWorkspaces,
+    accessible_workspaces_summary: accessibleSummary,
+  }
 
   if (isPlatformAdmin) {
     return {
@@ -103,6 +165,7 @@ export function buildChatRoleSnapshot(input: {
       can_manage_workspace: true,
       can_manage_governance: true,
       can_manage_members: true,
+      ...scopeFields,
     }
   }
 
@@ -116,10 +179,14 @@ export function buildChatRoleSnapshot(input: {
     can_manage_workspace: rank >= roleRank('Admin'),
     can_manage_governance: rank >= roleRank('Admin'),
     can_manage_members: rank >= roleRank('Admin'),
+    ...scopeFields,
   }
 }
 
-export async function refreshTectonaChatRoleSnapshot(workspaceId: string | null): Promise<TectonaChatRoleSnapshot | null> {
+export async function refreshTectonaChatRoleSnapshot(
+  workspaceId: string | null,
+  options?: { tenantDisplayName?: string | null },
+): Promise<TectonaChatRoleSnapshot | null> {
   const session = getSession()
   if (!session?.user.id) {
     useTectonaChatRoleStore.getState().setSnapshot(null)
@@ -127,15 +194,21 @@ export async function refreshTectonaChatRoleSnapshot(workspaceId: string | null)
   }
 
   const platformRoles = sessionPlatformRoles()
-  const membershipsRes = await fetchSubjectMemberships(TECTONA_WAC_APP_ID, session.user.id, {
-    activeOnly: true,
-  }).catch(() => ({ items: [] as WacMembershipDto[] }))
+  const [membershipsRes, directory] = await Promise.all([
+    fetchSubjectMembershipsCached(session.user.id, { activeOnly: true }).catch(() => ({
+      items: [] as WacMembershipDto[],
+    })),
+    fetchAllWorkspaceOrgWorkspacesCached().catch(() => []),
+  ])
+  const workspaceNameById = new Map(directory.map((row) => [row.id, row.name]))
 
   const snapshot = buildChatRoleSnapshot({
     platformRoles,
     uiRole: session.user.role,
     workspaceId,
+    tenantDisplayName: options?.tenantDisplayName ?? null,
     memberships: membershipsRes.items ?? [],
+    workspaceNameById,
   })
   useTectonaChatRoleStore.getState().setSnapshot(snapshot)
   return snapshot
@@ -145,11 +218,12 @@ export async function refreshTectonaChatRoleSnapshot(workspaceId: string | null)
 export function useTectonaChatRoleSync(): void {
   const tenant = useTenantContextOptional()
   const workspaceId = tenant?.workspaceId ?? null
+  const tenantDisplayName = tenant?.displayName ?? null
 
   useEffect(() => {
     let cancelled = false
     useTectonaChatRoleStore.getState().setLoading(true)
-    void refreshTectonaChatRoleSnapshot(workspaceId)
+    void refreshTectonaChatRoleSnapshot(workspaceId, { tenantDisplayName })
       .catch(() => {
         if (!cancelled) useTectonaChatRoleStore.getState().setSnapshot(null)
       })
@@ -159,15 +233,15 @@ export function useTectonaChatRoleSync(): void {
     return () => {
       cancelled = true
     }
-  }, [workspaceId, tenant?.orgId])
+  }, [workspaceId, tenant?.orgId, tenantDisplayName])
 
   useEffect(() => {
     const onTenantChanged = () => {
-      void refreshTectonaChatRoleSnapshot(workspaceId)
+      void refreshTectonaChatRoleSnapshot(workspaceId, { tenantDisplayName })
     }
     window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
     return () => window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, onTenantChanged)
-  }, [workspaceId])
+  }, [workspaceId, tenantDisplayName])
 }
 
 export function readTectonaChatRoleSnapshot(): TectonaChatRoleSnapshot | null {
@@ -186,5 +260,8 @@ export function mergeRoleFieldsIntoUiContext<T extends Record<string, unknown>>(
     can_manage_workspace: role.can_manage_workspace,
     can_manage_governance: role.can_manage_governance,
     can_manage_members: role.can_manage_members,
+    active_tenant_workspace_id: role.active_tenant_workspace_id,
+    active_tenant_workspace_name: role.active_tenant_workspace_name,
+    accessible_workspaces_summary: role.accessible_workspaces_summary,
   }
 }

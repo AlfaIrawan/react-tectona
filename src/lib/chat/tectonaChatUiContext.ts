@@ -42,6 +42,9 @@ export type TectonaUiContextPayload = {
   can_manage_workspace?: boolean | null
   can_manage_governance?: boolean | null
   can_manage_members?: boolean | null
+  active_tenant_workspace_id?: string | null
+  active_tenant_workspace_name?: string | null
+  accessible_workspaces_summary?: string | null
 }
 
 type RouteEntry = {

@@ -20,10 +20,13 @@ describe('buildChatRoleSnapshot', () => {
       platformRoles: [],
       workspaceId: 'ws-1',
       memberships,
+      workspaceNameById: new Map([['ws-1', 'IT Data WS']]),
     })
     expect(snapshot.workspace_role).toBe('Member')
     expect(snapshot.can_manage_members).toBe(false)
     expect(snapshot.can_view_governance).toBe(false)
+    expect(snapshot.accessible_workspaces).toHaveLength(1)
+    expect(snapshot.accessible_workspaces_summary).toContain('IT Data WS')
   })
 
   it('grants full flags for platform admin', () => {
