@@ -87,6 +87,82 @@ describe('buildDirectoryTreeParentById', () => {
     expect(parents.get(HENRY_PERSONAL)).toBe(IT_BP)
     expect(parents.get(MANUEL_PERSONAL)).toBe(ORG_HOME)
   })
+
+  it('nests owner personal under deepest owned operational even when division is listed first', () => {
+    const DEPT = 'ws-it-data-ai'
+    const ALFA_PERSONAL = 'ws-alfa-personal'
+    const workspaces = [
+      row({
+        id: ORG_HOME,
+        type: 'Organization',
+        isPersonalWorkspace: false,
+      }),
+      row({
+        id: IT_BP,
+        type: 'Division',
+        isPersonalWorkspace: false,
+        orgDirectoryJoined: true,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+      row({
+        id: DEPT,
+        type: 'Department',
+        isPersonalWorkspace: false,
+        orgDirectoryJoined: true,
+        parentWorkspaceId: IT_BP,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+      row({
+        id: ALFA_PERSONAL,
+        type: 'Personal',
+        isPersonalWorkspace: true,
+        personalOrgScope: 'organization_tree',
+        parentWorkspaceId: ORG_HOME,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+    ]
+
+    const parents = buildDirectoryTreeParentById(workspaces)
+    expect(parents.get(DEPT)).toBe(IT_BP)
+    expect(parents.get(ALFA_PERSONAL)).toBe(DEPT)
+  })
+
+  it('nests owner personal under owned department when it is a sibling of owned division', () => {
+    const DEPT = 'ws-it-data-ai'
+    const ALFA_PERSONAL = 'ws-alfa-personal'
+    const workspaces = [
+      row({
+        id: ORG_HOME,
+        type: 'Organization',
+        isPersonalWorkspace: false,
+      }),
+      row({
+        id: IT_BP,
+        type: 'Division',
+        isPersonalWorkspace: false,
+        orgDirectoryJoined: true,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+      row({
+        id: DEPT,
+        type: 'Department',
+        isPersonalWorkspace: false,
+        orgDirectoryJoined: true,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+      row({
+        id: ALFA_PERSONAL,
+        type: 'Personal',
+        isPersonalWorkspace: true,
+        personalOrgScope: 'organization_tree',
+        parentWorkspaceId: ORG_HOME,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+    ]
+
+    const parents = buildDirectoryTreeParentById(workspaces)
+    expect(parents.get(ALFA_PERSONAL)).toBe(DEPT)
+  })
 })
 
 describe('personal directory linked placements', () => {

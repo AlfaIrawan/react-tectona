@@ -103,6 +103,49 @@ function isOperationalInOrgDirectoryTree(workspace: DirectoryTreeWorkspace): boo
   return workspace.orgDirectoryJoined === true
 }
 
+function operationalDirectoryAnchorId(
+  workspace: DirectoryTreeWorkspace,
+  orgHomeId: string | null,
+  byId: ReadonlyMap<string, DirectoryTreeWorkspace>,
+): string | null {
+  const explicitParent = workspace.parentWorkspaceId?.trim() || null
+  if (explicitParent && explicitParent !== orgHomeId && byId.has(explicitParent)) {
+    return explicitParent
+  }
+  const anchor = workspace.provisionedUnderWorkspaceId?.trim() || orgHomeId || null
+  return anchor && byId.has(anchor) ? anchor : null
+}
+
+/** Prefer the deepest owned operational host so tenant catalog order cannot change the tree. */
+function pickDeepestOwnedOperational(
+  owned: ReadonlyArray<DirectoryTreeWorkspace>,
+  orgHomeId: string | null,
+  catalogById: ReadonlyMap<string, DirectoryTreeWorkspace>,
+): DirectoryTreeWorkspace | null {
+  if (owned.length === 0) return null
+  if (owned.length === 1) return owned[0] ?? null
+  const parentById = new Map<string, string | null>()
+  for (const workspace of owned) {
+    parentById.set(
+      workspace.id,
+      operationalDirectoryAnchorId(workspace, orgHomeId, catalogById),
+    )
+  }
+  const deepestIds = dominantDirectoryHostIds(
+    owned.map((workspace) => workspace.id),
+    parentById,
+  )
+  const deepest = owned.filter((workspace) => deepestIds.includes(workspace.id))
+  const ranked = (deepest.length > 0 ? deepest : owned).slice().sort((a, b) => {
+    const rankDelta =
+      workspaceClassificationRank(b.type, b.isPersonalWorkspace)
+      - workspaceClassificationRank(a.type, a.isPersonalWorkspace)
+    if (rankDelta !== 0) return rankDelta
+    return a.id.localeCompare(b.id)
+  })
+  return ranked[0] ?? null
+}
+
 /**
  * Directory tree parents from visible workspace rows:
  * Organization (root) → org-directory-joined operational → personal org-tree.
@@ -187,8 +230,12 @@ export function buildDirectoryTreeParentById(
       )
       const ownerRef = workspace.ownerIdentityRef?.trim()
       if (ownerRef && joinedOperationalCandidates.length > 0) {
-        const ownedOperational = joinedOperationalCandidates.find(
-          (candidate) => candidate.ownerIdentityRef?.trim() === ownerRef,
+        const ownedOperational = pickDeepestOwnedOperational(
+          joinedOperationalCandidates.filter(
+            (candidate) => candidate.ownerIdentityRef?.trim() === ownerRef,
+          ),
+          orgHomeId,
+          byId,
         )
         if (ownedOperational) {
           result.set(workspace.id, ownedOperational.id)
