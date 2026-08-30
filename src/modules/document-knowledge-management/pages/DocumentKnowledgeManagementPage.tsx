@@ -273,6 +273,7 @@ import {
   parseMemoInternalToKbContentStandard,
 } from '@/lib/kb/memoInternalToKbContentStandard'
 import { ADIRA_FINANCE_WORKSPACE_KEY, ensureAdiraApplicationGlossaryEntries, isAdiraFinanceWorkspaceRef, isAdiraGlossaryManagedTitle, suppressAdiraGlossaryTitle } from '@/lib/kb/adiraApplicationGlossary'
+import { ensureIdeaIntakeChecklistDefaultEntry, isSystemKbEntry, isSystemKbEntryTitle } from '@/lib/kb/systemKbEntry'
 import { repairFlattenedComparisonBlocks } from '@/lib/kb/repairComparisonTable'
 import { scrubKbExtractionArtifacts, stripRepeatedRunningLines } from '@/lib/kb/kbExtractionArtifacts'
 import { captureKbEditorHtml, prepareKbRichHtmlContent, sanitizeKbRichHtmlPreservingTables, applyKbTableLayoutStylesFromAttrs } from '@/lib/kb/kbRichTableHtml'
@@ -1727,14 +1728,6 @@ function KbDetailHtmlWithColumnLimits({
       proseClassName={`${KB_RICH_CONTENT_PROSE_CLASSES} ${KB_RICH_TABLE_CLASSES}`}
     />
   )
-}
-
-const SYSTEM_KB_TITLE_PATTERNS = [
-  /^idea intake checklist(?: \(default\))?$/i,
-]
-
-function isSystemKbEntryTitle(title: string): boolean {
-  return SYSTEM_KB_TITLE_PATTERNS.some((pattern) => pattern.test(title.trim()))
 }
 
 function humanizeKbJsonKey(value: string): string {
@@ -5828,8 +5821,28 @@ export function DocumentKnowledgeManagementPage() {
       }
       }
 
+      const ensuredChecklist = await ensureIdeaIntakeChecklistDefaultEntry(items)
+      if (ensuredChecklist) {
+        const existingIndex = items.findIndex((item) => item.id === ensuredChecklist.id)
+        if (existingIndex >= 0) {
+          items[existingIndex] = ensuredChecklist
+        } else {
+          items = [ensuredChecklist, ...items]
+        }
+      }
+
       const scope = dkmWorkspaceScope
-      items = items.filter((entry) => belongsToDkmRepositoryScope(entry.workspace_id, scope))
+      items = items.filter((entry) => (
+        // Role/permission definitions are platform-wide reference material, not the content of
+        // any one workspace (see authorization-policy-service's kb_sync.py) — they carry no
+        // workspace_id at all, so the normal workspace-scope check would hide them from every
+        // workspace instead of the intended "visible everywhere" behavior.
+        entry.category === 'access_control'
+        // Idea Intake Checklist (Default) is a Tectona system entry for every user. Untagged
+        // rows are hidden by belongsToDkmRepositoryScope, and the seed used to be Adira-only.
+        || isSystemKbEntry(entry)
+        || belongsToDkmRepositoryScope(entry.workspace_id, scope)
+      ))
 
       setKbApiItems(items)
       setKbViewEntry((prev) => {
@@ -11552,8 +11565,9 @@ export function DocumentKnowledgeManagementPage() {
   }
 
   function handleKbDelete(id: string) {
-    const deletingTitle = kbApiItems.find((item) => item.id === id)?.title ?? id
-    if (isSystemKbEntryTitle(deletingTitle)) {
+    const deletingEntry = kbApiItems.find((item) => item.id === id)
+    const deletingTitle = deletingEntry?.title ?? id
+    if (deletingEntry && isSystemKbEntry(deletingEntry)) {
       addToast({
         title: 'System entry cannot be deleted',
         description: 'This Knowledge Base entry is managed by the system and is required for the workspace.',
@@ -11566,7 +11580,8 @@ export function DocumentKnowledgeManagementPage() {
 
   async function handleKbDeleteConfirm() {
     if (!kbDeleteTarget) return
-    if (isSystemKbEntryTitle(kbDeleteTarget.title)) {
+    const confirmTarget = kbApiItems.find((item) => item.id === kbDeleteTarget.id)
+    if (isSystemKbEntry(confirmTarget ?? { title: kbDeleteTarget.title })) {
       setKbDeleteTarget(null)
       return
     }
@@ -21893,7 +21908,7 @@ export function DocumentKnowledgeManagementPage() {
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-lg font-semibold text-foreground break-words">{kbViewEntry.title}</h3>
-                    {isSystemKbEntryTitle(kbViewEntry.title) ? (
+                    {isSystemKbEntry(kbViewEntry) ? (
                       <Badge variant="outline" className="rounded-full border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
                         System
                       </Badge>
@@ -22338,11 +22353,11 @@ export function DocumentKnowledgeManagementPage() {
                   variant="destructive"
                   className="h-10 rounded-xl w-full justify-center gap-2"
                   onClick={() => void handleKbDelete(kbViewEntry.id)}
-                  disabled={isSystemKbEntryTitle(kbViewEntry.title)}
-                  title={isSystemKbEntryTitle(kbViewEntry.title) ? 'System entries cannot be deleted.' : undefined}
+                  disabled={isSystemKbEntry(kbViewEntry)}
+                  title={isSystemKbEntry(kbViewEntry) ? 'System entries cannot be deleted.' : undefined}
                 >
                   <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
-                  {isSystemKbEntryTitle(kbViewEntry.title) ? 'System Entry' : 'Delete Entry'}
+                  {isSystemKbEntry(kbViewEntry) ? 'System Entry' : 'Delete Entry'}
                 </Button>
               </div>
             </div>
@@ -22979,16 +22994,26 @@ export function DocumentKnowledgeManagementPage() {
               <span className="min-w-0 truncate">Rename {kbContextMenuEntry.title}</span>
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem
-              className="text-destructive"
-              onClick={() => {
-                setKbRowContextMenu(null)
-                void deleteKbEntryFromTable(kbContextMenuEntry)
-              }}
-            >
-              <Trash2 className="w-4 h-4 mr-2 shrink-0" />
-              <span className="min-w-0 truncate">Delete {kbContextMenuEntry.title}</span>
-            </ContextMenuItem>
+            {isSystemKbEntryTitle(kbContextMenuEntry.title) ? (
+              <ContextMenuItem
+                className="cursor-not-allowed text-muted-foreground opacity-70"
+                onClick={() => setKbRowContextMenu(null)}
+              >
+                <Trash2 className="w-4 h-4 mr-2 shrink-0" />
+                <span className="min-w-0 truncate">System entry</span>
+              </ContextMenuItem>
+            ) : (
+              <ContextMenuItem
+                className="text-destructive"
+                onClick={() => {
+                  setKbRowContextMenu(null)
+                  void deleteKbEntryFromTable(kbContextMenuEntry)
+                }}
+              >
+                <Trash2 className="w-4 h-4 mr-2 shrink-0" />
+                <span className="min-w-0 truncate">Delete {kbContextMenuEntry.title}</span>
+              </ContextMenuItem>
+            )}
           </>
         ) : null}
       </ContextMenu>

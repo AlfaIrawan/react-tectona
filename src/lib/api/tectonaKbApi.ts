@@ -19,6 +19,7 @@ export const KB_CATEGORIES = [
   { value: 'strategic_priorities', label: 'Strategic priorities' },
   { value: 'business_rules', label: 'Business rules' },
   { value: 'idea_intake_checklist', label: 'Idea intake checklist' },
+  { value: 'access_control', label: 'Access control (roles)' },
 ] as const
 
 export type KbCategoryValue = (typeof KB_CATEGORIES)[number]['value']
