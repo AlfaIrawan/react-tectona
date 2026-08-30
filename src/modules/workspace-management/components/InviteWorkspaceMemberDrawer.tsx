@@ -20,6 +20,7 @@ import { EnterpriseInfoCallout } from '@/components/layout/EnterpriseInfoCallout
 import { getSession } from '@/auth/authService'
 import { ManageOperationalTeamsModal } from '@/components/workspace/ManageOperationalTeamsModal'
 import { ManageParticipationScopesModal } from '@/components/workspace/ManageParticipationScopesModal'
+import { fetchEmailDeliveryStatus } from '@/lib/api/identityApi'
 import { fetchAllFolders } from '@/lib/api/folderApi'
 import { fetchAllProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
 import {
@@ -50,6 +51,11 @@ import {
   buildInviteMemberGovernancePosture,
   type InviteWorkspaceGovernanceSnapshot,
 } from '@/modules/workspace-management/lib/inviteMemberGovernancePosture'
+import {
+  inviteNotifyChannelEnabled,
+  inviteNotifyPreferenceHint,
+  type InviteNotifyKey,
+} from '@/modules/workspace-management/lib/inviteNotificationChannels'
 import {
   DIRECTORY_PICKER_LIST_ATTR,
   directoryPickerListOpen,
@@ -109,9 +115,6 @@ export type InviteWorkspaceMemberFormState = {
   notifyGovernance: boolean
   notifyDelivery: boolean
 }
-
-/** Enable when invite flow saves channel preferences (notification integration). */
-const INVITE_NOTIFICATION_PREFERENCES_ENABLED = false
 
 const DEFAULT_FORM: InviteWorkspaceMemberFormState = {
   employeeId: null,
@@ -427,6 +430,7 @@ export function InviteWorkspaceMemberDrawer({
   const [projectSearchOptions, setProjectSearchOptions] = useState<SearchableMultiSelectOption[]>([])
   const [deliveryCatalogLoading, setDeliveryCatalogLoading] = useState(false)
   const [deliveryCatalogError, setDeliveryCatalogError] = useState<string | null>(null)
+  const [smtpConfigured, setSmtpConfigured] = useState(false)
   const inviteMemberDrawerRef = useRef<HTMLDivElement>(null)
   const employeeSearchRevertRef = useRef<{ employeeId: string | null; employeeQuery: string } | null>(null)
   const employeePickerSkipBlurRef = useRef(false)
@@ -509,6 +513,30 @@ export function InviteWorkspaceMemberDrawer({
         setDeliveryCatalogError(msg)
       } finally {
         if (!cancelled) setDeliveryCatalogLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) {
+      setSmtpConfigured(false)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const status = await fetchEmailDeliveryStatus()
+        if (cancelled) return
+        const connected = status.smtpConfigured === true
+        setSmtpConfigured(connected)
+        if (connected) {
+          setForm((prev) => ({ ...prev, notifyEmail: true }))
+        }
+      } catch {
+        if (!cancelled) setSmtpConfigured(false)
       }
     })()
     return () => {
@@ -1277,13 +1305,9 @@ export function InviteWorkspaceMemberDrawer({
               <div className="space-y-2">
                 <FieldLabel>Notification preference (optional)</FieldLabel>
                 <div
-                  className={cn(
-                    'space-y-2 rounded-xl border border-border/60 bg-muted/15 px-3 py-2.5',
-                    !INVITE_NOTIFICATION_PREFERENCES_ENABLED && 'opacity-60'
-                  )}
+                  className="space-y-2 rounded-xl border border-border/60 bg-muted/15 px-3 py-2.5"
                   role="group"
                   aria-label="Notification preference"
-                  aria-disabled={!INVITE_NOTIFICATION_PREFERENCES_ENABLED}
                 >
                   {(
                     [
@@ -1291,13 +1315,15 @@ export function InviteWorkspaceMemberDrawer({
                       { key: 'notifySlackTeams' as const, label: 'Slack / Teams notification' },
                       { key: 'notifyGovernance' as const, label: 'Governance alerts' },
                       { key: 'notifyDelivery' as const, label: 'Delivery reminders' },
-                    ] as const
-                  ).map(({ key, label }) => (
+                    ] satisfies ReadonlyArray<{ key: InviteNotifyKey; label: string }>
+                  ).map(({ key, label }) => {
+                    const channelEnabled = inviteNotifyChannelEnabled(key, smtpConfigured)
+                    return (
                     <label
                       key={key}
                       className={cn(
                         'flex items-center gap-2.5 text-sm text-foreground/90',
-                        INVITE_NOTIFICATION_PREFERENCES_ENABLED ? 'cursor-pointer' : 'cursor-not-allowed'
+                        channelEnabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
                       )}
                     >
                       <input
@@ -1306,19 +1332,17 @@ export function InviteWorkspaceMemberDrawer({
                         name={`invite-notify-${key}`}
                         className="h-3.5 w-3.5 rounded border-border text-primary focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed"
                         checked={form[key]}
-                        disabled={submitting || !INVITE_NOTIFICATION_PREFERENCES_ENABLED}
+                        disabled={submitting || !channelEnabled}
                         onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.checked }))}
                       />
                       <span className="text-[13px]">{label}</span>
                     </label>
-                  ))}
+                    )
+                  })}
                 </div>
-                {!INVITE_NOTIFICATION_PREFERENCES_ENABLED ? (
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">
-                    Not available yet — notification channels will apply after your organization connects email and
-                    collaboration tools for workspace invitations.
-                  </p>
-                ) : null}
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {inviteNotifyPreferenceHint(smtpConfigured)}
+                </p>
               </div>
             </DrawerSectionCard>
 

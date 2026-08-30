@@ -153,6 +153,7 @@ import { fetchAllProjects, updateProject, TECTONA_PROJECT_APP_ID, type ProjectAp
 import { useToast } from '@/components/ui/toast'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { notifyEvent } from '@/lib/api/notificationApi'
+import { sendWorkspaceInviteEmail } from '@/lib/api/identityApi'
 import { createClientUuid } from '@/lib/createClientUuid'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { useWorkspaceManagementAuthorization } from '@/auth/useAuthorization'
@@ -18537,6 +18538,45 @@ export function WorkspaceManagementPage() {
 
               if (activatedNewUser && payload.inviteByEmail?.email) {
                 await activateIdentityUser(payload.inviteByEmail.email)
+              }
+
+              const inviteeEmail =
+                payload.employee?.email?.trim()
+                || payload.inviteByEmail?.email?.trim()
+                || ''
+              if (payload.notifyEmail && inviteeEmail) {
+                try {
+                  const accessToken = session?.token?.trim()
+                  if (!accessToken) {
+                    throw new Error('Sign in again to send the invitation email.')
+                  }
+                  const organizationName =
+                    payload.workspaceIds
+                      .map(
+                        (workspaceId) =>
+                          allWorkspacesForList.find((workspace) => workspace.id === workspaceId)
+                            ?.primaryOrganizationLabel
+                            ?.trim(),
+                      )
+                      .find((label): label is string => Boolean(label)) ?? undefined
+                  await sendWorkspaceInviteEmail({
+                    accessToken,
+                    email: inviteeEmail,
+                    memberName: memberLabel,
+                    organizationName,
+                    workspaceNames: payload.workspaceNames,
+                    role: payload.workspaceRole,
+                    invitedBy: session?.user?.name ?? '',
+                  })
+                } catch (mailError) {
+                  const mailMsg =
+                    mailError instanceof Error ? mailError.message : 'Could not send the invitation email.'
+                  addToast({
+                    variant: 'warning',
+                    title: 'Member invited, email not sent',
+                    description: mailMsg,
+                  })
+                }
               }
 
               await refreshLiveMembersPanel()

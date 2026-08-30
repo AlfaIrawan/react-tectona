@@ -536,3 +536,45 @@ export async function resendDomainOnboardingVerificationEmail(input: {
     throw new Error(parseTokenError(res.status, text))
   }
 }
+
+export async function fetchEmailDeliveryStatus(): Promise<{ smtpConfigured: boolean }> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/email-delivery`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) {
+    return { smtpConfigured: false }
+  }
+  const data = (await res.json()) as { smtp_configured?: boolean }
+  return { smtpConfigured: data.smtp_configured === true }
+}
+
+export async function sendWorkspaceInviteEmail(input: {
+  accessToken: string
+  email: string
+  memberName?: string
+  organizationName?: string
+  workspaceNames: string[]
+  role: string
+  invitedBy?: string
+}): Promise<void> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/email/workspace-invite`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${input.accessToken}`,
+    },
+    body: JSON.stringify({
+      email: normalizeLoginEmail(input.email),
+      member_name: input.memberName,
+      organization_name: input.organizationName,
+      workspace_names: input.workspaceNames,
+      role: input.role,
+      invited_by: input.invitedBy,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(parseTokenError(res.status, text) || 'Could not send the invitation email.')
+  }
+}
