@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getSession } from '@/auth/authService'
 import { useTenantContextOptional } from '@/auth/TenantContext'
-import { hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import {
   type WacMembershipDto,
@@ -20,7 +20,7 @@ import {
   writeModuleAccessSnapshot,
 } from '@/lib/moduleAccessSnapshot'
 import { type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
-import { isOrganizationHomeWorkspace, isWorkspaceOwnedBySubject } from '@/lib/workspaceOwnershipVisibility'
+import { resolveSecurityAccess } from '@/auth/securityAccessPolicy'
 
 export type ModuleId =
   | 'workspace'
@@ -91,49 +91,6 @@ function maxRoleInMemberships(
   return max
 }
 
-function hasAdminMembership(
-  memberships: WacMembershipDto[],
-  workspaceIds: ReadonlySet<string>,
-): boolean {
-  return memberships.some(
-    (membership) => workspaceIds.has(membership.workspace_id) && wacRoleCodeToUiRole(membership.role_code) === 'Admin',
-  )
-}
-
-function ownedPersonalWorkspaceRoot(
-  workspace: WorkspaceOrgWorkspaceDto,
-  workspaces: ReadonlyArray<WorkspaceOrgWorkspaceDto>,
-  subject: { id?: string; name?: string | null; email?: string | null },
-): WorkspaceOrgWorkspaceDto | null {
-  const byId = new Map(workspaces.map((item) => [item.id, item]))
-  let current: WorkspaceOrgWorkspaceDto | undefined = workspace
-  let rootPersonal: WorkspaceOrgWorkspaceDto | undefined
-
-  while (current) {
-    if (current.tenant_mode === 'personal') {
-      rootPersonal = current
-      break
-    }
-    const parentId = typeof current.metadata?.parent_workspace_id === 'string'
-      ? current.metadata.parent_workspace_id.trim()
-      : ''
-    current = parentId ? byId.get(parentId) : undefined
-  }
-
-  if (!rootPersonal) return null
-  return isWorkspaceOwnedBySubject(
-      {
-        id: rootPersonal.id,
-        metadata: rootPersonal.metadata,
-        createdBy: rootPersonal.created_by ?? null,
-        tenantMode: rootPersonal.tenant_mode ?? null,
-      },
-      subject,
-    )
-    ? rootPersonal
-    : null
-}
-
 function resolveRoleFromMemberships(
   items: WacMembershipDto[] | undefined,
   workspaceId: string | null | undefined,
@@ -145,43 +102,14 @@ function resolveRoleFromMemberships(
   return role
 }
 
-function resolveSecurityAccess(args: {
-  isPlatformAdmin: boolean
-  items: WacMembershipDto[]
-  workspaces: WorkspaceOrgWorkspaceDto[]
-  activeWorkspaceId: string | null
-  tenantMode: string | null | undefined
-  subject: { id?: string; name?: string | null; email?: string | null }
-}): boolean {
-  if (args.isPlatformAdmin) return true
-  const activeWorkspace = args.workspaces.find((workspace) => workspace.id === args.activeWorkspaceId)
-  const isNonOrganizationUser = args.tenantMode !== 'organization'
-  const organizationWorkspaceIds = new Set(
-    args.workspaces.filter((workspace) => isOrganizationHomeWorkspace(workspace)).map((workspace) => workspace.id),
-  )
-  const hasOrganizationAdmin = hasAdminMembership(args.items, organizationWorkspaceIds)
-  const personalRoot = activeWorkspace && !isOrganizationHomeWorkspace(activeWorkspace)
-    ? ownedPersonalWorkspaceRoot(activeWorkspace, args.workspaces, args.subject)
-    : null
-  const personalScopeIds = new Set(
-    [activeWorkspace?.id, personalRoot?.id].filter((id): id is string => Boolean(id)),
-  )
-  const hasPersonalAdminScope = Boolean(
-    activeWorkspace
-    && !isOrganizationHomeWorkspace(activeWorkspace)
-    && personalRoot
-    && hasAdminMembership(args.items, personalScopeIds),
-  )
-  return isNonOrganizationUser || hasOrganizationAdmin || hasPersonalAdminScope
-}
-
 /**
  * Module access policy (production-like default):
  * - Root/Administrator bypass everything (platform admin).
  * - All other modules require at least one active WAC membership (AppAccessGate already enforces this).
  * - End-user GA launcher always includes Workspace + Document (see END_USER_GA_MODULE_IDS).
  * - Workspace module stays available in multi-select scope; WM page aggregates selected workspaces.
- * - Security & Access Control is available to standalone users, organization admins,
+ * - Security & Access Control is available to standalone users, JWT Organization Admins
+ *   in an organization tenant (org home and descendants), WAC Admin on org home,
  *   and creator/admin users within their personal workspace tree.
  * - GA-pending modules hidden via tenantUiProfile.
  */
@@ -193,6 +121,10 @@ export function useModuleAccess(): ModuleAccessState {
   const isPlatformAdmin = useMemo(
     () => hasPlatformAdminAccess(sessionRoles(), session?.user.role),
     [session?.user.id, session?.user.role],
+  )
+  const isOrganizationAdmin = useMemo(
+    () => hasOrganizationAdminAccess(sessionRoles()),
+    [session?.user.id, session?.user.roles],
   )
 
   const cachedMemberships = subjectId
@@ -217,6 +149,7 @@ export function useModuleAccess(): ModuleAccessState {
     if (cachedMemberships && cachedWorkspaces) {
       return resolveSecurityAccess({
         isPlatformAdmin: false,
+        isOrganizationAdmin,
         items: cachedMemberships.items ?? [],
         workspaces: cachedWorkspaces,
         activeWorkspaceId: tenant?.workspaceId ?? null,
@@ -245,6 +178,7 @@ export function useModuleAccess(): ModuleAccessState {
       const role = resolveRoleFromMemberships(items, activeWorkspaceId)
       const securityAccess = resolveSecurityAccess({
         isPlatformAdmin: false,
+        isOrganizationAdmin,
         items,
         workspaces,
         activeWorkspaceId,
@@ -302,6 +236,7 @@ export function useModuleAccess(): ModuleAccessState {
     }
   }, [
     isPlatformAdmin,
+    isOrganizationAdmin,
     subjectId,
     activeWorkspaceId,
     tenant?.tenantMode,

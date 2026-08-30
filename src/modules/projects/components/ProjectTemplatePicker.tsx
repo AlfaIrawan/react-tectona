@@ -311,30 +311,49 @@ export function ProjectTemplatePicker({
                 <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-8">
                   {templates.length > 0 ? (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                      {templates.map((template) => (
-                        <button
-                          key={template.id}
-                          type="button"
-                          onClick={() => onSelectTemplate(template)}
-                          className="group overflow-hidden rounded-xl border border-border bg-card text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
-                        >
-                          <TemplateCardArt
-                            imageSrc={template.thumbnailImage}
-                            alt={`${template.name} template preview`}
-                          />
-                          <div className="space-y-2 p-4">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-base font-semibold text-foreground">{template.name}</h3>
-                              {template.badge ? <TemplateBadge badge={template.badge} /> : null}
+                      {templates.map((template) => {
+                        const isAvailable = template.id === 'kanban'
+                        return (
+                          <button
+                            key={template.id}
+                            type="button"
+                            disabled={!isAvailable}
+                            onClick={() => {
+                              if (!isAvailable) return
+                              onSelectTemplate(template)
+                            }}
+                            aria-disabled={!isAvailable}
+                            title={isAvailable ? undefined : 'Coming soon'}
+                            className={cn(
+                              'group overflow-hidden rounded-xl border border-border bg-card text-left shadow-sm transition-all',
+                              isAvailable
+                                ? 'hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md'
+                                : 'cursor-not-allowed opacity-50 grayscale'
+                            )}
+                          >
+                            <TemplateCardArt
+                              imageSrc={template.thumbnailImage}
+                              alt={`${template.name} template preview`}
+                            />
+                            <div className="space-y-2 p-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="text-base font-semibold text-foreground">{template.name}</h3>
+                                {template.badge ? <TemplateBadge badge={template.badge} /> : null}
+                                {isAvailable ? null : (
+                                  <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                                    Coming soon
+                                  </span>
+                                )}
+                              </div>
+                              <p className="line-clamp-2 text-sm text-muted-foreground">{template.summary}</p>
+                              <div className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
+                                <LayoutGrid className="h-3.5 w-3.5" />
+                                <span>Tectona</span>
+                              </div>
                             </div>
-                            <p className="line-clamp-2 text-sm text-muted-foreground">{template.summary}</p>
-                            <div className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
-                              <LayoutGrid className="h-3.5 w-3.5" />
-                              <span>Tectona</span>
-                            </div>
-                          </div>
-                        </button>
-                      ))}
+                          </button>
+                        )
+                      })}
                     </div>
                   ) : (
                     <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center">

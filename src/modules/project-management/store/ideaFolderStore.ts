@@ -15,6 +15,15 @@ import {
   resolveWorkspaceIdForFetch,
   resolveWorkspaceIdForWrite,
 } from '@/lib/tenantWorkspaceScope'
+import { buildDuplicateIdeaFolderName } from '../lib/ideaFolderActions'
+import { getIdeaFolderClipboard } from '../lib/ideaFolderClipboard'
+
+export interface IdeaBacklogFolderMember {
+  userId: string
+  displayName: string
+  roleCode: string
+  roleName: string
+}
 
 export interface IdeaBacklogFolder {
   id: string
@@ -23,6 +32,8 @@ export interface IdeaBacklogFolder {
   description?: string
   ownerId: string
   parentId?: string | null
+  borderColor?: string | null
+  members?: IdeaBacklogFolderMember[]
   ideaCount: number
   childrenCount: number
   createdAt: string
@@ -37,6 +48,13 @@ function mapApiToFolder(api: IdeaFolderApi): IdeaBacklogFolder {
     description: api.description ?? undefined,
     ownerId: api.owner_id,
     parentId: api.parent_id ?? undefined,
+    borderColor: api.border_color ?? undefined,
+    members: (api.members ?? []).map((member) => ({
+      userId: member.user_id,
+      displayName: member.display_name,
+      roleCode: member.role_code,
+      roleName: member.role_name,
+    })),
     ideaCount: api.idea_count,
     childrenCount: api.children_count,
     createdAt: api.created_date,
@@ -54,11 +72,14 @@ interface IdeaFolderState {
       ownerId?: string
     },
   ) => Promise<IdeaBacklogFolder>
-  updateFolder: (id: string, updates: Partial<Pick<IdeaBacklogFolder, 'name' | 'description' | 'parentId'>>) => Promise<void>
+  updateFolder: (id: string, updates: Partial<Pick<IdeaBacklogFolder, 'name' | 'description' | 'parentId' | 'borderColor'>>) => Promise<void>
   deleteFolder: (id: string) => Promise<void>
   getFolder: (id: string) => IdeaBacklogFolder | undefined
   getFoldersByParent: (parentId: string | null) => IdeaBacklogFolder[]
   isFolderNameUnique: (name: string, excludeId?: string, parentId?: string | null) => boolean
+  moveFolderToParent: (id: string, parentId: string | null) => Promise<void>
+  duplicateFolder: (id: string, targetParentId?: string | null) => Promise<IdeaBacklogFolder>
+  pasteFolderFromClipboard: (targetParentId: string | null) => Promise<IdeaBacklogFolder>
   clearLocalCache: () => void
 }
 
@@ -135,6 +156,7 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
       parent_id: folderData.parentId ?? null,
       owner_id: folderData.ownerId ?? '00000000-0000-0000-0000-000000000001',
       workspace_id,
+      border_color: folderData.borderColor ?? null,
     })
     const folder: IdeaBacklogFolder = {
       ...mapApiToFolder(created),
@@ -150,6 +172,7 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
     if (updates.name != null) payload.name = updates.name
     if (updates.description != null) payload.description = updates.description
     if (updates.parentId !== undefined) payload.parent_id = updates.parentId ?? null
+    if (updates.borderColor !== undefined) payload.border_color = updates.borderColor ?? null
     if (Object.keys(payload).length === 0) return
 
     await updateIdeaFolder(id, payload)
@@ -182,6 +205,38 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
         folder.id !== excludeId &&
         (folder.parentId ?? null) === normalizedParent,
     )
+  },
+
+  moveFolderToParent: async (id, parentId) => {
+    await get().updateFolder(id, { parentId })
+  },
+
+  duplicateFolder: async (id, targetParentId) => {
+    const source = get().getFolder(id)
+    if (!source) {
+      throw new Error('Folder not found')
+    }
+    const parentId = targetParentId !== undefined ? targetParentId : (source.parentId ?? null)
+    const uniqueName = buildDuplicateIdeaFolderName(
+      source.name,
+      parentId,
+      (name, excludeId, parent) => get().isFolderNameUnique(name, excludeId, parent),
+    )
+    return get().addFolder({
+      name: uniqueName,
+      description: source.description,
+      parentId,
+      ownerId: source.ownerId,
+      borderColor: source.borderColor,
+    })
+  },
+
+  pasteFolderFromClipboard: async (targetParentId) => {
+    const clip = getIdeaFolderClipboard()
+    if (!clip) {
+      throw new Error('No folder in clipboard')
+    }
+    return get().duplicateFolder(clip.folderId, targetParentId)
   },
 
   clearLocalCache: () => {

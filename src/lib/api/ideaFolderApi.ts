@@ -18,8 +18,15 @@ export interface IdeaFolderApi {
   description: string | null
   owner_id: string
   parent_id: string | null
+  border_color?: string | null
   idea_count: number
   children_count: number
+  members?: {
+    user_id: string
+    display_name: string
+    role_code: string
+    role_name: string
+  }[]
   created_by: string
   created_date: string
   created_from: string
@@ -108,6 +115,7 @@ export interface CreateIdeaFolderPayload {
   parent_id?: string | null
   owner_id?: string
   workspace_id?: string | null
+  border_color?: string | null
 }
 
 export async function createIdeaFolder(payload: CreateIdeaFolderPayload): Promise<IdeaFolderApi> {
@@ -120,6 +128,7 @@ export async function createIdeaFolder(payload: CreateIdeaFolderPayload): Promis
       description: payload.description ?? null,
       parent_id: payload.parent_id ?? null,
       owner_id: payload.owner_id ?? dummyOwnerId,
+      border_color: payload.border_color ?? null,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
     }),
   })
@@ -130,6 +139,7 @@ export interface UpdateIdeaFolderPayload {
   name?: string
   description?: string
   parent_id?: string | null
+  border_color?: string | null
 }
 
 export async function updateIdeaFolder(id: string, payload: UpdateIdeaFolderPayload): Promise<IdeaFolderApi> {
@@ -147,6 +157,47 @@ export async function deleteIdeaFolder(id: string): Promise<void> {
     const text = await res.text()
     throw new Error(parseApiErrorMessage(text, `HTTP ${res.status}`))
   }
+}
+
+/** Same role vocabulary as Projects folders (owner reserved, admin/member/viewer assignable). */
+export type IdeaFolderMemberRoleCode = 'admin' | 'member' | 'viewer'
+
+export interface IdeaFolderMemberPayload {
+  user_id: string
+  role_code: IdeaFolderMemberRoleCode
+}
+
+export async function addIdeaFolderMember(
+  folderId: string,
+  payload: IdeaFolderMemberPayload,
+): Promise<IdeaFolderApi> {
+  const res = await apiFetch(`${BASE_URL}/v1/folders/${folderId}/members`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders(),
+    body: JSON.stringify(payload),
+  })
+  return handleResponse<IdeaFolderApi>(res)
+}
+
+export async function removeIdeaFolderMember(folderId: string, userId: string): Promise<IdeaFolderApi> {
+  const res = await apiFetch(`${BASE_URL}/v1/folders/${folderId}/members/${userId}`, {
+    method: 'DELETE',
+    headers: tectonaServiceHeaders(),
+  })
+  return handleResponse<IdeaFolderApi>(res)
+}
+
+export async function updateIdeaFolderMemberRole(
+  folderId: string,
+  userId: string,
+  roleCode: IdeaFolderMemberRoleCode,
+): Promise<IdeaFolderApi> {
+  const res = await apiFetch(`${BASE_URL}/v1/folders/${folderId}/members/${userId}`, {
+    method: 'PATCH',
+    headers: tectonaServiceHeaders(),
+    body: JSON.stringify({ role_code: roleCode }),
+  })
+  return handleResponse<IdeaFolderApi>(res)
 }
 
 export { dummyOwnerId as IDEA_BACKLOG_FOLDER_DUMMY_OWNER_ID }
