@@ -4,6 +4,7 @@ import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
 import { buildFlowchartFallbackSvg, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
+import { renderMermaidFlowchartAsBpmnPng } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
 
 type AssistantMermaidBlockProps = {
@@ -291,6 +292,7 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
   const containerRef = useRef<HTMLDivElement>(null)
   const reactId = useId().replace(/:/g, '')
   const [svgHtml, setSvgHtml] = useState<string | null>(null)
+  const [bpmnUrl, setBpmnUrl] = useState<string | null>(null)
   const [viaFallback, setViaFallback] = useState(false)
   const [previewHeight, setPreviewHeight] = useState<number>(180)
   const [fullscreenOpen, setFullscreenOpen] = useState(false)
@@ -300,10 +302,32 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
 
   useEffect(() => {
     let cancelled = false
-    // Debounce while assistant text is still streaming incomplete fences.
+    let objectUrl: string | null = null
     const timer = window.setTimeout(() => {
       void (async () => {
         setIsRendering(true)
+        setBpmnUrl(null)
+        const looksLikeFlowchart = /\b(flowchart|graph)\s+(TD|TB|LR|RL)\b/i.test(source)
+        if (looksLikeFlowchart) {
+          try {
+            objectUrl = await renderMermaidFlowchartAsBpmnPng(source, 'id')
+            if (cancelled) {
+              URL.revokeObjectURL(objectUrl)
+              return
+            }
+            setBpmnUrl(objectUrl)
+            setSvgHtml(null)
+            setViaFallback(false)
+            setHardError(null)
+            setIsRendering(false)
+            return
+          } catch {
+            if (objectUrl) {
+              URL.revokeObjectURL(objectUrl)
+              objectUrl = null
+            }
+          }
+        }
         try {
           const result = await renderMermaidSvg(source, reactId)
           if (cancelled) return
@@ -312,7 +336,6 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           setHardError(null)
         } catch (err) {
           if (!cancelled) {
-            // Last resort: still try fallback once more on raw source.
             const fallback = buildFlowchartFallbackSvg(source)
             if (fallback) {
               setSvgHtml(fallback)
@@ -334,6 +357,12 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
       window.clearTimeout(timer)
     }
   }, [reactId, source, retryTick])
+
+  useEffect(() => {
+    return () => {
+      if (bpmnUrl) URL.revokeObjectURL(bpmnUrl)
+    }
+  }, [bpmnUrl])
 
   useEffect(() => {
     if (!svgHtml || !containerRef.current) return
@@ -358,7 +387,7 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
   }, [source])
 
   // Only if both Mermaid and SVG fallback fail (rare non-flowchart diagrams).
-  if (hardError && !svgHtml) {
+  if (hardError && !svgHtml && !bpmnUrl) {
     return (
       <div
         className={cn(
@@ -397,27 +426,56 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           className,
         )}
       >
-        {svgHtml ? (
+        {(svgHtml || bpmnUrl) ? (
           <MermaidToolbar onCopy={() => void handleCopy()} onFullscreen={() => setFullscreenOpen(true)} />
         ) : null}
-        {viaFallback && svgHtml ? (
+        {bpmnUrl ? (
+          <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
+            BPMN 2.0
+          </p>
+        ) : null}
+        {viaFallback && svgHtml && !bpmnUrl ? (
           <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-[#202c33]/90 dark:text-slate-300">
             Preview diagram
           </p>
         ) : null}
-        <div
-          ref={containerRef}
-          className={cn(
-            'overflow-x-auto overflow-y-hidden p-3 [&_svg]:mx-auto [&_svg]:block',
-            '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
-            !svgHtml && 'min-h-[120px] animate-pulse bg-slate-50/80 dark:bg-slate-900/40',
-          )}
-          style={{ height: previewHeight }}
-          aria-label="Diagram or chart"
-          aria-busy={!svgHtml}
-        />
+        {bpmnUrl ? (
+          <div className="overflow-x-auto p-3">
+            <img
+              src={bpmnUrl}
+              alt="Diagram proses bisnis BPMN"
+              className="mx-auto max-h-[min(70vh,640px)] w-auto max-w-full object-contain"
+              onLoad={(event) => {
+                const height = event.currentTarget.naturalHeight
+                const width = event.currentTarget.naturalWidth
+                const host = event.currentTarget.parentElement?.clientWidth || 480
+                const scale = width > 0 ? Math.min(1, host / width) : 1
+                setPreviewHeight(Math.max(180, Math.ceil(height * scale) + 24))
+              }}
+            />
+          </div>
+        ) : (
+          <div
+            ref={containerRef}
+            className={cn(
+              'overflow-x-auto overflow-y-hidden p-3 [&_svg]:mx-auto [&_svg]:block',
+              '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+              !svgHtml && 'min-h-[120px] animate-pulse bg-slate-50/80 dark:bg-slate-900/40',
+            )}
+            style={{ height: previewHeight }}
+            aria-label="Diagram or chart"
+            aria-busy={!svgHtml}
+          />
+        )}
       </div>
-      {fullscreenOpen && svgHtml ? (
+      {fullscreenOpen && bpmnUrl ? (
+        <MermaidFullscreenModal
+          svgHtml={`<img src="${bpmnUrl}" alt="BPMN" style="max-width:100%;height:auto;display:block;margin:0 auto" />`}
+          source={source}
+          onClose={() => setFullscreenOpen(false)}
+        />
+      ) : null}
+      {fullscreenOpen && svgHtml && !bpmnUrl ? (
         <MermaidFullscreenModal svgHtml={svgHtml} source={source} onClose={() => setFullscreenOpen(false)} />
       ) : null}
     </>

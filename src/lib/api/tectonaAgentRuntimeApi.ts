@@ -890,6 +890,17 @@ function chatContext(
 function parseRuntimeErrorBody(text: string, status: number): string {
   const trimmed = text.trim()
   if (!trimmed) return `HTTP ${status}`
+  const looksLikeGatewayHtml =
+    /gateway time-?out/i.test(trimmed) ||
+    (trimmed.includes('<html') && /504|502|503/.test(trimmed) && /nginx/i.test(trimmed))
+  if (status === 504 || looksLikeGatewayHtml) {
+    return 'Generate dokumen melewati batas waktu gateway (504). Template URD butuh beberapa menit — coba lagi, atau generate saat LLM tidak sedang antri.'
+  }
+  if (status === 502 || status === 503) {
+    if (looksLikeGatewayHtml || /bad gateway|service unavailable/i.test(trimmed)) {
+      return 'Layanan AI generate dokumen sedang tidak merespons. Coba lagi beberapa saat.'
+    }
+  }
   try {
     const body = JSON.parse(trimmed) as {
       error?: { message?: string | unknown }
@@ -914,6 +925,9 @@ function parseRuntimeErrorBody(text: string, status: number): string {
   }
   if (trimmed === 'IDEA_DRAFT_INVALID_RESPONSE') {
     return 'AI draft response was not usable. Please try Generate Draft again.'
+  }
+  if (trimmed.startsWith('<') && trimmed.includes('</')) {
+    return `HTTP ${status}: layanan AI tidak mengembalikan JSON. Coba lagi.`
   }
   return trimmed
 }
@@ -1344,7 +1358,7 @@ export interface FillDkmTemplateResponse {
 
 export async function fillDkmTemplate(
   payload: FillDkmTemplateRequest,
-  timeoutMs: number = 120_000,
+  timeoutMs: number = 420_000,
 ): Promise<FillDkmTemplateResponse> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/fill-template`,
@@ -1756,6 +1770,28 @@ export async function getIdeaExtractionJob(
     15_000,
   )
   return handleResponse<IdeaExtractionJobStatusResponse>(res)
+}
+
+export async function renderMermaidFlowchartAsBpmnPng(
+  mermaidSource: string,
+  language: 'id' | 'en' = 'id',
+): Promise<string> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/render-mermaid-bpmn`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ mermaid_source: mermaidSource, language }),
+    },
+    50_000,
+  )
+  if (!res.ok) {
+    throw new Error(`BPMN render failed (HTTP ${res.status})`)
+  }
+  const blob = await res.blob()
+  if (!blob.size || !/^image\//i.test(blob.type || 'image/png')) {
+    throw new Error('BPMN render returned an empty image')
+  }
+  return URL.createObjectURL(blob)
 }
 
 export async function brainstormIdeaDraftJob(
