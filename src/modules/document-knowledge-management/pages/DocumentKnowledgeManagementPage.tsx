@@ -389,6 +389,7 @@ import {
   findExactDuplicate,
   findKbGeneratedDocIds,
   findNameMatches,
+  pickContentCompareCandidates,
   shortlistByKeywordOverlap,
   type ExistingBrdDoc,
 } from '@/lib/kb/brdDuplicateDetection'
@@ -7600,13 +7601,34 @@ export function DocumentKnowledgeManagementPage() {
     fingerprint: string,
     pendingFile: File,
   ): Promise<{ proceed: boolean; revisionTargetId: string | null }> => {
-    let existing: { docs: ExistingBrdDoc[]; summaryById: Map<string, string>; kbContents: string[] }
+    let fetchedDocs: ExistingBrdDoc[] = []
+    let summaryById = new Map<string, string>()
+    let kbContents = kbApiItems.map((entry) => entry.content ?? '')
     try {
-      existing = await gatherExistingBrdDocs()
+      const existing = await gatherExistingBrdDocs()
+      fetchedDocs = existing.docs
+      summaryById = existing.summaryById
+      kbContents = existing.kbContents
     } catch {
-      return { proceed: true, revisionTargetId: null } // never block the upload because the duplicate scan failed
+      // Keep checking against the currently loaded repository list.
     }
-    const { docs, summaryById, kbContents } = existing
+    const fromRepository: ExistingBrdDoc[] = repositoryItems.map((item) => ({
+      id: item.id,
+      title: item.name,
+      fileName: item.fileName || item.name,
+      projectName: item.storageProjectName || item.project || '',
+      contentSha256: '',
+      structured: parseBrdStructuredName(item.fileName || item.name) ?? parseBrdStructuredName(item.name),
+    }))
+    const docsById = new Map<string, ExistingBrdDoc>()
+    for (const doc of fromRepository) docsById.set(doc.id, doc)
+    for (const doc of fetchedDocs) {
+      const prior = docsById.get(doc.id)
+      docsById.set(doc.id, prior
+        ? { ...prior, ...doc, contentSha256: doc.contentSha256 || prior.contentSha256 }
+        : doc)
+    }
+    const docs = [...docsById.values()]
 
     const exact = findExactDuplicate(fingerprint, docs)
     if (exact) {
@@ -7625,43 +7647,95 @@ export function DocumentKnowledgeManagementPage() {
     }
     const nameMatches = findNameMatches(subject, docs)
     const excludeIds = new Set(nameMatches.map((d) => d.id))
-    const shortlistText = `${fileName} ${extractText.slice(0, 1500)}`
-    const shortlist = shortlistByKeywordOverlap(shortlistText, docs, { excludeIds })
-
-    // Documents whose file name doesn't follow the "BRD_..." convention (e.g. "[DRAFT] API Spec
-    // CMS to DLB" vs "...v.2") never produce a structured-name match at all, so they depend
-    // entirely on the LLM purpose-check below — and that call is best-effort/fire-and-forget
-    // (a timeout or backend hiccup silently skips it, letting a near-identical file upload as a
-    // fully separate, undetected document). A very high keyword-overlap match is caught here
-    // deterministically, independent of the LLM call ever running or succeeding.
     const HIGH_OVERLAP_THRESHOLD = 0.5
     const highOverlapIds = new Set(
-      shortlistByKeywordOverlap(shortlistText, docs, { excludeIds, threshold: HIGH_OVERLAP_THRESHOLD }).map((d) => d.id),
+      shortlistByKeywordOverlap(fileName, docs, { excludeIds, threshold: HIGH_OVERLAP_THRESHOLD }).map((d) => d.id),
     )
-    let samePurpose: { doc: ExistingBrdDoc; reason: string }[] = shortlist
+    let samePurpose: { doc: ExistingBrdDoc; reason: string }[] = docs
       .filter((d) => highOverlapIds.has(d.id))
-      .map((d) => ({ doc: d, reason: 'Very similar file name/content keywords' }))
+      .map((d) => ({ doc: d, reason: 'Very similar file name' }))
 
-    const remainingShortlist = shortlist.filter((d) => !highOverlapIds.has(d.id))
-    if (remainingShortlist.length > 0) {
+    const uploadFolderId = repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId
+    const preferredIds = new Set(
+      repositoryItems
+        .filter((item) => (item.folderId ?? null) === (uploadFolderId ?? null))
+        .map((item) => item.id),
+    )
+    const llmCandidates = pickContentCompareCandidates(docs, {
+      preferredIds,
+      limit: 8,
+    })
+
+    const excerptFromSnapshot = (snapshot: {
+      summary?: string | null
+      attachment_text?: string | null
+      content?: string | null
+    }) =>
+      [snapshot.summary, snapshot.attachment_text, snapshot.content]
+        .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+        .join('\n')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 3500)
+
+    if (llmCandidates.length > 0 && extractText.trim()) {
       try {
+        const excerpts = await Promise.all(
+          llmCandidates.map(async (doc) => {
+            try {
+              const snapshot = await getDocumentIndexSnapshot(doc.id)
+              const excerpt = excerptFromSnapshot(snapshot)
+              return [doc.id, excerpt || summaryById.get(doc.id) || doc.title] as const
+            } catch {
+              return [doc.id, summaryById.get(doc.id) || doc.title] as const
+            }
+          }),
+        )
+        const excerptById = new Map(excerpts)
         const resp = await compareBrdPurpose({
-          subject: { id: '__new__', title: fileName, purpose: extractText.slice(0, 2000) },
-          candidates: remainingShortlist.map((d) => ({ id: d.id, title: d.title, summary: summaryById.get(d.id) ?? '' })),
+          subject: {
+            id: '__new__',
+            title: fileName,
+            purpose: extractText.slice(0, 4000),
+            summary: extractText.slice(0, 1500),
+          },
+          candidates: llmCandidates.map((doc) => ({
+            id: doc.id,
+            title: doc.title,
+            summary: excerptById.get(doc.id) || doc.title,
+            purpose: excerptById.get(doc.id) || doc.title,
+          })),
         })
         const byId = new Map(resp.matches.map((m) => [m.id, m]))
         samePurpose = [
           ...samePurpose,
-          ...remainingShortlist
-            .filter((d) => { const m = byId.get(d.id); return Boolean(m?.same_purpose) && (m?.confidence ?? 0) >= 0.55 })
-            .map((d) => ({ doc: d, reason: byId.get(d.id)?.reason ?? '' })),
+          ...llmCandidates
+            .filter((d) => {
+              const m = byId.get(d.id)
+              return Boolean(m?.same_purpose) && (m?.confidence ?? 0) >= 0.55
+            })
+            .map((d) => ({
+              doc: d,
+              reason: byId.get(d.id)?.reason?.trim() || 'Agent judged these documents cover the same requirements.',
+            })),
         ]
-      } catch {
-        /* semantic check is best-effort */
+      } catch (error) {
+        addToast({
+          title: 'Content duplicate check incomplete',
+          description: error instanceof Error
+            ? error.message
+            : 'The agent could not compare requirements in this file with existing documents.',
+          variant: 'error',
+        })
       }
     }
 
     if (nameMatches.length === 0 && samePurpose.length === 0) return { proceed: true, revisionTargetId: null }
+
+    const nameMatchIds = new Set(nameMatches.map((d) => d.id))
+    const agentReasonById = new Map(samePurpose.map((entry) => [entry.doc.id, entry.reason]))
+    samePurpose = samePurpose.filter((entry) => !nameMatchIds.has(entry.doc.id))
 
     const kbGen = findKbGeneratedDocIds(
       [...nameMatches.map((d) => d.id), ...samePurpose.map((s) => s.doc.id)],
@@ -7673,7 +7747,13 @@ export function DocumentKnowledgeManagementPage() {
         fileName,
         pendingFile,
         revisionTargetId,
-        nameMatches: nameMatches.map((d) => ({ id: d.id, title: d.title, projectName: d.projectName, kbGenerated: kbGen.has(d.id) })),
+        nameMatches: nameMatches.map((d) => ({
+          id: d.id,
+          title: d.title,
+          projectName: d.projectName,
+          kbGenerated: kbGen.has(d.id),
+          reason: agentReasonById.get(d.id),
+        })),
         samePurpose: samePurpose.map((s) => ({ id: s.doc.id, title: s.doc.title, projectName: s.doc.projectName, kbGenerated: kbGen.has(s.doc.id), reason: s.reason })),
         resolve: (action) => {
           setRepositoryDuplicatePrompt(null)
@@ -7681,7 +7761,7 @@ export function DocumentKnowledgeManagementPage() {
         },
       })
     })
-  }, [addToast, gatherExistingBrdDocs])
+  }, [addToast, gatherExistingBrdDocs, kbApiItems, repositoryCurrentFolderId, repositoryItems])
 
   const processRepositoryUploadFile = useCallback(async (file: File, explicitWorkspaceId?: string | null) => {
     const uploadWorkspaceId = explicitWorkspaceId !== undefined ? explicitWorkspaceId : (activeWorkspaceApiId ?? null)
@@ -20588,7 +20668,7 @@ export function DocumentKnowledgeManagementPage() {
                         Possible duplicate document
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        This file looks similar to documents already in the repository. What would you like to do?
+                        File name and an agent content check (requirements/purpose) found similar documents. What would you like to do?
                       </p>
                     </div>
                   </div>
@@ -20610,6 +20690,7 @@ export function DocumentKnowledgeManagementPage() {
                               <div>
                                 <span className="font-medium text-foreground">{m.title}</span>
                                 {m.projectName ? ` · ${m.projectName}` : ''} · KB: {m.kbGenerated ? 'already generated' : 'not generated yet'}
+                                {m.reason ? <div className="mt-1 text-xs text-muted-foreground/80">{m.reason}</div> : null}
                               </div>
                               <Button
                                 type="button"
@@ -20630,7 +20711,7 @@ export function DocumentKnowledgeManagementPage() {
 
                   {repositoryDuplicatePrompt.samePurpose.length > 0 ? (
                     <div>
-                      <div className="font-medium text-foreground">Similar purpose/content</div>
+                      <div className="font-medium text-foreground">Similar requirements / content (agent)</div>
                       <ul className="mt-2 space-y-2">
                         {repositoryDuplicatePrompt.samePurpose.map((m) => (
                           <li key={m.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
@@ -20658,8 +20739,7 @@ export function DocumentKnowledgeManagementPage() {
                   ) : null}
 
                   <p className="text-xs text-muted-foreground">
-                    Guardrail: identical file content is always blocked. Save as new version attaches this file to the
-                    matched document as its next revision. Use Compare to review differences first.
+                    Identical file content is always blocked. An agent also compares extracted requirements with documents in the same folder, then the wider repository. Save as new version attaches this file to the matched document as its next revision.
                   </p>
                 </div>
 

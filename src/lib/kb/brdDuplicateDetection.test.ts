@@ -7,6 +7,7 @@ import {
   findNameMatches,
   normalizeForFingerprint,
   shortlistByKeywordOverlap,
+  pickContentCompareCandidates,
   type ExistingBrdDoc,
 } from './brdDuplicateDetection'
 
@@ -106,6 +107,14 @@ describe('BRD duplicate detection', () => {
     expect(generated.has('doc-999')).toBe(false)
   })
 
+  it('matches informal draft filenames that only differ by a version suffix', () => {
+    const subject = makeDoc({ id: 'new', fileName: '[DRAFT] API Spec CMS to DLB v.2.docx' })
+    const existing = [
+      makeDoc({ id: 'v1', fileName: '[DRAFT] API Spec CMS to DLB.docx', title: '[DRAFT] API Spec CMS to DLB' }),
+    ]
+    expect(findNameMatches(subject, existing).map((item) => item.id)).toEqual(['v1'])
+  })
+
   it('shortlists a near-identical non-BRD-named title at a high-overlap threshold', () => {
     // Regression: parseBrdStructuredName requires a "BRD_" filename prefix, so titles like
     // "[DRAFT] API Spec CMS to DLB" vs "...v.2" never produce a structured-name match at all and
@@ -131,5 +140,18 @@ describe('BRD duplicate detection', () => {
     expect(shortlist.map((d) => d.id)).toContain('close')
     expect(shortlist.map((d) => d.id)).not.toContain('far')
     expect(shortlist.map((d) => d.id)).not.toContain('dup') // excluded
+  })
+
+  it('prefers same-folder documents for LLM content compare', () => {
+    const existing = [
+      makeDoc({ id: 'other', fileName: 'Payroll.docx' }),
+      makeDoc({ id: 'folder-a', fileName: 'API Spec.docx' }),
+      makeDoc({ id: 'folder-b', fileName: 'CMS Integration.docx' }),
+    ]
+    const picked = pickContentCompareCandidates(existing, {
+      preferredIds: new Set(['folder-b', 'folder-a']),
+      limit: 2,
+    })
+    expect(picked.map((doc) => doc.id)).toEqual(['folder-a', 'folder-b'])
   })
 })

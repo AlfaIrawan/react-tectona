@@ -120,15 +120,53 @@ function sameFamily(a: ExistingBrdDoc['structured'], b: ExistingBrdDoc['structur
     && nearlyEqualSegment(mod, (b.moduleOrFeatureName || '').trim().toLowerCase())
 }
 
+/** Prefer same-folder (or otherwise preferred) docs for LLM content/requirement compare. */
+export function pickContentCompareCandidates(
+  existing: ExistingBrdDoc[],
+  options: { excludeIds?: Set<string>; preferredIds?: Set<string>; limit?: number } = {},
+): ExistingBrdDoc[] {
+  const excludeIds = options.excludeIds ?? new Set<string>()
+  const preferredIds = options.preferredIds ?? new Set<string>()
+  const limit = options.limit ?? 8
+  const eligible = existing.filter((doc) => !excludeIds.has(doc.id))
+  const preferred = eligible.filter((doc) => preferredIds.has(doc.id))
+  const rest = eligible.filter((doc) => !preferredIds.has(doc.id))
+  return [...preferred, ...rest].slice(0, Math.max(0, limit))
+}
+
 /** Find an existing doc with identical content fingerprint. */
 export function findExactDuplicate(fingerprint: string, existing: ExistingBrdDoc[]): ExistingBrdDoc | null {
   if (!fingerprint) return null
   return existing.find((doc) => doc.contentSha256 && doc.contentSha256 === fingerprint) ?? null
 }
 
-/** Find existing docs of the same BRD family (project+module) by structured file name. */
+/** Strip draft tags, version suffixes, and punctuation so informal names can be compared. */
+export function informalDocumentFamilyKey(name: string): string {
+  return (name || '')
+    .replace(/\.[^/.]+$/, '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(?:v(?:ersion)?\.?\s*|rev(?:ision)?\.?\s*)\d+(?:\.\d+)*\b/gi, ' ')
+    .replace(/[_\-]+v\d+(?:\.\d+)*/gi, ' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function sameInformalFamily(a: ExistingBrdDoc, b: ExistingBrdDoc): boolean {
+  const left = informalDocumentFamilyKey(a.fileName || a.title)
+  const right = informalDocumentFamilyKey(b.fileName || b.title)
+  if (left.length < 8 || right.length < 8) return false
+  return nearlyEqualSegment(left, right)
+}
+
+/** Same BRD family (structured name) or the same informal title with version/draft stripped. */
 export function findNameMatches(subject: ExistingBrdDoc, existing: ExistingBrdDoc[]): ExistingBrdDoc[] {
-  return existing.filter((doc) => doc.id !== subject.id && sameFamily(subject.structured, doc.structured))
+  return existing.filter((doc) => {
+    if (doc.id === subject.id) return false
+    return sameFamily(subject.structured, doc.structured) || sameInformalFamily(subject, doc)
+  })
 }
 
 /** A KB entry was generated for a document if its content embeds the document id (source footer). */
@@ -177,7 +215,10 @@ export function shortlistByKeywordOverlap(
     .filter((doc) => !excludeIds.has(doc.id))
     .map((doc) => ({
       doc,
-      score: jaccard(subjectTokens, tokenize(`${doc.title} ${doc.structured?.projectOrInitiativeName ?? ''} ${doc.structured?.moduleOrFeatureName ?? ''}`)),
+      score: jaccard(
+        subjectTokens,
+        tokenize(`${doc.title} ${doc.fileName} ${doc.structured?.projectOrInitiativeName ?? ''} ${doc.structured?.moduleOrFeatureName ?? ''}`),
+      ),
     }))
     .filter((entry) => entry.score >= threshold)
     .sort((a, b) => b.score - a.score)
