@@ -15,7 +15,7 @@ import {
 } from '@/lib/api/tectonaAgentRuntimeApi'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
-import { serviceApiBase } from './gatewayBase'
+import { serviceApiBase, tectonaAgentRuntimeApiBase } from './gatewayBase'
 
 const BASE_URL = serviceApiBase('/api/idea-backlog', import.meta.env.VITE_IDEA_BACKLOG_API_URL)
 
@@ -538,6 +538,27 @@ export async function listIdeas(params?: {
   return handleResponse<IdeaListApi>(res)
 }
 
+const IDEA_LIST_MAX_PAGE_SIZE = 200
+
+export async function fetchAllIdeas(
+  params?: Omit<NonNullable<Parameters<typeof listIdeas>[0]>, 'page' | 'page_size'>,
+): Promise<IdeaApi[]> {
+  const page_size = IDEA_LIST_MAX_PAGE_SIZE
+  const all: IdeaApi[] = []
+  let page = 1
+  let total = Number.POSITIVE_INFINITY
+
+  while (all.length < total) {
+    const res = await listIdeas({ ...params, page, page_size })
+    all.push(...res.items)
+    total = res.total
+    if (res.items.length < page_size) break
+    page += 1
+  }
+
+  return all
+}
+
 export async function createIdea(body: {
   title: string
   description?: string
@@ -696,9 +717,9 @@ export async function generateIdeaDescriptionWithAI(
   existingDescription?: string,
   workspace_id?: string
 ): Promise<IdeaAiAssistanceResult> {
-  const agentBase = serviceApiBase(
-    '/api/tectona-agent-runtime',
-    import.meta.env.VITE_TECTONA_AGENT_API_URL ?? import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL,
+  const agentBase = tectonaAgentRuntimeApiBase(
+    (import.meta.env.VITE_TECTONA_AGENT_API_URL as string | undefined)
+      ?? (import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL as string | undefined),
   )
 
   const prompt = buildIdeaAssistancePrompt(mode, title, existingDescription)

@@ -122,7 +122,7 @@ import {
 } from '@/components/enterprise/enterpriseFilterPanelClasses'
 import {
   deleteIdea,
-  listIdeas,
+  fetchAllIdeas,
   createIdea as apiCreateIdea,
   patchIdea,
   getIdeaById,
@@ -165,6 +165,10 @@ const BRAINSTORM_GAP_LABELS: Record<string, string> = {
   'diagram validation': 'Business process diagram validation',
   to_be: 'Expected TO-BE process',
   as_is: 'Current AS-IS business process',
+  discovery_business_value: 'Business Value scoring evidence',
+  discovery_roi: 'ROI scoring evidence',
+  discovery_effort: 'Effort scoring evidence',
+  discovery_risk: 'Risk scoring evidence',
 }
 
 function normalizeBrainstormGapKey(gap: string): string {
@@ -2289,6 +2293,26 @@ export function IdeaBacklogManagementPage() {
     ideas: ideasInCurrentFolder.length,
   }), [filteredFolders.length, ideasInCurrentFolder.length])
 
+  const foldersWithVisibleCounts = useMemo(() => {
+    const ideaCountByFolder = new Map<string, number>()
+    for (const idea of ideas) {
+      const folderId = idea.folderId
+      if (!folderId) continue
+      ideaCountByFolder.set(folderId, (ideaCountByFolder.get(folderId) ?? 0) + 1)
+    }
+    const childCountByFolder = new Map<string, number>()
+    for (const folder of folders) {
+      const parentId = folder.parentId
+      if (!parentId) continue
+      childCountByFolder.set(parentId, (childCountByFolder.get(parentId) ?? 0) + 1)
+    }
+    return filteredFolders.map((folder) => ({
+      ...folder,
+      ideaCount: (isLoading || loadError) ? folder.ideaCount : (ideaCountByFolder.get(folder.id) ?? 0),
+      childrenCount: childCountByFolder.get(folder.id) ?? 0,
+    }))
+  }, [filteredFolders, ideas, folders, isLoading, loadError])
+
   const contentTotalForLabel = contentCounts.folders + contentCounts.ideas
 
   useEffect(() => {
@@ -2608,25 +2632,25 @@ export function IdeaBacklogManagementPage() {
     setSelectedIdeaIds(new Set())
 
     const workspaceApiId = resolveWorkspaceApiId(tenant?.workspaceId)
-    const listParams: Parameters<typeof listIdeas>[0] = { page_size: 200 }
+    const listParams: Parameters<typeof fetchAllIdeas>[0] = {}
     if (workspaceApiId) {
       listParams.workspace_id = workspaceApiId
     }
 
     Promise.all([
-      listIdeas(listParams),
+      fetchAllIdeas(listParams),
       fetchIdentityUsers({ limit: 500, offset: 0 }).catch(() => null),
       fetchAllProjects({
         app_id: TECTONA_PROJECT_APP_ID,
         workspace_id: workspaceApiId,
       }).catch(() => []),
     ])
-      .then(async ([res, usersRes, projects]) => {
+      .then(async ([ideaItems, usersRes, projects]) => {
         if (cancelled) return
         const namesByProjectId = Object.fromEntries(projects.map((project) => [project.id, project.name]))
         const linkedProjectIds = [
           ...new Set(
-            res.items
+            ideaItems
               .map((item) => item.project_id?.trim())
               .filter((id): id is string => Boolean(id)),
           ),
@@ -2662,7 +2686,7 @@ export function IdeaBacklogManagementPage() {
         // Always enforce active workspace scope client-side (covers "All workspaces"
         // + accessible-ID filtering, and legacy rows without workspace_id).
         const scope = readActiveWorkspaceScope()
-        const mapped = res.items
+        const mapped = ideaItems
           .map((api) => fromApiIdea(api, namesByProjectId))
           .filter((idea) => belongsToActiveWorkspaceScope(idea.workspace, scope))
         setIdeas(mapped)
@@ -4554,7 +4578,7 @@ export function IdeaBacklogManagementPage() {
         <div className="space-y-8">
         {showFoldersSection && (
           <IdeaBacklogFoldersSection
-            folders={filteredFolders}
+            folders={foldersWithVisibleCounts}
             sortOrder={folderSortOrder}
             onSortOrderChange={setFolderSortOrder}
             onOpenFolder={handleOpenFolder}

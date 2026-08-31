@@ -5,6 +5,7 @@
 
 import { getSession } from '@/auth/authService'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
+import { tectonaAgentRuntimeApiBase } from './gatewayBase'
 import type { LlmUsagePayload } from '@/lib/tokenTelemetry'
 
 /** Default workspace slug for sidebar Gen AI sessions until workspace context is wired from shell. */
@@ -17,10 +18,7 @@ const SIDEBAR_CHAT_TIMEOUT_MS = 180_000
 const GENAI_SESSION_FETCH_TIMEOUT_MS = 5000
 
 /** Same-origin nginx → agent runtime :8414. Do not fall back to gateway-runtime (500/401 on chat). */
-const BASE_URL = (
-  (import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL as string | undefined)?.trim()
-  || '/api/tectona-agent-runtime'
-).replace(/\/$/, '')
+const BASE_URL = tectonaAgentRuntimeApiBase()
 
 export interface RuntimeSummaryScoring {
   businessValue: number

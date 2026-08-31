@@ -47,7 +47,7 @@ export async function initPwa(): Promise<void> {
     return
   }
 
-  registerSW({
+  const updateSW = registerSW({
     immediate: true,
     onOfflineReady() {
       if (sessionStorage.getItem(OFFLINE_READY_TOAST_KEY) === '1') return
@@ -61,9 +61,13 @@ export async function initPwa(): Promise<void> {
     },
     onRegistered(registration) {
       if (!registration) return
+      void registration.update()
       window.setInterval(() => {
         void registration.update()
       }, 60 * 60 * 1000)
+    },
+    onNeedRefresh() {
+      void updateSW(true)
     },
   })
 }

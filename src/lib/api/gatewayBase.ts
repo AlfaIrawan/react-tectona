@@ -18,3 +18,14 @@ export function serviceApiBase(servicePrefix: string, envOverride?: string): str
   const prefix = servicePrefix.startsWith('/') ? servicePrefix : `/${servicePrefix}`
   return `${GATEWAY_RUNTIME_BASE}${prefix}`
 }
+
+/**
+ * Agent runtime (8414). Default is the nginx same-origin prefix — never gateway-runtime.
+ * Chat via `/api/gateway-runtime/api/tectona-agent-runtime/...` returns 500 on tectona-dev.
+ */
+export function tectonaAgentRuntimeApiBase(envOverride?: string): string {
+  const fromArg = envOverride?.trim()
+  const fromRuntime = (import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL as string | undefined)?.trim()
+  const fromLegacy = (import.meta.env.VITE_TECTONA_AGENT_API_URL as string | undefined)?.trim()
+  return (fromArg || fromRuntime || fromLegacy || '/api/tectona-agent-runtime').replace(/\/$/, '')
+}

@@ -4,7 +4,7 @@
 
 import { getClientEnvironmentHintsAsync } from '@/lib/clientEnvironment'
 import { FetchTimeoutError, fetchWithTimeout } from '@/lib/fetchWithTimeout'
-import { IDENTITY_API_BASE, TECTONA_OIDC_CLIENT_ID, serviceApiBase } from './gatewayBase'
+import { IDENTITY_API_BASE, TECTONA_OIDC_CLIENT_ID, tectonaAgentRuntimeApiBase } from './gatewayBase'
 import { formatAuthErrorMessage } from '@/lib/authErrorMessages'
 import { SessionConflictError, SessionRevokedError } from '@/lib/sessionConflict'
 import type { TokenTelemetryEvent } from '@/lib/tokenTelemetry'
@@ -48,9 +48,8 @@ export interface SsoBootstrapTokenResponse {
 }
 
 export async function fetchTokenAudit(accessToken: string, limit = 80, userId?: string): Promise<TokenTelemetryEvent[]> {
-  const runtimeBase = serviceApiBase(
-    '/api/tectona-agent-runtime',
-    import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL,
+  const runtimeBase = tectonaAgentRuntimeApiBase(
+    import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL as string | undefined,
   )
   const res = await identityFetch(
     `${runtimeBase}/v1/agent/llm-usage?limit=${encodeURIComponent(String(limit))}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`,

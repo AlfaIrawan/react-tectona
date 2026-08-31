@@ -83,6 +83,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        cacheId: 'tectona-direct-agent-runtime',
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2,json,webmanifest,png,webp}'],
