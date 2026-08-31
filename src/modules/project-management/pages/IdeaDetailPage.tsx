@@ -507,10 +507,88 @@ function summaryFromPersistentRecord(record: IdeaSummaryPersistent): RuntimeSumm
   return generatedAt ? { ...summary, generated_at: generatedAt } : summary
 }
 
+function hasNumericIntakeScoring(idea: Idea): boolean {
+  const { businessValue, effort, risk, roi } = idea.scoring
+  return businessValue > 0 || effort > 0 || risk > 0 || roi > 0
+}
+
+function displaySummaryOverallScore(raw: string | undefined, idea: Idea): string {
+  const value = (raw ?? '').trim()
+  if (!hasNumericIntakeScoring(idea) && (value === '' || value === '44' || value === '44.0')) {
+    return '—'
+  }
+  return value || '—'
+}
+
+function displaySummaryPriority(raw: string | undefined, idea: Idea): string {
+  const value = (raw ?? '').trim()
+  if (
+    !hasNumericIntakeScoring(idea) &&
+    ['High Priority', 'Medium Priority', 'Low Priority', 'High', 'Medium', 'Low'].includes(value)
+  ) {
+    return 'Pending scoring'
+  }
+  return value || '—'
+}
+
+function displaySummaryDecisionBias(raw: string | undefined, idea: Idea): string {
+  const value = (raw ?? '').trim()
+  if (!hasNumericIntakeScoring(idea) && ['Accelerate', 'Balance', 'Caution'].includes(value)) {
+    return 'Awaiting scores'
+  }
+  return value || '—'
+}
+
+function displaySummaryKpiCard<T extends { label: string; value: string; detail: string }>(card: T, idea: Idea): T {
+  if (hasNumericIntakeScoring(idea)) return card
+  const label = card.label.toLowerCase()
+  const value = card.value.trim()
+  if (label.includes('composite') && (value === '44' || value === '44.0')) {
+    return {
+      ...card,
+      value: 'Pending',
+      detail: 'Composite is not calculated from empty BV/ROI/Effort/Risk scores.',
+    }
+  }
+  if (label.includes('sla') && ['-35%', '-25%', '-15%', '-10%'].includes(value)) {
+    return {
+      ...card,
+      value: 'Pending',
+      detail: 'SLA target is not derived from 0/10 scores.',
+    }
+  }
+  if (label.includes('priority') && ['high', 'medium', 'low', 'watch'].includes(value.toLowerCase())) {
+    return {
+      ...card,
+      value: 'Pending',
+      detail: 'Priority band waits for backlog score dimensions.',
+    }
+  }
+  return card
+}
+
+function weightedIntakeScore(idea: Idea): number | null {
+  if (!hasNumericIntakeScoring(idea)) return null
+  const { businessValue, effort, risk, roi } = idea.scoring
+  return businessValue * 3 + roi * 3 + (11 - effort) * 2 + (11 - risk) * 2
+}
+
 function buildIdeaSummaryFallback(idea: Idea): RuntimeSummaryResponse {
-  const totalScore = idea.scoring.businessValue * 3 + idea.scoring.roi * 3 + (11 - idea.scoring.effort) * 2 + (11 - idea.scoring.risk) * 2
-  const priority = totalScore >= 80 ? 'High Priority' : totalScore >= 60 ? 'Medium Priority' : 'Low Priority'
-  const decisionBias = totalScore >= 80 ? 'Accelerate' : totalScore >= 60 ? 'Shape First' : 'Refine First'
+  const totalScore = weightedIntakeScore(idea)
+  const priority = totalScore == null
+    ? 'Pending scoring'
+    : totalScore >= 80
+      ? 'High Priority'
+      : totalScore >= 60
+        ? 'Medium Priority'
+        : 'Low Priority'
+  const decisionBias = totalScore == null
+    ? 'Awaiting scores'
+    : totalScore >= 80
+      ? 'Accelerate'
+      : totalScore >= 60
+        ? 'Shape First'
+        : 'Refine First'
   const executionPosture = idea.scoring.effort <= 5 && idea.scoring.risk <= 5 ? 'Ready' : idea.scoring.effort <= 7 && idea.scoring.risk <= 7 ? 'Controlled' : 'Caution'
   const workspaceLabel = idea.workspace?.trim() || 'Cross-functional'
   const tagsLabel = idea.tags.length > 0 ? idea.tags.slice(0, 3).join(', ') : 'Priority initiative'
@@ -522,9 +600,11 @@ function buildIdeaSummaryFallback(idea: Idea): RuntimeSummaryResponse {
     strategic_response: 'Run structured backlog shaping, validate key dependencies, then continue to BRD elaboration so business narrative, execution controls, and implementation readiness stay aligned.',
     value_thesis: `Expected value comes from improving business value ${idea.scoring.businessValue}/10 and ROI ${idea.scoring.roi}/10, while keeping effort ${idea.scoring.effort}/10 and risk ${idea.scoring.risk}/10 manageable.`,
     decision_signal: {
-      overall_score: String(totalScore),
+      overall_score: totalScore == null ? '' : String(totalScore),
       decision_bias: decisionBias,
-      decision_bias_detail: 'This local fallback is generated directly from the active idea attributes and intake scores.',
+      decision_bias_detail: totalScore == null
+        ? 'Intake scores are still empty, so no composite overall score is calculated.'
+        : 'This local fallback is generated directly from the active idea attributes and intake scores.',
       priority,
     },
     board_note: `The local fallback summary indicates this proposal is currently in ${idea.status} status and still needs the AI runtime for richer evidence-first analysis.`,
@@ -566,7 +646,7 @@ function buildIdeaSummaryFallback(idea: Idea): RuntimeSummaryResponse {
     ],
     governance_readiness: {
       title: 'Signals supporting next-stage approval',
-      badge: totalScore >= 60 ? 'Reviewable' : 'Needs Refinement',
+      badge: totalScore != null && totalScore >= 60 ? 'Reviewable' : 'Needs Refinement',
     },
     readiness_signals: [
       {
@@ -5034,10 +5114,7 @@ export function IdeaDetailPage() {
       })
     : null
 
-  const totalScore = useMemo(() => {
-    const { businessValue, effort, risk, roi } = idea.scoring
-    return businessValue * 3 + roi * 3 + (11 - effort) * 2 + (11 - risk) * 2
-  }, [idea])
+  const totalScore = useMemo(() => weightedIntakeScore(idea) ?? 0, [idea])
 
   const priorityLabel = useMemo(() => {
     if (totalScore >= 80) return 'High Priority'
@@ -10579,9 +10656,11 @@ export function IdeaDetailPage() {
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 border-t border-white/45 bg-white/20 px-6 py-5 backdrop-blur-xl sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
-                      {summaryKpiCards.slice(0, 4).map((card, index) => (
+                      {summaryKpiCards.slice(0, 4).map((card, index) => {
+                        const shown = displaySummaryKpiCard(card, idea)
+                        return (
                         <div key={`${card.label}-${index}`} className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'p-4')}>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{card.label}</p>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{shown.label}</p>
                           {isSummaryRefreshing ? (
                             <div className="mt-2 space-y-2 animate-pulse">
                               <div className="h-7 w-2/3 rounded-md bg-slate-200" />
@@ -10589,15 +10668,16 @@ export function IdeaDetailPage() {
                             </div>
                           ) : (
                             <>
-                              <p className="mt-2 text-2xl font-semibold text-slate-950">{card.value}</p>
-                              <p className="mt-1 text-xs leading-5 text-slate-500">{card.detail}</p>
-                              {card.reason && (
-                                <p className="mt-2 border-t border-slate-200/70 pt-2 text-[11px] leading-4 text-slate-400 italic">{card.reason}</p>
+                              <p className="mt-2 text-2xl font-semibold text-slate-950">{shown.value}</p>
+                              <p className="mt-1 text-xs leading-5 text-slate-500">{shown.detail}</p>
+                              {shown.reason && (
+                                <p className="mt-2 border-t border-slate-200/70 pt-2 text-[11px] leading-4 text-slate-400 italic">{shown.reason}</p>
                               )}
                             </>
                           )}
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </CardContent>
                 </Card>
@@ -10615,7 +10695,7 @@ export function IdeaDetailPage() {
                           {isSummaryRefreshing ? (
                             <div className="mt-1 h-4 w-20 rounded-md bg-emerald-100 animate-pulse" />
                           ) : (
-                            <p className="text-sm font-semibold text-emerald-800">{summaryDecisionSignal.priority}</p>
+                            <p className="text-sm font-semibold text-emerald-800">{displaySummaryPriority(summaryDecisionSignal.priority, idea)}</p>
                           )}
                         </div>
                       </div>
@@ -10631,7 +10711,9 @@ export function IdeaDetailPage() {
                             </div>
                           ) : (
                             <>
-                              <p className="mt-2 text-3xl font-semibold leading-none text-slate-950">{summaryDecisionSignal.overall_score}</p>
+                              <p className="mt-2 text-3xl font-semibold leading-none text-slate-950">
+                                {displaySummaryOverallScore(summaryDecisionSignal.overall_score, idea)}
+                              </p>
                               <p className="mt-2 text-xs text-slate-500">Composite signal from value, ROI, effort, and execution risk.</p>
                             </>
                           )}
@@ -10646,8 +10728,12 @@ export function IdeaDetailPage() {
                             </div>
                           ) : (
                             <>
-                              <p className="mt-2 text-lg font-semibold text-slate-950">{summaryDecisionSignal.decision_bias}</p>
-                              <p className="mt-2 text-xs text-slate-500">{summaryDecisionSignal.decision_bias_detail}</p>
+                              <p className="mt-2 text-lg font-semibold text-slate-950">{displaySummaryDecisionBias(summaryDecisionSignal.decision_bias, idea)}</p>
+                              <p className="mt-2 text-xs text-slate-500">
+                                {hasNumericIntakeScoring(idea)
+                                  ? summaryDecisionSignal.decision_bias_detail
+                                  : 'BV, ROI, Effort, and Risk are still 0, so the composite score is not calculated.'}
+                              </p>
                             </>
                           )}
                         </div>
