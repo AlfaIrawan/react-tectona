@@ -463,7 +463,11 @@ import { TemplateAgentSchemaPanel } from '@/modules/document-knowledge-managemen
 import { buildTemplateInstantiateNamingPlan, buildTemplateUploadNamingPlan } from '@/modules/document-knowledge-management/lib/templateInstantiateNaming'
 import {
   belongsToDkmTemplateScope,
+  collectWorkspaceShareSearchLabels,
+  expandShareSelectionWithChildren,
+  listTemplateShareWorkspaceOptions,
   resolveTemplateWorkspaceId,
+  type TemplateShareDirectoryWorkspace,
   type TemplateWorkspaceCandidate,
 } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
 import { gatherExistingTemplateDocs, pickTemplateRevisionTargetId, resolveNextTemplateVersionLabelForFamily, formatTemplateVersionForDisplay, resolveTemplateVersionLabelFromResponse, type TemplateUploadDuplicateVerdict } from '@/modules/document-knowledge-management/lib/templateDuplicateDetection'
@@ -8111,7 +8115,15 @@ export function DocumentKnowledgeManagementPage() {
     setTemplateError(null)
     try {
       const scope = dkmWorkspaceScope
-      const workspaceCandidates = resolveTemplateWorkspaceCandidates()
+      const fromDirectory: TemplateWorkspaceCandidate[] = kbWorkspaceOptions.map((workspace) => ({
+        id: workspace.id,
+        name: formatKbWorkspaceLabel(workspace.id, kbWorkspaceOptions) || workspace.name,
+        organizationId: workspace.organization_id,
+        tenantMode: workspace.tenant_mode ?? null,
+      }))
+      const workspaceCandidates = fromDirectory.length > 0
+        ? fromDirectory
+        : resolveTemplateWorkspaceCandidates()
       let items = await listTemplates()
       if (!Array.isArray(items)) items = []
       const scoped = items.filter((item) => belongsToDkmTemplateScope(item, scope, workspaceCandidates))
@@ -8122,7 +8134,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setTemplateLoading(false)
     }
-  }, [dkmWorkspaceScope, resolveTemplateWorkspaceCandidates])
+  }, [dkmWorkspaceScope, kbWorkspaceOptions, resolveTemplateWorkspaceCandidates])
 
   const checkTemplateUploadForDuplicates = useCallback(async (
     pendingFile: File,
@@ -12314,22 +12326,61 @@ export function DocumentKnowledgeManagementPage() {
   } | null>(null)
   const [templateShareSearchQuery, setTemplateShareSearchQuery] = useState('')
   const [templateShareSearchOpen, setTemplateShareSearchOpen] = useState(false)
+  const [templateShareIncludeChildren, setTemplateShareIncludeChildren] = useState(false)
 
-  /** Sibling workspaces in the SAME organization as `template`'s own workspace — the only ones
-   * eligible to appear in the "Share with workspaces…" picker (excludes the template's own
-   * workspace itself). Returns an empty list if the template has no resolvable workspace. */
+  /** Org directory (not only workspaces the current user can switch into). Personal workspaces
+   * in the same org tree are included so a grant can target e.g. Stella WS without membership. */
   const getTemplateShareCandidates = useCallback((template: DocumentTemplateResponse) => {
-    const candidates = resolveAllAccessibleWorkspaceCandidates()
-    const workspaceId = resolveTemplateWorkspaceId(template, candidates)
-    if (!workspaceId) return { workspaceId: null as string | null, options: [] as TemplateWorkspaceCandidate[] }
-    const templateWorkspace = candidates.find((candidate) => candidate.id === workspaceId)
-    const options = templateWorkspace?.organizationId
-      ? candidates.filter(
-          (candidate) => candidate.id !== workspaceId && candidate.organizationId === templateWorkspace.organizationId,
-        )
-      : []
-    return { workspaceId, options }
-  }, [resolveAllAccessibleWorkspaceCandidates])
+    const accessible = resolveAllAccessibleWorkspaceCandidates()
+    const directory: TemplateShareDirectoryWorkspace[] = kbWorkspaceOptions.map((workspace) => {
+      const meta = workspace.metadata && typeof workspace.metadata === 'object' ? workspace.metadata : {}
+      const parentRaw = meta.parent_workspace_id
+      const name = formatKbWorkspaceLabel(workspace.id, kbWorkspaceOptions) || workspace.name
+      return {
+        id: workspace.id,
+        name,
+        organizationId: workspace.organization_id,
+        tenantMode: workspace.tenant_mode ?? null,
+        parentWorkspaceId:
+          typeof parentRaw === 'string' && parentRaw.trim() ? parentRaw.trim() : null,
+        statusCode: workspace.status_code,
+        searchHaystack: collectWorkspaceShareSearchLabels({
+          name,
+          tenantMode: workspace.tenant_mode ?? null,
+          createdBy: workspace.created_by ?? null,
+          metadata: workspace.metadata,
+        }),
+      }
+    })
+    const resolvePool: TemplateWorkspaceCandidate[] = [
+      ...directory.map((row) => ({
+        id: row.id,
+        name: row.name,
+        organizationId: row.organizationId,
+        tenantMode: row.tenantMode,
+        searchHaystack: row.searchHaystack,
+      })),
+      ...accessible.filter((candidate) => !directory.some((row) => row.id === candidate.id)),
+    ]
+    const workspaceId = resolveTemplateWorkspaceId(template, resolvePool)
+    if (!workspaceId) {
+      return {
+        workspaceId: null as string | null,
+        options: [] as TemplateWorkspaceCandidate[],
+        directory,
+      }
+    }
+    const templateOrganizationId =
+      directory.find((row) => row.id === workspaceId)?.organizationId
+      ?? accessible.find((candidate) => candidate.id === workspaceId)?.organizationId
+      ?? null
+    const options = listTemplateShareWorkspaceOptions({
+      templateWorkspaceId: workspaceId,
+      templateOrganizationId,
+      directory,
+    })
+    return { workspaceId, options, directory }
+  }, [kbWorkspaceOptions, resolveAllAccessibleWorkspaceCandidates])
 
   const templateShareDialogItem = useMemo(
     () => (templateShareDialog ? templateById.get(templateShareDialog.templateId) ?? null : null),
@@ -12340,6 +12391,27 @@ export function DocumentKnowledgeManagementPage() {
     () => (templateShareDialogItem ? getTemplateShareCandidates(templateShareDialogItem).options : []),
     [getTemplateShareCandidates, templateShareDialogItem],
   )
+
+  const templateShareDialogDirectory = useMemo(
+    () => (templateShareDialogItem ? getTemplateShareCandidates(templateShareDialogItem).directory : []),
+    [getTemplateShareCandidates, templateShareDialogItem],
+  )
+
+  const addTemplateShareWorkspaceIds = useCallback((workspaceId: string) => {
+    const eligible = new Set(templateShareDialogOptions.map((option) => option.id))
+    setTemplateShareDialog((prev) => {
+      if (!prev) return prev
+      const next = new Set(prev.selectedIds)
+      for (const id of expandShareSelectionWithChildren(
+        workspaceId,
+        templateShareDialogDirectory,
+        templateShareIncludeChildren,
+      )) {
+        if (eligible.has(id)) next.add(id)
+      }
+      return { ...prev, selectedIds: next }
+    })
+  }, [templateShareDialogDirectory, templateShareDialogOptions, templateShareIncludeChildren])
 
   const openTemplateDetail = useCallback((templateId: string) => {
     const template = templateById.get(templateId)
@@ -12650,6 +12722,7 @@ export function DocumentKnowledgeManagementPage() {
       setTemplateShareDialog(null)
       setTemplateShareSearchQuery('')
       setTemplateShareSearchOpen(false)
+      setTemplateShareIncludeChildren(false)
     } catch (error) {
       addToast({
         title: 'Failed to update sharing',
@@ -23326,6 +23399,7 @@ export function DocumentKnowledgeManagementPage() {
                   setTemplateShareDialog({ templateId: target.id, selectedIds: new Set(shared) })
                   setTemplateShareSearchQuery('')
                   setTemplateShareSearchOpen(false)
+                  setTemplateShareIncludeChildren(false)
                 }}
               >
                 <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -23391,6 +23465,7 @@ export function DocumentKnowledgeManagementPage() {
                     setTemplateShareDialog(null)
                     setTemplateShareSearchQuery('')
                     setTemplateShareSearchOpen(false)
+                    setTemplateShareIncludeChildren(false)
                   }
                 }}
               />
@@ -23411,7 +23486,7 @@ export function DocumentKnowledgeManagementPage() {
                         Share with workspaces
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        Search a workspace and select it to let it use "{templateShareDialogItem.name}". Remove a badge to revoke access.
+                        Search by workspace name or owner name (for example Stella). Personal workspaces you are not a member of can be selected. People see the template when they open that workspace. Remove a badge to revoke access.
                       </p>
                     </div>
                   </div>
@@ -23451,10 +23526,43 @@ export function DocumentKnowledgeManagementPage() {
 
                   {templateShareDialogOptions.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      No other workspaces in this template's organization are available to share with.
+                      No other workspaces in this template's organization are available. If a personal workspace is missing, link it to this organization in Workspace Directory.
                     </p>
                   ) : (
-                    <div className="relative">
+                    <div className="relative space-y-3">
+                      <label className="flex items-start gap-2.5 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 rounded border-input"
+                          checked={templateShareIncludeChildren}
+                          onChange={(event) => {
+                            const includeChildren = event.target.checked
+                            setTemplateShareIncludeChildren(includeChildren)
+                            if (!includeChildren || !templateShareDialog) return
+                            const eligible = new Set(templateShareDialogOptions.map((option) => option.id))
+                            setTemplateShareDialog((prev) => {
+                              if (!prev) return prev
+                              const next = new Set(prev.selectedIds)
+                              for (const selectedId of prev.selectedIds) {
+                                for (const id of expandShareSelectionWithChildren(
+                                  selectedId,
+                                  templateShareDialogDirectory,
+                                  true,
+                                )) {
+                                  if (eligible.has(id)) next.add(id)
+                                }
+                              }
+                              return { ...prev, selectedIds: next }
+                            })
+                          }}
+                        />
+                        <span>
+                          <span className="font-medium">Include child workspaces</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            Selecting a parent (for example IT Business Partner WS) also grants every nested child. Each child is stored as its own workspace id.
+                          </span>
+                        </span>
+                      </label>
                       <div className="relative">
                         <Search
                           className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
@@ -23468,7 +23576,7 @@ export function DocumentKnowledgeManagementPage() {
                           onBlur={() => {
                             window.setTimeout(() => setTemplateShareSearchOpen(false), 150)
                           }}
-                          placeholder="Search workspaces…"
+                          placeholder="Search workspaces or owner name…"
                           className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         />
                       </div>
@@ -23479,32 +23587,48 @@ export function DocumentKnowledgeManagementPage() {
                           const filtered = templateShareDialogOptions.filter((option) => {
                             if (templateShareDialog.selectedIds.has(option.id)) return false
                             if (!query) return true
-                            return option.name.toLowerCase().includes(query)
+                            const haystack = option.searchHaystack || option.name.toLowerCase()
+                            return haystack.includes(query)
                           })
                           return (
                             <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg scrollbar-hide">
                               {filtered.length === 0 ? (
                                 <p className="px-3 py-2.5 text-sm text-muted-foreground">
-                                  {query ? 'No matching workspaces.' : 'All workspaces are already selected.'}
+                                  {query
+                                    ? 'No matching workspaces. Try the workspace name, owner name, or confirm it is linked in Workspace Directory.'
+                                    : 'All workspaces are already selected.'}
                                 </p>
                               ) : (
                                 filtered.map((option) => (
                                   <button
                                     key={option.id}
                                     type="button"
-                                    className="flex w-full cursor-pointer items-center px-3 py-2.5 text-left text-sm text-foreground hover:bg-muted/40"
+                                    className="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm text-foreground hover:bg-muted/40"
                                     onMouseDown={(event) => {
                                       event.preventDefault()
-                                      setTemplateShareDialog((prev) => {
-                                        if (!prev) return prev
-                                        const next = new Set(prev.selectedIds)
-                                        next.add(option.id)
-                                        return { ...prev, selectedIds: next }
-                                      })
+                                      addTemplateShareWorkspaceIds(option.id)
                                       setTemplateShareSearchQuery('')
                                     }}
                                   >
-                                    {option.name}
+                                    <span className="min-w-0 flex-1 truncate">{option.name}</span>
+                                    {(() => {
+                                      const childCount = expandShareSelectionWithChildren(
+                                        option.id,
+                                        templateShareDialogDirectory,
+                                        true,
+                                      ).filter((id) => id !== option.id && templateShareDialogOptions.some((item) => item.id === id)).length
+                                      if (childCount <= 0) return null
+                                      return (
+                                        <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
+                                          {childCount} child{childCount === 1 ? '' : 'ren'}
+                                        </span>
+                                      )
+                                    })()}
+                                    {option.tenantMode === 'personal' ? (
+                                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                        Personal
+                                      </span>
+                                    ) : null}
                                   </button>
                                 ))
                               )}
@@ -23526,6 +23650,7 @@ export function DocumentKnowledgeManagementPage() {
                       setTemplateShareDialog(null)
                       setTemplateShareSearchQuery('')
                       setTemplateShareSearchOpen(false)
+                      setTemplateShareIncludeChildren(false)
                     }}
                   >
                     <X className="h-4 w-4 shrink-0" aria-hidden />
