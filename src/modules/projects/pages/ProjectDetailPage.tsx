@@ -556,7 +556,7 @@ function ProjectDetailSidebar({
     <aside
       ref={asideRef}
       className={cn(
-        'fixed right-0 top-12 z-40 h-[calc(100vh-3rem)] border-l border-border/20 glass-sidebar transition-all duration-300',
+        'fixed right-0 top-12 z-40 h-[calc(var(--app-vh,100vh)-3rem)] border-l border-border/20 glass-sidebar transition-all duration-300',
         collapsed ? 'w-12' : 'w-72'
       )}
     >

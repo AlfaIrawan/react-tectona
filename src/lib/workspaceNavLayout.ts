@@ -1,3 +1,4 @@
+import { getUiLayoutScale } from '@/lib/uiScale'
 import { cn } from '@/lib/utils'
 import type { CSSProperties } from 'react'
 
@@ -14,18 +15,20 @@ export const WORKSPACE_MAIN_PANEL_VIEWPORT_BOTTOM_PAD_PX = 66
 export const WORKSPACE_PANEL_PAIR_EXTRA_HEIGHT_PX = 15
 
 export function computeWorkspaceMainPanelViewportHeightPx(panelTopPx: number): number {
-  const viewportH = window.innerHeight
+  const scale = getUiLayoutScale()
+  const viewportH = window.innerHeight / scale
   const stickyTopPx = 48
-  const effectiveTop = Math.max(panelTopPx, stickyTopPx)
+  const effectiveTop = Math.max(panelTopPx / scale, stickyTopPx)
   const raw = Math.floor(viewportH - effectiveTop - WORKSPACE_MAIN_PANEL_VIEWPORT_BOTTOM_PAD_PX)
   return Math.max(240, raw) + WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX + WORKSPACE_PANEL_PAIR_EXTRA_HEIGHT_PX
 }
 
 /** Samakan tinggi Enterprise Navigation dengan kolom konten (filter + panel utama). */
 export function measureEnterpriseNavHeightFromMainPanel(navEl: HTMLElement, mainPanelEl: HTMLElement): number {
+  const scale = getUiLayoutScale()
   const navTop = navEl.getBoundingClientRect().top
   const mainBottom = mainPanelEl.getBoundingClientRect().bottom
-  const span = Math.floor(mainBottom - navTop)
+  const span = Math.floor((mainBottom - navTop) / scale)
   return Math.max(220, span)
 }
 
@@ -111,9 +114,9 @@ export function workspaceAsideClass(
         // Docked rail: selalu dibatasi viewport. Pada <xl gunakan sticky, pada xl gunakan fixed (top+bottom) agar pasti tidak melewati layar.
         'min-h-0 overflow-hidden xl:flex xl:flex-col',
         // <xl: stick di bawah topbar (h-12) dan batasi tinggi sesuai offset itu
-        'max-xl:sticky max-xl:top-12 max-xl:max-h-[calc(100vh-3rem+10px)]',
+        'max-xl:sticky max-xl:top-12 max-xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
         // xl: tinggi eksplisit (+ WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX) — kelas harus literal agar Tailwind JIT mengenali
-        'xl:fixed xl:left-0 xl:top-12 xl:z-30 xl:min-h-0 xl:h-[calc(100dvh-3rem+10px)] xl:max-h-[calc(100dvh-3rem+10px)] xl:h-[calc(100vh-3rem+10px)] xl:max-h-[calc(100vh-3rem+10px)]',
+        'xl:fixed xl:left-0 xl:top-12 xl:z-30 xl:min-h-0 xl:h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:h-[calc(var(--app-vh,100vh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
         'xl:pb-0 xl:pr-1 xl:pl-0 xl:pt-0',
         isCollapsed ? 'xl:w-[56px]' : dockedWidthClass(widthVariant)
       )
@@ -137,10 +140,10 @@ export function workspaceNavInnerClass(docked: boolean, _sidebarFixed: boolean, 
     'flex min-h-0 flex-col overflow-hidden',
     // Mode non-docked (Fixed Sidebar = true): batasi tinggi panel agar tidak melebihi viewport
     !docked &&
-      'max-h-[calc(100dvh-3rem+10px)] max-h-[calc(100vh-3rem+10px)]',
+      'max-h-[calc(var(--app-vh,100dvh)-3rem+10px)] max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
     docked &&
       cn(
-        'liquid-glass-enterprise-nav--docked p-2 max-xl:max-h-[calc(100vh-4rem+10px)] xl:flex-1 xl:h-full xl:max-h-full xl:rounded-r-[28px] xl:rounded-l-none xl:border-r-0',
+        'liquid-glass-enterprise-nav--docked p-2 max-xl:max-h-[calc(var(--app-vh,100vh)-4rem+10px)] xl:flex-1 xl:h-full xl:max-h-full xl:rounded-r-[28px] xl:rounded-l-none xl:border-r-0',
       ),
     // Fixed Sidebar (non-docked): tinggi diset via JS agar selaras panel utama — jangan pakai sticky + h viewport penuh.
     isCollapsed ? 'w-[56px] p-1.5' : 'w-full'

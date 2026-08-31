@@ -3161,7 +3161,7 @@ function IdeaDetailSidebar({
     <aside
       ref={asideRef}
       className={cn(
-        'fixed right-0 top-12 z-40 flex h-[calc(100vh-3rem)] flex-col border-l border-slate-200/70',
+        'fixed right-0 top-12 z-40 flex h-[calc(var(--app-vh,100vh)-3rem)] flex-col border-l border-slate-200/70',
         'bg-gradient-to-b from-slate-50/95 via-white to-slate-100/80 backdrop-blur-xl',
         'shadow-[-8px_0_32px_-12px_rgba(15,23,42,0.12)] transition-all duration-300 dark:border-slate-800/80 dark:from-slate-950/95 dark:via-slate-950 dark:to-slate-900/90',
         collapsed ? 'w-12' : 'w-72',
@@ -10452,7 +10452,7 @@ export function IdeaDetailPage() {
             id="panel-summary"
             style={
               isSummaryPanelFullscreen
-                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
                 : ideaSummaryPanelHeightPx != null
                   ? { height: ideaSummaryPanelHeightPx, maxHeight: ideaSummaryPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined
@@ -10892,7 +10892,7 @@ export function IdeaDetailPage() {
             id="panel-scoring"
             style={
               isScoringPanelFullscreen
-                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
                 : ideaScoringPanelHeightPx != null
                   ? { height: ideaScoringPanelHeightPx, maxHeight: ideaScoringPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined
@@ -11302,7 +11302,7 @@ export function IdeaDetailPage() {
             id="panel-impact"
             style={
               isImpactPanelFullscreen
-                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
                 : ideaImpactPanelHeightPx != null
                   ? { height: ideaImpactPanelHeightPx, maxHeight: ideaImpactPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined
@@ -11674,7 +11674,7 @@ export function IdeaDetailPage() {
             ref={ideaDiagramsPanelRef}
             style={
               isDiagramsPanelFullscreen
-                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
                 : ideaDiagramsPanelHeightPx != null
                   ? { height: ideaDiagramsPanelHeightPx, maxHeight: ideaDiagramsPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined
@@ -12072,7 +12072,7 @@ export function IdeaDetailPage() {
             ref={ideaCostBenefitPanelRef}
             style={
               isCostBenefitPanelFullscreen
-                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
                 : ideaCostBenefitPanelHeightPx != null
                   ? { height: ideaCostBenefitPanelHeightPx, maxHeight: ideaCostBenefitPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined
@@ -12462,7 +12462,7 @@ export function IdeaDetailPage() {
             ref={ideaConversionPanelRef}
             style={
               isConversionPanelFullscreen
-                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
                 : ideaConversionPanelHeightPx != null
                   ? { height: ideaConversionPanelHeightPx, maxHeight: ideaConversionPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined
@@ -12575,7 +12575,7 @@ export function IdeaDetailPage() {
             ref={ideaDocsPanelRef}
             style={
               isIdeaDocsPanelFullscreen
-                ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+                ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
                 : ideaDocsPanelHeightPx != null
                   ? { height: ideaDocsPanelHeightPx, maxHeight: ideaDocsPanelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
                   : undefined

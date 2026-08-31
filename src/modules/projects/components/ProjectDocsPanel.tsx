@@ -489,7 +489,7 @@ export function ProjectDocsPanel({
       id="panel-docs"
       style={
         isFullscreen
-          ? { height: 'calc(100dvh - 3rem)', maxHeight: 'calc(100dvh - 3rem)' }
+          ? { height: 'calc(var(--app-vh, 100dvh) - 3rem)', maxHeight: 'calc(var(--app-vh, 100dvh) - 3rem)' }
           : panelHeightPx != null
             ? { height: panelHeightPx, maxHeight: panelHeightPx, minHeight: PROJECT_PANEL_MIN_HEIGHT_PX }
             : undefined

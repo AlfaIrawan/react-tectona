@@ -40,3 +40,11 @@ export function initUiScaleLock(): void {
   window.addEventListener('resize', syncUiScaleLock)
   window.addEventListener('orientationchange', syncUiScaleLock)
 }
+
+/** Layout-px multiplier: 1 at native 1920+, otherwise `--ui-scale`. */
+export function getUiLayoutScale(): number {
+  if (typeof window === 'undefined') return 1
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim()
+  const n = Number.parseFloat(raw)
+  return Number.isFinite(n) && n > 0 ? n : 1
+}
