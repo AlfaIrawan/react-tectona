@@ -15747,9 +15747,12 @@ export function WorkspaceManagementPage() {
                             const isDirectoryRowSelected =
                               (showDirectorySelection && directorySelectedIds.includes(workspace.id))
                               || directoryActiveRowId === workspace.id
-                              || (rowContextMenu?.variant !== 'members'
-                                && rowContextMenu?.variant !== 'assets'
-                                && rowContextMenu.workspace.id === workspace.id)
+                              || Boolean(
+                                rowContextMenu
+                                && rowContextMenu.variant !== 'members'
+                                && rowContextMenu.variant !== 'assets'
+                                && rowContextMenu.workspace.id === workspace.id,
+                              )
                             const resolveDirectoryBodyCellBackground = (isFirstColumn: boolean) => {
                               if (isDirectoryRowSelected) return ''
                               const stickyFirstClass =
@@ -17261,9 +17264,12 @@ export function WorkspaceManagementPage() {
                                 'group cursor-pointer transition-colors',
                                 governanceSelectedIds.includes(workspace.id) ||
                                   governanceMatrixDetailWorkspace?.id === workspace.id ||
-                                  (rowContextMenu?.variant !== 'members'
-                                    && rowContextMenu?.variant !== 'assets'
-                                    && rowContextMenu.workspace.id === workspace.id)
+                                  Boolean(
+                                    rowContextMenu
+                                    && rowContextMenu.variant !== 'members'
+                                    && rowContextMenu.variant !== 'assets'
+                                    && rowContextMenu.workspace.id === workspace.id,
+                                  )
                                   ? 'bg-primary/10 hover:bg-primary/12 ring-1 ring-inset ring-primary/20'
                                   : groupTint?.row ?? 'hover:bg-accent/20'
                               )}

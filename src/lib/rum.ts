@@ -56,6 +56,7 @@ let flushInFlight = false
 let lastSentSignature: string | null = null
 let latestObservedLcp: number | null = null
 let lastSentLcpValue: number | null = null
+let ingestDisabled = false
 
 function roundMetric(value: number | null): number | null {
   if (value == null || !Number.isFinite(value)) return null
@@ -159,7 +160,7 @@ function flushObservedLcpFallback(): void {
 }
 
 async function postRumSample(): Promise<void> {
-  if (flushInFlight) return
+  if (flushInFlight || ingestDisabled) return
 
   const apiLatencyMs = average(bucket.apiLatencySamples)
   const apiLatencySampleCount = bucket.apiLatencySamples.length
@@ -225,6 +226,10 @@ async function postRumSample(): Promise<void> {
       body: JSON.stringify(payload),
     })
 
+    if (response.status === 401 || response.status === 403) {
+      ingestDisabled = true
+      return
+    }
     if (!response.ok) return
 
     lastSentSignature = payloadSignature
