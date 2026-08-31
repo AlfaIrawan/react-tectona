@@ -27,6 +27,8 @@ declare global {
   }
 }
 
+import { resolveBrowserDocumentServerUrl } from '@/lib/onlyofficeDocumentServerUrl'
+
 const PLACEHOLDER_ID = 'document-editor-surface'
 const SAVE_POLL_TIMEOUT_MS = 30_000
 const SAVE_POLL_INTERVAL_MS = 1_500
@@ -97,7 +99,8 @@ export function describeOnlyOfficeError(code: unknown): string {
 
 const scriptPromises = new Map<string, Promise<void>>()
 export function loadDocumentServerApi(documentServerUrl: string): Promise<void> {
-  const src = `${documentServerUrl.replace(/\/$/, '')}/web-apps/apps/api/documents/api.js`
+  const publicBase = resolveBrowserDocumentServerUrl(documentServerUrl)
+  const src = `${publicBase.replace(/\/$/, '')}/web-apps/apps/api/documents/api.js`
   const cached = scriptPromises.get(src)
   if (cached) return cached
 
@@ -108,7 +111,12 @@ export function loadDocumentServerApi(documentServerUrl: string): Promise<void> 
     script.onload = () => resolve()
     script.onerror = () => {
       scriptPromises.delete(src)
-      reject(new Error('Could not reach the document editor service.'))
+      reject(
+        new Error(
+          `Could not reach the document editor service (${src}). ` +
+            'Pastikan OnlyOffice Document Server hidup (port 8085) dan nginx mem-proxy /onlyoffice-ds/.',
+        ),
+      )
     }
     document.head.appendChild(script)
   })

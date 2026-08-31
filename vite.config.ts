@@ -289,6 +289,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/plantuml/, ''),
       },
+      '/onlyoffice-ds': {
+        target: 'http://127.0.0.1:8085',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (p) => p.replace(/^\/onlyoffice-ds/, '') || '/',
+      },
     },
   },
   resolve: {
