@@ -83,6 +83,11 @@ const CHAT_SANITIZE_SCHEMA = {
     span: [['className', ...ALLOWED_SPAN_CLASSES]],
     mark: [],
     u: [],
+    img: ['src', 'alt'],
+  },
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    src: [...new Set([...(defaultSchema.protocols?.src ?? ['http', 'https']), 'data'])],
   },
 }
 
@@ -97,6 +102,18 @@ const MARKDOWN_COMPONENTS: Components = {
       <span className={mapped || undefined} {...props}>
         {children}
       </span>
+    )
+  },
+  img({ src, alt }) {
+    if (!src || !/^data:image\/(?:png|jpeg|jpg|gif|webp);base64,/i.test(src)) {
+      return null
+    }
+    return (
+      <img
+        src={src}
+        alt={alt || 'Diagram'}
+        className="my-2 max-w-full rounded-md border border-black/10 dark:border-white/15"
+      />
     )
   },
   code({ className, children, ...props }) {

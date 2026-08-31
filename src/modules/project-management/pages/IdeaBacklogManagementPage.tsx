@@ -938,14 +938,12 @@ function BrainstormEvidenceRail({
   )
 }
 
-function BrainstormAssistantMessageBody({ text }: { text: string }) {
+function BrainstormProseSegments({ text }: { text: string }) {
   const segments = splitMermaidContent(text)
   if (segments.length === 0) return null
-
-  // Mount diagrams directly so broken markdown fences cannot hide them as code blocks.
   if (segments.some((s) => s.type === 'mermaid' || s.type === 'tecchart')) {
     return (
-      <div className="space-y-2 text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2">
+      <>
         {segments.map((segment, index) => {
           if (segment.type === 'mermaid') {
             return <AssistantMermaidBlock key={`m-${index}`} source={segment.source} />
@@ -963,15 +961,47 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
             />
           )
         })}
-      </div>
+      </>
     )
   }
-
   return (
     <AssistantChatMarkdown
       content={formatBrainstormProse(normalizeMermaidFences(text))}
       className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
     />
+  )
+}
+
+function BrainstormAssistantMessageBody({ text }: { text: string }) {
+  const parts = splitBrainstormDisplayParts(text)
+  if (parts.length === 0) return null
+
+  const hasVisual = parts.some((part) => part.type === 'png' || part.type === 'mermaid')
+  if (!hasVisual) {
+    return <BrainstormProseSegments text={text} />
+  }
+
+  return (
+    <div className="space-y-2 text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2">
+      {parts.map((part, index) => {
+        if (part.type === 'png') {
+          return (
+            <img
+              key={`png-${index}`}
+              src={part.src}
+              alt="Diagram proses bisnis BPMN"
+              className="my-2 max-w-full rounded-md border border-black/10 dark:border-white/15"
+            />
+          )
+        }
+        if (part.type === 'mermaid') {
+          return <AssistantMermaidBlock key={`m-${index}`} source={part.source} />
+        }
+        const prose = part.text.trim()
+        if (!prose) return null
+        return <BrainstormProseSegments key={`p-${index}`} text={prose} />
+      })}
+    </div>
   )
 }
 
@@ -986,8 +1016,7 @@ function BrainstormAssistantTypingMessage({
   onComplete?: () => void
   onProgress?: () => void
 }) {
-  const mermaidStart = text.indexOf('```mermaid')
-  const typingTarget = mermaidStart >= 0 ? text.slice(0, mermaidStart) : text
+  const typingTarget = text.slice(0, brainstormTypingCutoff(text))
   const [displayText, setDisplayText] = useState(animate ? '' : text)
   const [isTyping, setIsTyping] = useState(animate)
 
@@ -1044,6 +1073,7 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
+import { brainstormTypingCutoff, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
 import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
 import { normalizeMermaidFences, splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
 import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'

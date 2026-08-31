@@ -38,10 +38,25 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
   const input = (text || '').replace(/\r\n?/g, '\n')
   if (!input.trim()) return []
 
+  const commentSources: string[] = []
+  const commentRe = /<!--tectona-mermaid\s*\r?\n([\s\S]*?)-->/gi
+  let commentMatch: RegExpExecArray | null
+  while ((commentMatch = commentRe.exec(input)) !== null) {
+    const source = (commentMatch[1] || '').trim()
+    if (source) commentSources.push(source)
+  }
+
   const segments = splitMermaidContent(input)
   const results: ExtractedProcessDiagram[] = []
   let cursor = 0
   const seen = new Set<string>()
+
+  for (const source of commentSources) {
+    const key = source.replace(/\s+/g, ' ').toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    results.push({ kind: 'unlabeled', label: '', source })
+  }
 
   for (const segment of segments) {
     if (segment.type === 'prose') {
