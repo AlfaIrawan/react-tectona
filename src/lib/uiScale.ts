@@ -41,10 +41,18 @@ export function initUiScaleLock(): void {
   window.addEventListener('orientationchange', syncUiScaleLock)
 }
 
-/** Layout-px multiplier: 1 at native 1920+, otherwise `--ui-scale`. */
+/** Layout-px multiplier: 1 at native 1920+, otherwise innerWidth/1920. */
 export function getUiLayoutScale(): number {
   if (typeof window === 'undefined') return 1
-  const raw = getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim()
-  const n = Number.parseFloat(raw)
-  return Number.isFinite(n) && n > 0 ? n : 1
+  if (!document.documentElement.classList.contains('ui-scale-lock')) return 1
+  return window.innerWidth / UI_DESIGN_WIDTH_PX
+}
+
+/** Canvas height in layout px (`--app-vh` while scaled, otherwise the window). */
+export function getUiLayoutViewportHeight(): number {
+  if (typeof window === 'undefined') return 0
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--app-vh').trim()
+  const fromVar = Number.parseFloat(raw)
+  if (Number.isFinite(fromVar) && fromVar > 0) return fromVar
+  return window.innerHeight
 }

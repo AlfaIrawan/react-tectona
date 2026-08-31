@@ -1280,7 +1280,7 @@ export function ProjectListPage() {
         onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
       >
-        <div className="space-y-6" onClick={handleContentAreaClick} onContextMenu={handleContentAreaContextMenu}>
+        <div className="flex min-h-full flex-col gap-6" onClick={handleContentAreaClick} onContextMenu={handleContentAreaContextMenu}>
         {/* Breadcrumb */}
         <Breadcrumb items={[{ label: 'Projects' }]} />
 
@@ -1383,7 +1383,7 @@ export function ProjectListPage() {
             </Button>
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="flex min-h-0 flex-1 flex-col">
             {layout === 'list' ? (
               <>
                 {(showFoldersSection && showFoldersSectionVisible) || showProjectsSection ? (

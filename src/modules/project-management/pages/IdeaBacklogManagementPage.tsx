@@ -3857,7 +3857,7 @@ export function IdeaBacklogManagementPage() {
 
   return (
     <div
-      className="space-y-6"
+      className="flex min-h-full flex-col gap-6"
       onContextMenu={openContextMenu}
       onMouseDown={(event) => {
         if (event.button !== 0) return
@@ -4586,7 +4586,7 @@ export function IdeaBacklogManagementPage() {
           onDragOver={handleIdeaDragOver}
           onDragCancel={handleIdeaDragCancel}
         >
-        <div className="space-y-8">
+        <div className="flex min-h-0 flex-1 flex-col gap-8">
         {showFoldersSection && (
           <IdeaBacklogFoldersSection
             folders={foldersWithVisibleCounts}

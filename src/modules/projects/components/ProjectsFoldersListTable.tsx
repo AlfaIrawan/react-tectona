@@ -371,14 +371,10 @@ export function ProjectsFoldersListTable({
       ref={panelRef}
       style={
         panelHeightPx != null
-          ? {
-              height: panelHeightPx,
-              maxHeight: panelHeightPx,
-              minHeight: PROJECT_PANEL_MIN_HEIGHT_PX,
-            }
+          ? { minHeight: Math.max(PROJECT_PANEL_MIN_HEIGHT_PX, panelHeightPx) }
           : undefined
       }
-      className={PROJECT_LIST_TABLE_WRAPPER_CLASS}
+      className={cn(PROJECT_LIST_TABLE_WRAPPER_CLASS, 'h-full min-h-[320px] flex-1')}
     >
       <div className="flex h-full min-h-0 w-full flex-col">
         <div className={PROJECT_LIST_TABLE_PANEL_INNER_CLASS}>

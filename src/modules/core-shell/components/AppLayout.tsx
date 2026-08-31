@@ -340,9 +340,9 @@ export function AppLayout({ children }: AppLayoutProps) {
         ref={layoutRowRef}
         className="flex min-h-0 flex-1 overflow-hidden overflow-x-hidden transition-[padding] duration-200"
       >
-        <div ref={mainBodyRef} data-app-main-body className="relative min-h-0 min-w-0 flex-1 overflow-auto scrollbar-hide">
-          <main className="relative min-h-full">
-            <div className="relative mx-auto max-w-[1920px] px-10 py-3">
+        <div ref={mainBodyRef} data-app-main-body className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto scrollbar-hide">
+          <main className="relative flex min-h-full flex-1 flex-col">
+            <div className="relative mx-auto flex w-full min-h-full max-w-[1920px] flex-1 flex-col px-10 py-3">
               {children || <Outlet />}
             </div>
           </main>
