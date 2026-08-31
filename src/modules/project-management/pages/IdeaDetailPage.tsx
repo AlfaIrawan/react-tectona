@@ -472,7 +472,7 @@ const DEFAULT_SUMMARY: RuntimeSummaryResponse = {
       tone: 'positive',
     },
   ],
-  confidence_score: 0.92,
+  confidence_score: 0,
   evidence: [],
   warnings: [],
   correlation_id: '',
@@ -585,7 +585,7 @@ function buildIdeaSummaryFallback(idea: Idea): RuntimeSummaryResponse {
         tone: 'warning',
       },
     ],
-    confidence_score: 0.92,
+    confidence_score: 0,
     evidence: [],
     warnings: [],
     correlation_id: '',
@@ -796,6 +796,7 @@ type RuntimeScoringAnalysis = {
   watchpoint_signal_detail: string
   missing_fields: string[]
   kpi_cards: RuntimeScoringCard[]
+  confidence_score: number
 }
 
 const EMPTY_RUNTIME_SCORING_ANALYSIS: RuntimeScoringAnalysis = {
@@ -821,6 +822,7 @@ const EMPTY_RUNTIME_SCORING_ANALYSIS: RuntimeScoringAnalysis = {
   watchpoint_signal_detail: '',
   missing_fields: [],
   kpi_cards: [],
+  confidence_score: 0,
 }
 
 function parseScoringGenerationError(error: unknown): string {
@@ -893,6 +895,19 @@ function isFallbackLikeRuntimeAnswer(answer: string, warnings: string[] = []): b
   ].some((marker) => haystack.includes(marker))
 }
 
+function agentConfidencePercent(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 0 && value <= 1) return Math.round(value * 100)
+    if (value > 1 && value <= 100) return Math.round(value)
+  }
+  if (typeof value === 'string') {
+    const raw = value.trim().replace(/%$/, '')
+    const parsed = Number(raw)
+    if (Number.isFinite(parsed)) return agentConfidencePercent(parsed)
+  }
+  return 0
+}
+
 function parseRuntimeScoringAnalysis(answer: string): RuntimeScoringAnalysis {
   const jsonText = extractJsonObject(answer)
   if (!jsonText) {
@@ -961,6 +976,9 @@ function parseRuntimeScoringAnalysis(answer: string): RuntimeScoringAnalysis {
     watchpoint_signal_detail: toText(payload.watchpoint_signal_detail),
     missing_fields: missingFields,
     kpi_cards: kpiCards,
+    confidence_score: agentConfidencePercent(
+      payload.analysis_confidence ?? payload.confidence_score ?? payload.confidence,
+    ) / 100,
   }
 }
 
@@ -1006,8 +1024,9 @@ function buildScoringAnalysisPrompt(idea: Idea): string {
     'Jika data cukup, set status = "ok" dan berikan analisa scoring yang tajam, singkat, dan bisa dipakai board.',
     'Jangan menyebut model, fallback, prompt, atau instruksi internal.',
     'Balas STRICT JSON tanpa markdown/code fence dengan schema ini:',
-    '{"status":"ok|insufficient_data","summary_title":"","executive_brief":"","priority":"","overall_score":"","score_posture":"","decision_bias":"","decision_bias_detail":"","primary_strength":"","primary_strength_detail":"","execution_posture":"","execution_posture_detail":"","main_watchpoint":"","main_watchpoint_detail":"","recommended_action":"","commentary":"","positive_signal_title":"","positive_signal_detail":"","watchpoint_signal_title":"","watchpoint_signal_detail":"","missing_fields":[""],"kpi_cards":[{"label":"","value":"","detail":""}]}',
+    '{"status":"ok|insufficient_data","analysis_confidence":0.0,"summary_title":"","executive_brief":"","priority":"","overall_score":"","score_posture":"","decision_bias":"","decision_bias_detail":"","primary_strength":"","primary_strength_detail":"","execution_posture":"","execution_posture_detail":"","main_watchpoint":"","main_watchpoint_detail":"","recommended_action":"","commentary":"","positive_signal_title":"","positive_signal_detail":"","watchpoint_signal_title":"","watchpoint_signal_detail":"","missing_fields":[""],"kpi_cards":[{"label":"","value":"","detail":""}]}',
     'Aturan:',
+    '- analysis_confidence: 0.0–1.0 keyakinan analisa berdasarkan evidence nyata, bukan kelengkapan form.',
     '- overall_score boleh string kosong jika memang tidak ada angka score yang valid atau belum bisa dihitung jujur dari evidence.',
     '- priority, score_posture, decision_bias, primary_strength, execution_posture, main_watchpoint harus sesuai data yang ada; jangan melebih-lebihkan.',
     '- commentary maksimal 3 kalimat.',
@@ -1870,6 +1889,7 @@ function ScoringDraftReadinessCard({
   missingFields,
   evidenceItems,
   readinessPercent,
+  hasNumericScoring,
   onNavigateToPanel,
   onOpenBacklog,
 }: {
@@ -1878,6 +1898,7 @@ function ScoringDraftReadinessCard({
   missingFields: string[]
   evidenceItems: ScoringEvidenceItem[]
   readinessPercent: number
+  hasNumericScoring: boolean
   onNavigateToPanel: (panel: PanelKey) => void
   onOpenBacklog: () => void
 }) {
@@ -1894,9 +1915,11 @@ function ScoringDraftReadinessCard({
             </div>
             <h3 className="text-base font-semibold text-slate-950">{title}</h3>
             <p className="w-full text-sm leading-6 text-slate-600">{executiveBrief}</p>
-            <p className="w-full text-xs text-amber-800">
-              Backlog score dimensions are empty — the panel does not invent numbers until evidence is available.
-            </p>
+            {!hasNumericScoring ? (
+              <p className="w-full text-xs text-amber-800">
+                Backlog score dimensions are empty — the panel does not invent numbers until evidence is available.
+              </p>
+            ) : null}
           </div>
           <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex shrink-0 flex-col items-center gap-1 px-4 py-3 lg:mt-0')}>
             <div
@@ -1909,8 +1932,8 @@ function ScoringDraftReadinessCard({
                 <span className="text-sm font-bold tabular-nums text-slate-900">{readinessPercent}%</span>
               </div>
             </div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Evidence ready</p>
-            <p className="text-[11px] text-slate-600">{completedCount}/{evidenceItems.length} fields</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">AI confidence</p>
+            <p className="text-[11px] text-slate-600">{completedCount}/{evidenceItems.length} intake fields</p>
           </div>
         </div>
 
@@ -3486,18 +3509,18 @@ export function IdeaDetailPage() {
     document: false,
   })
   const [confidence, setConfidence] = useState<Record<PanelKey, number>>({
-    summary: 92,
-    scoring: 91,
-    impact: 86,
-    diagrams: 88,
+    summary: 0,
+    scoring: 0,
+    impact: 0,
+    diagrams: 0,
     integration: 0,
-    process: 88,
+    process: 0,
     c4Level1: 0,
     c4Level2: 0,
     bpmnHigh: 0,
-    costBenefit: 79,
-    conversion: 90,
-    document: 84,
+    costBenefit: 0,
+    conversion: 0,
+    document: 0,
   })
   const isBrdGenerating = regenerating.brd
   const [isBrdRenderLocked, setIsBrdRenderLocked] = useState(false)
@@ -4355,13 +4378,12 @@ export function IdeaDetailPage() {
         watchpoint_signal_detail: response.watchpoint_signal_detail,
         missing_fields: response.missing_fields ?? [],
         kpi_cards: response.kpi_cards ?? [],
+        confidence_score: response.confidence_score ?? 0,
       }
       applyRuntimeScoringAnalysis(analysis, response.warnings ?? [])
       setConfidence((prev) => ({
         ...prev,
-        scoring: analysis.status === 'ok'
-          ? Math.round(Math.max(0, Math.min(1, response.confidence_score ?? 0)) * 100)
-          : 0,
+        scoring: agentConfidencePercent(response.confidence_score),
       }))
     } catch (error) {
       const message = parseScoringGenerationError(error)
@@ -5055,12 +5077,6 @@ export function IdeaDetailPage() {
   const hasNumericScoring = scoreData.some((item) => item.score > 0)
 
   const scoringEvidenceItems = useMemo(() => buildScoringEvidenceChecklist(idea), [idea])
-  const scoringReadinessPercent = useMemo(() => {
-    const complete = scoringEvidenceItems.filter((item) => item.complete).length
-    return scoringEvidenceItems.length === 0
-      ? 0
-      : Math.round((complete / scoringEvidenceItems.length) * 100)
-  }, [scoringEvidenceItems])
   const showScoringFrameworkDraft = !scoringLoaded || scoringMissing
   const openIdeaBacklogForScoring = useCallback(() => {
     navigate('/idea-backlog', { state: { selectedIdeaId: idea.id } })
@@ -10386,7 +10402,7 @@ export function IdeaDetailPage() {
                       <h2 className="text-lg font-semibold text-foreground">AI-Powered Idea Summary</h2>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {typeof confidence.summary === 'number' ? (
+                      {typeof confidence.summary === 'number' && confidence.summary > 0 ? (
                         <Badge
                           variant="outline"
                           className={cn('text-[10px] font-semibold', confidenceClass(confidence.summary))}
@@ -10824,7 +10840,8 @@ export function IdeaDetailPage() {
                         >
                           Pending evidence
                         </Badge>
-                      ) : typeof confidence.scoring === 'number' ? (
+                      ) : null}
+                      {typeof confidence.scoring === 'number' && confidence.scoring > 0 ? (
                         <Badge
                           variant="outline"
                           className={cn('text-[10px] font-semibold', confidenceClass(confidence.scoring))}
@@ -10904,7 +10921,8 @@ export function IdeaDetailPage() {
                   }
                   missingFields={runtimeScoringAnalysis.missing_fields}
                   evidenceItems={scoringEvidenceItems}
-                  readinessPercent={scoringReadinessPercent}
+                  readinessPercent={confidence.scoring}
+                  hasNumericScoring={hasNumericScoring}
                   onNavigateToPanel={navigateToPanel}
                   onOpenBacklog={openIdeaBacklogForScoring}
                 />
