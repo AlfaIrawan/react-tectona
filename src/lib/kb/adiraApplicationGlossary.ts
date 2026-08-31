@@ -261,7 +261,7 @@ function findAdiraApplicationEntry(
   ) ?? null
 }
 
-/** Idempotent seed: create missing entries only. Never auto-patch user-edited content on load. */
+/** Idempotent seed: create missing entries only. Never auto-patch user-edited content or re-enable inactive entries on load. */
 export async function ensureAdiraApplicationGlossaryEntries(
   existingEntries: KbEntryResponse[] = [],
 ): Promise<KbEntryResponse[]> {

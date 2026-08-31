@@ -19,6 +19,7 @@ export const KB_CATEGORIES = [
   { value: 'strategic_priorities', label: 'Strategic priorities' },
   { value: 'business_rules', label: 'Business rules' },
   { value: 'idea_intake_checklist', label: 'Idea intake checklist' },
+  { value: 'application_catalog', label: 'Application catalog' },
   { value: 'access_control', label: 'Access control (roles)' },
 ] as const
 

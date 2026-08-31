@@ -126,7 +126,7 @@ export function isBrdToKbContentStandardCorrupted(content: string): boolean {
 
 /**
  * Ensure the standard entry exists. Creates it with the default template ONLY when missing.
- * It never overwrites an existing entry — repair of a corrupted standard is an explicit, manual
+ * It never overwrites an existing entry — including `is_active`. Repair of a corrupted standard is an explicit, manual
  * action (see {@link repairBrdToKbContentStandardEntry}) so we don't silently clobber deliberate edits.
  */
 export async function ensureBrdToKbContentStandardEntry(

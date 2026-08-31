@@ -16,6 +16,8 @@ import {
 import { KbDetailMarkdown, kbLooksLikeMarkdown } from '../components/KbDetailMarkdown'
 import { KbRichHtmlWithColumnLimits } from '../components/KbRichHtmlWithColumnLimits'
 import { KbEditorTableColumnLimits } from '../components/KbEditorTableColumnLimits'
+import { SystemKbTableEditorForm } from '../components/SystemKbTableEditorForm'
+import { SystemKbTableDetailView } from '../components/SystemKbTableDetailView'
 import {
   convertKbWorkspaceOrgPlainToHtml,
   KbWorkspaceOrgDetailView,
@@ -34,6 +36,7 @@ import {
   filterDkmFoldersForRepositoryScope,
   isAllWorkspacesSelection,
   resolveWorkspaceApiId,
+  resolveWorkspaceIdForWrite,
 } from '@/lib/tenantWorkspaceScope'
 import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
@@ -273,7 +276,10 @@ import {
   parseMemoInternalToKbContentStandard,
 } from '@/lib/kb/memoInternalToKbContentStandard'
 import { ADIRA_FINANCE_WORKSPACE_KEY, ensureAdiraApplicationGlossaryEntries, isAdiraFinanceWorkspaceRef, isAdiraGlossaryManagedTitle, suppressAdiraGlossaryTitle } from '@/lib/kb/adiraApplicationGlossary'
-import { ensureIdeaIntakeChecklistDefaultEntry, isSystemKbEntry, isSystemKbEntryTitle } from '@/lib/kb/systemKbEntry'
+import { ensureIdeaIntakeChecklistDefaultEntry, ensureWorkspaceSystemKbTemplates, dedupeWorkspaceSystemKbTemplates, displaySystemKbEntryTitle, isPlatformWideSystemKbEntry, isSystemKbEntry, isSystemKbEntryTitle, mergeEnsuredKbEntries, withoutDuplicateWorkspaceSystemKbEntries } from '@/lib/kb/systemKbEntry'
+import { stripGuidsFromKbDisplayText, stripGuidsFromKbHtml } from '@/lib/kb/kbDisplayText'
+import { disableSupersededApplicationCatalogs, applicationSourceNotice, isManagedApplicationPortfolioCatalogTitle } from '@/lib/kb/applicationPortfolioKbPolicy'
+import { parseSystemKbTableContent, serializeSystemKbTable, systemKbTablePlainLength, type SystemKbTableEditModel } from '@/lib/kb/systemKbTableEditor'
 import { repairFlattenedComparisonBlocks } from '@/lib/kb/repairComparisonTable'
 import { scrubKbExtractionArtifacts, stripRepeatedRunningLines } from '@/lib/kb/kbExtractionArtifacts'
 import { captureKbEditorHtml, prepareKbRichHtmlContent, sanitizeKbRichHtmlPreservingTables, applyKbTableLayoutStylesFromAttrs } from '@/lib/kb/kbRichTableHtml'
@@ -863,7 +869,9 @@ type KnowledgeEntry = {
   divisionId?: string | null
   divisionName?: string | null
   visibilityScope?: 'public' | 'internal' | 'restricted'
+  isActive: boolean
   detailId: string
+  applicationSourceNotice?: string | null
 }
 
 type ArtifactLink = {
@@ -983,7 +991,7 @@ const detailEntries: Record<string, DetailEntry> = {}
 function formatKbUpdated(iso: string): string {
   try {
     const d = new Date(iso)
-    return d.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
+    return d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
   } catch {
     return iso
   }
@@ -1879,20 +1887,27 @@ function renderKbDetailContent(
   content: string,
   workspaces: WorkspaceOrgWorkspaceDto[] = [],
   densityMode: 'maximize' | 'minimize' = 'minimize',
+  title?: string,
+  category?: string,
 ): ReactNode {
-  const structuredJson = parseKbStructuredJson(content)
-  if (structuredJson) {
-    return <KbStructuredJsonContent content={content} />
+  const viewedContent = category === 'access_control' ? stripGuidsFromKbHtml(content) : content
+  const systemTable = title ? parseSystemKbTableContent(title, viewedContent) : null
+  if (systemTable) {
+    return <SystemKbTableDetailView model={systemTable} />
   }
-  const preparedContent = prepareKbRichHtmlContent(content)
+  const structuredJson = parseKbStructuredJson(viewedContent)
+  if (structuredJson) {
+    return <KbStructuredJsonContent content={viewedContent} />
+  }
+  const preparedContent = prepareKbRichHtmlContent(viewedContent)
   if (kbLooksLikeHtml(preparedContent)) {
     const plainProbe = kbExtractPlainText(sanitizeKbRichHtml(preparedContent)).trim()
     if (plainProbe) {
-      return <KbDetailHtmlWithColumnLimits content={content} densityMode={densityMode} />
+      return <KbDetailHtmlWithColumnLimits content={viewedContent} densityMode={densityMode} />
     }
   }
 
-  const detailPlainText = kbLooksLikeHtml(content) ? kbExtractPlainText(content) : content
+  const detailPlainText = kbLooksLikeHtml(viewedContent) ? kbExtractPlainText(viewedContent) : viewedContent
   const standardContent = parseKbStandardDetailContent(detailPlainText)
   if (standardContent) {
     return (
@@ -3382,13 +3397,18 @@ function formatKbCategoryLabel(categoryValue: string, options?: Array<{ value: s
     .replace(/\w/g, (char) => char.toUpperCase())
 }
 
-function kbApiToKnowledgeEntry(row: KbEntryResponse, workspaces: WorkspaceOrgWorkspaceDto[] = []): KnowledgeEntry {
-  const shortSummary = formatKbShortSummary(row.content ?? '')
+function kbApiToKnowledgeEntry(
+  row: KbEntryResponse,
+  workspaces: WorkspaceOrgWorkspaceDto[] = [],
+  catalog: KbEntryResponse[] = [],
+): KnowledgeEntry {
+  const tableModel = parseSystemKbTableContent(row.title, row.content ?? '')
+  const shortSummary = formatKbShortSummary(tableModel ? tableModel.intro : (row.content ?? ''))
 
   return {
     id: row.id,
-    title: row.title,
-    shortSummary,
+    title: stripGuidsFromKbDisplayText(displaySystemKbEntryTitle(row.title)),
+    shortSummary: stripGuidsFromKbDisplayText(shortSummary),
     category: row.category.replace(/_/g, ' '),
     linkedWorkspace: formatKbWorkspaceLabel(row.workspace_id, workspaces),
     sourceType: 'KB service',
@@ -3400,7 +3420,9 @@ function kbApiToKnowledgeEntry(row: KbEntryResponse, workspaces: WorkspaceOrgWor
     divisionId: row.division_id,
     divisionName: row.division_name_snapshot,
     visibilityScope: row.visibility_scope,
+    isActive: row.is_active !== false,
     detailId: row.id,
+    applicationSourceNotice: applicationSourceNotice(row, catalog),
   }
 }
 
@@ -5143,6 +5165,7 @@ export function DocumentKnowledgeManagementPage() {
   const [kbFormTitle, setKbFormTitle] = useState('')
   const [kbFormContent, setKbFormContent] = useState('')
   const [kbStructuredEdit, setKbStructuredEdit] = useState<KbQuestionEditModel | null>(null)
+  const [kbSystemTableEdit, setKbSystemTableEdit] = useState<SystemKbTableEditModel | null>(null)
   const [kbTableInsertOpen, setKbTableInsertOpen] = useState(false)
   const [kbTableInsertHover, setKbTableInsertHover] = useState({ rows: 0, cols: 0 })
   const [kbTableInsertOptions, setKbTableInsertOptions] = useState<KbTableInsertOptions>(
@@ -5186,6 +5209,7 @@ export function DocumentKnowledgeManagementPage() {
   const [kbOrgDivisions, setKbOrgDivisions] = useState<KbOrgDivisionResponse[]>([])
   const [kbWorkspaceOptions, setKbWorkspaceOptions] = useState<WorkspaceOrgWorkspaceDto[]>([])
   const [kbSaving, setKbSaving] = useState(false)
+  const [kbAiToggleBusyId, setKbAiToggleBusyId] = useState<string | null>(null)
   const [kbAiActionLoading, setKbAiActionLoading] = useState<KbAiActionKey | null>(null)
   const [kbAiStickyPinned, setKbAiStickyPinned] = useState(false)
   const [kbRelations, setKbRelations] = useState<KbRelationResponse[]>([])
@@ -5348,6 +5372,7 @@ export function DocumentKnowledgeManagementPage() {
     setKbFormTitle('')
     setKbFormContent('')
     setKbStructuredEdit(null)
+    setKbSystemTableEdit(null)
     setKbFormPriority(10)
     setKbFormWorkspace('')
     setKbFormDepartmentId('')
@@ -5800,6 +5825,7 @@ export function DocumentKnowledgeManagementPage() {
       const res = await listAllKbEntries()
       let items = res.items
 
+      try {
       // Adira glossary/standards seeding when active workspace scope includes Adira Finance WS.
       if (isAdiraFinanceInScope) {
       const ensuredStandard = await ensureBrdToKbContentStandardEntry(items)
@@ -5822,13 +5848,23 @@ export function DocumentKnowledgeManagementPage() {
       }
 
       const ensuredChecklist = await ensureIdeaIntakeChecklistDefaultEntry(items)
-      if (ensuredChecklist) {
-        const existingIndex = items.findIndex((item) => item.id === ensuredChecklist.id)
-        if (existingIndex >= 0) {
-          items[existingIndex] = ensuredChecklist
-        } else {
-          items = [ensuredChecklist, ...items]
-        }
+      items = mergeEnsuredKbEntries(items, [ensuredChecklist])
+      items = await dedupeWorkspaceSystemKbTemplates(items)
+
+      const templateWorkspaceIds = dkmWorkspaceScope.mode === 'single' && dkmWorkspaceScope.workspaceId
+        ? [dkmWorkspaceScope.workspaceId]
+        : [
+            ...(dkmWorkspaceScope.mode === 'all' ? (dkmWorkspaceScope.workspaceIds ?? []) : []),
+            resolveWorkspaceIdForWrite(dkmWorkspaceScope) ?? '',
+            activeWorkspaceApiId ?? '',
+          ].filter(Boolean)
+      const ensuredWorkspaceTemplates = await ensureWorkspaceSystemKbTemplates(items, templateWorkspaceIds)
+      items = mergeEnsuredKbEntries(items, ensuredWorkspaceTemplates)
+      items = await dedupeWorkspaceSystemKbTemplates(items)
+      items = mergeEnsuredKbEntries(items, await disableSupersededApplicationCatalogs(items))
+      items = withoutDuplicateWorkspaceSystemKbEntries(items)
+      } catch {
+        items = withoutDuplicateWorkspaceSystemKbEntries(items)
       }
 
       const scope = dkmWorkspaceScope
@@ -5838,9 +5874,8 @@ export function DocumentKnowledgeManagementPage() {
         // workspace_id at all, so the normal workspace-scope check would hide them from every
         // workspace instead of the intended "visible everywhere" behavior.
         entry.category === 'access_control'
-        // Idea Intake Checklist (Default) is a Tectona system entry for every user. Untagged
-        // rows are hidden by belongsToDkmRepositoryScope, and the seed used to be Adira-only.
-        || isSystemKbEntry(entry)
+        // Idea Intake Checklist (Default) is global. Per-workspace System templates stay scoped.
+        || isPlatformWideSystemKbEntry(entry)
         || belongsToDkmRepositoryScope(entry.workspace_id, scope)
       ))
 
@@ -5857,7 +5892,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setKbLoading(false)
     }
-  }, [dkmWorkspaceScope, isAdiraFinanceInScope])
+  }, [activeWorkspaceApiId, dkmWorkspaceScope, isAdiraFinanceInScope])
 
   const loadKbOrgOptions = useCallback(async () => {
     try {
@@ -9489,12 +9524,14 @@ export function DocumentKnowledgeManagementPage() {
 
     setKbEditingEntryId(fullEntry.id)
     setKbFormCategory(fullEntry.category)
-    setKbFormTitle(fullEntry.title)
+    setKbFormTitle(displaySystemKbEntryTitle(fullEntry.title))
       const structuredEdit = parseKbQuestionEditModel(fullEntry.content)
+      const systemTableEdit = structuredEdit ? null : parseSystemKbTableContent(fullEntry.title, fullEntry.content)
       setKbStructuredEdit(structuredEdit)
+      setKbSystemTableEdit(systemTableEdit)
       const workspaceOrgHtml = convertKbWorkspaceOrgPlainToHtml(fullEntry.content)
       const rawEntryContent = workspaceOrgHtml ?? fullEntry.content
-      setKbFormContent(structuredEdit ? fullEntry.content : sanitizeKbRichHtml(prepareKbRichHtmlContent(rawEntryContent)))
+      setKbFormContent(structuredEdit || systemTableEdit ? fullEntry.content : sanitizeKbRichHtml(prepareKbRichHtmlContent(rawEntryContent)))
     setKbFormPriority(fullEntry.priority)
     const entryWorkspace = resolveKbWorkspaceOption(fullEntry.workspace_id, kbOrganizationWorkspaceOptions)
     setKbFormWorkspace(entryWorkspace ? canonicalizeKbWorkspaceId(fullEntry.workspace_id) : '')
@@ -9559,7 +9596,7 @@ export function DocumentKnowledgeManagementPage() {
   const displayedKbEntries = useMemo(() => {
     const source = kbLive
       ? kbApiItems.map((row) => ({
-          ...kbApiToKnowledgeEntry(row, kbWorkspaceOptions),
+          ...kbApiToKnowledgeEntry(row, kbWorkspaceOptions, kbApiItems),
           category: formatKbCategoryLabel(row.category, kbCategoryOptions),
         }))
       : []
@@ -9639,8 +9676,9 @@ export function DocumentKnowledgeManagementPage() {
 
   const kbContentTextLength = useMemo(() => {
     if (kbStructuredEdit) return kbStructuredEdit.questions.map((question) => question.prompt).join('\n').length
+    if (kbSystemTableEdit) return systemKbTablePlainLength(kbSystemTableEdit)
     return kbExtractPlainText(kbFormContent).length
-  }, [kbFormContent, kbStructuredEdit])
+  }, [kbFormContent, kbStructuredEdit, kbSystemTableEdit])
 
   const runKbAiAction = useCallback((action: KbAiActionKey, task: () => void | Promise<void>) => {
     if (kbAiActionLoading) return
@@ -9663,6 +9701,7 @@ export function DocumentKnowledgeManagementPage() {
   const setKbEditorHtml = useCallback((nextHtml: string) => {
     const sanitized = sanitizeKbRichHtml(nextHtml)
     setKbStructuredEdit(null)
+    setKbSystemTableEdit(null)
     setKbFormContent(sanitized)
     const editor = kbContentEditorRef.current
     if (editor && editor.innerHTML !== sanitized) {
@@ -10801,6 +10840,21 @@ export function DocumentKnowledgeManagementPage() {
                     System
                   </Badge>
                 ) : null}
+                {isManagedApplicationPortfolioCatalogTitle(entry.title) ? (
+                  <Badge variant="outline" className="shrink-0 rounded-full border-emerald-200 bg-emerald-50 px-2 py-0 text-[9px] font-semibold text-emerald-700">
+                    Portfolio SoR
+                  </Badge>
+                ) : null}
+                {entry.applicationSourceNotice && !isManagedApplicationPortfolioCatalogTitle(entry.title) ? (
+                  <Badge variant="outline" className="shrink-0 rounded-full border-amber-200 bg-amber-50 px-2 py-0 text-[9px] font-semibold text-amber-800">
+                    {entry.applicationSourceNotice.startsWith('Application source: APM') ? 'App source: APM' : 'App source: portfolio'}
+                  </Badge>
+                ) : null}
+                {entry.isActive ? null : (
+                  <Badge variant="outline" className="shrink-0 rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[9px] font-semibold text-slate-500">
+                    AI off
+                  </Badge>
+                )}
               </div>
             )}
             <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-2">
@@ -11399,6 +11453,11 @@ export function DocumentKnowledgeManagementPage() {
       setKbFormContent(structuredContent)
       return structuredContent
     }
+    if (kbSystemTableEdit) {
+      const tableContent = serializeSystemKbTable(kbSystemTableEdit)
+      setKbFormContent(tableContent)
+      return tableContent
+    }
     const editor = kbContentEditorRef.current
     if (editor) {
       // Force-stamp every table's current visual column widths into width attrs.
@@ -11561,6 +11620,31 @@ export function DocumentKnowledgeManagementPage() {
       })
     } finally {
       setKbSaving(false)
+    }
+  }
+
+  async function handleKbAiContextToggle(entryId: string, nextActive: boolean) {
+    if (kbAiToggleBusyId) return
+    setKbAiToggleBusyId(entryId)
+    try {
+      const updated = await patchKbEntry(entryId, { is_active: nextActive })
+      setKbApiItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+      setKbViewEntry((prev) => (prev?.id === updated.id ? updated : prev))
+      addToast({
+        title: nextActive ? 'Use for AI: on' : 'Use for AI: off',
+        description: nextActive
+          ? 'This entry is included in Tectona Assistant context.'
+          : 'The entry stays in the Knowledge Base, but AI will not use it.',
+        variant: 'success',
+      })
+    } catch (e) {
+      addToast({
+        title: 'Could not update Use for AI',
+        description: e instanceof Error ? e.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setKbAiToggleBusyId(null)
     }
   }
 
@@ -16943,9 +17027,6 @@ export function DocumentKnowledgeManagementPage() {
                           <BookOpenText className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                           <h2 className="text-lg font-semibold text-foreground">Knowledge Base integration</h2>
                         </div>
-                        <p className="mt-0.5 max-w-2xl text-[11px] text-muted-foreground">
-                          The Knowledge Base keeps important references in one place so teams can find reliable information faster.
-                        </p>
                       </div>
                       {sortedKbEntries.length > 0 ? (
                         <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
@@ -17546,6 +17627,21 @@ export function DocumentKnowledgeManagementPage() {
                                                 System
                                               </Badge>
                                             ) : null}
+                                            {isManagedApplicationPortfolioCatalogTitle(entry.title) ? (
+                                              <Badge variant="outline" className="shrink-0 rounded-full border-emerald-200 bg-emerald-50 px-2 py-0 text-[9px] font-semibold text-emerald-700">
+                                                Portfolio SoR
+                                              </Badge>
+                                            ) : null}
+                                            {entry.applicationSourceNotice && !isManagedApplicationPortfolioCatalogTitle(entry.title) ? (
+                                              <Badge variant="outline" className="shrink-0 rounded-full border-amber-200 bg-amber-50 px-2 py-0 text-[9px] font-semibold text-amber-800">
+                                                {entry.applicationSourceNotice.startsWith('Application source: APM') ? 'App source: APM' : 'App source: portfolio'}
+                                              </Badge>
+                                            ) : null}
+                                            {entry.isActive ? null : (
+                                              <Badge variant="outline" className="shrink-0 rounded-full border-slate-200 bg-slate-50 px-2 py-0 text-[9px] font-semibold text-slate-500">
+                                                AI off
+                                              </Badge>
+                                            )}
                                           </div>
                                         )}
                                       </div>
@@ -17576,6 +17672,23 @@ export function DocumentKnowledgeManagementPage() {
                                     ) : null}
                                   </div>
                                   <div className="mt-3 border-t border-border/20 bg-slate-50/40 px-4 py-3">
+                                    <div
+                                      className="mb-2 flex items-center justify-between gap-2"
+                                      onClick={(event) => event.stopPropagation()}
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="text-[11px] font-semibold text-foreground">Use for AI</p>
+                                      </div>
+                                      <Switch
+                                        checked={entry.isActive}
+                                        disabled={kbAiToggleBusyId === entry.id}
+                                        onCheckedChange={(checked) => {
+                                          void handleKbAiContextToggle(entry.id, checked)
+                                        }}
+                                        aria-label={`Use for AI: ${entry.title}`}
+                                      />
+                                    </div>
                                     <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
                                       <span className="truncate">Created {entry.created}</span>
                                       <span className="truncate text-right">Updated {entry.referenced}</span>
@@ -20843,6 +20956,7 @@ export function DocumentKnowledgeManagementPage() {
                         value={kbFormCategory}
                         onChange={(e) => setKbFormCategory(e.target.value)}
                         className="h-10 w-full text-sm"
+                        disabled={Boolean(kbSystemTableEdit)}
                       >
                         <SelectItem value="">Select category</SelectItem>
                         {kbCategoryOptions.map((c) => (
@@ -20879,6 +20993,7 @@ export function DocumentKnowledgeManagementPage() {
                         maxLength={200}
                         placeholder="Short and unique"
                         className="h-10 text-sm"
+                        disabled={Boolean(kbSystemTableEdit)}
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -20909,8 +21024,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('generate', handleKbAiGenerateDraft)}
-                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
-                            title={kbStructuredEdit ? 'Generate Draft is unavailable while editing structured questions.' : undefined}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit) || Boolean(kbSystemTableEdit)}
+                            title={kbStructuredEdit || kbSystemTableEdit ? 'AI Assist is unavailable while editing a structured System entry.' : undefined}
                           >
                             {kbAiActionLoading === 'generate' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Generate Draft
@@ -20921,8 +21036,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('improve', handleKbAiImproveWriting)}
-                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
-                            title={kbStructuredEdit ? 'Improve Writing is unavailable while editing structured questions.' : undefined}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit) || Boolean(kbSystemTableEdit)}
+                            title={kbStructuredEdit || kbSystemTableEdit ? 'AI Assist is unavailable while editing a structured System entry.' : undefined}
                           >
                             {kbAiActionLoading === 'improve' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <PencilLine className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Improve Writing
@@ -20933,8 +21048,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('structure', handleKbAiStructure)}
-                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
-                            title={kbStructuredEdit ? 'Make Structured is unavailable while editing structured questions.' : undefined}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit) || Boolean(kbSystemTableEdit)}
+                            title={kbStructuredEdit || kbSystemTableEdit ? 'AI Assist is unavailable while editing a structured System entry.' : undefined}
                           >
                             {kbAiActionLoading === 'structure' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <LayoutList className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Make Structured
@@ -20945,8 +21060,8 @@ export function DocumentKnowledgeManagementPage() {
                             size="sm"
                             className="h-auto min-h-8 justify-start rounded-lg border-border/70 bg-background/90 px-2 py-1.5 text-[11px]"
                             onClick={() => runKbAiAction('suggest', handleKbAiSuggestCategoryPriority)}
-                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit)}
-                            title={kbStructuredEdit ? 'Suggest Category & Priority is unavailable while editing structured questions.' : undefined}
+                            disabled={kbAiActionLoading !== null || Boolean(kbStructuredEdit) || Boolean(kbSystemTableEdit)}
+                            title={kbStructuredEdit || kbSystemTableEdit ? 'AI Assist is unavailable while editing a structured System entry.' : undefined}
                           >
                             {kbAiActionLoading === 'suggest' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 shrink-0 animate-spin" /> : <Target className="mr-1.5 h-3.5 w-3.5 shrink-0" />}
                             Suggest Category & Priority
@@ -21026,8 +21141,14 @@ export function DocumentKnowledgeManagementPage() {
                           </Button>
                         </div>
                       ) : null}
+                      {kbSystemTableEdit ? (
+                        <SystemKbTableEditorForm
+                          model={kbSystemTableEdit}
+                          onChange={setKbSystemTableEdit}
+                        />
+                      ) : null}
                       <div
-                        hidden={Boolean(kbStructuredEdit)}
+                        hidden={Boolean(kbStructuredEdit) || Boolean(kbSystemTableEdit)}
                         className={cn(
                           'min-w-0 rounded-xl border backdrop-blur transition-all duration-300 ease-out supports-[backdrop-filter]:bg-background/90',
                           kbAiStickyPinned
@@ -21452,7 +21573,7 @@ export function DocumentKnowledgeManagementPage() {
                         </div>
                       </div>
                       </div>
-                      <div hidden={Boolean(kbStructuredEdit)} className="min-w-0 overflow-hidden rounded-xl border border-border bg-background/80">
+                      <div hidden={Boolean(kbStructuredEdit) || Boolean(kbSystemTableEdit)} className="min-w-0 overflow-hidden rounded-xl border border-border bg-background/80">
                         <div className={cn('relative space-y-1 p-1', KB_RICH_TABLE_WRAPPER_CLASSES)}>
                           <KbEditorTableColumnLimits
                             editorRef={kbContentEditorRef}
@@ -21658,12 +21779,9 @@ export function DocumentKnowledgeManagementPage() {
                       </Select>
                     </div>
                     <div className="flex items-center justify-between rounded-lg border border-border/70 bg-background/70 px-3 py-2">
-                      <div>
-                        <Label htmlFor="kb-active" className="text-xs font-semibold text-foreground">
-                          Active
-                        </Label>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">Turn off to hide from runtime context.</p>
-                      </div>
+                      <Label htmlFor="kb-active" className="text-xs font-semibold text-foreground">
+                        Use for AI
+                      </Label>
                       <Switch id="kb-active" checked={kbFormActive} onCheckedChange={setKbFormActive} disabled={kbSaving} />
                     </div>
                     <p className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
@@ -21907,18 +22025,43 @@ export function DocumentKnowledgeManagementPage() {
                 {/* Title and Metadata */}
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-lg font-semibold text-foreground break-words">{kbViewEntry.title}</h3>
+                    <h3 className="text-lg font-semibold text-foreground break-words">{stripGuidsFromKbDisplayText(displaySystemKbEntryTitle(kbViewEntry.title))}</h3>
                     {isSystemKbEntry(kbViewEntry) ? (
                       <Badge variant="outline" className="rounded-full border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
                         System
                       </Badge>
                     ) : null}
+                    {isManagedApplicationPortfolioCatalogTitle(kbViewEntry.title) ? (
+                      <Badge variant="outline" className="rounded-full border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        Portfolio SoR
+                      </Badge>
+                    ) : null}
+                    {kbViewEntry.is_active ? null : (
+                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                        AI off
+                      </Badge>
+                    )}
                   </div>
+                  {applicationSourceNotice(kbViewEntry, kbApiItems) ? (
+                    <p className="rounded-lg border border-emerald-200/80 bg-emerald-50/80 px-3 py-2 text-[11px] text-emerald-900">
+                      {applicationSourceNotice(kbViewEntry, kbApiItems)}
+                    </p>
+                  ) : null}
                   <p className="text-xs text-muted-foreground">
                     {kbViewEntry.category.replace(/_/g, ' ')} · {' '}
-                    {formatKbWorkspaceLabel(kbViewEntry.workspace_id, kbWorkspaceOptions)} · Priority {kbViewEntry.priority} · {' '}
-                    {kbViewEntry.is_active ? <span className="text-green-600">Active</span> : <span className="text-slate-500">Inactive</span>}
+                    {formatKbWorkspaceLabel(kbViewEntry.workspace_id, kbWorkspaceOptions)} · Priority {kbViewEntry.priority}
                   </p>
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/70 px-3 py-2">
+                    <p className="text-xs font-semibold text-foreground">Use for AI</p>
+                    <Switch
+                      checked={kbViewEntry.is_active}
+                      disabled={kbAiToggleBusyId === kbViewEntry.id}
+                      onCheckedChange={(checked) => {
+                        void handleKbAiContextToggle(kbViewEntry.id, checked)
+                      }}
+                      aria-label="Use for AI"
+                    />
+                  </div>
                 </div>
 
                 <Tabs
@@ -22003,6 +22146,8 @@ export function DocumentKnowledgeManagementPage() {
                             kbViewEntry.content,
                             kbWorkspaceOptions,
                             kbViewFullscreen ? 'maximize' : 'minimize',
+                            kbViewEntry.title,
+                            kbViewEntry.category,
                           )}
                         </div>
                       </div>
