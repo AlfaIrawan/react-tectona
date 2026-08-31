@@ -7625,19 +7625,37 @@ export function DocumentKnowledgeManagementPage() {
     }
     const nameMatches = findNameMatches(subject, docs)
     const excludeIds = new Set(nameMatches.map((d) => d.id))
-    const shortlist = shortlistByKeywordOverlap(`${fileName} ${extractText.slice(0, 1500)}`, docs, { excludeIds })
+    const shortlistText = `${fileName} ${extractText.slice(0, 1500)}`
+    const shortlist = shortlistByKeywordOverlap(shortlistText, docs, { excludeIds })
 
-    let samePurpose: { doc: ExistingBrdDoc; reason: string }[] = []
-    if (shortlist.length > 0) {
+    // Documents whose file name doesn't follow the "BRD_..." convention (e.g. "[DRAFT] API Spec
+    // CMS to DLB" vs "...v.2") never produce a structured-name match at all, so they depend
+    // entirely on the LLM purpose-check below — and that call is best-effort/fire-and-forget
+    // (a timeout or backend hiccup silently skips it, letting a near-identical file upload as a
+    // fully separate, undetected document). A very high keyword-overlap match is caught here
+    // deterministically, independent of the LLM call ever running or succeeding.
+    const HIGH_OVERLAP_THRESHOLD = 0.5
+    const highOverlapIds = new Set(
+      shortlistByKeywordOverlap(shortlistText, docs, { excludeIds, threshold: HIGH_OVERLAP_THRESHOLD }).map((d) => d.id),
+    )
+    let samePurpose: { doc: ExistingBrdDoc; reason: string }[] = shortlist
+      .filter((d) => highOverlapIds.has(d.id))
+      .map((d) => ({ doc: d, reason: 'Very similar file name/content keywords' }))
+
+    const remainingShortlist = shortlist.filter((d) => !highOverlapIds.has(d.id))
+    if (remainingShortlist.length > 0) {
       try {
         const resp = await compareBrdPurpose({
           subject: { id: '__new__', title: fileName, purpose: extractText.slice(0, 2000) },
-          candidates: shortlist.map((d) => ({ id: d.id, title: d.title, summary: summaryById.get(d.id) ?? '' })),
+          candidates: remainingShortlist.map((d) => ({ id: d.id, title: d.title, summary: summaryById.get(d.id) ?? '' })),
         })
         const byId = new Map(resp.matches.map((m) => [m.id, m]))
-        samePurpose = shortlist
-          .filter((d) => { const m = byId.get(d.id); return Boolean(m?.same_purpose) && (m?.confidence ?? 0) >= 0.55 })
-          .map((d) => ({ doc: d, reason: byId.get(d.id)?.reason ?? '' }))
+        samePurpose = [
+          ...samePurpose,
+          ...remainingShortlist
+            .filter((d) => { const m = byId.get(d.id); return Boolean(m?.same_purpose) && (m?.confidence ?? 0) >= 0.55 })
+            .map((d) => ({ doc: d, reason: byId.get(d.id)?.reason ?? '' })),
+        ]
       } catch {
         /* semantic check is best-effort */
       }
@@ -23493,43 +23511,84 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
 
                 <div className="space-y-3 px-6 py-5">
-                  {templateShareDialog.selectedIds.size > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {Array.from(templateShareDialog.selectedIds).map((selectedId) => {
-                        const option = templateShareDialogOptions.find((item) => item.id === selectedId)
-                        return (
-                          <span
-                            key={selectedId}
-                            className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-sky-400/30 bg-gradient-to-r from-sky-500/15 to-cyan-500/15 py-1 pl-3 pr-1.5 text-xs font-medium text-sky-950 ring-1 ring-sky-500/20 dark:text-sky-100"
-                          >
-                            <span className="truncate">{option?.name ?? selectedId}</span>
-                            <button
-                              type="button"
-                              className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-sky-900/70 hover:bg-sky-500/20 hover:text-sky-950 dark:text-sky-200/80 dark:hover:text-sky-50"
-                              aria-label={`Remove ${option?.name ?? selectedId}`}
-                              onClick={() => {
-                                setTemplateShareDialog((prev) => {
-                                  if (!prev) return prev
-                                  const next = new Set(prev.selectedIds)
-                                  next.delete(selectedId)
-                                  return { ...prev, selectedIds: next }
-                                })
-                              }}
-                            >
-                              <X className="h-3 w-3" aria-hidden />
-                            </button>
-                          </span>
-                        )
-                      })}
-                    </div>
-                  ) : null}
-
                   {templateShareDialogOptions.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       No other workspaces in this template's organization are available. If a personal workspace is missing, link it to this organization in Workspace Directory.
                     </p>
                   ) : (
-                    <div className="relative space-y-3">
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <Search
+                          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <input
+                          type="text"
+                          value={templateShareSearchQuery}
+                          onChange={(event) => setTemplateShareSearchQuery(event.target.value)}
+                          onFocus={() => setTemplateShareSearchOpen(true)}
+                          onBlur={() => {
+                            window.setTimeout(() => setTemplateShareSearchOpen(false), 150)
+                          }}
+                          placeholder="Search workspaces or owner name…"
+                          className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                        {templateShareSearchOpen ? (
+                          (() => {
+                            const query = templateShareSearchQuery.trim().toLowerCase()
+                            const filtered = templateShareDialogOptions.filter((option) => {
+                              if (templateShareDialog.selectedIds.has(option.id)) return false
+                              if (!query) return true
+                              const haystack = option.searchHaystack || option.name.toLowerCase()
+                              return haystack.includes(query)
+                            })
+                            return (
+                              <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg scrollbar-hide">
+                                {filtered.length === 0 ? (
+                                  <p className="px-3 py-2.5 text-sm text-muted-foreground">
+                                    {query
+                                      ? 'No matching workspaces. Try the workspace name, owner name, or confirm it is linked in Workspace Directory.'
+                                      : 'All workspaces are already selected.'}
+                                  </p>
+                                ) : (
+                                  filtered.map((option) => (
+                                    <button
+                                      key={option.id}
+                                      type="button"
+                                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm text-foreground hover:bg-muted/40"
+                                      onMouseDown={(event) => {
+                                        event.preventDefault()
+                                        addTemplateShareWorkspaceIds(option.id)
+                                        setTemplateShareSearchQuery('')
+                                      }}
+                                    >
+                                      <span className="min-w-0 flex-1 truncate">{option.name}</span>
+                                      {(() => {
+                                        const childCount = expandShareSelectionWithChildren(
+                                          option.id,
+                                          templateShareDialogDirectory,
+                                          true,
+                                        ).filter((id) => id !== option.id && templateShareDialogOptions.some((item) => item.id === id)).length
+                                        if (childCount <= 0) return null
+                                        return (
+                                          <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
+                                            {childCount} child{childCount === 1 ? '' : 'ren'}
+                                          </span>
+                                        )
+                                      })()}
+                                      {option.tenantMode === 'personal' ? (
+                                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                          Personal
+                                        </span>
+                                      ) : null}
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            )
+                          })()
+                        ) : null}
+                      </div>
                       <label className="flex items-start gap-2.5 text-sm text-foreground">
                         <input
                           type="checkbox"
@@ -23563,81 +23622,41 @@ export function DocumentKnowledgeManagementPage() {
                           </span>
                         </span>
                       </label>
-                      <div className="relative">
-                        <Search
-                          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-                          aria-hidden
-                        />
-                        <input
-                          type="text"
-                          value={templateShareSearchQuery}
-                          onChange={(event) => setTemplateShareSearchQuery(event.target.value)}
-                          onFocus={() => setTemplateShareSearchOpen(true)}
-                          onBlur={() => {
-                            window.setTimeout(() => setTemplateShareSearchOpen(false), 150)
-                          }}
-                          placeholder="Search workspaces or owner name…"
-                          className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                        />
-                      </div>
-
-                      {templateShareSearchOpen ? (
-                        (() => {
-                          const query = templateShareSearchQuery.trim().toLowerCase()
-                          const filtered = templateShareDialogOptions.filter((option) => {
-                            if (templateShareDialog.selectedIds.has(option.id)) return false
-                            if (!query) return true
-                            const haystack = option.searchHaystack || option.name.toLowerCase()
-                            return haystack.includes(query)
-                          })
-                          return (
-                            <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg scrollbar-hide">
-                              {filtered.length === 0 ? (
-                                <p className="px-3 py-2.5 text-sm text-muted-foreground">
-                                  {query
-                                    ? 'No matching workspaces. Try the workspace name, owner name, or confirm it is linked in Workspace Directory.'
-                                    : 'All workspaces are already selected.'}
-                                </p>
-                              ) : (
-                                filtered.map((option) => (
-                                  <button
-                                    key={option.id}
-                                    type="button"
-                                    className="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm text-foreground hover:bg-muted/40"
-                                    onMouseDown={(event) => {
-                                      event.preventDefault()
-                                      addTemplateShareWorkspaceIds(option.id)
-                                      setTemplateShareSearchQuery('')
-                                    }}
-                                  >
-                                    <span className="min-w-0 flex-1 truncate">{option.name}</span>
-                                    {(() => {
-                                      const childCount = expandShareSelectionWithChildren(
-                                        option.id,
-                                        templateShareDialogDirectory,
-                                        true,
-                                      ).filter((id) => id !== option.id && templateShareDialogOptions.some((item) => item.id === id)).length
-                                      if (childCount <= 0) return null
-                                      return (
-                                        <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
-                                          {childCount} child{childCount === 1 ? '' : 'ren'}
-                                        </span>
-                                      )
-                                    })()}
-                                    {option.tenantMode === 'personal' ? (
-                                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                        Personal
-                                      </span>
-                                    ) : null}
-                                  </button>
-                                ))
-                              )}
-                            </div>
-                          )
-                        })()
-                      ) : null}
                     </div>
                   )}
+
+                  {templateShareDialog.selectedIds.size > 0 ? (
+                    <div className="max-h-40 overflow-y-auto scrollbar-hide">
+                      <div className="flex flex-wrap gap-2">
+                        {Array.from(templateShareDialog.selectedIds).map((selectedId) => {
+                          const option = templateShareDialogOptions.find((item) => item.id === selectedId)
+                          return (
+                            <span
+                              key={selectedId}
+                              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-sky-400/30 bg-gradient-to-r from-sky-500/15 to-cyan-500/15 py-1 pl-3 pr-1.5 text-xs font-medium text-sky-950 ring-1 ring-sky-500/20 dark:text-sky-100"
+                            >
+                              <span className="truncate">{option?.name ?? selectedId}</span>
+                              <button
+                                type="button"
+                                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-sky-900/70 hover:bg-sky-500/20 hover:text-sky-950 dark:text-sky-200/80 dark:hover:text-sky-50"
+                                aria-label={`Remove ${option?.name ?? selectedId}`}
+                                onClick={() => {
+                                  setTemplateShareDialog((prev) => {
+                                    if (!prev) return prev
+                                    const next = new Set(prev.selectedIds)
+                                    next.delete(selectedId)
+                                    return { ...prev, selectedIds: next }
+                                  })
+                                }}
+                              >
+                                <X className="h-3 w-3" aria-hidden />
+                              </button>
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="flex items-center justify-end gap-3 rounded-b-2xl border-t border-border/70 bg-muted/20 px-6 py-4">

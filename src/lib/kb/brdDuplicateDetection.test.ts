@@ -106,6 +106,17 @@ describe('BRD duplicate detection', () => {
     expect(generated.has('doc-999')).toBe(false)
   })
 
+  it('shortlists a near-identical non-BRD-named title at a high-overlap threshold', () => {
+    // Regression: parseBrdStructuredName requires a "BRD_" filename prefix, so titles like
+    // "[DRAFT] API Spec CMS to DLB" vs "...v.2" never produce a structured-name match at all and
+    // fall through entirely to the (best-effort, fire-and-forget) LLM purpose check — if that call
+    // fails or scores low, the two near-identical documents upload as fully separate, undetected
+    // documents. A high-overlap keyword shortlist threshold must still catch this deterministically.
+    const existing = [makeDoc({ id: 'v1', fileName: '[DRAFT] API Spec CMS to DLB.docx' })]
+    const shortlist = shortlistByKeywordOverlap('[DRAFT] API Spec CMS to DLB v.2.docx', existing, { threshold: 0.5 })
+    expect(shortlist.map((d) => d.id)).toEqual(['v1'])
+  })
+
   it('shortlists candidates by keyword overlap, excluding already-matched ids', () => {
     const existing = [
       makeDoc({ id: 'close', fileName: 'BRD_SCF_FMCG.docx', title: 'Penanganan Produk SCF FMCG di CLAR' }),
