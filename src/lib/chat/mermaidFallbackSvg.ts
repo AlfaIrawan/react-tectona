@@ -148,7 +148,65 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
   }
 
   if (nodes.size === 0) return null
+  collapseBareFallbackNodes(nodes, edges)
+  if (nodes.size === 0) return null
   return { direction, nodes: [...nodes.values()], edges }
+}
+
+function collapseBareFallbackNodes(
+  nodes: Map<string, { id: string; label: string; shape: FallbackNodeShape }>,
+  edges: FallbackGraph['edges'],
+) {
+  const isBare = (node: { id: string; label: string }) => node.label === node.id && node.id.length <= 2
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const node of [...nodes.values()]) {
+      if (!isBare(node)) continue
+      const succs = edges.filter((e) => e.source === node.id)
+      const preds = edges.filter((e) => e.target === node.id)
+      if (succs.length === 0) {
+        node.label = 'Selesai'
+        continue
+      }
+      const kept = edges.filter((e) => e.source !== node.id && e.target !== node.id)
+      for (const pred of preds) {
+        for (const succ of succs) {
+          kept.push({ source: pred.source, target: succ.target, label: pred.label || succ.label })
+        }
+      }
+      edges.length = 0
+      edges.push(...kept)
+      nodes.delete(node.id)
+      changed = true
+      break
+    }
+  }
+}
+
+/** Rebuild flowchart source without 1–2 character unlabeled boxes (J, l, …). */
+export function rewriteBareMermaidSource(source: string): string {
+  const graph = parseFlowchartFallback(source)
+  if (!graph) return source
+  const lines = [`flowchart ${graph.direction}`]
+  for (const node of graph.nodes) {
+    const label = node.label.replace(/"/g, "'")
+    if (node.shape === 'diamond') {
+      lines.push(`  ${node.id}{"${label}"}`)
+    } else if (node.shape === 'round') {
+      lines.push(`  ${node.id}("${label}")`)
+    } else {
+      lines.push(`  ${node.id}["${label}"]`)
+    }
+  }
+  for (const edge of graph.edges) {
+    if (edge.label) {
+      lines.push(`  ${edge.source} -->|"${edge.label.replace(/"/g, "'")}"| ${edge.target}`)
+    } else {
+      lines.push(`  ${edge.source} --> ${edge.target}`)
+    }
+  }
+  return lines.join('\n')
 }
 
 function layoutGraph(graph: FallbackGraph): {

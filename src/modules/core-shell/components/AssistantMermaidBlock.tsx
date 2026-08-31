@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
-import { buildFlowchartFallbackSvg } from '@/lib/chat/mermaidFallbackSvg'
+import { buildFlowchartFallbackSvg, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
 import { cn } from '@/lib/utils'
 
 type AssistantMermaidBlockProps = {
@@ -83,7 +83,7 @@ function sanitizeMermaidSource(source: string): string {
   text = text.replace(/(\|--?)(?!")([^|\n]+)(\|)/g, (_m, left: string, label: string, right: string) => {
     return `${left}"${label.replace(/"/g, "'")}"${right}`
   })
-  return text
+  return rewriteBareMermaidSource(text)
 }
 
 function removeStaleMermaidDom(renderId: string) {
