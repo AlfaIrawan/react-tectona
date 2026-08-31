@@ -27,7 +27,7 @@ declare global {
   }
 }
 
-import { resolveBrowserDocumentServerUrl } from '@/lib/onlyofficeDocumentServerUrl'
+import { resolveWorkingDocumentServerUrl } from '@/lib/onlyofficeDocumentServerUrl'
 
 const PLACEHOLDER_ID = 'document-editor-surface'
 const SAVE_POLL_TIMEOUT_MS = 30_000
@@ -99,28 +99,20 @@ export function describeOnlyOfficeError(code: unknown): string {
 
 const scriptPromises = new Map<string, Promise<void>>()
 export function loadDocumentServerApi(documentServerUrl: string): Promise<void> {
-  const publicBase = resolveBrowserDocumentServerUrl(documentServerUrl)
-  const src = `${publicBase.replace(/\/$/, '')}/web-apps/apps/api/documents/api.js`
-  const cached = scriptPromises.get(src)
+  const cached = scriptPromises.get(documentServerUrl)
   if (cached) return cached
 
-  const promise = new Promise<void>((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = src
-    script.async = true
-    script.onload = () => resolve()
-    script.onerror = () => {
-      scriptPromises.delete(src)
-      reject(
-        new Error(
-          `Could not reach the document editor service (${src}). ` +
-            'Pastikan OnlyOffice Document Server hidup (port 8085) dan nginx mem-proxy /onlyoffice-ds/.',
-        ),
-      )
-    }
-    document.head.appendChild(script)
-  })
-  scriptPromises.set(src, promise)
+  const promise = resolveWorkingDocumentServerUrl(documentServerUrl)
+    .then((base) => {
+      if (!(window as Window & { DocsAPI?: unknown }).DocsAPI) {
+        throw new Error(`Document editor failed to initialize (${base}).`)
+      }
+    })
+    .catch((error) => {
+      scriptPromises.delete(documentServerUrl)
+      throw error
+    })
+  scriptPromises.set(documentServerUrl, promise)
   return promise
 }
 
