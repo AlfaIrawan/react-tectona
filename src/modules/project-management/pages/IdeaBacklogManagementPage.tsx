@@ -2318,11 +2318,11 @@ export function IdeaBacklogManagementPage() {
       const visibleChildCount = childCountByFolder.get(folderId) ?? 0
       return {
         ...folder,
-        ideaCount: visibleIdeaCount > 0 ? visibleIdeaCount : folder.ideaCount,
-        childrenCount: visibleChildCount > 0 ? visibleChildCount : folder.childrenCount,
+        ideaCount: isLoading ? folder.ideaCount : visibleIdeaCount,
+        childrenCount: isLoading ? folder.childrenCount : visibleChildCount,
       }
     })
-  }, [filteredFolders, ideas, folders])
+  }, [filteredFolders, ideas, folders, isLoading])
 
   const contentTotalForLabel = contentCounts.folders + contentCounts.ideas
 

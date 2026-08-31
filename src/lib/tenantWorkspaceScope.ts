@@ -80,6 +80,24 @@ export function resolveWorkspaceIdForFetch(scope: WorkspaceScope): string | unde
 }
 
 /**
+ * Idea-backlog folders must follow the idea list: a named workspace only sees folders
+ * tagged with that workspace_id. Untagged legacy folders leaked into every org workspace
+ * (e.g. "2023" with Innolimit ideas appearing empty under Adira Finance WS).
+ */
+export function resolveWorkspaceIdForIdeaFolderFetch(scope: WorkspaceScope): string | undefined {
+  if (scope.mode === 'single') return scope.workspaceId
+  return undefined
+}
+
+export function belongsToIdeaBacklogFolderScope(
+  entityWorkspaceId: string | null | undefined,
+  scope: WorkspaceScope,
+): boolean {
+  if (!entityWorkspaceId) return scope.mode === 'all'
+  return belongsToActiveWorkspaceScope(entityWorkspaceId, scope)
+}
+
+/**
  * Apply the workspace id we sent on create when the API omits `workspace_id` in the response.
  * Do not use this on list/fetch — legacy untagged rows must stay hidden.
  */

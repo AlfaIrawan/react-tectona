@@ -10,9 +10,9 @@ import {
 } from '@/lib/api/ideaFolderApi'
 import {
   applyWorkspaceIdFromWrite,
-  belongsToActiveWorkspaceScope,
+  belongsToIdeaBacklogFolderScope,
   readActiveWorkspaceScope,
-  resolveWorkspaceIdForFetch,
+  resolveWorkspaceIdForIdeaFolderFetch,
   resolveWorkspaceIdForWrite,
 } from '@/lib/tenantWorkspaceScope'
 import { buildDuplicateIdeaFolderName } from '../lib/ideaFolderActions'
@@ -92,7 +92,7 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
     set({ foldersLoading: true, foldersError: null })
     try {
       const scope = readActiveWorkspaceScope()
-      const workspace_id = resolveWorkspaceIdForFetch(scope)
+      const workspace_id = resolveWorkspaceIdForIdeaFolderFetch(scope)
       const isScopedFetch = parentId !== undefined
       const apiFolders = isScopedFetch
         ? (
@@ -107,7 +107,7 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
         : await fetchAllIdeaFolders({ owner_id: ownerId, workspace_id })
 
       const incoming = apiFolders
-        .filter((api) => belongsToActiveWorkspaceScope(api.workspace_id, scope))
+        .filter((api) => belongsToIdeaBacklogFolderScope(api.workspace_id, scope))
         .map(mapApiToFolder)
       const incomingIds = new Set(incoming.map((folder) => folder.id))
 
