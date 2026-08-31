@@ -49,7 +49,6 @@ import {
   TriangleAlert,
   TrendingUp,
   UserRound,
-  Wand2,
   X,
   Loader2,
   Maximize2,
@@ -3823,9 +3822,6 @@ export function IdeaDetailPage() {
 
   const [brdSections, setBrdSections] = useState<BrdSection[]>(INITIAL_BRD_SECTIONS)
   const [showMermaidCode, setShowMermaidCode] = useState(false)
-  const [developModalOpen, setDevelopModalOpen] = useState(false)
-  const [targetWorkspace, setTargetWorkspace] = useState('Virea / Delivery Excellence')
-  const [developStep, setDevelopStep] = useState<'idle' | 'generating' | 'creating' | 'sending' | 'done'>('idle')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const stored = localStorage.getItem(IDEA_DETAIL_SIDEBAR_STORAGE_KEY)
     return stored ? JSON.parse(stored) : false
@@ -6312,13 +6308,6 @@ export function IdeaDetailPage() {
     }, 900)
   }
 
-  const startDevelop = () => {
-    setDevelopStep('generating')
-    window.setTimeout(() => setDevelopStep('creating'), 1000)
-    window.setTimeout(() => setDevelopStep('sending'), 2200)
-    window.setTimeout(() => setDevelopStep('done'), 3600)
-  }
-
   const addMetaToast = useCallback((
     key: string,
     toast: { variant: 'success' | 'error'; title: string; description: string }
@@ -6365,32 +6354,6 @@ export function IdeaDetailPage() {
       setIsMetaPatchSaving(false)
     }
   }, [idea.id, idea.version])
-
-  const quickUpdateStatus = (status: IdeaStatus) => {
-    if (isMetaPatchSaving || status === idea.status) return
-    const previousStatus = idea.status
-    setMetaPatchInlineError(null)
-    setIdea((prev) => ({ ...prev, status }))
-    void persistIdeaMetaPatch({ status, reviewer: idea.reviewer }).then((result) => {
-      if (result.ok) {
-        setMetaPatchLastSavedAt(new Date())
-        setMetaPatchInlineError(null)
-        addMetaToast(`status:${status}:ok`, {
-          variant: 'success',
-          title: 'Status updated',
-          description: `Idea status changed to ${status}.`,
-        })
-        return
-      }
-      setIdea((prev) => ({ ...prev, status: previousStatus }))
-      setMetaPatchInlineError(result.message)
-      addMetaToast('status:error', {
-        variant: 'error',
-        title: 'Status update failed',
-        description: result.message,
-      })
-    })
-  }
 
   const quickUpdateReviewer = (reviewer: string) => {
     if (isMetaPatchSaving || reviewer === idea.reviewer) return
@@ -10334,60 +10297,6 @@ export function IdeaDetailPage() {
             </div>
 
             <div className="flex shrink-0 flex-col items-end gap-2">
-              <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm flex-nowrap">
-                <button
-                  type="button"
-                  onClick={() => quickUpdateStatus('Approved')}
-                  disabled={isMetaPatchSaving}
-                  className={cn(
-                    'flex items-center justify-center rounded-lg p-2.5 text-emerald-600 transition-all duration-200 hover:bg-background hover:shadow-sm',
-                    isMetaPatchSaving && 'cursor-not-allowed opacity-55 hover:bg-transparent hover:shadow-none'
-                  )}
-                  aria-label="Approve idea"
-                  title="Approve idea"
-                >
-                  <Check className="w-5 h-5" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => quickUpdateStatus('Rejected')}
-                  disabled={isMetaPatchSaving}
-                  className={cn(
-                    'flex items-center justify-center rounded-lg p-2.5 text-rose-600 transition-all duration-200 hover:bg-background hover:shadow-sm',
-                    isMetaPatchSaving && 'cursor-not-allowed opacity-55 hover:bg-transparent hover:shadow-none'
-                  )}
-                  aria-label="Reject idea"
-                  title="Reject idea"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => quickUpdateStatus('Under Review')}
-                  disabled={isMetaPatchSaving}
-                  className={cn(
-                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
-                    isMetaPatchSaving && 'cursor-not-allowed opacity-55 hover:bg-transparent hover:text-muted-foreground hover:shadow-none'
-                  )}
-                  aria-label="Move to backlog"
-                  title="Move to backlog"
-                >
-                  <ClipboardList className="w-5 h-5" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setDevelopModalOpen(true)}
-                  className="flex items-center justify-center rounded-lg p-2.5 text-[#5f7de0] transition-all duration-200 hover:bg-background hover:shadow-sm"
-                  aria-label="Develop"
-                  title="Develop"
-                >
-                  <Wand2 className="w-5 h-5" />
-                      </button>
-              </div>
-
               {activePanel === 'summary' && (
                 <div className="self-end text-[11px] text-slate-600">
                   <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right">
@@ -13419,64 +13328,6 @@ export function IdeaDetailPage() {
         </div>
         )}
       </div>
-
-      <Dialog open={developModalOpen} onOpenChange={setDevelopModalOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Develop with AI</DialogTitle>
-            <DialogDescription>
-              Preview generated structure, choose target, and trigger Virea workflow.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 text-sm">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Card className="border-border/40 bg-white/80">
-                <CardHeader className="pb-2"><CardTitle className="text-sm">Generated structure preview</CardTitle></CardHeader>
-                <CardContent className="space-y-1 text-slate-700">
-                  <p>Project: Multi Finance Approval Intelligence</p>
-                  <p>Epics: 3</p>
-                  <p>Stories: 11</p>
-                  <p>Tasks: 38</p>
-                </CardContent>
-              </Card>
-              <Card className="border-border/40 bg-white/80">
-                <CardHeader className="pb-2"><CardTitle className="text-sm">Target workspace/project</CardTitle></CardHeader>
-                <CardContent>
-                  <select
-                    value={targetWorkspace}
-                    onChange={(e) => setTargetWorkspace(e.target.value)}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  >
-                    <option>Virea / Delivery Multi Finance</option>
-                    <option>Virea / PMO Kredit Ritel</option>
-                    <option>Virea / Transformasi Proses Persetujuan</option>
-                  </select>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="rounded-xl border border-border/40 bg-white/80 p-3 space-y-2">
-              <p className="text-xs font-semibold text-slate-600">Progress status</p>
-              <div className="space-y-1.5 text-xs">
-                <p className={cn(developStep === 'generating' && 'text-blue-700 font-semibold', (developStep === 'creating' || developStep === 'sending' || developStep === 'done') && 'text-emerald-700')}>1. Generating artifacts...</p>
-                <p className={cn(developStep === 'creating' && 'text-blue-700 font-semibold', (developStep === 'sending' || developStep === 'done') && 'text-emerald-700')}>2. Creating project / epics / stories / tasks...</p>
-                <p className={cn(developStep === 'sending' && 'text-blue-700 font-semibold', developStep === 'done' && 'text-emerald-700')}>3. Sending to Virea...</p>
-                <p className={cn(developStep === 'done' ? 'text-emerald-700 font-semibold' : 'text-slate-500')}>4. Workflow triggered successfully.</p>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDevelopModalOpen(false)}>
-              Close
-            </Button>
-            <Button onClick={startDevelop} disabled={developStep !== 'idle' && developStep !== 'done'}>
-              <Wand2 className="h-4 w-4 mr-1.5" /> Start Develop Workflow
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       </div>
     </>
   )
