@@ -64,7 +64,7 @@ export function OnboardingStatusPage() {
     !loading &&
     !bypass &&
     !emailVerificationPathActive &&
-    (pendingEmailFromNavigation || status === 'email_verify_pending')
+    pendingEmailFromNavigation
   ) {
     return <Navigate to="/onboarding" replace />
   }

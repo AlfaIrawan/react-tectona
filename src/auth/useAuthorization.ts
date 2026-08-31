@@ -28,6 +28,7 @@ export interface WorkspaceManagementAccess {
   canManageOrganization: boolean
   canManageGovernance: boolean
   isPlatformAdmin: boolean
+  isOrganizationAdmin: boolean
   loading: boolean
   canAccessPanel: (panel: WorkspacePanelAuth) => boolean
   canMutate: boolean
@@ -35,7 +36,7 @@ export interface WorkspaceManagementAccess {
 
 type AccessFlags = Omit<
   WorkspaceManagementAccess,
-  'loading' | 'isPlatformAdmin' | 'canAccessPanel' | 'canMutate'
+  'loading' | 'isPlatformAdmin' | 'isOrganizationAdmin' | 'canAccessPanel' | 'canMutate'
 >
 
 type WacUiRole = 'Admin' | 'Manager' | 'Member' | 'Viewer' | 'None'

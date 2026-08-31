@@ -793,13 +793,17 @@ export interface RuntimeChatResponse {
 export type TectonaProposedAction = {
   action_id: string
   action_code:
+    | 'app.navigate'
     | 'workspace.create'
     | 'workspace.update'
     | 'workspace.delete'
     | 'workspace.governance.apply'
     | 'workspace.member.add'
     | 'idea.content.inject'
+    | 'idea.section.revision'
     | 'document.apply_chat_edit'
+    | 'document.transform'
+    | 'knowledge.person_alias.add'
   summary: string
   payload: Record<string, unknown>
   risk_level?: 'low' | 'medium' | 'high'

@@ -117,9 +117,13 @@ export function ContextMenu({
 
 const ContextMenuItem = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { onSelect?: (event: React.MouseEvent<HTMLDivElement>) => void }
->(({ className, onClick, onSelect, ...props }, ref) => {
+  React.HTMLAttributes<HTMLDivElement> & {
+    onSelect?: (event: React.MouseEvent<HTMLDivElement>) => void
+    disabled?: boolean
+  }
+>(({ className, onClick, onSelect, disabled, ...props }, ref) => {
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (disabled) return
     onSelect?.(e)
     onClick?.(e)
   }
@@ -128,6 +132,7 @@ const ContextMenuItem = React.forwardRef<
     <div
       ref={ref}
       role="menuitem"
+      aria-disabled={disabled || undefined}
       className={cn(
         'relative flex items-center gap-3 px-4 py-2.5 text-sm cursor-pointer',
         'rounded-lg mx-1',
@@ -135,6 +140,7 @@ const ContextMenuItem = React.forwardRef<
         'hover:bg-accent/80 hover:text-accent-foreground',
         'active:scale-[0.98] active:bg-accent',
         'focus:outline-none focus:bg-accent focus:text-accent-foreground',
+        disabled && 'pointer-events-none cursor-not-allowed opacity-50',
         className
       )}
       onClick={handleClick}

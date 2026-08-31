@@ -22,7 +22,7 @@ export function TenantDeepLinkPage() {
     void evaluateWorkspaceSlugAccess(normalized)
       .then((result) => {
         if (cancelled) return
-        if (!result.allowed) {
+        if (result.allowed === false) {
           if (result.reason === 'invalid_slug') {
             setError('Workspace not found.')
             return

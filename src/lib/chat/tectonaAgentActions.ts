@@ -42,6 +42,7 @@ export type TectonaAgentActionCode =
   | 'idea.section.revision'
   | 'app.navigate'
   | 'document.apply_chat_edit'
+  | 'document.transform'
   | 'knowledge.person_alias.add'
 
 export type TectonaIdeaContentUpdate = {

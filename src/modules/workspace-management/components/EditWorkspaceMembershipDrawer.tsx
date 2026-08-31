@@ -572,14 +572,12 @@ export function EditWorkspaceMembershipDrawer({
         open={manageParticipationScopesOpen}
         onClose={() => setManageParticipationScopesOpen(false)}
         options={participationScopeOptions}
-        selectedValue={participationScope}
-        onSelectedValueChange={setParticipationScope}
         disabled={submitting}
         saving={scopesMutating}
         onUpdateScope={async (scopeId, displayName) => {
           setScopesMutating(true)
           try {
-            await updateParticipationScope(TECTONA_WAC_APP_ID, scopeId, displayName, { actorId: wacActorId() })
+            await updateParticipationScope(TECTONA_WAC_APP_ID, scopeId, { display_name: displayName }, { actorId: wacActorId() })
             await reloadParticipationScopes()
           } finally {
             setScopesMutating(false)

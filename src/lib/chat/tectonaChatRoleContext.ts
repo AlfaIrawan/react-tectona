@@ -11,6 +11,7 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
 import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
+import type { WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import { useEffect } from 'react'
 import { create } from 'zustand'
@@ -198,9 +199,9 @@ export async function refreshTectonaChatRoleSnapshot(
     fetchSubjectMembershipsCached(session.user.id, { activeOnly: true }).catch(() => ({
       items: [] as WacMembershipDto[],
     })),
-    fetchAllWorkspaceOrgWorkspacesCached().catch(() => []),
+    fetchAllWorkspaceOrgWorkspacesCached().catch((): WorkspaceOrgWorkspaceDto[] => []),
   ])
-  const workspaceNameById = new Map(directory.map((row) => [row.id, row.name]))
+  const workspaceNameById = new Map<string, string>(directory.map((row) => [row.id, row.name]))
 
   const snapshot = buildChatRoleSnapshot({
     platformRoles,

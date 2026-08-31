@@ -6520,7 +6520,7 @@ export function WorkspaceManagementPage() {
           const next = assigns.items ?? []
           if (
             prev.length === next.length
-            && prev.every((row, index) => row.workspace_id === next[index]?.workspace_id && row.version === next[index]?.version)
+            && prev.every((row, index) => row.workspace_id === next[index]?.workspace_id && row.row_version === next[index]?.row_version)
           ) {
             return prev
           }
@@ -6764,8 +6764,11 @@ export function WorkspaceManagementPage() {
           return existing
             ? {
                 ...rec,
-                governanceConfigurationStatus: existing.governanceConfigurationStatus,
-                complianceStatus: existing.complianceStatus,
+                governance: {
+                  ...rec.governance,
+                  configurationStatus: existing.governance.configurationStatus,
+                  complianceStatus: existing.governance.complianceStatus,
+                },
               }
             : rec
         })
@@ -13840,7 +13843,6 @@ export function WorkspaceManagementPage() {
 
     if (format === 'xlsx') {
       // Use ExcelJS's browser bundle; the package root can resolve to Node-only modules in Vite.
-      // @ts-expect-error ExcelJS does not ship declarations for its browser bundle path.
       const exceljsBrowser = await import('exceljs/dist/exceljs.min.js') as {
         Workbook?: new () => import('exceljs').Workbook
         default?: { Workbook?: new () => import('exceljs').Workbook }
@@ -14129,7 +14131,7 @@ export function WorkspaceManagementPage() {
                       </DropdownMenuItem>
                     </>
                   ) : (
-                    <DropdownMenuItem disabled>No export available for this section</DropdownMenuItem>
+                    <DropdownMenuItem className="pointer-events-none opacity-50">No export available for this section</DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -14496,7 +14498,7 @@ export function WorkspaceManagementPage() {
                 ) : canCreateOrgWorkspace && activePanel === 'directory' ? (
                   <button
                     type="button"
-                    onClick={openNewWorkspaceDrawer}
+                    onClick={() => openNewWorkspaceDrawer()}
                       data-tour-target="wm-new-workspace-btn"
                       className={cn(
                         enterpriseCyanGradientActionButtonClass(),
@@ -15746,7 +15748,8 @@ export function WorkspaceManagementPage() {
                               (showDirectorySelection && directorySelectedIds.includes(workspace.id))
                               || directoryActiveRowId === workspace.id
                               || (rowContextMenu?.variant !== 'members'
-                                && rowContextMenu?.workspace.id === workspace.id)
+                                && rowContextMenu?.variant !== 'assets'
+                                && rowContextMenu.workspace.id === workspace.id)
                             const resolveDirectoryBodyCellBackground = (isFirstColumn: boolean) => {
                               if (isDirectoryRowSelected) return ''
                               const stickyFirstClass =
@@ -17258,7 +17261,9 @@ export function WorkspaceManagementPage() {
                                 'group cursor-pointer transition-colors',
                                 governanceSelectedIds.includes(workspace.id) ||
                                   governanceMatrixDetailWorkspace?.id === workspace.id ||
-                                  (rowContextMenu?.variant !== 'members' && rowContextMenu?.workspace.id === workspace.id)
+                                  (rowContextMenu?.variant !== 'members'
+                                    && rowContextMenu?.variant !== 'assets'
+                                    && rowContextMenu.workspace.id === workspace.id)
                                   ? 'bg-primary/10 hover:bg-primary/12 ring-1 ring-inset ring-primary/20'
                                   : groupTint?.row ?? 'hover:bg-accent/20'
                               )}
@@ -18444,7 +18449,7 @@ export function WorkspaceManagementPage() {
             payload.linkedProjects,
             payload.linkedPrograms
           )
-          if (!deliveryCheck.ok) {
+          if (deliveryCheck.ok === false) {
             addToast({ variant: 'error', title: 'Invalid delivery context', description: deliveryCheck.message })
             return
           }
@@ -18500,9 +18505,7 @@ export function WorkspaceManagementPage() {
                   }
                 )
 
-                const invitedOperational =
-                  inviteWorkspaceOptions.find((w) => w.id === workspaceId)
-                  ?? allWorkspacesForList.find((w) => w.id === workspaceId)
+                const invitedOperational = allWorkspacesForList.find((w) => w.id === workspaceId)
                 if (
                   invitedOperational
                   && !invitedOperational.isPersonalWorkspace
@@ -19805,7 +19808,7 @@ export function WorkspaceManagementPage() {
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={closeAssignAssetDialog} disabled={assetAssignSubmitting}>
+            <Button type="button" variant="outline" onClick={() => closeAssignAssetDialog()} disabled={assetAssignSubmitting}>
               Cancel
             </Button>
             <Button
@@ -22089,11 +22092,17 @@ export function WorkspaceManagementPage() {
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-4">
-              {ownershipOverlay.type === 'directory' && ownershipOverlay.target !== 'owner' ? (
+              {ownershipOverlay.type === 'directory' &&
+              (ownershipOverlay.target === 'business' || ownershipOverlay.target === 'technical') ? (
                 <button
                   type="button"
                   className="text-xs font-medium text-primary hover:underline"
-                  onClick={() => openOwnershipInviteContact(ownershipOverlay.target)}
+                  onClick={() => {
+                    const target = ownershipOverlay.target
+                    if (target === 'business' || target === 'technical') {
+                      openOwnershipInviteContact(target)
+                    }
+                  }}
                 >
                   Invite by email instead
                 </button>
