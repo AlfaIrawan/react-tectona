@@ -4,7 +4,6 @@
  */
 
 import { getSession } from '@/auth/authService'
-import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 import type { LlmUsagePayload } from '@/lib/tokenTelemetry'
 
@@ -17,10 +16,11 @@ const GREET_LLM_TIMEOUT_MS = 18_000
 const SIDEBAR_CHAT_TIMEOUT_MS = 180_000
 const GENAI_SESSION_FETCH_TIMEOUT_MS = 5000
 
-const BASE_URL = serviceApiBase(
-  '/api/tectona-agent-runtime',
-  import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL,
-)
+/** Same-origin nginx → agent runtime :8414. Do not fall back to gateway-runtime (500/401 on chat). */
+const BASE_URL = (
+  (import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL as string | undefined)?.trim()
+  || '/api/tectona-agent-runtime'
+).replace(/\/$/, '')
 
 export interface RuntimeSummaryScoring {
   businessValue: number
