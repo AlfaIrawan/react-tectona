@@ -5496,26 +5496,6 @@ export function TaskWorkManagementPage() {
                 </div>
               </div>
 
-              {!sidebarFixed ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Bulk Actions</div>
-                  <div className="mt-2 text-2xl font-bold text-slate-900">{selectedIds.length}</div>
-                  <p className="mt-1 text-xs text-slate-600">Selected work items ready for reassignment or status changes.</p>
-                  {selectedIds.length > 0 ? (
-                    <div className="mt-3 flex flex-col gap-2">
-                      <Button variant="outline" size="sm" className="h-8 justify-start" onClick={() => openBulkAction('status')}>
-                        Update Status
-                      </Button>
-                      <Button variant="outline" size="sm" className="h-8 justify-start" onClick={() => openBulkAction('assignee')}>
-                        Reassign
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-8 justify-start" onClick={() => setSelectedIds([])}>
-                        Clear selection
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           </div>
         </aside>
