@@ -61,22 +61,55 @@ export interface SendMailRequest {
 
 const BASE = '/api/tectona-mail/v1'
 
-async function parseError(response: Response): Promise<string> {
+async function readResponseBody(response: Response): Promise<string> {
   try {
-    const data = (await response.json()) as { detail?: string | { msg?: string }[]; error?: { message?: string } }
+    return await response.text()
+  } catch {
+    return ''
+  }
+}
+
+function errorMessageFromBody(body: string): string | null {
+  try {
+    const data = JSON.parse(body) as { detail?: string | { msg?: string }[]; error?: { message?: string } }
     if (typeof data.detail === 'string') return data.detail
     if (Array.isArray(data.detail) && data.detail[0]?.msg) return data.detail[0].msg
     if (data.error?.message) return data.error.message
   } catch {
-    /* ignore */
+    return null
+  }
+  return null
+}
+
+async function parseError(response: Response): Promise<string> {
+  const body = await readResponseBody(response)
+  const apiMessage = errorMessageFromBody(body)
+  if (apiMessage) return apiMessage
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  if (contentType.includes('text/html') || /^\s*<!doctype\s+html/i.test(body)) {
+    return `Mail service returned an HTML error page (${response.status}). Check that the Tectona Mail service or proxy is running.`
   }
   return `Request failed (${response.status})`
+}
+
+async function parseJsonResponse<T>(response: Response): Promise<T> {
+  const body = await readResponseBody(response)
+  try {
+    return JSON.parse(body) as T
+  } catch {
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+    if (contentType.includes('text/html') || /^\s*<!doctype\s+html/i.test(body)) {
+      throw new Error(`Mail service returned an HTML response instead of JSON (${response.status}). Check the mail service or proxy route.`)
+    }
+    throw new Error('Mail service returned an invalid response. Please try again.')
+  }
 }
 
 export async function getMailboxConfig(): Promise<MailboxConfigStatus> {
   const response = await apiFetch(`${BASE}/mailbox/config`, { headers: tectonaServiceHeaders() })
   if (!response.ok) throw new Error(await parseError(response))
-  return response.json()
+  return parseJsonResponse<MailboxConfigStatus>(response)
 }
 
 export async function saveMailboxConfig(payload: MailboxConfigSave): Promise<MailboxConfigPublic> {
@@ -86,7 +119,7 @@ export async function saveMailboxConfig(payload: MailboxConfigSave): Promise<Mai
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(await parseError(response))
-  return response.json()
+  return parseJsonResponse<MailboxConfigPublic>(response)
 }
 
 export async function testMailboxConfig(payload: MailboxConfigSave): Promise<MailboxTestResult> {
@@ -96,14 +129,14 @@ export async function testMailboxConfig(payload: MailboxConfigSave): Promise<Mai
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(await parseError(response))
-  return response.json()
+  return parseJsonResponse<MailboxTestResult>(response)
 }
 
 export async function listMailMessages(folder: EmailFolder, limit = 50): Promise<MailMessageListResponse> {
   const params = new URLSearchParams({ folder, limit: String(limit) })
   const response = await apiFetch(`${BASE}/messages?${params}`, { headers: tectonaServiceHeaders() })
   if (!response.ok) throw new Error(await parseError(response))
-  return response.json()
+  return parseJsonResponse<MailMessageListResponse>(response)
 }
 
 export async function getMailMessageDetail(folder: EmailFolder, uid: string): Promise<MailMessageDetail> {
@@ -112,7 +145,7 @@ export async function getMailMessageDetail(folder: EmailFolder, uid: string): Pr
     headers: tectonaServiceHeaders(),
   })
   if (!response.ok) throw new Error(await parseError(response))
-  return response.json()
+  return parseJsonResponse<MailMessageDetail>(response)
 }
 
 export async function markMailMessageRead(folder: EmailFolder, uid: string): Promise<void> {
