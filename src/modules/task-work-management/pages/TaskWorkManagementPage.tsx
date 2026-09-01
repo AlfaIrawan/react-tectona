@@ -3146,10 +3146,6 @@ export function TaskWorkManagementPage() {
     void fetchAllWorkspaceOrgWorkspaces({ status: 'active' })
       .then((rows) => {
         if (cancelled) return
-        if (isPlatformAdmin) {
-          setTectonaOrgWorkspaces(rows)
-          return
-        }
         const allowedIds = new Set(userWorkspaceOptions.map((option) => option.workspaceId))
         setTectonaOrgWorkspaces(rows.filter((row) => allowedIds.has(row.id)))
       })
@@ -3159,7 +3155,7 @@ export function TaskWorkManagementPage() {
     return () => {
       cancelled = true
     }
-  }, [isPlatformAdmin, userWorkspaceOptions, userWorkspacesLoading])
+  }, [userWorkspaceOptions, userWorkspacesLoading])
 
   const accessibleWorkspaceKeys = useMemo(() => {
     const keys = new Set<string>()

@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { ensureFreshSession, getSession } from '@/auth/authService'
 import { onSessionActive, onSessionCleared, onSessionExpired } from '@/auth/sessionEvents'
-import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
+import { hasOrganizationAdminAccess } from '@/lib/auth/platformAccess'
 import {
   canActivateWorkspaceAsTenant,
   isWorkspaceListedForUser,
@@ -115,7 +115,6 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
       : session.user.role === 'admin'
         ? ['tectona_admin']
         : []
-  const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles, session.user.role)
   const isOrganizationAdmin = hasOrganizationAdminAccess(sessionRoles)
   const email = session.user.email?.trim().toLowerCase() ?? ''
   const isCorporateUser = Boolean(email) && !isConsumerEmail(email)
@@ -176,20 +175,6 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
     )
   }
 
-  // Root/platform administrators operate the directory itself and may not
-  // have WAC membership rows. Keep their workspace picker complete while
-  // leaving the membership/ownership rules below intact for regular users.
-  if (isPlatformAdmin || isOrganizationAdmin) {
-    const visibleWorkspaces = isPlatformAdmin
-      ? activeWorkspaces
-      : activeWorkspaces.filter((workspace) =>
-          (workspace.tenant_mode !== 'personal' || isOwnedBySubject(workspace))
-          && (workspace.organization_id === '00000000-0000-0000-0000-000000000001'
-            || workspace.organization_name?.toLowerCase().includes('adira'))
-        )
-    for (const workspace of visibleWorkspaces) pushWorkspace(workspace)
-  }
-
   for (const membership of memberships.items ?? []) {
     const workspaceId = membership.workspace_id
     if (!workspaceId || seen.has(workspaceId)) continue
@@ -200,12 +185,15 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
     if (
       workspace &&
       !isWorkspaceListedForUser(workspace.tenant_mode ?? null, {
-        isPlatformAdmin,
-        isOrganizationAdmin,
+        // The workspace switcher is user-scoped even for directory admins.
+        // Administrative roles manage the directory; they do not broaden the
+        // tenant list used for daily work and item creation.
+        isPlatformAdmin: false,
+        isOrganizationAdmin: false,
         isCorporateUser,
-          hasActiveMembership: true,
-          membershipParticipationScopeCode: membership.participation_scope_code,
-          isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
+        hasActiveMembership: true,
+        membershipParticipationScopeCode: membership.participation_scope_code,
+        isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
       })
     ) {
       continue
@@ -240,8 +228,8 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
 
     if (
       !canActivateWorkspaceAsTenant(workspace.tenant_mode ?? null, {
-        isPlatformAdmin,
-        isOrganizationAdmin,
+        isPlatformAdmin: false,
+        isOrganizationAdmin: false,
         isCorporateUser,
         hasActiveMembership: false,
         isWorkspaceOwner: isOwner,
