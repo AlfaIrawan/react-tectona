@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { parseBrdStructuredName } from './repositoryKbFromDocument'
 import {
+  buildComparePurposeWindows,
+  clipComparePurposeText,
+  COMPARE_PURPOSE_TEXT_MAX_CHARS,
   computeContentFingerprint,
   findExactDuplicate,
   findKbGeneratedDocIds,
   findNameMatches,
   normalizeForFingerprint,
   shortlistByKeywordOverlap,
+  retrieveSimilarChunks,
+  retrieveSimilarChunksFromVectors,
+  cosineSimilarity,
   pickContentCompareCandidates,
   type ExistingBrdDoc,
 } from './brdDuplicateDetection'
@@ -22,6 +28,20 @@ function makeDoc(partial: Partial<ExistingBrdDoc> & { id: string; fileName: stri
 }
 
 describe('BRD duplicate detection', () => {
+  it('clips agent compare text to the API summary limit', () => {
+    const clipped = clipComparePurposeText('x'.repeat(COMPARE_PURPOSE_TEXT_MAX_CHARS + 80))
+    expect(clipped.length).toBe(COMPARE_PURPOSE_TEXT_MAX_CHARS)
+  })
+
+  it('puts late requirement sentences into purpose instead of only the document head', () => {
+    const head = `Overview of the CMS integration. ${'Padding text. '.repeat(180)}`
+    const late = 'The system shall expose POST /promosi/kaderisasi as a required API endpoint for cadre monitoring.'
+    const windows = buildComparePurposeWindows(`${head} ${late}`)
+    expect(windows.summary.length).toBeLessThanOrEqual(COMPARE_PURPOSE_TEXT_MAX_CHARS)
+    expect(windows.purpose.length).toBeLessThanOrEqual(COMPARE_PURPOSE_TEXT_MAX_CHARS)
+    expect(windows.purpose.toLowerCase()).toContain('kaderisasi')
+    expect(windows.purpose.toLowerCase()).toContain('shall')
+  })
   it('normalizes content independent of markers/case/punctuation', () => {
     const a = normalizeForFingerprint('--- DOCX BODY ---\nOverview: SCF/FMCG!!!')
     const b = normalizeForFingerprint('overview   scf fmcg')
@@ -153,5 +173,32 @@ describe('BRD duplicate detection', () => {
       limit: 2,
     })
     expect(picked.map((doc) => doc.id)).toEqual(['folder-a', 'folder-b'])
+  })
+
+  it('retrieves a matching requirement that lives in the middle of a long document', () => {
+    const subjectFiller = 'Company background and historical finance reporting process description. '
+    const candidateFiller = 'Unrelated payroll onboarding notes for human resources administration. '
+    const requirement = 'Cadre promotion monitoring must post status updates to CMS using the dedicated integration contract for DLB new customers.'
+    const subject = `${subjectFiller.repeat(40)}${requirement}${subjectFiller.repeat(10)}`
+    const candidate = `${candidateFiller.repeat(25)}Operational notes. ${requirement} Closing remarks follow.${candidateFiller.repeat(20)}`
+    const pairs = retrieveSimilarChunks(subject, candidate)
+    expect(pairs.length).toBeGreaterThan(0)
+    expect(pairs[0].score).toBeGreaterThan(0.14)
+    expect(`${pairs[0].subjectChunk} ${pairs[0].candidateChunk}`.toLowerCase()).toContain('cadre promotion')
+  })
+
+  it('ranks the same requirement higher with embedding cosine than an unrelated chunk', () => {
+    const requirement = 'Cadre promotion monitoring must post status updates to CMS using the dedicated integration contract.'
+    const unrelated = 'Payroll onboarding notes for human resources administration and leave balances.'
+    const shared: number[] = [0.9, 0.1, 0]
+    const other: number[] = [0.1, 0.9, 0]
+    const vectors = new Map<string, number[]>([
+      [requirement, shared],
+      [unrelated, other],
+    ])
+    expect(cosineSimilarity(shared, shared)).toBeCloseTo(1, 5)
+    const pairs = retrieveSimilarChunksFromVectors([requirement], [requirement, unrelated], vectors)
+    expect(pairs[0]?.candidateChunk).toBe(requirement)
+    expect(pairs[0]?.score).toBeGreaterThan(0.9)
   })
 })

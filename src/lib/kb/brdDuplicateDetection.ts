@@ -40,6 +40,76 @@ export type BrdDuplicateReport = {
 
 const FINGERPRINT_MARKER_RE = /---\s*DOCX (?:HEADINGS|TABLE EXTRACT|BODY)\s*---/gi
 
+/** Agent `compare-brd-purpose` rejects summary/purpose longer than this (Pydantic max_length). */
+export const COMPARE_PURPOSE_TEXT_MAX_CHARS = 2000
+
+export function clipComparePurposeText(
+  value: string,
+  maxChars: number = COMPARE_PURPOSE_TEXT_MAX_CHARS,
+): string {
+  const trimmed = (value || '').replace(/\s+/g, ' ').trim()
+  if (trimmed.length <= maxChars) return trimmed
+  return trimmed.slice(0, maxChars).trimEnd()
+}
+
+const REQUIREMENT_HINT_RE =
+  /\b(requirement|shall|must|should|harus|kriteria|acceptance|endpoint|api|functional|non-?functional|given|when|then|user story|use case|as a user|request|response)\b/i
+
+function splitCompareSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 24)
+}
+
+/**
+ * API allows 2000 chars each on summary and purpose. Prefix-only clips miss
+ * duplicated requirements later in the file, so summary keeps the head and
+ * purpose keeps requirement-like sentences plus the document tail.
+ */
+export function buildComparePurposeWindows(
+  raw: string,
+  maxChars: number = COMPARE_PURPOSE_TEXT_MAX_CHARS,
+): { summary: string; purpose: string } {
+  const text = (raw || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  const summary = clipComparePurposeText(text, maxChars)
+  if (!text || text.length <= maxChars) {
+    return { summary, purpose: summary }
+  }
+
+  const headMarker = summary.slice(0, Math.min(80, summary.length))
+  const sentences = splitCompareSentences(text)
+  const ranked = sentences
+    .map((sentence, index) => ({
+      sentence,
+      index,
+      score: REQUIREMENT_HINT_RE.test(sentence) ? 2 : 0,
+    }))
+    .filter((row) => row.score > 0 && !summary.includes(row.sentence.slice(0, 48)))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+
+  const parts: string[] = []
+  let used = 0
+  for (const row of ranked) {
+    const next = used === 0 ? row.sentence : ` ${row.sentence}`
+    if (used + next.length > maxChars) continue
+    parts.push(row.sentence)
+    used += next.length
+  }
+
+  const tail = text.slice(-maxChars)
+  if (used < Math.floor(maxChars * 0.45) && tail && tail !== headMarker) {
+    const room = maxChars - used
+    const filler = used === 0 ? tail : ` ${clipComparePurposeText(tail, Math.max(0, room - 1))}`
+    if (filler.trim()) {
+      parts.push(filler.trim())
+    }
+  }
+
+  const purpose = clipComparePurposeText(parts.join(' '), maxChars)
+  return { summary, purpose: purpose || summary }
+}
+
 /** Normalize extracted text for content fingerprinting (extraction-method independent). */
 export function normalizeForFingerprint(text: string): string {
   return (text || '')
@@ -201,6 +271,179 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   let intersection = 0
   for (const token of a) if (b.has(token)) intersection += 1
   return intersection / (a.size + b.size - intersection)
+}
+
+export const DUPLICATE_COMPARE_CHUNK_MAX_CHARS = 900
+export const DUPLICATE_RETRIEVE_MIN_SCORE = 0.14
+export const DUPLICATE_LEXICAL_NEAR_DUP_SCORE = 0.42
+/** Cosine floor for retrieve (normalized embedding). Higher than Jaccard because unrelated pairs often sit ~0.3–0.5. */
+export const DUPLICATE_EMBED_MIN_SCORE = 0.62
+export const DUPLICATE_EMBED_NEAR_DUP_SCORE = 0.82
+
+/** Split full document text so middle sections can be retrieved, not only the first 2000 chars. */
+export function chunkDocumentForDuplicateCompare(
+  text: string,
+  maxChars: number = DUPLICATE_COMPARE_CHUNK_MAX_CHARS,
+): string[] {
+  const normalized = (text || '').replace(/<[^>]+>/g, ' ').replace(/\r\n/g, '\n').trim()
+  if (!normalized) return []
+  const parts = normalized
+    .split(/\n{2,}|\n/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter((part) => part.length >= 32)
+  const chunks: string[] = []
+  const push = (value: string) => {
+    const compact = value.replace(/\s+/g, ' ').trim()
+    if (!compact) return
+    if (compact.length <= maxChars) {
+      chunks.push(compact)
+      return
+    }
+    const words = compact.split(' ')
+    let window = ''
+    for (const word of words) {
+      const next = window ? `${window} ${word}` : word
+      if (next.length <= maxChars) {
+        window = next
+        continue
+      }
+      if (window) chunks.push(window)
+      window = word.length > maxChars ? word.slice(0, maxChars) : word
+    }
+    if (window) chunks.push(window)
+  }
+  let buffer = ''
+  for (const part of parts) {
+    if (!buffer) {
+      buffer = part
+      continue
+    }
+    if (buffer.length + 1 + part.length <= maxChars) {
+      buffer = `${buffer} ${part}`
+      continue
+    }
+    push(buffer)
+    buffer = part
+  }
+  if (buffer) push(buffer)
+  if (chunks.length === 0) push(normalized)
+  return chunks.slice(0, 48)
+}
+
+export type RetrievedDuplicateChunkPair = {
+  subjectChunk: string
+  candidateChunk: string
+  score: number
+}
+
+/**
+ * Retrieve-then-rerank stage 1 (lexical): compare every subject chunk to every candidate chunk
+ * (Jaccard). Prefer `retrieveSimilarChunksFromVectors` when Knowledge Index embeddings are available.
+ */
+export function retrieveSimilarChunks(
+  subjectText: string,
+  candidateText: string,
+  options: { maxPairs?: number; minScore?: number } = {},
+): RetrievedDuplicateChunkPair[] {
+  const minScore = options.minScore ?? DUPLICATE_RETRIEVE_MIN_SCORE
+  const maxPairs = options.maxPairs ?? 4
+  const subjectChunks = chunkDocumentForDuplicateCompare(subjectText)
+  const candidateChunks = chunkDocumentForDuplicateCompare(candidateText)
+  if (subjectChunks.length === 0 || candidateChunks.length === 0) return []
+
+  const subjectTokens = subjectChunks.map((chunk) => tokenize(chunk))
+  const candidateTokens = candidateChunks.map((chunk) => tokenize(chunk))
+  const scored: RetrievedDuplicateChunkPair[] = []
+  for (let i = 0; i < subjectChunks.length; i += 1) {
+    for (let j = 0; j < candidateChunks.length; j += 1) {
+      const score = jaccard(subjectTokens[i], candidateTokens[j])
+      if (score < minScore) continue
+      scored.push({
+        subjectChunk: subjectChunks[i],
+        candidateChunk: candidateChunks[j],
+        score,
+      })
+    }
+  }
+  return selectTopChunkPairs(scored, maxPairs)
+}
+
+export function cosineSimilarity(left: number[], right: number[]): number {
+  if (!left.length || left.length !== right.length) return 0
+  let dot = 0
+  let leftNorm = 0
+  let rightNorm = 0
+  for (let i = 0; i < left.length; i += 1) {
+    dot += left[i] * right[i]
+    leftNorm += left[i] * left[i]
+    rightNorm += right[i] * right[i]
+  }
+  const denom = Math.sqrt(leftNorm) * Math.sqrt(rightNorm)
+  if (denom === 0) return 0
+  return Math.max(0, Math.min(1, dot / denom))
+}
+
+function selectTopChunkPairs(
+  scored: RetrievedDuplicateChunkPair[],
+  maxPairs: number,
+): RetrievedDuplicateChunkPair[] {
+  scored.sort((left, right) => right.score - left.score)
+  const seen = new Set<string>()
+  const unique: RetrievedDuplicateChunkPair[] = []
+  for (const pair of scored) {
+    const key = `${pair.subjectChunk.slice(0, 40)}::${pair.candidateChunk.slice(0, 40)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(pair)
+    if (unique.length >= maxPairs) break
+  }
+  return unique
+}
+
+/** Retrieve-then-rerank stage 1 (semantic): cosine over Knowledge Index embeddings. */
+export function retrieveSimilarChunksFromVectors(
+  subjectChunks: string[],
+  candidateChunks: string[],
+  vectorsByText: Map<string, number[]>,
+  options: { maxPairs?: number; minScore?: number } = {},
+): RetrievedDuplicateChunkPair[] {
+  const minScore = options.minScore ?? DUPLICATE_EMBED_MIN_SCORE
+  const maxPairs = options.maxPairs ?? 4
+  if (subjectChunks.length === 0 || candidateChunks.length === 0) return []
+  const scored: RetrievedDuplicateChunkPair[] = []
+  for (const subjectChunk of subjectChunks) {
+    const subjectVector = vectorsByText.get(subjectChunk)
+    if (!subjectVector) continue
+    for (const candidateChunk of candidateChunks) {
+      const candidateVector = vectorsByText.get(candidateChunk)
+      if (!candidateVector) continue
+      const score = cosineSimilarity(subjectVector, candidateVector)
+      if (score < minScore) continue
+      scored.push({ subjectChunk, candidateChunk, score })
+    }
+  }
+  return selectTopChunkPairs(scored, maxPairs)
+}
+
+export function windowsFromRetrievedPairs(
+  pairs: RetrievedDuplicateChunkPair[],
+  side: 'subject' | 'candidate',
+  maxChars: number = COMPARE_PURPOSE_TEXT_MAX_CHARS,
+): { summary: string; purpose: string } {
+  const texts: string[] = []
+  const seen = new Set<string>()
+  for (const pair of pairs) {
+    const chunk = side === 'subject' ? pair.subjectChunk : pair.candidateChunk
+    const key = chunk.slice(0, 80)
+    if (seen.has(key)) continue
+    seen.add(key)
+    texts.push(chunk)
+  }
+  if (texts.length === 0) return { summary: '', purpose: '' }
+  return {
+    summary: clipComparePurposeText(texts[0], maxChars),
+    purpose: clipComparePurposeText((texts.slice(1).join(' ') || texts[0]), maxChars),
+  }
 }
 
 /** Keyword-overlap shortlist of candidates likely to share a purpose (cheap pre-filter before LLM). */

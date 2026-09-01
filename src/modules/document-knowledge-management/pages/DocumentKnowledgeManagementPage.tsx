@@ -385,15 +385,23 @@ import {
   type RepositoryFileProperties,
 } from '@/lib/documents/extractOfficeFileMetadata'
 import {
+  DUPLICATE_EMBED_NEAR_DUP_SCORE,
+  DUPLICATE_LEXICAL_NEAR_DUP_SCORE,
+  buildComparePurposeWindows,
+  chunkDocumentForDuplicateCompare,
   computeContentFingerprint,
   findExactDuplicate,
   findKbGeneratedDocIds,
   findNameMatches,
   pickContentCompareCandidates,
+  retrieveSimilarChunks,
+  retrieveSimilarChunksFromVectors,
   shortlistByKeywordOverlap,
+  windowsFromRetrievedPairs,
   type ExistingBrdDoc,
 } from '@/lib/kb/brdDuplicateDetection'
 import { notifyEvent } from '@/lib/api/notificationApi'
+import { embedKnowledgeIndexTexts } from '@/lib/api/knowledgeIndexApi'
 import {
   generateRepositoryKbFromDocument,
   chatWithTectonaAgentRuntime,
@@ -7677,7 +7685,6 @@ export function DocumentKnowledgeManagementPage() {
         .replace(/<[^>]+>/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
-        .slice(0, 3500)
 
     if (llmCandidates.length > 0 && extractText.trim()) {
       try {
@@ -7693,39 +7700,106 @@ export function DocumentKnowledgeManagementPage() {
           }),
         )
         const excerptById = new Map(excerpts)
-        const resp = await compareBrdPurpose({
-          subject: {
-            id: '__new__',
-            title: fileName,
-            purpose: extractText.slice(0, 4000),
-            summary: extractText.slice(0, 1500),
-          },
-          candidates: llmCandidates.map((doc) => ({
-            id: doc.id,
-            title: doc.title,
-            summary: excerptById.get(doc.id) || doc.title,
-            purpose: excerptById.get(doc.id) || doc.title,
-          })),
+        const subjectChunks = chunkDocumentForDuplicateCompare(extractText)
+        const candidateChunksById = new Map(
+          llmCandidates.map((doc) => {
+            const candidateText = excerptById.get(doc.id) || doc.title
+            return [doc.id, { candidateText, chunks: chunkDocumentForDuplicateCompare(candidateText) }] as const
+          }),
+        )
+        let vectorsByText: Map<string, number[]> | null = null
+        try {
+          const uniqueTexts = [
+            ...subjectChunks,
+            ...[...candidateChunksById.values()].flatMap((row) => row.chunks),
+          ]
+          vectorsByText = await embedKnowledgeIndexTexts(uniqueTexts)
+          if (vectorsByText.size === 0) vectorsByText = null
+        } catch {
+          vectorsByText = null
+        }
+        const retrieved = llmCandidates.map((doc) => {
+          const { candidateText, chunks } = candidateChunksById.get(doc.id) ?? {
+            candidateText: excerptById.get(doc.id) || doc.title,
+            chunks: [] as string[],
+          }
+          const embeddingPairs = vectorsByText
+            ? retrieveSimilarChunksFromVectors(subjectChunks, chunks, vectorsByText)
+            : []
+          const pairs = embeddingPairs.length > 0
+            ? embeddingPairs
+            : retrieveSimilarChunks(extractText, candidateText)
+          const topScore = pairs[0]?.score ?? 0
+          return {
+            doc,
+            pairs,
+            topScore,
+            candidateText,
+            usedEmbedding: embeddingPairs.length > 0,
+          }
         })
-        const byId = new Map(resp.matches.map((m) => [m.id, m]))
-        samePurpose = [
-          ...samePurpose,
-          ...llmCandidates
-            .filter((d) => {
-              const m = byId.get(d.id)
-              return Boolean(m?.same_purpose) && (m?.confidence ?? 0) >= 0.55
-            })
-            .map((d) => ({
-              doc: d,
-              reason: byId.get(d.id)?.reason?.trim() || 'Agent judged these documents cover the same requirements.',
-            })),
-        ]
-      } catch (error) {
+        const lexicalHits = retrieved.filter((row) => (
+          row.topScore >= (row.usedEmbedding ? DUPLICATE_EMBED_NEAR_DUP_SCORE : DUPLICATE_LEXICAL_NEAR_DUP_SCORE)
+        ))
+        const toRerank = retrieved
+          .filter((row) => row.pairs.length > 0)
+          .sort((left, right) => right.topScore - left.topScore)
+          .slice(0, 5)
+
+        const llmMatches: { doc: ExistingBrdDoc; reason: string }[] = []
+        if (toRerank.length > 0) {
+          const subjectFallback = buildComparePurposeWindows(extractText)
+          const rerankResults = await Promise.all(
+            toRerank.map(async (row) => {
+              const subjectWindows = windowsFromRetrievedPairs(row.pairs, 'subject')
+              const candidateWindows = windowsFromRetrievedPairs(row.pairs, 'candidate')
+              const fallback = buildComparePurposeWindows(row.candidateText)
+              const resp = await compareBrdPurpose({
+                subject: {
+                  id: '__new__',
+                  title: fileName,
+                  summary: subjectWindows.summary || subjectFallback.summary,
+                  purpose: subjectWindows.purpose || subjectFallback.purpose,
+                },
+                candidates: [{
+                  id: row.doc.id,
+                  title: row.doc.title,
+                  summary: candidateWindows.summary || fallback.summary,
+                  purpose: candidateWindows.purpose || fallback.purpose,
+                }],
+              })
+              const match = resp.matches.find((item) => item.id === row.doc.id)
+              return { row, match }
+            }),
+          )
+          for (const { row, match } of rerankResults) {
+            if (match?.same_purpose && (match.confidence ?? 0) >= 0.55) {
+              llmMatches.push({
+                doc: row.doc,
+                reason: match.reason?.trim() || 'Agent reranked matching document sections as the same requirements.',
+              })
+            }
+          }
+        }
+
+        const seenPurpose = new Set<string>()
+        const mergedPurpose: { doc: ExistingBrdDoc; reason: string }[] = []
+        for (const hit of [
+          ...lexicalHits.map((row) => ({
+            doc: row.doc,
+            reason: `Matching section in the document body (${row.usedEmbedding ? 'embedding' : 'chunk'} similarity ${row.topScore.toFixed(2)}).`,
+          })),
+          ...llmMatches,
+        ]) {
+          if (seenPurpose.has(hit.doc.id)) continue
+          seenPurpose.add(hit.doc.id)
+          mergedPurpose.push(hit)
+        }
+        samePurpose = [...samePurpose, ...mergedPurpose]
+      } catch {
         addToast({
           title: 'Content duplicate check incomplete',
-          description: error instanceof Error
-            ? error.message
-            : 'The agent could not compare requirements in this file with existing documents.',
+          description: 'The agent could not compare requirements. File-name matching still applied.',
           variant: 'error',
         })
       }
@@ -8273,11 +8347,15 @@ export function DocumentKnowledgeManagementPage() {
     if (shortlist.length > 0) {
       try {
         const resp = await compareBrdPurpose({
-          subject: { id: '__new__', title: fileName, purpose: extractText.slice(0, 2000) },
+          subject: {
+            id: '__new__',
+            title: fileName,
+            ...buildComparePurposeWindows(extractText),
+          },
           candidates: shortlist.map((doc) => ({
             id: doc.id,
             title: doc.title,
-            summary: summaryById.get(doc.id) ?? '',
+            ...buildComparePurposeWindows(summaryById.get(doc.id) ?? doc.title),
           })),
         })
         const byId = new Map(resp.matches.map((match) => [match.id, match]))
@@ -20739,7 +20817,7 @@ export function DocumentKnowledgeManagementPage() {
                   ) : null}
 
                   <p className="text-xs text-muted-foreground">
-                    Identical file content is always blocked. An agent also compares extracted requirements with documents in the same folder, then the wider repository. Save as new version attaches this file to the matched document as its next revision.
+                    Identical file content is always blocked. Matching sections are retrieved from the whole document, then an agent reranks those sections. Save as new version attaches this file to the matched document as its next revision.
                   </p>
                 </div>
 
