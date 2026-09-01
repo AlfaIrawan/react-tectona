@@ -89,11 +89,21 @@ export function resolveWorkspaceIdForIdeaFolderFetch(scope: WorkspaceScope): str
   return undefined
 }
 
+/**
+ * Tagged folders must match the active workspace.
+ * Untagged legacy folders are kept in the fetch result for organization workspaces so the
+ * UI can show them only when they contain ideas in the current workspace (e.g. "2023" in
+ * Innolimit WS) and hide them when they would be empty (e.g. Adira Finance WS).
+ */
 export function belongsToIdeaBacklogFolderScope(
   entityWorkspaceId: string | null | undefined,
   scope: WorkspaceScope,
 ): boolean {
-  if (!entityWorkspaceId) return scope.mode === 'all'
+  if (!entityWorkspaceId) {
+    if (scope.mode === 'all') return true
+    if (scope.mode === 'single' && scope.tenantMode === 'personal') return false
+    return true
+  }
   return belongsToActiveWorkspaceScope(entityWorkspaceId, scope)
 }
 

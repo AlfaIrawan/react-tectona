@@ -2154,10 +2154,28 @@ export function IdeaBacklogManagementPage() {
     return ideas.filter((idea) => coerceFolderId(idea.folderId) === normalizedFolderId)
   }, [ideas, currentFolderId])
 
+  const ideaCountByFolderId = useMemo(() => {
+    const ideaCountByFolder = new Map<string, number>()
+    for (const idea of ideas) {
+      const folderId = coerceFolderId(idea.folderId)
+      if (!folderId) continue
+      ideaCountByFolder.set(folderId, (ideaCountByFolder.get(folderId) ?? 0) + 1)
+    }
+    return ideaCountByFolder
+  }, [ideas])
+
   const foldersInCurrentParent = useMemo(() => {
     const normalizedParentId = currentFolderId ?? null
-    return folders.filter((folder) => (folder.parentId ?? null) === normalizedParentId)
-  }, [folders, currentFolderId])
+    const scope = readActiveWorkspaceScope()
+    return folders.filter((folder) => {
+      if ((folder.parentId ?? null) !== normalizedParentId) return false
+      if (folder.workspaceId) return true
+      if (scope.mode === 'all') return true
+      if (isLoading) return false
+      const folderId = coerceFolderId(folder.id) ?? folder.id
+      return (ideaCountByFolderId.get(folderId) ?? 0) > 0
+    })
+  }, [folders, currentFolderId, ideaCountByFolderId, isLoading])
 
   const folderAncestors = useMemo(() => {
     if (!currentFolderId) return [] as IdeaBacklogFolder[]
@@ -2300,12 +2318,6 @@ export function IdeaBacklogManagementPage() {
   }), [filteredFolders.length, ideasInCurrentFolder.length])
 
   const foldersWithVisibleCounts = useMemo(() => {
-    const ideaCountByFolder = new Map<string, number>()
-    for (const idea of ideas) {
-      const folderId = coerceFolderId(idea.folderId)
-      if (!folderId) continue
-      ideaCountByFolder.set(folderId, (ideaCountByFolder.get(folderId) ?? 0) + 1)
-    }
     const childCountByFolder = new Map<string, number>()
     for (const folder of folders) {
       const parentId = coerceFolderId(folder.parentId)
@@ -2314,7 +2326,7 @@ export function IdeaBacklogManagementPage() {
     }
     return filteredFolders.map((folder) => {
       const folderId = coerceFolderId(folder.id) ?? folder.id
-      const visibleIdeaCount = ideaCountByFolder.get(folderId) ?? 0
+      const visibleIdeaCount = ideaCountByFolderId.get(folderId) ?? 0
       const visibleChildCount = childCountByFolder.get(folderId) ?? 0
       return {
         ...folder,
@@ -2322,7 +2334,7 @@ export function IdeaBacklogManagementPage() {
         childrenCount: isLoading ? folder.childrenCount : visibleChildCount,
       }
     })
-  }, [filteredFolders, ideas, folders, isLoading])
+  }, [filteredFolders, folders, ideaCountByFolderId, isLoading])
 
   const contentTotalForLabel = contentCounts.folders + contentCounts.ideas
 
