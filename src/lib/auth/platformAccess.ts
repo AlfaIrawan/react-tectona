@@ -6,6 +6,13 @@ export const PLATFORM_ADMIN_JWT_ROLES = [
 
 export const ORGANIZATION_ADMIN_JWT_ROLE = 'tectona_organization_admin'
 
+/** AuthZ / identity-lite aliases for the same organization-admin grant. */
+export const ORGANIZATION_ADMIN_JWT_ROLES = [
+  ORGANIZATION_ADMIN_JWT_ROLE,
+  'tectona.organization_admin',
+  'organization_admin',
+] as const
+
 export function isPlatformAdminJwtRole(roles: string[] | undefined): boolean {
   if (!roles?.length) return false
   return PLATFORM_ADMIN_JWT_ROLES.some((r) => roles.includes(r))
@@ -20,5 +27,6 @@ export function hasPlatformAdminAccess(roles: string[] | undefined, uiRole?: str
 }
 
 export function hasOrganizationAdminAccess(roles: string[] | undefined): boolean {
-  return Boolean(roles?.includes(ORGANIZATION_ADMIN_JWT_ROLE))
+  if (!roles?.length) return false
+  return ORGANIZATION_ADMIN_JWT_ROLES.some((role) => roles.includes(role))
 }

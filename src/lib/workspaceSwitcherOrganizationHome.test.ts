@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectSwitcherOrganizationIds,
+  selectAdministeredOrgWorkspacesForSwitcher,
   selectOrganizationHomesForSwitcher,
 } from './workspaceSwitcherOrganizationHome'
 
@@ -12,6 +13,7 @@ function orgHome(id: string, organizationId: string, name = 'Adira Finance WS') 
     id,
     organization_id: organizationId,
     name,
+    tenant_mode: 'organization' as const,
     metadata: {
       tectona_workspace_classification: 'Organization',
     },
@@ -22,6 +24,7 @@ function division(id: string, organizationId: string) {
   return {
     id,
     organization_id: organizationId,
+    tenant_mode: 'organization' as const,
     metadata: {
       tectona_workspace_classification: 'Division',
       parent_workspace_id: 'parent-1',
@@ -54,19 +57,19 @@ describe('selectOrganizationHomesForSwitcher', () => {
     ).toEqual(['home-adira'])
   })
 
-  it('does not dump operational workspaces into the switcher', () => {
-    const selected = selectOrganizationHomesForSwitcher([adiraHome, itData], {
-      isPlatformAdmin: false,
-      isOrganizationAdmin: true,
-      alreadyListedOrganizationIds: new Set([ADIRA_ORG]),
-    })
-    expect(selected.map((row) => row.id)).toEqual(['home-adira'])
-    expect(selected.some((row) => row.id === 'it-data')).toBe(false)
+  it('lists every organization workspace in orgs an org admin already uses', () => {
+    expect(
+      selectAdministeredOrgWorkspacesForSwitcher([adiraHome, itData, otherHome], {
+        isPlatformAdmin: false,
+        isOrganizationAdmin: true,
+        alreadyListedOrganizationIds: new Set([ADIRA_ORG]),
+      }).map((row) => row.id),
+    ).toEqual(['home-adira', 'it-data'])
   })
 
-  it('does not list another organization home for an org admin', () => {
+  it('does not list another organization workspace for an org admin', () => {
     expect(
-      selectOrganizationHomesForSwitcher([adiraHome, otherHome], {
+      selectAdministeredOrgWorkspacesForSwitcher([adiraHome, otherHome], {
         isPlatformAdmin: false,
         isOrganizationAdmin: true,
         alreadyListedOrganizationIds: new Set([ADIRA_ORG]),
@@ -74,14 +77,14 @@ describe('selectOrganizationHomesForSwitcher', () => {
     ).toEqual(['home-adira'])
   })
 
-  it('lists every organization home for a platform admin', () => {
+  it('lists every organization workspace for a platform admin', () => {
     expect(
-      selectOrganizationHomesForSwitcher([adiraHome, otherHome, itData], {
+      selectAdministeredOrgWorkspacesForSwitcher([adiraHome, otherHome, itData], {
         isPlatformAdmin: true,
         isOrganizationAdmin: false,
         alreadyListedOrganizationIds: new Set(),
       }).map((row) => row.id),
-    ).toEqual(['home-adira', 'home-other'])
+    ).toEqual(['home-adira', 'home-other', 'it-data'])
   })
 })
 

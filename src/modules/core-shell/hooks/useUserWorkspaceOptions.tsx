@@ -31,7 +31,7 @@ import {
 } from '@/lib/workspaceOwnershipVisibility'
 import {
   collectSwitcherOrganizationIds,
-  selectOrganizationHomesForSwitcher,
+  selectAdministeredOrgWorkspacesForSwitcher,
 } from '@/lib/workspaceSwitcherOrganizationHome'
 import {
   isNestedOrgPersonalScope,
@@ -133,7 +133,7 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
       'Workspace memberships',
     ).catch(() => ({ items: [] as Awaited<ReturnType<typeof fetchSubjectMembershipsCached>>['items'] })),
     withTimeout(
-      fetchAllWorkspaceOrgWorkspacesCached(),
+      fetchAllWorkspaceOrgWorkspacesCached({ force: true }),
       WORKSPACE_OPTIONS_FETCH_TIMEOUT_MS,
       'Workspace directory',
     ).catch(() => [] as WorkspaceOrgWorkspaceDto[]),
@@ -191,10 +191,8 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
     if (
       workspace &&
       !isWorkspaceListedForUser(workspace.tenant_mode ?? null, {
-        // Daily work stays user-scoped. Organization home is the org root tenant
-        // (Adira Finance WS) and must remain switchable for directory admins.
-        isPlatformAdmin: isOrgHome ? isPlatformAdmin : false,
-        isOrganizationAdmin: isOrgHome ? isOrganizationAdmin : false,
+        isPlatformAdmin,
+        isOrganizationAdmin,
         isCorporateUser,
         hasActiveMembership: true,
         membershipParticipationScopeCode: membership.participation_scope_code,
@@ -257,7 +255,9 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
       .filter((workspace) => isOwnedBySubject(workspace))
       .map((workspace) => workspace.organization_id),
   ])
-  for (const workspace of selectOrganizationHomesForSwitcher(activeWorkspaces, {
+  // Org / platform admins can enter every organization workspace in orgs they
+  // already use — not only WAC memberships plus organization home.
+  for (const workspace of selectAdministeredOrgWorkspacesForSwitcher(activeWorkspaces, {
     isPlatformAdmin,
     isOrganizationAdmin,
     alreadyListedOrganizationIds: listedOrganizationIds,
