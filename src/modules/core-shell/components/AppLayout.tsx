@@ -6,7 +6,7 @@ import { usePreferencesStore } from '@/stores/preferences-store'
 import { useChatPanelStore, clampChatWidthPct } from '@/stores/chat-panel-store'
 import { useEmailPanelStore, clampEmailWidthPct } from '@/stores/email-panel-store'
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
-import { useRightDrawerStore } from '@/stores/right-drawer-store'
+import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 import { syncUiScaleLock } from '@/lib/uiScale'
 import { cn } from '@/lib/utils'
 import { Outlet, useLocation } from 'react-router-dom'
@@ -83,6 +83,19 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   useEffect(() => {
     syncUiScaleLock()
+
+    // Detail pages register a right-side chrome width via useRightDrawerStore; clear stale state
+    // on list/shell routes so the comm panel cannot stay docked/floating against a ghost reserve.
+    const path = location.pathname
+    const usesRightDrawer =
+      /\/projects\/[^/]+/.test(path) ||
+      /\/idea-backlog\/[^/]+/.test(path) ||
+      path.includes('/workspace-management')
+    if (!usesRightDrawer) {
+      const drawerStore = useRightDrawerStore.getState()
+      drawerStore.setOpen(false)
+      drawerStore.setWidth(DEFAULT_RIGHT_DRAWER_WIDTH)
+    }
   }, [location.pathname])
 
   const clampFloatingChatPosition = useCallback((candidate: { x: number; y: number }) => {
@@ -343,15 +356,20 @@ export function AppLayout({ children }: AppLayoutProps) {
       />
       <div
         ref={layoutRowRef}
-        className="flex min-h-0 flex-1 overflow-hidden overflow-x-hidden transition-[padding] duration-200"
+        className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden overflow-x-hidden transition-[padding] duration-200"
       >
-        <div ref={mainBodyRef} data-app-main-body className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto scrollbar-hide">
-          <main className="relative flex min-h-full flex-1 flex-col">
+        <div
+          ref={mainBodyRef}
+          data-app-main-body
+          className="relative flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-auto scrollbar-hide"
+        >
+          <main className="relative flex min-h-full w-full min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-full min-w-0 w-full max-w-none flex-1 flex-col self-stretch px-10 py-3">
               {children || <Outlet />}
             </div>
           </main>
         </div>
+        {commPanelOpen ? (
         <div
           ref={(el) => {
             commPanelRef.current = el
@@ -510,6 +528,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             {activeCommPanel === 'email' ? <EmailSidebarPanel /> : null}
           </aside>
         </div>
+        ) : null}
       </div>
 
       {import.meta.env.DEV ? <LayoutDebugIndicator metrics={layoutDebugMetrics} /> : null}
