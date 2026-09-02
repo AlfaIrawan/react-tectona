@@ -9,6 +9,7 @@ import {
   PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR,
 } from '@/modules/projects/lib/projectDocumentFolder'
 import {
+  isSamplesLibraryFolder,
   isSamplesSystemFolder,
   SAMPLES_FOLDER_ACCENT_COLOR,
 } from '@/modules/document-knowledge-management/lib/samplesFolder'
@@ -47,8 +48,9 @@ export function DocumentRepositoryFolderCard({
   const hasDocuments = folder.document_count > 0
   const metaLabel = `${folder.document_count} docs · ${folder.children_count} subfolders`
   const isProjectFolder = isProjectLinkedDocumentFolder(folder.description)
-  const isSamplesFolder = isSamplesSystemFolder(folder, folders)
-  const accentColor = isSamplesFolder
+  const isSamplesLocked = isSamplesSystemFolder(folder)
+  const isSamplesLibrary = isSamplesLibraryFolder(folder, folders)
+  const accentColor = isSamplesLibrary
     ? SAMPLES_FOLDER_ACCENT_COLOR
     : isProjectFolder
       ? PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR
@@ -56,7 +58,7 @@ export function DocumentRepositoryFolderCard({
   const themedStyle = accentColor
     ? (buildFolderCardThemeVariables(accentColor, hasDocuments) as CSSProperties)
     : undefined
-  const showRenameInput = isRenaming && !isProjectFolder && !isSamplesFolder
+  const showRenameInput = isRenaming && !isProjectFolder && !isSamplesLocked
 
   useEffect(() => {
     if (!showRenameInput) return
@@ -71,7 +73,7 @@ export function DocumentRepositoryFolderCard({
         compactStyles.compactCard,
         'group/folder shrink-0',
         isProjectFolder && folderCardStyles.folderCardThemed,
-        isSamplesFolder && folderCardStyles.folderCardThemed,
+        isSamplesLibrary && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         isDragOver && folderCardStyles.dragOver,
       )}
@@ -124,10 +126,10 @@ export function DocumentRepositoryFolderCard({
                 folderCardStyles.folderTitle,
                 compactStyles.compactTitle,
                 'min-w-0 flex-1 text-left',
-                isProjectFolder || isSamplesFolder ? 'flex items-center gap-1 cursor-pointer' : 'hover:text-sky-700',
+                isProjectFolder || isSamplesLocked ? 'flex items-center gap-1 cursor-pointer' : 'hover:text-sky-700',
               )}
               title={
-                isSamplesFolder
+                isSamplesLocked
                   ? `${folder.name} (Tectona Samples — locked system folder)`
                   : isProjectFolder
                     ? `${folder.name} (linked to project — name and color are locked)`
@@ -135,14 +137,14 @@ export function DocumentRepositoryFolderCard({
               }
               onClick={(event) => {
                 event.stopPropagation()
-                if (isProjectFolder || isSamplesFolder) {
+                if (isProjectFolder || isSamplesLocked) {
                   onOpen()
                   return
                 }
                 onStartRename()
               }}
             >
-              {isProjectFolder || isSamplesFolder ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
+              {isProjectFolder || isSamplesLocked ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
               <span className="min-w-0 truncate">{folder.name}</span>
             </button>
           )}

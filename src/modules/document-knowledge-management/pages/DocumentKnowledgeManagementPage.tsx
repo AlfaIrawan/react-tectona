@@ -6326,7 +6326,7 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryFolderRenameId(null)
     if (!name) return
     const folder = repositoryFolders.find((item) => item.id === folderId)
-    if (folder && isSamplesSystemFolder(folder, repositoryFolders)) return
+    if (folder && isSamplesSystemFolder(folder)) return
     try {
       await updateDocumentFolder(folderId, { name })
       await loadRepositoryFolders()
@@ -6336,7 +6336,7 @@ export function DocumentKnowledgeManagementPage() {
   }, [addToast, loadRepositoryFolders, repositoryFolders])
 
   const handleDeleteRepositoryFolder = useCallback(async (folder: DocumentFolder) => {
-    if (isSamplesSystemFolder(folder, repositoryFolders)) {
+    if (isSamplesSystemFolder(folder)) {
       addToast({
         title: 'System folder',
         description: 'Samples is a Tectona system folder and cannot be deleted.',
@@ -6353,7 +6353,7 @@ export function DocumentKnowledgeManagementPage() {
     } catch (e) {
       addToast({ title: 'Failed to delete folder', description: e instanceof Error ? e.message : '', variant: 'error' })
     }
-  }, [repositoryCurrentFolderId, addToast, loadRepositoryFolders, loadRepositoryItems, repositoryFolders])
+  }, [repositoryCurrentFolderId, addToast, loadRepositoryFolders, loadRepositoryItems])
 
   const handleMoveDocumentToFolder = useCallback(async (item: RepositoryItem, folderId: string | null) => {
     if ((item.folderId ?? null) === folderId) return
@@ -6396,10 +6396,10 @@ export function DocumentKnowledgeManagementPage() {
   }, [addToast, loadRepositoryItems, loadRepositoryFolders])
 
   const handleMoveFolderToParent = useCallback(async (folder: DocumentFolder, parentId: string | null) => {
-    if (isSamplesSystemFolder(folder, repositoryFolders)) {
+    if (isSamplesSystemFolder(folder)) {
       addToast({
         title: 'System folder',
-        description: 'Samples folders cannot be moved.',
+        description: 'Samples cannot be moved.',
         variant: 'error',
       })
       return
@@ -6427,8 +6427,8 @@ export function DocumentKnowledgeManagementPage() {
     () => repositoryFolders
       .filter((folder) => (folder.parent_id ?? null) === repositoryCurrentFolderId)
       .sort((a, b) => {
-        const aSample = isSamplesSystemFolder(a, repositoryFolders) ? 0 : 1
-        const bSample = isSamplesSystemFolder(b, repositoryFolders) ? 0 : 1
+        const aSample = isSamplesSystemFolder(a) ? 0 : 1
+        const bSample = isSamplesSystemFolder(b) ? 0 : 1
         if (aSample !== bSample) return aSample - bSample
         return a.name.localeCompare(b.name)
       }),
@@ -24080,7 +24080,7 @@ export function DocumentKnowledgeManagementPage() {
               <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">Open {repositoryFolderContextMenuItem.name}</span>
             </ContextMenuItem>
-            {isSamplesSystemFolder(repositoryFolderContextMenuItem, repositoryFolders) ? null : (
+            {isSamplesSystemFolder(repositoryFolderContextMenuItem) ? null : (
               <>
             <ContextMenuSeparator />
             <ContextMenuSubmenu
@@ -24126,7 +24126,7 @@ export function DocumentKnowledgeManagementPage() {
               </>
             )}
             <ContextMenuSeparator />
-            {isSamplesSystemFolder(repositoryFolderContextMenuItem, repositoryFolders) ? (
+            {isSamplesSystemFolder(repositoryFolderContextMenuItem) ? (
               <ContextMenuItem disabled>
                 <Lock className="w-4 h-4 mr-2 shrink-0" />
                 Samples is a locked system folder

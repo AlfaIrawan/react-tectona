@@ -9,6 +9,7 @@ import {
   PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR,
 } from '@/modules/projects/lib/projectDocumentFolder'
 import {
+  isSamplesLibraryFolder,
   isSamplesSystemFolder,
   SAMPLES_FOLDER_ACCENT_COLOR,
 } from '@/modules/document-knowledge-management/lib/samplesFolder'
@@ -28,8 +29,9 @@ export function DocumentRepositoryFolderCardReadOnly({
   const hasDocuments = folder.document_count > 0
   const metaLabel = `${folder.document_count} docs · ${folder.children_count} subfolders`
   const isProjectFolder = isProjectLinkedDocumentFolder(folder.description)
-  const isSamplesFolder = isSamplesSystemFolder(folder, folders)
-  const accentColor = isSamplesFolder
+  const isSamplesLocked = isSamplesSystemFolder(folder)
+  const isSamplesLibrary = isSamplesLibraryFolder(folder, folders)
+  const accentColor = isSamplesLibrary
     ? SAMPLES_FOLDER_ACCENT_COLOR
     : isProjectFolder
       ? PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR
@@ -44,7 +46,7 @@ export function DocumentRepositoryFolderCardReadOnly({
         folderCardStyles.folderCard,
         compactStyles.compactCard,
         isProjectFolder && folderCardStyles.folderCardThemed,
-        isSamplesFolder && folderCardStyles.folderCardThemed,
+        isSamplesLibrary && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         'cursor-pointer',
       )}
@@ -78,7 +80,7 @@ export function DocumentRepositoryFolderCardReadOnly({
               folderCardStyles.folderTitle,
               compactStyles.compactTitle,
               'min-w-0 flex-1 text-left',
-              isProjectFolder || isSamplesFolder ? 'flex items-center gap-1' : 'hover:text-sky-700',
+              isProjectFolder || isSamplesLocked ? 'flex items-center gap-1' : 'hover:text-sky-700',
             )}
             title={folder.name}
             onClick={(event) => {
@@ -86,7 +88,7 @@ export function DocumentRepositoryFolderCardReadOnly({
               onOpen()
             }}
           >
-            {isProjectFolder || isSamplesFolder ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
+            {isProjectFolder || isSamplesLocked ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
             <span className="min-w-0 truncate">{folder.name}</span>
           </button>
         </div>
