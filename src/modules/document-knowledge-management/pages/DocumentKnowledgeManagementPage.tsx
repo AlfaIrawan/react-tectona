@@ -469,6 +469,8 @@ import {
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
 import { isFolderInSamplesTree, isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
+import { isDocumentFolderDescendant } from '@/modules/document-knowledge-management/lib/repositoryFolderNav'
+import { RepositoryMoveFolderPicker } from '@/modules/document-knowledge-management/components/RepositoryMoveFolderPicker'
 import {
   SAMPLE_KIND_LABELS,
   resolveSampleKindFromFolderNames,
@@ -4480,18 +4482,6 @@ const DOC_LAST_PANEL_STORAGE_KEY = 'tectona:document-knowledge:last-panel'
 
 function isDocPanelId(value: string): value is DocPanelId {
   return DOC_PANEL_ITEMS.some((item) => item.id === value)
-}
-
-function isDocumentFolderDescendant(folders: DocumentFolder[], ancestorId: string, candidateId: string): boolean {
-  const byId = new Map(folders.map((folder) => [folder.id, folder]))
-  let cursor: string | null = candidateId
-  let guard = 0
-  while (cursor && guard < 64) {
-    if (cursor === ancestorId) return true
-    cursor = byId.get(cursor)?.parent_id ?? null
-    guard += 1
-  }
-  return false
 }
 
 function nextUntitledDocumentFolderName(folders: DocumentFolder[], parentId: string | null): string {
@@ -10054,15 +10044,6 @@ export function DocumentKnowledgeManagementPage() {
     () => (repositoryFolderContextMenu ? repositoryFolders.find((folder) => folder.id === repositoryFolderContextMenu.folderId) ?? null : null),
     [repositoryFolders, repositoryFolderContextMenu]
   )
-
-  const repositoryFolderMoveTargets = useMemo(() => {
-    if (!repositoryFolderContextMenuItem) return []
-    return repositoryFolders.filter(
-      (folder) =>
-        folder.id !== repositoryFolderContextMenuItem.id
-        && !isDocumentFolderDescendant(repositoryFolders, repositoryFolderContextMenuItem.id, folder.id),
-    )
-  }, [repositoryFolders, repositoryFolderContextMenuItem])
 
   const categoryColumnOptions = useMemo(() => {
     const categories = new Set(displayedKbEntries.map((entry) => entry.category))
@@ -24253,38 +24234,16 @@ export function DocumentKnowledgeManagementPage() {
                 </>
               }
             >
-              <div className="max-h-56 min-w-[14rem] overflow-y-auto scrollbar-hide">
-                {repositoryContextMenuItem.folderId ? (
-                  <ContextMenuItem
-                    onClick={() => {
-                      const target = repositoryContextMenuItem
-                      setRepositoryRowContextMenu(null)
-                      void handleMoveDocumentToFolder(target, null)
-                    }}
-                  >
-                    <Folder className="w-4 h-4 mr-2 shrink-0" />
-                    All documents (root)
-                  </ContextMenuItem>
-                ) : null}
-                {repositoryFolders
-                  .filter((folder) => folder.id !== repositoryContextMenuItem.folderId)
-                  .map((folder) => (
-                    <ContextMenuItem
-                      key={folder.id}
-                      onClick={() => {
-                        const target = repositoryContextMenuItem
-                        setRepositoryRowContextMenu(null)
-                        void handleMoveDocumentToFolder(target, folder.id)
-                      }}
-                    >
-                      <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
-                      <span className="min-w-0 truncate">{folder.name}</span>
-                    </ContextMenuItem>
-                  ))}
-                {repositoryFolders.length === 0 ? (
-                  <div className="px-4 py-2.5 text-sm text-muted-foreground">No folders yet — create one first.</div>
-                ) : null}
-              </div>
+              <RepositoryMoveFolderPicker
+                folders={repositoryFolders}
+                initialParentId={repositoryContextMenuItem.folderId}
+                currentParentId={repositoryContextMenuItem.folderId}
+                onSelect={(folderId) => {
+                  const target = repositoryContextMenuItem
+                  setRepositoryRowContextMenu(null)
+                  void handleMoveDocumentToFolder(target, folderId)
+                }}
+              />
             </ContextMenuSubmenu>
             <ContextMenuSeparator />
             <ContextMenuItem
@@ -24354,36 +24313,17 @@ export function DocumentKnowledgeManagementPage() {
                 </>
               }
             >
-              <div className="max-h-56 min-w-[14rem] overflow-y-auto">
-                {repositoryFolderContextMenuItem.parent_id ? (
-                  <ContextMenuItem
-                    onClick={() => {
-                      const target = repositoryFolderContextMenuItem
-                      setRepositoryFolderContextMenu(null)
-                      void handleMoveFolderToParent(target, null)
-                    }}
-                  >
-                    <Folder className="w-4 h-4 mr-2 shrink-0" />
-                    All documents (root)
-                  </ContextMenuItem>
-                ) : null}
-                {repositoryFolderMoveTargets.map((folder) => (
-                  <ContextMenuItem
-                    key={folder.id}
-                    onClick={() => {
-                      const target = repositoryFolderContextMenuItem
-                      setRepositoryFolderContextMenu(null)
-                      void handleMoveFolderToParent(target, folder.id)
-                    }}
-                  >
-                    <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
-                    <span className="min-w-0 truncate">{folder.name}</span>
-                  </ContextMenuItem>
-                ))}
-                {repositoryFolderMoveTargets.length === 0 && !repositoryFolderContextMenuItem.parent_id ? (
-                  <div className="px-4 py-2.5 text-sm text-muted-foreground">No other folders available.</div>
-                ) : null}
-              </div>
+              <RepositoryMoveFolderPicker
+                folders={repositoryFolders}
+                initialParentId={repositoryFolderContextMenuItem.parent_id ?? null}
+                excludeFolderId={repositoryFolderContextMenuItem.id}
+                currentParentId={repositoryFolderContextMenuItem.parent_id ?? null}
+                onSelect={(folderId) => {
+                  const target = repositoryFolderContextMenuItem
+                  setRepositoryFolderContextMenu(null)
+                  void handleMoveFolderToParent(target, folderId)
+                }}
+              />
             </ContextMenuSubmenu>
               </>
             )}
