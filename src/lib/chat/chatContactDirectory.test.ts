@@ -5,6 +5,7 @@ import {
   isPlaceholderChatContactName,
   pickChatDirectoryWorkspaceIds,
   resolveActiveWorkspaceMembershipRows,
+  shouldIncludeIdentityUserInChatDirectory,
   TECTONA_ASSISTANT_CONTACT,
 } from './chatContactDirectory'
 
@@ -60,20 +61,28 @@ describe('pickChatDirectoryWorkspaceIds', () => {
     expect(ids).toEqual([])
   })
 
-  it('scopes single workspace to active tenant', () => {
+  it('keeps the active tenant plus membership workspaces in single mode', () => {
     const ids = pickChatDirectoryWorkspaceIds({
       scope: { mode: 'single', workspaceId: 'ws-a', tenantMode: 'organization' },
       membershipWorkspaceIds: ['ws-b'],
     })
-    expect(ids).toEqual(['ws-a'])
+    expect(ids.sort()).toEqual(['ws-a', 'ws-b'].sort())
   })
 
-  it('does not WAC-list every org workspace when a personal workspace is active', () => {
+  it('does not WAC-list catalog org workspaces the user is not a member of', () => {
     const ids = pickChatDirectoryWorkspaceIds({
       scope: { mode: 'single', workspaceId: 'ws-personal', tenantMode: 'personal' },
       membershipWorkspaceIds: ['ws-personal'],
     })
     expect(ids).toEqual(['ws-personal'])
+  })
+
+  it('still lists members of other membership workspaces when a personal tenant is selected', () => {
+    const ids = pickChatDirectoryWorkspaceIds({
+      scope: { mode: 'single', workspaceId: 'ws-personal', tenantMode: 'personal' },
+      membershipWorkspaceIds: ['ws-personal', 'ws-org-home'],
+    })
+    expect(ids.sort()).toEqual(['ws-org-home', 'ws-personal'].sort())
   })
 })
 
@@ -96,6 +105,26 @@ describe('buildChatContactsFromWorkspaceMembers', () => {
     expect(contacts[0]).toEqual(TECTONA_ASSISTANT_CONTACT)
     expect(contacts.some((contact) => contact.id === 'outsider')).toBe(false)
     expect(contacts.some((contact) => contact.id === 'member-a')).toBe(true)
+  })
+})
+
+describe('shouldIncludeIdentityUserInChatDirectory', () => {
+  it('includes Adira colleagues when the session is a local tectona account', () => {
+    expect(
+      shouldIncludeIdentityUserInChatDirectory(
+        { email: 'v.christophe.harnanto@adira.co.id', status_code: 'active' },
+        'alfa.irawan.local@tectona.local',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not list unrelated consumer emails', () => {
+    expect(
+      shouldIncludeIdentityUserInChatDirectory(
+        { email: 'someone@gmail.com', status_code: 'active' },
+        'alfa.irawan.local@tectona.local',
+      ),
+    ).toBe(false)
   })
 })
 

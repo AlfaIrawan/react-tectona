@@ -130,8 +130,8 @@ async function fetchActiveMembershipWorkspaceIds(userId: string): Promise<string
 
 /**
  * Workspaces whose WAC member lists we are allowed to call.
- * Do not pass every org workspace: WAC returns 403 for workspaces the user is not in.
- * Org-wide people come from identity-lite (same corporate email domain), not from WAC fan-out.
+ * Never fan out to the full org catalog (403). In single-tenant mode still include
+ * every workspace the user is a member of — the active tenant is often a personal WS.
  */
 export function pickChatDirectoryWorkspaceIds(input: {
   scope: ReturnType<typeof buildWorkspaceScopeFromTenant>
@@ -140,25 +140,23 @@ export function pickChatDirectoryWorkspaceIds(input: {
 }): string[] {
   const membership = new Set(input.membershipWorkspaceIds.filter(Boolean))
   const accessible = (input.accessibleWorkspaceIds ?? []).filter(Boolean)
-  let workspaceIds: string[] = []
 
   if (input.scope.mode === 'single') {
-    workspaceIds = [input.scope.workspaceId]
+    return [...new Set([input.scope.workspaceId, ...membership])]
+  }
+
+  let workspaceIds: string[] = []
+  const selected = (input.scope.mode === 'all' ? input.scope.workspaceIds : undefined)?.filter(Boolean)
+  if (selected?.length) {
+    const inMembership = selected.filter((id) => membership.has(id))
+    workspaceIds = inMembership.length > 0 ? inMembership : selected
   } else {
-    const selected = (input.scope.mode === 'all' ? input.scope.workspaceIds : undefined)?.filter(Boolean)
-    if (selected?.length) {
-      const inMembership = selected.filter((id) => membership.has(id))
-      workspaceIds = inMembership.length > 0 ? inMembership : selected
-    } else {
-      workspaceIds = [...new Set([...membership, ...accessible])]
-    }
+    workspaceIds = [...new Set([...membership, ...accessible])]
   }
 
   if (workspaceIds.length === 0 && accessible.length > 0) {
     workspaceIds = [...new Set(accessible)]
   }
-
-  if (input.scope.mode === 'single') return workspaceIds
 
   const allowed = new Set([...membership, ...accessible])
   if (allowed.size === 0) return workspaceIds
@@ -206,35 +204,71 @@ function emailDomain(email: string | undefined): string | null {
   return domain || null
 }
 
-/**
- * Corporate New chat roster: everyone in identity-lite who shares the signed-in user's
- * email domain (e.g. adira.co.id). Consumer domains are skipped so Gmail users are not
- * listed against every other Gmail account in identity-lite.
- */
-export async function collectCorporateDirectorySubjectIds(
+/** Local/dev accounts (tectona.local) must still see Adira colleagues in New chat. */
+export function shouldIncludeIdentityUserInChatDirectory(
+  user: Pick<IdentityUserDto, 'email' | 'status_code'>,
   sessionEmail: string | undefined,
-): Promise<Set<string>> {
-  const ids = new Set<string>()
-  if (!sessionEmail?.trim() || isConsumerEmail(sessionEmail)) return ids
-  const domain = emailDomain(sessionEmail)
-  if (!domain) return ids
+): boolean {
+  if (!isActiveIdentityUser(user as IdentityUserDto)) return false
+  const email = user.email?.trim() ?? ''
+  if (!email) return false
+  const sessionDomain =
+    sessionEmail?.trim() && !isConsumerEmail(sessionEmail) ? emailDomain(sessionEmail) : null
+  if (sessionDomain && emailDomain(email) === sessionDomain) return true
+  return !isConsumerEmail(email)
+}
 
-  const listed = await fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] }))
-  for (const user of listed.items ?? []) {
-    if (!isActiveIdentityUser(user)) continue
-    if (emailDomain(user.email) !== domain) continue
-    if (user.id?.trim()) ids.add(user.id.trim())
+const IDENTITY_DIRECTORY_PAGE = 200
+const IDENTITY_DIRECTORY_MAX_PAGES = 10
+
+export type ChatIdentityDirectory = {
+  subjectIds: Set<string>
+  users: IdentityUserDto[]
+}
+
+/**
+ * New chat roster from identity-lite: corporate (non-consumer) accounts, plus anyone
+ * on the same domain as the session. Do not require the session domain to match
+ * @adira.co.id — "Alfa Irawan Local" is often @tectona.local.
+ */
+export async function loadChatIdentityDirectory(
+  sessionEmail: string | undefined,
+): Promise<ChatIdentityDirectory> {
+  const subjectIds = new Set<string>()
+  const usersById = new Map<string, IdentityUserDto>()
+  for (let page = 0; page < IDENTITY_DIRECTORY_MAX_PAGES; page += 1) {
+    const listed = await fetchIdentityUsers({
+      limit: IDENTITY_DIRECTORY_PAGE,
+      offset: page * IDENTITY_DIRECTORY_PAGE,
+    }).catch(() => ({ items: [] as IdentityUserDto[] }))
+    const items = listed.items ?? []
+    for (const user of items) {
+      if (!user.id?.trim()) continue
+      usersById.set(user.id, user)
+      if (shouldIncludeIdentityUserInChatDirectory(user, sessionEmail)) {
+        subjectIds.add(user.id.trim())
+      }
+    }
+    if (items.length < IDENTITY_DIRECTORY_PAGE) break
   }
-  return ids
+  return { subjectIds, users: [...usersById.values()] }
 }
 
 const IDENTITY_ENRICH_BATCH = 40
 
-async function loadIdentityUsersForSubjects(subjectIds: ReadonlySet<string>): Promise<IdentityUserDto[]> {
-  if (subjectIds.size === 0) return []
+async function loadIdentityUsersForSubjects(
+  subjectIds: ReadonlySet<string>,
+  alreadyLoaded: IdentityUserDto[] = [],
+): Promise<IdentityUserDto[]> {
+  if (subjectIds.size === 0 && alreadyLoaded.length === 0) return []
 
-  const listed = await fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] }))
-  const byId = new Map((listed.items ?? []).map((user) => [user.id, user]))
+  const byId = new Map(alreadyLoaded.map((user) => [user.id, user]))
+  if (byId.size === 0) {
+    const listed = await fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] }))
+    for (const user of listed.items ?? []) {
+      byId.set(user.id, user)
+    }
+  }
 
   const missing = [...subjectIds].filter((id) => !byId.has(id))
   const toFetch = missing.slice(0, IDENTITY_ENRICH_BATCH)
@@ -513,12 +547,12 @@ export async function loadChatContactDirectory(
   }
 
   const workspaceIds = await resolveChatDirectoryWorkspaceIds()
-  const [memberSubjectIds, corporateSubjectIds] = await Promise.all([
+  const [memberSubjectIds, identityDirectory] = await Promise.all([
     collectChatDirectorySubjectIds(workspaceIds),
-    collectCorporateDirectorySubjectIds(getSession()?.user.email),
+    loadChatIdentityDirectory(getSession()?.user.email),
   ])
-  const allowedSubjectIds = new Set([...memberSubjectIds, ...corporateSubjectIds])
-  const identityUsers = await loadIdentityUsersForSubjects(allowedSubjectIds)
+  const allowedSubjectIds = new Set([...memberSubjectIds, ...identityDirectory.subjectIds])
+  const identityUsers = await loadIdentityUsersForSubjects(allowedSubjectIds, identityDirectory.users)
   let contacts = buildChatContactsFromWorkspaceMembers(allowedSubjectIds, identityUsers)
 
   try {
