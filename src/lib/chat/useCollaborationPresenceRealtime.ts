@@ -6,10 +6,13 @@ import {
   listChannelMessages,
   listWorkspaceChannels,
   markChannelDelivered,
+  type CollaborationChannelApi,
   type CollaborationPresenceApi,
   type VoiceRecordRequestRealtimePayload,
   TECTONA_CHAT_WORKSPACE_ID,
 } from '@/lib/api/collaborationContextApi'
+import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
+import { isAllWorkspacesSelection, readStoredTenantSelection } from '@/lib/tenantWorkspaceScope'
 import { useChatPanelStore } from '@/stores/chat-panel-store'
 import { useChatNotificationTargetStore } from '@/stores/chat-notification-target-store'
 import { useVoiceRecordRequestStore } from '@/stores/voice-record-request-store'
@@ -30,6 +33,21 @@ type MessageSentPayload = ChatMessageRealtimePayload & {
 
 /** Poll inbox for new messages (fallback when WebSocket is down). */
 const INBOX_POLL_MS = 5_000
+
+function collaborationRealtimeWorkspaceIds(): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  const add = (raw?: string | null) => {
+    const id = raw?.trim()
+    if (!id || seen.has(id) || isAllWorkspacesSelection(id)) return
+    seen.add(id)
+    ids.push(id)
+  }
+  add(TECTONA_CHAT_WORKSPACE_ID)
+  add(readStoredTenantSelection()?.workspaceId)
+  for (const id of readAccessibleWorkspaceIds() ?? []) add(id)
+  return ids.slice(0, 8)
+}
 
 function detachWebSocketHandlers(ws: WebSocket): void {
   ws.onopen = null
@@ -76,6 +94,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
   const handlerRef = useRef(onPresenceUpdated)
   handlerRef.current = onPresenceUpdated
   const lastSequenceByChannelRef = useRef<Map<string, number>>(new Map())
+  const lastPreviewByChannelRef = useRef<Map<string, string>>(new Map())
   const seenMessageIdsRef = useRef<Set<string>>(new Set())
   const inboxSeededRef = useRef(false)
 
@@ -85,7 +104,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
 
   useEffect(() => {
     let disposed = false
-    let socket: WebSocket | null = null
+    const sockets = new Map<string, WebSocket>()
     let socketGeneration = 0
     let reconnectTimer: number | null = null
     let inboxPollTimer: number | null = null
@@ -134,104 +153,119 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
         channelId: payload.channel_id,
         senderUserId: payload.sender_user_id,
         body: payload.body,
+        messageId: payload.message_id,
         channelType: payload.channel_type,
         channelTitle: payload.channel_title,
       })
     }
 
+    const ingestChannelInbox = async (ch: CollaborationChannelApi, seeding: boolean) => {
+      const latestSeq = ch.last_sequence_no ?? 0
+      const preview = ch.last_message_preview ?? ''
+      const prevSeq = lastSequenceByChannelRef.current.get(ch.id)
+      const prevPreview = lastPreviewByChannelRef.current.get(ch.id)
+      lastPreviewByChannelRef.current.set(ch.id, preview)
+
+      if (seeding || prevSeq === undefined) {
+        lastSequenceByChannelRef.current.set(ch.id, latestSeq)
+        return
+      }
+
+      const seqGrew = latestSeq > prevSeq
+      const previewChanged = preview !== (prevPreview ?? preview)
+      if (!seqGrew && !previewChanged) return
+
+      lastSequenceByChannelRef.current.set(ch.id, Math.max(latestSeq, prevSeq))
+
+      let newMessages: Awaited<ReturnType<typeof listChannelMessages>> = []
+      try {
+        newMessages = await listChannelMessages(ch.id, { afterSequence: prevSeq, limit: 20 })
+      } catch {
+        const peerId = ch.peer_user_id
+        if (ch.last_message_preview?.trim() && peerId) {
+          newMessages = [
+            {
+              id: `${ch.id}:${latestSeq}`,
+              channel_id: ch.id,
+              sender_user_id: peerId,
+              message_role: 'user',
+              body: ch.last_message_preview,
+              sequence_no: latestSeq,
+              message_at: ch.last_message_at ?? new Date().toISOString(),
+            },
+          ]
+        }
+      }
+
+      if (newMessages.length === 0 && previewChanged && ch.peer_user_id && preview.trim()) {
+        newMessages = [
+          {
+            id: `${ch.id}:${latestSeq}:${preview.slice(0, 24)}`,
+            channel_id: ch.id,
+            sender_user_id: ch.peer_user_id,
+            message_role: 'user',
+            body: preview,
+            sequence_no: latestSeq,
+            message_at: ch.last_message_at ?? new Date().toISOString(),
+          },
+        ]
+      }
+
+      for (const msg of newMessages) {
+        dispatchIncomingMessage(
+          {
+            channel_id: ch.id,
+            message_id: msg.id,
+            sender_user_id: msg.sender_user_id,
+            body: msg.body,
+            sequence_no: msg.sequence_no,
+            channel_type: ch.channel_type,
+            channel_title: ch.title,
+          },
+          !seeding,
+        )
+      }
+    }
+
     const pollInboxForNewMessages = async () => {
       const session = getSession()
       if (!session?.user?.id) return
+      const seeding = !inboxSeededRef.current
+      const workspaceIds = collaborationRealtimeWorkspaceIds()
       try {
-        const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
-        const seeding = !inboxSeededRef.current
-
-        for (const ch of res.items) {
-          const latestSeq = ch.last_sequence_no ?? 0
-          const prevSeq = lastSequenceByChannelRef.current.get(ch.id)
-          if (seeding || prevSeq === undefined) {
-            lastSequenceByChannelRef.current.set(ch.id, latestSeq)
-            continue
-          }
-          if (latestSeq <= prevSeq) continue
-
-          lastSequenceByChannelRef.current.set(ch.id, latestSeq)
-
-          let newMessages: Awaited<ReturnType<typeof listChannelMessages>> = []
-          try {
-            newMessages = await listChannelMessages(ch.id, { afterSequence: prevSeq, limit: 20 })
-          } catch {
-            const peerId = ch.peer_user_id
-            if (ch.last_message_preview?.trim() && peerId) {
-              newMessages = [
-                {
-                  id: `${ch.id}:${latestSeq}`,
-                  channel_id: ch.id,
-                  sender_user_id: peerId,
-                  message_role: 'user',
-                  body: ch.last_message_preview,
-                  sequence_no: latestSeq,
-                  message_at: ch.last_message_at ?? new Date().toISOString(),
-                },
-              ]
-            }
-          }
-
-          for (const msg of newMessages) {
-            dispatchIncomingMessage(
-              {
-                channel_id: ch.id,
-                message_id: msg.id,
-                sender_user_id: msg.sender_user_id,
-                body: msg.body,
-                sequence_no: msg.sequence_no,
-                channel_type: ch.channel_type,
-                channel_title: ch.title,
-              },
-              !seeding,
-            )
+        const lists = await Promise.all(
+          workspaceIds.map((workspaceId) =>
+            listWorkspaceChannels(workspaceId, { pageSize: 100 }).catch(() => null),
+          ),
+        )
+        const seenChannels = new Set<string>()
+        for (const res of lists) {
+          if (!res) continue
+          for (const ch of res.items) {
+            if (seenChannels.has(ch.id)) continue
+            seenChannels.add(ch.id)
+            await ingestChannelInbox(ch, seeding)
           }
         }
-
         inboxSeededRef.current = true
       } catch {
         // collaboration-context may be down
       }
     }
 
-    const scheduleReconnect = () => {
-      if (disposed) return
-      const delay = Math.min(30_000, 1000 * 2 ** reconnectAttempt)
-      reconnectAttempt += 1
-      clearReconnect()
-      reconnectTimer = window.setTimeout(connect, delay)
+    const closeAllSockets = () => {
+      for (const ws of sockets.values()) closeWebSocketQuietly(ws)
+      sockets.clear()
     }
 
-    const connect = () => {
-      if (disposed) return
-      const session = getSession()
-      if (!session?.token) return
-
-      if (socket) {
-        closeWebSocketQuietly(socket)
-        socket = null
-      }
-
-      const url = createCollaborationPresenceWebSocketUrl({
-        workspaceId: TECTONA_CHAT_WORKSPACE_ID,
-        token: session.token,
-      })
-      const generation = ++socketGeneration
-      const ws = new WebSocket(url)
-      socket = ws
-
+    const attachSocketHandlers = (ws: WebSocket, workspaceId: string, generation: number) => {
       ws.onopen = () => {
-        if (disposed || generation !== socketGeneration || socket !== ws) return
+        if (disposed || generation !== socketGeneration || sockets.get(workspaceId) !== ws) return
         reconnectAttempt = 0
       }
 
       ws.onmessage = (event) => {
-        if (disposed || generation !== socketGeneration || socket !== ws) return
+        if (disposed || generation !== socketGeneration || sockets.get(workspaceId) !== ws) return
         try {
           const parsed = JSON.parse(String(event.data)) as {
             type?: string
@@ -303,14 +337,44 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
       }
 
       ws.onclose = () => {
-        if (socket === ws) socket = null
+        if (sockets.get(workspaceId) === ws) sockets.delete(workspaceId)
         if (disposed || generation !== socketGeneration) return
+        if (sockets.size > 0) return
         scheduleReconnect()
       }
 
       ws.onerror = () => {
-        if (disposed || generation !== socketGeneration || socket !== ws) return
+        if (disposed || generation !== socketGeneration || sockets.get(workspaceId) !== ws) return
         closeWebSocketQuietly(ws)
+      }
+    }
+
+    const scheduleReconnect = () => {
+      if (disposed) return
+      const delay = Math.min(30_000, 1000 * 2 ** reconnectAttempt)
+      reconnectAttempt += 1
+      clearReconnect()
+      reconnectTimer = window.setTimeout(connect, delay)
+    }
+
+    const connect = () => {
+      if (disposed) return
+      const session = getSession()
+      if (!session?.token) {
+        scheduleReconnect()
+        return
+      }
+
+      closeAllSockets()
+      const generation = ++socketGeneration
+      for (const workspaceId of collaborationRealtimeWorkspaceIds()) {
+        const url = createCollaborationPresenceWebSocketUrl({
+          workspaceId,
+          token: session.token,
+        })
+        const ws = new WebSocket(url)
+        sockets.set(workspaceId, ws)
+        attachSocketHandlers(ws, workspaceId, generation)
       }
     }
 
@@ -333,8 +397,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
       clearInboxPoll()
       document.removeEventListener('visibilitychange', onVisibilityOrFocus)
       window.removeEventListener('focus', onVisibilityOrFocus)
-      closeWebSocketQuietly(socket)
-      socket = null
+      closeAllSockets()
     }
   }, [])
 }

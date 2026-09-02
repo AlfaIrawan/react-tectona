@@ -417,8 +417,13 @@ export function buildTeamChatContactForUserId(userId: string, contacts: ChatCont
   }
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 export function resolveChatContactName(userId: string): string {
-  return cachedContactsById.get(userId)?.name ?? 'Team member'
+  const name = cachedContactsById.get(userId)?.name?.trim()
+  if (name && name.toLowerCase() !== userId.toLowerCase() && !UUID_RE.test(name)) return name
+  return 'Team member'
 }
 
 export async function loadChatContactDirectory(

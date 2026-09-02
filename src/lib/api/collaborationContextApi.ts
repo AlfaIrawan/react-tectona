@@ -3,6 +3,7 @@
  * Multi-tenant via app_id — same pattern as notification-service.
  */
 
+import { decodePeopleChatBody } from '@/lib/chat/peopleChatMessagePayload'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 import { TECTONA_APP_ID } from './notificationApi'
 import { TECTONA_CHAT_WORKSPACE_ID } from './tectonaAgentRuntimeApi'
@@ -356,21 +357,62 @@ export interface CollaborationUiMessage {
   sequenceNo?: number
   expiresAt?: number
   senderContactId?: string
+  attachments?: {
+    id: string
+    kind: 'image' | 'document' | 'audio' | 'video' | 'contact' | 'poll' | 'event'
+    name: string
+    url: string
+    mimeType?: string
+    subtitle?: string
+    eventDescription?: string
+    eventLocation?: string
+  }[]
+}
+
+type PeopleUiAttachmentKind = NonNullable<CollaborationUiMessage['attachments']>[number]['kind']
+
+function asChatAttachmentKind(kind: string): PeopleUiAttachmentKind {
+  if (
+    kind === 'image' ||
+    kind === 'document' ||
+    kind === 'audio' ||
+    kind === 'video' ||
+    kind === 'contact' ||
+    kind === 'poll' ||
+    kind === 'event'
+  ) {
+    return kind
+  }
+  return 'document'
 }
 
 export function mapCollaborationMessagesToUi(
   messages: CollaborationMessageApi[],
   currentUserId: string,
 ): CollaborationUiMessage[] {
-  return messages.map((m) => ({
-    id: m.id,
-    role: m.message_role === 'system' ? 'system' : m.sender_user_id === currentUserId ? 'user' : 'assistant',
-    text: m.body,
-    at: new Date(m.message_at).getTime(),
-    sequenceNo: m.sequence_no,
-    ...(m.expires_at ? { expiresAt: new Date(m.expires_at).getTime() } : {}),
-    ...(m.sender_user_id !== currentUserId ? { senderContactId: m.sender_user_id } : {}),
-  }))
+  return messages.map((m) => {
+    const decoded = decodePeopleChatBody(m.body)
+    const attachments = decoded.attachments.map((item) => ({
+      id: item.id,
+      kind: asChatAttachmentKind(String(item.kind || 'document')),
+      name: item.name,
+      url: item.url,
+      ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+      ...(item.subtitle ? { subtitle: item.subtitle } : {}),
+      ...(item.eventDescription ? { eventDescription: item.eventDescription } : {}),
+      ...(item.eventLocation ? { eventLocation: item.eventLocation } : {}),
+    }))
+    return {
+      id: m.id,
+      role: m.message_role === 'system' ? 'system' : m.sender_user_id === currentUserId ? 'user' : 'assistant',
+      text: decoded.text,
+      at: new Date(m.message_at).getTime(),
+      sequenceNo: m.sequence_no,
+      ...(m.expires_at ? { expiresAt: new Date(m.expires_at).getTime() } : {}),
+      ...(m.sender_user_id ? { senderContactId: m.sender_user_id } : {}),
+      ...(attachments.length ? { attachments } : {}),
+    }
+  })
 }
 
 export interface CollaborationPresenceApi {

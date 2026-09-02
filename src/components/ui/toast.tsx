@@ -5,9 +5,11 @@ import { cn } from '@/lib/utils'
 import { useSettingsPanelStore } from '@/stores/settings-panel-store'
 import { useRightDrawerStore } from '@/stores/right-drawer-store'
 import { useRequestJoinWorkspaceStore } from '@/stores/request-join-workspace-store'
+import { useChatPanelStore } from '@/stores/chat-panel-store'
+import { useEmailPanelStore } from '@/stores/email-panel-store'
 
 /** Above workspace drawers (z-1100), floating chat (z-1150), and voice prompt (z-1400). */
-const TOAST_LAYER_Z_INDEX = 'z-[1600]'
+const TOAST_LAYER_Z_INDEX = 2000
 
 /** Matches AppLayout settings drawer widths. */
 const SETTINGS_DRAWER_WIDTH_PX = {
@@ -40,15 +42,24 @@ interface Toast {
 type ToastInput = Omit<Toast, 'id'>
 
 const globalToastListeners = new Set<(toast: ToastInput) => void>()
+const pendingGlobalToasts: ToastInput[] = []
 
 function subscribeGlobalToast(listener: (toast: ToastInput) => void) {
   globalToastListeners.add(listener)
+  if (pendingGlobalToasts.length > 0) {
+    const queued = pendingGlobalToasts.splice(0, pendingGlobalToasts.length)
+    for (const toast of queued) listener(toast)
+  }
   return () => {
     globalToastListeners.delete(listener)
   }
 }
 
 export function pushGlobalToast(toast: ToastInput) {
+  if (globalToastListeners.size === 0) {
+    pendingGlobalToasts.push(toast)
+    return
+  }
   for (const listener of globalToastListeners) {
     listener(toast)
   }
@@ -71,10 +82,12 @@ function ToastItem({
   const clickable = typeof toast.onClick === 'function'
 
   React.useLayoutEffect(() => {
-    const id = requestAnimationFrame(() => {
-      requestAnimationFrame(() => setPhase('idle'))
-    })
-    return () => cancelAnimationFrame(id)
+    const frame = requestAnimationFrame(() => setPhase('idle'))
+    const fallback = window.setTimeout(() => setPhase('idle'), 50)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(fallback)
+    }
   }, [])
 
   React.useEffect(() => {
@@ -121,9 +134,9 @@ function ToastItem({
         toast.variant === 'warning' && 'bg-gradient-to-r from-amber-950/95 to-orange-950/95 border-amber-700/50 hover:border-amber-600/80',
         toast.variant === 'info' && 'bg-gradient-to-r from-sky-950/95 to-blue-950/95 border-sky-700/50 hover:border-sky-600/80',
         (toast.variant === 'default' || !toast.variant) && 'bg-gradient-to-r from-slate-900/95 to-slate-800/95 border-slate-700/50 hover:border-slate-600/80',
-        phase === 'enter' && 'translate-x-[120%] opacity-0 transition-none',
+        phase === 'enter' && 'translate-x-3 opacity-0',
         phase === 'idle' && 'translate-x-0 opacity-100 ease-out',
-        phase === 'leave' && 'translate-x-[120%] opacity-0 ease-in'
+        phase === 'leave' && 'translate-x-3 opacity-0 ease-in'
       )}
     >
       {/* Accent line top */}
@@ -241,8 +254,16 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const rightDrawerOpen = useRightDrawerStore((s) => s.open)
   const rightDrawerWidth = useRightDrawerStore((s) => s.width)
   const requestJoinOpen = useRequestJoinWorkspaceStore((s) => s.open)
+  const chatOpen = useChatPanelStore((s) => s.open)
+  const chatWidthPct = useChatPanelStore((s) => s.widthPct)
+  const emailOpen = useEmailPanelStore((s) => s.open)
+  const emailWidthPct = useEmailPanelStore((s) => s.widthPct)
 
-  const rightOffsetPx = React.useMemo(() => {
+  const floatingChat = chatOpen && (rightDrawerOpen || requestJoinOpen)
+  const dockedCommPct =
+    !floatingChat && (chatOpen || emailOpen) ? (emailOpen ? emailWidthPct : chatWidthPct) : 0
+
+  const rightOffset = React.useMemo(() => {
     const settingsWidth =
       settingsPanel === 'todo'
         ? SETTINGS_DRAWER_WIDTH_PX.todo
@@ -252,8 +273,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const detailWidth = rightDrawerOpen ? rightDrawerWidth : 0
     const joinWidth = requestJoinOpen ? 420 : 0
     const reserve = Math.max(settingsWidth, detailWidth, joinWidth, 0)
-    return reserve > 0 ? reserve + TOAST_EDGE_GAP_PX : TOAST_EDGE_GAP_PX
-  }, [settingsPanel, rightDrawerOpen, rightDrawerWidth, requestJoinOpen])
+    const base = reserve > 0 ? reserve + TOAST_EDGE_GAP_PX : TOAST_EDGE_GAP_PX
+    if (dockedCommPct > 0) {
+      return `calc(${base}px + min(30vw, ${dockedCommPct}vw))`
+    }
+    return `${base}px`
+  }, [settingsPanel, rightDrawerOpen, rightDrawerWidth, requestJoinOpen, dockedCommPct])
 
   const addToast = React.useCallback((toast: Omit<Toast, 'id'>) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -274,13 +299,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const toastStack = (
     <div
-      className={cn(
-        'fixed top-20 flex flex-col gap-3 pointer-events-none transition-[right] duration-300 ease-out',
-        TOAST_LAYER_Z_INDEX
-      )}
-      style={{ right: rightOffsetPx }}
+      className="pointer-events-none"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100dvh',
+        overflow: 'visible',
+        zIndex: TOAST_LAYER_Z_INDEX,
+      }}
       aria-live="polite"
       aria-relevant="additions"
+    >
+    <div
+      className="absolute top-20 flex flex-col gap-3 pointer-events-none transition-[right] duration-300 ease-out"
+      style={{ right: rightOffset }}
     >
       {hiddenToastsCount > 0 && (
         <div className="pointer-events-auto group animate-in fade-in slide-in-from-top-2 duration-300">
@@ -329,6 +363,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           <ToastItem toast={toast} onRemove={() => removeToast(toast.id)} />
         </div>
       ))}
+    </div>
     </div>
   )
 

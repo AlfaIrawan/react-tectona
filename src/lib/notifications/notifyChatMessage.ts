@@ -1,3 +1,4 @@
+import { peopleChatPreview } from '@/lib/chat/peopleChatMessagePayload'
 import { getSession } from '@/auth/authService'
 import { resolveChatContactName } from '@/lib/chat/chatContactDirectory'
 import { emitNotificationsUpdated } from '@/lib/chat/chatRealtimeEvents'
@@ -16,14 +17,24 @@ export type IncomingChatMessageNotifyParams = {
   channelId: string
   senderUserId: string
   body: string
+  messageId?: string
   channelType?: string
   channelTitle?: string | null
 }
 
-function previewBody(body: string, max = 120): string {
-  const t = body.trim()
-  if (t.length <= max) return t
-  return `${t.slice(0, max).trimEnd()}…`
+const recentNotificationKeys = new Map<string, number>()
+
+export function claimIncomingChatNotificationKey(key: string, windowMs = 8_000): boolean {
+  const now = Date.now()
+  const prev = recentNotificationKeys.get(key)
+  if (prev != null && now - prev < windowMs) return false
+  recentNotificationKeys.set(key, now)
+  if (recentNotificationKeys.size > 200) {
+    for (const [item, at] of recentNotificationKeys) {
+      if (now - at > windowMs) recentNotificationKeys.delete(item)
+    }
+  }
+  return true
 }
 
 function resolveThreadTitle(params: IncomingChatMessageNotifyParams): string {
@@ -33,7 +44,8 @@ function resolveThreadTitle(params: IncomingChatMessageNotifyParams): string {
   return resolveChatContactName(params.senderUserId)
 }
 
-function shouldSuppressUiAlert(channelId: string): boolean {
+/** Sound / OS notification only — in-app toast still shows so the alert is visible. */
+function shouldSuppressBackgroundAlert(channelId: string): boolean {
   const chatOpen = useChatPanelStore.getState().open
   if (!chatOpen) return false
   const { activeChannelId } = useChatNotificationTargetStore.getState()
@@ -55,24 +67,29 @@ function openThreadFromNotification(params: IncomingChatMessageNotifyParams): vo
 export function notifyIncomingChatMessage(params: IncomingChatMessageNotifyParams): void {
   const session = getSession()
   if (!session?.user?.id) return
-  if (params.senderUserId === session.user.id) return
-  if (params.senderUserId === 'unknown') return
+  if (!params.senderUserId || params.senderUserId === session.user.id) return
+
+  const dedupeKey =
+    params.messageId?.trim() ||
+    `${params.channelId}:${params.senderUserId}:${peopleChatPreview(params.body, 80)}`
+  if (!claimIncomingChatNotificationKey(dedupeKey)) return
 
   const senderName = resolveChatContactName(params.senderUserId)
   const threadTitle = resolveThreadTitle(params)
-  const bodyPreview = previewBody(params.body)
+  const bodyPreview = peopleChatPreview(params.body, 120) || 'New message'
   const title =
     params.channelType === 'group' ? `${senderName} in ${threadTitle}` : `Message from ${senderName}`
 
-  if (!shouldSuppressUiAlert(params.channelId)) {
-    playChatMessageNotificationSound()
+  pushGlobalToast({
+    variant: 'default',
+    title,
+    description: bodyPreview,
+    onClick: () => openThreadFromNotification(params),
+  })
 
-    pushGlobalToast({
-      variant: 'default',
-      title,
-      description: bodyPreview,
-      onClick: () => openThreadFromNotification(params),
-    })
+  const suppressBackground = shouldSuppressBackgroundAlert(params.channelId)
+  if (!suppressBackground) {
+    playChatMessageNotificationSound()
 
     const tabHidden = document.visibilityState === 'hidden' || !document.hasFocus()
     const chatOpen = useChatPanelStore.getState().open

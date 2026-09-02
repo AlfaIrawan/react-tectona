@@ -187,6 +187,10 @@ import {
   unhideChatForContact,
 } from '@/lib/chat/chatHiddenConversations'
 import {
+  encodePeopleChatBody,
+  peopleChatPreview,
+} from '@/lib/chat/peopleChatMessagePayload'
+import {
   maxInboundMessageSequence,
   maxVisibleMessageSequence,
   resolveOutboundDeliveryStatus,
@@ -220,6 +224,7 @@ import {
 import { useChatNavigationStore, type OpenChatThreadRequest } from '@/stores/chat-navigation-store'
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
 import { pushGlobalToast } from '@/components/ui/toast'
+import { notifyIncomingChatMessage } from '@/lib/notifications/notifyChatMessage'
 import {
   CHAT_CHANNEL_RECEIPT_EVENT,
   CHAT_MESSAGE_RECEIVED_EVENT,
@@ -634,7 +639,7 @@ function collaborationChannelToConversation(
   const updatedAt = parseCollaborationTimestamp(ch.last_message_at)
   const lastSequenceNo = ch.last_sequence_no ?? 0
   const previewSource =
-    ch.last_message_preview?.trim() || (ch.last_message_at ? 'New message' : 'No messages yet')
+    peopleChatPreview(ch.last_message_preview) || (ch.last_message_at ? 'New message' : 'No messages yet')
   const preview = isChannelPreviewCleared(ch.id, lastSequenceNo)
     ? 'No messages yet'
     : truncatePreview(previewSource)
@@ -643,15 +648,15 @@ function collaborationChannelToConversation(
   if (ch.channel_type === 'direct') {
     const peerId = ch.peer_user_id
     if (!peerId) return null
-    const contact = contacts.find((c) => c.id === peerId)
+    const contact = buildTeamChatContactForUserId(peerId, contacts)
     const peerReceipt = safePeerReceiptFromChannel(ch)
     return {
       id: `conv-channel-${ch.id}`,
       mode: 'team',
-      title: contact?.name ?? peerId,
+      title: contact.name,
       contactId: peerId,
-      contactName: contact?.name ?? peerId,
-      contactAvatarSrc: contact?.avatarSrc,
+      contactName: contact.name,
+      contactAvatarSrc: contact.avatarSrc,
       channelId: ch.id,
       lastSequenceNo,
       disappearingMessagesTtl: parseDisappearingMessagesDuration(ch.disappearing_messages_ttl),
@@ -1852,6 +1857,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       return
     }
     setActiveChannelId(activeConversation?.channelId ?? null)
+    return () => setActiveChannelId(null)
   }, [screen, activeConversation?.channelId, setActiveChannelId])
 
   useEffect(() => {
@@ -1938,6 +1944,16 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       void refreshCollaborationInbox()
 
       const actorId = getCurrentChatActorId()
+      if (actorId && detail.sender_user_id && detail.sender_user_id !== actorId) {
+        notifyIncomingChatMessage({
+          channelId: detail.channel_id,
+          senderUserId: detail.sender_user_id,
+          body: detail.body,
+          messageId: detail.message_id,
+          channelType: detail.channel_type,
+          channelTitle: detail.channel_title,
+        })
+      }
       const mapped = mapCollaborationMessagesToUi([toCollaborationMessageApi(detail)], actorId)
       const uiMsg = mapped[0]
       if (!uiMsg) return
@@ -1978,7 +1994,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           c.channelId === detail.channel_id
             ? {
                 ...c,
-                preview: detail.body.slice(0, 72),
+                preview: peopleChatPreview(detail.body) || 'New message',
                 updatedAt: Date.now(),
                 unreadCount: isViewingChannel && c.id === activeId ? 0 : (c.unreadCount ?? 0) + 1,
               }
@@ -4380,7 +4396,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       }
     }
 
-    if (convMode === 'genai') {
+    if (convMode === 'genai' || convMode === 'team' || convMode === 'group') {
       if (attachSnapshot.length > 0) {
         try {
           const originalAttachments = attachSnapshot
@@ -4401,7 +4417,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         }
       }
 
-      if (autoEvidenceAttachment) {
+      if (convMode === 'genai' && autoEvidenceAttachment) {
         try {
           autoEvidenceAttachment = await uploadAttachmentForGenAi(conversationId, autoEvidenceAttachment)
         } catch (error) {
@@ -4690,9 +4706,21 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               : 'Direct channel is not connected yet.',
           )
         }
-        if (t) {
-          const sent = await sendChannelMessage(channelId, t)
-          setMessagesById((prev) => ({
+        const wireBody = encodePeopleChatBody(
+          t,
+          attachSnapshot.map((a) => ({
+            id: a.id,
+            kind: a.kind,
+            name: a.name,
+            url: a.url,
+            mimeType: a.mimeType,
+            subtitle: a.subtitle,
+            eventDescription: a.eventDescription,
+            eventLocation: a.eventLocation,
+          })),
+        )
+        const sent = await sendChannelMessage(channelId, wireBody)
+        setMessagesById((prev) => ({
             ...prev,
             [conversationId]: (prev[conversationId] ?? []).map((m) =>
               m.id === userMsg.id
@@ -4715,7 +4743,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             }
             window.setTimeout(pollPeerReceipts, 500)
           }
-        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to send message.'
         pushGlobalToast({
@@ -7948,14 +7975,12 @@ function resolveGroupBubbleContact(
 ): ChatContact | undefined {
   if (!conversation || conversation.mode !== 'group') return undefined
   if (m.role === 'system') return undefined
-  if (m.role === 'user') {
-    return getChatContactById(m.senderContactId ?? currentUserId, contacts)
-  }
-  if (m.role === 'assistant') {
-    const id = m.senderContactId ?? conversation.groupMemberContactIds?.[0]
-    return getChatContactById(id, contacts)
-  }
-  return undefined
+  const id =
+    m.role === 'user'
+      ? (m.senderContactId ?? currentUserId)
+      : (m.senderContactId ?? conversation.groupMemberContactIds?.[0])
+  if (!id) return undefined
+  return getChatContactById(id, contacts) ?? buildTeamChatContactForUserId(id, contacts)
 }
 
 function GroupBubbleAvatar({ contact }: { contact: ChatContact }) {
@@ -8366,7 +8391,14 @@ function WhatsAppChatBubble({
   return (
     <div className={cn('flex w-full items-end gap-2', isUser ? 'justify-end' : 'justify-start')}>
       {!isUser ? <GroupBubbleAvatar contact={groupContact} /> : null}
-      {bubble}
+      <div className="min-w-0">
+        {!isUser ? (
+          <p className="mb-0.5 px-1 text-[11px] font-medium text-[#667781] dark:text-[#8696a0]">
+            {groupContact.name}
+          </p>
+        ) : null}
+        {bubble}
+      </div>
       {isUser ? <GroupBubbleAvatar contact={groupContact} /> : null}
     </div>
   )
