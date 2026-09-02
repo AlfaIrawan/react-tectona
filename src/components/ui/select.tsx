@@ -67,6 +67,52 @@ function emitSelectChange(
 
 const SELECT_LAYOUT_CLASS_RE = /^(?:w-|min-w-|max-w-|shrink-|grow-|basis-)/
 
+const SELECT_MENU_MAX_HEIGHT = 280
+const SELECT_MENU_MIN_HEIGHT = 96
+const SELECT_MENU_MIN_WIDTH = 132
+const SELECT_MENU_GAP = 4
+const SELECT_VIEWPORT_PADDING = 8
+
+type ViewportBox = { width: number; height: number }
+
+/** Viewport-fixed menu box next to a trigger. Used so the portal never paints at 0,0. */
+export function computeSelectMenuStyle(
+  rect: Pick<DOMRectReadOnly, 'top' | 'left' | 'right' | 'bottom' | 'width' | 'height'>,
+  viewport: ViewportBox,
+  opts?: { minWidth?: number },
+): React.CSSProperties {
+  const minWidth = opts?.minWidth ?? SELECT_MENU_MIN_WIDTH
+  const width = Math.min(
+    Math.max(rect.width, minWidth),
+    Math.max(minWidth, viewport.width - SELECT_VIEWPORT_PADDING * 2),
+  )
+  let left = rect.right - width
+  const maxLeft = viewport.width - width - SELECT_VIEWPORT_PADDING
+  if (left > maxLeft) left = Math.max(SELECT_VIEWPORT_PADDING, maxLeft)
+  if (left < SELECT_VIEWPORT_PADDING) left = SELECT_VIEWPORT_PADDING
+
+  const spaceBelow = viewport.height - rect.bottom - SELECT_VIEWPORT_PADDING
+  const spaceAbove = rect.top - SELECT_VIEWPORT_PADDING
+  const openUpward = spaceBelow < 160 && spaceAbove > spaceBelow
+  const available = openUpward ? spaceAbove : spaceBelow
+  const maxHeight = Math.min(SELECT_MENU_MAX_HEIGHT, Math.max(SELECT_MENU_MIN_HEIGHT, available))
+
+  return {
+    position: 'fixed',
+    left,
+    width,
+    zIndex: 9999,
+    maxHeight,
+    ...(openUpward
+      ? { top: 'auto', bottom: viewport.height - rect.top + SELECT_MENU_GAP }
+      : { bottom: 'auto', top: rect.bottom + SELECT_MENU_GAP }),
+  }
+}
+
+function isSelectMenuPositioned(style: React.CSSProperties): boolean {
+  return style.top !== undefined || style.bottom !== undefined
+}
+
 function sanitizeAutoName(id: string): string {
   return id.replace(/:/g, '')
 }
@@ -161,38 +207,32 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
     const updateMenuPosition = React.useCallback(() => {
       const trigger = triggerRef.current
       if (!trigger) return
-      const rect = trigger.getBoundingClientRect()
-      const viewportPadding = 8
-      const maxHeight = 280
-      const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
-      const spaceAbove = rect.top - viewportPadding
-      const openUpward = spaceBelow < 180 && spaceAbove > spaceBelow
-      const available = openUpward ? spaceAbove : spaceBelow
-      const height = Math.min(maxHeight, Math.max(120, available))
-
-      setMenuStyle({
-        position: 'fixed',
-        left: rect.left,
-        width: rect.width,
-        zIndex: 9999,
-        maxHeight: height,
-        ...(openUpward
-          ? { bottom: window.innerHeight - rect.top + 4 }
-          : { top: rect.top + rect.height + 4 }),
-      })
+      setMenuStyle(
+        computeSelectMenuStyle(trigger.getBoundingClientRect(), {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        }),
+      )
     }, [])
+
+    const setMenuOpen = React.useCallback((nextOpen: boolean) => {
+      if (nextOpen) updateMenuPosition()
+      setOpen(nextOpen)
+    }, [updateMenuPosition])
 
     React.useEffect(() => {
       setMounted(true)
     }, [])
 
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
       if (!open) return
       updateMenuPosition()
+      const frame = window.requestAnimationFrame(() => updateMenuPosition())
       const onScrollOrResize = () => updateMenuPosition()
       window.addEventListener('resize', onScrollOrResize)
       window.addEventListener('scroll', onScrollOrResize, true)
       return () => {
+        window.cancelAnimationFrame(frame)
         window.removeEventListener('resize', onScrollOrResize)
         window.removeEventListener('scroll', onScrollOrResize, true)
       }
@@ -205,10 +245,10 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         if (containerRef.current?.contains(target)) return
         if (triggerRef.current?.contains(target)) return
         if (menuRef.current?.contains(target)) return
-        setOpen(false)
+        setMenuOpen(false)
       }
       const onKeyDown = (event: KeyboardEvent) => {
-        if (event.key === 'Escape') setOpen(false)
+        if (event.key === 'Escape') setMenuOpen(false)
       }
       document.addEventListener('mousedown', onPointerDown)
       document.addEventListener('keydown', onKeyDown)
@@ -216,7 +256,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         document.removeEventListener('mousedown', onPointerDown)
         document.removeEventListener('keydown', onKeyDown)
       }
-    }, [open])
+    }, [open, setMenuOpen])
 
     React.useEffect(() => {
       if (!open) {
@@ -232,14 +272,14 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
       if (!isControlled) setInternalValue(nextValue)
       if (hiddenSelectRef.current) hiddenSelectRef.current.value = nextValue
       emitSelectChange(onChange, nextValue, resolvedName)
-      setOpen(false)
+      setMenuOpen(false)
     }
 
     const onTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
       if (disabled) return
       if (event.key === ' ') {
         event.preventDefault()
-        setOpen((prev) => !prev)
+        setMenuOpen(!open)
         return
       }
       if (event.key === 'Enter') {
@@ -248,14 +288,14 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           const opt = enabledOptions[highlightIndex]
           if (opt) commitValue(opt.value)
         } else {
-          setOpen(true)
+          setMenuOpen(true)
         }
         return
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (!open) {
-          setOpen(true)
+          setMenuOpen(true)
           return
         }
         setHighlightIndex((prev) => {
@@ -267,7 +307,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
       if (event.key === 'ArrowUp') {
         event.preventDefault()
         if (!open) {
-          setOpen(true)
+          setMenuOpen(true)
           return
         }
         setHighlightIndex((prev) => {
@@ -282,7 +322,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
       ?? (currentValue ? currentValue : placeholder ?? 'Select…')
 
     const menu =
-      open && mounted
+      open && mounted && isSelectMenuPositioned(menuStyle)
         ? createPortal(
             <div
               ref={menuRef}
@@ -371,7 +411,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           aria-expanded={open}
           onClick={() => {
             if (disabled) return
-            setOpen((prev) => !prev)
+            setMenuOpen(!open)
           }}
           onKeyDown={onTriggerKeyDown}
           className={cn(
