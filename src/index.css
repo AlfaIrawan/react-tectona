@@ -265,7 +265,17 @@
   html::-webkit-scrollbar {
     display: none;
   }
-  /* Only present when innerWidth < 1920. At FHD the class is omitted (native layout). */
+
+  /* Shell always fills the layout viewport (ui-scale-lock disabled in uiScale.ts). */
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  /* Legacy scaled canvas — kept for reference; syncUiScaleLock() no longer enables this. */
   html.ui-scale-lock {
     width: 100%;
     height: 100%;

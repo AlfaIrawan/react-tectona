@@ -345,7 +345,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     useFloatingChatPanel && floatingChatPosition ? clampFloatingChatPosition(floatingChatPosition) : floatingChatPosition
 
   return (
-    <div className="relative flex h-[var(--app-vh,100dvh)] min-h-0 flex-col pt-12">
+    <div className="relative flex h-[var(--app-vh,100dvh)] min-h-0 w-full min-w-0 flex-col pt-12">
       <Topbar
         sidebarCollapsed={false}
         accentColor={accentColor}

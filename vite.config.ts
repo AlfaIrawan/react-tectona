@@ -46,7 +46,6 @@ export default defineConfig({
         'vite.svg',
         'images/logo.png',
         'images/logo-white.png',
-        'images/background-1.mp4',
         'ui-manifest.json',
       ],
       manifest: {
@@ -83,7 +82,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        cacheId: 'tectona-direct-agent-runtime',
+        cacheId: 'tectona-shell-fullwidth-2026-09',
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2,json,webmanifest,png,webp}'],
