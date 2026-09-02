@@ -1,5 +1,7 @@
-/** Desktop design width (legacy). ui-scale-lock is disabled — responsive layout only. */
+/** Desktop design width. Below this, layout stays 1920px CSS and is scaled to the window. */
 export const UI_DESIGN_WIDTH_PX = 1920
+
+const SCALE_EPSILON = 0.995
 
 function clearScaleLock(root: HTMLElement): void {
   root.classList.remove('ui-scale-lock')
@@ -9,12 +11,34 @@ function clearScaleLock(root: HTMLElement): void {
 }
 
 /**
- * Keep the shell at native viewport width. The old 1920px scaled canvas left a persistent
- * white strip on the right on ultrawide / zoomed Windows desktops when scale vars drifted.
+ * Apply the 1920px desktop canvas only when the window is narrower than 1920.
+ * At 1920+ this is a no-op so FHD stays native (no transform, no overflow clip).
+ * Scale is width-only — never min(width, height/1080), which shrank real FHD
+ * because browser chrome makes innerHeight < 1080.
  */
 export function syncUiScaleLock(): void {
   if (typeof window === 'undefined') return
-  clearScaleLock(document.documentElement)
+  const root = document.documentElement
+  // Layout viewport only — visualViewport can be narrower than innerWidth and would
+  // under-scale the canvas, leaving a white strip on the right of html { width: 100% }.
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  if (vw <= 0 || vh <= 0) return
+
+  const scale = vw / UI_DESIGN_WIDTH_PX
+
+  if (scale >= SCALE_EPSILON) {
+    clearScaleLock(root)
+    return
+  }
+
+  const layoutHeight = vh / scale
+  // Set CSS vars before toggling the class so we never render one frame at scale(1)
+  // with a 1920px body (the old right-gap bug on wide/zoomed desktops).
+  root.style.setProperty('--ui-scale', String(scale))
+  root.style.setProperty('--app-vw', `${UI_DESIGN_WIDTH_PX}px`)
+  root.style.setProperty('--app-vh', `${layoutHeight}px`)
+  root.classList.add('ui-scale-lock')
 }
 
 export function initUiScaleLock(): void {
@@ -29,9 +53,11 @@ export function initUiScaleLock(): void {
   })
 }
 
-/** Layout-px multiplier: always 1 (scale-lock disabled). */
+/** Layout-px multiplier: 1 at native 1920+, otherwise innerWidth/1920. */
 export function getUiLayoutScale(): number {
-  return 1
+  if (typeof window === 'undefined') return 1
+  if (!document.documentElement.classList.contains('ui-scale-lock')) return 1
+  return window.innerWidth / UI_DESIGN_WIDTH_PX
 }
 
 /** Canvas height in layout px (`--app-vh` while scaled, otherwise the window). */
