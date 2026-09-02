@@ -16,18 +16,14 @@ function clearScaleLock(root: HTMLElement): void {
  * Scale is width-only — never min(width, height/1080), which shrank real FHD
  * because browser chrome makes innerHeight < 1080.
  */
-function readLayoutViewportSize(): { width: number; height: number } {
-  const vv = window.visualViewport
-  return {
-    width: vv?.width ?? window.innerWidth,
-    height: vv?.height ?? window.innerHeight,
-  }
-}
-
 export function syncUiScaleLock(): void {
   if (typeof window === 'undefined') return
   const root = document.documentElement
-  const { width: vw, height: vh } = readLayoutViewportSize()
+  // Always scale against layout viewport width (innerWidth). visualViewport can be narrower
+  // than innerWidth on desktop (zoom, IME, DevTools) and would leave an unscaled white strip
+  // on the right when paired with html { width: 100% }.
+  const vw = window.innerWidth
+  const vh = window.innerHeight
   const scale = vw / UI_DESIGN_WIDTH_PX
 
   if (scale >= SCALE_EPSILON) {

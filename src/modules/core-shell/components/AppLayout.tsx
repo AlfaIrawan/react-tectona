@@ -75,7 +75,6 @@ export function AppLayout({ children }: AppLayoutProps) {
   const rightDrawerWidth = useRightDrawerStore((s) => s.width)
   const useFloatingChatPanel =
     activeCommPanel === 'chat' && (rightDrawerOpen || requestJoinOpen)
-  const commPanelDockedOpen = commPanelOpen && !useFloatingChatPanel
   const commPanelWidthPct = activeCommPanel === 'email' ? emailWidthPct : chatWidthPct
   const hideCommResizeLine = useUiOverlayStore((s) => s.blockingOverlayCount > 0)
   const [panelContentEl, setPanelContentEl] = useState<HTMLElement | null>(null)
@@ -270,11 +269,10 @@ export function AppLayout({ children }: AppLayoutProps) {
       }
 
       const onMove = (ev: PointerEvent) => {
-        const row = layoutRowRef.current
-        if (!row) return
-        const rect = row.getBoundingClientRect()
-        const panelWidthPx = rect.right - ev.clientX
-        const pct = (panelWidthPx / rect.width) * 100
+        const viewportW = window.innerWidth
+        if (viewportW <= 0) return
+        const panelWidthPx = Math.max(0, viewportW - ev.clientX)
+        const pct = (panelWidthPx / viewportW) * 100
         if (panelAtStart === 'email') {
           setEmailWidthPct(clampEmailWidthPct(pct))
         } else {
@@ -369,7 +367,9 @@ export function AppLayout({ children }: AppLayoutProps) {
             </div>
           </main>
         </div>
-        {commPanelOpen ? (
+      </div>
+
+      {commPanelOpen ? (
         <div
           ref={(el) => {
             commPanelRef.current = el
@@ -378,21 +378,18 @@ export function AppLayout({ children }: AppLayoutProps) {
             floatingPanelRef.current = useFloatingChatPanel ? el : floatingPanelRef.current
           }}
           className={cn(
-            'relative flex min-h-0 overflow-hidden',
+            'flex min-h-0 overflow-hidden',
             isChatCommPanel ? 'liquid-glass-chat-panel' : 'bg-card',
             useFloatingChatPanel
               ? 'fixed z-[1150] rounded-2xl border border-border/80 opacity-100 shadow-2xl ring-1 ring-black/[0.06] dark:ring-white/[0.08]'
               : cn(
-                  'shrink-0 rounded-l-2xl',
-                  commPanelDockedOpen && 'h-[calc(var(--app-vh,100vh)-3rem)] max-h-[calc(var(--app-vh,100vh)-3rem)] self-start',
-                  commPanelDockedOpen &&
-                    (isChatCommPanel
-                      ? 'border border-white/45 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.14)] dark:border-white/12 dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55)] ring-1 ring-white/20 dark:ring-white/[0.06]'
-                      : 'border border-border/70 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.12),-1px_0_0_rgba(15,23,42,0.04)] dark:border-border dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55),inset_1px_0_0_rgba(255,255,255,0.04)] ring-1 ring-black/[0.03] dark:ring-white/[0.06]'),
-                  !commPanelDockedOpen && 'border border-transparent shadow-none ring-0',
+                  'fixed right-0 top-12 z-[55] rounded-l-2xl',
+                  'h-[calc(var(--app-vh,100vh)-3rem)] max-h-[calc(var(--app-vh,100vh)-3rem)]',
+                  isChatCommPanel
+                    ? 'border border-white/45 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.14)] dark:border-white/12 dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55)] ring-1 ring-white/20 dark:ring-white/[0.06]'
+                    : 'border border-border/70 shadow-[-14px_0_36px_-12px_rgba(15,23,42,0.12),-1px_0_0_rgba(15,23,42,0.04)] dark:border-border dark:shadow-[-14px_0_40px_-12px_rgba(0,0,0,0.55),inset_1px_0_0_rgba(255,255,255,0.04)] ring-1 ring-black/[0.03] dark:ring-white/[0.06]',
                   !commResizing &&
-                    'motion-safe:transition-[flex-basis,max-width,opacity] motion-safe:duration-320 motion-safe:ease-[cubic-bezier(0.32,0.72,0,1)]',
-                  commPanelDockedOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+                    'motion-safe:transition-[width,opacity] motion-safe:duration-320 motion-safe:ease-[cubic-bezier(0.32,0.72,0,1)]'
                 )
           )}
           style={
@@ -415,23 +412,19 @@ export function AppLayout({ children }: AppLayoutProps) {
                   height: 'min(44rem, calc(var(--app-vh, 100dvh) - 4rem))',
                 }
               : {
-                  // Docked mode (always used for email; used for chat whenever no right-side
-                  // drawer forces floating) is a plain flex sibling with no stacking elevation of
-                  // its own — a same-page `fixed` fullscreen panel (e.g. an idea's Summary/Scoring
-                  // view) has no reason to know this exists and will simply paint over it. A
-                  // small explicit z-index (well below true modals/drawers at 1050+, but above a
-                  // typical page-level fullscreen panel's z-50) keeps it visible without fighting
-                  // the flex layout — `position: relative` doesn't affect flex sizing at all.
-                  position: 'relative',
+                  // Docked chat/email overlays the shell instead of shrinking the main flex column
+                  // (which left a persistent white strip on wide viewports when the panel was closed
+                  // or when ui-scale-lock canvas width did not match innerWidth).
+                  position: 'fixed',
+                  right: 0,
+                  top: '3rem',
                   zIndex: 55,
-                  flexGrow: 0,
-                  flexShrink: 0,
-                  flexBasis: commPanelDockedOpen ? `${commPanelWidthPct}%` : '0%',
-                  maxWidth: commPanelDockedOpen ? '30%' : '0%',
+                  width: `${commPanelWidthPct}%`,
+                  maxWidth: '30%',
                   minWidth: 0,
                 }
           }
-          aria-hidden={!useFloatingChatPanel && !commPanelDockedOpen}
+          aria-hidden={false}
         >
           {useFloatingChatPanel ? (
             <button
@@ -469,7 +462,6 @@ export function AppLayout({ children }: AppLayoutProps) {
                 'bg-transparent',
                 'transition-[background] duration-200',
                 'hover:bg-muted/20 dark:hover:bg-muted/15',
-                !commPanelDockedOpen && 'pointer-events-none'
               )}
               // Same `.liquid-glass-chat-panel > *` cascade issue as the floating drag handle above
               // — pin `position: absolute` and `zIndex` inline so this resize strip is actually
@@ -519,17 +511,14 @@ export function AppLayout({ children }: AppLayoutProps) {
               useFloatingChatPanel && 'pt-8',
               !commResizing &&
                 'motion-safe:transition-transform motion-safe:duration-280 motion-safe:ease-out',
-              commPanelDockedOpen || useFloatingChatPanel
-                ? 'translate-x-0 motion-safe:delay-[55ms]'
-                : '-translate-x-3 motion-safe:delay-0'
+              'translate-x-0 motion-safe:delay-[55ms]'
             )}
           >
             {activeCommPanel === 'chat' ? <ChatSidebarPanel /> : null}
             {activeCommPanel === 'email' ? <EmailSidebarPanel /> : null}
           </aside>
         </div>
-        ) : null}
-      </div>
+      ) : null}
 
       {import.meta.env.DEV ? <LayoutDebugIndicator metrics={layoutDebugMetrics} /> : null}
 

@@ -291,6 +291,16 @@
     min-height: var(--app-vh, 100dvh);
     overflow: hidden;
   }
+  /* Native (non-scaled) layout must span the full layout viewport — never leave a 1920px
+     canvas stranded on ultrawide / zoomed windows when ui-scale-lock is off. */
+  html:not(.ui-scale-lock),
+  html:not(.ui-scale-lock) body,
+  html:not(.ui-scale-lock) #root {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
   body {
     @apply text-foreground antialiased;
     position: relative;
