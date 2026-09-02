@@ -9,6 +9,7 @@ import {
 } from '@/lib/api/documentKnowledgeApi'
 import { extractDocumentTextPreview } from '@/lib/api/documentParserApi'
 import { extractRepositoryDocxStructure, extractRepositoryPdfText } from '@/lib/api/tectonaAgentRuntimeApi'
+import { extractSpreadsheetText, isSpreadsheetFile } from './extractSpreadsheetText'
 
 export const KB_REPOSITORY_EXTRACT_MAX_CHARS = 80_000
 export const KB_REPOSITORY_LLM_EXCERPT_MAX_CHARS = 3_200
@@ -17,7 +18,7 @@ export const KB_REPOSITORY_RUNTIME_MESSAGE_MAX_CHARS = 18_000
 
 const MAX_READABLE_BYTES = 4 * 1024 * 1024
 
-export type RepositoryExtractMethod = 'docx' | 'doc' | 'pdf' | 'plain' | 'parser' | 'none'
+export type RepositoryExtractMethod = 'docx' | 'doc' | 'pdf' | 'xlsx' | 'plain' | 'parser' | 'none'
 
 function isPdfFile(file: File): boolean {
   const lowerName = file.name.toLowerCase()
@@ -1808,6 +1809,15 @@ export async function extractRepositoryDocumentText(
           /* optional parser supplement */
         }
       }
+    }
+  }
+
+  if (!raw && isSpreadsheetFile(file)) {
+    try {
+      raw = await extractSpreadsheetText(file, maxChars)
+      if (raw) method = 'xlsx'
+    } catch {
+      raw = ''
     }
   }
 

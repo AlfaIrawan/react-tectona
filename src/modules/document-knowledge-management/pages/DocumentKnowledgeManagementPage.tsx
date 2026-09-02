@@ -243,6 +243,7 @@ import {
   resolveWorkspacePanelHeightStyle,
   workspaceMainPanelViewportHeightStyle,
 } from '@/lib/workspaceNavLayout'
+import { getUiLayoutViewportSize, pointerClientToLayout, visualRectToLayoutRect } from '@/lib/uiScale'
 import { APP_MAIN_BODY_SELECTOR } from '@/lib/useAppMainBodyWidth'
 import { usePreferencesStore } from '@/stores/preferences-store'
 import {
@@ -355,6 +356,7 @@ import {
   scrubKbGeneratedContent,
   type RepositoryKbSourceMeta,
 } from '@/lib/kb/repositoryKbFromDocument'
+import { isSpreadsheetFile } from '@/lib/kb/extractSpreadsheetText'
 import {
   buildRepositoryFolderPathNames,
   detectRepositoryDocumentKind,
@@ -594,18 +596,20 @@ function useFlippedMenuPosition(
     if (!open || !ref.current) return
     const el = ref.current
     const raf = requestAnimationFrame(() => {
-      const rect = el.getBoundingClientRect()
-      let newX = x
-      let newY = y
-      if (rect.bottom > window.innerHeight) newY = Math.max(8, y - rect.height)
-      if (rect.right > window.innerWidth) newX = window.innerWidth - rect.width - 8
+      const origin = pointerClientToLayout(x, y)
+      const rect = visualRectToLayoutRect(el.getBoundingClientRect())
+      const viewport = getUiLayoutViewportSize()
+      let newX = origin.x
+      let newY = origin.y
+      if (rect.bottom > viewport.height) newY = Math.max(8, origin.y - rect.height)
+      if (rect.right > viewport.width) newX = viewport.width - rect.width - 8
       if (rect.left < 0) newX = 8
-      if (newX !== x || newY !== y) setAdjusted({ x: newX, y: newY })
+      if (newX !== origin.x || newY !== origin.y) setAdjusted({ x: newX, y: newY })
     })
     return () => cancelAnimationFrame(raf)
   }, [open, x, y, ref])
 
-  return { x: adjusted?.x ?? x, y: adjusted?.y ?? y }
+  return { x: adjusted?.x ?? pointerClientToLayout(x, y).x, y: adjusted?.y ?? pointerClientToLayout(x, y).y }
 }
 
 /** Position a fixed popup under a trigger, then shift inward if it would overflow the viewport. */
@@ -627,12 +631,11 @@ function useFixedPopupPosition(
       const trigger = triggerRef.current
       if (!trigger || cancelled) return
 
-      const t = trigger.getBoundingClientRect()
+      const t = visualRectToLayoutRect(trigger.getBoundingClientRect())
       const panel = panelRef.current
-      const measured = panel?.getBoundingClientRect()
-      // Fallback size so we can place before the first panel measure lands.
-      const width = measured && measured.width > 0 ? measured.width : 176
-      const height = measured && measured.height > 0 ? measured.height : 168
+      const viewport = getUiLayoutViewportSize()
+      const width = panel && panel.offsetWidth > 0 ? panel.offsetWidth : 176
+      const height = panel && panel.offsetHeight > 0 ? panel.offsetHeight : 168
       const margin = 8
 
       // Prefer right-align under trigger (toolbar table button sits near the drawer edge).
@@ -640,10 +643,10 @@ function useFixedPopupPosition(
       let left = t.right - width
 
       if (left < margin) left = margin
-      if (left + width > window.innerWidth - margin) {
-        left = Math.max(margin, window.innerWidth - width - margin)
+      if (left + width > viewport.width - margin) {
+        left = Math.max(margin, viewport.width - width - margin)
       }
-      if (top + height > window.innerHeight - margin) {
+      if (top + height > viewport.height - margin) {
         top = Math.max(margin, t.top - height - 6)
       }
       if (top < margin) top = margin
@@ -6776,12 +6779,15 @@ export function DocumentKnowledgeManagementPage() {
     if (!extract.text.trim()) {
       const isLegacyDoc = /\.doc$/i.test(fileName) && !/\.docx$/i.test(fileName)
       const isPdf = /\.pdf$/i.test(fileName) || (fileType || '').toLowerCase() === 'application/pdf'
+      const isSpreadsheet = isSpreadsheetFile({ name: fileName, type: fileType })
       throw new Error(
         isLegacyDoc
           ? `Could not extract text from "${fileName}". Make sure Gotenberg/LibreOffice is running, or re-save as .docx and Generate KB again.`
           : isPdf
             ? `Could not extract text from "${fileName}" (0 characters). Make sure Agent Runtime (8414) is running to extract PDFs, or the PDF may be a scanned image without OCR.`
-            : `Could not extract text from "${fileName}" (0 characters). Generate KB was canceled to avoid saving an empty entry.`,
+            : isSpreadsheet
+              ? `Could not extract text from "${fileName}". Save as .xlsx (not legacy .xls) or CSV and Generate KB again.`
+              : `Could not extract text from "${fileName}" (0 characters). Generate KB was canceled to avoid saving an empty entry.`,
       )
     }
     // Lazy backfill: ensure the source document carries a content fingerprint so future uploads
