@@ -110,6 +110,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
     let inboxPollTimer: number | null = null
     let reconnectAttempt = 0
     let stopSessionActive: (() => void) | undefined
+    let inboxPollInFlight = false
 
     const clearReconnect = () => {
       if (reconnectTimer !== null) {
@@ -230,6 +231,8 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
     const pollInboxForNewMessages = async () => {
       const session = getSession()
       if (!session?.user?.id) return
+      if (inboxPollInFlight) return
+      inboxPollInFlight = true
       const seeding = !inboxSeededRef.current
       const workspaceIds = collaborationRealtimeWorkspaceIds()
       try {
@@ -250,6 +253,8 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
         inboxSeededRef.current = true
       } catch {
         // collaboration-context may be down
+      } finally {
+        inboxPollInFlight = false
       }
     }
 
@@ -367,15 +372,14 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
 
       closeAllSockets()
       const generation = ++socketGeneration
-      for (const workspaceId of collaborationRealtimeWorkspaceIds()) {
-        const url = createCollaborationPresenceWebSocketUrl({
-          workspaceId,
-          token: session.token,
-        })
-        const ws = new WebSocket(url)
-        sockets.set(workspaceId, ws)
-        attachSocketHandlers(ws, workspaceId, generation)
-      }
+      const workspaceId = TECTONA_CHAT_WORKSPACE_ID
+      const url = createCollaborationPresenceWebSocketUrl({
+        workspaceId,
+        token: session.token,
+      })
+      const ws = new WebSocket(url)
+      sockets.set(workspaceId, ws)
+      attachSocketHandlers(ws, workspaceId, generation)
     }
 
     const onVisibilityOrFocus = () => {

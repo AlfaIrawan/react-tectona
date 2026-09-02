@@ -1432,6 +1432,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   )
   const chatContactsRef = useRef(chatContacts)
   chatContactsRef.current = chatContacts
+  const inboxRefreshInFlightRef = useRef(false)
   const presenceByUserId = useCollaborationPresenceStore((s) => s.byUserId)
   const myPresence = useMyPresenceStore((s) => s.status)
   const chatContactsForDisplay = useMemo(() => {
@@ -1760,6 +1761,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   }, [messages, activeConversation?.channelId, disappearingNoticesRevision])
 
   const refreshCollaborationInbox = useCallback(async () => {
+    if (inboxRefreshInFlightRef.current) return
+    inboxRefreshInFlightRef.current = true
     try {
       const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
       const peerIds = res.items
@@ -1768,9 +1771,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       const extraContacts = await hydrateChatContactsForUserIds(peerIds)
       let contacts = chatContactsRef.current
       if (extraContacts.length > 0) {
-        contacts = mergeChatContactLists(contacts, extraContacts)
-        chatContactsRef.current = contacts
-        setChatContacts(contacts)
+        const merged = mergeChatContactLists(contacts, extraContacts)
+        const changed = extraContacts.some((contact) => {
+          const previous = contacts.find((item) => item.id === contact.id)
+          return !previous || previous.name !== contact.name
+        })
+        contacts = merged
+        chatContactsRef.current = merged
+        if (changed) setChatContacts(merged)
       }
       const apiConversations = res.items
         .map((ch) => collaborationChannelToConversation(ch, contacts))
@@ -1787,8 +1795,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       })
     } catch {
       // collaboration-context unavailable — inbox stays empty until service is up
+    } finally {
+      inboxRefreshInFlightRef.current = false
     }
-  }, [chatContacts, hiddenChannelIds, hiddenContactIds])
+  }, [hiddenChannelIds, hiddenContactIds])
 
   const syncChannelReceiptsAndMessageSequences = useCallback(
     async (conversationId: string, channelId: string, options?: { markAsViewed?: boolean }) => {
@@ -2166,7 +2176,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   useEffect(() => {
     if (chatContacts.length <= 1) return
     void refreshCollaborationInbox()
-  }, [chatContacts, refreshCollaborationInbox])
+  }, [chatContacts.length, refreshCollaborationInbox])
 
   useEffect(() => {
     let cancelled = false

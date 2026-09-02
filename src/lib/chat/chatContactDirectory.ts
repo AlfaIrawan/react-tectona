@@ -447,9 +447,7 @@ export async function hydrateChatContactsForUserIds(userIds: string[]): Promise<
     const existing = cachedContactsById.get(id)
     return !existing || isPlaceholderChatContactName(existing.name) || existing.name.toLowerCase() === id.toLowerCase()
   })
-  if (missing.length === 0) {
-    return unique.map((id) => cachedContactsById.get(id)).filter((contact): contact is ChatContact => Boolean(contact))
-  }
+  if (missing.length === 0) return []
 
   const fetched = await Promise.all(missing.map((id) => fetchIdentityUser(id).catch(() => null)))
   const added: ChatContact[] = []
