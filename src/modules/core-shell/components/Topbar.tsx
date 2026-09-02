@@ -102,7 +102,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
   return (
     <header
       className={cn(
-        'fixed top-0 right-0 h-12 z-[60] transition-all duration-300',
+        'absolute top-0 right-0 left-0 h-12 z-[60] transition-all duration-300',
         'glass-topbar',
         'left-0'
       )}

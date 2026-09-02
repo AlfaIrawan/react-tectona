@@ -7,6 +7,7 @@ import { useChatPanelStore, clampChatWidthPct } from '@/stores/chat-panel-store'
 import { useEmailPanelStore, clampEmailWidthPct } from '@/stores/email-panel-store'
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
 import { useRightDrawerStore } from '@/stores/right-drawer-store'
+import { syncUiScaleLock } from '@/lib/uiScale'
 import { cn } from '@/lib/utils'
 import { Outlet, useLocation } from 'react-router-dom'
 import ThemeSettingsPanel from '@/components/settings/ThemeSettingsPanel'
@@ -79,6 +80,10 @@ export function AppLayout({ children }: AppLayoutProps) {
   const hideCommResizeLine = useUiOverlayStore((s) => s.blockingOverlayCount > 0)
   const [panelContentEl, setPanelContentEl] = useState<HTMLElement | null>(null)
   const setPanelContentRef = useCallback((el: HTMLDivElement | null) => setPanelContentEl(el), [])
+
+  useEffect(() => {
+    syncUiScaleLock()
+  }, [location.pathname])
 
   const clampFloatingChatPosition = useCallback((candidate: { x: number; y: number }) => {
     const panelRect = floatingPanelRef.current?.getBoundingClientRect()

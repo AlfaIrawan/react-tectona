@@ -39,6 +39,12 @@ export function initUiScaleLock(): void {
   syncUiScaleLock()
   window.addEventListener('resize', syncUiScaleLock)
   window.addEventListener('orientationchange', syncUiScaleLock)
+  window.addEventListener('pageshow', syncUiScaleLock)
+  window.visualViewport?.addEventListener('resize', syncUiScaleLock)
+  window.requestAnimationFrame(() => {
+    syncUiScaleLock()
+    window.requestAnimationFrame(syncUiScaleLock)
+  })
 }
 
 /** Layout-px multiplier: 1 at native 1920+, otherwise innerWidth/1920. */
