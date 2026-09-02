@@ -111,6 +111,7 @@ export function DocumentRepositoryFolderCard({
                 compactStyles.compactTitle,
                 'w-full min-w-0 rounded border border-sky-300/70 bg-white/90 px-1 py-0 focus:outline-none focus:ring-2 focus:ring-sky-300/40',
               )}
+              maxLength={255}
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
                 event.stopPropagation()

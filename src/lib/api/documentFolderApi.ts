@@ -64,9 +64,25 @@ async function handleJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail = text
     try {
-      const parsed = JSON.parse(text) as { detail?: unknown; error?: { message?: string } }
+      const parsed = JSON.parse(text) as { detail?: unknown; error?: { message?: unknown } }
       if (typeof parsed.detail === 'string') detail = parsed.detail
       else if (typeof parsed.error?.message === 'string') detail = parsed.error.message
+      else if (Array.isArray(parsed.error?.message)) {
+        detail = parsed.error.message
+          .map((item) => {
+            if (typeof item === 'string') return item
+            if (item && typeof item === 'object' && 'msg' in item) {
+              const loc = Array.isArray((item as { loc?: unknown }).loc)
+                ? (item as { loc: unknown[] }).loc.filter((part) => part !== 'body').join('.')
+                : ''
+              const msg = String((item as { msg?: unknown }).msg ?? '')
+              return loc && msg ? `${loc}: ${msg}` : msg || loc
+            }
+            return ''
+          })
+          .filter(Boolean)
+          .join('; ') || text
+      }
     } catch {
       // keep raw text
     }
