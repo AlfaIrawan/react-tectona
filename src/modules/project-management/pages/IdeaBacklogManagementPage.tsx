@@ -2171,6 +2171,7 @@ export function IdeaBacklogManagementPage() {
       if ((folder.parentId ?? null) !== normalizedParentId) return false
       if (folder.workspaceId) return true
       if (scope.mode === 'all') return true
+      if (currentFolderId) return true
       if (isLoading) return false
       const folderId = coerceFolderId(folder.id) ?? folder.id
       return (ideaCountByFolderId.get(folderId) ?? 0) > 0
@@ -2337,13 +2338,6 @@ export function IdeaBacklogManagementPage() {
   }, [filteredFolders, folders, ideaCountByFolderId, isLoading])
 
   const contentTotalForLabel = contentCounts.folders + contentCounts.ideas
-
-  useEffect(() => {
-    if (!currentFolderId || foldersLoading) return
-    if (!getFolder(currentFolderId)) {
-      handleBackToFolderRoot()
-    }
-  }, [currentFolderId, foldersLoading, folders, getFolder, handleBackToFolderRoot])
 
   const showFoldersSection = contentFilterTags.has('folders')
   const showIdeasSection = contentFilterTags.has('ideas')

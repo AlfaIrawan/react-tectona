@@ -113,7 +113,11 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
 
       set((state) => {
         if (!isScopedFetch) {
-          return { folders: incoming, foldersLoading: false, foldersError: null }
+          const mergedById = new Map(incoming.map((folder) => [folder.id, folder]))
+          for (const folder of state.folders) {
+            if (!mergedById.has(folder.id)) mergedById.set(folder.id, folder)
+          }
+          return { folders: Array.from(mergedById.values()), foldersLoading: false, foldersError: null }
         }
         const normalizedParent = parentId ?? null
         const kept = state.folders.filter((folder) => {
