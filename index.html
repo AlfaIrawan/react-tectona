@@ -28,11 +28,13 @@
           root.style.removeProperty('--ui-scale')
           root.style.removeProperty('--app-vw')
           root.style.removeProperty('--app-vh')
+          root.style.removeProperty('zoom')
           return
         }
         root.style.setProperty('--ui-scale', String(scale))
-        root.style.setProperty('--app-vw', vw / scale + 'px')
+        root.style.setProperty('--app-vw', DESIGN + 'px')
         root.style.setProperty('--app-vh', vh / scale + 'px')
+        root.style.zoom = String(scale)
         root.classList.add('ui-scale-lock')
       })()
     </script>
@@ -48,7 +50,7 @@
         var isDevHost = host === 'tectona-dev.adira.co.id'
         if (!isLocal && !isDevHost) return
         if (!('serviceWorker' in navigator)) return
-        var FLAG = 'tectona:sw-layout-fullwidth-v4'
+        var FLAG = 'tectona:sw-layout-fullwidth-v5'
         var hadController = Boolean(navigator.serviceWorker.controller)
         navigator.serviceWorker.getRegistrations().then(function (regs) {
           return Promise.all(
@@ -74,32 +76,6 @@
     </script>
   </head>
   <body>
-    <!-- Pin body width before CSS/JS modules load (head script runs before body exists). -->
-    <script>
-      (function () {
-        var root = document.documentElement
-        if (!root.classList.contains('ui-scale-lock')) return
-        var raw =
-          root.style.getPropertyValue('--ui-scale') ||
-          getComputedStyle(root).getPropertyValue('--ui-scale')
-        var scale = parseFloat(raw)
-        if (!scale || scale <= 0) return
-        var vw = window.innerWidth
-        var vh = window.innerHeight
-        var layoutW = vw / scale
-        var layoutH = vh / scale
-        var body = document.body
-        body.style.position = 'absolute'
-        body.style.left = '0'
-        body.style.top = '0'
-        body.style.width = layoutW + 'px'
-        body.style.height = layoutH + 'px'
-        body.style.minHeight = layoutH + 'px'
-        body.style.transform = 'scale(' + scale + ')'
-        body.style.transformOrigin = 'top left'
-        body.style.overflow = 'hidden'
-      })()
-    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

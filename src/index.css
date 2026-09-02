@@ -266,33 +266,21 @@
     display: none;
   }
 
-  /* Only present when innerWidth < 1920. At FHD the class is omitted (native layout). */
+  /* Viewport < 1920: html zoom (set in uiScale.ts) scales the whole page uniformly. */
   html.ui-scale-lock {
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    overflow-x: hidden;
     background-color: hsl(var(--background));
   }
-  html.ui-scale-lock body {
-    position: absolute;
-    left: 0;
-    top: 0;
-    /* Inline styles from uiScale.ts are authoritative; keep CSS as fallback. */
-    width: var(--app-vw, 1920px);
-    height: var(--app-vh);
-    min-height: var(--app-vh);
-    overflow: hidden;
-    transform: scale(var(--ui-scale));
-    transform-origin: top left;
-  }
+  html.ui-scale-lock body,
   html.ui-scale-lock #root {
     width: 100%;
-    height: 100%;
-    min-height: inherit;
-    overflow: hidden;
+    max-width: none;
+    min-width: 0;
+    min-height: var(--app-vh, 100dvh);
   }
-  /* Native (non-scaled) layout must span the full layout viewport — never leave a 1920px
-     canvas stranded on ultrawide / zoomed windows when ui-scale-lock is off. */
+  /* Native (non-scaled) layout must span the full layout viewport. */
   html:not(.ui-scale-lock),
   html:not(.ui-scale-lock) body,
   html:not(.ui-scale-lock) #root {
@@ -323,7 +311,7 @@
     overflow: hidden;
   }
   html.ui-scale-lock .app-background-video-layer {
-    position: absolute;
+    position: fixed;
     width: 100%;
     height: 100%;
   }
@@ -353,7 +341,7 @@
     z-index: -1;
   }
   html.ui-scale-lock body::after {
-    position: absolute;
+    position: fixed;
     inset: 0;
     width: 100%;
     height: 100%;

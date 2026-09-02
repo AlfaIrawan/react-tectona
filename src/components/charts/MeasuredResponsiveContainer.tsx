@@ -7,7 +7,7 @@ type MeasuredResponsiveContainerProps = {
 
 /**
  * Layout-box size for Recharts. `getBoundingClientRect()` is visual pixels and is
- * wrong under `html.ui-scale-lock` (body `transform: scale`) — the SVG would be
+ * wrong under `html.ui-scale-lock` (page zoom) — the SVG would be
  * smaller than its CSS host and sit off-center inside donuts and bars.
  */
 export function readChartHostLayoutSize(el: HTMLElement): { width: number; height: number } {
