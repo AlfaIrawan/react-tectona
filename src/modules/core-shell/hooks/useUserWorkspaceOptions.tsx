@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { ensureFreshSession, getSession } from '@/auth/authService'
 import { onSessionActive, onSessionCleared, onSessionExpired } from '@/auth/sessionEvents'
-import { hasOrganizationAdminAccess } from '@/lib/auth/platformAccess'
+import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import {
   canActivateWorkspaceAsTenant,
   isWorkspaceListedForUser,
@@ -29,6 +29,10 @@ import {
   isOrganizationHomeWorkspace,
   isWorkspaceOwnedBySubject,
 } from '@/lib/workspaceOwnershipVisibility'
+import {
+  collectSwitcherOrganizationIds,
+  selectOrganizationHomesForSwitcher,
+} from '@/lib/workspaceSwitcherOrganizationHome'
 import {
   isNestedOrgPersonalScope,
   resolvePersonalOrgScopeFromMetadata,
@@ -115,6 +119,7 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
       : session.user.role === 'admin'
         ? ['tectona_admin']
         : []
+  const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles, session.user.role)
   const isOrganizationAdmin = hasOrganizationAdminAccess(sessionRoles)
   const email = session.user.email?.trim().toLowerCase() ?? ''
   const isCorporateUser = Boolean(email) && !isConsumerEmail(email)
@@ -182,18 +187,18 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
     const workspace = workspaceById.get(workspaceId)
     if (workspace?.status_code === 'archived') continue
     if (isOrganizationAdmin && workspace?.tenant_mode === 'personal' && !isOwnedBySubject(workspace)) continue
+    const isOrgHome = Boolean(workspace && isOrganizationHomeWorkspace(workspace))
     if (
       workspace &&
       !isWorkspaceListedForUser(workspace.tenant_mode ?? null, {
-        // The workspace switcher is user-scoped even for directory admins.
-        // Administrative roles manage the directory; they do not broaden the
-        // tenant list used for daily work and item creation.
-        isPlatformAdmin: false,
-        isOrganizationAdmin: false,
+        // Daily work stays user-scoped. Organization home is the org root tenant
+        // (Adira Finance WS) and must remain switchable for directory admins.
+        isPlatformAdmin: isOrgHome ? isPlatformAdmin : false,
+        isOrganizationAdmin: isOrgHome ? isOrganizationAdmin : false,
         isCorporateUser,
         hasActiveMembership: true,
         membershipParticipationScopeCode: membership.participation_scope_code,
-        isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
+        isOrganizationHomeWorkspace: isOrgHome,
       })
     ) {
       continue
@@ -239,6 +244,24 @@ async function loadUserWorkspaceOptions(): Promise<UserWorkspaceOption[]> {
       continue
     }
 
+    pushWorkspace(workspace)
+  }
+
+  // Regression: 2178786 hid Adira Finance WS by treating org home like any
+  // operational tenant. Keep user-scoped listing, but always restore org home
+  // for directory admins in organizations they already use.
+  const listedOrganizationIds = collectSwitcherOrganizationIds([
+    ...next.map((option) => option.organizationId),
+    ...(memberships.items ?? []).map((row) => workspaceById.get(row.workspace_id)?.organization_id),
+    ...activeWorkspaces
+      .filter((workspace) => isOwnedBySubject(workspace))
+      .map((workspace) => workspace.organization_id),
+  ])
+  for (const workspace of selectOrganizationHomesForSwitcher(activeWorkspaces, {
+    isPlatformAdmin,
+    isOrganizationAdmin,
+    alreadyListedOrganizationIds: listedOrganizationIds,
+  })) {
     pushWorkspace(workspace)
   }
 
