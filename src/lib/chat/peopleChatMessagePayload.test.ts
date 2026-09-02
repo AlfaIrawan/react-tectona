@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   decodePeopleChatBody,
   encodePeopleChatBody,
+  materializePeopleChatUiMessage,
   peopleChatPreview,
 } from './peopleChatMessagePayload'
 
@@ -28,5 +29,24 @@ describe('peopleChatMessagePayload', () => {
       { id: 'a1', kind: 'image', name: 'shot.png', url: 'https://example/shot.png' },
     ])
     expect(peopleChatPreview(wire)).toBe('Photo')
+  })
+
+  it('decodes payloads with leading whitespace', () => {
+    const wire = `  ${encodePeopleChatBody('', [
+      { id: 'a1', kind: 'image', name: 'shot.png', url: 'https://minio.example/shot.png' },
+    ])}`
+    const decoded = decodePeopleChatBody(wire)
+    expect(decoded.attachments).toHaveLength(1)
+    expect(decoded.text).toBe('')
+  })
+
+  it('materializes encoded text into image attachments', () => {
+    const wire = encodePeopleChatBody('', [
+      { id: 'a1', kind: 'image', name: 'shot.png', url: 'https://minio.example/shot.png' },
+    ])
+    const materialized = materializePeopleChatUiMessage({ id: 'm1', text: wire })
+    expect(materialized.text).toBe('')
+    expect(materialized.attachments?.[0]?.kind).toBe('image')
+    expect(materialized.attachments?.[0]?.url).toContain('shot.png')
   })
 })

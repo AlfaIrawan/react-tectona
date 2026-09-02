@@ -399,14 +399,75 @@ async function mergePresenceIntoContacts(
 
 let cachedContactsById = new Map<string, ChatContact>()
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+const PLACEHOLDER_CHAT_NAME = 'Team member'
+
 function cacheChatContacts(contacts: ChatContact[]): void {
-  cachedContactsById = new Map(contacts.map((c) => [c.id, c]))
+  cachedContactsById = new Map(contacts.map((contact) => [contact.id, contact]))
+}
+
+export function isPlaceholderChatContactName(name: string | null | undefined): boolean {
+  const trimmed = name?.trim() ?? ''
+  if (!trimmed) return true
+  if (trimmed === PLACEHOLDER_CHAT_NAME) return true
+  if (/^Member [0-9a-f]{8}$/i.test(trimmed)) return true
+  if (UUID_RE.test(trimmed)) return true
+  return false
+}
+
+function rememberChatContact(contact: ChatContact): void {
+  const current = cachedContactsById.get(contact.id)
+  if (current && !isPlaceholderChatContactName(current.name) && isPlaceholderChatContactName(contact.name)) {
+    return
+  }
+  cachedContactsById.set(contact.id, contact)
+}
+
+export function mergeChatContactLists(base: ChatContact[], extra: ChatContact[]): ChatContact[] {
+  const byId = new Map<string, ChatContact>()
+  for (const contact of [...base, ...extra]) {
+    const prev = byId.get(contact.id)
+    if (!prev || isPlaceholderChatContactName(prev.name)) {
+      byId.set(contact.id, contact)
+    }
+    rememberChatContact(byId.get(contact.id)!)
+  }
+  const teamUsers = [...byId.values()]
+    .filter((contact) => contact.mode === 'team' && !contact.isAssistant)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+  return [TECTONA_ASSISTANT_CONTACT, ...teamUsers]
+}
+
+/** Resolve DM/group peers that are not in the WAC directory via identity-lite. */
+export async function hydrateChatContactsForUserIds(userIds: string[]): Promise<ChatContact[]> {
+  const unique = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))]
+  const missing = unique.filter((id) => {
+    const existing = cachedContactsById.get(id)
+    return !existing || isPlaceholderChatContactName(existing.name) || existing.name.toLowerCase() === id.toLowerCase()
+  })
+  if (missing.length === 0) {
+    return unique.map((id) => cachedContactsById.get(id)).filter((contact): contact is ChatContact => Boolean(contact))
+  }
+
+  const fetched = await Promise.all(missing.map((id) => fetchIdentityUser(id).catch(() => null)))
+  const added: ChatContact[] = []
+  for (const user of fetched) {
+    if (!user) continue
+    const contact = mapIdentityUserToChatContact(user)
+    rememberChatContact(contact)
+    added.push(contact)
+  }
+  return added
 }
 
 /** People contact for DM — from the directory or synthesized from a user id. */
 export function buildTeamChatContactForUserId(userId: string, contacts: ChatContact[]): ChatContact {
   const found = contacts.find((c) => c.id === userId)
-  if (found) return found
+  const cached = cachedContactsById.get(userId)
+  const named = [found, cached].find((contact) => contact && !isPlaceholderChatContactName(contact.name))
+  if (named) return named
   const name = resolveChatContactName(userId)
   return {
     id: userId,
@@ -414,16 +475,16 @@ export function buildTeamChatContactForUserId(userId: string, contacts: ChatCont
     mode: 'team',
     initials: initialsFromDisplayName(name),
     avatarClassName: avatarClassForUserId(userId),
+    ...(cached?.avatarSrc ? { avatarSrc: cached.avatarSrc } : {}),
   }
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
 export function resolveChatContactName(userId: string): string {
   const name = cachedContactsById.get(userId)?.name?.trim()
-  if (name && name.toLowerCase() !== userId.toLowerCase() && !UUID_RE.test(name)) return name
-  return 'Team member'
+  if (name && name.toLowerCase() !== userId.toLowerCase() && !isPlaceholderChatContactName(name)) {
+    return name
+  }
+  return PLACEHOLDER_CHAT_NAME
 }
 
 export async function loadChatContactDirectory(
@@ -449,8 +510,9 @@ export async function loadChatContactDirectory(
     // presence is optional when collaboration-context is down
   }
 
-  cacheChatContacts(contacts)
-  return contacts
+  const merged = mergeChatContactLists([...cachedContactsById.values()], contacts)
+  cacheChatContacts(merged)
+  return merged
 }
 
 export async function refreshChatContactPresence(

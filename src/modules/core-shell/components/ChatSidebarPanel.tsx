@@ -171,7 +171,9 @@ import {
   CHAT_PRESENCE_FALLBACK_POLL_MS,
   getCurrentChatActorId,
   buildTeamChatContactForUserId,
+  hydrateChatContactsForUserIds,
   loadChatContactDirectory,
+  mergeChatContactLists,
   mergeRealtimePresenceStore,
   syncWorkspacePresenceStore,
   TECTONA_ASSISTANT_CONTACT,
@@ -188,6 +190,7 @@ import {
 } from '@/lib/chat/chatHiddenConversations'
 import {
   encodePeopleChatBody,
+  materializePeopleChatUiMessage,
   peopleChatPreview,
 } from '@/lib/chat/peopleChatMessagePayload'
 import {
@@ -1751,14 +1754,26 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const threadDisplayMessages = useMemo(() => {
     void disappearingNoticesRevision
-    return mergeLocalDisappearingNotices(messages, activeConversation?.channelId)
+    return mergeLocalDisappearingNotices(messages, activeConversation?.channelId).map((message) =>
+      materializePeopleChatUiMessage(message),
+    )
   }, [messages, activeConversation?.channelId, disappearingNoticesRevision])
 
   const refreshCollaborationInbox = useCallback(async () => {
     try {
       const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
+      const peerIds = res.items
+        .map((ch) => ch.peer_user_id)
+        .filter((id): id is string => Boolean(id?.trim()))
+      const extraContacts = await hydrateChatContactsForUserIds(peerIds)
+      let contacts = chatContactsRef.current
+      if (extraContacts.length > 0) {
+        contacts = mergeChatContactLists(contacts, extraContacts)
+        chatContactsRef.current = contacts
+        setChatContacts(contacts)
+      }
       const apiConversations = res.items
-        .map((ch) => collaborationChannelToConversation(ch, chatContacts))
+        .map((ch) => collaborationChannelToConversation(ch, contacts))
         .filter((c): c is Conversation => c != null)
         .filter((c) => !isHiddenPeopleConversation(c))
       collaborationInboxSyncedRef.current = true
@@ -3840,6 +3855,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
       try {
         const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
+        const extraContacts = await hydrateChatContactsForUserIds(
+          res.items.map((ch) => ch.peer_user_id).filter((id): id is string => Boolean(id?.trim())),
+        )
+        if (extraContacts.length > 0) {
+          contacts = mergeChatContactLists(contacts, extraContacts)
+          chatContactsRef.current = contacts
+          setChatContacts(contacts)
+        }
         const channel = res.items.find((ch) => ch.id === request.channelId)
         const apiConversations = res.items
           .map((ch) => collaborationChannelToConversation(ch, contacts))
@@ -3873,7 +3896,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             contactAvatarSrc: peerContact.avatarSrc,
             channelId: channel.id,
             ...safePeerReceiptFromChannel(channel),
-            preview: truncatePreview(channel.last_message_preview?.trim() || 'No messages yet'),
+            preview: truncatePreview(peopleChatPreview(channel.last_message_preview) || 'No messages yet'),
             updatedAt: parseCollaborationTimestamp(channel.last_message_at),
             unreadCount: channel.unread_count ?? 0,
           }
@@ -5109,7 +5132,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       messageSearchConversation?.channelId,
       messagesById,
       conversations,
-    )
+    ).map((message) => materializePeopleChatUiMessage(message))
   }, [
     messageSearchConversationId,
     messageSearchConversation?.channelId,
@@ -5139,7 +5162,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       contactInfoConversation?.channelId,
       messagesById,
       conversations,
-    )
+    ).map((message) => materializePeopleChatUiMessage(message))
     const items: ContactMediaItem[] = []
     for (const m of msgs) {
       for (const a of m.attachments ?? []) {
@@ -7484,18 +7507,29 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
         {attachments.map((a) => (
           <div key={a.id}>
             {a.kind === 'image' && (
-              <button
-                type="button"
-                onClick={() => setPreview({ url: a.url, name: a.name })}
-                className={cn(
-                  'relative block h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border/50 bg-muted/20',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0 focus-visible:ring-neutral-400/55',
-                  'dark:focus-visible:ring-neutral-500/45'
-                )}
-                aria-label={`Preview ${a.name}`}
-              >
-                <img src={a.url} alt="" className="h-full w-full object-cover" />
-              </button>
+              <div className="flex max-w-[min(100%,280px)] flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPreview({ url: a.url, name: a.name })}
+                  className={cn(
+                    'relative block max-h-56 w-full overflow-hidden rounded-md border border-border/50 bg-muted/20',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0 focus-visible:ring-neutral-400/55',
+                    'dark:focus-visible:ring-neutral-500/45'
+                  )}
+                  aria-label={`View ${a.name}`}
+                >
+                  <img src={a.url} alt={a.name} className="max-h-56 w-full object-contain bg-black/5" />
+                </button>
+                <a
+                  href={a.url}
+                  download={a.name}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
+                >
+                  Download {a.name}
+                </a>
+              </div>
             )}
             {a.kind === 'document' && (
               <span className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-sky-200/80 bg-white/80 px-2.5 py-1.5 text-xs text-foreground dark:border-slate-700 dark:bg-slate-950/40">
@@ -8242,11 +8276,12 @@ function WhatsAppChatBubble({
   onAgentActionCancel?: (messageId: string, actionId: string) => void
 }) {
   const isPeople = variant === 'people'
-  const isUser = m.role === 'user'
-  const time = formatWhatsAppTime(m.at)
-  const hasAttachments = (m.attachments?.length ?? 0) > 0
-  const showTyping = Boolean(m.isLoading && m.role === 'assistant' && !isPeople)
-  const hasText = Boolean(m.text?.trim()) && !showTyping
+  const display = isPeople ? materializePeopleChatUiMessage(m) : m
+  const isUser = display.role === 'user'
+  const time = formatWhatsAppTime(display.at)
+  const hasAttachments = (display.attachments?.length ?? 0) > 0
+  const showTyping = Boolean(display.isLoading && display.role === 'assistant' && !isPeople)
+  const hasText = Boolean(display.text?.trim()) && !showTyping
   const isGroup = conversation?.mode === 'group'
   const groupContact = isGroup
     ? resolveGroupBubbleContact(m, conversation, chatContacts, currentUserId)
@@ -8298,7 +8333,7 @@ function WhatsAppChatBubble({
               ],
         )}
       >
-        {hasAttachments ? <UserMessageAttachments attachments={m.attachments!} /> : null}
+        {hasAttachments ? <UserMessageAttachments attachments={display.attachments!} /> : null}
 
         {showTyping ? (
           <div className="flex items-end gap-2">
@@ -8334,7 +8369,7 @@ function WhatsAppChatBubble({
           ) : (
             <div className="flex items-end gap-2">
               <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-left [overflow-wrap:anywhere]">
-                {m.text}
+                {display.text}
               </p>
               <WhatsAppMetaRow time={time} isUser={isUser} deliveryStatus={deliveryStatus} />
             </div>

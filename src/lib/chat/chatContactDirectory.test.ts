@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { WacMembershipDto } from '@/lib/api/workspaceAccessControlApi'
 import {
   buildChatContactsFromWorkspaceMembers,
+  isPlaceholderChatContactName,
   pickChatDirectoryWorkspaceIds,
   resolveActiveWorkspaceMembershipRows,
   TECTONA_ASSISTANT_CONTACT,
@@ -88,5 +89,13 @@ describe('buildChatContactsFromWorkspaceMembers', () => {
     expect(contacts[0]).toEqual(TECTONA_ASSISTANT_CONTACT)
     expect(contacts.some((contact) => contact.id === 'outsider')).toBe(false)
     expect(contacts.some((contact) => contact.id === 'member-a')).toBe(true)
+  })
+})
+
+describe('isPlaceholderChatContactName', () => {
+  it('treats Team member and UUID labels as placeholders', () => {
+    expect(isPlaceholderChatContactName('Team member')).toBe(true)
+    expect(isPlaceholderChatContactName('Member a1b2c3d4')).toBe(true)
+    expect(isPlaceholderChatContactName('Alfa Irawan')).toBe(false)
   })
 })
