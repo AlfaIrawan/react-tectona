@@ -152,17 +152,14 @@ export function pickChatDirectoryWorkspaceIds(input: {
   }
 
   const orgIds = input.orgWorkspaceIds?.filter(Boolean) ?? []
-  if (orgIds.length > 0 && workspaceIds.length > 0) {
-    const orgSet = new Set(orgIds)
-    const scoped = workspaceIds.filter((id) => orgSet.has(id))
-    if (scoped.length > 0) workspaceIds = scoped
+  // New chat lists everyone in the organization, not only the workspace currently selected
+  // in the switcher (e.g. a personal "Local WS" that only contains you + one DM peer).
+  if (orgIds.length > 0) {
+    return [...new Set([...workspaceIds, ...orgIds])]
   }
 
   if (workspaceIds.length === 0 && accessible.length > 0) {
     workspaceIds = [...new Set(accessible)]
-  }
-  if (workspaceIds.length === 0 && orgIds.length > 0) {
-    workspaceIds = [...orgIds]
   }
 
   return workspaceIds
@@ -177,13 +174,16 @@ export async function resolveChatDirectoryWorkspaceIds(): Promise<string[]> {
   const scope = buildWorkspaceScopeFromTenant(tenant)
   const membershipWorkspaceIds = await fetchActiveMembershipWorkspaceIds(session.user.id)
 
-  let orgWorkspaceIds: string[] | null = null
-  if (tenant?.orgId) {
-    const workspaces = await fetchAllWorkspaceOrgWorkspaces().catch(() => [])
-    orgWorkspaceIds = workspaces
-      .filter((workspace) => workspace.organization_id === tenant.orgId)
-      .map((workspace) => workspace.id)
-  }
+  const workspaces = await fetchAllWorkspaceOrgWorkspaces().catch(() => [])
+  const currentWorkspace = tenant?.workspaceId
+    ? workspaces.find((workspace) => workspace.id === tenant.workspaceId)
+    : undefined
+  const organizationId = tenant?.orgId || currentWorkspace?.organization_id || null
+  const orgWorkspaceIds = organizationId
+    ? workspaces
+        .filter((workspace) => workspace.organization_id === organizationId)
+        .map((workspace) => workspace.id)
+    : null
 
   return pickChatDirectoryWorkspaceIds({
     scope,

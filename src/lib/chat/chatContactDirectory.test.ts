@@ -68,6 +68,15 @@ describe('pickChatDirectoryWorkspaceIds', () => {
     })
     expect(ids).toEqual(['ws-a'])
   })
+
+  it('unions organization workspaces so New chat is not limited to the active workspace', () => {
+    const ids = pickChatDirectoryWorkspaceIds({
+      scope: { mode: 'single', workspaceId: 'ws-personal', tenantMode: 'personal' },
+      membershipWorkspaceIds: ['ws-personal'],
+      orgWorkspaceIds: ['ws-org-home', 'ws-org-dept'],
+    })
+    expect(ids.sort()).toEqual(['ws-org-dept', 'ws-org-home', 'ws-personal'].sort())
+  })
 })
 
 describe('buildChatContactsFromWorkspaceMembers', () => {
