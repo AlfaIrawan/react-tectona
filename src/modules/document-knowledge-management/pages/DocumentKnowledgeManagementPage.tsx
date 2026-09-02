@@ -169,6 +169,7 @@ import { PlatformServiceLoadingPanel } from '@/components/loading'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import { DocumentRepositoryFolderCard } from '@/modules/document-knowledge-management/components/DocumentRepositoryFolderCard'
+import { DocumentRepositoryExplorerView } from '@/modules/document-knowledge-management/components/DocumentRepositoryExplorerView'
 import { DocumentRepositoryPreviewDrawer } from '@/modules/document-knowledge-management/components/DocumentRepositoryPreviewDrawer'
 import {
   DocumentOnlyOfficeEditor,
@@ -5097,10 +5098,10 @@ export function DocumentKnowledgeManagementPage() {
   // --- Document repository folders (Stage 3) ---
   const [repositoryFolders, setRepositoryFolders] = useState<DocumentFolder[]>([])
   const [repositoryCurrentFolderId, setRepositoryCurrentFolderId] = useState<string | null>(null)
-  const [repositoryViewMode, setRepositoryViewMode] = useState<'folders' | 'split' | 'grouped'>(() => {
+  const [repositoryViewMode, setRepositoryViewMode] = useState<'folders' | 'split' | 'grouped' | 'explorer'>(() => {
     try {
       const stored = localStorage.getItem('tectona-repository-view-mode')
-      return stored === 'split' || stored === 'grouped' ? stored : 'folders'
+      return stored === 'split' || stored === 'grouped' || stored === 'explorer' ? stored : 'folders'
     } catch {
       return 'folders'
     }
@@ -6470,7 +6471,7 @@ export function DocumentKnowledgeManagementPage() {
     slider.scrollBy({ left: direction === 'next' ? distance : -distance, behavior: 'smooth' })
   }, [])
 
-  const changeRepositoryViewMode = useCallback((mode: 'folders' | 'split' | 'grouped') => {
+  const changeRepositoryViewMode = useCallback((mode: 'folders' | 'split' | 'grouped' | 'explorer') => {
     setRepositoryViewMode(mode)
     try {
       localStorage.setItem('tectona-repository-view-mode', mode)
@@ -15297,6 +15298,21 @@ export function DocumentKnowledgeManagementPage() {
                         >
                           <FolderKanban className="h-4 w-4" aria-hidden />
                         </button>
+                        <button
+                          type="button"
+                          aria-label="Explorer details view"
+                          title="Explorer details view (group by type)"
+                          aria-pressed={repositoryViewMode === 'explorer'}
+                          onClick={() => changeRepositoryViewMode('explorer')}
+                          className={cn(
+                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                            repositoryViewMode === 'explorer'
+                              ? 'bg-slate-900 text-white shadow-sm'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                          )}
+                        >
+                          <List className="h-4 w-4" aria-hidden />
+                        </button>
                       </div>
 
                     </>
@@ -16443,12 +16459,22 @@ export function DocumentKnowledgeManagementPage() {
                 <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
                   <EnterpriseGroupByControl
                     options={REPOSITORY_TABLE_GROUP_BY_OPTIONS}
-                    value={repositoryViewMode === 'grouped' ? 'folder' : repositoryTableGroupBy}
-                    disabled={repositoryViewMode === 'grouped'}
+                    value={
+                      repositoryViewMode === 'grouped'
+                        ? 'folder'
+                        : repositoryViewMode === 'explorer'
+                          ? 'type'
+                          : repositoryTableGroupBy
+                    }
+                    disabled={repositoryViewMode === 'grouped' || repositoryViewMode === 'explorer'}
                     onChange={(value) => {
-                      if (repositoryViewMode !== 'grouped') setRepositoryTableGroupBy(value)
+                      if (repositoryViewMode !== 'grouped' && repositoryViewMode !== 'explorer') {
+                        setRepositoryTableGroupBy(value)
+                      }
                     }}
                   />
+                  {repositoryViewMode === 'explorer' ? null : (
+                    <>
                   <EnterpriseSelectionToggle checked={showRepositoryTableSelection} onChange={setShowRepositoryTableSelection} />
                   <EnterpriseColumnVisibilityControl
                     columns={REPOSITORY_TABLE_COLUMN_VISIBILITY_OPTIONS}
@@ -16459,6 +16485,8 @@ export function DocumentKnowledgeManagementPage() {
                     canEnable={repositoryTableColumns.canShowColumn}
                     limitReachedMessage={`Maximum ${REPOSITORY_TABLE_MAX_VISIBLE_COLUMNS} columns shown at once — hide one below to show another.`}
                   />
+                    </>
+                  )}
                   {repositoryLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   <p className="text-xs text-muted-foreground">
                     Showing <span className="font-semibold text-foreground">{repositoryStart}</span>-<span className="font-semibold text-foreground">{repositoryEnd}</span> of <span className="font-semibold text-foreground">{filteredRepository.length}</span>
@@ -16662,7 +16690,7 @@ export function DocumentKnowledgeManagementPage() {
                           <p className="px-2 py-4 text-xs text-muted-foreground">No subfolders here.</p>
                         ) : null}
                       </div>
-                    ) : repositorySubfolders.length > 0 ? (
+                    ) : repositoryViewMode !== 'explorer' && repositorySubfolders.length > 0 ? (
                       <div className="flex min-w-0 shrink-0 items-center gap-2 pt-2">
                         <button
                           type="button"
@@ -16720,7 +16748,31 @@ export function DocumentKnowledgeManagementPage() {
                     showRepositoryTableSelection && repositoryTableSelectedIds.length > 0 ? 'row-start-2' : 'row-start-1',
                   ),
                 )}>
-                {filteredRepository.length > 0 ? (
+                {repositoryViewMode === 'explorer' ? (
+                  <DocumentRepositoryExplorerView
+                    folders={deferredQuery.length === 0 ? repositorySubfolders : []}
+                    documents={filteredRepository.map((item) => ({
+                      id: item.id,
+                      name: item.name,
+                      fileName: item.fileName || item.name,
+                      updatedAt: item.updatedAt,
+                    }))}
+                    selectedDocumentId={selectedDetailId}
+                    dropTargetFolderId={typeof repositoryDropTarget === 'string' && repositoryDropTarget !== 'root' ? repositoryDropTarget : null}
+                    onOpenFolder={(folderId) => setRepositoryCurrentFolderId(folderId)}
+                    onOpenDocument={(documentId) => openDetail(documentId)}
+                    onFolderContextMenu={openRepositoryFolderContextMenu}
+                    onDocumentContextMenu={(event, documentId) => {
+                      const item = repositoryItems.find((entry) => entry.id === documentId)
+                      if (item) openRepositoryRowContextMenu(event, item)
+                    }}
+                    onFolderDragOver={handleFolderDragOver}
+                    onFolderDragLeave={(folderId) => {
+                      setRepositoryDropTarget((prev) => (prev === folderId ? null : prev))
+                    }}
+                    onFolderDrop={handleFolderDrop}
+                  />
+                ) : filteredRepository.length > 0 ? (
                   <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl scrollbar-hide">
                     <DndContext sensors={repositoryTableColumns.dndSensors} onDragEnd={repositoryTableColumns.handleColumnDragEnd}>
                       <table
