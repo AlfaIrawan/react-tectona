@@ -464,7 +464,7 @@ import {
   updateDocumentFolder,
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
-import { isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
+import { isFolderInSamplesTree, isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
 import { extractDocumentTextPreview } from '@/lib/api/documentParserApi'
 import { transcribeAudio } from '@/lib/api/tectonaVoiceApi'
 import { getFileTypeIcon } from '../fileTypeIcon'
@@ -6435,6 +6435,11 @@ export function DocumentKnowledgeManagementPage() {
     [repositoryFolders, repositoryCurrentFolderId],
   )
 
+  const viewingSamplesLibrary = useMemo(
+    () => isFolderInSamplesTree(repositoryCurrentFolderId, repositoryFolders),
+    [repositoryCurrentFolderId, repositoryFolders],
+  )
+
   const updateRepositoryFolderSliderPosition = useCallback(() => {
     const slider = repositoryFolderSliderRef.current
     if (!slider) return
@@ -7921,6 +7926,8 @@ export function DocumentKnowledgeManagementPage() {
     const extract = await extractRepositoryDocumentText(file)
     const uploadFolderId = repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId
     const uploadFolderPath = buildRepositoryFolderPathNames(repositoryFolders, uploadFolderId)
+    const skipAutoGenerateKbInSamples = isFolderInSamplesTree(uploadFolderId, repositoryFolders)
+    const shouldAutoGenerateKb = repositoryAutoGenerateKb && !skipAutoGenerateKbInSamples
     const uploadDocumentKind = detectRepositoryDocumentKind(extract.text, file.name, {
       folderPath: uploadFolderPath,
     })
@@ -8045,11 +8052,13 @@ export function DocumentKnowledgeManagementPage() {
 
         addToast({
           title: 'Saved as new version',
-          description: `${effectiveFileName} was added as a new version of "${finalDoc.title}".`,
+          description: skipAutoGenerateKbInSamples
+            ? `${effectiveFileName} was added as a new version of "${finalDoc.title}". Auto-generate KB is off for Samples.`
+            : `${effectiveFileName} was added as a new version of "${finalDoc.title}".`,
           variant: 'success',
         })
 
-        if (repositoryAutoGenerateKb) {
+        if (shouldAutoGenerateKb) {
           void runRepositoryKbGeneration({
             usageSource: 'system',
             file: uploadFile,
@@ -8184,12 +8193,12 @@ export function DocumentKnowledgeManagementPage() {
       setRepositoryKbProcessState(created.id, {
         status: 'idle',
         progress: 0,
-        message: repositoryAutoGenerateKb ? 'Ready for AI Knowledge Enrichment' : 'Auto-generate is off',
+        message: shouldAutoGenerateKb ? 'Ready for AI Knowledge Enrichment' : 'Auto-generate is off',
       })
 
       addToast({
         title: uploadAutoRenamed ? 'Upload successful (auto-renamed)' : 'Upload successful',
-        description: namingRule
+        description: `${namingRule
           ? uploadAutoRenamed
             ? hasExplicitProjectSelection
               ? `${file.name} renamed to ${effectiveFileName} and uploaded with naming standard '${namingRule.namingConventionCode}' linked to ${targetProject.name}.`
@@ -8199,11 +8208,11 @@ export function DocumentKnowledgeManagementPage() {
               : `${file.name} uploaded with naming standard '${namingRule.namingConventionCode}'.`
           : hasExplicitProjectSelection
             ? `${file.name} uploaded and linked to ${targetProject.name}.`
-            : `${file.name} uploaded.`,
+            : `${file.name} uploaded.`}${skipAutoGenerateKbInSamples ? ' Auto-generate KB is off for Samples.' : ''}`,
         variant: 'success',
       })
 
-      if (repositoryAutoGenerateKb) {
+      if (shouldAutoGenerateKb) {
         void runRepositoryKbGeneration({
           usageSource: 'system',
           file: uploadFile,
@@ -12417,7 +12426,11 @@ export function DocumentKnowledgeManagementPage() {
         const processState = repositoryKbProcessByDocumentId[item.id] ?? {
           status: 'idle' as const,
           progress: 0,
-          message: repositoryAutoGenerateKb ? 'Ready to generate KB' : 'Auto-generate is off',
+          message: viewingSamplesLibrary
+            ? 'Auto-generate is off in Samples'
+            : repositoryAutoGenerateKb
+              ? 'Ready to generate KB'
+              : 'Auto-generate is off',
         }
         const processTone =
           processState.status === 'success'
@@ -15224,14 +15237,17 @@ export function DocumentKnowledgeManagementPage() {
 
                       <div className="inline-flex items-center gap-2 rounded-xl border border-border/50 bg-background/70 px-3 py-2">
                         <Switch
-                          checked={repositoryAutoGenerateKb}
+                          checked={repositoryAutoGenerateKb && !viewingSamplesLibrary}
                           onCheckedChange={setRepositoryAutoGenerateKb}
+                          disabled={viewingSamplesLibrary}
                           aria-label="Auto-generate KB after upload"
                         />
                         <div className="leading-tight">
                           <p className="text-[11px] font-semibold text-foreground">Auto-generate KB</p>
                           <p className="text-[10px] text-muted-foreground">
-                            KB summary from document extraction (not a full BRD copy) + link to the repository
+                            {viewingSamplesLibrary
+                              ? 'Off in Samples — files here are examples only, not KB source'
+                              : 'KB summary from document extraction (not a full BRD copy) + link to the repository'}
                           </p>
                         </div>
                       </div>

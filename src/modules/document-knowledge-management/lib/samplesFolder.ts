@@ -35,3 +35,21 @@ export function isSamplesLibraryFolder(
   const parent = folders.find((item) => item.id === folder.parent_id)
   return parent ? isSamplesRootFolder(parent) : false
 }
+
+/** True for the Samples root or any descendant (category folders and nested user folders). */
+export function isFolderInSamplesTree(
+  folderId: string | null | undefined,
+  folders: readonly SamplesFolderLike[],
+): boolean {
+  if (!folderId) return false
+  const byId = new Map(folders.map((folder) => [folder.id, folder]))
+  let current = byId.get(folderId)
+  let guard = 0
+  while (current && guard < 64) {
+    guard += 1
+    if (isSamplesRootFolder(current)) return true
+    if (!current.parent_id) return false
+    current = byId.get(current.parent_id)
+  }
+  return false
+}
