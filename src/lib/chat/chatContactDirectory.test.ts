@@ -34,6 +34,32 @@ describe('pickChatDirectoryWorkspaceIds', () => {
     expect(ids).toEqual(['ws-a'])
   })
 
+  it('keeps selected workspaces when membership list is empty (org admin / WAC 403)', () => {
+    const ids = pickChatDirectoryWorkspaceIds({
+      scope: { mode: 'all', workspaceIds: ['ws-a', 'ws-b'] },
+      membershipWorkspaceIds: [],
+    })
+    expect(ids).toEqual(['ws-a', 'ws-b'])
+  })
+
+  it('unions switcher-accessible workspaces when membership fetch is empty', () => {
+    const ids = pickChatDirectoryWorkspaceIds({
+      scope: { mode: 'all' },
+      membershipWorkspaceIds: [],
+      accessibleWorkspaceIds: ['ws-a', 'ws-b'],
+    })
+    expect(ids).toEqual(['ws-a', 'ws-b'])
+  })
+
+  it('falls back to org directory workspaces when nothing else is in scope', () => {
+    const ids = pickChatDirectoryWorkspaceIds({
+      scope: { mode: 'all' },
+      membershipWorkspaceIds: [],
+      orgWorkspaceIds: ['org-ws-1'],
+    })
+    expect(ids).toEqual(['org-ws-1'])
+  })
+
   it('scopes single workspace to active tenant', () => {
     const ids = pickChatDirectoryWorkspaceIds({
       scope: { mode: 'single', workspaceId: 'ws-a', tenantMode: 'organization' },

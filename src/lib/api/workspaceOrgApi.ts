@@ -2,13 +2,13 @@
  * Workspace Org API — directory organizations/workspaces (port 8424) + onboarding P0 helpers.
  */
 
-import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 import type { TenantMode } from '@/lib/onboardingFeature'
 
+/** Same-origin nginx → workspace-org :8424. Do not fall back to gateway-runtime. */
 const BASE_URL =
   (import.meta.env.VITE_WORKSPACE_ORG_API_URL as string | undefined)?.trim()?.replace(/\/$/, '')
-  || (import.meta.env.DEV ? '/api/workspace-org' : serviceApiBase('/api/workspace-org'))
+  || '/api/workspace-org'
 
 function workspaceOrgWebSocketBaseUrl(): string {
   const override = (import.meta.env.VITE_WORKSPACE_ORG_API_URL as string | undefined)?.replace(/\/$/, '')

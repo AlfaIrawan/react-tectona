@@ -5,16 +5,14 @@
 
 import { TECTONA_AUTHZ_APP_ID } from '@/lib/constants/tectonaAuthz'
 
-import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
 export const TECTONA_WAC_APP_ID = TECTONA_AUTHZ_APP_ID
 
+/** Same-origin nginx → WAC :8421. Do not fall back to gateway-runtime (403 on members). */
 const BASE_URL =
   (import.meta.env.VITE_WORKSPACE_ACCESS_CONTROL_API_URL as string | undefined)?.trim()?.replace(/\/$/, '')
-  || (import.meta.env.DEV
-    ? '/api/workspace-access-control'
-    : serviceApiBase('/api/workspace-access-control'))
+  || '/api/workspace-access-control'
 
 function wacWebSocketBaseUrl(): string {
   const override = (import.meta.env.VITE_WORKSPACE_ACCESS_CONTROL_API_URL as string | undefined)?.replace(/\/$/, '')

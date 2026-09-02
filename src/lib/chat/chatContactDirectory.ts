@@ -4,7 +4,7 @@
  */
 
 import { getSession } from '@/auth/authService'
-import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { fetchIdentityUser, fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import {
   listWorkspacePresence,
   type CollaborationPresenceApi,
@@ -19,6 +19,7 @@ import {
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
+import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import {
   buildWorkspaceScopeFromTenant,
   readStoredTenantSelection,
@@ -127,33 +128,41 @@ async function fetchActiveMembershipWorkspaceIds(userId: string): Promise<string
   ]
 }
 
-/** Pure scope picker — only workspaces the subject belongs to (avoids gateway 403 on foreign workspaces). */
+/** Workspaces whose members may appear in New chat (membership, switcher, or org directory). */
 export function pickChatDirectoryWorkspaceIds(input: {
   scope: ReturnType<typeof buildWorkspaceScopeFromTenant>
   membershipWorkspaceIds: string[]
   orgWorkspaceIds?: string[] | null
+  accessibleWorkspaceIds?: string[] | null
 }): string[] {
-  const membership = new Set(input.membershipWorkspaceIds)
+  const membership = new Set(input.membershipWorkspaceIds.filter(Boolean))
+  const accessible = (input.accessibleWorkspaceIds ?? []).filter(Boolean)
   let workspaceIds: string[] = []
 
   if (input.scope.mode === 'single') {
-    workspaceIds = membership.has(input.scope.workspaceId)
-      ? [input.scope.workspaceId]
-      : [input.scope.workspaceId]
+    workspaceIds = [input.scope.workspaceId]
   } else {
     const selected = (input.scope.mode === 'all' ? input.scope.workspaceIds : undefined)?.filter(Boolean)
     if (selected?.length) {
-      workspaceIds = selected.filter((id) => membership.has(id))
+      const inMembership = selected.filter((id) => membership.has(id))
+      workspaceIds = inMembership.length > 0 ? inMembership : selected
     } else {
-      workspaceIds = [...membership]
+      workspaceIds = [...new Set([...membership, ...accessible])]
     }
   }
 
-  const orgIds = input.orgWorkspaceIds?.filter(Boolean)
-  if (orgIds?.length && workspaceIds.length > 0) {
+  const orgIds = input.orgWorkspaceIds?.filter(Boolean) ?? []
+  if (orgIds.length > 0 && workspaceIds.length > 0) {
     const orgSet = new Set(orgIds)
     const scoped = workspaceIds.filter((id) => orgSet.has(id))
     if (scoped.length > 0) workspaceIds = scoped
+  }
+
+  if (workspaceIds.length === 0 && accessible.length > 0) {
+    workspaceIds = [...new Set(accessible)]
+  }
+  if (workspaceIds.length === 0 && orgIds.length > 0) {
+    workspaceIds = [...orgIds]
   }
 
   return workspaceIds
@@ -180,6 +189,7 @@ export async function resolveChatDirectoryWorkspaceIds(): Promise<string[]> {
     scope,
     membershipWorkspaceIds,
     orgWorkspaceIds,
+    accessibleWorkspaceIds: readAccessibleWorkspaceIds(),
   })
 }
 
@@ -201,6 +211,26 @@ export async function collectChatDirectorySubjectIds(workspaceIds: string[]): Pr
   }
 
   return subjectIds
+}
+
+const IDENTITY_ENRICH_BATCH = 40
+
+async function loadIdentityUsersForSubjects(subjectIds: ReadonlySet<string>): Promise<IdentityUserDto[]> {
+  if (subjectIds.size === 0) return []
+
+  const listed = await fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] }))
+  const byId = new Map((listed.items ?? []).map((user) => [user.id, user]))
+
+  const missing = [...subjectIds].filter((id) => !byId.has(id))
+  const toFetch = missing.slice(0, IDENTITY_ENRICH_BATCH)
+  if (toFetch.length > 0) {
+    const extras = await Promise.all(toFetch.map((id) => fetchIdentityUser(id).catch(() => null)))
+    for (const user of extras) {
+      if (user) byId.set(user.id, user)
+    }
+  }
+
+  return [...byId.values()]
 }
 
 export function buildChatContactsFromWorkspaceMembers(
@@ -405,13 +435,7 @@ export async function loadChatContactDirectory(
 
   const workspaceIds = await resolveChatDirectoryWorkspaceIds()
   const allowedSubjectIds = await collectChatDirectorySubjectIds(workspaceIds)
-
-  let identityUsers: IdentityUserDto[] = []
-  if (allowedSubjectIds.size > 0) {
-    const res = await fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] }))
-    identityUsers = (res.items ?? []).filter((user) => allowedSubjectIds.has(user.id))
-  }
-
+  const identityUsers = await loadIdentityUsersForSubjects(allowedSubjectIds)
   let contacts = buildChatContactsFromWorkspaceMembers(allowedSubjectIds, identityUsers)
 
   try {
