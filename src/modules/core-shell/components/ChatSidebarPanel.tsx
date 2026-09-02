@@ -193,6 +193,7 @@ import {
   materializePeopleChatUiMessage,
   peopleChatPreview,
 } from '@/lib/chat/peopleChatMessagePayload'
+import { chatAttachmentDisplayUrl, toBrowserChatAttachmentUrl } from '@/lib/chat/chatAttachmentUrl'
 import {
   maxInboundMessageSequence,
   maxVisibleMessageSequence,
@@ -521,8 +522,10 @@ interface ChatAttachment {
   id: string
   kind: ChatAttachmentKind
   name: string
-  /** Object URL for local preview / playback (mock UI). */
+  /** Object URL / data URL / same-origin proxy for preview and download. */
   url: string
+  /** Local capture preview (data/blob) so the bubble still shows while MinIO URLs are blocked. */
+  previewUrl?: string
   mimeType?: string
   /** Secondary line (poll options, event time, contact role). */
   subtitle?: string
@@ -996,7 +999,7 @@ function mapGenAiApiMessagesToUi(
               id: a.id,
               kind: a.kind,
               name: a.name,
-              url: a.url,
+              url: toBrowserChatAttachmentUrl(a.url),
               ...(a.mimeType ? { mimeType: a.mimeType } : {}),
               ...(a.subtitle ? { subtitle: a.subtitle } : {}),
               ...(a.eventDescription ? { eventDescription: a.eventDescription } : {}),
@@ -4372,11 +4375,15 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         event_location: attachment.eventLocation,
       })
 
+      const remoteUrl = toBrowserChatAttachmentUrl(uploaded.attachment.url)
+      const localPreview =
+        attachment.url.startsWith('data:') || attachment.url.startsWith('blob:') ? attachment.url : undefined
       return {
         id: uploaded.attachment.id || attachment.id,
         kind: attachment.kind,
         name: uploaded.attachment.name || attachment.name,
-        url: uploaded.attachment.url,
+        url: remoteUrl,
+        ...(localPreview ? { previewUrl: localPreview } : {}),
         ...(uploaded.attachment.mime_type ? { mimeType: uploaded.attachment.mime_type } : {}),
         ...(uploaded.attachment.subtitle ? { subtitle: uploaded.attachment.subtitle } : {}),
         ...(uploaded.attachment.event_description ? { eventDescription: uploaded.attachment.event_description } : {}),
@@ -7533,13 +7540,15 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
   return (
     <>
       <div className="mb-2 flex flex-wrap gap-2">
-        {attachments.map((a) => (
+        {attachments.map((a) => {
+          const displayUrl = chatAttachmentDisplayUrl(a)
+          return (
           <div key={a.id}>
             {a.kind === 'image' && (
               <div className="flex max-w-[min(100%,280px)] flex-col gap-1">
                 <button
                   type="button"
-                  onClick={() => setPreview({ url: a.url, name: a.name })}
+                  onClick={() => setPreview({ url: displayUrl, name: a.name })}
                   className={cn(
                     'relative block max-h-56 w-full overflow-hidden rounded-md border border-border/50 bg-muted/20',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0 focus-visible:ring-neutral-400/55',
@@ -7547,10 +7556,15 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
                   )}
                   aria-label={`View ${a.name}`}
                 >
-                  <img src={a.url} alt={a.name} className="max-h-56 w-full object-contain bg-black/5" />
+                  <img
+                    src={displayUrl}
+                    alt={a.name}
+                    referrerPolicy="no-referrer"
+                    className="max-h-56 w-full object-contain bg-black/5"
+                  />
                 </button>
                 <a
-                  href={a.url}
+                  href={displayUrl}
                   download={a.name}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -7566,12 +7580,12 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
                 <span className="truncate">{a.name}</span>
               </span>
             )}
-            {a.kind === 'audio' && a.url ? (
-              <audio src={a.url} controls className="h-9 w-full max-w-[min(100%,280px)]" preload="metadata" />
+            {a.kind === 'audio' && displayUrl ? (
+              <audio src={displayUrl} controls className="h-9 w-full max-w-[min(100%,280px)]" preload="metadata" />
             ) : null}
-            {a.kind === 'video' && a.url ? (
+            {a.kind === 'video' && displayUrl ? (
               <video
-                src={a.url}
+                src={displayUrl}
                 controls
                 className="max-h-48 w-full max-w-[min(100%,280px)] rounded-md border border-border/50 bg-black/5"
                 preload="metadata"
@@ -7626,7 +7640,8 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
               </span>
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
       <ImageAttachmentPreviewDialog
         open={!!preview}
