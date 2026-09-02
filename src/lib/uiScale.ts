@@ -115,3 +115,59 @@ export function getUiLayoutViewportHeight(): number {
   if (Number.isFinite(fromVar) && fromVar > 0) return fromVar
   return window.innerHeight
 }
+
+/** Layout canvas size. With ui-scale-lock this is 1920 × `--app-vh`, not the visual window. */
+export function getUiLayoutViewportSize(): { width: number; height: number } {
+  if (typeof window === 'undefined') return { width: UI_DESIGN_WIDTH_PX, height: 0 }
+  const scale = getUiLayoutScale()
+  return {
+    width: scale === 1 ? window.innerWidth : UI_DESIGN_WIDTH_PX,
+    height: getUiLayoutViewportHeight(),
+  }
+}
+
+/** `getBoundingClientRect` / `clientX` are visual px; `position: fixed` uses layout px under html zoom. */
+export function visualPxToLayoutPx(visualPx: number): number {
+  const scale = getUiLayoutScale()
+  return scale === 1 ? visualPx : visualPx / scale
+}
+
+export type LayoutRect = {
+  top: number
+  left: number
+  right: number
+  bottom: number
+  width: number
+  height: number
+}
+
+export function visualRectToLayoutRect(
+  rect: Pick<DOMRectReadOnly, 'top' | 'left' | 'right' | 'bottom' | 'width' | 'height'>,
+): LayoutRect {
+  const scale = getUiLayoutScale()
+  if (scale === 1) {
+    return {
+      top: rect.top,
+      left: rect.left,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    }
+  }
+  return {
+    top: rect.top / scale,
+    left: rect.left / scale,
+    right: rect.right / scale,
+    bottom: rect.bottom / scale,
+    width: rect.width / scale,
+    height: rect.height / scale,
+  }
+}
+
+export function pointerClientToLayout(clientX: number, clientY: number): { x: number; y: number } {
+  return {
+    x: visualPxToLayoutPx(clientX),
+    y: visualPxToLayoutPx(clientY),
+  }
+}

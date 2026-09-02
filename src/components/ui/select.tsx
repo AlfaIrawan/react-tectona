@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { enterpriseControlFocusClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
+import { getUiLayoutViewportSize, visualRectToLayoutRect } from '@/lib/uiScale'
 
 export interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'onChange'> {
   children: React.ReactNode
@@ -208,10 +209,10 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
       const trigger = triggerRef.current
       if (!trigger) return
       setMenuStyle(
-        computeSelectMenuStyle(trigger.getBoundingClientRect(), {
-          width: window.innerWidth,
-          height: window.innerHeight,
-        }),
+        computeSelectMenuStyle(
+          visualRectToLayoutRect(trigger.getBoundingClientRect()),
+          getUiLayoutViewportSize(),
+        ),
       )
     }, [])
 

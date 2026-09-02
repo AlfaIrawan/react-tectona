@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { CheckCircle2, Columns2, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
+import { getUiLayoutViewportSize, visualRectToLayoutRect } from '@/lib/uiScale'
 
 /** Generic "show/hide columns" control — same trigger icon + searchable portal checklist as the
  * Workspace Directory table's column visibility manager, parameterized over any column key type. */
@@ -46,8 +47,15 @@ export function EnterpriseColumnVisibilityControl<K extends string>({
   const updateAnchor = useCallback(() => {
     const trigger = triggerRef.current
     if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    setAnchor({ left: rect.right - 260, top: rect.bottom + 12 })
+    const rect = visualRectToLayoutRect(trigger.getBoundingClientRect())
+    const viewport = getUiLayoutViewportSize()
+    const panelWidth = 260
+    let left = rect.right - panelWidth
+    if (left < 8) left = 8
+    if (left + panelWidth > viewport.width - 8) {
+      left = Math.max(8, viewport.width - panelWidth - 8)
+    }
+    setAnchor({ left, top: rect.bottom + 12 })
   }, [])
 
   useEffect(() => {

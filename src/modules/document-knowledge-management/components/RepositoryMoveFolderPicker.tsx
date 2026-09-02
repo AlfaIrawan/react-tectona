@@ -56,7 +56,7 @@ export function RepositoryMoveFolderPicker({
   const canMoveToRoot = showRootDestination && currentParentId !== null
 
   return (
-    <div className="max-h-64 min-w-[16rem] overflow-y-auto scrollbar-hide">
+    <div className="w-full">
       {browseParentId ? (
         <button
           type="button"

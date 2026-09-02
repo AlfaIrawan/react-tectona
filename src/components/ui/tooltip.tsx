@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
+import { getUiLayoutViewportSize, visualRectToLayoutRect } from '@/lib/uiScale'
 
 interface TooltipProps {
   children: React.ReactElement
@@ -97,7 +98,8 @@ export function Tooltip({
 
   const updatePosition = React.useCallback(() => {
     if (!triggerRef.current) return
-    const rect = triggerRef.current.getBoundingClientRect()
+    const rect = visualRectToLayoutRect(triggerRef.current.getBoundingClientRect())
+    const viewport = getUiLayoutViewportSize()
     const gap = sideOffset
     const padding = 14
     const centerX = rect.left + rect.width / 2
@@ -111,7 +113,7 @@ export function Tooltip({
       top = centerY
       if (tooltipRef.current) {
         const w = tooltipRef.current.offsetWidth
-        const maxLeft = window.innerWidth - padding - w
+        const maxLeft = viewport.width - padding - w
         left = Math.min(left, maxLeft)
       }
     } else if (side === 'left') {
@@ -127,12 +129,12 @@ export function Tooltip({
         const tooltipWidth = tooltipRef.current.offsetWidth
         const halfWidth = tooltipWidth / 2
         const minLeft = padding + halfWidth
-        const maxLeft = window.innerWidth - padding - halfWidth
+        const maxLeft = viewport.width - padding - halfWidth
         left = Math.max(minLeft, Math.min(maxLeft, centerX))
       } else {
         const halfMaxW = 160
         const minLeft = padding + halfMaxW
-        const maxLeft = window.innerWidth - padding - halfMaxW
+        const maxLeft = viewport.width - padding - halfMaxW
         left = Math.max(minLeft, Math.min(maxLeft, centerX))
       }
     } else {
@@ -142,12 +144,12 @@ export function Tooltip({
         const tooltipWidth = tooltipRef.current.offsetWidth
         const halfWidth = tooltipWidth / 2
         const minLeft = padding + halfWidth
-        const maxLeft = window.innerWidth - padding - halfWidth
+        const maxLeft = viewport.width - padding - halfWidth
         left = Math.max(minLeft, Math.min(maxLeft, centerX))
       } else {
         const halfMaxW = 160
         const minLeft = padding + halfMaxW
-        const maxLeft = window.innerWidth - padding - halfMaxW
+        const maxLeft = viewport.width - padding - halfMaxW
         left = Math.max(minLeft, Math.min(maxLeft, centerX))
       }
     }

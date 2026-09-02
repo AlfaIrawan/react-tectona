@@ -1,6 +1,12 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
+import { computeContextSubmenuPosition } from '@/components/ui/contextSubmenuPosition'
+import {
+  getUiLayoutViewportSize,
+  pointerClientToLayout,
+  visualRectToLayoutRect,
+} from '@/lib/uiScale'
 
 const DEFAULT_CONTEXT_MENU_Z_INDEX = 100
 
@@ -51,21 +57,24 @@ export function ContextMenu({
   // After paint: if menu would overflow bottom/right/left, adjust position so it stays on screen
   React.useEffect(() => {
     if (!open || !ref.current) return
-    const el = ref.current
     const measure = () => {
-      const rect = el.getBoundingClientRect()
-      let newX = x
-      let newY = y
-      if (rect.bottom > window.innerHeight) {
-        newY = Math.max(0, y - rect.height)
+      const el = ref.current
+      if (!el) return
+      const origin = pointerClientToLayout(x, y)
+      const rect = visualRectToLayoutRect(el.getBoundingClientRect())
+      const viewport = getUiLayoutViewportSize()
+      let newX = origin.x
+      let newY = origin.y
+      if (rect.bottom > viewport.height) {
+        newY = Math.max(0, origin.y - rect.height)
       }
-      if (rect.right > window.innerWidth) {
-        newX = window.innerWidth - rect.width - 8
+      if (rect.right > viewport.width) {
+        newX = viewport.width - rect.width - 8
       }
       if (rect.left < 0) {
         newX = 8
       }
-      if (newX !== x || newY !== y) {
+      if (newX !== origin.x || newY !== origin.y) {
         setAdjusted({ x: newX, y: newY })
       }
     }
@@ -91,8 +100,9 @@ export function ContextMenu({
 
   if (!open) return null
 
-  const posX = adjusted?.x ?? x
-  const posY = adjusted?.y ?? y
+  const origin = pointerClientToLayout(x, y)
+  const posX = adjusted?.x ?? origin.x
+  const posY = adjusted?.y ?? origin.y
 
   const menu = (
     <ContextMenuLayerContext.Provider value={zIndex}>
@@ -172,47 +182,54 @@ function ContextMenuSubmenu({ trigger, children, className }: ContextMenuSubmenu
   const menuZIndex = React.useContext(ContextMenuLayerContext)
   const submenuZIndex = menuZIndex + 1
   const triggerRef = React.useRef<HTMLDivElement>(null)
+  const submenuRef = React.useRef<HTMLDivElement>(null)
   const [open, setOpen] = React.useState(false)
-  const [position, setPosition] = React.useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = React.useState<{ left: number; top: number; maxHeight: number } | null>(null)
   const timeoutRef = React.useRef<number>(0)
 
-  const submenuRef = React.useRef<HTMLDivElement>(null)
-  React.useEffect(() => {
-    if (!open || !triggerRef.current) {
+  const updatePosition = React.useCallback(() => {
+    const triggerEl = triggerRef.current
+    const submenuEl = submenuRef.current
+    if (!triggerEl || !submenuEl) return
+    const rect = visualRectToLayoutRect(triggerEl.getBoundingClientRect())
+    const viewport = getUiLayoutViewportSize()
+    const next = computeContextSubmenuPosition({
+      trigger: rect,
+      submenuWidth: submenuEl.offsetWidth || 288,
+      submenuHeight: submenuEl.scrollHeight || submenuEl.offsetHeight || 256,
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+    })
+    setPosition((prev) => {
+      if (
+        prev
+        && Math.abs(prev.left - next.left) < 1
+        && Math.abs(prev.top - next.top) < 1
+        && Math.abs(prev.maxHeight - next.maxHeight) < 1
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+
+  React.useLayoutEffect(() => {
+    if (!open) {
       setPosition(null)
       return
     }
-    const measure = () => {
-      if (!triggerRef.current) return
-      const rect = triggerRef.current.getBoundingClientRect()
-      const submenuWidth = submenuRef.current?.offsetWidth ?? 136
-      const overlapRight = 8
-      const overlapLeft = 36
-      let left = rect.right - overlapRight
-      if (left + submenuWidth > window.innerWidth - 8) {
-        left = rect.left - submenuWidth + overlapLeft
-      }
-      setPosition({ left: Math.max(8, left), top: rect.top })
+    updatePosition()
+    const raf = requestAnimationFrame(updatePosition)
+    const submenuEl = submenuRef.current
+    const observer = submenuEl ? new ResizeObserver(() => updatePosition()) : null
+    if (submenuEl && observer) observer.observe(submenuEl)
+    window.addEventListener('resize', updatePosition)
+    return () => {
+      cancelAnimationFrame(raf)
+      observer?.disconnect()
+      window.removeEventListener('resize', updatePosition)
     }
-    const raf = requestAnimationFrame(measure)
-    return () => cancelAnimationFrame(raf)
-  }, [open])
-
-  React.useEffect(() => {
-    if (!open || !position || !triggerRef.current || !submenuRef.current) return
-    const rect = triggerRef.current.getBoundingClientRect()
-    const submenuWidth = submenuRef.current.offsetWidth
-    const overlapRight = 8
-    const overlapLeft = 36
-    let left = rect.right - overlapRight
-    if (left + submenuWidth > window.innerWidth - 8) {
-      left = rect.left - submenuWidth + overlapLeft
-    }
-    const nextLeft = Math.max(8, left)
-    if (Math.abs(nextLeft - position.left) > 1) {
-      setPosition({ left: nextLeft, top: rect.top })
-    }
-  }, [open, position])
+  }, [open, children, updatePosition])
 
   const clearCloseTimeout = () => {
     if (timeoutRef.current) {
@@ -248,23 +265,30 @@ function ContextMenuSubmenu({ trigger, children, className }: ContextMenuSubmenu
       >
         {trigger}
       </div>
-      {open && position && createPortal(
+      {open && createPortal(
         <div
           ref={submenuRef}
           role="menu"
           data-context-menu-submenu
           className={cn(
-            'fixed rounded-xl liquid-glass-enterprise-panel shadow-2xl py-2 min-w-[8rem]',
+            'fixed overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl liquid-glass-enterprise-panel shadow-2xl py-2',
+            'w-[min(18rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)]',
             'border border-border/50 backdrop-blur-xl',
-            'animate-in fade-in-0 zoom-in-95 duration-150'
+            'animate-in fade-in-0 zoom-in-95 duration-150',
           )}
-          style={{ left: position.left, top: position.top, zIndex: submenuZIndex }}
+          style={{
+            left: position?.left ?? -9999,
+            top: position?.top ?? 0,
+            zIndex: submenuZIndex,
+            maxHeight: position?.maxHeight ?? 'min(20rem, calc(100vh - 1rem))',
+            visibility: position ? 'visible' : 'hidden',
+          }}
           onMouseEnter={clearCloseTimeout}
           onMouseLeave={scheduleClose}
         >
           {children}
         </div>,
-        document.body
+        document.body,
       )}
     </>
   )

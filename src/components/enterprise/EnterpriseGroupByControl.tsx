@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { CheckCircle2, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
+import { getUiLayoutViewportSize, visualRectToLayoutRect } from '@/lib/uiScale'
 
 /** Generic "Group by" dropdown — same trigger button + searchable portal panel as the Workspace
  * Directory table, parameterized over any set of group-by option keys. */
@@ -36,8 +37,15 @@ export function EnterpriseGroupByControl<K extends string>({
   const updateAnchor = useCallback(() => {
     const trigger = triggerRef.current
     if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    setAnchor({ left: rect.left, top: rect.bottom + 8, width: rect.width })
+    const rect = visualRectToLayoutRect(trigger.getBoundingClientRect())
+    const viewport = getUiLayoutViewportSize()
+    const panelWidth = 260
+    let left = rect.left
+    if (left + panelWidth > viewport.width - 8) {
+      left = Math.max(8, rect.right - panelWidth)
+    }
+    if (left < 8) left = 8
+    setAnchor({ left, top: rect.bottom + 8, width: rect.width })
   }, [])
 
   useEffect(() => {
