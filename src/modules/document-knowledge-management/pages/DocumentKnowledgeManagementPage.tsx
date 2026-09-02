@@ -170,6 +170,8 @@ import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import { DocumentRepositoryFolderCard } from '@/modules/document-knowledge-management/components/DocumentRepositoryFolderCard'
 import { DocumentRepositoryExplorerView } from '@/modules/document-knowledge-management/components/DocumentRepositoryExplorerView'
+import { DocumentRepositoryUploadProgressOverlay } from '@/modules/document-knowledge-management/components/DocumentRepositoryUploadProgressOverlay'
+import { collectBrowserFiles } from '@/modules/document-knowledge-management/lib/collectBrowserFiles'
 import { DocumentRepositoryPreviewDrawer } from '@/modules/document-knowledge-management/components/DocumentRepositoryPreviewDrawer'
 import {
   DocumentOnlyOfficeEditor,
@@ -5095,6 +5097,13 @@ export function DocumentKnowledgeManagementPage() {
   const [repositoryBulkDeleteConfirmOpen, setRepositoryBulkDeleteConfirmOpen] = useState(false)
   const [repositoryProjects, setRepositoryProjects] = useState<Array<{ id: string; name: string }>>([])
   const [repositoryUploadBusy, setRepositoryUploadBusy] = useState(false)
+  const [repositoryUploadProgress, setRepositoryUploadProgress] = useState<{
+    total: number
+    index: number
+    fileName: string
+    succeeded: number
+    failed: number
+  } | null>(null)
   // --- Document repository folders (Stage 3) ---
   const [repositoryFolders, setRepositoryFolders] = useState<DocumentFolder[]>([])
   const [repositoryCurrentFolderId, setRepositoryCurrentFolderId] = useState<string | null>(null)
@@ -7592,6 +7601,7 @@ export function DocumentKnowledgeManagementPage() {
     purpose: 'repository-document' | 'template-upload' | 'template-create'
     candidates: Array<{ id: string; name: string }>
     pendingFile?: File
+    pendingFiles?: File[]
     targetFolderId?: string | null
     templateUploadOptions?: { category_code?: string; document_type_code?: string }
   }
@@ -7891,7 +7901,13 @@ export function DocumentKnowledgeManagementPage() {
     })
   }, [addToast, gatherExistingBrdDocs, kbApiItems, repositoryCurrentFolderId, repositoryItems])
 
-  const processRepositoryUploadFile = useCallback(async (file: File, explicitWorkspaceId?: string | null) => {
+  const processRepositoryUploadFile = useCallback(async (
+    file: File,
+    explicitWorkspaceId?: string | null,
+    options?: { skipBusy?: boolean; skipSuccessToast?: boolean },
+  ) => {
+    const skipBusy = options?.skipBusy === true
+    const skipSuccessToast = options?.skipSuccessToast === true
     const uploadWorkspaceId = explicitWorkspaceId !== undefined ? explicitWorkspaceId : (activeWorkspaceApiId ?? null)
     const hasExplicitProjectSelection = filters.project !== 'All projects'
     // Upload is allowed without picking a project. When none is chosen we still need a storage
@@ -7908,7 +7924,7 @@ export function DocumentKnowledgeManagementPage() {
         description: 'No target project is available. Please create/select a project first.',
         variant: 'error',
       })
-      return
+      return false
     }
 
     let namingRule: RepositoryUploadNamingRule | null = null
@@ -7992,13 +8008,13 @@ export function DocumentKnowledgeManagementPage() {
     const contentFingerprint = await computeContentFingerprint(extract.text)
     const duplicateVerdict = await checkUploadForDuplicates(effectiveFileName, extract.text, contentFingerprint, uploadFile)
     if (!duplicateVerdict.proceed) {
-      repositoryUploadTargetFolderIdRef.current = null
-      return
+      if (!skipBusy) repositoryUploadTargetFolderIdRef.current = null
+      return false
     }
 
     if (duplicateVerdict.revisionTargetId) {
       const revisionTargetId = duplicateVerdict.revisionTargetId
-      setRepositoryUploadBusy(true)
+      if (!skipBusy) setRepositoryUploadBusy(true)
       try {
         const latest = await getDocument(revisionTargetId)
         const updated = await patchDocument(revisionTargetId, {
@@ -8051,6 +8067,7 @@ export function DocumentKnowledgeManagementPage() {
         setSelectedDetailId(finalDoc.id)
         setRepositoryUploadFileByDocumentId((prev) => ({ ...prev, [finalDoc.id]: uploadFile }))
 
+        if (!skipSuccessToast) {
         addToast({
           title: 'Saved as new version',
           description: skipAutoGenerateKbInSamples
@@ -8058,6 +8075,7 @@ export function DocumentKnowledgeManagementPage() {
             : `${effectiveFileName} was added as a new version of "${finalDoc.title}".`,
           variant: 'success',
         })
+        }
 
         if (shouldAutoGenerateKb) {
           void runRepositoryKbGeneration({
@@ -8072,20 +8090,23 @@ export function DocumentKnowledgeManagementPage() {
             documentVersionLabel,
           })
         }
+        return true
       } catch (error) {
         addToast({
           title: 'Failed to save new version',
           description: error instanceof Error ? error.message : 'Unable to save the new document version.',
           variant: 'error',
         })
+        return false
       } finally {
-        repositoryUploadTargetFolderIdRef.current = null
-        setRepositoryUploadBusy(false)
+        if (!skipBusy) {
+          repositoryUploadTargetFolderIdRef.current = null
+          setRepositoryUploadBusy(false)
+        }
       }
-      return
     }
 
-    setRepositoryUploadBusy(true)
+    if (!skipBusy) setRepositoryUploadBusy(true)
     try {
       const created = await createProjectDocument(targetProject.id, {
         workspace_id: uploadWorkspaceId,
@@ -8197,6 +8218,7 @@ export function DocumentKnowledgeManagementPage() {
         message: shouldAutoGenerateKb ? 'Ready for AI Knowledge Enrichment' : 'Auto-generate is off',
       })
 
+      if (!skipSuccessToast) {
       addToast({
         title: uploadAutoRenamed ? 'Upload successful (auto-renamed)' : 'Upload successful',
         description: `${namingRule
@@ -8212,6 +8234,7 @@ export function DocumentKnowledgeManagementPage() {
             : `${file.name} uploaded.`}${skipAutoGenerateKbInSamples ? ' Auto-generate KB is off for Samples.' : ''}`,
         variant: 'success',
       })
+      }
 
       if (shouldAutoGenerateKb) {
         void runRepositoryKbGeneration({
@@ -8228,15 +8251,19 @@ export function DocumentKnowledgeManagementPage() {
           documentVersionLabel,
         })
       }
+      return true
     } catch (error) {
       addToast({
         title: 'Upload failed',
         description: error instanceof Error ? error.message : 'Unable to upload document repository file.',
         variant: 'error',
       })
+      return false
     } finally {
-      repositoryUploadTargetFolderIdRef.current = null
-      setRepositoryUploadBusy(false)
+      if (!skipBusy) {
+        repositoryUploadTargetFolderIdRef.current = null
+        setRepositoryUploadBusy(false)
+      }
     }
   }, [
     activeWorkspaceApiId,
@@ -8485,13 +8512,66 @@ export function DocumentKnowledgeManagementPage() {
     void loadMasterTemplates()
   }, [loadMasterTemplates, workspaceScopeKey])
 
-  const queueRepositoryUploadFile = useCallback((file: File, folderId?: string | null) => {
+  const runRepositoryUploadBatch = useCallback(async (files: File[], workspaceId?: string | null) => {
+    const list = collectBrowserFiles(files)
+    if (list.length === 0) return
+    const folderId = repositoryUploadTargetFolderIdRef.current
+    const skipSuccessToast = list.length > 1
+    setRepositoryUploadBusy(true)
+    let succeeded = 0
+    let failed = 0
+    try {
+      for (let index = 0; index < list.length; index += 1) {
+        const file = list[index]
+        repositoryUploadTargetFolderIdRef.current = folderId
+        setRepositoryUploadProgress({
+          total: list.length,
+          index: index + 1,
+          fileName: file.name,
+          succeeded,
+          failed,
+        })
+        try {
+          const ok = await processRepositoryUploadFile(file, workspaceId, { skipBusy: true, skipSuccessToast })
+          if (ok) succeeded += 1
+          else failed += 1
+        } catch {
+          failed += 1
+        }
+        setRepositoryUploadProgress({
+          total: list.length,
+          index: Math.min(index + 1, list.length),
+          fileName: file.name,
+          succeeded,
+          failed,
+        })
+      }
+      if (list.length > 1) {
+        addToast({
+          title: failed > 0 ? 'Bulk upload finished with errors' : 'Bulk upload complete',
+          description: failed > 0
+            ? `${succeeded} of ${list.length} document(s) uploaded; ${failed} failed or skipped.`
+            : `${succeeded} document(s) uploaded.`,
+          variant: failed > 0 ? 'error' : 'success',
+        })
+      }
+    } finally {
+      repositoryUploadTargetFolderIdRef.current = null
+      setRepositoryUploadBusy(false)
+      setRepositoryUploadProgress(null)
+    }
+  }, [addToast, processRepositoryUploadFile])
+
+  const queueRepositoryUploadFiles = useCallback((files: File[], folderId?: string | null) => {
+    const list = collectBrowserFiles(files)
+    if (list.length === 0) return
     const resolved = resolveRepositoryUploadWorkspaceCandidates()
     if (resolved.mode === 'choose') {
       setUploadWorkspacePicker({
         purpose: 'repository-document',
         candidates: resolved.candidates,
-        pendingFile: file,
+        pendingFile: list[0],
+        pendingFiles: list,
         targetFolderId: folderId ?? repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId,
       })
       return
@@ -8499,15 +8579,19 @@ export function DocumentKnowledgeManagementPage() {
     if (folderId !== undefined) {
       repositoryUploadTargetFolderIdRef.current = folderId
     }
-    void processRepositoryUploadFile(file, resolved.workspaceId)
-  }, [processRepositoryUploadFile, repositoryCurrentFolderId, resolveRepositoryUploadWorkspaceCandidates])
+    void runRepositoryUploadBatch(list, resolved.workspaceId)
+  }, [repositoryCurrentFolderId, resolveRepositoryUploadWorkspaceCandidates, runRepositoryUploadBatch])
+
+  const queueRepositoryUploadFile = useCallback((file: File, folderId?: string | null) => {
+    queueRepositoryUploadFiles([file], folderId)
+  }, [queueRepositoryUploadFiles])
 
   const handleRepositoryFilePicked = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const files = collectBrowserFiles(event.target.files)
     event.target.value = ''
-    if (!file) return
-    queueRepositoryUploadFile(file)
-  }, [queueRepositoryUploadFile])
+    if (files.length === 0) return
+    queueRepositoryUploadFiles(files)
+  }, [queueRepositoryUploadFiles])
 
   const handleRepositoryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     // Only show the file-upload highlight for external file drags, not internal document drags.
@@ -8549,21 +8633,21 @@ export function DocumentKnowledgeManagementPage() {
     event.stopPropagation()
     setIsRepositoryDragActive(false)
 
-    const files = event.dataTransfer.files
-    if (files && files.length > 0) {
-      queueRepositoryUploadFile(files[0])
+    const files = collectBrowserFiles(event.dataTransfer.files)
+    if (files.length > 0) {
+      queueRepositoryUploadFiles(files)
     }
-  }, [queueRepositoryUploadFile])
+  }, [queueRepositoryUploadFiles])
 
   const handleFolderDrop = useCallback((event: React.DragEvent, folderId: string | null) => {
-    const files = event.dataTransfer.files
-    if (files && files.length > 0) {
+    const files = collectBrowserFiles(event.dataTransfer.files)
+    if (files.length > 0) {
       event.preventDefault()
       event.stopPropagation()
       setRepositoryDropTarget(null)
       setIsRepositoryDragActive(false)
       repositoryUploadTargetFolderIdRef.current = folderId
-      queueRepositoryUploadFile(files[0], folderId)
+      queueRepositoryUploadFiles(files, folderId)
       return
     }
 
@@ -8574,7 +8658,7 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryDropTarget(null)
     const item = repositoryItems.find((entry) => entry.id === documentId)
     if (item) void handleMoveDocumentToFolder(item, folderId)
-  }, [repositoryItems, handleMoveDocumentToFolder, queueRepositoryUploadFile])
+  }, [repositoryItems, handleMoveDocumentToFolder, queueRepositoryUploadFiles])
 
   const loadKbRelations = useCallback(
     async (entryId: string) => {
@@ -15209,7 +15293,7 @@ export function DocumentKnowledgeManagementPage() {
                         ) : (
                           <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
                         )}
-                        Upload document repository
+                        {repositoryUploadBusy ? 'Uploading…' : 'Upload document repository'}
                       </button>
                       <button
                         type="button"
@@ -15232,6 +15316,7 @@ export function DocumentKnowledgeManagementPage() {
                         id="dkm-repository-document-upload"
                         name="dkm-repository-document-upload"
                         type="file"
+                        multiple
                         className="hidden"
                         onChange={(event) => void handleRepositoryFilePicked(event)}
                       />
@@ -16534,13 +16619,17 @@ export function DocumentKnowledgeManagementPage() {
                 onDragLeave={handleRepositoryDragLeave}
                 onDrop={handleRepositoryDrop}
               >
-                {isRepositoryDragActive ? (
+                {isRepositoryDragActive && !repositoryUploadBusy ? (
                   <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-blue-500/5">
                     <div className="text-center">
                       <Upload className="mx-auto mb-2 h-8 w-8 text-blue-500" />
                       <p className="text-sm font-semibold text-blue-700">Drop documents to upload</p>
+                      <p className="mt-1 text-xs font-medium text-blue-600/80">You can drop multiple files at once</p>
                     </div>
                   </div>
+                ) : null}
+                {repositoryUploadProgress ? (
+                  <DocumentRepositoryUploadProgressOverlay progress={repositoryUploadProgress} />
                 ) : null}
                 {showRepositoryTableSelection && repositoryTableSelectedIds.length > 0 ? (
                   <div className={cn(
@@ -21156,7 +21245,17 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
 
                 <div className="space-y-3 px-6 py-5">
-                  {uploadWorkspacePicker.pendingFile ? (
+                  {uploadWorkspacePicker.pendingFiles && uploadWorkspacePicker.pendingFiles.length > 1 ? (
+                    <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Files</p>
+                      <p className="mt-1 text-sm font-semibold text-foreground">
+                        {uploadWorkspacePicker.pendingFiles.length} documents selected
+                      </p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground" title={uploadWorkspacePicker.pendingFiles.map((file) => file.name).join(', ')}>
+                        {uploadWorkspacePicker.pendingFiles.map((file) => file.name).join(', ')}
+                      </p>
+                    </div>
+                  ) : uploadWorkspacePicker.pendingFile ? (
                     <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">File</p>
                       <p
@@ -21184,9 +21283,10 @@ export function DocumentKnowledgeManagementPage() {
                           const pending = uploadWorkspacePicker
                           setUploadWorkspacePicker(null)
                           if (pending.purpose === 'repository-document') {
-                            if (!pending.pendingFile) return
+                            const files = pending.pendingFiles?.length ? pending.pendingFiles : pending.pendingFile ? [pending.pendingFile] : []
+                            if (files.length === 0) return
                             repositoryUploadTargetFolderIdRef.current = pending.targetFolderId ?? null
-                            void processRepositoryUploadFile(pending.pendingFile, candidate.id)
+                            void runRepositoryUploadBatch(files, candidate.id)
                             return
                           }
                           if (pending.purpose === 'template-upload') {
