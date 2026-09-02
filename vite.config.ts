@@ -82,7 +82,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        cacheId: 'tectona-shell-fullwidth-v3',
+        cacheId: 'tectona-shell-fullwidth-v4',
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2,json,webmanifest,png,webp}'],

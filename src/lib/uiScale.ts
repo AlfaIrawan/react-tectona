@@ -3,6 +3,18 @@ export const UI_DESIGN_WIDTH_PX = 1920
 
 const SCALE_EPSILON = 0.995
 
+const BODY_LOCK_PROPS = [
+  'position',
+  'left',
+  'top',
+  'width',
+  'height',
+  'min-height',
+  'transform',
+  'transform-origin',
+  'overflow',
+] as const
+
 function readScaleVar(root: HTMLElement): number | null {
   const raw =
     root.style.getPropertyValue('--ui-scale').trim() ||
@@ -12,11 +24,36 @@ function readScaleVar(root: HTMLElement): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
+function clearBodyScaleLock(): void {
+  if (typeof document === 'undefined') return
+  const body = document.body
+  if (!body) return
+  for (const prop of BODY_LOCK_PROPS) {
+    body.style.removeProperty(prop)
+  }
+}
+
+function applyBodyScaleLock(layoutWidth: number, layoutHeight: number, scale: number): void {
+  if (typeof document === 'undefined') return
+  const body = document.body
+  if (!body) return
+  body.style.position = 'absolute'
+  body.style.left = '0'
+  body.style.top = '0'
+  body.style.width = `${layoutWidth}px`
+  body.style.height = `${layoutHeight}px`
+  body.style.minHeight = `${layoutHeight}px`
+  body.style.transform = `scale(${scale})`
+  body.style.transformOrigin = 'top left'
+  body.style.overflow = 'hidden'
+}
+
 function clearScaleLock(root: HTMLElement): void {
   root.classList.remove('ui-scale-lock')
   root.style.removeProperty('--ui-scale')
   root.style.removeProperty('--app-vw')
   root.style.removeProperty('--app-vh')
+  clearBodyScaleLock()
 }
 
 /** Drop a stale lock left by cached bundles (class on html without a valid scale var). */
@@ -47,11 +84,13 @@ export function syncUiScaleLock(): void {
   }
 
   const scale = vw / UI_DESIGN_WIDTH_PX
+  const layoutWidth = vw / scale
   const layoutHeight = vh / scale
   root.style.setProperty('--ui-scale', String(scale))
-  root.style.setProperty('--app-vw', `${UI_DESIGN_WIDTH_PX}px`)
+  root.style.setProperty('--app-vw', `${layoutWidth}px`)
   root.style.setProperty('--app-vh', `${layoutHeight}px`)
   root.classList.add('ui-scale-lock')
+  applyBodyScaleLock(layoutWidth, layoutHeight, scale)
 }
 
 export function initUiScaleLock(): void {

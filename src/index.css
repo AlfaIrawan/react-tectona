@@ -277,10 +277,10 @@
     position: absolute;
     left: 0;
     top: 0;
-    /* Logical width scales to exactly 100vw after transform — no right gap when --ui-scale is set. */
-    width: calc(100vw / var(--ui-scale));
+    /* Inline styles from uiScale.ts are authoritative; keep CSS as fallback. */
+    width: var(--app-vw, 1920px);
     height: var(--app-vh);
-    min-height: calc(100dvh / var(--ui-scale));
+    min-height: var(--app-vh);
     overflow: hidden;
     transform: scale(var(--ui-scale));
     transform-origin: top left;
