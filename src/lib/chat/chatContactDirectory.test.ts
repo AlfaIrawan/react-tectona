@@ -107,6 +107,28 @@ describe('buildChatContactsFromWorkspaceMembers', () => {
     expect(contacts.some((contact) => contact.id === 'outsider')).toBe(false)
     expect(contacts.some((contact) => contact.id === 'member-a')).toBe(true)
   })
+
+  it('omits bootstrap Administrator from New chat', () => {
+    const contacts = buildChatContactsFromWorkspaceMembers(
+      new Set(['00000000-0000-0000-0000-000000000002', 'member-a']),
+      [
+        {
+          id: '00000000-0000-0000-0000-000000000002',
+          email: 'administrator@tectona.local',
+          display_name: 'Administrator',
+          status_code: 'active',
+        },
+        {
+          id: 'member-a',
+          email: 'member.a@adira.co.id',
+          display_name: 'Member A',
+          status_code: 'active',
+        },
+      ],
+    )
+    expect(contacts.some((contact) => contact.id === '00000000-0000-0000-0000-000000000002')).toBe(false)
+    expect(contacts.some((contact) => contact.id === 'member-a')).toBe(true)
+  })
 })
 
 describe('shouldLookupIdentityUserById', () => {
@@ -139,6 +161,29 @@ describe('shouldIncludeIdentityUserInChatDirectory', () => {
         'alfa.irawan.local@tectona.local',
       ),
     ).toBe(true)
+  })
+
+  it('hides bootstrap Administrator and Root', () => {
+    expect(
+      shouldIncludeIdentityUserInChatDirectory(
+        {
+          id: '00000000-0000-0000-0000-000000000002',
+          email: 'administrator@tectona.local',
+          status_code: 'active',
+        },
+        'alfa.irawan@local.adira.co.id',
+      ),
+    ).toBe(false)
+    expect(
+      shouldIncludeIdentityUserInChatDirectory(
+        {
+          id: '00000000-0000-0000-0000-000000000001',
+          email: 'root@tectona.local',
+          status_code: 'active',
+        },
+        'alfa.irawan@local.adira.co.id',
+      ),
+    ).toBe(false)
   })
 
   it('does not list unrelated consumer emails', () => {

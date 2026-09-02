@@ -3,7 +3,7 @@
  * Membership SoR: workspace-access-control (not the full identity directory).
  */
 
-import { getSession } from '@/auth/authService'
+import { DEFAULT_ACCOUNTS, getSession } from '@/auth/authService'
 import { fetchIdentityUser, fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import {
   listWorkspacePresence,
@@ -75,6 +75,29 @@ function avatarClassForUserId(userId: string): string {
     hash = (hash + userId.charCodeAt(i)) % AVATAR_GRADIENTS.length
   }
   return AVATAR_GRADIENTS[hash] ?? AVATAR_GRADIENTS[0]
+}
+
+const HIDDEN_SYSTEM_CHAT_EMAILS = new Set(
+  DEFAULT_ACCOUNTS.map((account) => account.email.trim().toLowerCase()),
+)
+const HIDDEN_SYSTEM_CHAT_IDS = new Set([
+  '00000000-0000-0000-0000-000000000001',
+  '00000000-0000-0000-0000-000000000002',
+])
+
+/** Bootstrap Root / Administrator — not people to start a chat with. */
+export function isHiddenSystemChatContact(input: {
+  id?: string | null
+  email?: string | null
+  currentUserId?: string | null
+}): boolean {
+  const id = input.id?.trim().toLowerCase() ?? ''
+  if (input.currentUserId?.trim() && id && id === input.currentUserId.trim().toLowerCase()) {
+    return false
+  }
+  if (id && HIDDEN_SYSTEM_CHAT_IDS.has(id)) return true
+  const email = input.email?.trim().toLowerCase() ?? ''
+  return Boolean(email) && HIDDEN_SYSTEM_CHAT_EMAILS.has(email)
 }
 
 function isListableIdentityUser(user: IdentityUserDto): boolean {
@@ -206,10 +229,12 @@ function emailDomain(email: string | undefined): string | null {
 
 /** Local/dev accounts (tectona.local) must still see Adira colleagues in New chat. */
 export function shouldIncludeIdentityUserInChatDirectory(
-  user: Pick<IdentityUserDto, 'email' | 'status_code'>,
+  user: Pick<IdentityUserDto, 'email' | 'status_code'> & { id?: string },
   sessionEmail: string | undefined,
+  currentUserId?: string,
 ): boolean {
   if (!isListableIdentityUser(user as IdentityUserDto)) return false
+  if (isHiddenSystemChatContact({ id: user.id, email: user.email, currentUserId })) return false
   const email = user.email?.trim() ?? ''
   if (!email) return false
   const sessionDomain =
@@ -272,7 +297,7 @@ export async function loadChatIdentityDirectory(
     for (const user of items) {
       if (!user.id?.trim()) continue
       usersById.set(user.id, user)
-      if (shouldIncludeIdentityUserInChatDirectory(user, sessionEmail)) {
+      if (shouldIncludeIdentityUserInChatDirectory(user, sessionEmail, getSession()?.user.id)) {
         subjectIds.add(user.id.trim())
       }
     }
@@ -330,21 +355,26 @@ export function buildChatContactsFromWorkspaceMembers(
   allowedSubjectIds: ReadonlySet<string>,
   identityUsers: IdentityUserDto[],
 ): ChatContact[] {
+  const session = getSession()
   const identityById = new Map(identityUsers.map((user) => [user.id, user]))
   const enrichedUsers: IdentityUserDto[] = []
   for (const subjectId of allowedSubjectIds) {
     const user = identityById.get(subjectId)
-    if (user && isListableIdentityUser(user)) enrichedUsers.push(user)
+    if (user && isListableIdentityUser(user) && !isHiddenSystemChatContact({
+      id: user.id,
+      email: user.email,
+      currentUserId: session?.user.id,
+    })) enrichedUsers.push(user)
   }
 
   const contacts = buildChatContactsFromIdentityUsers(enrichedUsers)
   const presentIds = new Set(contacts.map((contact) => contact.id))
-  const session = getSession()
   const extras: ChatContact[] = []
 
   for (const subjectId of allowedSubjectIds) {
     if (presentIds.has(subjectId)) continue
     if (session?.user.id === subjectId) continue
+    if (isHiddenSystemChatContact({ id: subjectId, currentUserId: session?.user.id })) continue
     extras.push({
       id: subjectId,
       name: `Member ${subjectId.slice(0, 8)}`,
@@ -377,6 +407,7 @@ export function buildChatContactsFromIdentityUsers(users: IdentityUserDto[]): Ch
 
   for (const user of users) {
     if (!isListableIdentityUser(user)) continue
+    if (isHiddenSystemChatContact({ id: user.id, email: user.email, currentUserId })) continue
     if (currentUserId && user.id === currentUserId) {
       byId.set(user.id, sessionUserToChatContact(session!))
       continue
@@ -529,6 +560,10 @@ export function mergeChatContactLists(base: ChatContact[], extra: ChatContact[])
   }
   const teamUsers = [...byId.values()]
     .filter((contact) => contact.mode === 'team' && !contact.isAssistant)
+    .filter((contact) => !isHiddenSystemChatContact({
+      id: contact.id,
+      currentUserId: getSession()?.user.id,
+    }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
   return [TECTONA_ASSISTANT_CONTACT, ...teamUsers]
 }
@@ -544,6 +579,7 @@ export async function hydrateChatContactsForUserIds(
 
   const unresolved: string[] = []
   for (const id of unique) {
+    if (isHiddenSystemChatContact({ id, currentUserId: getSession()?.user.id })) continue
     const existing = cachedContactsById.get(id)
     if (existing && !isPlaceholderChatContactName(existing.name) && existing.name.toLowerCase() !== id.toLowerCase()) {
       continue
@@ -703,5 +739,6 @@ export function getCurrentChatActorId(): string {
 }
 
 export function canPickContactForGroupChat(c: ChatContact, currentUserId: string): boolean {
+  if (isHiddenSystemChatContact({ id: c.id, currentUserId })) return false
   return c.mode === 'team' && !c.isAssistant && c.id !== currentUserId
 }
