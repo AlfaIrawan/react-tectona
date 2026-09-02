@@ -52,13 +52,12 @@ describe('pickChatDirectoryWorkspaceIds', () => {
     expect(ids).toEqual(['ws-a', 'ws-b'])
   })
 
-  it('falls back to org directory workspaces when nothing else is in scope', () => {
+  it('does not fan out to catalog org workspaces (WAC members 403)', () => {
     const ids = pickChatDirectoryWorkspaceIds({
       scope: { mode: 'all' },
       membershipWorkspaceIds: [],
-      orgWorkspaceIds: ['org-ws-1'],
     })
-    expect(ids).toEqual(['org-ws-1'])
+    expect(ids).toEqual([])
   })
 
   it('scopes single workspace to active tenant', () => {
@@ -69,13 +68,12 @@ describe('pickChatDirectoryWorkspaceIds', () => {
     expect(ids).toEqual(['ws-a'])
   })
 
-  it('unions organization workspaces so New chat is not limited to the active workspace', () => {
+  it('does not WAC-list every org workspace when a personal workspace is active', () => {
     const ids = pickChatDirectoryWorkspaceIds({
       scope: { mode: 'single', workspaceId: 'ws-personal', tenantMode: 'personal' },
       membershipWorkspaceIds: ['ws-personal'],
-      orgWorkspaceIds: ['ws-org-home', 'ws-org-dept'],
     })
-    expect(ids.sort()).toEqual(['ws-org-dept', 'ws-org-home', 'ws-personal'].sort())
+    expect(ids).toEqual(['ws-personal'])
   })
 })
 
