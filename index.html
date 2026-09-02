@@ -13,6 +13,29 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Tectona" />
     <title>Tectona - Project Management Platform</title>
+    <!-- Sync ui-scale-lock before first paint (must match src/lib/uiScale.ts). -->
+    <script>
+      (function () {
+        var DESIGN = 1920
+        var EPS = 0.995
+        var vw = window.innerWidth
+        var vh = window.innerHeight
+        var root = document.documentElement
+        if (vw <= 0) return
+        var scale = vw / DESIGN
+        if (scale >= EPS) {
+          root.classList.remove('ui-scale-lock')
+          root.style.removeProperty('--ui-scale')
+          root.style.removeProperty('--app-vw')
+          root.style.removeProperty('--app-vh')
+          return
+        }
+        root.style.setProperty('--ui-scale', String(scale))
+        root.style.setProperty('--app-vw', DESIGN + 'px')
+        root.style.setProperty('--app-vh', String(vh / scale) + 'px')
+        root.classList.add('ui-scale-lock')
+      })()
+    </script>
     <!--
       Stale Workbox from a prior production/preview build on :9411 can keep serving
       old hashed /assets/*.js (mojibake Â·) even while Vite dev is running.
@@ -21,9 +44,11 @@
     <script>
       (function () {
         var host = location.hostname
-        if (host !== 'localhost' && host !== '127.0.0.1') return
+        var isLocal = host === 'localhost' || host === '127.0.0.1'
+        var isDevHost = host === 'tectona-dev.adira.co.id'
+        if (!isLocal && !isDevHost) return
         if (!('serviceWorker' in navigator)) return
-        var FLAG = 'tectona:sw-dev-reset-v1'
+        var FLAG = 'tectona:sw-layout-fullwidth-v3'
         var hadController = Boolean(navigator.serviceWorker.controller)
         navigator.serviceWorker.getRegistrations().then(function (regs) {
           return Promise.all(

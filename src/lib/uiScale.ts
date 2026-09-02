@@ -3,6 +3,15 @@ export const UI_DESIGN_WIDTH_PX = 1920
 
 const SCALE_EPSILON = 0.995
 
+function readScaleVar(root: HTMLElement): number | null {
+  const raw =
+    root.style.getPropertyValue('--ui-scale').trim() ||
+    getComputedStyle(root).getPropertyValue('--ui-scale').trim()
+  if (!raw) return null
+  const parsed = Number.parseFloat(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
 function clearScaleLock(root: HTMLElement): void {
   root.classList.remove('ui-scale-lock')
   root.style.removeProperty('--ui-scale')
@@ -10,31 +19,35 @@ function clearScaleLock(root: HTMLElement): void {
   root.style.removeProperty('--app-vh')
 }
 
+/** Drop a stale lock left by cached bundles (class on html without a valid scale var). */
+function repairStaleScaleLock(root: HTMLElement, viewportWidth: number): void {
+  if (!root.classList.contains('ui-scale-lock')) return
+  const scale = readScaleVar(root)
+  if (scale == null || viewportWidth >= UI_DESIGN_WIDTH_PX * SCALE_EPSILON) {
+    clearScaleLock(root)
+  }
+}
+
 /**
  * Apply the 1920px desktop canvas only when the window is narrower than 1920.
  * At 1920+ this is a no-op so FHD stays native (no transform, no overflow clip).
- * Scale is width-only — never min(width, height/1080), which shrank real FHD
- * because browser chrome makes innerHeight < 1080.
  */
 export function syncUiScaleLock(): void {
   if (typeof window === 'undefined') return
   const root = document.documentElement
-  // Layout viewport only — visualViewport can be narrower than innerWidth and would
-  // under-scale the canvas, leaving a white strip on the right of html { width: 100% }.
   const vw = window.innerWidth
   const vh = window.innerHeight
   if (vw <= 0 || vh <= 0) return
 
-  const scale = vw / UI_DESIGN_WIDTH_PX
+  repairStaleScaleLock(root, vw)
 
-  if (scale >= SCALE_EPSILON) {
+  if (vw >= UI_DESIGN_WIDTH_PX * SCALE_EPSILON) {
     clearScaleLock(root)
     return
   }
 
+  const scale = vw / UI_DESIGN_WIDTH_PX
   const layoutHeight = vh / scale
-  // Set CSS vars before toggling the class so we never render one frame at scale(1)
-  // with a 1920px body (the old right-gap bug on wide/zoomed desktops).
   root.style.setProperty('--ui-scale', String(scale))
   root.style.setProperty('--app-vw', `${UI_DESIGN_WIDTH_PX}px`)
   root.style.setProperty('--app-vh', `${layoutHeight}px`)
