@@ -160,7 +160,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align={menuAlign}
-        className="z-[120] w-80 border border-border/80 bg-popover p-0 shadow-xl"
+        className="z-[200] w-80 overflow-hidden border border-slate-200 bg-white p-0 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <div className="px-3 pt-2.5 pb-2">

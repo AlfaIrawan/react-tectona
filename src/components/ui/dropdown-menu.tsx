@@ -131,7 +131,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       className={cn(
         'absolute w-56 rounded-xl liquid-glass-enterprise-popover shadow-2xl z-50 py-2',
-        'border border-border/50 backdrop-blur-xl',
+        'border border-border/60 bg-popover',
         'transition-all duration-200 ease-out',
         isTop ? 'bottom-full mb-2' : 'mt-2 top-full',
         isAnimating

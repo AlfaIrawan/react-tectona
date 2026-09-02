@@ -4134,24 +4134,24 @@ function IntelligenceChartPanel({
 
 function workspaceKpiChrome(cardId: string): string {
   const base =
-    'rounded-2xl p-4 transition-all duration-200 relative overflow-hidden group border border-white/40 ring-1 ring-black/[0.04] shadow-[0_14px_40px_rgba(15,23,42,0.10)] hover:-translate-y-0.5 hover:shadow-[0_18px_56px_rgba(15,23,42,0.14)]'
+    'flex h-full min-h-[7.25rem] min-w-0 flex-col rounded-2xl p-4 transition-all duration-200 relative overflow-hidden group border border-slate-200/80 ring-1 ring-black/[0.04] shadow-[0_10px_28px_rgba(15,23,42,0.08)] hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(15,23,42,0.12)]'
 
   if (cardId === 'total') {
-    return cn(base, 'bg-gradient-to-br from-slate-50/85 via-white/90 to-sky-50/75')
+    return cn(base, 'bg-gradient-to-br from-slate-50 via-white to-sky-50')
   }
   if (cardId === 'active') {
-    return cn(base, 'bg-gradient-to-br from-emerald-50/70 via-white/90 to-cyan-50/70')
+    return cn(base, 'bg-gradient-to-br from-emerald-50 via-white to-cyan-50')
   }
   if (cardId === 'risk') {
-    return cn(base, 'bg-gradient-to-br from-rose-50/70 via-white/90 to-amber-50/70')
+    return cn(base, 'bg-gradient-to-br from-rose-50 via-white to-amber-50')
   }
   if (cardId === 'members') {
-    return cn(base, 'bg-gradient-to-br from-indigo-50/70 via-white/90 to-violet-50/70')
+    return cn(base, 'bg-gradient-to-br from-indigo-50 via-white to-violet-50')
   }
   if (cardId === 'projects') {
-    return cn(base, 'bg-gradient-to-br from-orange-50/70 via-white/90 to-yellow-50/70')
+    return cn(base, 'bg-gradient-to-br from-orange-50 via-white to-yellow-50')
   }
-  return cn(base, 'bg-gradient-to-br from-cyan-50/70 via-white/90 to-blue-50/70')
+  return cn(base, 'bg-gradient-to-br from-cyan-50 via-white to-blue-50')
 }
 
 function sparklineYDomain(values: number[]): [number, number] {
@@ -4187,8 +4187,8 @@ const KpiSparkline = memo(function KpiSparkline({ data, color }: { data: number[
 
   if (!hasTrend) {
     return (
-      <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-background/40 px-2 text-[10px] font-medium text-muted-foreground/80">
-        Historical trend unavailable
+      <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-white/70 px-2 text-[10px] font-medium text-muted-foreground">
+        No trend
       </div>
     )
   }
@@ -4264,19 +4264,19 @@ function WorkspaceKpiCard({
         </div>
       </div>
 
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 flex items-center gap-3">
-        <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{value}</div>
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className="mt-1 flex min-w-0 items-center gap-3">
+        <div className="shrink-0 text-2xl font-bold leading-none tabular-nums text-slate-950">{value}</div>
         <div className="h-10 min-w-0 flex-1">
             <KpiSparkline data={trendSeries} color={trendColor} />
           </div>
         </div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
-        <span className="inline-flex min-w-0 items-center gap-2">
-          <Icon className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
-          <span className="truncate">{subtitle}</span>
+      <div className="mt-auto flex items-start justify-between gap-2 pt-2 text-[11px] leading-snug text-slate-500">
+        <span className="inline-flex min-w-0 items-start gap-2">
+          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
+          <span className="line-clamp-2">{subtitle}</span>
         </span>
-        <span className={cn('shrink-0 font-semibold', trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
+        <span className={cn('shrink-0 font-semibold tabular-nums', trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
           {trend}
         </span>
       </div>
@@ -5712,11 +5712,17 @@ export function WorkspaceManagementPage() {
   const enterpriseNavWidthVariant = enterpriseNavUltra ? 'ultra' : enterpriseNavCompact ? 'compact' : 'default'
   // Match Document & Knowledge Management Enterprise Navigation: 260px panel width.
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
-  const { widthForBreakpoint: mainWidthForBreakpoint, isBelowBreakpoint: narrowMainBody } = useAppMainBodyWidth(
+  const {
+    widthForBreakpoint: mainWidthForBreakpoint,
+    isBelowBreakpoint: narrowMainBody,
+    desktopCanvasLock,
+  } = useAppMainBodyWidth(
     WORKSPACE_KPI_CAROUSEL_BODY_MAX_PX
   )
   const showKpiCarousel =
-    mainWidthForBreakpoint > 0 && mainWidthForBreakpoint < WORKSPACE_KPI_GRID_BODY_MIN_PX
+    !desktopCanvasLock
+    && mainWidthForBreakpoint > 0
+    && mainWidthForBreakpoint < WORKSPACE_KPI_GRID_BODY_MIN_PX
   /** Rentang 700px–999px (lebar konten): layout carousel KPI, float nav, filter ringkas. */
   const workspaceMediumBodyLayout = showKpiCarousel && !narrowMainBody
   const kpiCarouselCardsPerSlide: 1 | 2 = narrowMainBody ? 1 : 2
@@ -12665,7 +12671,7 @@ export function WorkspaceManagementPage() {
     const totalWorkspacesCard = {
       label: 'Total Workspaces',
       value: String(metrics.totalWorkspaces),
-      subtitle: 'Registered workspace boundaries',
+      subtitle: 'Registered boundaries',
       trend: '+6.2%',
       trendSeries: kpiTrendSeries.total,
       trendColor: '#0ea5e9',
@@ -12674,7 +12680,7 @@ export function WorkspaceManagementPage() {
     const activeWorkspacesCard = {
       label: 'Active Workspaces',
       value: String(metrics.activeCount),
-      subtitle: 'Operating lifecycle state',
+      subtitle: 'Currently operating',
       trend: '+2.1%',
       trendSeries: kpiTrendSeries.active,
       trendColor: '#10b981',
@@ -12683,7 +12689,7 @@ export function WorkspaceManagementPage() {
     const atRiskCard = {
       label: 'At Risk',
       value: String(metrics.atRiskCount),
-      subtitle: 'Portfolio health flag',
+      subtitle: 'Health flag',
       trend: '-0.8%',
       trendSeries: kpiTrendSeries.risk,
       trendColor: '#f43f5e',
@@ -12692,7 +12698,7 @@ export function WorkspaceManagementPage() {
     const membersCard = {
       label: 'Total Members',
       value: String(metrics.totalMembers),
-      subtitle: 'Across workspace participation scopes',
+      subtitle: 'Across participation',
       trend: '+4.5%',
       trendSeries: kpiTrendSeries.members,
       trendColor: '#6366f1',
@@ -12701,7 +12707,7 @@ export function WorkspaceManagementPage() {
     const projectsCard = {
       label: 'Total Projects',
       value: String(metrics.totalProjects),
-      subtitle: 'Linked under workspace boundaries',
+      subtitle: 'Linked projects',
       trend: '+3.3%',
       trendSeries: kpiTrendSeries.projects,
       trendColor: '#f59e0b',
@@ -14161,7 +14167,7 @@ export function WorkspaceManagementPage() {
             onDragEnd={handleKpiDragEnd}
           >
             <SortableContext items={kpiCardOrder} strategy={rectSortingStrategy}>
-              <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid min-w-0 grid-cols-5 items-stretch gap-4">
                 {kpiCardOrder.map((key) => {
                   const card = kpiCardMap[key]
                   return (
@@ -14187,7 +14193,7 @@ export function WorkspaceManagementPage() {
           )}
         </section>
         ) : (
-          <section className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <section className="grid min-w-0 grid-cols-5 items-stretch gap-4">
             {Array.from({ length: 5 }, (_, index) => (
               <div key={index} className="h-24 animate-pulse rounded-2xl bg-muted/40" />
             ))}

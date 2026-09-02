@@ -13,12 +13,18 @@ function readMainBodyWidths(el: HTMLElement): { bodyWidth: number; contentWidth:
   return { bodyWidth, contentWidth }
 }
 
+function readDesktopCanvasLock(): boolean {
+  return document.documentElement.classList.contains('ui-scale-lock')
+}
+
 /** Lebar kolom main body + lebar konten efektif (selaras Layout debug). */
 export function useAppMainBodyWidth(breakpointPx = 700) {
   const [bodyWidth, setBodyWidth] = useState(0)
   const [contentWidth, setContentWidth] = useState(0)
+  const [desktopCanvasLock, setDesktopCanvasLock] = useState(false)
 
   const measure = useCallback(() => {
+    setDesktopCanvasLock(readDesktopCanvasLock())
     const el = document.querySelector(APP_MAIN_BODY_SELECTOR)
     if (!(el instanceof HTMLElement)) {
       setBodyWidth(0)
@@ -63,5 +69,5 @@ export function useAppMainBodyWidth(breakpointPx = 700) {
   const widthForBreakpoint = contentWidth > 0 ? contentWidth : bodyWidth
   const isBelowBreakpoint = widthForBreakpoint > 0 && widthForBreakpoint < breakpointPx
 
-  return { bodyWidth, contentWidth, widthForBreakpoint, isBelowBreakpoint }
+  return { bodyWidth, contentWidth, widthForBreakpoint, isBelowBreakpoint, desktopCanvasLock }
 }
