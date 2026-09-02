@@ -79,6 +79,7 @@ import {
   FileStack,
   FileText,
   FileType,
+  Filter as FilterIcon,
   FolderKanban,
   GitBranch,
   Highlighter,
@@ -15008,7 +15009,7 @@ export function DocumentKnowledgeManagementPage() {
                 aria-label={showFiltersPanel ? 'Hide filters' : 'Show filters'}
                 title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
               >
-                <Funnel className="w-5 h-5" />
+                <FilterIcon className="w-5 h-5" />
               </button>
 
               <button
