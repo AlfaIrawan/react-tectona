@@ -103,7 +103,7 @@ export function DocumentRepositoryExplorerView({
   const isEmpty = folders.length === 0 && documents.length === 0
 
   return (
-    <div className="min-h-[360px] w-full flex-1 overflow-auto rounded-xl border border-slate-200/80 bg-white md:min-h-[420px] dark:border-slate-700/70 dark:bg-slate-950">
+    <div className="min-h-0 w-full min-w-0 flex-1 overflow-auto scrollbar-hide rounded-xl border border-slate-200/80 bg-white dark:border-slate-700/70 dark:bg-slate-950">
       <table className="w-full table-fixed border-collapse text-[13px] leading-snug">
         <colgroup>
           <col className="w-[44%]" />
