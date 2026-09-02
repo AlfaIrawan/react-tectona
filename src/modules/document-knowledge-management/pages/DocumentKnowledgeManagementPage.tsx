@@ -469,6 +469,19 @@ import {
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
 import { isFolderInSamplesTree, isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
+import {
+  SAMPLE_KIND_LABELS,
+  resolveSampleKindFromFolderNames,
+} from '@/modules/document-knowledge-management/lib/sampleDocumentKind'
+import {
+  classifyAgainstSampleGoldSet,
+  clipSampleExcerpt,
+  collectTextsForSampleClassifyEmbed,
+  excerptFromIndexSnapshot,
+  selectSampleGoldItems,
+  type SampleGoldDocument,
+  type SampleKindClassification,
+} from '@/modules/document-knowledge-management/lib/classifyFromSamples'
 import { extractDocumentTextPreview } from '@/lib/api/documentParserApi'
 import { transcribeAudio } from '@/lib/api/tectonaVoiceApi'
 import { getFileTypeIcon } from '../fileTypeIcon'
@@ -7946,20 +7959,96 @@ export function DocumentKnowledgeManagementPage() {
     const uploadFolderPath = buildRepositoryFolderPathNames(repositoryFolders, uploadFolderId)
     const skipAutoGenerateKbInSamples = isFolderInSamplesTree(uploadFolderId, repositoryFolders)
     const shouldAutoGenerateKb = repositoryAutoGenerateKb && !skipAutoGenerateKbInSamples
-    const uploadDocumentKind = detectRepositoryDocumentKind(extract.text, file.name, {
+    const pathSampleKind = resolveSampleKindFromFolderNames(uploadFolderPath)
+    let sampleClassification: SampleKindClassification = pathSampleKind && skipAutoGenerateKbInSamples
+      ? {
+        kind: pathSampleKind,
+        source: 'samples_path',
+        confidence: 1,
+        reason: `Filed under Samples / ${SAMPLE_KIND_LABELS[pathSampleKind]}.`,
+      }
+      : {
+        kind: 'unknown',
+        source: 'unknown',
+        confidence: 0,
+        reason: skipAutoGenerateKbInSamples
+          ? 'Samples folder is not a known document category.'
+          : '',
+      }
+
+    if (!skipAutoGenerateKbInSamples) {
+      try {
+        const goldItems = selectSampleGoldItems(repositoryItems, repositoryFolders)
+        const goldDocs: SampleGoldDocument[] = []
+        await Promise.all(goldItems.map(async (item) => {
+          try {
+            const snapshot = await getDocumentIndexSnapshot(item.id)
+            const text = excerptFromIndexSnapshot(snapshot)
+              || clipSampleExcerpt(`${item.name} ${item.fileName}`)
+            if (text.length >= 24) goldDocs.push({ id: item.id, kind: item.sampleKind, text })
+          } catch {
+            const text = clipSampleExcerpt(`${item.name} ${item.fileName}`)
+            if (text.length >= 24) goldDocs.push({ id: item.id, kind: item.sampleKind, text })
+          }
+        }))
+        if (goldDocs.length > 0 && extract.text.trim()) {
+          let vectorsByText: Map<string, number[]> | null = null
+          try {
+            const uniqueTexts = collectTextsForSampleClassifyEmbed(extract.text, goldDocs)
+            vectorsByText = await embedKnowledgeIndexTexts(uniqueTexts)
+            if (vectorsByText.size === 0) vectorsByText = null
+          } catch {
+            vectorsByText = null
+          }
+          sampleClassification = classifyAgainstSampleGoldSet(extract.text, goldDocs, vectorsByText)
+        }
+      } catch {
+        /* keep unknown — do not guess Kartu Keluarga / KTP from body text */
+      }
+    }
+
+    const persistDocumentKind = sampleClassification.kind !== 'unknown'
+      ? sampleClassification.kind
+      : (pathSampleKind && skipAutoGenerateKbInSamples ? pathSampleKind : 'unknown')
+    const heuristicKind = detectRepositoryDocumentKind(extract.text, file.name, {
       folderPath: uploadFolderPath,
     })
+    const uploadDocumentKind: RepositoryDocumentKind =
+      persistDocumentKind === 'memo_internal' || persistDocumentKind === 'ketetapan_sementara'
+        ? persistDocumentKind
+        : persistDocumentKind === 'brd'
+          ? 'brd'
+          : heuristicKind
     const capabilityRules = resolveCapabilityRulesFromKbEntries(kbApiItems)
-    const detectedCapability = detectDocumentCapability({
+    let detectedCapability = detectDocumentCapability({
       fileName: file.name,
       text: extract.text,
       rules: capabilityRules,
     })
+    if (
+      (persistDocumentKind === 'memo_internal' || persistDocumentKind === 'ketetapan_sementara')
+      && (detectedCapability === 'ktp' || detectedCapability === 'kartu_keluarga')
+    ) {
+      detectedCapability = null
+    }
     const skipBrdAutoRename =
-      uploadDocumentKind === 'memo_internal'
+      skipAutoGenerateKbInSamples
+      || uploadDocumentKind === 'memo_internal'
+      || uploadDocumentKind === 'ketetapan_sementara'
       || looksLikeMemoUploadFileName(file.name)
       || looksLikeMemoAttachmentFileName(file.name)
       || isMemoInternalFolderPath(uploadFolderPath)
+    const classifiedKindToast =
+      sampleClassification.source === 'samples_compare' && persistDocumentKind !== 'unknown'
+        ? ` Classified as ${SAMPLE_KIND_LABELS[persistDocumentKind]} from Samples.`
+        : ''
+    const documentKindMetadata = {
+      document_kind: persistDocumentKind === 'unknown' ? null : persistDocumentKind,
+      document_kind_source: sampleClassification.source,
+      document_kind_confidence: sampleClassification.confidence,
+      document_kind_reason: sampleClassification.reason || null,
+      samples_excerpt: skipAutoGenerateKbInSamples ? clipSampleExcerpt(extract.text) : undefined,
+    }
     const versionFromContent = extractBrdVersionFromDocumentText(extract.text)
     const projectFromContent = extractBrdProjectOrInitiativeNameFromDocumentText(extract.text)
     const parsedOriginal = parseBrdStructuredName(file.name)
@@ -8031,6 +8120,7 @@ export function DocumentKnowledgeManagementPage() {
             document_version_label: documentVersionLabel,
             document_version_source: versionFromContent ? 'content' : parsedOriginal?.version ? 'filename' : 'default',
             file_properties: fileProperties,
+            ...documentKindMetadata,
           },
         })
 
@@ -8073,7 +8163,7 @@ export function DocumentKnowledgeManagementPage() {
           title: 'Saved as new version',
           description: skipAutoGenerateKbInSamples
             ? `${effectiveFileName} was added as a new version of "${finalDoc.title}". Auto-generate KB is off for Samples.`
-            : `${effectiveFileName} was added as a new version of "${finalDoc.title}".`,
+            : `${effectiveFileName} was added as a new version of "${finalDoc.title}".${classifiedKindToast}`,
           variant: 'success',
         })
         }
@@ -8157,6 +8247,7 @@ export function DocumentKnowledgeManagementPage() {
           file_properties: fileProperties,
           capability_code: detectedCapability,
           capability_detected_from: detectedCapability ? 'kb_rules_or_fallback' : null,
+          ...documentKindMetadata,
         },
         version_notes: 'initial upload',
       })
@@ -8232,7 +8323,7 @@ export function DocumentKnowledgeManagementPage() {
               : `${file.name} uploaded with naming standard '${namingRule.namingConventionCode}'.`
           : hasExplicitProjectSelection
             ? `${file.name} uploaded and linked to ${targetProject.name}.`
-            : `${file.name} uploaded.`}${skipAutoGenerateKbInSamples ? ' Auto-generate KB is off for Samples.' : ''}`,
+            : `${file.name} uploaded.`}${skipAutoGenerateKbInSamples ? ' Auto-generate KB is off for Samples.' : ''}${classifiedKindToast}`,
         variant: 'success',
       })
       }
@@ -8281,6 +8372,8 @@ export function DocumentKnowledgeManagementPage() {
     runRepositoryKbGeneration,
     setRepositoryKbProcessState,
     kbApiItems,
+    repositoryItems,
+    checkUploadForDuplicates,
   ])
 
   const resolveRepositoryUploadWorkspaceCandidates = useCallback(():

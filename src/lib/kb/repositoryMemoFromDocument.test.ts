@@ -40,6 +40,32 @@ describe('repositoryMemoFromDocument', () => {
     expect(detectRepositoryDocumentKind(sampleMemoHead, 'BRD_Helpdesk.docx')).toBe('memo_internal')
   })
 
+  it('uses the Samples category folder, not a nested KS pack name', () => {
+    expect(
+      detectRepositoryDocumentKind('Nasabah wajib KTP dan Kartu Keluarga.', 'Ketentuan.pdf', {
+        folderPath: [
+          'Samples',
+          'Memo Internal',
+          'KS-023A_RISK_CRPL&INC_VII_2026 Ketentuan Penggunaan Sistem',
+        ],
+      }),
+    ).toBe('memo_internal')
+    expect(
+      detectRepositoryDocumentKind('Nomor: KS-01 / Perihal: uji', 'KS-01BA.pdf', {
+        folderPath: ['Samples', 'Ketetapan Sementara'],
+      }),
+    ).toBe('ketetapan_sementara')
+  })
+
+  it('does not treat Nomor + Perihal alone as Memo Internal', () => {
+    expect(
+      detectRepositoryDocumentKind(
+        'Nomor: KS-021A/RISK/VII/2026\nPerihal: Ketentuan Penggunaan Sistem\nKepada: Divisi',
+        'Ketentuan Penggunaan Sistem.pdf',
+      ),
+    ).toBe('unknown')
+  })
+
   it('detects memo lampiran from filename and folder path', () => {
     expect(
       detectRepositoryDocumentKind('Isu internal dan eksternal ...', 'Lampiran II - Isu Internal dan Eksternal.pdf', {

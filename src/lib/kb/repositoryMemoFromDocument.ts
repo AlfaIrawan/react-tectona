@@ -4,8 +4,13 @@
 
 import type { MemoInternalToKbContentStandardParsed } from './memoInternalToKbContentStandard'
 import { parseBrdStructuredName } from './repositoryKbFromDocument'
+import { resolveSampleKindFromFolderNames } from '@/modules/document-knowledge-management/lib/sampleDocumentKind'
 
-export type RepositoryDocumentKind = 'brd' | 'memo_internal' | 'unknown'
+export type RepositoryDocumentKind =
+  | 'brd'
+  | 'memo_internal'
+  | 'ketetapan_sementara'
+  | 'unknown'
 
 export type MemoAttachmentEntry = {
   id: string
@@ -215,6 +220,10 @@ export function detectRepositoryDocumentKind(
   const upperName = name.toUpperCase()
   const head = (text || '').slice(0, 12_000)
   const folderPath = options?.folderPath
+  const sampleKind = resolveSampleKindFromFolderNames(folderPath ?? [])
+  if (sampleKind === 'memo_internal' || sampleKind === 'ketetapan_sementara' || sampleKind === 'brd') {
+    return sampleKind
+  }
   const memoContext = isMemoContext(name, folderPath)
   const hasBrdDocMarker = BRD_DOC_MARKER_RE.test(head)
 
@@ -230,16 +239,12 @@ export function detectRepositoryDocumentKind(
     return 'memo_internal'
   }
 
-  const headerWindow = head.slice(0, 4000)
-  if (
-    /\b(?:No\.?|Nomor)\s*:?\s*[A-Z]{1,5}-\d+/i.test(headerWindow)
-    && /\b(?:Perihal|Kepada|Dari)\b/i.test(headerWindow)
-  ) {
-    return 'memo_internal'
-  }
-
   if (upperName.startsWith('BRD_') || /^BRD[-_.]/i.test(name) || parseBrdStructuredName(name)) {
     return 'brd'
+  }
+
+  if (/^KS[-_]/i.test(name) || /\bketetapan\s+sementara\b/i.test(name)) {
+    return 'ketetapan_sementara'
   }
 
   return 'unknown'

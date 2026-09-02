@@ -216,13 +216,18 @@ export function humanizeCapabilityCode(code: string | null | undefined): string 
 
 function scoreRule(haystack: string, fileName: string, rule: DocumentCapabilityRule): number {
   let score = 0
-  const lowerHaystack = haystack.toLowerCase()
-  const lowerFile = fileName.toLowerCase()
+  const identity = rule.capability_code === 'ktp' || rule.capability_code === 'kartu_keluarga'
+  const identityFileHaystack = identity ? fileName.replace(/[_./\\-]+/g, ' ') : fileName
+  const textSource = identity ? identityFileHaystack : haystack
+  const lowerHaystack = textSource.toLowerCase()
+  const lowerFile = (identity ? identityFileHaystack : fileName).toLowerCase()
 
   for (const source of rule.regexSources) {
     const re = compileRegex(source)
     if (!re) continue
-    if (re.test(fileName) || re.test(haystack)) {
+    if (identity) {
+      if (re.test(identityFileHaystack)) score += source.startsWith('^') ? 100 : 60
+    } else if (re.test(fileName) || re.test(haystack)) {
       score += source.startsWith('^') ? 100 : 60
     }
   }
@@ -230,7 +235,7 @@ function scoreRule(haystack: string, fileName: string, rule: DocumentCapabilityR
   for (const keyword of rule.keywords) {
     const needle = keyword.trim().toLowerCase()
     if (!needle) continue
-    if (lowerFile.includes(needle) || lowerHaystack.includes(needle)) {
+    if (lowerFile.includes(needle) || (!identity && lowerHaystack.includes(needle))) {
       score += needle.length >= 8 ? 40 : 25
     }
   }
@@ -240,7 +245,7 @@ function scoreRule(haystack: string, fileName: string, rule: DocumentCapabilityR
   if (token && new RegExp(`(?:^|[\\\\s_\\-./])${token}(?:$|[\\\\s_\\-./])`, 'i').test(fileName)) {
     score += 35
   }
-  if (rule.capability_code === 'kartu_keluarga' && /\bkk\b/i.test(fileName)) {
+  if (rule.capability_code === 'kartu_keluarga' && /\bkk\b/i.test(identityFileHaystack)) {
     score += 30
   }
 

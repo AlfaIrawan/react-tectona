@@ -105,6 +105,15 @@ describe('documentCapabilityClassification', () => {
     ).toBe('tsd')
   })
 
+  it('does not label Kartu Keluarga from body mentions in a policy document', () => {
+    expect(
+      detectDocumentCapability({
+        fileName: 'Ketentuan Penggunaan Sistem Aplikasi.pdf',
+        text: 'Nasabah wajib melampirkan KTP dan Kartu Keluarga sebagai syarat.',
+      }),
+    ).toBeNull()
+  })
+
   it('uses hardcoded fallback keywords when rules omitted', () => {
     expect(detectDocumentCapability({ fileName: 'dokumen_KTP.pdf', text: '' })).toBe('ktp')
     expect(detectDocumentCapability({ fileName: 'memo_internal.pdf', text: 'Surat edaran' })).toBeNull()
