@@ -15004,7 +15004,7 @@ export function DocumentKnowledgeManagementPage() {
                 onClick={() => setShowFiltersPanel((visible) => !visible)}
                 className={cn(
                   'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
-                  showFiltersPanel && 'bg-background text-primary shadow-sm ring-1 ring-border/50',
+                  showFiltersPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50',
                 )}
                 aria-label={showFiltersPanel ? 'Hide filters' : 'Show filters'}
                 title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
