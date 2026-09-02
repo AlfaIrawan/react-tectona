@@ -4134,24 +4134,24 @@ function IntelligenceChartPanel({
 
 function workspaceKpiChrome(cardId: string): string {
   const base =
-    'flex h-full min-h-[7.25rem] min-w-0 flex-col rounded-2xl p-4 transition-all duration-200 relative overflow-hidden group border border-slate-200/80 ring-1 ring-black/[0.04] shadow-[0_10px_28px_rgba(15,23,42,0.08)] hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(15,23,42,0.12)]'
+    'rounded-2xl p-4 transition-all duration-200 relative overflow-hidden group border border-white/40 ring-1 ring-black/[0.04] shadow-[0_14px_40px_rgba(15,23,42,0.10)] hover:-translate-y-0.5 hover:shadow-[0_18px_56px_rgba(15,23,42,0.14)]'
 
   if (cardId === 'total') {
-    return cn(base, 'bg-gradient-to-br from-slate-50 via-white to-sky-50')
+    return cn(base, 'bg-gradient-to-br from-slate-50/85 via-white/90 to-sky-50/75')
   }
   if (cardId === 'active') {
-    return cn(base, 'bg-gradient-to-br from-emerald-50 via-white to-cyan-50')
+    return cn(base, 'bg-gradient-to-br from-emerald-50/70 via-white/90 to-cyan-50/70')
   }
   if (cardId === 'risk') {
-    return cn(base, 'bg-gradient-to-br from-rose-50 via-white to-amber-50')
+    return cn(base, 'bg-gradient-to-br from-rose-50/70 via-white/90 to-amber-50/70')
   }
   if (cardId === 'members') {
-    return cn(base, 'bg-gradient-to-br from-indigo-50 via-white to-violet-50')
+    return cn(base, 'bg-gradient-to-br from-indigo-50/70 via-white/90 to-violet-50/70')
   }
   if (cardId === 'projects') {
-    return cn(base, 'bg-gradient-to-br from-orange-50 via-white to-yellow-50')
+    return cn(base, 'bg-gradient-to-br from-orange-50/70 via-white/90 to-yellow-50/70')
   }
-  return cn(base, 'bg-gradient-to-br from-cyan-50 via-white to-blue-50')
+  return cn(base, 'bg-gradient-to-br from-cyan-50/70 via-white/90 to-blue-50/70')
 }
 
 function sparklineYDomain(values: number[]): [number, number] {
@@ -4187,8 +4187,8 @@ const KpiSparkline = memo(function KpiSparkline({ data, color }: { data: number[
 
   if (!hasTrend) {
     return (
-      <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-white/70 px-2 text-[10px] font-medium text-muted-foreground">
-        No trend
+      <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-background/40 px-2 text-[10px] font-medium text-muted-foreground/80">
+        Historical trend unavailable
       </div>
     )
   }
@@ -4264,19 +4264,19 @@ function WorkspaceKpiCard({
         </div>
       </div>
 
-      <div className="text-xs font-medium text-slate-500">{label}</div>
-      <div className="mt-1 flex min-w-0 items-center gap-3">
-        <div className="shrink-0 text-2xl font-bold leading-none tabular-nums text-slate-950">{value}</div>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 flex items-center gap-3">
+        <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{value}</div>
         <div className="h-10 min-w-0 flex-1">
             <KpiSparkline data={trendSeries} color={trendColor} />
           </div>
         </div>
-      <div className="mt-auto flex items-start justify-between gap-2 pt-2 text-[11px] leading-snug text-slate-500">
-        <span className="inline-flex min-w-0 items-start gap-2">
-          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
-          <span className="line-clamp-2">{subtitle}</span>
+      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Icon className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
+          <span className="truncate">{subtitle}</span>
         </span>
-        <span className={cn('shrink-0 font-semibold tabular-nums', trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
+        <span className={cn('shrink-0 font-semibold', trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
           {trend}
         </span>
       </div>
@@ -4963,10 +4963,14 @@ function WorkspaceHealthExecutiveDonut({
           animation: ws-sheen-spin 14s linear infinite;
         }
       `}</style>
-    <div className="grid gap-5 lg:grid-cols-[250px,1fr] lg:items-center">
-      <div className="relative mx-auto h-60 w-60">
+    <div className="grid gap-5 lg:grid-cols-[minmax(220px,260px),1fr] lg:items-center">
+      <div className="mx-auto flex w-full max-w-[260px] flex-col items-center gap-2">
+        <div className="whitespace-nowrap rounded-full border border-emerald-200/80 bg-emerald-50/95 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
+          Portfolio Resilience
+        </div>
+      <div className="relative h-52 w-52">
         {/* Radial vignette ambient glow */}
-        <div className="pointer-events-none absolute -inset-4 rounded-full" style={{ background: 'radial-gradient(ellipse 90% 90% at 50% 50%, rgba(16,185,129,0.15) 0%, rgba(14,165,233,0.10) 40%, transparent 72%)' }} />
+        <div className="pointer-events-none absolute -inset-3 rounded-full" style={{ background: 'radial-gradient(ellipse 90% 90% at 50% 50%, rgba(16,185,129,0.15) 0%, rgba(14,165,233,0.10) 40%, transparent 72%)' }} />
         {/* Animated spinning sheen ring */}
         <div className="ws-sheen-ring pointer-events-none absolute -inset-1 rounded-full" style={{
           background: 'conic-gradient(from 0deg, transparent 0%, rgba(255,255,255,0.55) 12%, transparent 25%, transparent 50%, rgba(255,255,255,0.28) 62%, transparent 75%, transparent 100%)',
@@ -4980,9 +4984,6 @@ function WorkspaceHealthExecutiveDonut({
           opacity: 0.6,
         }} />
         <div className="pointer-events-none absolute inset-3 rounded-full border border-white/80 bg-gradient-to-br from-slate-50/90 via-white/95 to-slate-100/85 shadow-[0_22px_52px_rgba(15,23,42,0.14),inset_0_1px_0_rgba(255,255,255,0.95)]" />
-        <div className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-emerald-200/80 bg-emerald-50/95 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
-          Portfolio Resilience
-        </div>
         <div className="absolute inset-0 min-h-0 min-w-0">
           <MeasuredResponsiveContainer className="h-full w-full min-h-0 min-w-0">
           <PieChart>
@@ -5004,8 +5005,8 @@ function WorkspaceHealthExecutiveDonut({
               data={data}
               cx="50%"
               cy="50%"
-              innerRadius={64}
-              outerRadius={96}
+              innerRadius={52}
+              outerRadius={80}
               cornerRadius={8}
               paddingAngle={2}
               dataKey="value"
@@ -5052,12 +5053,15 @@ function WorkspaceHealthExecutiveDonut({
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <div className="text-4xl font-bold leading-none tracking-tight text-slate-900">{total}</div>
           <div className="mt-1 text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Workspace Total</div>
-          <div className="mt-2 rounded-full border border-slate-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm">
+        </div>
+      </div>
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          <div className="rounded-full border border-slate-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm">
             Executive Index {healthIndex}
           </div>
-        </div>
-        <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-slate-200/80 bg-white/95 px-3 py-1 text-[10px] font-semibold text-slate-600 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-          Stability Score {stabilityScore}
+          <div className="rounded-full border border-slate-200/80 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
+            Stability Score {stabilityScore}
+          </div>
         </div>
       </div>
 
@@ -5712,17 +5716,11 @@ export function WorkspaceManagementPage() {
   const enterpriseNavWidthVariant = enterpriseNavUltra ? 'ultra' : enterpriseNavCompact ? 'compact' : 'default'
   // Match Document & Knowledge Management Enterprise Navigation: 260px panel width.
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
-  const {
-    widthForBreakpoint: mainWidthForBreakpoint,
-    isBelowBreakpoint: narrowMainBody,
-    desktopCanvasLock,
-  } = useAppMainBodyWidth(
+  const { widthForBreakpoint: mainWidthForBreakpoint, isBelowBreakpoint: narrowMainBody } = useAppMainBodyWidth(
     WORKSPACE_KPI_CAROUSEL_BODY_MAX_PX
   )
   const showKpiCarousel =
-    !desktopCanvasLock
-    && mainWidthForBreakpoint > 0
-    && mainWidthForBreakpoint < WORKSPACE_KPI_GRID_BODY_MIN_PX
+    mainWidthForBreakpoint > 0 && mainWidthForBreakpoint < WORKSPACE_KPI_GRID_BODY_MIN_PX
   /** Rentang 700px–999px (lebar konten): layout carousel KPI, float nav, filter ringkas. */
   const workspaceMediumBodyLayout = showKpiCarousel && !narrowMainBody
   const kpiCarouselCardsPerSlide: 1 | 2 = narrowMainBody ? 1 : 2
@@ -12619,8 +12617,8 @@ export function WorkspaceManagementPage() {
       0,
     )
     const totalProjects = list.reduce((sum, workspace) => sum + workspace.projects, 0)
-    const activeCount = list.filter((workspace) => workspace.status === 'Active').length
-    const atRiskCount = list.filter((workspace) => workspace.status === 'At Risk').length
+    const activeCount = list.filter((workspace) => workspace.lifecycle === 'Active').length
+    const atRiskCount = list.filter((workspace) => workspaceHealthBand(workspace) === 'At Risk').length
 
     return {
       totalWorkspaces: list.length,
@@ -12659,8 +12657,8 @@ export function WorkspaceManagementPage() {
         total[idx] += 1
         members[idx] += memberCount
         projects[idx] += workspace.projects
-        if (workspace.status === 'Active') active[idx] += 1
-        if (workspace.status === 'At Risk') risk[idx] += 1
+        if (workspace.lifecycle === 'Active') active[idx] += 1
+        if (workspaceHealthBand(workspace) === 'At Risk') risk[idx] += 1
       }
     }
 
@@ -12671,7 +12669,7 @@ export function WorkspaceManagementPage() {
     const totalWorkspacesCard = {
       label: 'Total Workspaces',
       value: String(metrics.totalWorkspaces),
-      subtitle: 'Registered boundaries',
+      subtitle: 'Registered workspace boundaries',
       trend: '+6.2%',
       trendSeries: kpiTrendSeries.total,
       trendColor: '#0ea5e9',
@@ -12680,7 +12678,7 @@ export function WorkspaceManagementPage() {
     const activeWorkspacesCard = {
       label: 'Active Workspaces',
       value: String(metrics.activeCount),
-      subtitle: 'Currently operating',
+      subtitle: 'Lifecycle stage Active',
       trend: '+2.1%',
       trendSeries: kpiTrendSeries.active,
       trendColor: '#10b981',
@@ -12689,7 +12687,7 @@ export function WorkspaceManagementPage() {
     const atRiskCard = {
       label: 'At Risk',
       value: String(metrics.atRiskCount),
-      subtitle: 'Health flag',
+      subtitle: 'Health band At Risk (not Critical)',
       trend: '-0.8%',
       trendSeries: kpiTrendSeries.risk,
       trendColor: '#f43f5e',
@@ -12698,7 +12696,7 @@ export function WorkspaceManagementPage() {
     const membersCard = {
       label: 'Total Members',
       value: String(metrics.totalMembers),
-      subtitle: 'Across participation',
+      subtitle: 'Across workspace participation scopes',
       trend: '+4.5%',
       trendSeries: kpiTrendSeries.members,
       trendColor: '#6366f1',
@@ -12707,7 +12705,7 @@ export function WorkspaceManagementPage() {
     const projectsCard = {
       label: 'Total Projects',
       value: String(metrics.totalProjects),
-      subtitle: 'Linked projects',
+      subtitle: 'Linked under workspace boundaries',
       trend: '+3.3%',
       trendSeries: kpiTrendSeries.projects,
       trendColor: '#f59e0b',
@@ -14167,7 +14165,7 @@ export function WorkspaceManagementPage() {
             onDragEnd={handleKpiDragEnd}
           >
             <SortableContext items={kpiCardOrder} strategy={rectSortingStrategy}>
-              <div className="grid min-w-0 grid-cols-5 items-stretch gap-4">
+              <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
                 {kpiCardOrder.map((key) => {
                   const card = kpiCardMap[key]
                   return (
@@ -14193,7 +14191,7 @@ export function WorkspaceManagementPage() {
           )}
         </section>
         ) : (
-          <section className="grid min-w-0 grid-cols-5 items-stretch gap-4">
+          <section className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
             {Array.from({ length: 5 }, (_, index) => (
               <div key={index} className="h-24 animate-pulse rounded-2xl bg-muted/40" />
             ))}
@@ -14957,10 +14955,10 @@ export function WorkspaceManagementPage() {
                               </div>
                             )
                           }
-                          if (workspaceLoadDistributionData.length === 0) {
+                          if (workspaceLoadDistributionData.length === 0 || workspaceLoadDistributionData.every((w) => w.tasks <= 0)) {
                             return (
                               <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
-                                No workspace load data in the current scope yet.
+                                No linked projects in the current workspace scope yet.
                               </div>
                             )
                           }
@@ -15165,9 +15163,15 @@ export function WorkspaceManagementPage() {
                         style={chartEnterStyle(5)}
                       >
                         <div className="h-64 min-h-[220px] w-full">
-                          {allWorkspacesForList.length === 0 ? (
+                          {allWorkspacesForList.length === 0 ||
+                          (riskExposureStackRow[0] != null &&
+                            riskExposureStackRow[0].noOwner +
+                              riskExposureStackRow[0].lowActivity +
+                              riskExposureStackRow[0].overloaded +
+                              riskExposureStackRow[0].governance ===
+                              0) ? (
                             <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
-                              No risk exposure data in the current scope yet.
+                              No risk-signal counts in the current scope yet (owner, engagement, overload, or governance gap).
                             </div>
                           ) : (
                           <MeasuredResponsiveContainer>

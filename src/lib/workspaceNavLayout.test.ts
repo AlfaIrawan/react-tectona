@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   computeWorkspaceMainPanelViewportHeightPx,
   measureEnterpriseNavHeightFromMainPanel,
+  workspaceAsideClass,
 } from '@/lib/workspaceNavLayout'
 
 describe('workspaceNavLayout', () => {
@@ -39,5 +40,11 @@ describe('workspaceNavLayout', () => {
     } finally {
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
     }
+  })
+
+  it('docks enterprise nav to the main canvas offset instead of the viewport edge', () => {
+    const docked = workspaceAsideClass(true, false, 'default')
+    expect(docked).toContain('--app-main-canvas-left')
+    expect(docked).not.toContain('xl:left-0')
   })
 })

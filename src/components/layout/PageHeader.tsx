@@ -14,7 +14,7 @@ export function PageHeader({ title, description, right, className }: PageHeaderP
       <div>
         <h1 className="text-2xl font-bold text-foreground">{title}</h1>
         {description ? (
-          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">{description}</p>
+          <p className="text-sm text-muted-foreground mt-1">{description}</p>
         ) : null}
       </div>
       {right ? <div className="flex-shrink-0 pt-0.5">{right}</div> : null}

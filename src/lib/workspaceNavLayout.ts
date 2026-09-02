@@ -116,7 +116,7 @@ export function workspaceAsideClass(
         // <xl: stick di bawah topbar (h-12) dan batasi tinggi sesuai offset itu
         'max-xl:sticky max-xl:top-12 max-xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
         // xl: tinggi eksplisit (+ WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX) — kelas harus literal agar Tailwind JIT mengenali
-        'xl:fixed xl:left-0 xl:top-12 xl:z-30 xl:min-h-0 xl:h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:h-[calc(var(--app-vh,100vh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
+        'xl:fixed xl:left-[var(--app-main-canvas-left,0px)] xl:top-12 xl:z-30 xl:min-h-0 xl:h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:h-[calc(var(--app-vh,100vh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
         'xl:pb-0 xl:pr-1 xl:pl-0 xl:pt-0',
         isCollapsed ? 'xl:w-[56px]' : dockedWidthClass(widthVariant)
       )
