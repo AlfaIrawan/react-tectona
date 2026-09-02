@@ -8,10 +8,15 @@ import {
   isProjectLinkedDocumentFolder,
   PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR,
 } from '@/modules/projects/lib/projectDocumentFolder'
+import {
+  isSamplesSystemFolder,
+  SAMPLES_FOLDER_ACCENT_COLOR,
+} from '@/modules/document-knowledge-management/lib/samplesFolder'
 import compactStyles from './DocumentRepositoryFolderCard.module.css'
 
 type DocumentRepositoryFolderCardProps = {
   folder: DocumentFolder
+  folders?: DocumentFolder[]
   isRenaming: boolean
   isDragOver: boolean
   onOpen: () => void
@@ -26,6 +31,7 @@ type DocumentRepositoryFolderCardProps = {
 
 export function DocumentRepositoryFolderCard({
   folder,
+  folders = [],
   isRenaming,
   isDragOver,
   onOpen,
@@ -41,10 +47,16 @@ export function DocumentRepositoryFolderCard({
   const hasDocuments = folder.document_count > 0
   const metaLabel = `${folder.document_count} docs · ${folder.children_count} subfolders`
   const isProjectFolder = isProjectLinkedDocumentFolder(folder.description)
-  const themedStyle = isProjectFolder
-    ? (buildFolderCardThemeVariables(PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR, hasDocuments) as CSSProperties)
+  const isSamplesFolder = isSamplesSystemFolder(folder, folders)
+  const accentColor = isSamplesFolder
+    ? SAMPLES_FOLDER_ACCENT_COLOR
+    : isProjectFolder
+      ? PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR
+      : null
+  const themedStyle = accentColor
+    ? (buildFolderCardThemeVariables(accentColor, hasDocuments) as CSSProperties)
     : undefined
-  const showRenameInput = isRenaming && !isProjectFolder
+  const showRenameInput = isRenaming && !isProjectFolder && !isSamplesFolder
 
   useEffect(() => {
     if (!showRenameInput) return
@@ -59,6 +71,7 @@ export function DocumentRepositoryFolderCard({
         compactStyles.compactCard,
         'group/folder shrink-0',
         isProjectFolder && folderCardStyles.folderCardThemed,
+        isSamplesFolder && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         isDragOver && folderCardStyles.dragOver,
       )}
@@ -111,19 +124,25 @@ export function DocumentRepositoryFolderCard({
                 folderCardStyles.folderTitle,
                 compactStyles.compactTitle,
                 'min-w-0 flex-1 text-left',
-                isProjectFolder ? 'flex items-center gap-1 cursor-pointer' : 'hover:text-sky-700',
+                isProjectFolder || isSamplesFolder ? 'flex items-center gap-1 cursor-pointer' : 'hover:text-sky-700',
               )}
-              title={isProjectFolder ? `${folder.name} (linked to project — name and color are locked)` : folder.name}
+              title={
+                isSamplesFolder
+                  ? `${folder.name} (Tectona Samples — locked system folder)`
+                  : isProjectFolder
+                    ? `${folder.name} (linked to project — name and color are locked)`
+                    : folder.name
+              }
               onClick={(event) => {
                 event.stopPropagation()
-                if (isProjectFolder) {
+                if (isProjectFolder || isSamplesFolder) {
                   onOpen()
                   return
                 }
                 onStartRename()
               }}
             >
-              {isProjectFolder ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
+              {isProjectFolder || isSamplesFolder ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
               <span className="min-w-0 truncate">{folder.name}</span>
             </button>
           )}

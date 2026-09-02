@@ -8,22 +8,34 @@ import {
   isProjectLinkedDocumentFolder,
   PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR,
 } from '@/modules/projects/lib/projectDocumentFolder'
+import {
+  isSamplesSystemFolder,
+  SAMPLES_FOLDER_ACCENT_COLOR,
+} from '@/modules/document-knowledge-management/lib/samplesFolder'
 import compactStyles from './DocumentRepositoryFolderCard.module.css'
 
 type DocumentRepositoryFolderCardReadOnlyProps = {
   folder: DocumentFolder
+  folders?: DocumentFolder[]
   onOpen: () => void
 }
 
 export function DocumentRepositoryFolderCardReadOnly({
   folder,
+  folders = [],
   onOpen,
 }: DocumentRepositoryFolderCardReadOnlyProps) {
   const hasDocuments = folder.document_count > 0
   const metaLabel = `${folder.document_count} docs · ${folder.children_count} subfolders`
   const isProjectFolder = isProjectLinkedDocumentFolder(folder.description)
-  const themedStyle = isProjectFolder
-    ? (buildFolderCardThemeVariables(PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR, hasDocuments) as CSSProperties)
+  const isSamplesFolder = isSamplesSystemFolder(folder, folders)
+  const accentColor = isSamplesFolder
+    ? SAMPLES_FOLDER_ACCENT_COLOR
+    : isProjectFolder
+      ? PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR
+      : null
+  const themedStyle = accentColor
+    ? (buildFolderCardThemeVariables(accentColor, hasDocuments) as CSSProperties)
     : undefined
 
   return (
@@ -32,6 +44,7 @@ export function DocumentRepositoryFolderCardReadOnly({
         folderCardStyles.folderCard,
         compactStyles.compactCard,
         isProjectFolder && folderCardStyles.folderCardThemed,
+        isSamplesFolder && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         'cursor-pointer',
       )}
@@ -65,7 +78,7 @@ export function DocumentRepositoryFolderCardReadOnly({
               folderCardStyles.folderTitle,
               compactStyles.compactTitle,
               'min-w-0 flex-1 text-left',
-              isProjectFolder ? 'flex items-center gap-1' : 'hover:text-sky-700',
+              isProjectFolder || isSamplesFolder ? 'flex items-center gap-1' : 'hover:text-sky-700',
             )}
             title={folder.name}
             onClick={(event) => {
@@ -73,7 +86,7 @@ export function DocumentRepositoryFolderCardReadOnly({
               onOpen()
             }}
           >
-            {isProjectFolder ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
+            {isProjectFolder || isSamplesFolder ? <Lock className="h-3 w-3 shrink-0 opacity-70" aria-hidden /> : null}
             <span className="min-w-0 truncate">{folder.name}</span>
           </button>
         </div>

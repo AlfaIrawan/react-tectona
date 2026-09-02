@@ -12,6 +12,8 @@ export interface DocumentFolder {
   parent_id: string | null
   owner_id: string
   workspace_id: string | null
+  is_system?: boolean
+  folder_kind?: string | null
   document_count: number
   children_count: number
   created_date: string
@@ -149,4 +151,15 @@ export async function deleteDocumentFolder(id: string): Promise<void> {
     headers: { Accept: 'application/json', 'X-Actor-Id': 'react-tectona-ui' },
   })
   await handleJson<void>(res)
+}
+
+export async function ensureDocumentSamplesFolders(workspaceIds: string[]): Promise<void> {
+  const ids = [...new Set(workspaceIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return
+  const res = await apiFetch(`${getV1Base()}/folders/system/samples/ensure`, {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ workspace_ids: ids }),
+  })
+  await handleJson<unknown>(res)
 }

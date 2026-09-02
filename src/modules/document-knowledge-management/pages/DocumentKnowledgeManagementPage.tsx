@@ -459,10 +459,12 @@ import {
 import {
   createDocumentFolder,
   deleteDocumentFolder,
+  ensureDocumentSamplesFolders,
   fetchAllDocumentFolders,
   updateDocumentFolder,
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
+import { isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
 import { extractDocumentTextPreview } from '@/lib/api/documentParserApi'
 import { transcribeAudio } from '@/lib/api/tectonaVoiceApi'
 import { getFileTypeIcon } from '../fileTypeIcon'
@@ -5294,6 +5296,7 @@ export function DocumentKnowledgeManagementPage() {
   } | null>(null)
   const [repositoryRowContextMenu, setRepositoryRowContextMenu] = useState<{ documentId: string; detailId: string; x: number; y: number } | null>(null)
   const [repositoryFolderContextMenu, setRepositoryFolderContextMenu] = useState<{ folderId: string; x: number; y: number } | null>(null)
+  const samplesFoldersBootstrappedRef = useRef(false)
   const [templateRowContextMenu, setTemplateRowContextMenu] = useState<{ templateId: string; x: number; y: number } | null>(null)
   const [templateDownloadBusyId, setTemplateDownloadBusyId] = useState<string | null>(null)
   const [templateStatusBusyId, setTemplateStatusBusyId] = useState<string | null>(null)
@@ -6244,6 +6247,28 @@ export function DocumentKnowledgeManagementPage() {
 
   const loadRepositoryFolders = useCallback(async () => {
     try {
+      const workspaceIds = new Set<string>()
+      if (activeWorkspaceApiId) workspaceIds.add(activeWorkspaceApiId)
+      if (!samplesFoldersBootstrappedRef.current) {
+        try {
+          const directory = await fetchAllWorkspaceOrgWorkspaces()
+          for (const workspace of directory) {
+            if ((workspace.status_code || '').toLowerCase() === 'archived') continue
+            if (workspace.id) workspaceIds.add(workspace.id)
+          }
+        } catch {
+          /* still ensure the active workspace */
+        }
+      }
+      try {
+        const ids = [...workspaceIds]
+        for (let offset = 0; offset < ids.length; offset += 200) {
+          await ensureDocumentSamplesFolders(ids.slice(offset, offset + 200))
+        }
+        if (ids.length > 1) samplesFoldersBootstrappedRef.current = true
+      } catch {
+        /* listing still proceeds if bootstrap is unavailable */
+      }
       const folders = await fetchAllDocumentFolders(activeWorkspaceApiId)
       const session = getSession()
       const currentOwnerId = session?.user.id || session?.user.email || null
@@ -6300,15 +6325,25 @@ export function DocumentKnowledgeManagementPage() {
     const name = nextName.trim()
     setRepositoryFolderRenameId(null)
     if (!name) return
+    const folder = repositoryFolders.find((item) => item.id === folderId)
+    if (folder && isSamplesSystemFolder(folder, repositoryFolders)) return
     try {
       await updateDocumentFolder(folderId, { name })
       await loadRepositoryFolders()
     } catch (e) {
       addToast({ title: 'Failed to rename folder', description: e instanceof Error ? e.message : '', variant: 'error' })
     }
-  }, [addToast, loadRepositoryFolders])
+  }, [addToast, loadRepositoryFolders, repositoryFolders])
 
   const handleDeleteRepositoryFolder = useCallback(async (folder: DocumentFolder) => {
+    if (isSamplesSystemFolder(folder, repositoryFolders)) {
+      addToast({
+        title: 'System folder',
+        description: 'Samples is a Tectona system folder and cannot be deleted.',
+        variant: 'error',
+      })
+      return
+    }
     try {
       await deleteDocumentFolder(folder.id)
       if (repositoryCurrentFolderId === folder.id) setRepositoryCurrentFolderId(folder.parent_id ?? null)
@@ -6318,7 +6353,7 @@ export function DocumentKnowledgeManagementPage() {
     } catch (e) {
       addToast({ title: 'Failed to delete folder', description: e instanceof Error ? e.message : '', variant: 'error' })
     }
-  }, [repositoryCurrentFolderId, addToast, loadRepositoryFolders, loadRepositoryItems])
+  }, [repositoryCurrentFolderId, addToast, loadRepositoryFolders, loadRepositoryItems, repositoryFolders])
 
   const handleMoveDocumentToFolder = useCallback(async (item: RepositoryItem, folderId: string | null) => {
     if ((item.folderId ?? null) === folderId) return
@@ -6361,6 +6396,14 @@ export function DocumentKnowledgeManagementPage() {
   }, [addToast, loadRepositoryItems, loadRepositoryFolders])
 
   const handleMoveFolderToParent = useCallback(async (folder: DocumentFolder, parentId: string | null) => {
+    if (isSamplesSystemFolder(folder, repositoryFolders)) {
+      addToast({
+        title: 'System folder',
+        description: 'Samples folders cannot be moved.',
+        variant: 'error',
+      })
+      return
+    }
     if ((folder.parent_id ?? null) === parentId) return
     if (parentId && isDocumentFolderDescendant(repositoryFolders, folder.id, parentId)) {
       addToast({ title: 'Invalid move', description: 'Cannot move a folder into itself or its subfolder.', variant: 'error' })
@@ -6383,7 +6426,12 @@ export function DocumentKnowledgeManagementPage() {
   const repositorySubfolders = useMemo(
     () => repositoryFolders
       .filter((folder) => (folder.parent_id ?? null) === repositoryCurrentFolderId)
-      .sort((a, b) => a.name.localeCompare(b.name)),
+      .sort((a, b) => {
+        const aSample = isSamplesSystemFolder(a, repositoryFolders) ? 0 : 1
+        const bSample = isSamplesSystemFolder(b, repositoryFolders) ? 0 : 1
+        if (aSample !== bSample) return aSample - bSample
+        return a.name.localeCompare(b.name)
+      }),
     [repositoryFolders, repositoryCurrentFolderId],
   )
 
@@ -16619,6 +16667,7 @@ export function DocumentKnowledgeManagementPage() {
                             <DocumentRepositoryFolderCard
                               key={folder.id}
                               folder={folder}
+                              folders={repositoryFolders}
                               isRenaming={repositoryFolderRenameId === folder.id}
                               isDragOver={repositoryDropTarget === folder.id}
                               onOpen={() => setRepositoryCurrentFolderId(folder.id)}
@@ -24031,6 +24080,8 @@ export function DocumentKnowledgeManagementPage() {
               <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">Open {repositoryFolderContextMenuItem.name}</span>
             </ContextMenuItem>
+            {isSamplesSystemFolder(repositoryFolderContextMenuItem, repositoryFolders) ? null : (
+              <>
             <ContextMenuSeparator />
             <ContextMenuSubmenu
               trigger={
@@ -24072,7 +24123,15 @@ export function DocumentKnowledgeManagementPage() {
                 ) : null}
               </div>
             </ContextMenuSubmenu>
+              </>
+            )}
             <ContextMenuSeparator />
+            {isSamplesSystemFolder(repositoryFolderContextMenuItem, repositoryFolders) ? (
+              <ContextMenuItem disabled>
+                <Lock className="w-4 h-4 mr-2 shrink-0" />
+                Samples is a locked system folder
+              </ContextMenuItem>
+            ) : (
             <ContextMenuItem
               className="text-destructive"
               onClick={() => {
@@ -24084,6 +24143,7 @@ export function DocumentKnowledgeManagementPage() {
               <Trash2 className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">Delete {repositoryFolderContextMenuItem.name}</span>
             </ContextMenuItem>
+            )}
           </>
         ) : null}
       </ContextMenu>
