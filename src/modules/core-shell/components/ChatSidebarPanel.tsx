@@ -1765,10 +1765,19 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     inboxRefreshInFlightRef.current = true
     try {
       const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
+      const displayNameByUserId: Record<string, string> = {}
       const peerIds = res.items
-        .map((ch) => ch.peer_user_id)
-        .filter((id): id is string => Boolean(id?.trim()))
-      const extraContacts = await hydrateChatContactsForUserIds(peerIds)
+        .map((ch) => {
+          const peerId = ch.peer_user_id?.trim()
+          if (!peerId) return null
+          const title = ch.title?.trim()
+          if (title && title.toLowerCase() !== peerId.toLowerCase()) {
+            displayNameByUserId[peerId] = title
+          }
+          return peerId
+        })
+        .filter((id): id is string => Boolean(id))
+      const extraContacts = await hydrateChatContactsForUserIds(peerIds, { displayNameByUserId })
       let contacts = chatContactsRef.current
       if (extraContacts.length > 0) {
         const merged = mergeChatContactLists(contacts, extraContacts)
@@ -3865,9 +3874,19 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
       try {
         const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
-        const extraContacts = await hydrateChatContactsForUserIds(
-          res.items.map((ch) => ch.peer_user_id).filter((id): id is string => Boolean(id?.trim())),
-        )
+        const displayNameByUserId: Record<string, string> = {}
+        const peerIds = res.items
+          .map((ch) => {
+            const peerId = ch.peer_user_id?.trim()
+            if (!peerId) return null
+            const title = ch.title?.trim()
+            if (title && title.toLowerCase() !== peerId.toLowerCase()) {
+              displayNameByUserId[peerId] = title
+            }
+            return peerId
+          })
+          .filter((id): id is string => Boolean(id))
+        const extraContacts = await hydrateChatContactsForUserIds(peerIds, { displayNameByUserId })
         if (extraContacts.length > 0) {
           contacts = mergeChatContactLists(contacts, extraContacts)
           chatContactsRef.current = contacts

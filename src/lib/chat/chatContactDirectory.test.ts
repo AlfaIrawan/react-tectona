@@ -6,6 +6,7 @@ import {
   pickChatDirectoryWorkspaceIds,
   resolveActiveWorkspaceMembershipRows,
   shouldIncludeIdentityUserInChatDirectory,
+  shouldLookupIdentityUserById,
   TECTONA_ASSISTANT_CONTACT,
 } from './chatContactDirectory'
 
@@ -105,6 +106,28 @@ describe('buildChatContactsFromWorkspaceMembers', () => {
     expect(contacts[0]).toEqual(TECTONA_ASSISTANT_CONTACT)
     expect(contacts.some((contact) => contact.id === 'outsider')).toBe(false)
     expect(contacts.some((contact) => contact.id === 'member-a')).toBe(true)
+  })
+})
+
+describe('shouldLookupIdentityUserById', () => {
+  it('does not GET by id when the identity list already loaded', () => {
+    expect(
+      shouldLookupIdentityUserById(
+        'e6ba7c48-1395-4661-bbd6-3868419de2d6',
+        new Set(),
+        true,
+        new Set(),
+      ),
+    ).toBe(false)
+  })
+
+  it('does not retry ids that already 404d', () => {
+    const id = '4c58d169-6339-42d5-9d25-aa000ce1f77e'
+    expect(shouldLookupIdentityUserById(id, new Set(), false, new Set([id]))).toBe(false)
+  })
+
+  it('looks up by id only when the directory list failed', () => {
+    expect(shouldLookupIdentityUserById('abc', new Set(), false, new Set())).toBe(true)
   })
 })
 

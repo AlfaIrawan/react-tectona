@@ -77,9 +77,9 @@ function avatarClassForUserId(userId: string): string {
   return AVATAR_GRADIENTS[hash] ?? AVATAR_GRADIENTS[0]
 }
 
-function isActiveIdentityUser(user: IdentityUserDto): boolean {
+function isListableIdentityUser(user: IdentityUserDto): boolean {
   const code = (user.status_code ?? '').toLowerCase()
-  return code === '' || code === 'active'
+  return code === '' || code === 'active' || code === 'invited'
 }
 
 export function mapIdentityUserToChatContact(user: IdentityUserDto): ChatContact {
@@ -209,7 +209,7 @@ export function shouldIncludeIdentityUserInChatDirectory(
   user: Pick<IdentityUserDto, 'email' | 'status_code'>,
   sessionEmail: string | undefined,
 ): boolean {
-  if (!isActiveIdentityUser(user as IdentityUserDto)) return false
+  if (!isListableIdentityUser(user as IdentityUserDto)) return false
   const email = user.email?.trim() ?? ''
   if (!email) return false
   const sessionDomain =
@@ -224,6 +224,26 @@ const IDENTITY_DIRECTORY_MAX_PAGES = 10
 export type ChatIdentityDirectory = {
   subjectIds: Set<string>
   users: IdentityUserDto[]
+  listSucceeded: boolean
+}
+
+let listedIdentityById = new Map<string, IdentityUserDto>()
+let identityDirectoryListOk = false
+const identityLookupFailedIds = new Set<string>()
+
+/** Skip GET /users/{id} when the directory already answered, or a prior 404 was cached. */
+export function shouldLookupIdentityUserById(
+  userId: string,
+  listedIds: ReadonlySet<string>,
+  listSucceeded: boolean,
+  failedIds: ReadonlySet<string>,
+): boolean {
+  const id = userId.trim()
+  if (!id) return false
+  if (failedIds.has(id)) return false
+  if (listedIds.has(id)) return false
+  if (listSucceeded) return false
+  return true
 }
 
 /**
@@ -236,12 +256,19 @@ export async function loadChatIdentityDirectory(
 ): Promise<ChatIdentityDirectory> {
   const subjectIds = new Set<string>()
   const usersById = new Map<string, IdentityUserDto>()
+  let listSucceeded = false
   for (let page = 0; page < IDENTITY_DIRECTORY_MAX_PAGES; page += 1) {
-    const listed = await fetchIdentityUsers({
-      limit: IDENTITY_DIRECTORY_PAGE,
-      offset: page * IDENTITY_DIRECTORY_PAGE,
-    }).catch(() => ({ items: [] as IdentityUserDto[] }))
-    const items = listed.items ?? []
+    let items: IdentityUserDto[] = []
+    try {
+      const listed = await fetchIdentityUsers({
+        limit: IDENTITY_DIRECTORY_PAGE,
+        offset: page * IDENTITY_DIRECTORY_PAGE,
+      })
+      listSucceeded = true
+      items = listed.items ?? []
+    } catch {
+      break
+    }
     for (const user of items) {
       if (!user.id?.trim()) continue
       usersById.set(user.id, user)
@@ -251,7 +278,11 @@ export async function loadChatIdentityDirectory(
     }
     if (items.length < IDENTITY_DIRECTORY_PAGE) break
   }
-  return { subjectIds, users: [...usersById.values()] }
+
+  listedIdentityById = usersById
+  identityDirectoryListOk = listSucceeded
+
+  return { subjectIds, users: [...usersById.values()], listSucceeded }
 }
 
 const IDENTITY_ENRICH_BATCH = 40
@@ -263,19 +294,32 @@ async function loadIdentityUsersForSubjects(
   if (subjectIds.size === 0 && alreadyLoaded.length === 0) return []
 
   const byId = new Map(alreadyLoaded.map((user) => [user.id, user]))
-  if (byId.size === 0) {
-    const listed = await fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] }))
-    for (const user of listed.items ?? []) {
-      byId.set(user.id, user)
-    }
+  for (const user of listedIdentityById.values()) {
+    byId.set(user.id, user)
   }
 
-  const missing = [...subjectIds].filter((id) => !byId.has(id))
+  const listedIds = new Set(byId.keys())
+  const missing = [...subjectIds].filter((id) =>
+    shouldLookupIdentityUserById(id, listedIds, identityDirectoryListOk, identityLookupFailedIds),
+  )
   const toFetch = missing.slice(0, IDENTITY_ENRICH_BATCH)
   if (toFetch.length > 0) {
-    const extras = await Promise.all(toFetch.map((id) => fetchIdentityUser(id).catch(() => null)))
+    const extras = await Promise.all(
+      toFetch.map(async (id) => {
+        try {
+          return await fetchIdentityUser(id)
+        } catch {
+          identityLookupFailedIds.add(id)
+          return null
+        }
+      }),
+    )
     for (const user of extras) {
       if (user) byId.set(user.id, user)
+    }
+  } else {
+    for (const id of subjectIds) {
+      if (!byId.has(id)) identityLookupFailedIds.add(id)
     }
   }
 
@@ -290,7 +334,7 @@ export function buildChatContactsFromWorkspaceMembers(
   const enrichedUsers: IdentityUserDto[] = []
   for (const subjectId of allowedSubjectIds) {
     const user = identityById.get(subjectId)
-    if (user && isActiveIdentityUser(user)) enrichedUsers.push(user)
+    if (user && isListableIdentityUser(user)) enrichedUsers.push(user)
   }
 
   const contacts = buildChatContactsFromIdentityUsers(enrichedUsers)
@@ -332,7 +376,7 @@ export function buildChatContactsFromIdentityUsers(users: IdentityUserDto[]): Ch
   }
 
   for (const user of users) {
-    if (!isActiveIdentityUser(user)) continue
+    if (!isListableIdentityUser(user)) continue
     if (currentUserId && user.id === currentUserId) {
       byId.set(user.id, sessionUserToChatContact(session!))
       continue
@@ -490,21 +534,89 @@ export function mergeChatContactLists(base: ChatContact[], extra: ChatContact[])
 }
 
 /** Resolve DM/group peers that are not in the WAC directory via identity-lite. */
-export async function hydrateChatContactsForUserIds(userIds: string[]): Promise<ChatContact[]> {
+export async function hydrateChatContactsForUserIds(
+  userIds: string[],
+  options?: { displayNameByUserId?: Record<string, string> },
+): Promise<ChatContact[]> {
   const unique = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))]
-  const missing = unique.filter((id) => {
-    const existing = cachedContactsById.get(id)
-    return !existing || isPlaceholderChatContactName(existing.name) || existing.name.toLowerCase() === id.toLowerCase()
-  })
-  if (missing.length === 0) return []
-
-  const fetched = await Promise.all(missing.map((id) => fetchIdentityUser(id).catch(() => null)))
+  const listedIds = new Set(listedIdentityById.keys())
   const added: ChatContact[] = []
-  for (const user of fetched) {
-    if (!user) continue
-    const contact = mapIdentityUserToChatContact(user)
-    rememberChatContact(contact)
-    added.push(contact)
+
+  const unresolved: string[] = []
+  for (const id of unique) {
+    const existing = cachedContactsById.get(id)
+    if (existing && !isPlaceholderChatContactName(existing.name) && existing.name.toLowerCase() !== id.toLowerCase()) {
+      continue
+    }
+    const listed = listedIdentityById.get(id)
+    if (listed && isListableIdentityUser(listed)) {
+      const contact = mapIdentityUserToChatContact(listed)
+      rememberChatContact(contact)
+      added.push(contact)
+      continue
+    }
+    const hint = options?.displayNameByUserId?.[id]?.trim()
+    if (hint && !isPlaceholderChatContactName(hint)) {
+      const contact: ChatContact = {
+        id,
+        name: hint,
+        mode: 'team',
+        initials: initialsFromDisplayName(hint),
+        avatarClassName: avatarClassForUserId(id),
+      }
+      rememberChatContact(contact)
+      added.push(contact)
+      continue
+    }
+    if (!shouldLookupIdentityUserById(id, listedIds, identityDirectoryListOk, identityLookupFailedIds)) {
+      if (!existing) {
+        const fallback: ChatContact = {
+          id,
+          name: `Member ${id.slice(0, 8)}`,
+          mode: 'team',
+          initials: initialsFromDisplayName(id),
+          avatarClassName: avatarClassForUserId(id),
+        }
+        rememberChatContact(fallback)
+        added.push(fallback)
+      }
+      continue
+    }
+    unresolved.push(id)
+  }
+
+  if (unresolved.length === 0) return added
+
+  const fetched = await Promise.all(
+    unresolved.map(async (id) => {
+      try {
+        return await fetchIdentityUser(id)
+      } catch {
+        identityLookupFailedIds.add(id)
+        return null
+      }
+    }),
+  )
+  for (let i = 0; i < unresolved.length; i += 1) {
+    const user = fetched[i]
+    const id = unresolved[i]
+    if (user) {
+      const contact = mapIdentityUserToChatContact(user)
+      rememberChatContact(contact)
+      added.push(contact)
+      continue
+    }
+    if (!cachedContactsById.get(id)) {
+      const fallback: ChatContact = {
+        id,
+        name: `Member ${id.slice(0, 8)}`,
+        mode: 'team',
+        initials: initialsFromDisplayName(id),
+        avatarClassName: avatarClassForUserId(id),
+      }
+      rememberChatContact(fallback)
+      added.push(fallback)
+    }
   }
   return added
 }
