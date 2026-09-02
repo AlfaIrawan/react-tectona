@@ -1,30 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { getUiLayoutScale } from '@/lib/uiScale'
-
 export const APP_MAIN_BODY_SELECTOR = '[data-app-main-body]'
-export const APP_MAIN_CANVAS_SELECTOR = '[data-app-main-canvas]'
-export const APP_MAIN_CANVAS_LEFT_VAR = '--app-main-canvas-left'
 
 /** Padding horizontal konten di dalam main body (`AppLayout` — `px-10` × 2). Selaras Layout debug `contentW`. */
 export const APP_MAIN_BODY_CONTENT_PADDING_X = 80
-
-/**
- * Pin docked enterprise nav to the AppLayout 1920 canvas (inside padding), not the viewport.
- * `position:fixed; left:0` orphans the rail on ultrawide while content is `mx-auto max-w-[1920px]`.
- */
-export function syncAppMainCanvasLeft(canvasEl: HTMLElement | null): void {
-  const root = document.documentElement
-  if (!canvasEl) {
-    root.style.removeProperty(APP_MAIN_CANVAS_LEFT_VAR)
-    return
-  }
-  const scale = getUiLayoutScale()
-  const rect = canvasEl.getBoundingClientRect()
-  const pad = Number.parseFloat(getComputedStyle(canvasEl).paddingLeft) || 0
-  const left = Math.max(0, rect.left / scale + pad)
-  root.style.setProperty(APP_MAIN_CANVAS_LEFT_VAR, `${Math.round(left)}px`)
-}
 
 function readMainBodyWidths(el: HTMLElement): { bodyWidth: number; contentWidth: number } {
   // Layout box, not getBoundingClientRect: an ancestor transform (ui-scale-lock)

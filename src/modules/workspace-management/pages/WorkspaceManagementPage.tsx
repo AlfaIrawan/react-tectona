@@ -4744,7 +4744,7 @@ function IntelligenceDonut({
 
           <div className="absolute inset-0 min-h-0 min-w-0">
             <MeasuredResponsiveContainer className="h-full w-full min-h-0 min-w-0">
-            <PieChart>
+            <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
               <defs>
                 {data.map((entry, index) => {
                   const sc = pieColors?.[index] ?? entry.color
@@ -4766,8 +4766,8 @@ function IntelligenceDonut({
                 data={data}
                 cx="50%"
                 cy="50%"
-                innerRadius={60}
-                outerRadius={88}
+                innerRadius="58%"
+                outerRadius="86%"
                 cornerRadius={isVivid ? 10 : 7}
                 paddingAngle={isVivid ? 3.5 : 2.5}
                 dataKey="value"
@@ -4953,40 +4953,16 @@ function WorkspaceHealthExecutiveDonut({
   }
 
   return (
-    <>
-      <style>{`
-        @keyframes ws-sheen-spin {
-          from { transform: rotate(0deg); }
-          to   { transform: rotate(360deg); }
-        }
-        .ws-sheen-ring {
-          animation: ws-sheen-spin 14s linear infinite;
-        }
-      `}</style>
-    <div className="grid gap-5 lg:grid-cols-[minmax(220px,260px),1fr] lg:items-center">
-      <div className="mx-auto flex w-full max-w-[260px] flex-col items-center gap-2">
+    <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(200px,240px),1fr] lg:items-center">
+      <div className="mx-auto flex w-full max-w-[240px] flex-col items-center gap-2">
         <div className="whitespace-nowrap rounded-full border border-emerald-200/80 bg-emerald-50/95 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
           Portfolio Resilience
         </div>
-      <div className="relative h-52 w-52">
-        {/* Radial vignette ambient glow */}
-        <div className="pointer-events-none absolute -inset-3 rounded-full" style={{ background: 'radial-gradient(ellipse 90% 90% at 50% 50%, rgba(16,185,129,0.15) 0%, rgba(14,165,233,0.10) 40%, transparent 72%)' }} />
-        {/* Animated spinning sheen ring */}
-        <div className="ws-sheen-ring pointer-events-none absolute -inset-1 rounded-full" style={{
-          background: 'conic-gradient(from 0deg, transparent 0%, rgba(255,255,255,0.55) 12%, transparent 25%, transparent 50%, rgba(255,255,255,0.28) 62%, transparent 75%, transparent 100%)',
-          maskImage: 'radial-gradient(circle, transparent 44%, black 52%, black 56%, transparent 62%)',
-          WebkitMaskImage: 'radial-gradient(circle, transparent 44%, black 52%, black 56%, transparent 62%)',
-        }} />
-        {/* Second counter-slow ring for depth */}
-        <div className="pointer-events-none absolute -inset-2 rounded-full" style={{
-          background: 'conic-gradient(from 180deg, rgba(16,185,129,0.28), rgba(14,165,233,0.22), rgba(244,63,94,0.18), rgba(16,185,129,0.28))',
-          filter: 'blur(2px)',
-          opacity: 0.6,
-        }} />
-        <div className="pointer-events-none absolute inset-3 rounded-full border border-white/80 bg-gradient-to-br from-slate-50/90 via-white/95 to-slate-100/85 shadow-[0_22px_52px_rgba(15,23,42,0.14),inset_0_1px_0_rgba(255,255,255,0.95)]" />
+      <div className="relative aspect-square w-full max-w-[220px] overflow-hidden">
+        <div className="pointer-events-none absolute inset-[8%] rounded-full border border-white/80 bg-gradient-to-br from-slate-50/90 via-white/95 to-slate-100/85 shadow-[0_12px_28px_rgba(15,23,42,0.10)]" />
         <div className="absolute inset-0 min-h-0 min-w-0">
           <MeasuredResponsiveContainer className="h-full w-full min-h-0 min-w-0">
-          <PieChart>
+          <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <defs>
               <linearGradient id="health-seg-healthy" x1="0" y1="0" x2="1" y2="1">
                 <stop offset="0%" stopColor={palette.healthSegHealthy} />
@@ -5005,8 +4981,8 @@ function WorkspaceHealthExecutiveDonut({
               data={data}
               cx="50%"
               cy="50%"
-              innerRadius={52}
-              outerRadius={80}
+              innerRadius="58%"
+              outerRadius="86%"
               cornerRadius={8}
               paddingAngle={2}
               dataKey="value"
@@ -5050,9 +5026,9 @@ function WorkspaceHealthExecutiveDonut({
           </PieChart>
           </MeasuredResponsiveContainer>
         </div>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
           <div className="text-4xl font-bold leading-none tracking-tight text-slate-900">{total}</div>
-          <div className="mt-1 text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Workspace Total</div>
+          <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">Workspaces</div>
         </div>
       </div>
         <div className="flex flex-wrap items-center justify-center gap-1.5">
@@ -5156,7 +5132,6 @@ function WorkspaceHealthExecutiveDonut({
         </div>
       </div>
     </div>
-    </>
   )
 }
 

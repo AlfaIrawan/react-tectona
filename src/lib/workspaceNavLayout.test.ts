@@ -4,6 +4,7 @@ import {
   computeWorkspaceMainPanelViewportHeightPx,
   measureEnterpriseNavHeightFromMainPanel,
   workspaceAsideClass,
+  workspaceNavInnerClass,
 } from '@/lib/workspaceNavLayout'
 
 describe('workspaceNavLayout', () => {
@@ -42,9 +43,13 @@ describe('workspaceNavLayout', () => {
     }
   })
 
-  it('docks enterprise nav to the main canvas offset instead of the viewport edge', () => {
+  it('docks enterprise nav flush to the viewport left edge', () => {
     const docked = workspaceAsideClass(true, false, 'default')
-    expect(docked).toContain('--app-main-canvas-left')
-    expect(docked).not.toContain('xl:left-0')
+    expect(docked).toContain('xl:left-0')
+    expect(docked).not.toContain('--app-main-canvas-left')
+  })
+
+  it('squares the docked rail against the left screen edge', () => {
+    expect(workspaceNavInnerClass(true, false, false)).toContain('xl:!rounded-l-none')
   })
 })

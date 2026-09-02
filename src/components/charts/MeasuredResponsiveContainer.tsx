@@ -6,6 +6,17 @@ type MeasuredResponsiveContainerProps = {
 }
 
 /**
+ * Layout-box size for Recharts. `getBoundingClientRect()` is visual pixels and is
+ * wrong under `html.ui-scale-lock` (body `transform: scale`) — the SVG would be
+ * smaller than its CSS host and sit off-center inside donuts and bars.
+ */
+export function readChartHostLayoutSize(el: HTMLElement): { width: number; height: number } {
+  const width = Math.max(0, Math.floor(el.clientWidth || el.offsetWidth))
+  const height = Math.max(0, Math.floor(el.clientHeight || el.offsetHeight))
+  return { width, height }
+}
+
+/**
  * Measures host size and passes fixed width/height to Recharts charts.
  * Avoids Recharts ResponsiveContainer (internal ResizeObserver + redux store).
  */
@@ -27,14 +38,12 @@ export function MeasuredResponsiveContainer({
       if (rafRef.current != null) return
       rafRef.current = window.requestAnimationFrame(() => {
         rafRef.current = null
-        const rect = el.getBoundingClientRect()
-        const width = Math.max(0, Math.floor(rect.width))
-        const height = Math.max(0, Math.floor(rect.height))
+        const next = readChartHostLayoutSize(el)
         setSize((prev) => {
-          if (Math.abs(prev.width - width) <= 1 && Math.abs(prev.height - height) <= 1) {
+          if (Math.abs(prev.width - next.width) <= 1 && Math.abs(prev.height - next.height) <= 1) {
             return prev
           }
-          return { width, height }
+          return next
         })
       })
     }

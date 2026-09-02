@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Topbar } from './Topbar'
 import { useThemeStore } from '@/stores/theme-store'
 import { useSettingsPanelStore } from '@/stores/settings-panel-store'
@@ -8,7 +8,6 @@ import { useEmailPanelStore, clampEmailWidthPct } from '@/stores/email-panel-sto
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
 import { useRightDrawerStore } from '@/stores/right-drawer-store'
 import { syncUiScaleLock } from '@/lib/uiScale'
-import { syncAppMainCanvasLeft, APP_MAIN_CANVAS_LEFT_VAR } from '@/lib/useAppMainBodyWidth'
 import { cn } from '@/lib/utils'
 import { Outlet, useLocation } from 'react-router-dom'
 import ThemeSettingsPanel from '@/components/settings/ThemeSettingsPanel'
@@ -49,7 +48,6 @@ export function AppLayout({ children }: AppLayoutProps) {
   const setEmailOpen = useEmailPanelStore((s) => s.setOpen)
   const layoutRowRef = useRef<HTMLDivElement>(null)
   const mainBodyRef = useRef<HTMLDivElement>(null)
-  const mainCanvasRef = useRef<HTMLDivElement>(null)
   const commPanelRef = useRef<HTMLDivElement>(null)
   const [commResizing, setCommResizing] = useState(false)
 
@@ -86,31 +84,6 @@ export function AppLayout({ children }: AppLayoutProps) {
   useEffect(() => {
     syncUiScaleLock()
   }, [location.pathname])
-
-  useLayoutEffect(() => {
-    const canvas = mainCanvasRef.current
-    const sync = () => syncAppMainCanvasLeft(mainCanvasRef.current)
-    sync()
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sync) : null
-    if (canvas) ro?.observe(canvas)
-    const body = mainBodyRef.current
-    if (body) ro?.observe(body)
-    const row = layoutRowRef.current
-    if (row) ro?.observe(row)
-    window.addEventListener('resize', sync, { passive: true })
-    window.visualViewport?.addEventListener('resize', sync)
-    const raf = window.requestAnimationFrame(() => {
-      sync()
-      window.requestAnimationFrame(sync)
-    })
-    return () => {
-      ro?.disconnect()
-      window.removeEventListener('resize', sync)
-      window.visualViewport?.removeEventListener('resize', sync)
-      window.cancelAnimationFrame(raf)
-      document.documentElement.style.removeProperty(APP_MAIN_CANVAS_LEFT_VAR)
-    }
-  }, [location.pathname, commPanelDockedOpen, commPanelWidthPct, rightDrawerOpen])
 
   const clampFloatingChatPosition = useCallback((candidate: { x: number; y: number }) => {
     const panelRect = floatingPanelRef.current?.getBoundingClientRect()
@@ -374,11 +347,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       >
         <div ref={mainBodyRef} data-app-main-body className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto scrollbar-hide">
           <main className="relative flex min-h-full flex-1 flex-col">
-            <div
-              ref={mainCanvasRef}
-              data-app-main-canvas
-              className="relative mx-auto flex w-full min-h-full max-w-[1920px] flex-1 flex-col px-10 py-3"
-            >
+            <div className="relative mx-auto flex w-full min-h-full max-w-[1920px] flex-1 flex-col px-10 py-3">
               {children || <Outlet />}
             </div>
           </main>

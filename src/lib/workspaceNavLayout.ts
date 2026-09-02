@@ -116,7 +116,7 @@ export function workspaceAsideClass(
         // <xl: stick di bawah topbar (h-12) dan batasi tinggi sesuai offset itu
         'max-xl:sticky max-xl:top-12 max-xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
         // xl: tinggi eksplisit (+ WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX) — kelas harus literal agar Tailwind JIT mengenali
-        'xl:fixed xl:left-[var(--app-main-canvas-left,0px)] xl:top-12 xl:z-30 xl:min-h-0 xl:h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:h-[calc(var(--app-vh,100vh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
+        'xl:fixed xl:left-0 xl:top-12 xl:z-30 xl:min-h-0 xl:h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100dvh)-3rem+10px)] xl:h-[calc(var(--app-vh,100vh)-3rem+10px)] xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
         'xl:pb-0 xl:pr-1 xl:pl-0 xl:pt-0',
         isCollapsed ? 'xl:w-[56px]' : dockedWidthClass(widthVariant)
       )
@@ -143,7 +143,7 @@ export function workspaceNavInnerClass(docked: boolean, _sidebarFixed: boolean, 
       'max-h-[calc(var(--app-vh,100dvh)-3rem+10px)] max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
     docked &&
       cn(
-        'liquid-glass-enterprise-nav--docked p-2 max-xl:max-h-[calc(var(--app-vh,100vh)-4rem+10px)] xl:flex-1 xl:h-full xl:max-h-full xl:rounded-r-[28px] xl:rounded-l-none xl:border-r-0',
+        'liquid-glass-enterprise-nav--docked p-2 max-xl:max-h-[calc(var(--app-vh,100vh)-4rem+10px)] xl:flex-1 xl:h-full xl:max-h-full xl:rounded-r-[28px] xl:!rounded-l-none xl:border-l-0 xl:border-r-0',
       ),
     // Fixed Sidebar (non-docked): tinggi diset via JS agar selaras panel utama — jangan pakai sticky + h viewport penuh.
     isCollapsed ? 'w-[56px] p-1.5' : 'w-full'
