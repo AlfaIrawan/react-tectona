@@ -165,14 +165,24 @@ function MermaidToolbar({ onCopy, onFullscreen }: MermaidToolbarProps) {
 }
 
 type MermaidFullscreenModalProps = {
-  svgHtml: string
+  svgHtml?: string | null
+  imageUrl?: string | null
   source: string
   onClose: () => void
 }
 
-function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenModalProps) {
+function MermaidFullscreenModal({ svgHtml, imageUrl, source, onClose }: MermaidFullscreenModalProps) {
   const canvasRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(1)
+  const [natural, setNatural] = useState({ width: 0, height: 0 })
+
+  const centerScroll = useCallback(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
+    el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
+  }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -183,13 +193,27 @@ function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenM
   }, [onClose])
 
   useEffect(() => {
-    if (!canvasRef.current) return
+    if (!canvasRef.current || imageUrl || !svgHtml) return
     canvasRef.current.innerHTML = svgHtml
     const svg = canvasRef.current.querySelector('svg')
-    if (svg instanceof SVGSVGElement) {
-      normalizeRenderedSvg(svg)
+    if (!(svg instanceof SVGSVGElement)) return
+    const size = measureSvgNaturalSize(svg)
+    setNatural(size)
+    svg.style.display = 'block'
+    svg.style.maxWidth = 'none'
+    svg.style.width = `${size.width}px`
+    svg.style.height = `${size.height}px`
+  }, [svgHtml, imageUrl])
+
+  useEffect(() => {
+    const svg = canvasRef.current?.querySelector('svg')
+    if (svg instanceof SVGSVGElement && natural.width > 0) {
+      svg.style.width = `${natural.width * zoom}px`
+      svg.style.height = `${natural.height * zoom}px`
     }
-  }, [svgHtml])
+    const frame = window.requestAnimationFrame(centerScroll)
+    return () => window.cancelAnimationFrame(frame)
+  }, [centerScroll, imageUrl, natural.height, natural.width, zoom])
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(source)
@@ -199,6 +223,8 @@ function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenM
       variant: ok ? 'success' : 'error',
     })
   }
+
+  const imageWidth = natural.width > 0 ? natural.width * zoom : undefined
 
   return createPortal(
     <div
@@ -230,12 +256,25 @@ function MermaidFullscreenModal({ svgHtml, source, onClose }: MermaidFullscreenM
             <X className="h-4 w-4" />
           </Button>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
-          <div
-            ref={canvasRef}
-            className="mx-auto inline-block min-w-min origin-top [&_svg]:max-w-none"
-            style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
-          />
+        <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
+          <div className="flex min-h-full min-w-full items-center justify-center">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt="Diagram proses bisnis BPMN"
+                className="block h-auto max-w-none shrink-0"
+                style={{ width: imageWidth }}
+                onLoad={(event) => {
+                  setNatural({
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                  })
+                }}
+              />
+            ) : (
+              <div ref={canvasRef} className="shrink-0" />
+            )}
+          </div>
         </div>
       </div>
     </div>,
@@ -470,7 +509,7 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
       </div>
       {fullscreenOpen && bpmnUrl ? (
         <MermaidFullscreenModal
-          svgHtml={`<img src="${bpmnUrl}" alt="BPMN" style="max-width:100%;height:auto;display:block;margin:0 auto" />`}
+          imageUrl={bpmnUrl}
           source={source}
           onClose={() => setFullscreenOpen(false)}
         />

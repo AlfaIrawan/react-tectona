@@ -117,6 +117,35 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
       continue
     }
 
+    const chainIds =
+      /-->|---/.test(line)
+        ? line
+            .split(/\s*(?:--+>|---+)\s*(?:\|[^|]*\|\s*)?/)
+            .map((chunk) => chunk.trim().match(/^([A-Za-z][\w-]*)/)?.[1])
+            .filter((id): id is string => Boolean(id))
+        : []
+    if (chainIds.length >= 2) {
+      for (const piece of line.matchAll(
+        /([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(([^)]*)\)|\(\(([^)]*)\)\))/g,
+      )) {
+        const id = piece[1]
+        const label = unwrapLabel(piece[2] ?? piece[3] ?? piece[4] ?? piece[5] ?? id)
+        const shape: FallbackNodeShape =
+          piece[3] != null ? 'diamond' : piece[4] != null || piece[5] != null ? 'round' : 'rect'
+        ensureNode(id, label, shape)
+      }
+      for (const id of chainIds) ensureNode(id)
+      const labels = [...line.matchAll(/\|([^|]+)\|/g)].map((m) => unwrapLabel(m[1]))
+      for (let i = 0; i < chainIds.length - 1; i += 1) {
+        edges.push({
+          source: chainIds[i],
+          target: chainIds[i + 1],
+          label: labels[i] || undefined,
+        })
+      }
+      continue
+    }
+
     // A --> B  or A[Label] --> B[Label]
     const plainEdge = line.match(
       /^([A-Za-z][\w-]*)(?:\s*(?:\[[^\]]*\]|\{[^}]*\}|\([^)]*\)))?\s*--+>\s*([A-Za-z][\w-]*)(?:\s*(?:\[[^\]]*\]|\{[^}]*\}|\([^)]*\)))?$/,
@@ -148,6 +177,12 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
   }
 
   if (nodes.size === 0) return null
+  if (edges.length === 0 && nodes.size >= 2) {
+    const ids = [...nodes.keys()]
+    for (let i = 0; i < ids.length - 1; i += 1) {
+      edges.push({ source: ids[i], target: ids[i + 1] })
+    }
+  }
   collapseBareFallbackNodes(nodes, edges)
   if (nodes.size === 0) return null
   return { direction, nodes: [...nodes.values()], edges }
@@ -214,11 +249,21 @@ function layoutGraph(graph: FallbackGraph): {
   height: number
   positions: Map<string, { x: number; y: number; w: number; h: number }>
 } {
-  const nodeW = 200
-  const nodeH = 64
   const gapX = 56
   const gapY = 48
   const pad = 28
+  const boxes = new Map<string, { w: number; h: number }>()
+  for (const node of graph.nodes) {
+    const lines = wrapLabel(node.label, 36)
+    const longest = Math.max(...lines.map((line) => line.length), node.shape === 'round' ? 8 : 16)
+    const w =
+      node.shape === 'round'
+        ? Math.max(72, Math.min(160, longest * 9 + 24))
+        : Math.min(480, Math.max(220, longest * 8 + 32))
+    const h =
+      node.shape === 'round' ? 48 : Math.max(80, lines.length * 16 + 32)
+    boxes.set(node.id, { w, h })
+  }
 
   const indegree = new Map<string, number>()
   const children = new Map<string, string[]>()
@@ -268,18 +313,23 @@ function layoutGraph(graph: FallbackGraph): {
 
   ranks.forEach((r, rankIndex) => {
     const ids = buckets.get(r) ?? []
+    const rankHeights = ids.map((id) => boxes.get(id)?.h ?? 80)
+    const rankWidths = ids.map((id) => boxes.get(id)?.w ?? 220)
+    const rowH = Math.max(...rankHeights, 80)
+    const colW = Math.max(...rankWidths, 220)
     ids.forEach((id, colIndex) => {
+      const box = boxes.get(id) ?? { w: 220, h: 80 }
       const x =
         graph.direction === 'LR'
-          ? pad + rankIndex * (nodeW + gapX)
-          : pad + colIndex * (nodeW + gapX)
+          ? pad + rankIndex * (colW + gapX)
+          : pad + colIndex * (colW + gapX) + (colW - box.w) / 2
       const y =
         graph.direction === 'LR'
-          ? pad + colIndex * (nodeH + gapY)
-          : pad + rankIndex * (nodeH + gapY)
-      positions.set(id, { x, y, w: nodeW, h: nodeH })
-      maxX = Math.max(maxX, x + nodeW)
-      maxY = Math.max(maxY, y + nodeH)
+          ? pad + colIndex * (rowH + gapY) + (rowH - box.h) / 2
+          : pad + rankIndex * (rowH + gapY)
+      positions.set(id, { x, y, w: box.w, h: box.h })
+      maxX = Math.max(maxX, x + box.w)
+      maxY = Math.max(maxY, y + box.h)
     })
   })
 
@@ -301,7 +351,7 @@ export function buildFlowchartFallbackSvg(source: string): string | null {
     .map((node) => {
       const pos = positions.get(node.id)
       if (!pos) return ''
-      const lines = wrapLabel(node.label, 22)
+      const lines = wrapLabel(node.label, 36)
       const text = lines
         .map((line, idx) => {
           const dy = idx === 0 ? -((lines.length - 1) * 7) : 14
