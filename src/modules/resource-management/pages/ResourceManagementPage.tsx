@@ -175,7 +175,7 @@ function KpiSparkline({ data, color }: { data: number[]; color: string }) {
   const gradientId = `tectona-resource-kpi-${color.replace('#', '')}`
 
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
       <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -575,7 +575,7 @@ function OverviewDonut({
         <div className="pointer-events-none absolute -inset-3 rounded-full" style={{ background: 'conic-gradient(from 220deg, rgba(99,102,241,0.15), rgba(14,165,233,0.11), rgba(16,185,129,0.13), rgba(99,102,241,0.15))', filter: 'blur(1px)' }} />
         <div className="pointer-events-none absolute inset-2 rounded-full border border-white/90 bg-gradient-to-br from-white/95 via-slate-50/95 to-slate-100/85 shadow-[0_14px_32px_rgba(15,23,42,0.10)]" />
         <div className="absolute inset-0">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
             <PieChart>
               <defs>
                 {data.map((entry, index) => {
@@ -678,7 +678,7 @@ function OverviewExecutiveDonut({ data }: { data: Array<{ name: string; value: n
           Staffing Resilience
         </div>
         <div className="absolute inset-0">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
             <PieChart>
               <defs>
                 <linearGradient id="res-health-healthy" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor={HEALTH_SEG.Healthy[0]} /><stop offset="100%" stopColor={HEALTH_SEG.Healthy[1]} /></linearGradient>
@@ -826,7 +826,7 @@ function ResourceExecutionOverview() {
         right={<Badge className="rounded-full border border-rose-200 bg-rose-50 text-[11px] text-rose-600">Over capacity</Badge>}
       >
         <div className="h-56 w-full">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
             <BarChart data={capacityVsAllocation} margin={{ top: 18, right: 6, left: -18, bottom: 0 }} barGap={4}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
               <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -871,7 +871,7 @@ function ResourceExecutionOverview() {
         right={<Badge className="flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 text-[11px] text-rose-600"><AlertTriangle className="h-3 w-3" /> -45h</Badge>}
       >
         <div className="h-56 w-full">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
             <LineChart data={demandForecast} margin={{ top: 18, right: 12, left: -18, bottom: 0 }}>
               <defs>
                 <linearGradient id="tectona-demand-gap" x1="0" y1="0" x2="0" y2="1">
@@ -956,7 +956,7 @@ function ResourceExecutionOverview() {
         right={<Badge className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700"><TrendingUp className="h-3 w-3" /> 8%</Badge>}
       >
         <div className="h-56 w-full">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
             <AreaChart data={utilizationTrend} margin={{ top: 18, right: 12, left: -18, bottom: 0 }}>
               <defs>
                 <linearGradient id="tectona-util-trend" x1="0" y1="0" x2="0" y2="1">
@@ -994,7 +994,7 @@ function ResourceExecutionOverview() {
       >
         <div className="flex flex-1 flex-col items-center justify-center">
           <div className="relative h-40 w-full">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <RadialBarChart
                 innerRadius="74%"
                 outerRadius="100%"
