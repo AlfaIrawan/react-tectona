@@ -333,7 +333,7 @@ function ResourceCapacityDrawer({
 
             <div>
               <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Allocation Trend</div>
-              <div className="h-[120px]">
+              <div className="h-[120px] min-h-[120px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={resource.forecast} margin={{ top: 8, right: 8, left: -16, bottom: 8 }}>
                     <defs>
@@ -576,7 +576,7 @@ export function CapacityPlanningPanel() {
               </div>
             </div>
             <div className="p-5">
-              <div className="h-[280px]">
+              <div className="h-[280px] min-h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={forecastData} margin={{ top: 12, right: 12, left: -12, bottom: 12 }}>
                     <defs>
@@ -713,7 +713,7 @@ export function CapacityPlanningPanel() {
               </div>
             </div>
             <div className="p-5">
-              <div className="relative h-[160px]">
+              <div className="relative h-[160px] min-h-[160px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie

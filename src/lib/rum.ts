@@ -178,10 +178,15 @@ async function postRumSample(): Promise<void> {
 
   if (!hasData) return
 
+  const apiKey = (import.meta.env.VITE_REGISTRY_RUM_API_KEY as string | undefined)?.trim()
+  if (!apiKey && !isSameOriginRegistryIngest()) {
+    ingestDisabled = true
+    return
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
-  const apiKey = (import.meta.env.VITE_REGISTRY_RUM_API_KEY as string | undefined)?.trim()
   if (apiKey) {
     headers['X-API-Key'] = apiKey
   }
