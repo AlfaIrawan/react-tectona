@@ -44,9 +44,9 @@ function parseProviderList(raw: string | undefined): string[] {
     .filter(Boolean)
 }
 
-/** All providers from VITE_AUTH_PROVIDERS (default: password only). */
+/** All providers from VITE_AUTH_PROVIDERS (Tectona default: password + Microsoft). */
 export function parseEnabledAuthProviders(): Set<string> {
-  const raw = envFlag('VITE_AUTH_PROVIDERS') ?? 'password'
+  const raw = envFlag('VITE_AUTH_PROVIDERS') ?? 'password,microsoft'
   return new Set(parseProviderList(raw))
 }
 
@@ -58,7 +58,7 @@ export function isPasswordAuthEnabled(): boolean {
 /** Social buttons to render — order follows VITE_AUTH_PROVIDERS. */
 export function listSocialAuthProviders(): SocialAuthProvider[] {
   const enabled = parseEnabledAuthProviders()
-  const ordered = parseProviderList(envFlag('VITE_AUTH_PROVIDERS') ?? 'password')
+  const ordered = parseProviderList(envFlag('VITE_AUTH_PROVIDERS') ?? 'password,microsoft')
 
   const ids = ordered.filter((id): id is SocialAuthProviderId =>
     SOCIAL_PROVIDER_IDS.has(id as SocialAuthProviderId) && enabled.has(id),
