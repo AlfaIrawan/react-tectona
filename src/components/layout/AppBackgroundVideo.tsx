@@ -128,7 +128,6 @@ export function AppBackgroundVideo() {
     className: 'app-background-video',
     muted: true,
     playsInline: true,
-    crossOrigin: 'anonymous' as const,
     preload: 'auto' as const,
     poster: BACKGROUND_VIDEO_POSTER,
     'aria-hidden': true,

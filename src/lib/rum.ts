@@ -179,16 +179,17 @@ async function postRumSample(): Promise<void> {
   if (!hasData) return
 
   const apiKey = (import.meta.env.VITE_REGISTRY_RUM_API_KEY as string | undefined)?.trim()
-  if (!apiKey && !isSameOriginRegistryIngest()) {
+  // Registry returns 401 when REGISTRY_RUM_INGEST_API_KEY is set and the
+  // browser omits X-API-Key. Do not POST without a key — same-origin nginx
+  // does not bypass that check, and a 401 still appears in DevTools.
+  if (!apiKey) {
     ingestDisabled = true
     return
   }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-  }
-  if (apiKey) {
-    headers['X-API-Key'] = apiKey
+    'X-API-Key': apiKey,
   }
 
   const payload: RumPayload = {

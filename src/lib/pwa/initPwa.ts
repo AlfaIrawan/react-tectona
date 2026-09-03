@@ -38,11 +38,22 @@ export async function clearSensitiveRuntimeCaches(): Promise<void> {
   }
 }
 
+function isPublicDevHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === 'tectona-dev.adira.co.id'
+  )
+}
+
 /** Register the service worker (production builds only). */
 export async function initPwa(): Promise<void> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
-  if (!import.meta.env.PROD) {
+  // tectona-dev is a Vite production build behind nginx. Registering Workbox
+  // there fights the index.html unregister script and makes <link rel=preload>
+  // unused (Chrome: cross-world service worker resource mismatch).
+  if (!import.meta.env.PROD || isPublicDevHost(window.location.hostname)) {
     await unregisterDevServiceWorkers()
     return
   }

@@ -130,6 +130,7 @@ export default defineConfig({
             urlPattern: ({ sameOrigin, url }) =>
               sameOrigin &&
               url.pathname.startsWith('/images/') &&
+              url.pathname !== '/images/background-1.png' &&
               !/\.(mp4|webm|mov|m4v)$/i.test(url.pathname),
             handler: 'CacheFirst',
             options: {
