@@ -17,7 +17,6 @@ import {
 } from 'lucide-react'
 import {
   Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -265,25 +264,6 @@ function getHeatmapColor(value: number): string {
   return '#10b981'
 }
 
-function CompactKpiSparkline({ data, color }: { data: number[]; color: string }) {
-  const chartData = data.map((value, index) => ({ idx: index, value }))
-  const gradientId = `capacity-kpi-${color.replace('#', '')}`
-
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={chartData} margin={{ top: 1, right: 0, left: 0, bottom: 1 }}>
-        <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.24} />
-            <stop offset="100%" stopColor={color} stopOpacity={0.02} />
-          </linearGradient>
-        </defs>
-        <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.4} fill={`url(#${gradientId})`} isAnimationActive={false} />
-      </AreaChart>
-    </ResponsiveContainer>
-  )
-}
-
 function ResourceCapacityDrawer({
   resource,
   onClose,
@@ -417,12 +397,6 @@ export function CapacityPlanningPanel() {
   const [selectedResource, setSelectedResource] = useState<ResourceDetailData | null>(null)
 
   const totalAllocated = 412
-  const avgAllocation = 82
-  const avgUtilization = 79
-  const availableCapacity = 2
-  const atRisk = 1
-  const overallocated = 1
-  const workspaceCount = 3
 
   const handleResourceClick = (resource: CapacityResource) => {
     const detailData: ResourceDetailData = {
@@ -488,37 +462,7 @@ export function CapacityPlanningPanel() {
         </div>
       </div>
 
-      {/* ROW 1: Compact KPI Strip */}
-      <div className="grid grid-cols-6 gap-3">
-        {[
-          { label: 'Avg Allocation', value: `${avgAllocation}%`, change: '+4%', trend: [78, 80, 79, 81, 82, 82], color: '#3b82f6' },
-          { label: 'Avg Utilization', value: `${avgUtilization}%`, change: '+2.4%', trend: [76, 77, 78, 79, 79, 79], color: '#8b5cf6' },
-          { label: 'Available Capacity', value: availableCapacity, change: '-1', trend: [3, 3, 2, 2, 2, 2], color: '#10b981' },
-          { label: 'At Risk', value: atRisk, change: 'Same', trend: [1, 1, 2, 1, 1, 1], color: '#f59e0b' },
-          { label: 'Overallocated', value: overallocated, change: 'Same', trend: [1, 0, 1, 1, 1, 1], color: '#ef4444' },
-          { label: 'Workspaces', value: workspaceCount, change: '+1', trend: [2, 2, 2, 3, 3, 3], color: '#06b6d4' },
-        ].map((kpi) => (
-          <div key={kpi.label} className="group relative overflow-hidden rounded-xl border border-slate-200/80 bg-white/60 p-3 shadow-sm transition-all hover:shadow-md">
-            <div className="relative z-10">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-slate-500">{kpi.label}</div>
-              <div className="mt-2 flex items-baseline gap-2">
-                <div className="text-2xl font-bold text-slate-900">{kpi.value}</div>
-                <div className={cn(
-                  'text-[10px] font-medium',
-                  kpi.change.startsWith('+') ? 'text-emerald-600' : kpi.change === 'Same' ? 'text-slate-400' : 'text-rose-600'
-                )}>
-                  {kpi.change !== 'Same' && kpi.change} vs last month
-                </div>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-10 opacity-60">
-              <CompactKpiSparkline data={kpi.trend} color={kpi.color} />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ROW 2: Capacity vs Allocation (60%) + Forecast (40%) */}
+      {/* ROW 1: Capacity vs Allocation (60%) + Forecast (40%) */}
       <div className="grid grid-cols-5 gap-4">
         {/* Capacity vs Allocation - 3 columns (60%) */}
         <div className="col-span-3">
@@ -699,60 +643,60 @@ export function CapacityPlanningPanel() {
         </div>
       </div>
 
-      {/* ROW 3: Team Heatmap (45%) + Donut (30%) + Attention (25%) */}
-      <div className="grid grid-cols-20 gap-4">
-        {/* Team Capacity Heatmap - 9 columns (45%) */}
-        <div className="col-span-9">
-          <Card className="h-full rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200/80 bg-gradient-to-br from-slate-50/80 via-white to-transparent px-5 py-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm font-bold text-slate-900">3. Team Capacity Heatmap</div>
-                    <Info className="h-3.5 w-3.5 text-slate-400" />
-                  </div>
-                  <div className="mt-1 text-xs text-slate-600">Team utilization across the next 6 weeks.</div>
+      {/* ROW 2: Team Capacity Heatmap */}
+      <div>
+        <Card className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200/80 bg-gradient-to-br from-slate-50/80 via-white to-transparent px-5 py-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-bold text-slate-900">3. Team Capacity Heatmap</div>
+                  <Info className="h-3.5 w-3.5 text-slate-400" />
                 </div>
+                <div className="mt-1 text-xs text-slate-600">Team utilization across the next 6 weeks.</div>
               </div>
             </div>
-            <div className="p-5">
-              <div className="space-y-3">
-                <div className="grid grid-cols-7 gap-2 text-center">
-                  <div className="text-xs font-semibold text-slate-500">Team / Squad</div>
-                  {['W1\n17 May', 'W2\n24 May', 'W3\n31 May', 'W4\n7 Jun', 'W5\n14 Jun', 'W6\n21 Jun'].map((week) => (
-                    <div key={week} className="whitespace-pre-line text-[10px] font-semibold text-slate-500">
-                      {week}
-                    </div>
-                  ))}
-                </div>
-                {teamHeatmap.map((row) => (
-                  <div key={row.team} className="grid grid-cols-7 gap-2">
-                    <div className="flex items-center text-xs font-semibold text-slate-700">{row.team}</div>
-                    {row.weeks.map((value, idx) => (
-                      <div
-                        key={idx}
-                        className={cn(
-                          'flex items-center justify-center rounded-lg py-3 text-xs font-bold transition-all hover:scale-105',
-                          value >= 100 && 'bg-rose-100 text-rose-900',
-                          value >= 90 && value < 100 && 'bg-orange-100 text-orange-900',
-                          value >= 80 && value < 90 && 'bg-amber-100 text-amber-900',
-                          value >= 60 && value < 80 && 'bg-blue-100 text-blue-900',
-                          value < 60 && 'bg-emerald-100 text-emerald-900'
-                        )}
-                        style={{ backgroundColor: `${getHeatmapColor(value)}20`, color: getHeatmapColor(value) }}
-                      >
-                        {value}%
-                      </div>
-                    ))}
+          </div>
+          <div className="p-5">
+            <div className="space-y-3">
+              <div className="grid grid-cols-7 gap-2 text-center">
+                <div className="text-xs font-semibold text-slate-500">Team / Squad</div>
+                {['W1\n17 May', 'W2\n24 May', 'W3\n31 May', 'W4\n7 Jun', 'W5\n14 Jun', 'W6\n21 Jun'].map((week) => (
+                  <div key={week} className="whitespace-pre-line text-[10px] font-semibold text-slate-500">
+                    {week}
                   </div>
                 ))}
               </div>
+              {teamHeatmap.map((row) => (
+                <div key={row.team} className="grid grid-cols-7 gap-2">
+                  <div className="flex items-center text-xs font-semibold text-slate-700">{row.team}</div>
+                  {row.weeks.map((value, idx) => (
+                    <div
+                      key={idx}
+                      className={cn(
+                        'flex items-center justify-center rounded-lg py-3 text-xs font-bold transition-all hover:scale-105',
+                        value >= 100 && 'bg-rose-100 text-rose-900',
+                        value >= 90 && value < 100 && 'bg-orange-100 text-orange-900',
+                        value >= 80 && value < 90 && 'bg-amber-100 text-amber-900',
+                        value >= 60 && value < 80 && 'bg-blue-100 text-blue-900',
+                        value < 60 && 'bg-emerald-100 text-emerald-900'
+                      )}
+                      style={{ backgroundColor: `${getHeatmapColor(value)}20`, color: getHeatmapColor(value) }}
+                    >
+                      {value}%
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
-          </Card>
-        </div>
+          </div>
+        </Card>
+      </div>
 
-        {/* Allocation by Project/Workspace - 6 columns (30%) */}
-        <div className="col-span-6">
+      {/* ROW 3: Allocation by Project/Workspace + Capacity Attention */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Allocation by Project/Workspace */}
+        <div>
           <Card className="h-full rounded-xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200/80 bg-gradient-to-br from-slate-50/80 via-white to-transparent px-5 py-4">
               <div className="flex items-start justify-between">
@@ -825,8 +769,8 @@ export function CapacityPlanningPanel() {
           </Card>
         </div>
 
-        {/* Capacity Attention - 5 columns (25%) */}
-        <div className="col-span-5">
+        {/* Capacity Attention */}
+        <div>
           <Card className="h-full rounded-xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200/80 bg-gradient-to-br from-slate-50/80 via-white to-transparent px-5 py-4">
               <div className="flex items-start justify-between">
