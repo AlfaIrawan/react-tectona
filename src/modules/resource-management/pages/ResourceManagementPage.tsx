@@ -27,6 +27,7 @@ import {
   Wand2,
   type LucideIcon,
 } from 'lucide-react'
+import { CapacityPlanningPanel } from '@/modules/resource-management/components/CapacityPlanningPanel'
 import {
   Area,
   AreaChart,
@@ -2019,29 +2020,14 @@ export function ResourceManagementPage() {
             <Panel
               id="capacity"
               title="Capacity Planning Panel"
-              description="Capacity summary for resource allocation planning."
+              description="Balance resource demand and forecast to help you balance workload and optimize team performance."
               highlight={activePanel === 'capacity'}
               outerRef={activeMainPanelRef}
               style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
               className={cn(mainPanelViewportHeightPx != null && 'overflow-hidden')}
               scrollBody={mainPanelViewportHeightPx != null}
             >
-              <div className="space-y-4">
-                <div className="text-sm font-semibold text-slate-900">Capacity Planning Panel</div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                  {[
-                    { label: 'Avg Allocation', value: `${Math.round(resources.reduce((s, r) => s + r.allocation, 0) / resources.length)}%` },
-                    { label: 'Avg Utilization', value: `${Math.round(resources.reduce((s, r) => s + r.utilization, 0) / resources.length)}%` },
-                    { label: 'Available', value: `${resources.filter((r) => r.availabilityStatus === 'Available').length}` },
-                    { label: 'At Risk', value: `${resources.filter((r) => r.utilization > 90).length}` },
-                  ].map((item) => (
-                    <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{item.label}</div>
-                      <div className="mt-2 text-2xl font-bold text-slate-900">{item.value}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <CapacityPlanningPanel />
             </Panel>
           ) : null}
 
