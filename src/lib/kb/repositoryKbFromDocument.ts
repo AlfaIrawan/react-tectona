@@ -1250,8 +1250,48 @@ function removeLeadingOrphanStakeholderLists(contentHtml: string): string {
   return result
 }
 
-function buildGenericSectionFallbackHtml(sectionTitle: string): string {
-  return `<h2>${escapeHtml(sectionTitle)}</h2><p>Section ini belum dapat dilengkapi otomatis dari cuplikan dokumen.</p>`
+function looksLikeForcedBrdKbTemplate(html: string): boolean {
+  const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+  return /daftar isi brd/i.test(plain)
+    || /perubahan brd/i.test(plain)
+    || /business requirement document/i.test(plain)
+}
+
+function paragraphHtmlFromExtract(documentText: string, maxParagraphs = 8): string {
+  const chunks = documentText
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter((part) => part.length >= 24)
+    .slice(0, maxParagraphs)
+  if (chunks.length === 0) {
+    const fallback = documentText.replace(/\s+/g, ' ').trim().slice(0, 1600)
+    return fallback ? `<p>${escapeHtml(fallback)}</p>` : '<p>Cuplikan dokumen tidak cukup untuk merangkum isi.</p>'
+  }
+  return chunks.map((part) => `<p>${escapeHtml(part.slice(0, 1200))}</p>`).join('')
+}
+
+/** KB body when the document is not a BRD — never use BRD TOC / impacted-app scaffolding. */
+export function buildNonBrdRepositoryKbHtml(input: {
+  kindLabel: string
+  documentTitle: string
+  documentText: string
+  llmHtml?: string | null
+  llmSummary?: string | null
+}): string {
+  const llm = (input.llmHtml || '').trim()
+  if (llm && !looksLikeForcedBrdKbTemplate(llm)) {
+    return llm
+  }
+  const summary = (input.llmSummary || '').trim()
+  const summaryHtml = summary && !/brd/i.test(summary)
+    ? `<p>${escapeHtml(summary.slice(0, 1200))}</p>`
+    : ''
+  return [
+    `<h2>Ringkasan</h2>`,
+    `<p>Dokumen ini dikenali sebagai <strong>${escapeHtml(input.kindLabel)}</strong>, bukan Business Requirement Document (BRD).</p>`,
+    summaryHtml,
+    paragraphHtmlFromExtract(input.documentText),
+  ].join('')
 }
 
 /**

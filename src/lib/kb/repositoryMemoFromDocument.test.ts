@@ -16,6 +16,8 @@ import {
   mergeMemoAttachmentEntriesForUpload,
   mergeMemoMetadataExtract,
   parseMemoAttachmentFromFileName,
+  resolveRepositoryKbDocumentKind,
+  toAgentRepositoryKbKind,
 } from './repositoryMemoFromDocument'
 import { parseMemoInternalToKbContentStandard } from './memoInternalToKbContentStandard'
 
@@ -216,5 +218,37 @@ describe('repositoryMemoFromDocument', () => {
     })
     expect(title).toContain('Lampiran 4:')
     expect(title).toContain('MI-001')
+  })
+
+  it('does not treat persisted operational docs as BRD for the agent', () => {
+    expect(
+      toAgentRepositoryKbKind(
+        resolveRepositoryKbDocumentKind({
+          text: 'Petunjuk foto survey non auto untuk unit lapangan. Ambil foto tampak depan.',
+          fileName: 'Petunjuk Foto Survey Non Auto.pdf',
+        }),
+      ),
+    ).toBe('auto')
+    expect(
+      toAgentRepositoryKbKind(
+        resolveRepositoryKbDocumentKind({
+          text: 'Petunjuk foto survey.',
+          fileName: 'Petunjuk Foto Survey.pdf',
+          persistedKind: 'ketetapan_sementara',
+        }),
+      ),
+    ).toBe('auto')
+    expect(toAgentRepositoryKbKind('brd')).toBe('brd')
+    expect(toAgentRepositoryKbKind('memo_internal')).toBe('memo_internal')
+    expect(toAgentRepositoryKbKind('unknown')).toBe('auto')
+    expect(
+      toAgentRepositoryKbKind(
+        resolveRepositoryKbDocumentKind({
+          text: 'Unit lapangan mengambil foto tampak depan.',
+          fileName: 'Lampiran 1 - Petunjuk Foto Survey_Non Auto.pdf',
+          persistedKind: 'sop',
+        }),
+      ),
+    ).toBe('auto')
   })
 })

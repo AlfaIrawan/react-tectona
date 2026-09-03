@@ -354,6 +354,7 @@ import {
   resolveRepositoryDocumentVersionLabel,
   sanitizeDetectedStakeholdersForRuntimeApi,
   scrubKbGeneratedContent,
+  buildNonBrdRepositoryKbHtml,
   type RepositoryKbSourceMeta,
 } from '@/lib/kb/repositoryKbFromDocument'
 import { isSpreadsheetFile } from '@/lib/kb/extractSpreadsheetText'
@@ -372,6 +373,9 @@ import {
   looksLikeMemoUploadFileName,
   mergeMemoAttachmentEntriesForUpload,
   mergeMemoMetadataExtract,
+  repositoryDocumentKindLabel,
+  resolveRepositoryKbDocumentKind,
+  toAgentRepositoryKbKind,
   type RepositoryDocumentKind,
 } from '@/lib/kb/repositoryMemoFromDocument'
 import { resolveParentMemoMetadataFromFolder } from '@/lib/kb/repositoryMemoParentContext'
@@ -475,6 +479,7 @@ import { isDocumentFolderDescendant } from '@/modules/document-knowledge-managem
 import { RepositoryMoveFolderPicker } from '@/modules/document-knowledge-management/components/RepositoryMoveFolderPicker'
 import {
   SAMPLE_KIND_LABELS,
+  isSampleDocumentKind,
   resolveSampleKindFromFolderNames,
 } from '@/modules/document-knowledge-management/lib/sampleDocumentKind'
 import {
@@ -6814,24 +6819,32 @@ export function DocumentKnowledgeManagementPage() {
     const { excerpt: llmExcerpt, truncated: excerptTruncated } = buildRepositoryKbLlmExcerpt(extract.text)
     let repositoryFolderPath: string[] = []
     let repositoryFolderId: string | null = null
+    let persistedDocumentKind: string | null = null
     try {
       const existingDoc = await getDocument(documentId)
       repositoryFolderId = typeof existingDoc.folder_id === 'string' ? existingDoc.folder_id : null
       repositoryFolderPath = buildRepositoryFolderPathNames(repositoryFolders, repositoryFolderId)
+      const meta = (existingDoc.metadata ?? {}) as Record<string, unknown>
+      persistedDocumentKind = typeof meta.document_kind === 'string' ? meta.document_kind : null
     } catch {
       repositoryFolderPath = []
     }
-    const documentKind: RepositoryDocumentKind = detectRepositoryDocumentKind(extract.text, fileName, {
+    const documentKind = resolveRepositoryKbDocumentKind({
+      text: extract.text,
+      fileName,
       folderPath: repositoryFolderPath,
+      persistedKind: persistedDocumentKind,
     })
+    const agentDocumentKind = toAgentRepositoryKbKind(documentKind)
     const isMemoInternal = documentKind === 'memo_internal'
+    const useBrdPipeline = documentKind === 'brd'
     const isMemoAttachmentDoc = isMemoInternal && isMemoAttachmentUpload(fileName, extract.text)
 
-    const tocEntries = isMemoInternal ? [] : extractBrdTableOfContentsEntries(extract.text)
-    const affectedApplications = isMemoInternal ? [] : extractAffectedApplicationsFromDocumentText(extract.text)
-    const stakeholders = isMemoInternal
-      ? []
-      : sanitizeDetectedStakeholdersForRuntimeApi(extractBrdStakeholdersFromDocumentText(extract.text))
+    const tocEntries = useBrdPipeline ? extractBrdTableOfContentsEntries(extract.text) : []
+    const affectedApplications = useBrdPipeline ? extractAffectedApplicationsFromDocumentText(extract.text) : []
+    const stakeholders = useBrdPipeline
+      ? sanitizeDetectedStakeholdersForRuntimeApi(extractBrdStakeholdersFromDocumentText(extract.text))
+      : []
 
     let memoMetadata = isMemoInternal ? extractMemoMetadataFromDocumentText(extract.text) : null
     if (memoMetadata && isMemoAttachmentDoc) {
@@ -6890,7 +6903,7 @@ export function DocumentKnowledgeManagementPage() {
         user_name: getSession()?.user.name || getSession()?.user.email || null,
         session_id: `repository-upload-kb-${documentId}`,
       },
-      document_kind: isMemoInternal ? 'memo_internal' : 'brd',
+      document_kind: agentDocumentKind,
       document: {
         file_name: fileName,
         file_type: fileType,
@@ -6954,6 +6967,7 @@ export function DocumentKnowledgeManagementPage() {
       throw new Error('Repository Upload Auto-KB Summary must return STRICT JSON sesuai schema.')
     }
 
+    const genericTitleFromAi = (parsed.kb_title ?? '').trim()
     const kbTitle = isMemoInternal
       ? deriveMemoKbTitle({
           metadata: memoMetadata ?? extractMemoMetadataFromDocumentText(extract.text),
@@ -6962,7 +6976,8 @@ export function DocumentKnowledgeManagementPage() {
           llmTitle: parsed.kb_title ?? '',
           fileName,
         })
-      : deriveKbTitleFromBrdStandard({
+      : useBrdPipeline
+      ? deriveKbTitleFromBrdStandard({
       namingClass: normalizeBrdKbNamingClass(parsed.kb_naming_class),
       primaryName: parsed.kb_primary_name ?? '',
       secondaryName: parsed.kb_secondary_name ?? '',
@@ -6971,6 +6986,9 @@ export function DocumentKnowledgeManagementPage() {
       fileName,
       projectName,
     })
+      : (genericTitleFromAi && !/\bBRD\b/i.test(genericTitleFromAi)
+        ? genericTitleFromAi
+        : (documentTitle || fileName.replace(/\.[^/.]+$/, '')).trim())
     if (!kbTitle) {
       throw new Error('Repository Upload Auto-KB Summary returned invalid kb_title.')
     }
@@ -6978,7 +6996,7 @@ export function DocumentKnowledgeManagementPage() {
     const kbCategory = isMemoInternal
       ? resolveKbCategoryFromAi(parsed.kb_category || 'business_rules')
       : resolveKbCategoryFromAi(parsed.kb_category)
-    const kbPriority = Math.max(0, Math.min(100, Number(parsed.kb_priority ?? (isMemoInternal ? 85 : 70))))
+    const kbPriority = Math.max(0, Math.min(100, Number(parsed.kb_priority ?? (isMemoInternal ? 85 : useBrdPipeline ? 70 : 55))))
 
     if (typeof parsed.kb_content_html !== 'string' || !parsed.kb_content_html.trim()) {
       throw new Error('Repository Upload Auto-KB Summary returned empty kb_content_html.')
@@ -6991,24 +7009,34 @@ export function DocumentKnowledgeManagementPage() {
 
     // The backend now authoritatively assembles all required sections. Only fall back to
     // client-side assembly when the server did not (e.g. content standard unavailable).
-    const kbContentBodyStandard = generated.sections_assembled_server_side === true
-      ? kbContentBody
-      : isMemoInternal
-        ? ensureMemoKbStandardContent(
+    const kbContentBodyStandard = isMemoInternal
+      ? generated.sections_assembled_server_side === true
+        ? kbContentBody
+        : ensureMemoKbStandardContent(
             kbContentBody,
             extract.text,
             memoContentStandard,
             memoMetadata ?? extractMemoMetadataFromDocumentText(extract.text),
             memoAttachments,
           )
-      : ensureBrdKbStandardContent(kbContentBody, extract.text, brdContentStandard, stakeholders)
+      : useBrdPipeline
+        ? generated.sections_assembled_server_side === true
+          ? kbContentBody
+          : ensureBrdKbStandardContent(kbContentBody, extract.text, brdContentStandard, stakeholders)
+        : buildNonBrdRepositoryKbHtml({
+            kindLabel: repositoryDocumentKindLabel(documentKind),
+            documentTitle,
+            documentText: extract.text,
+            llmHtml: kbContentBody,
+            llmSummary: parsed.kb_summary,
+          })
     // Final pass: rebuild any flattened "Sebelum/Sesudah" comparison into a real table, covering
     // both the server-assembled and the client-side-assembly fallback paths.
     const kbContentBodyComparison = repairFlattenedComparisonBlocks(kbContentBodyStandard)
     // Strip PDF running-header/footer noise ("Page X of Y", "Klasifikasi : Internal", trailing
     // section headings) that bleeds into extracted content — applies to both memo and BRD.
     const kbContentBodyArtifactClean = scrubKbExtractionArtifacts(kbContentBodyComparison)
-    const kbContentBodyScrubbed = isMemoInternal ? kbContentBodyArtifactClean : scrubKbGeneratedContent(kbContentBodyArtifactClean)
+    const kbContentBodyScrubbed = useBrdPipeline ? scrubKbGeneratedContent(kbContentBodyArtifactClean) : kbContentBodyArtifactClean
     const kbContentBodyWithPeople = sanitizeKbRichHtml(kbContentBodyScrubbed)
 
     const kbContent = sanitizeKbRichHtml(
@@ -7124,7 +7152,7 @@ export function DocumentKnowledgeManagementPage() {
       title: 'KB generated',
       description: summaryEntryId
         ? `${fileName} KB summary updated (${extract.fullCharCount} characters extracted). The official document stays in the repository.`
-        : `${fileName} summarized into KB and linked to the document (${extract.fullCharCount} characters extracted${isMemoInternal ? ', Internal Memo' : ''}).`,
+        : `${fileName} summarized into KB and linked to the document (${extract.fullCharCount} characters extracted${isMemoInternal ? ', Internal Memo' : useBrdPipeline ? '' : `, ${repositoryDocumentKindLabel(documentKind)}`}).`,
       variant: 'success',
     })
   }, [activeWorkspaceApiId, addToast, kbApiItems, kbCategoryOptions, repositoryFolders, resolveKbCategoryFromAi])
@@ -8014,7 +8042,9 @@ export function DocumentKnowledgeManagementPage() {
         ? persistDocumentKind
         : persistDocumentKind === 'brd'
           ? 'brd'
-          : heuristicKind
+          : isSampleDocumentKind(persistDocumentKind)
+            ? 'unknown'
+            : heuristicKind
     const capabilityRules = resolveCapabilityRulesFromKbEntries(kbApiItems)
     let detectedCapability = detectDocumentCapability({
       fileName: file.name,
@@ -8029,11 +8059,7 @@ export function DocumentKnowledgeManagementPage() {
     }
     const skipBrdAutoRename =
       skipAutoGenerateKbInSamples
-      || uploadDocumentKind === 'memo_internal'
-      || uploadDocumentKind === 'ketetapan_sementara'
-      || looksLikeMemoUploadFileName(file.name)
-      || looksLikeMemoAttachmentFileName(file.name)
-      || isMemoInternalFolderPath(uploadFolderPath)
+      || uploadDocumentKind !== 'brd'
     const classifiedKindToast =
       sampleClassification.source === 'samples_compare' && persistDocumentKind !== 'unknown'
         ? ` Classified as ${SAMPLE_KIND_LABELS[persistDocumentKind]} from Samples.`
@@ -15414,7 +15440,7 @@ export function DocumentKnowledgeManagementPage() {
                           <p className="text-[10px] text-muted-foreground">
                             {viewingSamplesLibrary
                               ? 'Off in Samples — files here are examples only, not KB source'
-                              : 'KB summary from document extraction (not a full BRD copy) + link to the repository'}
+                              : 'KB summary from document extraction (not a full document copy) + link to the repository'}
                           </p>
                         </div>
                       </div>

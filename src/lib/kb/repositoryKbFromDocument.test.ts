@@ -19,6 +19,7 @@ import {
   resolveRepositoryDocumentVersionLabel,
   sanitizeDetectedStakeholdersForRuntimeApi,
   scrubKbGeneratedContent,
+  buildNonBrdRepositoryKbHtml,
 } from './repositoryKbFromDocument'
 
 describe('repository BRD metadata extraction', () => {
@@ -674,5 +675,20 @@ describe('BRD to KB content standard enforcement', () => {
   it('keeps real section content untouched', () => {
     const clean = '<h3>Keuntungan/Benefit</h3><p>Mempercepat proses approval jaminan dari 5 hari menjadi 1 hari.</p>'
     expect(scrubKbGeneratedContent(clean)).toBe(clean)
+  })
+})
+
+describe('non-BRD repository KB html', () => {
+  it('replaces server BRD boilerplate with extract from the source document', () => {
+    const html = buildNonBrdRepositoryKbHtml({
+      kindLabel: 'dokumen operasional',
+      documentTitle: 'Petunjuk Foto Survey Non Auto',
+      documentText: 'Unit lapangan wajib mengambil foto tampak depan kendaraan. Minimal tiga sudut pandang.\n\nFoto harus jelas dan tidak buram.',
+      llmHtml: '<h2>Ringkasan Daftar Isi</h2><p>Daftar isi BRD tidak terdeteksi dari cuplikan dokumen.</p>',
+      llmSummary: 'Terdampak oleh perubahan BRD',
+    })
+    expect(html).not.toMatch(/Daftar isi BRD/i)
+    expect(html).toContain('dokumen operasional')
+    expect(html).toContain('tampak depan kendaraan')
   })
 })

@@ -4,13 +4,47 @@
 
 import type { MemoInternalToKbContentStandardParsed } from './memoInternalToKbContentStandard'
 import { parseBrdStructuredName } from './repositoryKbFromDocument'
-import { resolveSampleKindFromFolderNames } from '@/modules/document-knowledge-management/lib/sampleDocumentKind'
+import { isSampleDocumentKind, resolveSampleKindFromFolderNames } from '@/modules/document-knowledge-management/lib/sampleDocumentKind'
 
 export type RepositoryDocumentKind =
   | 'brd'
   | 'memo_internal'
   | 'ketetapan_sementara'
   | 'unknown'
+
+export function resolveRepositoryKbDocumentKind(input: {
+  text: string
+  fileName: string
+  folderPath?: readonly string[]
+  persistedKind?: string | null
+}): RepositoryDocumentKind {
+  const persisted = (input.persistedKind || '').trim()
+  if (persisted === 'memo_internal' || persisted === 'ketetapan_sementara' || persisted === 'brd') {
+    return persisted
+  }
+  // Samples / gold-set kinds (SOP, FSD, URD, KTP, …) are first-class documents.
+  // Do not re-guess Memo/BRD from a "Lampiran" filename or BRD naming regex.
+  if (isSampleDocumentKind(persisted)) {
+    return 'unknown'
+  }
+  return detectRepositoryDocumentKind(input.text, input.fileName, { folderPath: input.folderPath })
+}
+
+/** Agent runtime special-cases memo vs BRD only. SOP, FSD, KS, scans, and unknown docs must be `auto`, never BRD. */
+export function toAgentRepositoryKbKind(
+  kind: RepositoryDocumentKind,
+): 'brd' | 'memo_internal' | 'auto' {
+  if (kind === 'memo_internal') return 'memo_internal'
+  if (kind === 'brd') return 'brd'
+  return 'auto'
+}
+
+export function repositoryDocumentKindLabel(kind: RepositoryDocumentKind): string {
+  if (kind === 'memo_internal') return 'Memo Internal'
+  if (kind === 'ketetapan_sementara') return 'Ketetapan Sementara'
+  if (kind === 'brd') return 'Business Requirement Document (BRD)'
+  return 'dokumen operasional'
+}
 
 export type MemoAttachmentEntry = {
   id: string
