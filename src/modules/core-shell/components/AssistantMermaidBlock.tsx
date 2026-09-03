@@ -121,6 +121,47 @@ function normalizeRenderedSvg(svg: SVGSVGElement): { width: number; height: numb
   return measureSvgNaturalSize(svg)
 }
 
+async function cropWhiteMarginsFromObjectUrl(objectUrl: string): Promise<string> {
+  const image = new Image()
+  image.src = objectUrl
+  await image.decode()
+  const source = document.createElement('canvas')
+  source.width = image.naturalWidth
+  source.height = image.naturalHeight
+  const ctx = source.getContext('2d')
+  if (!ctx) return objectUrl
+  ctx.drawImage(image, 0, 0)
+  const { data, width, height } = ctx.getImageData(0, 0, source.width, source.height)
+  let minX = width
+  let minY = height
+  let maxX = 0
+  let maxY = 0
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4
+      if (data[i] < 250 || data[i + 1] < 250 || data[i + 2] < 250) {
+        minX = Math.min(minX, x)
+        minY = Math.min(minY, y)
+        maxX = Math.max(maxX, x)
+        maxY = Math.max(maxY, y)
+      }
+    }
+  }
+  if (maxX <= minX || maxY <= minY) return objectUrl
+  const pad = 16
+  minX = Math.max(0, minX - pad)
+  minY = Math.max(0, minY - pad)
+  maxX = Math.min(width - 1, maxX + pad)
+  maxY = Math.min(height - 1, maxY + pad)
+  const cropped = document.createElement('canvas')
+  cropped.width = maxX - minX + 1
+  cropped.height = maxY - minY + 1
+  cropped.getContext('2d')?.drawImage(source, minX, minY, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height)
+  const blob = await new Promise<Blob | null>((resolve) => cropped.toBlob(resolve, 'image/png'))
+  if (!blob) return objectUrl
+  return URL.createObjectURL(blob)
+}
+
 async function copyTextToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
@@ -256,14 +297,17 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, source, onClose }: MermaidF
             <X className="h-4 w-4" />
           </Button>
         </div>
-        <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
-          <div className="flex min-h-full min-w-full items-center justify-center">
+        <div ref={scrollerRef} className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 sm:p-6">
+          <div className="flex min-h-full w-full min-w-full items-center justify-center">
             {imageUrl ? (
               <img
                 src={imageUrl}
                 alt="Diagram proses bisnis BPMN"
-                className="block h-auto max-w-none shrink-0"
-                style={{ width: imageWidth }}
+                className="mx-auto block h-auto shrink-0"
+                style={{
+                  width: zoom <= 1 ? '100%' : imageWidth,
+                  maxWidth: zoom <= 1 ? '100%' : 'none',
+                }}
                 onLoad={(event) => {
                   setNatural({
                     width: event.currentTarget.naturalWidth,
@@ -272,7 +316,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, source, onClose }: MermaidF
                 }}
               />
             ) : (
-              <div ref={canvasRef} className="shrink-0" />
+              <div ref={canvasRef} className="mx-auto flex w-full justify-center [&_svg]:mx-auto [&_svg]:block" />
             )}
           </div>
         </div>
@@ -348,8 +392,21 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
         setBpmnUrl(null)
         const looksLikeFlowchart = /\b(flowchart|graph)\s+(TD|TB|LR|RL)\b/i.test(source)
         if (looksLikeFlowchart) {
+          const safeSource = sanitizeMermaidSource(source)
+          const sizedSvg = buildFlowchartFallbackSvg(safeSource) ?? buildFlowchartFallbackSvg(source)
+          if (sizedSvg) {
+            if (cancelled) return
+            setSvgHtml(sizedSvg)
+            setViaFallback(false)
+            setHardError(null)
+            setIsRendering(false)
+            return
+          }
           try {
             objectUrl = await renderMermaidFlowchartAsBpmnPng(source, 'id')
+            const cropped = await cropWhiteMarginsFromObjectUrl(objectUrl)
+            if (cropped !== objectUrl) URL.revokeObjectURL(objectUrl)
+            objectUrl = cropped
             if (cancelled) {
               URL.revokeObjectURL(objectUrl)
               return
@@ -479,7 +536,7 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           </p>
         ) : null}
         {bpmnUrl ? (
-          <div className="overflow-x-auto p-3">
+          <div className="flex w-full justify-center overflow-x-auto p-3">
             <img
               src={bpmnUrl}
               alt="Diagram proses bisnis BPMN"
@@ -497,7 +554,7 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           <div
             ref={containerRef}
             className={cn(
-              'overflow-x-auto overflow-y-hidden p-3 [&_svg]:mx-auto [&_svg]:block',
+              'flex w-full justify-center overflow-x-auto overflow-y-hidden p-3 [&_svg]:mx-auto [&_svg]:block [&_svg]:max-w-full',
               '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
               !svgHtml && 'min-h-[120px] animate-pulse bg-slate-50/80 dark:bg-slate-900/40',
             )}

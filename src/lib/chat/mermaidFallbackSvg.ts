@@ -89,7 +89,7 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
   }
 
   const nodeDecl =
-    /^([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(([^)]*)\)|\(\[([^\]]*)\]\)|\[\[([^\]]*)\]\])/
+    /^([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(\(([^)]*)\)\)|\(([^)]*)\)|\(\[([^\]]*)\]\)|\[\[([^\]]*)\]\])/
 
   for (const line of lines) {
     if (/^(flowchart|graph)\s+/i.test(line)) continue
@@ -170,8 +170,9 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
     const alone = line.match(nodeDecl)
     if (alone) {
       const id = alone[1]
-      const label = unwrapLabel(alone[2] ?? alone[3] ?? alone[4] ?? alone[5] ?? alone[6] ?? id)
-      const shape: FallbackNodeShape = alone[3] != null ? 'diamond' : alone[4] != null ? 'round' : 'rect'
+      const label = unwrapLabel(alone[2] ?? alone[3] ?? alone[4] ?? alone[5] ?? alone[6] ?? alone[7] ?? id)
+      const shape: FallbackNodeShape =
+        alone[3] != null ? 'diamond' : alone[4] != null || alone[5] != null ? 'round' : 'rect'
       ensureNode(id, label, shape)
     }
   }
@@ -254,14 +255,11 @@ function layoutGraph(graph: FallbackGraph): {
   const pad = 28
   const boxes = new Map<string, { w: number; h: number }>()
   for (const node of graph.nodes) {
+    const isEvent = node.shape === 'round' || /^(mulai|selesai|start|end)$/i.test(node.label.trim())
     const lines = wrapLabel(node.label, 36)
-    const longest = Math.max(...lines.map((line) => line.length), node.shape === 'round' ? 8 : 16)
-    const w =
-      node.shape === 'round'
-        ? Math.max(72, Math.min(160, longest * 9 + 24))
-        : Math.min(480, Math.max(220, longest * 8 + 32))
-    const h =
-      node.shape === 'round' ? 48 : Math.max(80, lines.length * 16 + 32)
+    const longest = Math.max(...lines.map((line) => line.length), isEvent ? 8 : 16)
+    const w = isEvent ? 56 : Math.min(480, Math.max(220, longest * 8 + 40))
+    const h = isEvent ? 56 : Math.max(88, lines.length * 18 + 36)
     boxes.set(node.id, { w, h })
   }
 
@@ -366,18 +364,25 @@ export function buildFlowchartFallbackSvg(source: string): string | null {
         const rh = pos.h * 0.46
         const points = `${cx},${cy - rh} ${cx + rw},${cy} ${cx},${cy + rh} ${cx - rw},${cy}`
         return `<g>
-  <polygon points="${points}" fill="#fff7ed" stroke="#fb923c" stroke-width="1.6" />
-  <text fill="#9a3412" font-size="12" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle" y="${cy}">${text}</text>
+  <polygon points="${points}" fill="#ffffff" stroke="#111827" stroke-width="1.6" />
+  <text fill="#111827" font-size="12" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle" y="${cy}">${text}</text>
 </g>`
       }
 
-      const rx = node.shape === 'round' ? 24 : 12
-      const fill = node.shape === 'round' ? '#ecfdf5' : '#eff6ff'
-      const stroke = node.shape === 'round' ? '#34d399' : '#60a5fa'
-      const textFill = node.shape === 'round' ? '#065f46' : '#1e3a8a'
+      if (node.shape === 'round' || /^(mulai|selesai|start|end)$/i.test(node.label.trim())) {
+        const cx = pos.x + pos.w / 2
+        const cy = pos.y + pos.h / 2
+        const radius = Math.max(18, Math.min(pos.w, pos.h) / 2 - 2)
+        const strokeWidth = /selesai|^end$/i.test(node.label.trim()) ? 4 : 1.6
+        return `<g>
+  <circle cx="${cx}" cy="${cy}" r="${radius}" fill="#ffffff" stroke="#111827" stroke-width="${strokeWidth}" />
+  <text fill="#111827" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle" y="${cy}">${text}</text>
+</g>`
+      }
+
       return `<g>
-  <rect x="${pos.x}" y="${pos.y}" width="${pos.w}" height="${pos.h}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="1.6" />
-  <text fill="${textFill}" font-size="12" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle" y="${pos.y + pos.h / 2}">${text}</text>
+  <rect x="${pos.x}" y="${pos.y}" width="${pos.w}" height="${pos.h}" rx="12" fill="#ffffff" stroke="#111827" stroke-width="1.6" />
+  <text fill="#111827" font-size="12" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle" y="${pos.y + pos.h / 2}">${text}</text>
 </g>`
     })
     .join('\n')
@@ -397,11 +402,11 @@ export function buildFlowchartFallbackSvg(source: string): string | null {
         ? `<text x="${mx}" y="${my - 6}" fill="#475569" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">${escapeXml(edge.label)}</text>`
         : ''
       return `<g>
-  <path d="M ${x1} ${y1} L ${x2} ${y2}" stroke="#64748b" stroke-width="1.6" fill="none" marker-end="url(#arrow-${index})" />
+  <path d="M ${x1} ${y1} L ${x2} ${y2}" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow-${index})" />
   ${label}
   <defs>
     <marker id="arrow-${index}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111827" />
     </marker>
   </defs>
 </g>`
