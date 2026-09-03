@@ -283,13 +283,32 @@ function installFetchObserver(): void {
   }
 }
 
+// web-vitals' own CLS handler intermittently reads .startTime off an undefined
+// PerformanceEntry inside a requestIdleCallback/timeout it schedules internally
+// (Chrome-only race). Upstream closed this as not-planned:
+// https://github.com/GoogleChrome/web-vitals/issues/274 — it never affects app
+// behavior, so filter it out instead of letting it spam the console and inflate
+// our own error count.
+function isKnownHarmlessRumError(message: string): boolean {
+  return message.includes("reading 'startTime'")
+}
+
 function installErrorObserver(): void {
   if (typeof window === 'undefined') return
 
-  window.addEventListener('error', () => {
+  window.addEventListener('error', (event) => {
+    if (isKnownHarmlessRumError(event.message)) {
+      event.preventDefault()
+      return
+    }
     bucket.jsErrorCount += 1
   })
-  window.addEventListener('unhandledrejection', () => {
+  window.addEventListener('unhandledrejection', (event) => {
+    const message = event.reason instanceof Error ? event.reason.message : String(event.reason ?? '')
+    if (isKnownHarmlessRumError(message)) {
+      event.preventDefault()
+      return
+    }
     bucket.jsErrorCount += 1
   })
 }
