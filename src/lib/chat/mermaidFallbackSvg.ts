@@ -50,11 +50,11 @@ function unwrapLabel(raw: string): string {
   return text
 }
 
-function isEventLabel(label: string): boolean {
+export function isEventLabel(label: string): boolean {
   return /^(mulai|selesai|start|end)$/i.test(label.trim())
 }
 
-function isEventNode(node: { label: string; shape: FallbackNodeShape }): boolean {
+export function isEventNode(node: { label: string; shape: FallbackNodeShape }): boolean {
   return node.shape === 'round' || isEventLabel(node.label)
 }
 
@@ -109,7 +109,8 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
 
   for (const line of lines) {
     if (/^(flowchart|graph)\s+/i.test(line)) continue
-    if (/^(subgraph|end|style|classDef|class|linkStyle|click|direction)\b/i.test(line)) continue
+    if (/^(subgraph|style|classDef|class|linkStyle|click|direction)\b/i.test(line)) continue
+    if (/^end$/i.test(line)) continue
 
     // A[Label] -->|edge| B{Decision}
     const edgeWithLabel = line.match(
@@ -204,8 +205,42 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
   }
   collapseBareFallbackNodes(nodes, edges)
   connectOrphanNodes(nodes, edges)
+  normalizeEndEvents(nodes, edges)
   if (nodes.size === 0) return null
   return { direction, nodes: [...nodes.values()], edges }
+}
+
+export function isEndLike(node: { label: string; shape: FallbackNodeShape }): boolean {
+  return /^(selesai|end)$/i.test(node.label.trim())
+}
+
+function normalizeEndEvents(
+  nodes: Map<string, { id: string; label: string; shape: FallbackNodeShape }>,
+  edges: FallbackGraph['edges'],
+) {
+  for (const node of [...nodes.values()]) {
+    if (!isEndLike(node) && node.shape !== 'round') continue
+    if (/^(mulai|start)$/i.test(node.label.trim())) continue
+    if (!isEndLike(node) && node.shape === 'round') continue
+    const outgoing = edges.filter((edge) => edge.source === node.id)
+    if (outgoing.length === 0) continue
+    const incoming = edges.filter((edge) => edge.target === node.id)
+    const pred = incoming[0]?.source
+    const kept = edges.filter((edge) => edge.source !== node.id)
+    if (pred) {
+      for (const edge of outgoing) {
+        if (pred === edge.target) continue
+        if (!kept.some((item) => item.source === pred && item.target === edge.target)) {
+          kept.push({ source: pred, target: edge.target, label: edge.label })
+        }
+      }
+      if (!kept.some((item) => item.source === pred && item.target === node.id)) {
+        kept.push({ source: pred, target: node.id })
+      }
+    }
+    edges.length = 0
+    edges.push(...kept)
+  }
 }
 
 function connectOrphanNodes(
@@ -214,11 +249,17 @@ function connectOrphanNodes(
 ) {
   const ids = [...nodes.keys()]
   for (let i = 0; i < ids.length - 1; i += 1) {
-    const source = ids[i]
     const target = ids[i + 1]
-    const targetHasIncoming = edges.some((edge) => edge.target === target)
-    const alreadyLinked = edges.some((edge) => edge.source === source && edge.target === target)
-    if (!targetHasIncoming && !alreadyLinked) {
+    if (edges.some((edge) => edge.target === target)) continue
+    let sourceIndex = i
+    while (sourceIndex >= 0) {
+      const candidate = nodes.get(ids[sourceIndex])
+      if (candidate && !isEndLike(candidate)) break
+      sourceIndex -= 1
+    }
+    if (sourceIndex < 0) continue
+    const source = ids[sourceIndex]
+    if (!edges.some((edge) => edge.source === source && edge.target === target)) {
       edges.push({ source, target })
     }
   }
@@ -337,6 +378,16 @@ function layoutGraph(graph: FallbackGraph): {
   for (const node of graph.nodes) {
     if (!rank.has(node.id)) rank.set(node.id, 0)
   }
+  const processMaxRank = Math.max(
+    0,
+    ...graph.nodes.filter((node) => !isEndLike(node)).map((node) => rank.get(node.id) ?? 0),
+  )
+  for (const node of graph.nodes) {
+    const hasOutgoing = (children.get(node.id) ?? []).length > 0
+    if (isEndLike(node) && !hasOutgoing) {
+      rank.set(node.id, processMaxRank + 1)
+    }
+  }
 
   const buckets = new Map<number, string[]>()
   for (const node of graph.nodes) {
@@ -352,6 +403,7 @@ function layoutGraph(graph: FallbackGraph): {
   const positions = new Map<string, { x: number; y: number; w: number; h: number }>()
   let maxX = 0
   let maxY = 0
+  let cursor = pad
 
   ranks.forEach((r, rankIndex) => {
     const ids = buckets.get(r) ?? []
@@ -368,11 +420,12 @@ function layoutGraph(graph: FallbackGraph): {
       const y =
         graph.direction === 'LR'
           ? pad + colIndex * (rowH + gapY) + (rowH - box.h) / 2
-          : pad + rankIndex * (rowH + gapY) + (rowH - box.h) / 2
+          : cursor + (rowH - box.h) / 2
       positions.set(id, { x, y, w: box.w, h: box.h })
       maxX = Math.max(maxX, x + box.w)
       maxY = Math.max(maxY, y + box.h)
     })
+    cursor += rowH + gapY
   })
 
   return {
@@ -380,6 +433,10 @@ function layoutGraph(graph: FallbackGraph): {
     height: Math.max(maxY + pad, 200),
     positions,
   }
+}
+
+export function layoutFlowchartGraph(graph: FallbackGraph) {
+  return layoutGraph(graph)
 }
 
 /** Build an SVG string for a parsed flowchart. Always returns a drawable diagram when parse succeeds. */

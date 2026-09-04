@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
 import { buildFlowchartFallbackSvg, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
-import { renderMermaidFlowchartAsBpmnPng } from '@/lib/api/tectonaAgentRuntimeApi'
+import {
+  AssistantFlowchartCanvas,
+  canRenderAssistantFlowchart,
+  flowchartPreviewHeight,
+} from '@/modules/core-shell/components/AssistantFlowchartCanvas'
 import { cn } from '@/lib/utils'
 
 type AssistantMermaidBlockProps = {
@@ -121,47 +125,6 @@ function normalizeRenderedSvg(svg: SVGSVGElement): { width: number; height: numb
   return measureSvgNaturalSize(svg)
 }
 
-async function cropWhiteMarginsFromObjectUrl(objectUrl: string): Promise<string> {
-  const image = new Image()
-  image.src = objectUrl
-  await image.decode()
-  const source = document.createElement('canvas')
-  source.width = image.naturalWidth
-  source.height = image.naturalHeight
-  const ctx = source.getContext('2d')
-  if (!ctx) return objectUrl
-  ctx.drawImage(image, 0, 0)
-  const { data, width, height } = ctx.getImageData(0, 0, source.width, source.height)
-  let minX = width
-  let minY = height
-  let maxX = 0
-  let maxY = 0
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const i = (y * width + x) * 4
-      if (data[i] < 250 || data[i + 1] < 250 || data[i + 2] < 250) {
-        minX = Math.min(minX, x)
-        minY = Math.min(minY, y)
-        maxX = Math.max(maxX, x)
-        maxY = Math.max(maxY, y)
-      }
-    }
-  }
-  if (maxX <= minX || maxY <= minY) return objectUrl
-  const pad = 16
-  minX = Math.max(0, minX - pad)
-  minY = Math.max(0, minY - pad)
-  maxX = Math.min(width - 1, maxX + pad)
-  maxY = Math.min(height - 1, maxY + pad)
-  const cropped = document.createElement('canvas')
-  cropped.width = maxX - minX + 1
-  cropped.height = maxY - minY + 1
-  cropped.getContext('2d')?.drawImage(source, minX, minY, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height)
-  const blob = await new Promise<Blob | null>((resolve) => cropped.toBlob(resolve, 'image/png'))
-  if (!blob) return objectUrl
-  return URL.createObjectURL(blob)
-}
-
 async function copyTextToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
@@ -208,11 +171,12 @@ function MermaidToolbar({ onCopy, onFullscreen }: MermaidToolbarProps) {
 type MermaidFullscreenModalProps = {
   svgHtml?: string | null
   imageUrl?: string | null
+  children?: ReactNode
   source: string
   onClose: () => void
 }
 
-function MermaidFullscreenModal({ svgHtml, imageUrl, source, onClose }: MermaidFullscreenModalProps) {
+function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }: MermaidFullscreenModalProps) {
   const canvasRef = useRef<HTMLDivElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(1)
@@ -281,15 +245,19 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, source, onClose }: MermaidF
         aria-label="Fullscreen diagram"
       >
         <div className="flex items-center justify-end gap-0.5 border-b border-[#d1d7db]/80 px-2 py-1.5 dark:border-[#3b4a54]">
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.min(3, z + 0.15))} title="Zoom in">
-            <ZoomIn className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.max(0.35, z - 0.15))} title="Zoom out">
-            <ZoomOut className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom(1)} title="Reset zoom">
-            <RotateCcw className="h-4 w-4" />
-          </Button>
+          {children ? null : (
+            <>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.min(3, z + 0.15))} title="Zoom in">
+                <ZoomIn className="h-4 w-4" />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.max(0.35, z - 0.15))} title="Zoom out">
+                <ZoomOut className="h-4 w-4" />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setZoom(1)} title="Reset zoom">
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+            </>
+          )}
           <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void handleCopy()} title="Copy">
             <Copy className="h-4 w-4" />
           </Button>
@@ -297,6 +265,9 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, source, onClose }: MermaidF
             <X className="h-4 w-4" />
           </Button>
         </div>
+        {children ? (
+          <div className="min-h-0 flex-1 overflow-hidden p-2">{children}</div>
+        ) : (
         <div ref={scrollerRef} className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 sm:p-6">
           <div className="flex min-h-full w-full min-w-full items-center justify-center">
             {imageUrl ? (
@@ -320,6 +291,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, source, onClose }: MermaidF
             )}
           </div>
         </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -383,47 +355,25 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
   const [isRendering, setIsRendering] = useState(false)
   const [hardError, setHardError] = useState<string | null>(null)
 
+  const cleanedSource = useMemo(() => sanitizeMermaidSource(source), [source])
+  const flowchartSource = canRenderAssistantFlowchart(cleanedSource) ? cleanedSource : source
+  const showFlowchart = /\b(flowchart|graph)\s+(TD|TB|LR|RL)\b/i.test(source) && canRenderAssistantFlowchart(flowchartSource)
+  const flowHeight = showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
+
   useEffect(() => {
+    if (showFlowchart) {
+      setIsRendering(false)
+      setHardError(null)
+      setSvgHtml(null)
+      setBpmnUrl(null)
+      return
+    }
     let cancelled = false
     let objectUrl: string | null = null
     const timer = window.setTimeout(() => {
       void (async () => {
         setIsRendering(true)
         setBpmnUrl(null)
-        const looksLikeFlowchart = /\b(flowchart|graph)\s+(TD|TB|LR|RL)\b/i.test(source)
-        if (looksLikeFlowchart) {
-          const safeSource = sanitizeMermaidSource(source)
-          const sizedSvg = buildFlowchartFallbackSvg(safeSource) ?? buildFlowchartFallbackSvg(source)
-          if (sizedSvg) {
-            if (cancelled) return
-            setSvgHtml(sizedSvg)
-            setViaFallback(false)
-            setHardError(null)
-            setIsRendering(false)
-            return
-          }
-          try {
-            objectUrl = await renderMermaidFlowchartAsBpmnPng(source, 'id')
-            const cropped = await cropWhiteMarginsFromObjectUrl(objectUrl)
-            if (cropped !== objectUrl) URL.revokeObjectURL(objectUrl)
-            objectUrl = cropped
-            if (cancelled) {
-              URL.revokeObjectURL(objectUrl)
-              return
-            }
-            setBpmnUrl(objectUrl)
-            setSvgHtml(null)
-            setViaFallback(false)
-            setHardError(null)
-            setIsRendering(false)
-            return
-          } catch {
-            if (objectUrl) {
-              URL.revokeObjectURL(objectUrl)
-              objectUrl = null
-            }
-          }
-        }
         try {
           const result = await renderMermaidSvg(source, reactId)
           if (cancelled) return
@@ -451,8 +401,9 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
     return () => {
       cancelled = true
       window.clearTimeout(timer)
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [reactId, source, retryTick])
+  }, [reactId, source, retryTick, showFlowchart])
 
   useEffect(() => {
     return () => {
@@ -482,8 +433,9 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
     })
   }, [source])
 
-  // Only if both Mermaid and SVG fallback fail (rare non-flowchart diagrams).
-  if (hardError && !svgHtml && !bpmnUrl) {
+  const hasPreview = showFlowchart || Boolean(svgHtml || bpmnUrl)
+
+  if (hardError && !svgHtml && !bpmnUrl && !showFlowchart) {
     return (
       <div
         className={cn(
@@ -522,20 +474,27 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           className,
         )}
       >
-        {(svgHtml || bpmnUrl) ? (
+        {hasPreview ? (
           <MermaidToolbar onCopy={() => void handleCopy()} onFullscreen={() => setFullscreenOpen(true)} />
         ) : null}
-        {bpmnUrl ? (
+        {showFlowchart ? (
+          <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
+            Process flow
+          </p>
+        ) : null}
+        {bpmnUrl && !showFlowchart ? (
           <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
             BPMN 2.0
           </p>
         ) : null}
-        {viaFallback && svgHtml && !bpmnUrl ? (
+        {viaFallback && svgHtml && !bpmnUrl && !showFlowchart ? (
           <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-[#202c33]/90 dark:text-slate-300">
             Preview diagram
           </p>
         ) : null}
-        {bpmnUrl ? (
+        {showFlowchart ? (
+          <AssistantFlowchartCanvas source={flowchartSource} height={flowHeight} className="rounded-md" />
+        ) : bpmnUrl ? (
           <div className="flex w-full justify-center overflow-x-auto p-3">
             <img
               src={bpmnUrl}
@@ -564,14 +523,19 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           />
         )}
       </div>
-      {fullscreenOpen && bpmnUrl ? (
+      {fullscreenOpen && showFlowchart ? (
+        <MermaidFullscreenModal source={source} onClose={() => setFullscreenOpen(false)}>
+          <AssistantFlowchartCanvas source={flowchartSource} className="h-[min(78vh,760px)]" />
+        </MermaidFullscreenModal>
+      ) : null}
+      {fullscreenOpen && bpmnUrl && !showFlowchart ? (
         <MermaidFullscreenModal
           imageUrl={bpmnUrl}
           source={source}
           onClose={() => setFullscreenOpen(false)}
         />
       ) : null}
-      {fullscreenOpen && svgHtml && !bpmnUrl ? (
+      {fullscreenOpen && svgHtml && !bpmnUrl && !showFlowchart ? (
         <MermaidFullscreenModal svgHtml={svgHtml} source={source} onClose={() => setFullscreenOpen(false)} />
       ) : null}
     </>
