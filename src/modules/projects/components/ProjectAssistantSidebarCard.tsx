@@ -59,9 +59,9 @@ export function ProjectAssistantSidebarCard({
           </div>
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              Tectona Assistant
+              Smith
             </p>
-            <p className="text-xs font-semibold text-foreground">AI Project Assistant</p>
+            <p className="text-xs font-semibold text-foreground">AI Project Management Assistant</p>
           </div>
         </div>
 

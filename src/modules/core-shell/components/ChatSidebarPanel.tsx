@@ -5625,7 +5625,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             <div className="flex min-h-0 flex-1 flex-col gap-2">
               <p className="text-xs text-muted-foreground">
                 Select a contact to get started.{' '}
-                <span className="font-medium text-foreground">Tectona Assistant</span> is available for Gen AI assistance.
+                <span className="font-medium text-foreground">Smith</span> is available for Gen AI assistance.
               </p>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button

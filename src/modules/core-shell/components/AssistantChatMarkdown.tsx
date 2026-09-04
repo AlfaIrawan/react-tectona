@@ -15,7 +15,7 @@ import { AssistantMermaidBlock } from './AssistantMermaidBlock'
 import { splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
 
 /** User-visible label for Gen AI assistant in sidebar chat. */
-export const TECTONA_ASSISTANT_LABEL = 'Tectona Assistant'
+export const TECTONA_ASSISTANT_LABEL = 'Smith'
 
 const CHAT_MARKDOWN_CLASS = cn(
   'min-w-0 flex-1 text-left text-sm leading-[1.45] text-[#111b21] dark:text-[#e9edef]',
