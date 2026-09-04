@@ -410,6 +410,12 @@ function brainstormMessageHasDiagram(text: string): boolean {
   return lowered.includes('```mermaid') || /\bflowchart\s+(td|lr|tb|rl)\b/i.test(lowered)
 }
 
+function isBrainstormIntakeComplete(progress: IdeaDraftEvidenceProgress | null | undefined): boolean {
+  const total = progress?.total ?? 0
+  const answered = progress?.answered ?? 0
+  return total > 0 && answered >= total
+}
+
 /** Client-side unlock when backend forgot ready_to_continue but chat evidence is complete. */
 function inferBrainstormReadyFromMessages(messages: IdeaDraftBrainstormMessage[]): boolean {
   if (!messages.length) return false
@@ -3656,6 +3662,12 @@ export function IdeaBacklogManagementPage() {
     )
   }, [isBrainstormMode, brainstormMessages, brainstormReady, isBrainstormSending])
 
+  useEffect(() => {
+    if (!isBrainstormMode || brainstormReady) return
+    if (!isBrainstormIntakeComplete(brainstormEvidenceProgress)) return
+    setBrainstormOfferGenerateAnyway(true)
+  }, [isBrainstormMode, brainstormReady, brainstormEvidenceProgress])
+
   const syncBrainstormComposerHeight = () => {
     const el = brainstormComposerRef.current
     if (!el) return
@@ -3709,13 +3721,17 @@ export function IdeaBacklogManagementPage() {
   // state (not a query param) deliberately: WorkspaceSlugLayout keys its <Outlet>
   // on pathname+search+hash, so touching searchParams here would force a full
   // remount of this page and wipe the very state this effect sets below.
+  // After applying, drop resumeBrainstormJobId from history so a browser refresh
+  // does not reopen the same awaiting_input overlay.
   useEffect(() => {
     const jobId = (location.state as { resumeBrainstormJobId?: string } | null)?.resumeBrainstormJobId
     if (!jobId) return
 
+    let cancelled = false
     void (async () => {
       try {
         const status = await getIdeaDraftJob(jobId)
+        if (cancelled) return
         setIsCreateIdeaDrawerOpen(true)
         const pointerTitle = useIdeaDraftBrainstormPointerStore.getState().pointer?.title
         if (pointerTitle) {
@@ -3729,10 +3745,18 @@ export function IdeaBacklogManagementPage() {
           setIdeaDraftJob(status)
         }
       } catch {
-        useIdeaDraftBrainstormPointerStore.getState().clearPointer(jobId)
+        if (!cancelled) useIdeaDraftBrainstormPointerStore.getState().clearPointer(jobId)
+      } finally {
+        if (cancelled) return
+        const rest = { ...((location.state as Record<string, unknown> | null) ?? {}) }
+        delete rest.resumeBrainstormJobId
+        navigate('.', { replace: true, state: Object.keys(rest).length > 0 ? rest : null })
       }
     })()
-  }, [location.state])
+    return () => {
+      cancelled = true
+    }
+  }, [location.state, navigate])
 
   const handleApplyAiResult = () => {
     if (aiAssistanceResult?.result) {
@@ -5106,7 +5130,7 @@ export function IdeaBacklogManagementPage() {
 
                   <div className="space-y-1.5">
                     <div className="flex flex-col gap-2">
-                      <Label htmlFor="idea-description" className="text-xs text-muted-foreground">
+                      <Label id="idea-description-label" className="text-xs text-muted-foreground">
                         Description <RequiredFieldMark />
                       </Label>
 
@@ -5322,7 +5346,7 @@ export function IdeaBacklogManagementPage() {
                       </div>
                     </div>
 
-                    <div id="idea-description" className="space-y-2">
+                    <div id="idea-description" aria-labelledby="idea-description-label" className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
                         <Button
                           type="button"
@@ -5712,7 +5736,7 @@ export function IdeaBacklogManagementPage() {
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                          {brainstormReady || !brainstormOfferGenerateAnyway ? (
+                          {(brainstormReady || brainstormOfferGenerateAnyway) ? (
                             <button
                               type="button"
                               disabled={isBrainstormSending || isDraftContinuing}
@@ -5738,7 +5762,10 @@ export function IdeaBacklogManagementPage() {
                             variant="ghost"
                             size="icon"
                             className="h-9 w-9"
-                            onClick={() => setIsEvidenceDialogOpen(false)}
+                            onClick={() => {
+                              setIsEvidenceDialogOpen(false)
+                              setIsBrainstormMode(false)
+                            }}
                             aria-label="Close chat"
                           >
                             <X className="h-4 w-4" />
