@@ -177,7 +177,7 @@ function AssistantFlowchartCanvasInner({ source, className, height, showControls
         panOnDrag
         zoomOnScroll
         zoomOnPinch
-        preventScrolling={false}
+        preventScrolling
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{ type: 'smoothstep' }}
         className="h-full w-full"

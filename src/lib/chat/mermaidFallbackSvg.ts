@@ -81,8 +81,16 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
   const text = cleanSource(source)
   if (!text) return null
 
+  if (
+    /^(sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|C4Context)\b/im.test(
+      text,
+    )
+  ) {
+    return null
+  }
+
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
-  const header = lines.find((line) => /^(flowchart|graph)\s+/i.test(line))
+  const header = lines.find((line) => /^(flowchart|graph)\b/i.test(line))
   if (!header && !lines.some((line) => /-->/.test(line))) return null
 
   const directionMatch = header?.match(/^(?:flowchart|graph)\s+(TD|TB|LR|RL)\b/i)
@@ -108,7 +116,7 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
     /^([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(\(([^)]*)\)\)|\(([^)]*)\)|\(\[([^\]]*)\]\)|\[\[([^\]]*)\]\])/
 
   for (const line of lines) {
-    if (/^(flowchart|graph)\s+/i.test(line)) continue
+    if (/^(flowchart|graph)\b/i.test(line)) continue
     if (/^(subgraph|style|classDef|class|linkStyle|click|direction)\b/i.test(line)) continue
     if (/^end$/i.test(line)) continue
 

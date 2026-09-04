@@ -356,8 +356,12 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
   const [hardError, setHardError] = useState<string | null>(null)
 
   const cleanedSource = useMemo(() => sanitizeMermaidSource(source), [source])
-  const flowchartSource = canRenderAssistantFlowchart(cleanedSource) ? cleanedSource : source
-  const showFlowchart = /\b(flowchart|graph)\s+(TD|TB|LR|RL)\b/i.test(source) && canRenderAssistantFlowchart(flowchartSource)
+  const flowchartSource = canRenderAssistantFlowchart(cleanedSource)
+    ? cleanedSource
+    : canRenderAssistantFlowchart(source)
+      ? source
+      : cleanedSource
+  const showFlowchart = canRenderAssistantFlowchart(flowchartSource)
   const flowHeight = showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
 
   useEffect(() => {
@@ -478,7 +482,7 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           <MermaidToolbar onCopy={() => void handleCopy()} onFullscreen={() => setFullscreenOpen(true)} />
         ) : null}
         {showFlowchart ? (
-          <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
+          <p className="absolute left-2 top-2 z-20 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
             Process flow
           </p>
         ) : null}
