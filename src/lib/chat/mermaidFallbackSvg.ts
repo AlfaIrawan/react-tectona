@@ -32,14 +32,30 @@ function cleanSource(source: string): string {
 }
 
 function unwrapLabel(raw: string): string {
-  const text = raw.trim()
-  if (
-    (text.startsWith('"') && text.endsWith('"')) ||
-    (text.startsWith("'") && text.endsWith("'"))
-  ) {
-    return text.slice(1, -1)
+  let text = (raw || '').trim()
+  for (let i = 0; i < 4; i += 1) {
+    if (
+      (text.startsWith('"') && text.endsWith('"') && text.length >= 2) ||
+      (text.startsWith("'") && text.endsWith("'") && text.length >= 2)
+    ) {
+      text = text.slice(1, -1).trim()
+      continue
+    }
+    if (text.startsWith('(') && text.endsWith(')') && text.length >= 2) {
+      text = text.slice(1, -1).trim()
+      continue
+    }
+    break
   }
   return text
+}
+
+function isEventLabel(label: string): boolean {
+  return /^(mulai|selesai|start|end)$/i.test(label.trim())
+}
+
+function isEventNode(node: { label: string; shape: FallbackNodeShape }): boolean {
+  return node.shape === 'round' || isEventLabel(node.label)
 }
 
 function wrapLabel(label: string, maxChars: number): string[] {
@@ -104,11 +120,12 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
       const edgeLabel = unwrapLabel(edgeWithLabel[2])
       const targetId = edgeWithLabel[3]
       for (const piece of line.matchAll(
-        /([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(([^)]*)\))/g,
+        /([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(\(([^)]*)\)\)|\(([^)]*)\))/g,
       )) {
         const id = piece[1]
-        const label = unwrapLabel(piece[2] ?? piece[3] ?? piece[4] ?? id)
-        const shape: FallbackNodeShape = piece[3] != null ? 'diamond' : piece[4] != null ? 'round' : 'rect'
+        const label = unwrapLabel(piece[2] ?? piece[3] ?? piece[4] ?? piece[5] ?? id)
+        const shape: FallbackNodeShape =
+          piece[3] != null ? 'diamond' : piece[4] != null || piece[5] != null ? 'round' : 'rect'
         ensureNode(id, label, shape)
       }
       ensureNode(sourceId)
@@ -126,7 +143,7 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
         : []
     if (chainIds.length >= 2) {
       for (const piece of line.matchAll(
-        /([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(([^)]*)\)|\(\(([^)]*)\)\))/g,
+        /([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(\(([^)]*)\)\)|\(([^)]*)\))/g,
       )) {
         const id = piece[1]
         const label = unwrapLabel(piece[2] ?? piece[3] ?? piece[4] ?? piece[5] ?? id)
@@ -154,11 +171,12 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
       const sourceId = plainEdge[1]
       const targetId = plainEdge[2]
       for (const piece of line.matchAll(
-        /([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(([^)]*)\))/g,
+        /([A-Za-z][\w-]*)\s*(?:\[([^\]]*)\]|\{([^}]*)\}|\(\(([^)]*)\)\)|\(([^)]*)\))/g,
       )) {
         const id = piece[1]
-        const label = unwrapLabel(piece[2] ?? piece[3] ?? piece[4] ?? id)
-        const shape: FallbackNodeShape = piece[3] != null ? 'diamond' : piece[4] != null ? 'round' : 'rect'
+        const label = unwrapLabel(piece[2] ?? piece[3] ?? piece[4] ?? piece[5] ?? id)
+        const shape: FallbackNodeShape =
+          piece[3] != null ? 'diamond' : piece[4] != null || piece[5] != null ? 'round' : 'rect'
         ensureNode(id, label, shape)
       }
       ensureNode(sourceId)
@@ -185,8 +203,25 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
     }
   }
   collapseBareFallbackNodes(nodes, edges)
+  connectOrphanNodes(nodes, edges)
   if (nodes.size === 0) return null
   return { direction, nodes: [...nodes.values()], edges }
+}
+
+function connectOrphanNodes(
+  nodes: Map<string, { id: string; label: string; shape: FallbackNodeShape }>,
+  edges: FallbackGraph['edges'],
+) {
+  const ids = [...nodes.keys()]
+  for (let i = 0; i < ids.length - 1; i += 1) {
+    const source = ids[i]
+    const target = ids[i + 1]
+    const targetHasIncoming = edges.some((edge) => edge.target === target)
+    const alreadyLinked = edges.some((edge) => edge.source === source && edge.target === target)
+    if (!targetHasIncoming && !alreadyLinked) {
+      edges.push({ source, target })
+    }
+  }
 }
 
 function collapseBareFallbackNodes(
@@ -251,16 +286,23 @@ function layoutGraph(graph: FallbackGraph): {
   positions: Map<string, { x: number; y: number; w: number; h: number }>
 } {
   const gapX = 56
-  const gapY = 48
+  const gapY = 52
   const pad = 28
   const boxes = new Map<string, { w: number; h: number }>()
+  const eventSize = 44
+  let processWidth = 280
   for (const node of graph.nodes) {
-    const isEvent = node.shape === 'round' || /^(mulai|selesai|start|end)$/i.test(node.label.trim())
-    const lines = wrapLabel(node.label, 36)
-    const longest = Math.max(...lines.map((line) => line.length), isEvent ? 8 : 16)
-    const w = isEvent ? 56 : Math.min(480, Math.max(220, longest * 8 + 40))
-    const h = isEvent ? 56 : Math.max(88, lines.length * 18 + 36)
-    boxes.set(node.id, { w, h })
+    if (isEventNode(node)) continue
+    const longest = Math.max(...wrapLabel(node.label, 34).map((line) => line.length), 16)
+    processWidth = Math.max(processWidth, Math.min(420, longest * 8 + 40))
+  }
+  for (const node of graph.nodes) {
+    if (isEventNode(node)) {
+      boxes.set(node.id, { w: eventSize, h: eventSize })
+      continue
+    }
+    const lines = wrapLabel(node.label, Math.max(18, Math.floor((processWidth - 32) / 7)))
+    boxes.set(node.id, { w: processWidth, h: Math.max(72, 28 + lines.length * 18) })
   }
 
   const indegree = new Map<string, number>()
@@ -304,6 +346,8 @@ function layoutGraph(graph: FallbackGraph): {
     buckets.set(r, list)
   }
   const ranks = [...buckets.keys()].sort((a, b) => a - b)
+  const columnWidth = processWidth
+  const centerX = pad + columnWidth / 2
 
   const positions = new Map<string, { x: number; y: number; w: number; h: number }>()
   let maxX = 0
@@ -312,19 +356,19 @@ function layoutGraph(graph: FallbackGraph): {
   ranks.forEach((r, rankIndex) => {
     const ids = buckets.get(r) ?? []
     const rankHeights = ids.map((id) => boxes.get(id)?.h ?? 80)
-    const rankWidths = ids.map((id) => boxes.get(id)?.w ?? 220)
-    const rowH = Math.max(...rankHeights, 80)
-    const colW = Math.max(...rankWidths, 220)
+    const rowH = Math.max(...rankHeights, 44)
     ids.forEach((id, colIndex) => {
-      const box = boxes.get(id) ?? { w: 220, h: 80 }
+      const box = boxes.get(id) ?? { w: columnWidth, h: 80 }
       const x =
         graph.direction === 'LR'
-          ? pad + rankIndex * (colW + gapX)
-          : pad + colIndex * (colW + gapX) + (colW - box.w) / 2
+          ? pad + rankIndex * (columnWidth + gapX) + (columnWidth - box.w) / 2
+          : ids.length === 1
+            ? centerX - box.w / 2
+            : pad + colIndex * (columnWidth + gapX) + (columnWidth - box.w) / 2
       const y =
         graph.direction === 'LR'
           ? pad + colIndex * (rowH + gapY) + (rowH - box.h) / 2
-          : pad + rankIndex * (rowH + gapY)
+          : pad + rankIndex * (rowH + gapY) + (rowH - box.h) / 2
       positions.set(id, { x, y, w: box.w, h: box.h })
       maxX = Math.max(maxX, x + box.w)
       maxY = Math.max(maxY, y + box.h)
@@ -349,7 +393,7 @@ export function buildFlowchartFallbackSvg(source: string): string | null {
     .map((node) => {
       const pos = positions.get(node.id)
       if (!pos) return ''
-      const lines = wrapLabel(node.label, 36)
+      const lines = wrapLabel(node.label, Math.max(18, Math.floor((pos.w - 32) / 7)))
       const text = lines
         .map((line, idx) => {
           const dy = idx === 0 ? -((lines.length - 1) * 7) : 14
@@ -369,10 +413,10 @@ export function buildFlowchartFallbackSvg(source: string): string | null {
 </g>`
       }
 
-      if (node.shape === 'round' || /^(mulai|selesai|start|end)$/i.test(node.label.trim())) {
+      if (isEventNode(node)) {
         const cx = pos.x + pos.w / 2
         const cy = pos.y + pos.h / 2
-        const radius = Math.max(18, Math.min(pos.w, pos.h) / 2 - 2)
+        const radius = Math.max(16, Math.min(pos.w, pos.h) / 2 - 2)
         const strokeWidth = /selesai|^end$/i.test(node.label.trim()) ? 4 : 1.6
         return `<g>
   <circle cx="${cx}" cy="${cy}" r="${radius}" fill="#ffffff" stroke="#111827" stroke-width="${strokeWidth}" />
@@ -396,16 +440,24 @@ export function buildFlowchartFallbackSvg(source: string): string | null {
       const y1 = graph.direction === 'LR' ? from.y + from.h / 2 : from.y + from.h
       const x2 = graph.direction === 'LR' ? to.x : to.x + to.w / 2
       const y2 = graph.direction === 'LR' ? to.y + to.h / 2 : to.y
+      const path =
+        graph.direction === 'LR'
+          ? Math.abs(y1 - y2) < 1
+            ? `M ${x1} ${y1} L ${x2} ${y2}`
+            : `M ${x1} ${y1} L ${(x1 + x2) / 2} ${y1} L ${(x1 + x2) / 2} ${y2} L ${x2} ${y2}`
+          : Math.abs(x1 - x2) < 1
+            ? `M ${x1} ${y1} L ${x2} ${y2}`
+            : `M ${x1} ${y1} L ${x1} ${(y1 + y2) / 2} L ${x2} ${(y1 + y2) / 2} L ${x2} ${y2}`
       const mx = (x1 + x2) / 2
       const my = (y1 + y2) / 2
       const label = edge.label
         ? `<text x="${mx}" y="${my - 6}" fill="#475569" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">${escapeXml(edge.label)}</text>`
         : ''
       return `<g>
-  <path d="M ${x1} ${y1} L ${x2} ${y2}" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow-${index})" />
+  <path d="${path}" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow-${index})" />
   ${label}
   <defs>
-    <marker id="arrow-${index}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arrow-${index}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#111827" />
     </marker>
   </defs>

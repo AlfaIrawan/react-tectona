@@ -78,7 +78,7 @@ function sanitizeMermaidSource(source: string): string {
   text = text.replace(/([A-Za-z][\w-]*)\{(?!")([^}]+)\}/g, (_m, id: string, label: string) => {
     return `${id}{"${label.replace(/"/g, "'")}"}`
   })
-  text = text.replace(/([A-Za-z][\w-]*)\((?!")([^)]+)\)/g, (_m, id: string, label: string) => {
+  text = text.replace(/([A-Za-z][\w-]*)\((?!\()(?!")([^)]+)\)/g, (_m, id: string, label: string) => {
     return `${id}("${label.replace(/"/g, "'")}")`
   })
   text = text.replace(/(\|--?)(?!")([^|\n]+)(\|)/g, (_m, left: string, label: string, right: string) => {
