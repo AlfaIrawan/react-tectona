@@ -351,6 +351,11 @@ function layoutGraph(graph: FallbackGraph): {
       continue
     }
     const lines = wrapLabel(node.label, Math.max(18, Math.floor((processWidth - 32) / 7)))
+    if (node.shape === 'diamond') {
+      const size = Math.max(168, Math.min(processWidth, 36 + lines.length * 22))
+      boxes.set(node.id, { w: size, h: size })
+      continue
+    }
     boxes.set(node.id, { w: processWidth, h: Math.max(72, 28 + lines.length * 18) })
   }
 

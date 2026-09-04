@@ -72,10 +72,25 @@ function EventNode({ data }: NodeProps<AssistantFlowchartNodeData>) {
 
 function DecisionNode({ data }: NodeProps<AssistantFlowchartNodeData>) {
   return (
-    <div className="relative flex h-full w-full items-center justify-center">
+    <div className="relative flex h-full w-full items-center justify-center overflow-visible">
       <Handle type="target" position={targetPosition(data.direction)} className="!h-2 !w-2 !opacity-0" />
-      <div className="absolute inset-[12%] rotate-45 rounded-sm border-[1.6px] border-slate-900 bg-white" />
-      <span className="relative z-10 max-w-[80%] text-center text-[11px] leading-snug text-slate-900">{data.label}</span>
+      <svg
+        className="pointer-events-none absolute inset-0 h-full w-full"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        aria-hidden
+      >
+        <polygon
+          points="50,2 98,50 50,98 2,50"
+          fill="#ffffff"
+          stroke="#0f172a"
+          strokeWidth="1.6"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <span className="relative z-10 max-w-[70%] px-1 text-center text-[11px] leading-snug text-slate-900">
+        {data.label}
+      </span>
       <Handle type="source" position={sourcePosition(data.direction)} className="!h-2 !w-2 !opacity-0" />
     </div>
   )
