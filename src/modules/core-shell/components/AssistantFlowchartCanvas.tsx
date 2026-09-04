@@ -70,10 +70,15 @@ function EventNode({ data }: NodeProps<AssistantFlowchartNodeData>) {
   )
 }
 
+const DECISION_HANDLE_CLASS = '!h-2 !w-2 !border-0 !bg-transparent !opacity-0'
+
 function DecisionNode({ data }: NodeProps<AssistantFlowchartNodeData>) {
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-visible">
-      <Handle type="target" position={targetPosition(data.direction)} className="!h-2 !w-2 !opacity-0" />
+      <Handle type="target" id="target-top" position={Position.Top} className={DECISION_HANDLE_CLASS} />
+      <Handle type="target" id="target-right" position={Position.Right} className={DECISION_HANDLE_CLASS} />
+      <Handle type="target" id="target-bottom" position={Position.Bottom} className={DECISION_HANDLE_CLASS} />
+      <Handle type="target" id="target-left" position={Position.Left} className={DECISION_HANDLE_CLASS} />
       <svg
         className="pointer-events-none absolute inset-0 h-full w-full"
         viewBox="0 0 100 100"
@@ -91,9 +96,69 @@ function DecisionNode({ data }: NodeProps<AssistantFlowchartNodeData>) {
       <span className="relative z-10 max-w-[70%] px-1 text-center text-[11px] leading-snug text-slate-900">
         {data.label}
       </span>
-      <Handle type="source" position={sourcePosition(data.direction)} className="!h-2 !w-2 !opacity-0" />
+      <Handle type="source" id="source-top" position={Position.Top} className={DECISION_HANDLE_CLASS} />
+      <Handle type="source" id="source-right" position={Position.Right} className={DECISION_HANDLE_CLASS} />
+      <Handle type="source" id="source-bottom" position={Position.Bottom} className={DECISION_HANDLE_CLASS} />
+      <Handle type="source" id="source-left" position={Position.Left} className={DECISION_HANDLE_CLASS} />
     </div>
   )
+}
+
+type NodeBox = { x: number; y: number; w: number; h: number }
+
+function boxCenter(box: NodeBox) {
+  return { x: box.x + box.w / 2, y: box.y + box.h / 2 }
+}
+
+function preferredDecisionSourceHandle(from: NodeBox, to: NodeBox): 'source-left' | 'source-right' | 'source-top' | 'source-bottom' {
+  const a = boxCenter(from)
+  const b = boxCenter(to)
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? 'source-right' : 'source-left'
+  }
+  return dy >= 0 ? 'source-bottom' : 'source-top'
+}
+
+/** Decision diamonds never share one stem: each outgoing edge leaves a distinct vertex toward its target. */
+function decisionSourceHandleByOutgoing(
+  direction: 'TD' | 'LR',
+  from: NodeBox,
+  targets: Array<{ key: string; box: NodeBox }>,
+): Map<string, string> {
+  const assigned = new Map<string, string>()
+  if (targets.length === 0) return assigned
+  if (targets.length === 1) {
+    assigned.set(targets[0].key, preferredDecisionSourceHandle(from, targets[0].box))
+    return assigned
+  }
+
+  if (direction === 'TD') {
+    const ordered = [...targets].sort((a, b) => boxCenter(a.box).x - boxCenter(b.box).x)
+    if (ordered.length === 2) {
+      assigned.set(ordered[0].key, 'source-left')
+      assigned.set(ordered[1].key, 'source-right')
+      return assigned
+    }
+    const slots: Array<'source-left' | 'source-bottom' | 'source-right'> = ['source-left', 'source-bottom', 'source-right']
+    ordered.forEach((item, index) => {
+      assigned.set(item.key, slots[Math.min(index, slots.length - 1)])
+    })
+    return assigned
+  }
+
+  const ordered = [...targets].sort((a, b) => boxCenter(a.box).y - boxCenter(b.box).y)
+  if (ordered.length === 2) {
+    assigned.set(ordered[0].key, 'source-top')
+    assigned.set(ordered[1].key, 'source-bottom')
+    return assigned
+  }
+  const slots: Array<'source-top' | 'source-right' | 'source-bottom'> = ['source-top', 'source-right', 'source-bottom']
+  ordered.forEach((item, index) => {
+    assigned.set(item.key, slots[Math.min(index, slots.length - 1)])
+  })
+  return assigned
 }
 
 const nodeTypes = {
@@ -109,6 +174,7 @@ function handleReactFlowError(messageId: string, message: string) {
 
 function graphToFlow(graph: FallbackGraph): { nodes: Node<AssistantFlowchartNodeData>[]; edges: Edge[]; height: number } {
   const { positions, height } = layoutFlowchartGraph(graph)
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]))
   const nodes: Node<AssistantFlowchartNodeData>[] = graph.nodes.map((node) => {
     const pos = positions.get(node.id) ?? { x: 0, y: 0, w: 280, h: 72 }
     const kind: AssistantFlowchartNodeData['kind'] =
@@ -130,16 +196,44 @@ function graphToFlow(graph: FallbackGraph): { nodes: Node<AssistantFlowchartNode
       selectable: false,
     }
   })
-  const edges: Edge[] = graph.edges.map((edge, index) => ({
-    id: `${edge.source}-${edge.target}-${index}`,
-    source: edge.source,
-    target: edge.target,
-    label: edge.label,
-    type: 'smoothstep',
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#111827', width: 18, height: 18 },
-    style: { stroke: '#111827', strokeWidth: 1.8 },
-    labelStyle: { fontSize: 11, fill: '#475569' },
-  }))
+
+  const decisionHandleByEdgeKey = new Map<string, string>()
+  for (const node of graph.nodes) {
+    if (node.shape !== 'diamond') continue
+    const from = positions.get(node.id)
+    if (!from) continue
+    const outgoing = graph.edges
+      .map((edge, index) => ({ edge, index, key: `${edge.source}-${edge.target}-${index}` }))
+      .filter((item) => item.edge.source === node.id)
+    const targets = outgoing.flatMap((item) => {
+      const box = positions.get(item.edge.target)
+      return box ? [{ key: item.key, box }] : []
+    })
+    const assigned = decisionSourceHandleByOutgoing(graph.direction, from, targets)
+    for (const [key, handle] of assigned) decisionHandleByEdgeKey.set(key, handle)
+  }
+
+  const edges: Edge[] = graph.edges.map((edge, index) => {
+    const key = `${edge.source}-${edge.target}-${index}`
+    const sourceIsDecision = nodeById.get(edge.source)?.shape === 'diamond'
+    const targetIsDecision = nodeById.get(edge.target)?.shape === 'diamond'
+    return {
+      id: key,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: sourceIsDecision ? decisionHandleByEdgeKey.get(key) : undefined,
+      targetHandle: targetIsDecision
+        ? graph.direction === 'LR'
+          ? 'target-left'
+          : 'target-top'
+        : undefined,
+      label: edge.label,
+      type: 'smoothstep',
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#111827', width: 18, height: 18 },
+      style: { stroke: '#111827', strokeWidth: 1.8 },
+      labelStyle: { fontSize: 11, fill: '#475569' },
+    }
+  })
   return { nodes, edges, height }
 }
 
