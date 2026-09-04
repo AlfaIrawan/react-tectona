@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { splitAssistantGreetingLead } from './assistantMessageContent'
+import {
+  parseAssistantMessageContent,
+  splitAssistantGreetingLead,
+  stripAssistantReasoningLeak,
+} from './assistantMessageContent'
 
 describe('splitAssistantGreetingLead', () => {
   it('extracts only time salutation with name from opening greeting', () => {
@@ -52,5 +56,37 @@ describe('splitAssistantGreetingLead', () => {
     expect(
       splitAssistantGreetingLead('Email Niko Kurniawan adalah `niko.kurniawan@adira.co.id`.'),
     ).toBeNull()
+  })
+
+  it('hides leaked thinking-process dump instead of treating it as a greeting body', () => {
+    const content = [
+      "Selamat malam, Here's a thinking process:",
+      '1. Analyze User Input & System Prompt',
+      '- User Info: Alfa Irawan Local',
+      '2. Draft Construction (Mental Refinement):',
+    ].join('\n')
+
+    expect(stripAssistantReasoningLeak(content).toLowerCase()).toContain('selamat malam')
+    expect(stripAssistantReasoningLeak(content).toLowerCase()).not.toContain('thinking process')
+    expect(splitAssistantGreetingLead(content)).toBeNull()
+  })
+})
+
+describe('parseAssistantMessageContent', () => {
+  it('keeps at most three unique checkbox labels', () => {
+    const content = [
+      'Mau mulai dari mana?',
+      '- [ ] Atur timeline & jadwal',
+      '- [ ] Cek status tugas',
+      '- [ ] Lihat detail proyek',
+      '- [ ] Atur timeline & jadwal',
+      '- [ ] Cek status tugas',
+      '- [ ] Lihat detail proyek',
+    ].join('\n')
+
+    expect(parseAssistantMessageContent(content)).toEqual({
+      body: 'Mau mulai dari mana?',
+      choices: ['Atur timeline & jadwal', 'Cek status tugas', 'Lihat detail proyek'],
+    })
   })
 })
