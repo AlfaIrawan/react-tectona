@@ -42,7 +42,10 @@ import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
-import { ExplainerAssistantsPanel } from '@/modules/document-knowledge-management/components/ExplainerAssistantsPanel'
+import {
+  ExplainerAssistantsPanel,
+  type ExplainerAssistantsPanelHandle,
+} from '@/modules/document-knowledge-management/components/ExplainerAssistantsPanel'
 import {
   AArrowDown,
   AArrowUp,
@@ -5394,6 +5397,7 @@ export function DocumentKnowledgeManagementPage() {
   const meetingsPanelRef = useRef<HTMLElement | null>(null)
   const activityPanelRef = useRef<HTMLDivElement | null>(null)
   const explainersPanelRef = useRef<HTMLDivElement | null>(null)
+  const explainerAssistantsApiRef = useRef<ExplainerAssistantsPanelHandle | null>(null)
   const [activityPanelMaxHeightPx, setActivityPanelMaxHeightPx] = useState<number | null>(null)
   const [activityPanelAlignedHeightPx, setActivityPanelAlignedHeightPx] = useState<number | null>(null)
   const overviewDashboardRef = useRef<HTMLDivElement | null>(null)
@@ -15666,6 +15670,17 @@ export function DocumentKnowledgeManagementPage() {
                     </button>
                   ) : null}
 
+                  {activePanel === 'explainers' ? (
+                    <button
+                      type="button"
+                      className={enterpriseCyanGradientActionButtonClass()}
+                      onClick={() => explainerAssistantsApiRef.current?.openCreate()}
+                    >
+                      <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                      New assistant
+                    </button>
+                  ) : null}
+
                   {activePanel === 'templates' ? (
                     <>
                       <button
@@ -19380,6 +19395,7 @@ export function DocumentKnowledgeManagementPage() {
           {activePanel === 'explainers' ? (
             <div id="explainers" ref={explainersPanelRef} className="flex min-h-0 flex-1 flex-col">
               <ExplainerAssistantsPanel
+                ref={explainerAssistantsApiRef}
                 workspaceId={resolveWorkspaceIdForWrite(dkmWorkspaceScope) ?? activeWorkspaceApiId}
                 style={resolveWorkspacePanelHeightStyle(
                   docMainPanelViewportHeightPx,
