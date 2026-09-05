@@ -64,7 +64,7 @@ const EMPTY_DRAFT: DraftState = {
   version: null,
   displayName: '',
   description: '',
-  avatar: 'violet',
+  avatar: 'meta-human-adira-01',
   folderIds: [],
   documentIds: [],
 }
@@ -90,23 +90,32 @@ async function fetchDocumentsForCorpus(workspaceId: string): Promise<DocumentRes
   return collected
 }
 
-/** Avatar chrome per palette token; the chat clients apply their own equivalent. */
-const AVATAR_CHROME: Record<ExplainerAssistantAvatar, string> = {
-  violet: 'bg-violet-600 text-white',
-  sky: 'bg-sky-600 text-white',
-  teal: 'bg-teal-600 text-white',
-  emerald: 'bg-emerald-600 text-white',
-  amber: 'bg-amber-600 text-white',
-  rose: 'bg-rose-600 text-white',
-  slate: 'bg-slate-600 text-white',
-  indigo: 'bg-indigo-600 text-white',
+/**
+ * Token to bundled asset. The stored value is the token, never this path, so the
+ * artwork can be re-cropped or re-encoded without migrating a single row.
+ */
+const AVATAR_SRC: Record<ExplainerAssistantAvatar, string> = {
+  'meta-human-adira-01': '/images/assistant-avatars/meta-human-adira-01.webp',
+  'meta-human-adira-02': '/images/assistant-avatars/meta-human-adira-02.webp',
+  'meta-human-adira-03': '/images/assistant-avatars/meta-human-adira-03.webp',
+  'meta-human-adira-04': '/images/assistant-avatars/meta-human-adira-04.webp',
+  'meta-human-adira-05': '/images/assistant-avatars/meta-human-adira-05.webp',
+  'meta-human-01': '/images/assistant-avatars/meta-human-01.webp',
+  'meta-human-02': '/images/assistant-avatars/meta-human-02.webp',
+  'meta-human-03': '/images/assistant-avatars/meta-human-03.webp',
+  'meta-human-04': '/images/assistant-avatars/meta-human-04.webp',
 }
 
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return 'AI'
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return `${parts[0][0] ?? ''}${parts[parts.length - 1][0] ?? ''}`.toUpperCase()
+const AVATAR_LABEL: Record<ExplainerAssistantAvatar, string> = {
+  'meta-human-adira-01': 'Adira uniform 1',
+  'meta-human-adira-02': 'Adira uniform 2',
+  'meta-human-adira-03': 'Adira uniform 3',
+  'meta-human-adira-04': 'Adira uniform 4',
+  'meta-human-adira-05': 'Adira uniform 5',
+  'meta-human-01': 'Corporate 1',
+  'meta-human-02': 'Corporate 2',
+  'meta-human-03': 'Corporate 3',
+  'meta-human-04': 'Assistant bot',
 }
 
 /** Explorer-style timestamp: 02/09/2026 19:59. */
@@ -229,7 +238,7 @@ export const ExplainerAssistantsPanel = forwardRef<
       version: assistant.version,
       displayName: assistant.display_name,
       description: assistant.description ?? '',
-      avatar: assistant.avatar ?? 'violet',
+      avatar: assistant.avatar ?? 'meta-human-adira-01',
       folderIds: assistant.corpus.folder_ids ?? [],
       documentIds: assistant.corpus.document_ids ?? [],
     })
@@ -459,6 +468,14 @@ export const ExplainerAssistantsPanel = forwardRef<
                   className="flex flex-col gap-2 rounded-xl border border-border/50 bg-background/60 p-3"
                 >
                   <div className="flex items-start justify-between gap-2">
+                    {assistant.avatar ? (
+                      <img
+                        src={AVATAR_SRC[assistant.avatar]}
+                        alt=""
+                        aria-hidden
+                        className="h-9 w-9 shrink-0 rounded-full bg-muted object-cover"
+                      />
+                    ) : null}
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-foreground">{assistant.display_name}</p>
                       <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
@@ -633,37 +650,41 @@ export const ExplainerAssistantsPanel = forwardRef<
                     <div className="space-y-2">
                       <Label className="text-xs text-muted-foreground">Avatar</Label>
                       <div className="flex items-center gap-3">
-                        <span
-                          className={cn(
-                            'flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
-                            AVATAR_CHROME[draft.avatar],
-                          )}
+                        <img
+                          src={AVATAR_SRC[draft.avatar]}
+                          alt=""
                           aria-hidden
-                        >
-                          {initialsOf(draft.displayName)}
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {EXPLAINER_AVATARS.map((token) => (
-                            <button
-                              key={token}
-                              type="button"
-                              onClick={() => setDraft((prev) => ({ ...prev, avatar: token }))}
-                              aria-label={`Avatar colour ${token}`}
-                              aria-pressed={draft.avatar === token}
-                              title={token}
-                              className={cn(
-                                'h-6 w-6 rounded-full transition-transform',
-                                AVATAR_CHROME[token],
-                                draft.avatar === token
-                                  ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                                  : 'hover:scale-110',
-                              )}
-                            />
-                          ))}
+                          className="h-14 w-14 shrink-0 rounded-full bg-muted object-cover"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-foreground">
+                            {draft.displayName.trim() || 'Untitled assistant'}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">{AVATAR_LABEL[draft.avatar]}</p>
                         </div>
                       </div>
+                      <div className="grid grid-cols-5 gap-2 sm:grid-cols-9">
+                        {EXPLAINER_AVATARS.map((token) => (
+                          <button
+                            key={token}
+                            type="button"
+                            onClick={() => setDraft((prev) => ({ ...prev, avatar: token }))}
+                            aria-label={AVATAR_LABEL[token]}
+                            aria-pressed={draft.avatar === token}
+                            title={AVATAR_LABEL[token]}
+                            className={cn(
+                              'aspect-square overflow-hidden rounded-full bg-muted transition-transform',
+                              draft.avatar === token
+                                ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
+                                : 'opacity-80 hover:scale-105 hover:opacity-100',
+                            )}
+                          >
+                            <img src={AVATAR_SRC[token]} alt="" className="h-full w-full object-cover" />
+                          </button>
+                        ))}
+                      </div>
                       <p className="text-[11px] text-muted-foreground">
-                        Initials come from the display name. The same avatar is rendered in both chat clients.
+                        The same avatar is rendered in the assistant picker of both chat clients.
                       </p>
                     </div>
 

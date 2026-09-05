@@ -112,16 +112,20 @@ export const AGENT_RUNTIME_CONTACTS: ChatContact[] = [TECTONA_ASSISTANT_CONTACT,
 
 const EXPLAINER_CONTACT_PREFIX = 'explainer-assistant:'
 
-/** Palette tokens stored on the pack, rendered with this client's avatar chrome. */
-const EXPLAINER_AVATAR_CHROME: Record<string, string> = {
-  violet: 'bg-violet-600 text-white',
-  sky: 'bg-sky-600 text-white',
-  teal: 'bg-teal-600 text-white',
-  emerald: 'bg-emerald-600 text-white',
-  amber: 'bg-amber-600 text-white',
-  rose: 'bg-rose-600 text-white',
-  slate: 'bg-slate-600 text-white',
-  indigo: 'bg-indigo-600 text-white',
+/**
+ * Portrait tokens stored on the pack, mapped to this client's bundled assets.
+ * The token is the contract; the file path is a local detail.
+ */
+const EXPLAINER_AVATAR_SRC: Record<string, string> = {
+  'meta-human-adira-01': '/images/assistant-avatars/meta-human-adira-01.webp',
+  'meta-human-adira-02': '/images/assistant-avatars/meta-human-adira-02.webp',
+  'meta-human-adira-03': '/images/assistant-avatars/meta-human-adira-03.webp',
+  'meta-human-adira-04': '/images/assistant-avatars/meta-human-adira-04.webp',
+  'meta-human-adira-05': '/images/assistant-avatars/meta-human-adira-05.webp',
+  'meta-human-01': '/images/assistant-avatars/meta-human-01.webp',
+  'meta-human-02': '/images/assistant-avatars/meta-human-02.webp',
+  'meta-human-03': '/images/assistant-avatars/meta-human-03.webp',
+  'meta-human-04': '/images/assistant-avatars/meta-human-04.webp',
 }
 
 export function explainerContactId(assistantId: string): string {
@@ -152,8 +156,8 @@ export async function fetchExplainerAssistantContacts(workspaceId: string): Prom
       mode: 'genai' as const,
       initials: initialsFromDisplayName(assistant.display_name),
       isAssistant: true,
-      avatarClassName:
-        EXPLAINER_AVATAR_CHROME[assistant.avatar ?? ''] ?? 'bg-gradient-to-br from-slate-600 to-slate-800 text-white',
+      avatarSrc: EXPLAINER_AVATAR_SRC[assistant.avatar ?? ''],
+      avatarClassName: 'bg-gradient-to-br from-slate-600 to-slate-800 text-white',
       presence: 'online' as const,
     }))
 }

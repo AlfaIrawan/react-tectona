@@ -1231,18 +1231,19 @@ export type ExplainerAssistantStatus = 'draft' | 'published' | 'archived'
 export type ExplainerAssistantVisibility = 'workspace' | 'private'
 
 /**
- * Fixed palette rather than an image: each client renders the token with its own
- * avatar chrome, so Tectona and Advena stay consistent without hosting an image.
+ * Portrait tokens, not image URLs. Each client maps a token to its own bundled
+ * asset, so artwork can be re-cropped or re-encoded without touching stored data.
  */
 export const EXPLAINER_AVATARS = [
-  'violet',
-  'sky',
-  'teal',
-  'emerald',
-  'amber',
-  'rose',
-  'slate',
-  'indigo',
+  'meta-human-adira-01',
+  'meta-human-adira-02',
+  'meta-human-adira-03',
+  'meta-human-adira-04',
+  'meta-human-adira-05',
+  'meta-human-01',
+  'meta-human-02',
+  'meta-human-03',
+  'meta-human-04',
 ] as const
 export type ExplainerAssistantAvatar = (typeof EXPLAINER_AVATARS)[number]
 
