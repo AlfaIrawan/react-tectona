@@ -719,6 +719,11 @@ export interface RuntimeChatRequest {
     assistant_attachments?: RuntimeChatAttachment[]
     document_id?: string | null
     document_title?: string | null
+    /**
+     * Document explainer pack to answer as (document-knowledge-management).
+     * Omit for the default Tectona assistant.
+     */
+    assistant_id?: string | null
   }
   options?: {
     mode?: 'deterministic_first' | 'llm_first'
@@ -886,6 +891,12 @@ function chatContext(
     ui: context?.ui ?? undefined,
     user_attachments: context?.user_attachments ?? [],
     assistant_attachments: context?.assistant_attachments ?? [],
+    // This builder is a whitelist, so anything not listed here never reaches the
+    // runtime — document grounding and the explainer pack selection both depend on
+    // being forwarded explicitly.
+    document_id: context?.document_id ?? null,
+    document_title: context?.document_title ?? null,
+    assistant_id: context?.assistant_id ?? null,
   }
 }
 
@@ -2149,4 +2160,32 @@ export async function uploadChatAttachment(
     60_000,
   )
   return handleResponse<UploadChatAttachmentResponse>(res)
+}
+
+// --- Assistant picker --------------------------------------------------------
+// The runtime is the single catalog endpoint for both Tectona and Advena; neither
+// client reads document-knowledge-management directly for this list.
+
+export interface RuntimeAssistantSummary {
+  /** null = the built-in Tectona assistant (chat requests simply omit assistant_id). */
+  assistant_id: string | null
+  display_name: string
+  kind: string
+  description?: string | null
+  is_default: boolean
+  document_count: number
+}
+
+export interface RuntimeAssistantListResponse {
+  assistants: RuntimeAssistantSummary[]
+  warnings: string[]
+  correlation_id: string
+}
+
+export async function listRuntimeAssistants(
+  workspaceId: string,
+): Promise<RuntimeAssistantListResponse> {
+  const sp = new URLSearchParams({ workspace_id: workspaceId ?? '' })
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/assistants?${sp.toString()}`, { method: 'GET' }, 15_000)
+  return handleResponse<RuntimeAssistantListResponse>(res)
 }

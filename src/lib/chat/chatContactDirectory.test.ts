@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { WacMembershipDto } from '@/lib/api/workspaceAccessControlApi'
 import {
+  AGENT_RUNTIME_CONTACTS,
   buildChatContactsFromWorkspaceMembers,
+  explainerContactId,
+  mergeExplainerContacts,
   isPlaceholderChatContactName,
   pickChatDirectoryWorkspaceIds,
   resolveActiveWorkspaceMembershipRows,
@@ -201,5 +204,35 @@ describe('isPlaceholderChatContactName', () => {
     expect(isPlaceholderChatContactName('Team member')).toBe(true)
     expect(isPlaceholderChatContactName('Member a1b2c3d4')).toBe(true)
     expect(isPlaceholderChatContactName('Alfa Irawan')).toBe(false)
+  })
+})
+
+describe('mergeExplainerContacts', () => {
+  const john = {
+    id: explainerContactId('a1'),
+    assistantId: 'a1',
+    name: 'John',
+    subtitle: 'Penjelas MI Kredit',
+    mode: 'genai' as const,
+    initials: 'JO',
+    isAssistant: true,
+  }
+
+  it('replaces the coming-soon placeholder that shares the pack name', () => {
+    const merged = mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [john])
+    const johns = merged.filter((contact) => contact.name === 'John')
+    expect(johns).toHaveLength(1)
+    expect(johns[0].assistantId).toBe('a1')
+    expect(johns[0].disabled).toBeUndefined()
+  })
+
+  it('keeps the default assistant and unrelated placeholders', () => {
+    const merged = mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [john])
+    expect(merged.find((contact) => contact.id === TECTONA_ASSISTANT_CONTACT.id)).toBeDefined()
+    expect(merged.find((contact) => contact.name === 'Vanya')?.disabled).toBe(true)
+  })
+
+  it('is a no-op when no packs are published', () => {
+    expect(mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [])).toBe(AGENT_RUNTIME_CONTACTS)
   })
 })

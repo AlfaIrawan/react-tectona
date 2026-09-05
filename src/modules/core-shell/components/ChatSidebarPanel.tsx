@@ -149,6 +149,7 @@ import {
   type TectonaAgentActionState,
   type TectonaProposedAction,
 } from '@/lib/chat/tectonaAgentActions'
+import { shouldOpenWorkspaceIntelligence } from '@/lib/chat/workspaceIntelligenceIntent'
 import { AssistantChatMarkdown, TECTONA_ASSISTANT_LABEL } from './AssistantChatMarkdown'
 import { AssistantActionCard } from './AssistantActionCard'
 import { ChatComposerContextToolbar } from './chat/ChatComposerContextToolbar'
@@ -177,6 +178,9 @@ import {
   mergeRealtimePresenceStore,
   syncWorkspacePresenceStore,
   TECTONA_ASSISTANT_CONTACT,
+  AGENT_RUNTIME_CONTACTS,
+  fetchExplainerAssistantContacts,
+  mergeExplainerContacts,
   type ChatContact,
   type ChatMode,
 } from '@/lib/chat/chatContactDirectory'
@@ -237,6 +241,12 @@ import {
   type ChatMessageRealtimePayload,
 } from '@/lib/chat/chatRealtimeEvents'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
+import {
+  buildWorkspaceScopeFromTenant,
+  readStoredTenantSelection,
+  resolveWorkspaceApiId,
+  resolveWorkspaceIdForWrite,
+} from '@/lib/tenantWorkspaceScope'
 import {
   isChatMessageSoundEnabled,
   setChatMessageSoundEnabled,
@@ -599,6 +609,11 @@ interface Conversation {
   hasChatLockPassword?: boolean
   isBlurred?: boolean
   isBlocked?: boolean
+  /**
+   * Gen AI: document explainer pack this thread talks to. Undefined = default Tectona
+   * assistant, which is what every pre-existing conversation stays as.
+   */
+  assistantId?: string | null
   /** Local-only pointer row for a resumable "Generate Draft" brainstorm (idea-draft-job). */
   isBrainstormPointer?: boolean
   brainstormJobId?: string
@@ -1057,6 +1072,8 @@ type GenAiOpeningGreetingContext = {
   activeConversationMode?: string | null
   documentId?: string | null
   documentTitle?: string | null
+  /** Explainer pack to greet as; omitted/null greets as the default Tectona assistant. */
+  assistantId?: string | null
 }
 
 const BACKEND_OPENING_GREETING_TOKEN = '__TECTONA_OPENING_GREETING__'
@@ -1082,6 +1099,7 @@ async function resolveGenAiOpeningGreeting(
       ui: uiContext,
       document_id: context.documentId ?? null,
       document_title: context.documentTitle ?? null,
+      assistant_id: context.assistantId ?? null,
     },
   })
 
@@ -1421,7 +1439,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messagesById, setMessagesById] = useState<Record<string, ChatMessage[]>>({})
-  const [chatContacts, setChatContacts] = useState<ChatContact[]>([TECTONA_ASSISTANT_CONTACT])
+  const [chatContacts, setChatContacts] = useState<ChatContact[]>([...AGENT_RUNTIME_CONTACTS])
   const [chatContactsLoading, setChatContactsLoading] = useState(false)
   const [hiddenChatRevision, setHiddenChatRevision] = useState(0)
   const hiddenContactIds = useMemo(
@@ -2092,13 +2110,41 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         const loaded = await loadChatContactDirectory()
         if (!cancelled) setChatContacts(loaded)
       } catch {
-        if (!cancelled) setChatContacts([TECTONA_ASSISTANT_CONTACT])
+        if (!cancelled) setChatContacts([...AGENT_RUNTIME_CONTACTS])
       } finally {
         if (!cancelled) setChatContactsLoading(false)
       }
     })()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // Published explainer packs come from the runtime catalog, so the picker shows the
+  // same assistants as Advena without either client keeping its own persona list.
+  useEffect(() => {
+    let cancelled = false
+    const loadExplainers = () => {
+      const tenant = readStoredTenantSelection()
+      const workspaceId =
+        resolveWorkspaceIdForWrite(buildWorkspaceScopeFromTenant(tenant))
+        ?? resolveWorkspaceApiId(tenant?.workspaceId)
+      if (!workspaceId) return
+      void (async () => {
+        try {
+          const explainers = await fetchExplainerAssistantContacts(workspaceId)
+          if (cancelled || explainers.length === 0) return
+          setChatContacts((prev) => mergeExplainerContacts(prev, explainers))
+        } catch {
+          // Picker keeps the default assistant; explainer packs are additive.
+        }
+      })()
+    }
+    loadExplainers()
+    window.addEventListener(TECTONA_TENANT_CHANGED_EVENT, loadExplainers)
+    return () => {
+      cancelled = true
+      window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, loadExplainers)
     }
   }, [])
 
@@ -2109,7 +2155,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           const loaded = await loadChatContactDirectory()
           setChatContacts(loaded)
         } catch {
-          setChatContacts([TECTONA_ASSISTANT_CONTACT])
+          setChatContacts([...AGENT_RUNTIME_CONTACTS])
         }
       })()
     }
@@ -2317,6 +2363,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           activeConversationMode: conv.mode,
           documentId: documentContext?.documentId ?? null,
           documentTitle: documentContext?.documentTitle ?? null,
+          assistantId: conv.assistantId ?? null,
         })
         if (cancelled) return
         const synced = await syncThreadFromBackend()
@@ -2367,6 +2414,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               chatScreen: screen,
               activeConversationTitle: conv.title,
               activeConversationMode: conv.mode,
+              assistantId: conv.assistantId ?? null,
             })
             if (cancelled) return
             const synced = await syncThreadFromBackend()
@@ -3689,6 +3737,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   )
 
   const startChatWithContact = (contact: ChatContact) => {
+    if (contact.disabled) return
     if (contact.mode === 'team') {
       unhideChatForContact(contact)
       setHiddenChatRevision((v) => v + 1)
@@ -3714,7 +3763,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       mode: contact.mode,
       // Keep title aligned with backend default from first render to avoid
       // same-session title drift after close/reopen hydration.
-      title: isAi ? 'New conversation' : contact.name,
+      title: isAi ? (contact.assistantId ? contact.name : 'New conversation') : contact.name,
+      assistantId: isAi ? contact.assistantId ?? undefined : undefined,
       contactId: contact.mode === 'team' ? contact.id : undefined,
       contactName: contact.mode === 'team' ? contact.name : undefined,
       contactAvatarSrc: contact.mode === 'team' ? contact.avatarSrc : undefined,
@@ -4611,6 +4661,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             assistant_attachments: runtimeAssistantAttachments,
             document_id: documentContext?.documentId ?? null,
             document_title: documentContext?.documentTitle ?? null,
+            assistant_id:
+              conversationsRef.current.find((c) => c.id === conversationId)?.assistantId ?? null,
           },
         })
 
@@ -4696,6 +4748,20 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               : m,
           ),
         }))
+
+        if (
+          shouldOpenWorkspaceIntelligence({
+            userText: t,
+            assistantText: runtime.answer,
+            proposedActions: runtime.proposed_actions,
+          })
+        ) {
+          window.dispatchEvent(
+            new CustomEvent('tectona:navigate', {
+              detail: { pathname: '/workspace-management', search: null },
+            }),
+          )
+        }
 
         // Speak the reply when voice mode is active (hands-free).
         if (voiceListeningRef.current && voiceSpeakRef.current) {
@@ -5680,8 +5746,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                       <button
                         key={c.id}
                         type="button"
-                        disabled={newChatGroupPickMode && !pickable}
+                        disabled={(newChatGroupPickMode && !pickable) || Boolean(c.disabled)}
                         onClick={() => {
+                          if (c.disabled) return
                           if (newChatGroupPickMode) {
                             if (!pickable) return
                             setNewChatGroupSelectedIds((prev) =>
@@ -5694,14 +5761,19 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                         className={cn(
                           'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
                           'hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          newChatGroupPickMode && !pickable && 'cursor-not-allowed opacity-60',
+                          (newChatGroupPickMode && !pickable) || c.disabled
+                            ? 'cursor-not-allowed opacity-45 grayscale hover:bg-transparent'
+                            : null,
                           newChatGroupPickMode && pickable && selected && 'bg-muted/80 ring-1 ring-border/70',
                           !newChatGroupPickMode &&
                             c.isAssistant &&
+                            !c.disabled &&
                             'border-b border-violet-200/60 bg-gradient-to-r from-violet-500/[0.07] to-transparent dark:border-violet-900/40 dark:from-violet-500/10'
                         )}
                         title={
-                          newChatGroupPickMode && !pickable
+                          c.disabled
+                            ? `${c.name} is not enabled yet`
+                            : newChatGroupPickMode && !pickable
                             ? 'Gen AI and your own account cannot be added to a group from here.'
                             : undefined
                         }
@@ -5731,6 +5803,11 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                                 AI
                               </span>
                             )}
+                            {c.disabled ? (
+                              <span className="inline-flex shrink-0 rounded-full border border-border/70 bg-muted/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                Soon
+                              </span>
+                            ) : null}
                           </div>
                           {c.subtitle && (
                             <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{c.subtitle}</p>

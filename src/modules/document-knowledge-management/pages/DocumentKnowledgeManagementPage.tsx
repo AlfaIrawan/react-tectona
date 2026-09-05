@@ -42,6 +42,7 @@ import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
+import { ExplainerAssistantsPanel } from '@/modules/document-knowledge-management/components/ExplainerAssistantsPanel'
 import {
   AArrowDown,
   AArrowUp,
@@ -55,6 +56,7 @@ import {
   Ban,
   Bold,
   BookOpenText,
+  Bot,
   BrainCircuit,
   Building2,
   ArrowLeftToLine,
@@ -4386,6 +4388,7 @@ type DocPanelId =
   | 'overview'
   | 'repository'
   | 'knowledge'
+  | 'explainers'
   | 'templates'
   | 'versioning'
   | 'artifacts'
@@ -4432,6 +4435,14 @@ const DOC_PANEL_ITEMS: DocPanelNavItem[] = [
     description: 'Master template library from Document Knowledge — create, preview, and use governed templates.',
     icon: FileStack,
     badge: 'Master',
+    group: 'Control Library',
+  },
+  {
+    id: 'explainers',
+    label: 'Explainer assistants',
+    description: 'Knowledge-only assistants bound to governed folders/documents — no credit or SSD tooling.',
+    icon: Bot,
+    badge: 'Assistant',
     group: 'Control Library',
   },
   {
@@ -5382,6 +5393,7 @@ export function DocumentKnowledgeManagementPage() {
   const artifactsPanelRef = useRef<HTMLElement | null>(null)
   const meetingsPanelRef = useRef<HTMLElement | null>(null)
   const activityPanelRef = useRef<HTMLDivElement | null>(null)
+  const explainersPanelRef = useRef<HTMLDivElement | null>(null)
   const [activityPanelMaxHeightPx, setActivityPanelMaxHeightPx] = useState<number | null>(null)
   const [activityPanelAlignedHeightPx, setActivityPanelAlignedHeightPx] = useState<number | null>(null)
   const overviewDashboardRef = useRef<HTMLDivElement | null>(null)
@@ -5474,7 +5486,9 @@ export function DocumentKnowledgeManagementPage() {
                       ? activityPanelRef.current
                       : activePanel === 'knowledge'
                         ? knowledgePanelRef.current
-                        : null
+                        : activePanel === 'explainers'
+                          ? explainersPanelRef.current
+                          : null
 
       const viewportCap = computeWorkspaceMainPanelViewportHeightPx(navEl.getBoundingClientRect().top)
 
@@ -5507,6 +5521,7 @@ export function DocumentKnowledgeManagementPage() {
     if (meetingsPanelRef.current) ro.observe(meetingsPanelRef.current)
     if (activityPanelRef.current) ro.observe(activityPanelRef.current)
     if (knowledgePanelRef.current) ro.observe(knowledgePanelRef.current)
+    if (explainersPanelRef.current) ro.observe(explainersPanelRef.current)
     if (docMainFiltersRef.current) ro.observe(docMainFiltersRef.current)
     return () => {
       window.cancelAnimationFrame(raf1)
@@ -5528,6 +5543,7 @@ export function DocumentKnowledgeManagementPage() {
       && activePanel !== 'meetings'
       && activePanel !== 'activity'
       && activePanel !== 'knowledge'
+      && activePanel !== 'explainers'
     ) {
       setDocMainPanelViewportHeightPx(null)
       return
@@ -5549,7 +5565,9 @@ export function DocumentKnowledgeManagementPage() {
                     ? meetingsPanelRef.current
                     : activePanel === 'activity'
                       ? activityPanelRef.current
-                      : knowledgePanelRef.current
+                      : activePanel === 'explainers'
+                        ? explainersPanelRef.current
+                        : knowledgePanelRef.current
       if (!el) return
       setDocMainPanelViewportHeightPx(computeWorkspaceMainPanelViewportHeightPx(el.getBoundingClientRect().top))
     }
@@ -19357,6 +19375,20 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
               </div>
             </DocPanelSection>
+          ) : null}
+
+          {activePanel === 'explainers' ? (
+            <div id="explainers" ref={explainersPanelRef} className="flex min-h-0 flex-1 flex-col">
+              <ExplainerAssistantsPanel
+                workspaceId={resolveWorkspaceIdForWrite(dkmWorkspaceScope) ?? activeWorkspaceApiId}
+                style={resolveWorkspacePanelHeightStyle(
+                  docMainPanelViewportHeightPx,
+                  null,
+                  null,
+                  navDocked,
+                )}
+              />
+            </div>
           ) : null}
 
           {activePanel === 'activity' ? (

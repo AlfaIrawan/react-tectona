@@ -38,7 +38,14 @@ export interface ChatContact {
   initials: string
   avatarClassName?: string
   isAssistant?: boolean
+  disabled?: boolean
   presence?: 'online' | 'away' | 'offline'
+  /**
+   * Document explainer pack id (document-knowledge-management). Present only on
+   * explainer contacts; the built-in assistant leaves it undefined so chat requests
+   * omit `assistant_id` and take the default path.
+   */
+  assistantId?: string | null
 }
 
 export const TECTONA_ASSISTANT_CONTACT: ChatContact = {
@@ -51,6 +58,100 @@ export const TECTONA_ASSISTANT_CONTACT: ChatContact = {
   isAssistant: true,
   avatarClassName: 'bg-gradient-to-br from-violet-500/20 to-sky-500/20 ring-2 ring-violet-400/30',
   presence: 'online',
+}
+
+/** Preview Agent Runtimes — directory UI only until each runtime is wired. */
+export const COMING_SOON_AGENT_CONTACTS: ChatContact[] = [
+  {
+    id: 'agent-runtime-vena',
+    name: 'Vena',
+    subtitle: 'Service Desk Assistant',
+    mode: 'genai',
+    initials: 'VE',
+    isAssistant: true,
+    disabled: true,
+    avatarClassName: 'bg-teal-600 text-white',
+    presence: 'offline',
+  },
+  {
+    id: 'agent-runtime-vanya',
+    name: 'Vanya',
+    subtitle: 'Sales, Survey & Dealer Assistant',
+    mode: 'genai',
+    initials: 'VA',
+    isAssistant: true,
+    disabled: true,
+    avatarClassName: 'bg-amber-600 text-white',
+    presence: 'offline',
+  },
+  {
+    id: 'agent-runtime-desy',
+    name: 'Desy',
+    subtitle: 'Data Scientist Assistant',
+    mode: 'genai',
+    initials: 'DE',
+    isAssistant: true,
+    disabled: true,
+    avatarClassName: 'bg-sky-600 text-white',
+    presence: 'offline',
+  },
+  {
+    id: 'agent-runtime-john',
+    name: 'John',
+    subtitle: 'Credit Assistant',
+    mode: 'genai',
+    initials: 'JO',
+    isAssistant: true,
+    disabled: true,
+    avatarClassName: 'bg-slate-600 text-white',
+    presence: 'offline',
+  },
+]
+
+export const AGENT_RUNTIME_CONTACTS: ChatContact[] = [TECTONA_ASSISTANT_CONTACT, ...COMING_SOON_AGENT_CONTACTS]
+
+const EXPLAINER_CONTACT_PREFIX = 'explainer-assistant:'
+
+export function explainerContactId(assistantId: string): string {
+  return `${EXPLAINER_CONTACT_PREFIX}${assistantId}`
+}
+
+/**
+ * Published document explainer packs, as chat contacts.
+ *
+ * The catalog comes from tectona-agent-runtime (`GET /v1/assistants`), which reads
+ * document-knowledge-management — so Tectona and Advena always show the same list and
+ * neither maintains its own persona table. A published pack replaces the "coming soon"
+ * placeholder that shares its name (e.g. "John"), because the real pack is now usable.
+ */
+export async function fetchExplainerAssistantContacts(workspaceId: string): Promise<ChatContact[]> {
+  if (!workspaceId.trim()) return []
+  const { listRuntimeAssistants } = await import('@/lib/api/tectonaAgentRuntimeApi')
+  const response = await listRuntimeAssistants(workspaceId)
+  return response.assistants
+    .filter((assistant) => !assistant.is_default && assistant.assistant_id)
+    .map((assistant) => ({
+      id: explainerContactId(assistant.assistant_id as string),
+      assistantId: assistant.assistant_id,
+      name: assistant.display_name,
+      subtitle:
+        assistant.description
+        || `Menjelaskan ${assistant.document_count} dokumen terikat.`,
+      mode: 'genai' as const,
+      initials: initialsFromDisplayName(assistant.display_name),
+      isAssistant: true,
+      avatarClassName: 'bg-gradient-to-br from-slate-600 to-slate-800 text-white',
+      presence: 'online' as const,
+    }))
+}
+
+/** Live explainer packs win over the same-named placeholder in COMING_SOON_AGENT_CONTACTS. */
+export function mergeExplainerContacts(base: ChatContact[], explainers: ChatContact[]): ChatContact[] {
+  if (explainers.length === 0) return base
+  const liveNames = new Set(explainers.map((contact) => contact.name.trim().toLowerCase()))
+  const kept = base.filter((contact) => !(contact.disabled && liveNames.has(contact.name.trim().toLowerCase())))
+  const seen = new Set(kept.map((contact) => contact.id))
+  return [...kept, ...explainers.filter((contact) => !seen.has(contact.id))]
 }
 
 const AVATAR_GRADIENTS = [
@@ -391,7 +492,7 @@ export function buildChatContactsFromWorkspaceMembers(
     ...extras,
   ].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 
-  return [TECTONA_ASSISTANT_CONTACT, ...teamUsers]
+  return [...AGENT_RUNTIME_CONTACTS, ...teamUsers]
 }
 
 export function buildChatContactsFromIdentityUsers(users: IdentityUserDto[]): ChatContact[] {
@@ -418,7 +519,7 @@ export function buildChatContactsFromIdentityUsers(users: IdentityUserDto[]): Ch
   const teamUsers = [...byId.values()].filter((c) => c.mode === 'team' && !c.isAssistant)
   teamUsers.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 
-  return [TECTONA_ASSISTANT_CONTACT, ...teamUsers]
+  return [...AGENT_RUNTIME_CONTACTS, ...teamUsers]
 }
 
 function mapPresenceStatus(code: string): ChatContact['presence'] | undefined {
@@ -565,7 +666,7 @@ export function mergeChatContactLists(base: ChatContact[], extra: ChatContact[])
       currentUserId: getSession()?.user.id,
     }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-  return [TECTONA_ASSISTANT_CONTACT, ...teamUsers]
+  return [...AGENT_RUNTIME_CONTACTS, ...teamUsers]
 }
 
 /** Resolve DM/group peers that are not in the WAC directory via identity-lite. */
@@ -739,6 +840,7 @@ export function getCurrentChatActorId(): string {
 }
 
 export function canPickContactForGroupChat(c: ChatContact, currentUserId: string): boolean {
+  if (c.disabled) return false
   if (isHiddenSystemChatContact({ id: c.id, currentUserId })) return false
   return c.mode === 'team' && !c.isAssistant && c.id !== currentUserId
 }

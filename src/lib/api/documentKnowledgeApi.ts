@@ -1221,3 +1221,146 @@ export async function fetchTemplateCompareOnlyOfficeConfig(
   }
   return (await res.json()) as TemplateCompareOnlyOfficeConfig
 }
+
+// --- Document explainer assistants ------------------------------------------
+// Pack + corpus are owned by document-knowledge-management. The chat picker reads
+// the same catalog through tectona-agent-runtime, so nothing here is duplicated
+// client-side.
+
+export type ExplainerAssistantStatus = 'draft' | 'published' | 'archived'
+export type ExplainerAssistantVisibility = 'workspace' | 'private'
+
+export interface ExplainerAssistantCorpus {
+  document_ids: string[]
+  folder_ids: string[]
+}
+
+export interface ExplainerAssistant {
+  id: string
+  workspace_id: string
+  display_name: string
+  description: string | null
+  kind: string
+  status: ExplainerAssistantStatus
+  visibility: ExplainerAssistantVisibility
+  parent_persona: string | null
+  corpus: ExplainerAssistantCorpus
+  version: number
+  created_date: string
+  updated_date: string | null
+  /** Corpus expanded to the documents readable today; drives retrieval filtering. */
+  resolved_document_ids: string[]
+  resolved_document_count: number
+}
+
+export interface ExplainerAssistantListResponse {
+  assistants: ExplainerAssistant[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface CreateExplainerAssistantPayload {
+  display_name: string
+  workspace_id: string
+  description?: string | null
+  corpus?: Partial<ExplainerAssistantCorpus>
+  visibility?: ExplainerAssistantVisibility
+  parent_persona?: string | null
+}
+
+export interface PatchExplainerAssistantPayload {
+  display_name?: string
+  description?: string | null
+  corpus?: Partial<ExplainerAssistantCorpus>
+  visibility?: ExplainerAssistantVisibility
+  parent_persona?: string | null
+  /** Optimistic lock — send the version last read to detect concurrent edits. */
+  version?: number
+}
+
+function normalizeCorpus(corpus?: Partial<ExplainerAssistantCorpus>): ExplainerAssistantCorpus {
+  return {
+    document_ids: corpus?.document_ids ?? [],
+    folder_ids: corpus?.folder_ids ?? [],
+  }
+}
+
+export async function listExplainerAssistants(params: {
+  workspaceId: string
+  status?: ExplainerAssistantStatus
+  page?: number
+  pageSize?: number
+}): Promise<ExplainerAssistantListResponse> {
+  const sp = new URLSearchParams({ workspace_id: params.workspaceId })
+  if (params.status) sp.set('status', params.status)
+  sp.set('page', String(params.page ?? 1))
+  sp.set('page_size', String(params.pageSize ?? 50))
+  const res = await apiFetch(`${getV1Base()}/explainer-assistants?${sp.toString()}`, {
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+  })
+  return handleJson<ExplainerAssistantListResponse>(res)
+}
+
+export async function getExplainerAssistant(assistantId: string): Promise<ExplainerAssistant> {
+  const res = await apiFetch(`${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}`, {
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+  })
+  return handleJson<ExplainerAssistant>(res)
+}
+
+export async function createExplainerAssistant(
+  payload: CreateExplainerAssistantPayload,
+): Promise<ExplainerAssistant> {
+  const res = await apiFetch(`${getV1Base()}/explainer-assistants`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+    body: JSON.stringify({
+      display_name: payload.display_name,
+      workspace_id: payload.workspace_id,
+      description: payload.description ?? null,
+      corpus: normalizeCorpus(payload.corpus),
+      visibility: payload.visibility ?? 'workspace',
+      parent_persona: payload.parent_persona ?? 'smith',
+    }),
+  })
+  return handleJson<ExplainerAssistant>(res)
+}
+
+export async function patchExplainerAssistant(
+  assistantId: string,
+  payload: PatchExplainerAssistantPayload,
+): Promise<ExplainerAssistant> {
+  const body: Record<string, unknown> = {}
+  if (payload.display_name !== undefined) body.display_name = payload.display_name
+  if (payload.description !== undefined) body.description = payload.description
+  if (payload.corpus !== undefined) body.corpus = normalizeCorpus(payload.corpus)
+  if (payload.visibility !== undefined) body.visibility = payload.visibility
+  if (payload.parent_persona !== undefined) body.parent_persona = payload.parent_persona
+  if (payload.version !== undefined) body.version = payload.version
+
+  const res = await apiFetch(`${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}`, {
+    method: 'PATCH',
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  return handleJson<ExplainerAssistant>(res)
+}
+
+/** Publish makes the pack selectable in chat. Rejected when the corpus resolves to nothing. */
+export async function publishExplainerAssistant(assistantId: string): Promise<ExplainerAssistant> {
+  const res = await apiFetch(
+    `${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}:publish`,
+    { method: 'POST', headers: tectonaServiceHeaders({ Accept: 'application/json' }) },
+  )
+  return handleJson<ExplainerAssistant>(res)
+}
+
+/** Archive retires the pack from the picker; existing threads stay readable. */
+export async function archiveExplainerAssistant(assistantId: string): Promise<ExplainerAssistant> {
+  const res = await apiFetch(
+    `${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}:archive`,
+    { method: 'POST', headers: tectonaServiceHeaders({ Accept: 'application/json' }) },
+  )
+  return handleJson<ExplainerAssistant>(res)
+}
