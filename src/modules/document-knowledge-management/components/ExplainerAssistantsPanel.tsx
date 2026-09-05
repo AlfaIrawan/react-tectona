@@ -329,6 +329,38 @@ export const ExplainerAssistantsPanel = forwardRef<
     ]
   }, [folders, documents, corpusQuery, currentFolderId, folderPathById])
 
+  /**
+   * Select-all applies to what is currently on screen (this folder, or the search
+   * hits) rather than the whole workspace — a header checkbox that silently bound
+   * hundreds of unseen documents would be a trap, not a shortcut.
+   */
+  const visibleRowCount = explorerGroups.reduce((total, group) => total + group.rows.length, 0)
+
+  const selectedVisibleCount = explorerGroups.reduce(
+    (total, group) => total + group.rows.filter((row) => draft[group.stateKey].includes(row.id)).length,
+    0,
+  )
+
+  const allVisibleSelected = visibleRowCount > 0 && selectedVisibleCount === visibleRowCount
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected
+
+  const toggleVisibleSelection = useCallback(() => {
+    setDraft((prev) => {
+      const clearing = explorerGroups.every((group) =>
+        group.rows.every((row) => prev[group.stateKey].includes(row.id)),
+      )
+      const next = { ...prev }
+      for (const group of explorerGroups) {
+        const ids = group.rows.map((row) => row.id)
+        if (ids.length === 0) continue
+        next[group.stateKey] = clearing
+          ? next[group.stateKey].filter((id) => !ids.includes(id))
+          : [...new Set([...next[group.stateKey], ...ids])]
+      }
+      return next
+    })
+  }, [explorerGroups])
+
   const canSave = !!workspaceId && draft.displayName.trim().length > 0
 
   const handleSave = async () => {
@@ -695,6 +727,26 @@ export const ExplainerAssistantsPanel = forwardRef<
 
                       <div className="overflow-hidden rounded-lg border border-border/60">
                         <div className="flex items-center gap-2 border-b border-border/50 bg-muted/40 px-3 py-1.5 text-[11px] font-medium text-muted-foreground">
+                          <span className="flex w-[72px] shrink-0 items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={toggleVisibleSelection}
+                              disabled={visibleRowCount === 0}
+                              aria-label={allVisibleSelected ? 'Clear selection in this view' : 'Select everything in this view'}
+                              title={allVisibleSelected ? 'Clear selection in this view' : 'Select everything in this view'}
+                              className={cn(
+                                'flex h-4 w-4 shrink-0 items-center justify-center rounded border disabled:opacity-40',
+                                allVisibleSelected
+                                  ? 'border-primary bg-primary text-primary-foreground'
+                                  : someVisibleSelected
+                                    ? 'border-primary bg-primary/25'
+                                    : 'border-muted-foreground/40 bg-background',
+                              )}
+                            >
+                              {allVisibleSelected ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : null}
+                            </button>
+                            Select
+                          </span>
                           <span className="min-w-0 flex-1">Name</span>
                           <span className="w-[124px] shrink-0">Date modified</span>
                         </div>
@@ -710,7 +762,7 @@ export const ExplainerAssistantsPanel = forwardRef<
                                   <button
                                     type="button"
                                     onClick={() => toggleGroup(group.key)}
-                                    className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-foreground hover:bg-muted/50"
+                                    className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-xs font-semibold text-foreground hover:bg-muted/50"
                                   >
                                     {collapsedGroups.includes(group.key) ? (
                                       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
@@ -736,26 +788,27 @@ export const ExplainerAssistantsPanel = forwardRef<
                                           >
                                             {/* Selecting is separate from opening, so drilling into a
                                                 folder never silently binds it to the corpus. */}
-                                            <button
-                                              type="button"
-                                              onClick={() => toggle(group.stateKey, row.id)}
-                                              aria-pressed={selected}
-                                              aria-label={`${selected ? 'Remove' : 'Add'} ${row.name}`}
-                                              className={cn(
-                                                'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
-                                                selected
-                                                  ? 'border-primary bg-primary text-primary-foreground'
-                                                  : 'border-muted-foreground/40 bg-background',
+                                            <span className="flex w-[72px] shrink-0 items-center gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={() => toggle(group.stateKey, row.id)}
+                                                aria-pressed={selected}
+                                                aria-label={`${selected ? 'Remove' : 'Add'} ${row.name}`}
+                                                className={cn(
+                                                  'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                                                  selected
+                                                    ? 'border-primary bg-primary text-primary-foreground'
+                                                    : 'border-muted-foreground/40 bg-background',
+                                                )}
+                                              >
+                                                {selected ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : null}
+                                              </button>
+                                              {isFolder ? (
+                                                <Folder className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                                              ) : (
+                                                <FileText className="h-4 w-4 shrink-0 text-sky-500" aria-hidden />
                                               )}
-                                            >
-                                              {selected ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : null}
-                                            </button>
-
-                                            {isFolder ? (
-                                              <Folder className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
-                                            ) : (
-                                              <FileText className="h-4 w-4 shrink-0 text-sky-500" aria-hidden />
-                                            )}
+                                            </span>
 
                                             {isFolder ? (
                                               <button
