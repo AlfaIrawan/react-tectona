@@ -1230,6 +1230,22 @@ export async function fetchTemplateCompareOnlyOfficeConfig(
 export type ExplainerAssistantStatus = 'draft' | 'published' | 'archived'
 export type ExplainerAssistantVisibility = 'workspace' | 'private'
 
+/**
+ * Fixed palette rather than an image: each client renders the token with its own
+ * avatar chrome, so Tectona and Advena stay consistent without hosting an image.
+ */
+export const EXPLAINER_AVATARS = [
+  'violet',
+  'sky',
+  'teal',
+  'emerald',
+  'amber',
+  'rose',
+  'slate',
+  'indigo',
+] as const
+export type ExplainerAssistantAvatar = (typeof EXPLAINER_AVATARS)[number]
+
 export interface ExplainerAssistantCorpus {
   document_ids: string[]
   folder_ids: string[]
@@ -1243,6 +1259,7 @@ export interface ExplainerAssistant {
   kind: string
   status: ExplainerAssistantStatus
   visibility: ExplainerAssistantVisibility
+  avatar: ExplainerAssistantAvatar | null
   parent_persona: string | null
   corpus: ExplainerAssistantCorpus
   version: number
@@ -1266,6 +1283,7 @@ export interface CreateExplainerAssistantPayload {
   description?: string | null
   corpus?: Partial<ExplainerAssistantCorpus>
   visibility?: ExplainerAssistantVisibility
+  avatar?: ExplainerAssistantAvatar | null
   parent_persona?: string | null
 }
 
@@ -1274,6 +1292,7 @@ export interface PatchExplainerAssistantPayload {
   description?: string | null
   corpus?: Partial<ExplainerAssistantCorpus>
   visibility?: ExplainerAssistantVisibility
+  avatar?: ExplainerAssistantAvatar | null
   parent_persona?: string | null
   /** Optimistic lock — send the version last read to detect concurrent edits. */
   version?: number
@@ -1321,6 +1340,7 @@ export async function createExplainerAssistant(
       description: payload.description ?? null,
       corpus: normalizeCorpus(payload.corpus),
       visibility: payload.visibility ?? 'workspace',
+      avatar: payload.avatar ?? null,
       parent_persona: payload.parent_persona ?? 'smith',
     }),
   })
@@ -1336,6 +1356,7 @@ export async function patchExplainerAssistant(
   if (payload.description !== undefined) body.description = payload.description
   if (payload.corpus !== undefined) body.corpus = normalizeCorpus(payload.corpus)
   if (payload.visibility !== undefined) body.visibility = payload.visibility
+  if (payload.avatar !== undefined) body.avatar = payload.avatar
   if (payload.parent_persona !== undefined) body.parent_persona = payload.parent_persona
   if (payload.version !== undefined) body.version = payload.version
 

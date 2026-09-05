@@ -2174,6 +2174,8 @@ export interface RuntimeAssistantSummary {
   description?: string | null
   is_default: boolean
   document_count: number
+  /** Palette token chosen on the pack; each client applies its own avatar chrome. */
+  avatar?: string | null
 }
 
 export interface RuntimeAssistantListResponse {

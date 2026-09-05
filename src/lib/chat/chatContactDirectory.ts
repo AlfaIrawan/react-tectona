@@ -112,6 +112,18 @@ export const AGENT_RUNTIME_CONTACTS: ChatContact[] = [TECTONA_ASSISTANT_CONTACT,
 
 const EXPLAINER_CONTACT_PREFIX = 'explainer-assistant:'
 
+/** Palette tokens stored on the pack, rendered with this client's avatar chrome. */
+const EXPLAINER_AVATAR_CHROME: Record<string, string> = {
+  violet: 'bg-violet-600 text-white',
+  sky: 'bg-sky-600 text-white',
+  teal: 'bg-teal-600 text-white',
+  emerald: 'bg-emerald-600 text-white',
+  amber: 'bg-amber-600 text-white',
+  rose: 'bg-rose-600 text-white',
+  slate: 'bg-slate-600 text-white',
+  indigo: 'bg-indigo-600 text-white',
+}
+
 export function explainerContactId(assistantId: string): string {
   return `${EXPLAINER_CONTACT_PREFIX}${assistantId}`
 }
@@ -140,7 +152,8 @@ export async function fetchExplainerAssistantContacts(workspaceId: string): Prom
       mode: 'genai' as const,
       initials: initialsFromDisplayName(assistant.display_name),
       isAssistant: true,
-      avatarClassName: 'bg-gradient-to-br from-slate-600 to-slate-800 text-white',
+      avatarClassName:
+        EXPLAINER_AVATAR_CHROME[assistant.avatar ?? ''] ?? 'bg-gradient-to-br from-slate-600 to-slate-800 text-white',
       presence: 'online' as const,
     }))
 }
