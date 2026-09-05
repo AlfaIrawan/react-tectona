@@ -142,6 +142,7 @@ export const ExplainerAssistantsPanel = forwardRef<
   const [saveError, setSaveError] = useState<string | null>(null)
   const [corpusQuery, setCorpusQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
 
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]))
@@ -215,6 +216,7 @@ export const ExplainerAssistantsPanel = forwardRef<
     setDraft(EMPTY_DRAFT)
     setSaveError(null)
     setCorpusQuery('')
+    setCurrentFolderId(null)
     setDrawerFullscreen(false)
     setDrawerOpen(true)
   }, [])
@@ -233,6 +235,7 @@ export const ExplainerAssistantsPanel = forwardRef<
     })
     setSaveError(null)
     setCorpusQuery('')
+    setCurrentFolderId(null)
     setDrawerFullscreen(false)
     setDrawerOpen(true)
   }
@@ -247,44 +250,84 @@ export const ExplainerAssistantsPanel = forwardRef<
     })
   }
 
-  const filteredFolders = useMemo(() => {
-    const q = corpusQuery.trim().toLowerCase()
-    if (!q) return folders
-    return folders.filter((folder) => folder.name.toLowerCase().includes(q))
-  }, [folders, corpusQuery])
+  const searching = corpusQuery.trim().length > 0
 
-  const filteredDocuments = useMemo(() => {
-    const q = corpusQuery.trim().toLowerCase()
-    if (!q) return documents
-    return documents.filter((doc) => doc.title.toLowerCase().includes(q))
-  }, [documents, corpusQuery])
+  /**
+   * Mirrors the Document Repository: browse one folder at a time instead of dumping
+   * every folder and document at once. A flat list also made same-named folders at
+   * different depths indistinguishable (two rows both called "BRD").
+   *
+   * Search is the one exception — it looks across the whole workspace, because that
+   * is what a search box is for, and each hit shows the path it was found in.
+   */
+  const folderPathById = useMemo(() => {
+    const byId = new Map(folders.map((folder) => [folder.id, folder]))
+    const paths = new Map<string, string>()
+    for (const folder of folders) {
+      const segments: string[] = []
+      let cursor: DocumentFolder | undefined = folder
+      const guard = new Set<string>()
+      while (cursor && !guard.has(cursor.id)) {
+        guard.add(cursor.id)
+        segments.unshift(cursor.name)
+        cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined
+      }
+      paths.set(folder.id, segments.join(' / '))
+    }
+    return paths
+  }, [folders])
 
-  const explorerGroups = useMemo(
-    () =>
-      [
-        {
-          key: 'folders',
-          label: 'File folder',
-          stateKey: 'folderIds' as const,
-          rows: filteredFolders.map((folder) => ({
-            id: folder.id,
-            name: folder.name,
-            modified: formatModified(folder.updated_date ?? folder.created_date),
-          })),
-        },
-        {
-          key: 'documents',
-          label: 'Documents',
-          stateKey: 'documentIds' as const,
-          rows: filteredDocuments.map((doc) => ({
-            id: doc.id,
-            name: doc.title,
-            modified: formatModified(doc.updated_date ?? doc.created_date),
-          })),
-        },
-      ],
-    [filteredFolders, filteredDocuments],
-  )
+  const breadcrumb = useMemo(() => {
+    const byId = new Map(folders.map((folder) => [folder.id, folder]))
+    const trail: DocumentFolder[] = []
+    let cursor = currentFolderId ? byId.get(currentFolderId) : undefined
+    const guard = new Set<string>()
+    while (cursor && !guard.has(cursor.id)) {
+      guard.add(cursor.id)
+      trail.unshift(cursor)
+      cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined
+    }
+    return trail
+  }, [folders, currentFolderId])
+
+  const explorerGroups = useMemo(() => {
+    const q = corpusQuery.trim().toLowerCase()
+
+    const folderRows = (
+      q
+        ? folders.filter((folder) => folder.name.toLowerCase().includes(q))
+        : folders.filter((folder) => (folder.parent_id ?? null) === currentFolderId)
+    )
+      .slice()
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
+      .map((folder) => ({
+        id: folder.id,
+        name: folder.name,
+        hint: q ? folderPathById.get(folder.id) : undefined,
+        modified: formatModified(folder.updated_date ?? folder.created_date),
+        childCount: (folder.children_count ?? 0) + (folder.document_count ?? 0),
+      }))
+
+    const documentRows = (
+      q
+        ? documents.filter((doc) => doc.title.toLowerCase().includes(q))
+        : documents.filter((doc) => (doc.folder_id ?? null) === currentFolderId)
+    )
+      .slice()
+      .sort((left, right) => left.title.localeCompare(right.title, undefined, { sensitivity: 'base' }))
+      .map((doc) => ({
+        id: doc.id,
+        name: doc.title,
+        hint: q && doc.folder_id ? folderPathById.get(doc.folder_id) : undefined,
+        modified: formatModified(doc.updated_date ?? doc.created_date),
+        childCount: 0,
+      }))
+
+    return [
+      { key: 'folders', label: 'File folder', stateKey: 'folderIds' as const, rows: folderRows },
+      { key: 'documents', label: 'Documents', stateKey: 'documentIds' as const, rows: documentRows },
+    ]
+  }, [folders, documents, corpusQuery, currentFolderId, folderPathById])
 
   const canSave = !!workspaceId && draft.displayName.trim().length > 0
 
@@ -614,7 +657,42 @@ export const ExplainerAssistantsPanel = forwardRef<
                         />
                       </div>
 
-                      {/* File-explorer layout: one list, grouped by type, Name + Date modified. */}
+                      {/* Same navigation model as Document Repository: one folder at a
+                          time, with a breadcrumb back to the root. */}
+                      {!searching ? (
+                        <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                          <button
+                            type="button"
+                            onClick={() => setCurrentFolderId(null)}
+                            className={cn(
+                              'rounded px-1.5 py-0.5 hover:bg-muted/60',
+                              currentFolderId === null && 'font-semibold text-foreground',
+                            )}
+                          >
+                            All documents
+                          </button>
+                          {breadcrumb.map((folder) => (
+                            <span key={folder.id} className="flex items-center gap-1">
+                              <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
+                              <button
+                                type="button"
+                                onClick={() => setCurrentFolderId(folder.id)}
+                                className={cn(
+                                  'max-w-[160px] truncate rounded px-1.5 py-0.5 hover:bg-muted/60',
+                                  currentFolderId === folder.id && 'font-semibold text-foreground',
+                                )}
+                              >
+                                {folder.name}
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">
+                          Searching the whole workspace — clear the search box to browse folders again.
+                        </p>
+                      )}
+
                       <div className="overflow-hidden rounded-lg border border-border/60">
                         <div className="flex items-center gap-2 border-b border-border/50 bg-muted/40 px-3 py-1.5 text-[11px] font-medium text-muted-foreground">
                           <span className="min-w-0 flex-1">Name</span>
@@ -623,61 +701,100 @@ export const ExplainerAssistantsPanel = forwardRef<
                         <div className={cn('overflow-y-auto', drawerFullscreen ? 'max-h-[52vh]' : 'max-h-[320px]')}>
                           {explorerGroups.every((group) => group.rows.length === 0) ? (
                             <p className="p-6 text-center text-[11px] text-muted-foreground">
-                              Nothing to show in this workspace.
+                              {searching ? 'No matches in this workspace.' : 'This folder is empty.'}
                             </p>
                           ) : (
-                            explorerGroups.map((group) => (
-                              <div key={group.key}>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleGroup(group.key)}
-                                  className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-foreground hover:bg-muted/50"
-                                >
-                                  {collapsedGroups.includes(group.key) ? (
-                                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                                  ) : (
-                                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                                  )}
-                                  {group.label}
-                                  <span className="font-normal text-muted-foreground">({group.rows.length})</span>
-                                </button>
+                            explorerGroups.map((group) =>
+                              group.rows.length === 0 ? null : (
+                                <div key={group.key}>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleGroup(group.key)}
+                                    className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-foreground hover:bg-muted/50"
+                                  >
+                                    {collapsedGroups.includes(group.key) ? (
+                                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                                    ) : (
+                                      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                                    )}
+                                    {group.label}
+                                    <span className="font-normal text-muted-foreground">({group.rows.length})</span>
+                                  </button>
 
-                                {collapsedGroups.includes(group.key)
-                                  ? null
-                                  : group.rows.map((row) => {
-                                      const selected = draft[group.stateKey].includes(row.id)
-                                      return (
-                                        <button
-                                          key={row.id}
-                                          type="button"
-                                          onClick={() => toggle(group.stateKey, row.id)}
-                                          aria-pressed={selected}
-                                          className={cn(
-                                            'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs',
-                                            selected ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/50',
-                                          )}
-                                        >
-                                          {group.key === 'folders' ? (
-                                            <Folder className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
-                                          ) : (
-                                            <FileText className="h-4 w-4 shrink-0 text-sky-500" aria-hidden />
-                                          )}
-                                          <span className="min-w-0 flex-1 truncate">{row.name}</span>
-                                          <span className="w-[124px] shrink-0 tabular-nums text-[11px] text-muted-foreground">
-                                            {row.modified}
-                                          </span>
-                                          <Check
+                                  {collapsedGroups.includes(group.key)
+                                    ? null
+                                    : group.rows.map((row) => {
+                                        const selected = draft[group.stateKey].includes(row.id)
+                                        const isFolder = group.key === 'folders'
+                                        return (
+                                          <div
+                                            key={row.id}
                                             className={cn(
-                                              'h-3.5 w-3.5 shrink-0 text-primary',
-                                              selected ? 'opacity-100' : 'opacity-0',
+                                              'flex items-center gap-2 px-3 py-1.5 text-xs',
+                                              selected ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/50',
                                             )}
-                                            aria-hidden
-                                          />
-                                        </button>
-                                      )
-                                    })}
-                              </div>
-                            ))
+                                          >
+                                            {/* Selecting is separate from opening, so drilling into a
+                                                folder never silently binds it to the corpus. */}
+                                            <button
+                                              type="button"
+                                              onClick={() => toggle(group.stateKey, row.id)}
+                                              aria-pressed={selected}
+                                              aria-label={`${selected ? 'Remove' : 'Add'} ${row.name}`}
+                                              className={cn(
+                                                'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                                                selected
+                                                  ? 'border-primary bg-primary text-primary-foreground'
+                                                  : 'border-muted-foreground/40 bg-background',
+                                              )}
+                                            >
+                                              {selected ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : null}
+                                            </button>
+
+                                            {isFolder ? (
+                                              <Folder className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                                            ) : (
+                                              <FileText className="h-4 w-4 shrink-0 text-sky-500" aria-hidden />
+                                            )}
+
+                                            {isFolder ? (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setCorpusQuery('')
+                                                  setCurrentFolderId(row.id)
+                                                }}
+                                                title={row.hint ? `Open — ${row.hint}` : 'Open folder'}
+                                                className="min-w-0 flex-1 truncate text-left hover:underline"
+                                              >
+                                                {row.name}
+                                                {row.hint ? (
+                                                  <span className="ml-1.5 text-[10px] text-muted-foreground">{row.hint}</span>
+                                                ) : null}
+                                              </button>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                onClick={() => toggle(group.stateKey, row.id)}
+                                                title={row.hint ?? row.name}
+                                                className="min-w-0 flex-1 truncate text-left"
+                                              >
+                                                {row.name}
+                                                {row.hint ? (
+                                                  <span className="ml-1.5 text-[10px] text-muted-foreground">{row.hint}</span>
+                                                ) : null}
+                                              </button>
+                                            )}
+
+                                            <span className="w-[124px] shrink-0 tabular-nums text-[11px] text-muted-foreground">
+                                              {row.modified}
+                                            </span>
+                                          </div>
+                                        )
+                                      })}
+                                </div>
+                              ),
+                            )
                           )}
                         </div>
                       </div>
