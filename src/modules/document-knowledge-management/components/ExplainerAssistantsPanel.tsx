@@ -33,6 +33,7 @@ import {
   type ExplainerAssistantAvatar,
 } from '@/lib/api/documentKnowledgeApi'
 import { fetchAllDocumentFolders, type DocumentFolder } from '@/lib/api/documentFolderApi'
+import { isFolderInSamplesTree } from '@/modules/document-knowledge-management/lib/samplesFolder'
 
 /**
  * The "New assistant" trigger lives in the module toolbar (next to the search bar),
@@ -195,8 +196,14 @@ export const ExplainerAssistantsPanel = forwardRef<
           fetchDocumentsForCorpus(workspaceId),
         ])
         if (cancelled) return
-        setFolders(folderList)
-        setDocuments(documentList)
+        // Samples is a Tectona system library, not workspace content — binding an
+        // assistant to it would ground answers in demo material. Hide the whole
+        // subtree, not just the root, so its category folders go too.
+        const selectableFolders = folderList.filter(
+          (folder) => !isFolderInSamplesTree(folder.id, folderList),
+        )
+        setFolders(selectableFolders)
+        setDocuments(documentList.filter((doc) => !isFolderInSamplesTree(doc.folder_id, folderList)))
       } catch (err) {
         if (!cancelled) setSaveError(err instanceof Error ? err.message : 'Could not load folders and documents.')
       }
@@ -461,52 +468,113 @@ export const ExplainerAssistantsPanel = forwardRef<
               No assistants yet. Create one and bind it to the folders or documents it should explain.
             </p>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {assistants.map((assistant) => (
-                <div
+                <article
                   key={assistant.id}
-                  className="flex flex-col gap-2 rounded-xl border border-border/50 bg-background/60 p-3"
+                  className={cn(
+                    'group relative flex flex-col overflow-hidden rounded-2xl',
+                    // Depth comes from three stacked layers: an ambient drop shadow, a
+                    // 1px inner top highlight, and a tinted base — not a fake bevel.
+                    'border border-white/60 bg-gradient-to-b from-white/90 via-white/70 to-slate-100/70',
+                    'dark:border-white/10 dark:from-slate-900/70 dark:via-slate-900/50 dark:to-slate-950/60',
+                    'shadow-[0_1px_0_0_rgba(255,255,255,0.85)_inset,0_10px_24px_-12px_rgba(15,23,42,0.35),0_2px_6px_-2px_rgba(15,23,42,0.18)]',
+                    'dark:shadow-[0_1px_0_0_rgba(255,255,255,0.06)_inset,0_18px_40px_-18px_rgba(0,0,0,0.75)]',
+                    'ring-1 ring-black/[0.03] dark:ring-white/[0.04]',
+                    'transition-[transform,box-shadow] duration-300 ease-out',
+                    'hover:-translate-y-0.5 hover:shadow-[0_1px_0_0_rgba(255,255,255,0.9)_inset,0_20px_38px_-16px_rgba(15,23,42,0.42),0_4px_10px_-3px_rgba(15,23,42,0.22)]',
+                    'dark:hover:shadow-[0_1px_0_0_rgba(255,255,255,0.08)_inset,0_26px_54px_-20px_rgba(0,0,0,0.85)]',
+                  )}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    {assistant.avatar ? (
-                      <img
-                        src={AVATAR_SRC[assistant.avatar]}
-                        alt=""
+                  {/* Sheen sweep across the top edge — the only decorative layer. */}
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-white/25"
+                  />
+
+                  <div className="flex items-start gap-3 p-4 pb-3">
+                    <span className="relative shrink-0">
+                      <span
                         aria-hidden
-                        className="h-9 w-9 shrink-0 rounded-full bg-muted object-cover"
+                        className="absolute -inset-1 rounded-full bg-gradient-to-br from-violet-400/35 via-sky-400/20 to-transparent blur-[6px]"
                       />
-                    ) : null}
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">{assistant.display_name}</p>
-                      <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                      {assistant.avatar ? (
+                        <img
+                          src={AVATAR_SRC[assistant.avatar]}
+                          alt=""
+                          aria-hidden
+                          className="relative h-12 w-12 rounded-full bg-muted object-cover shadow-[0_3px_8px_-2px_rgba(15,23,42,0.45)] ring-2 ring-white/80 dark:ring-white/15"
+                        />
+                      ) : (
+                        <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-muted ring-2 ring-white/80 dark:ring-white/15">
+                          <Bot className="h-5 w-5 text-muted-foreground" aria-hidden />
+                        </span>
+                      )}
+                    </span>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate text-sm font-semibold tracking-tight text-foreground">
+                          {assistant.display_name}
+                        </p>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            'shrink-0 text-[9px] font-semibold uppercase tracking-[0.08em] shadow-sm',
+                            statusTone(assistant.status),
+                          )}
+                        >
+                          {assistant.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
                         {assistant.description || 'No description.'}
                       </p>
                     </div>
-                    <Badge variant="outline" className={cn('shrink-0 text-[10px] uppercase', statusTone(assistant.status))}>
-                      {assistant.status}
-                    </Badge>
                   </div>
 
-                  <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
-                    <span className="rounded-md border border-border/50 px-1.5 py-0.5">
-                      {assistant.corpus.folder_ids.length} folders
-                    </span>
-                    <span className="rounded-md border border-border/50 px-1.5 py-0.5">
-                      {assistant.corpus.document_ids.length} documents
-                    </span>
-                    <span className="rounded-md border border-border/50 px-1.5 py-0.5">
-                      {assistant.resolved_document_count} resolved
-                    </span>
+                  {/* Corpus reads as one instrument cluster: bound inputs, then what
+                      they actually resolve to — the number that gates publishing. */}
+                  <div className="mx-4 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-border/50 shadow-[0_1px_2px_rgba(15,23,42,0.08)_inset] ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/[0.06]">
+                    {[
+                      { label: 'Folders', value: assistant.corpus.folder_ids.length, strong: false },
+                      { label: 'Documents', value: assistant.corpus.document_ids.length, strong: false },
+                      { label: 'Resolved', value: assistant.resolved_document_count, strong: true },
+                    ].map((stat) => (
+                      <div
+                        key={stat.label}
+                        className="flex flex-col items-center bg-background/85 px-2 py-2 dark:bg-slate-900/70"
+                      >
+                        <span
+                          className={cn(
+                            'text-sm font-semibold tabular-nums',
+                            stat.strong && stat.value === 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground',
+                          )}
+                        >
+                          {stat.value}
+                        </span>
+                        <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                          {stat.label}
+                        </span>
+                      </div>
+                    ))}
                   </div>
 
-                  <div className="mt-auto flex items-center gap-2 pt-1">
-                    <Button type="button" variant="outline" size="sm" onClick={() => openEdit(assistant)}>
+                  <div className="mt-auto flex items-center gap-2 p-4 pt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 bg-background/70 shadow-sm"
+                      onClick={() => openEdit(assistant)}
+                    >
                       Edit
                     </Button>
                     {assistant.status !== 'published' ? (
                       <Button
                         type="button"
                         size="sm"
+                        className="flex-1 shadow-[0_2px_6px_-1px_rgba(37,99,235,0.45)]"
                         disabled={busyId === assistant.id || assistant.resolved_document_count === 0}
                         title={
                           assistant.resolved_document_count === 0
@@ -525,6 +593,7 @@ export const ExplainerAssistantsPanel = forwardRef<
                         type="button"
                         variant="outline"
                         size="sm"
+                        className="flex-1 bg-background/70 shadow-sm"
                         disabled={busyId === assistant.id}
                         onClick={() => void runAction(assistant, 'archive')}
                       >
@@ -532,7 +601,7 @@ export const ExplainerAssistantsPanel = forwardRef<
                       </Button>
                     )}
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
