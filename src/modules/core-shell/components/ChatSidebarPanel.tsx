@@ -1440,6 +1440,13 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messagesById, setMessagesById] = useState<Record<string, ChatMessage[]>>({})
   const [chatContacts, setChatContacts] = useState<ChatContact[]>([...AGENT_RUNTIME_CONTACTS])
+  /**
+   * Explainer packs live in their own state and are merged at render time.
+   * Merging them into `chatContacts` instead was a race: the directory loader
+   * replaces that array wholesale when it finishes, silently wiping any pack that
+   * had already landed.
+   */
+  const [explainerContacts, setExplainerContacts] = useState<ChatContact[]>([])
   const [chatContactsLoading, setChatContactsLoading] = useState(false)
   const [hiddenChatRevision, setHiddenChatRevision] = useState(0)
   const hiddenContactIds = useMemo(
@@ -1457,7 +1464,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   const presenceByUserId = useCollaborationPresenceStore((s) => s.byUserId)
   const myPresence = useMyPresenceStore((s) => s.status)
   const chatContactsForDisplay = useMemo(() => {
-    let merged = mergeRealtimePresenceStore(chatContacts, presenceByUserId)
+    let merged = mergeRealtimePresenceStore(
+      mergeExplainerContacts(chatContacts, explainerContacts),
+      presenceByUserId,
+    )
     merged = merged.filter((c) => c.isAssistant || !hiddenContactIds.has(c.id))
     if (myPresence === 'offline') return merged
     const selfPresence = myPresence === 'away' ? 'away' : 'online'
@@ -1465,7 +1475,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       contact.subtitle === 'You' ? { ...contact, presence: selfPresence } : contact,
     )
     return merged
-  }, [chatContacts, presenceByUserId, myPresence, hiddenContactIds])
+  }, [chatContacts, explainerContacts, presenceByUserId, myPresence, hiddenContactIds])
 
   const genaiHydratedRef = useRef<Set<string>>(new Set())
   const teamChannelHydratedRef = useRef<Set<string>>(new Set())
@@ -2133,10 +2143,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       void (async () => {
         try {
           const explainers = await fetchExplainerAssistantContacts(workspaceId)
-          if (cancelled || explainers.length === 0) return
-          setChatContacts((prev) => mergeExplainerContacts(prev, explainers))
-        } catch {
-          // Picker keeps the default assistant; explainer packs are additive.
+          if (cancelled) return
+          setExplainerContacts(explainers)
+        } catch (error) {
+          // Packs are additive, so the picker still works — but a silent failure here
+          // looks identical to "no packs published", which is the wrong conclusion.
+          if (import.meta.env.DEV) {
+            console.warn('[Tectona] explainer assistants unavailable', { workspaceId, error })
+          }
         }
       })()
     }
