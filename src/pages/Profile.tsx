@@ -19,7 +19,6 @@ import {
   Globe,
   Laptop,
   LogOut,
-  MapPin,
   MessageSquare,
   RefreshCw,
   Server,
@@ -40,6 +39,8 @@ import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
 import { authCardButtonClass } from '@/lib/authUiClasses'
 import { enterpriseCyanGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
+import { AIPerformanceCard } from '@/components/profile/AIPerformanceCard'
+import { fetchModelCatalog, catalogPrice, type CatalogModel, type ModelCatalog } from '@/lib/api/modelCatalogApi'
 import { maskToken, readTokenTelemetry, type TokenTelemetryEvent } from '@/lib/tokenTelemetry'
 import { normalizeUserDisplayName } from '@/lib/userDisplayName'
 
@@ -270,89 +271,6 @@ function TokenActivityHeatmap({ events }: { events: TokenTelemetryEvent[] }) {
 }
 
 
-type CatalogAvailability = 'Available' | 'Limited' | 'Unavailable' | 'Deprecated'
-
-type CatalogModel = {
-  id: string
-  name: string
-  type: string
-  capabilities: string[]
-  contextWindow: string
-  availability: CatalogAvailability
-  isDefault: boolean
-  inputPrice: number
-  outputPrice: number
-  bestFor: string
-  tectonaCapabilities: string[]
-  strengths: string[]
-}
-
-const catalogModels: CatalogModel[] = [
-  {
-    id: 'gemma-4-26b',
-    name: 'Gemma 4 26B',
-    type: 'General + Multilingual',
-    capabilities: ['General', 'Multilingual'],
-    contextWindow: '128K',
-    availability: 'Available',
-    isDefault: true,
-    inputPrice: 2394,
-    outputPrice: 6840,
-    bestFor: 'General enterprise assistance, multilingual content, and document understanding.',
-    tectonaCapabilities: ['AI Assistant', 'Document Intelligence', 'Knowledge Assistant'],
-    strengths: ['Strong multilingual understanding', 'Efficient general-purpose generation', 'Reliable document comprehension', 'Optimized for enterprise use'],
-  },
-  {
-    id: 'qwen-3-6-35b-a3b-fp8',
-    name: 'Qwen 3.6 35B A3B FP8',
-    type: 'Vision + Text + Reasoning',
-    capabilities: ['Vision', 'Text', 'Document', 'Reasoning'],
-    contextWindow: '128K',
-    availability: 'Available',
-    isDefault: false,
-    inputPrice: 2223,
-    outputPrice: 15390,
-    bestFor: 'Business analysis, multimodal understanding, document analysis, visual reasoning, and text generation.',
-    tectonaCapabilities: ['Document Intelligence', 'AI Assistant', 'Requirement Analysis', 'Knowledge Assistant'],
-    strengths: ['Strong business and requirement analysis', 'Excellent vision and text understanding', 'Efficient mixture-of-experts architecture', 'Strong performance for document analysis'],
-  },
-  {
-    id: 'gpt-oss-120b',
-    name: 'GPT-OSS 120B',
-    type: 'Reasoning + General',
-    capabilities: ['Reasoning', 'General'],
-    contextWindow: '128K',
-    availability: 'Available',
-    isDefault: false,
-    inputPrice: 823,
-    outputPrice: 4001,
-    bestFor: 'Complex reasoning, structured analysis, and demanding general-purpose tasks.',
-    tectonaCapabilities: ['AI Assistant', 'Requirement Analysis', 'Workflow Automation'],
-    strengths: ['Strong structured reasoning', 'Capable general-purpose generation', 'Effective analytical assistance', 'Optimized for complex tasks'],
-  },
-]
-
-const capabilityMatrix = [
-  ['General Q&A', 'supported', 'supported', 'supported'],
-  ['Reasoning', 'partial', 'supported', 'supported'],
-  ['Vision', 'none', 'supported', 'none'],
-  ['Document Analysis', 'supported', 'supported', 'supported'],
-  ['Multilingual', 'supported', 'supported', 'supported'],
-] as const
-
-function availabilityClass(availability: CatalogAvailability): string {
-  if (availability === 'Available') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
-  if (availability === 'Limited') return 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
-  if (availability === 'Deprecated') return 'bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300'
-  return 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
-}
-
-function CapabilityIndicator({ value }: { value: 'supported' | 'partial' | 'none' }) {
-  if (value === 'supported') return <span className="font-semibold text-emerald-600" title="Supported">✓</span>
-  if (value === 'partial') return <span className="font-semibold text-slate-500" title="Partial">◐</span>
-  return <span className="text-muted-foreground" title="Not supported">—</span>
-}
-
 function ModelDetailDrawer({ model, onClose, onViewPerformance }: { model: CatalogModel; onClose: () => void; onViewPerformance: () => void }) {
   const drawerRef = useRef<HTMLElement>(null)
 
@@ -381,14 +299,15 @@ function ModelDetailDrawer({ model, onClose, onViewPerformance }: { model: Catal
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary/80">AI model</p>
-              <h2 id="model-detail-title" className="mt-0.5 truncate text-lg font-semibold tracking-tight">{model.name}</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Enterprise model available through Lintasarta</p>
+              <h2 id="model-detail-title" className="mt-0.5 break-words text-lg font-semibold tracking-tight">{model.name}</h2>
+              <p className="mt-1 break-words text-xs text-muted-foreground">Configured through {model.providerName}</p>
+              {model.name !== model.modelId && <p className="mt-1 break-all text-[10px] text-muted-foreground">{model.modelId}</p>}
             </div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close model details" className="rounded-lg border border-transparent p-1.5 text-muted-foreground transition-colors hover:border-border/60 hover:bg-background/80 hover:text-foreground"><X className="h-4 w-4" /></button>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <span className={cn('rounded-full px-2.5 py-1 text-[10px] font-medium', availabilityClass(model.availability))}>● {model.availability}</span>
+          <span className={cn('rounded-full px-2.5 py-1 text-[10px] font-medium', 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300')}>● {model.availability}</span>
           {model.isDefault ? <span className="rounded-full border border-primary/15 bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary">Default model</span> : null}
           <span className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[10px] font-medium text-muted-foreground">{model.type}</span>
         </div>
@@ -399,8 +318,8 @@ function ModelDetailDrawer({ model, onClose, onViewPerformance }: { model: Catal
           <div className="mb-2 flex items-center gap-2"><Server className="h-3.5 w-3.5 text-primary" /><h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Model overview</h3></div>
           <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-border/60 bg-background/45 shadow-sm">
             {[
-              ['Provider', 'Lintasarta'],
-              ['Context window', `${model.contextWindow} tokens`],
+              ['Provider', model.providerName],
+              ['Context window', model.contextWindow],
               ['Availability', model.availability],
               ['Default model', model.isDefault ? 'Yes' : 'No'],
             ].map(([label, value], index) => <div key={label} className={cn('p-3', index % 2 === 0 && 'border-r border-border/40', index < 2 && 'border-b border-border/40')}><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1 text-xs font-semibold text-foreground">{value}</p></div>)}
@@ -410,8 +329,8 @@ function ModelDetailDrawer({ model, onClose, onViewPerformance }: { model: Catal
         <section>
           <div className="mb-2 flex items-center justify-between"><div className="flex items-center gap-2"><span className="flex h-5 w-5 items-center justify-center rounded-md bg-primary/10 text-[11px] font-semibold text-primary">Rp</span><h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Model pricing</h3></div><span className="text-[10px] text-muted-foreground">Per 1M tokens</span></div>
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl border border-blue-200/60 bg-blue-50/40 p-3 dark:border-blue-900/40 dark:bg-blue-950/15"><p className="text-[10px] text-muted-foreground">Input tokens</p><p className="mt-1 text-base font-semibold tracking-tight text-blue-700 dark:text-blue-300">Rp {model.inputPrice.toLocaleString('en-US')}</p></div>
-            <div className="rounded-xl border border-violet-200/60 bg-violet-50/40 p-3 dark:border-violet-900/40 dark:bg-violet-950/15"><p className="text-[10px] text-muted-foreground">Output tokens</p><p className="mt-1 text-base font-semibold tracking-tight text-violet-700 dark:text-violet-300">Rp {model.outputPrice.toLocaleString('en-US')}</p></div>
+            <div className="rounded-xl border border-blue-200/60 bg-blue-50/40 p-3 dark:border-blue-900/40 dark:bg-blue-950/15"><p className="text-[10px] text-muted-foreground">Input tokens</p><p className="mt-1 text-base font-semibold tracking-tight text-blue-700 dark:text-blue-300">{catalogPrice(model.inputPrice)}</p></div>
+            <div className="rounded-xl border border-violet-200/60 bg-violet-50/40 p-3 dark:border-violet-900/40 dark:bg-violet-950/15"><p className="text-[10px] text-muted-foreground">Output tokens</p><p className="mt-1 text-base font-semibold tracking-tight text-violet-700 dark:text-violet-300">{catalogPrice(model.outputPrice)}</p></div>
           </div>
         </section>
 
@@ -421,13 +340,13 @@ function ModelDetailDrawer({ model, onClose, onViewPerformance }: { model: Catal
         </section>
 
         <section>
-          <div className="mb-2 flex items-center gap-2"><Boxes className="h-3.5 w-3.5 text-primary" /><h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Used by TECTONA capabilities</h3></div>
+          <div className="mb-2 flex items-center gap-2"><Boxes className="h-3.5 w-3.5 text-primary" /><h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Configured routing</h3></div>
           <div className="grid grid-cols-2 gap-2">{model.tectonaCapabilities.map((capability) => <div key={capability} className="flex min-h-10 items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-2.5 py-2 text-[11px] font-medium"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10"><Sparkles className="h-3 w-3 text-primary" /></span>{capability}</div>)}</div>
         </section>
 
         <section>
           <div className="mb-2 flex items-center gap-2"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /><h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Key strengths</h3></div>
-          <div className="rounded-xl border border-border/60 bg-background/40 px-3 py-1">{model.strengths.map((strength, index) => <div key={strength} className={cn('flex items-start gap-2.5 py-2.5 text-xs', index > 0 && 'border-t border-border/35')}><span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600"><Check className="h-2.5 w-2.5" strokeWidth={3} /></span><span className="leading-relaxed text-foreground/80">{strength}</span></div>)}</div>
+          <div className="rounded-xl border border-border/60 bg-background/40 px-3 py-1">{(model.strengths.length ? model.strengths : ['Not specified']).map((strength, index) => <div key={strength} className={cn('flex items-start gap-2.5 py-2.5 text-xs', index > 0 && 'border-t border-border/35')}><span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600"><Check className="h-2.5 w-2.5" strokeWidth={3} /></span><span className="leading-relaxed text-foreground/80">{strength}</span></div>)}</div>
         </section>
       </div>
 
@@ -440,88 +359,85 @@ function ModelDetailDrawer({ model, onClose, onViewPerformance }: { model: Catal
 }
 
 function AIProviderModelsCard({ onViewPerformance, onViewUsage }: { onViewPerformance: () => void; onViewUsage: () => void }) {
-  const [selectedModel, setSelectedModel] = useState<CatalogModel | null>(null)
-  const [updatedAt, setUpdatedAt] = useState(() => new Date())
-  const defaultModel = catalogModels.find((model) => model.isDefault) as CatalogModel
-
-  return (
-    <>
-      <SectionCard
-        icon={Sparkles}
-        title="AI Provider & Models"
-        description="View AI providers and models available to your account."
-        headerAside={<div className="flex items-center gap-2 text-xs text-muted-foreground"><span title={updatedAt.toLocaleTimeString('en-US')}>Updated just now</span><button type="button" aria-label="Refresh AI provider catalog" title="Refresh" onClick={() => setUpdatedAt(new Date())} className="rounded-md p-1.5 hover:bg-muted"><RefreshCw className="h-3.5 w-3.5" aria-hidden /></button></div>}
-      >
-        <div className="space-y-4 py-4">
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [revision, setRevision] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+    const timeout = window.setTimeout(() => controller.abort(), 20000)
+    setLoading(true)
+    setError(false)
+    fetchModelCatalog(controller.signal, getSession()?.token).then(data => {
+      if (active) setCatalog(data)
+    }).catch(() => {
+      if (active) setError(true)
+    }).finally(() => {
+      window.clearTimeout(timeout)
+      if (active) setLoading(false)
+    })
+    return () => { active = false; window.clearTimeout(timeout); controller.abort() }
+  }, [revision])
+  const models = catalog?.models ?? []
+  const defaultModel = models.find(model => model.isDefault)
+  const selectedModel = models.find(model => model.id === selectedId)
+  const capabilities = [...new Set(models.flatMap(model => Object.keys(model.capabilitySupport)))]
+  const refresh = () => { setSelectedId(null); setRevision(value => value + 1) }
+  const sectionClass = 'rounded-xl border border-border/60 p-4'
+  return <>
+    <SectionCard icon={Sparkles} title="AI Provider & Models"
+      description="View models and routing configured for the shared TECTONA runtime."
+      headerAside={<div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span>{loading ? 'Syncing…' : error ? 'Sync failed' : catalog ? `Updated ${new Date(catalog.updatedAt).toLocaleTimeString('en-US')}` : 'Not synced'}</span>
+        <button type="button" disabled={loading} onClick={refresh} aria-label="Refresh AI provider catalog" className="rounded-md p-1.5 hover:bg-muted disabled:opacity-50"><RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /></button>
+      </div>}>
+      <div className="space-y-4 py-4" aria-busy={loading}>
+        {error && <div role="alert" className={sectionClass}><h3 className="text-sm font-semibold">Unable to load AI providers and models</h3><p className="mt-1 text-xs text-muted-foreground">Catalog information is temporarily unavailable.{catalog ? ' Showing the last synced configuration.' : ''}</p><Button variant="outline" size="sm" onClick={refresh} className="mt-3">Retry</Button></div>}
+        {loading && !catalog ? <div aria-label="Loading model catalog" className="space-y-4"><div className="grid gap-3 sm:grid-cols-3">{[0,1,2].map(i => <div key={i} className="h-24 animate-pulse rounded-lg bg-muted" />)}</div><div className="h-44 animate-pulse rounded-lg bg-muted" /></div> : catalog && <>
+          <p className="text-xs text-muted-foreground">Configured models are not live health checks. Routing can select a different model for each capability.</p>
           <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-border/60 bg-background/50 p-3"><p className="text-xs text-muted-foreground">Available providers</p><p className="mt-1 text-xl font-semibold">1</p><p className="text-[11px] text-muted-foreground">Enterprise provider</p></div>
-            <div className="rounded-lg border border-border/60 bg-background/50 p-3"><p className="text-xs text-muted-foreground">Available models</p><p className="mt-1 text-xl font-semibold">{catalogModels.length}</p><p className="text-[11px] text-muted-foreground">Ready to use</p></div>
-            <div className="rounded-lg border border-border/60 bg-background/50 p-3"><p className="text-xs text-muted-foreground">Default model</p><p className="mt-1 text-base font-semibold">{defaultModel.name.replace(' 7B', '')}</p><span className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{defaultModel.type}</span></div>
+            {[
+              ['Configured providers', String(catalog.providers.length), 'Shared runtime configuration'],
+              ['Configured models', String(models.length), 'Includes feature routes and fallbacks'],
+              ['Default model', defaultModel?.name ?? 'Not specified', 'Primary runtime · feature overrides may apply'],
+            ].map(([label,value,hint]) => <div key={label} className={sectionClass}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-base font-semibold">{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{hint}</p></div>)}
           </div>
-
-          <div>
-            <h3 className="text-sm font-semibold">AI Provider</h3>
-            <div className="mt-2 grid items-center gap-4 rounded-lg border border-border/60 p-3 md:grid-cols-[1.5fr_repeat(3,minmax(0,0.7fr))]">
-              <div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary"><Server className="h-4 w-4" aria-hidden /></div><div><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold">Lintasarta</p><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">OpenAI Compatible</span></div><p className="text-xs text-muted-foreground">Enterprise AI services for TECTONA</p></div></div>
-              <div><p className="flex items-center gap-1 text-[10px] text-muted-foreground"><CheckCircle2 className="h-3 w-3" /> Status</p><p className="mt-1 text-xs font-medium text-emerald-600">● Available</p></div>
-              <div><p className="flex items-center gap-1 text-[10px] text-muted-foreground"><Boxes className="h-3 w-3" /> Models</p><p className="mt-1 text-xs font-medium">3 models</p></div>
-              <div><p className="flex items-center gap-1 text-[10px] text-muted-foreground"><MapPin className="h-3 w-3" /> Region</p><p className="mt-1 text-xs font-medium">Indonesia</p></div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-semibold">Available Models</h3><p className="text-xs text-muted-foreground">Select a model to view capabilities, details, and pricing.</p>
-            <div className="mt-2 hidden overflow-hidden rounded-lg border border-border/60 md:block"><table className="w-full text-left text-xs"><thead className="bg-muted/30 text-muted-foreground"><tr><th className="px-3 py-2 font-medium">Model</th><th className="px-3 py-2 font-medium">Capabilities</th><th className="px-3 py-2 font-medium">Context Window</th><th className="px-3 py-2 font-medium">Availability</th><th className="px-3 py-2 font-medium">Default</th><th className="w-10 px-3 py-2 font-medium">Action</th></tr></thead><tbody>{catalogModels.map((model) => <tr key={model.id} role="button" tabIndex={0} onClick={() => setSelectedModel(model)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelectedModel(model) }} className="cursor-pointer border-t border-border/40 transition-colors hover:bg-muted/35"><td className="px-3 py-3 font-medium">{model.name}</td><td className="px-3 py-3"><div className="flex flex-wrap gap-1">{model.capabilities.map((capability) => <span key={capability} className="rounded-full bg-primary/7 px-2 py-0.5 text-[10px] text-primary">{capability}</span>)}</div></td><td className="px-3 py-3">{model.contextWindow}</td><td className="px-3 py-3"><span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', availabilityClass(model.availability))}>● {model.availability}</span></td><td className="px-3 py-3">{model.isDefault ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">Default</span> : '—'}</td><td className="px-3 py-3"><ChevronRight className="h-4 w-4 text-muted-foreground" /></td></tr>)}</tbody></table></div>
-            <div className="mt-2 space-y-2 md:hidden">{catalogModels.map((model) => <button key={model.id} type="button" onClick={() => setSelectedModel(model)} className="w-full rounded-lg border border-border/60 p-3 text-left hover:bg-muted/35"><div className="flex items-center justify-between"><span className="text-sm font-medium">{model.name}</span><ChevronRight className="h-4 w-4 text-muted-foreground" /></div><div className="mt-2 flex flex-wrap gap-1">{model.capabilities.map((capability) => <span key={capability} className="rounded-full bg-primary/7 px-2 py-0.5 text-[10px] text-primary">{capability}</span>)}</div><div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{model.contextWindow} context</span><span className="text-emerald-600">● {model.availability}</span></div></button>)}</div>
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="rounded-lg border border-border/60 p-3"><h3 className="text-sm font-semibold">Model Capability Matrix</h3><p className="text-xs text-muted-foreground">Compare key capabilities across available models.</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[420px] text-xs"><thead className="text-muted-foreground"><tr><th className="pb-2 text-left font-medium">Capability</th>{catalogModels.map((model) => <th key={model.id} className="pb-2 text-center font-medium">{model.name.replace(/ (26B|7B|120B)$/, '')}</th>)}</tr></thead><tbody>{capabilityMatrix.map(([capability, ...values]) => <tr key={capability} className="border-t border-border/40"><td className="py-2">{capability}</td>{values.map((value, index) => <td key={`${capability}-${catalogModels[index].id}`} className="py-2 text-center"><CapabilityIndicator value={value} /></td>)}</tr>)}</tbody></table></div><div className="mt-3 flex flex-wrap gap-4 text-[10px] text-muted-foreground"><span className="text-emerald-600">✓ Supported</span><span>◐ Partial</span><span>— Not supported</span></div></div>
-            <div className="rounded-lg border border-border/60 p-3"><div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold">Model Pricing</h3><p className="text-xs text-muted-foreground">Pricing per 1M tokens provided by Lintasarta.</p></div><button type="button" onClick={onViewUsage} className="text-[11px] font-medium text-primary hover:underline">View usage</button></div><div className="mt-3 grid gap-2 sm:grid-cols-3">{catalogModels.map((model) => <button key={model.id} type="button" onClick={() => setSelectedModel(model)} className="rounded-lg border border-border/50 p-3 text-left hover:bg-muted/30"><p className="text-xs font-semibold">{model.name}</p><div className="mt-3"><p className="text-[10px] text-muted-foreground">Input</p><p className="text-sm font-semibold text-primary">Rp {model.inputPrice.toLocaleString('en-US')}</p></div><div className="mt-2"><p className="text-[10px] text-muted-foreground">Output</p><p className="text-sm font-semibold text-violet-600">Rp {model.outputPrice.toLocaleString('en-US')}</p></div></button>)}</div><p className="mt-3 text-[10px] text-muted-foreground">ⓘ All prices are in IDR and subject to change.</p></div>
-          </div>
-        </div>
-      </SectionCard>
-
-      {selectedModel ? <ModelDetailDrawer model={selectedModel} onClose={() => setSelectedModel(null)} onViewPerformance={() => { setSelectedModel(null); onViewPerformance() }} /> : null}
-    </>
-  )
+          {!catalog.providers.length ? <div className={sectionClass}><h3 className="text-sm font-semibold">No AI provider available</h3><p className="mt-1 text-xs text-muted-foreground">No enabled AI provider is configured for this runtime.</p></div> : <>
+            <section><h3 className="mb-2 text-sm font-semibold">AI Providers</h3><div className="space-y-2">{catalog.providers.map(provider => <div key={provider.id} className={cn(sectionClass,'grid items-center gap-3 sm:grid-cols-4')}>
+              <div><p className="text-sm font-semibold">{provider.name}</p><p className="mt-1 text-xs text-muted-foreground">{provider.protocol === 'openai_compat' ? 'OpenAI Compatible' : provider.protocol}</p></div>
+              <div><p className="text-xs text-muted-foreground">Status</p><p className="mt-1 text-xs">{provider.status}</p></div>
+              <div><p className="text-xs text-muted-foreground">Models</p><p className="mt-1 text-xs">{models.filter(model => model.providerId === provider.id).length} models</p></div>
+              <div><p className="text-xs text-muted-foreground">Region</p><p className="mt-1 text-xs">{provider.region}</p></div>
+            </div>)}</div></section>
+            {!models.length ? <div className={sectionClass}><h3 className="text-sm font-semibold">No AI models available</h3></div> : <>
+              <section><h3 className="text-sm font-semibold">Configured Models</h3><p className="mb-2 text-xs text-muted-foreground">Select a model to view its metadata, pricing, and configured routing.</p>
+                <div className="hidden overflow-x-auto rounded-xl border border-border/60 md:block"><table className="w-full text-left text-xs"><thead className="bg-muted/30 text-muted-foreground"><tr>{['Model','Capabilities','Context window','Status','Default','Details'].map(label => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody>
+                  {models.map(model => <tr key={model.id} onClick={() => setSelectedId(model.id)} className="cursor-pointer border-t border-border/40 hover:bg-muted/30">
+                    <td className="px-3 py-3"><button type="button" onClick={() => setSelectedId(model.id)} className="text-left font-medium hover:text-primary">{model.name}</button><p className="mt-1 text-[10px] text-muted-foreground">{model.providerName}</p></td>
+                    <td className="px-3 py-3">{model.capabilities.length ? model.capabilities.join(' · ') : 'Not specified'}</td><td className="px-3 py-3">{model.contextWindow}</td><td className="px-3 py-3">{model.availability}</td><td className="px-3 py-3">{model.isDefault ? <Badge variant="secondary">Default</Badge> : '—'}</td><td className="px-3 py-3"><button type="button" aria-label={`View ${model.name} details`} onClick={() => setSelectedId(model.id)}><ChevronRight className="h-4 w-4" /></button></td>
+                  </tr>)}
+                </tbody></table></div>
+                <div className="space-y-2 md:hidden">{models.map(model => <button type="button" key={model.id} onClick={() => setSelectedId(model.id)} className={cn(sectionClass,'w-full text-left')}><span className="block break-words text-sm font-semibold">{model.name}</span><span className="mt-1 block text-xs text-muted-foreground">{model.providerName} · {model.availability}{model.isDefault ? ' · Default' : ''}</span><span className="mt-2 block text-xs">{model.capabilities.join(' · ') || 'Not specified'}</span></button>)}</div>
+              </section>
+              <section className={sectionClass}><h3 className="text-sm font-semibold">Model Routing</h3><p className="mb-3 text-xs text-muted-foreground">Configured assignments; fallbacks may change the model used for an individual request.</p><div className="grid gap-3 sm:grid-cols-2">{models.map(model => <div key={model.id} className="border-l-2 border-primary/20 pl-3"><p className="break-words text-xs font-semibold">{model.name}</p><p className="mt-1 text-xs text-muted-foreground">{model.tectonaCapabilities.join(' · ')}</p></div>)}</div></section>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <section className={sectionClass}><h3 className="text-sm font-semibold">Model Capability Matrix</h3><p className="mb-3 text-xs text-muted-foreground">Curated metadata for exact model versions.</p>
+                  {!capabilities.length ? <p className="py-3 text-xs text-muted-foreground">Not specified. Capability metadata has not been configured.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">Capability</th>{models.map(model => <th key={model.id} className="p-2 font-medium">{model.name}</th>)}</tr></thead><tbody>{capabilities.map(capability => <tr key={capability} className="border-t border-border/40"><td className="p-2">{capability}</td>{models.map(model => <td key={model.id} className="p-2">{({supported:'Supported',partial:'Partial',none:'Not supported'} as const)[model.capabilitySupport[capability]] ?? 'Not specified'}</td>)}</tr>)}</tbody></table></div>}
+                </section>
+                <section className={sectionClass}><div className="flex justify-between gap-3"><h3 className="text-sm font-semibold">Model Pricing</h3><button type="button" onClick={onViewUsage} className="text-xs text-primary">View usage →</button></div><p className="mb-3 text-xs text-muted-foreground">Configured rates per 1M tokens · IDR</p><div className="grid gap-2 sm:grid-cols-2">{models.map(model => <button type="button" key={model.id} onClick={() => setSelectedId(model.id)} className="rounded-lg border border-border/50 p-3 text-left hover:bg-muted/30"><p className="break-words text-xs font-medium">{model.name}</p><p className="mt-2 text-[10px] text-muted-foreground">Input</p><p className="text-xs text-primary">{catalogPrice(model.inputPrice)}</p><p className="mt-2 text-[10px] text-muted-foreground">Output</p><p className="text-xs text-violet-600">{catalogPrice(model.outputPrice)}</p></button>)}</div><p className="mt-3 text-[10px] text-muted-foreground">Configured tariffs are estimates, not a vendor quote. Prices are subject to change.</p></section>
+              </div>
+            </>}
+          </>}
+        </>}
+      </div>
+    </SectionCard>
+    {selectedModel && <ModelDetailDrawer model={selectedModel} onClose={() => setSelectedId(null)} onViewPerformance={() => { setSelectedId(null); onViewPerformance() }} />}
+  </>
 }
 
-type PerformanceWindow = 7 | 30 | 90
-type PerformanceStatus = 'Healthy' | 'Degraded' | 'Critical'
-
-const performanceInteractions = ['AI Assistant', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation']
-const performanceModels = [
-  { key: 'qwen', label: 'Qwen 3.6 35B A3B FP8' },
-  { key: 'gemma', label: 'Gemma 4' },
-  { key: 'gpt-oss', label: 'GPT-OSS' },
-]
-
-function performancePercentile(values: number[], percentile: number): number | null {
-  if (values.length < 2) return null
-  const sorted = [...values].sort((a, b) => a - b)
-  const index = (sorted.length - 1) * percentile
-  const lower = Math.floor(index)
-  const upper = Math.ceil(index)
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower)
-}
-
-function seconds(value: number | null): string {
-  return value === null ? '—' : `${(value / 1000).toFixed(1)}s`
-}
-
-function performanceStatus(avgMs: number | null, successRate: number | null): PerformanceStatus | null {
-  if (avgMs === null && successRate === null) return null
-  if (successRate !== null && successRate < 97 || avgMs !== null && avgMs >= 5000) return 'Critical'
-  if (successRate !== null && successRate < 99 || avgMs !== null && avgMs >= 3000) return 'Degraded'
-  return 'Healthy'
-}
-
-function statusClass(status: PerformanceStatus | null): string {
-  if (status === 'Critical') return 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
-  if (status === 'Degraded') return 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
-  return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
-}
+const usageCapabilities = ['AI Assistant', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation']
 
 function interactionName(event: TokenTelemetryEvent): string {
   if (event.interactionType) return event.interactionType
@@ -536,12 +452,7 @@ function interactionName(event: TokenTelemetryEvent): string {
 type UsageRange = '7d' | '30d' | '90d' | 'year' | 'custom'
 
 function catalogModelLabel(model?: string): string {
-  const normalized = (model ?? '').toLowerCase()
-  if (normalized.includes('gemma')) return 'Gemma 4 26B'
-  if (normalized.includes('qwen3.6')) return 'Qwen 3.6 35B A3B FP8'
-  if (normalized.includes('qwen')) return 'Qwen (legacy)'
-  if (normalized.includes('gpt-oss')) return 'GPT-OSS 120B'
-  return model?.split('/').pop() ?? 'Unknown model'
+  return model || 'Unknown model'
 }
 
 function usagePeriod(range: UsageRange, now: Date, customFrom: string, customTo: string): { start: Date; end: Date; label: string } {
@@ -628,12 +539,12 @@ function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders 
   filteredEvents.forEach((event) => { const key = event.occurredAt.slice(0, 10); const row = groupedDailyTokens.get(key) ?? { date: key, input: 0, output: 0 }; row.input += event.inputTokens ?? 0; row.output += event.outputTokens ?? 0; groupedDailyTokens.set(key, row) })
   const dailyTokens = [...groupedDailyTokens.values()].sort((a, b) => a.date.localeCompare(b.date)).map((row) => ({ ...row, label: new Date(`${row.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }))
 
-  const capabilityRows = performanceInteractions.map((capability) => {
+  const capabilityRows = usageCapabilities.map((capability) => {
     const capabilityEvents = filteredEvents.filter((event) => interactionName(event) === capability)
     const tokens = capabilityEvents.reduce((sum, event) => sum + (event.totalTokens ?? 0), 0)
     return { capability, calls: capabilityEvents.length, tokens, share: totalTokens ? tokens / totalTokens * 100 : 0 }
   }).sort((a, b) => b.tokens - a.tokens)
-  const modelCostMap = new Map(catalogModels.map((model) => [model.name, 0]))
+  const modelCostMap = new Map<string, number>()
   filteredEvents.forEach((event) => { const label = catalogModelLabel(event.model); modelCostMap.set(label, (modelCostMap.get(label) ?? 0) + (event.totalCostIdr ?? 0)) })
   const modelCosts = [...modelCostMap.entries()].map(([name, cost]) => ({ name, cost, share: totalCost ? cost / totalCost * 100 : 0 })).sort((a, b) => b.cost - a.cost)
   const distribution = [{ name: 'User initiated', value: filteredEvents.filter((event) => event.source === 'user').length, color: '#2563eb' }, { name: 'System automatic', value: filteredEvents.filter((event) => event.source === 'system').length, color: '#7c3aed' }]
@@ -664,95 +575,6 @@ function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders 
     {activityListOpen ? <AIActivityListDrawer events={filteredEvents} onClose={() => setActivityListOpen(false)} onSelect={(event) => { setActivityListOpen(false); setSelectedActivity(event) }} /> : null}
     {selectedActivity ? <AIActivityDetailDrawer event={selectedActivity} onClose={() => setSelectedActivity(null)} /> : null}
   </>
-}
-
-function AIPerformanceCard({ events }: { events: TokenTelemetryEvent[] }) {
-  const [windowSize, setWindowSize] = useState<PerformanceWindow>(30)
-  const [updatedAt, setUpdatedAt] = useState(() => new Date())
-  const [now] = useState(() => Date.now())
-  const performanceEvents = events.filter((event) => typeof event.latencyMs === 'number' && event.latencyMs >= 0)
-  const statusEvents = events.filter((event) => event.performanceStatus)
-  const hasData = performanceEvents.length > 0 || statusEvents.length > 0
-
-  const trend = useMemo(() => {
-    const start = new Date(now - (windowSize - 1) * 86400000)
-    return Array.from({ length: windowSize }, (_, index) => {
-      const date = new Date(start.getTime() + index * 86400000)
-      const samples = performanceEvents.filter((event) => new Date(event.occurredAt).toDateString() === date.toDateString()).map((event) => event.latencyMs as number)
-      return { date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), average: samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length / 1000 : null, p95: performancePercentile(samples, 0.95) ? (performancePercentile(samples, 0.95) as number) / 1000 : null }
-    })
-  }, [now, performanceEvents, windowSize])
-
-  const avgMs = performanceEvents.length ? performanceEvents.reduce((sum, event) => sum + (event.latencyMs as number), 0) / performanceEvents.length : null
-  const p95Ms = performancePercentile(performanceEvents.map((event) => event.latencyMs as number), 0.95)
-  const knownSuccessRate = statusEvents.length ? statusEvents.filter((event) => event.performanceStatus === 'success').length / statusEvents.length * 100 : null
-  const failedCount = statusEvents.filter((event) => event.performanceStatus !== 'success').length
-
-  const reliability = [
-    { label: 'Successful', value: knownSuccessRate, status: knownSuccessRate !== null ? 'Healthy' : null },
-    { label: 'Failed', value: statusEvents.length ? statusEvents.filter((event) => event.performanceStatus === 'failed').length / statusEvents.length * 100 : null },
-    { label: 'Timeout', value: statusEvents.length ? statusEvents.filter((event) => event.performanceStatus === 'timeout').length / statusEvents.length * 100 : null },
-    { label: 'Rate limited', value: statusEvents.length ? statusEvents.filter((event) => event.performanceStatus === 'rate_limited').length / statusEvents.length * 100 : null },
-    { label: 'Retried', value: events.some((event) => event.retryCount !== undefined) ? events.reduce((sum, event) => sum + (event.retryCount ?? 0), 0) / Math.max(events.length, 1) * 100 : null },
-  ]
-
-  const modelRows = performanceModels.map((model) => {
-    const modelEvents = performanceEvents.filter((event) => (event.model ?? '').toLowerCase().includes(model.key))
-    const values = modelEvents.map((event) => event.latencyMs as number)
-    const modelStatuses = modelEvents.filter((event) => event.performanceStatus)
-    const success = modelStatuses.length ? modelStatuses.filter((event) => event.performanceStatus === 'success').length / modelStatuses.length * 100 : null
-    return { ...model, avg: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, p95: performancePercentile(values, 0.95), success, timeout: modelStatuses.length ? modelStatuses.filter((event) => event.performanceStatus === 'timeout').length / modelStatuses.length * 100 : null, status: performanceStatus(values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, success) }
-  })
-
-  const interactionRows = performanceInteractions.map((label) => {
-    const rows = performanceEvents.filter((event) => interactionName(event) === label)
-    const values = rows.map((event) => event.latencyMs as number)
-    const interactionStatuses = rows.filter((event) => event.performanceStatus)
-    const success = interactionStatuses.length ? interactionStatuses.filter((event) => event.performanceStatus === 'success').length / interactionStatuses.length * 100 : null
-    const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
-    return { label, average, success, status: performanceStatus(average, success) }
-  })
-
-  const metricTitle = 'Not enough data yet'
-  return (
-    <SectionCard
-      icon={Activity}
-      title="AI Performance"
-      description="Monitor the responsiveness and reliability of your AI interactions across TECTONA."
-      headerAside={<div className="flex items-center gap-2 text-xs text-muted-foreground"><span title={updatedAt.toLocaleTimeString('en-US')}>Updated just now</span><button type="button" aria-label="Refresh AI performance" title="Refresh" onClick={() => { setUpdatedAt(new Date()); window.dispatchEvent(new CustomEvent('tectona:token-telemetry-updated')) }} className="rounded-md p-1.5 hover:bg-muted"><RefreshCw className="h-3.5 w-3.5" aria-hidden /></button></div>}
-    >
-      <div className="space-y-4 py-4">
-        {!hasData ? (
-          <div className="rounded-lg border border-dashed border-border/70 px-5 py-8 text-center">
-            <h3 className="text-sm font-semibold text-foreground">No AI performance data yet</h3>
-            <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">Performance metrics will appear after you start using AI capabilities in TECTONA.</p>
-            <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">Use AI Assistant, document generation, or other AI-powered features to start collecting performance insights.</p>
-            <Link to="/projects" className="mt-4 inline-flex rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90">Explore AI Features</Link>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {[
-                { label: 'Average response', value: seconds(avgMs), detail: avgMs !== null ? '↓ 8% vs previous period' : metricTitle },
-                { label: <span title="95% of your AI interactions completed within this response time.">P95 response ⓘ</span>, value: seconds(p95Ms), detail: p95Ms === null ? metricTitle : '95th percentile' },
-                { label: 'Success rate', value: knownSuccessRate === null ? '—' : `${knownSuccessRate.toFixed(1)}%`, detail: knownSuccessRate === null ? metricTitle : 'Healthy' },
-                { label: 'Failed requests', value: statusEvents.length ? `${(100 - (knownSuccessRate ?? 0)).toFixed(1)}%` : '—', detail: statusEvents.length ? `${failedCount} failed interactions` : metricTitle },
-              ].map((card) => <div key={String(card.label)} className="rounded-lg border border-border/60 bg-background/50 px-3 py-3"><p className="text-xs text-muted-foreground">{card.label}</p><p className="mt-1 text-xl font-semibold text-foreground">{card.value}</p><p className="mt-1 text-[11px] text-muted-foreground">{card.detail}</p></div>)}
-            </div>
-            <div className="rounded-lg border border-border/60 p-3">
-              <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold">Response Time Trend</h3><p className="text-xs text-muted-foreground">Average and P95 response time for your AI interactions.</p></div><div className="flex rounded-md border border-border/60 p-0.5">{([7, 30, 90] as PerformanceWindow[]).map((value) => <button key={value} type="button" onClick={() => setWindowSize(value)} className={cn('rounded px-2 py-1 text-[11px]', windowSize === value ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground')}>{value}D</button>)}</div></div>
-              <div className="mt-3 h-52"><ResponsiveContainer width="100%" height="100%"><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border) / .55)" /><XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 10 }} minTickGap={24} /><YAxis unit="s" tickLine={false} axisLine={false} tick={{ fontSize: 10 }} /><Tooltip /><Line type="monotone" dataKey="average" name="Average response" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls /><Line type="monotone" dataKey="p95" name="P95 response" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls /></LineChart></ResponsiveContainer></div>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-lg border border-border/60 p-3"><h3 className="text-sm font-semibold">AI Reliability</h3><p className="text-xs text-muted-foreground">Runtime outcomes of your AI interactions.</p><div className="mt-3 space-y-2.5">{reliability.map((row) => <div key={row.label}><div className="flex items-center justify-between text-xs"><span title={row.label === 'Retried' ? 'AI interactions automatically retried after an unsuccessful attempt.' : row.label === 'Rate limited' ? 'Requests temporarily limited by an AI service or model.' : undefined}>{row.label}</span><span className="font-medium">{row.value === null ? <span title={metricTitle}>—</span> : `${row.value.toFixed(1)}%`}{row.status ? <span className="ml-2 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">Healthy</span> : null}</span></div><div className="mt-1 h-1.5 rounded-full bg-muted"><div className="h-1.5 rounded-full bg-primary" style={{ width: `${Math.min(row.value ?? 0, 100)}%` }} /></div></div>)}</div></div>
-              <div className="rounded-lg border border-border/60 p-3"><h3 className="text-sm font-semibold">Performance by Interaction Type</h3><p className="text-xs text-muted-foreground">Compare responsiveness across TECTONA AI capabilities.</p><div className="mt-3 space-y-1">{interactionRows.map((row) => <div key={row.label} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded px-1 py-2 text-xs hover:bg-muted/50"><span>{row.label}</span><span>{seconds(row.average)} · {row.success === null ? '—' : `${row.success.toFixed(1)}%`}</span>{row.status ? <span className={cn('rounded-full px-1.5 py-0.5 text-[10px]', statusClass(row.status))}>{row.status}</span> : <span title={metricTitle}>—</span>}</div>)}</div></div>
-            </div>
-            <div className="rounded-lg border border-border/60 p-3"><h3 className="text-sm font-semibold">Model Performance</h3><p className="text-xs text-muted-foreground">Compare runtime performance across AI models available to your account.</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="text-muted-foreground"><tr className="border-b border-border/40"><th className="pb-2 font-medium">Model</th><th className="pb-2 font-medium">Avg response</th><th className="pb-2 font-medium">P95</th><th className="pb-2 font-medium">Success rate</th><th className="pb-2 font-medium">Timeout</th><th className="pb-2 font-medium">Status</th></tr></thead><tbody>{modelRows.map((row) => <tr key={row.key} className="border-b border-border/30 last:border-0"><td className="py-2 font-medium">{row.label}</td><td>{seconds(row.avg)}</td><td>{seconds(row.p95)}</td><td>{row.success === null ? <span title={metricTitle}>—</span> : `${row.success.toFixed(1)}%`}</td><td>{row.timeout === null ? <span title={metricTitle}>—</span> : `${row.timeout.toFixed(1)}%`}</td><td>{row.status ? <span className={cn('rounded-full px-1.5 py-0.5 text-[10px]', statusClass(row.status))}>{row.status}</span> : <span title={metricTitle}>—</span>}</td></tr>)}</tbody></table></div></div>
-          </>
-        )}
-      </div>
-    </SectionCard>
-  )
 }
 
 export function ProfilePage() {
@@ -953,7 +775,7 @@ export function ProfilePage() {
 
           <main className="min-w-0 space-y-6">
           {profileTab === 'usage' ? <AIUsageSpendingCard events={tokenEvents} loading={tokenEventsLoading} error={tokenEventsError} onRetry={() => window.dispatchEvent(new CustomEvent('tectona:token-telemetry-updated'))} onViewProviders={() => setProfileTab('providers')} /> : null}
-          {profileTab === 'performance' ? <AIPerformanceCard events={tokenEvents} /> : null}
+          {profileTab === 'performance' ? <AIPerformanceCard /> : null}
           {profileTab === 'providers' ? (
             <AIProviderModelsCard onViewPerformance={() => setProfileTab('performance')} onViewUsage={() => setProfileTab('usage')} />
           ) : null}
