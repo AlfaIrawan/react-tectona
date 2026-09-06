@@ -1469,6 +1469,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       presenceByUserId,
     )
     merged = merged.filter((c) => c.isAssistant || !hiddenContactIds.has(c.id))
+    // Assistants head the list regardless of where a loader appended them: the
+    // people directory is long, and a pack landing after it is effectively hidden.
+    merged = [...merged].sort((left, right) => Number(Boolean(right.isAssistant)) - Number(Boolean(left.isAssistant)))
     if (myPresence === 'offline') return merged
     const selfPresence = myPresence === 'away' ? 'away' : 'online'
     merged = merged.map((contact) =>
@@ -1478,6 +1481,15 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   }, [chatContacts, explainerContacts, presenceByUserId, myPresence, hiddenContactIds])
 
   const genaiHydratedRef = useRef<Set<string>>(new Set())
+  /**
+   * One opening greet per conversation, shared across effect re-runs.
+   *
+   * The greet effect depends on `conversations`, and the greet itself updates the
+   * conversation preview — so it re-triggers its own effect mid-flight. Without a
+   * shared promise the second run starts a second greet, and since the backend
+   * persists every greet turn, the thread ends up with two identical greetings.
+   */
+  const genaiGreetInFlightRef = useRef<Map<string, Promise<void>>>(new Map())
   const teamChannelHydratedRef = useRef<Set<string>>(new Set())
   const collaborationInboxSyncedRef = useRef(false)
   const [assistantTypingSpeed, setAssistantTypingSpeed] = useState<AssistantTypingSpeed>(() => {
@@ -2343,9 +2355,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       )
     }
 
-    const syncThreadFromBackend = async (): Promise<boolean> => {
+    const syncThreadFromBackend = async (options?: { force?: boolean }): Promise<boolean> => {
       const persisted = await fetchGenAiChatSessionMessages(conv.id, TECTONA_CHAT_WORKSPACE_ID)
-      if (cancelled || persisted.length === 0) return false
+      if ((cancelled && !options?.force) || persisted.length === 0) return false
       const persistedThread = mapGenAiApiMessagesToUi(persisted)
       setMessagesById((prev) => ({ ...prev, [conv.id]: persistedThread }))
       if (persistedThread.length > 0 && persistedThread[0]?.role === 'assistant') {
@@ -2361,6 +2373,16 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     }
 
     const runOpeningGreet = async (loadingMsgId: string) => {
+      // A greet already running for this conversation (started by an earlier run of
+      // this effect) is awaited rather than duplicated. Results are applied even if
+      // this run was cancelled — the thread is still on screen, and bailing here is
+      // what used to strand the loading bubble.
+      const inFlight = genaiGreetInFlightRef.current.get(conv.id)
+      if (inFlight) {
+        await inFlight
+        return
+      }
+
       setMessagesById((prev) => ({
         ...prev,
         [conv.id]: [{ id: loadingMsgId, role: 'assistant', text: '', at: Date.now(), isLoading: true }],
@@ -2368,25 +2390,33 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       setConversations((prev) =>
         prev.map((c) => (c.id === conv.id ? { ...c, preview: greetPreviewText(), updatedAt: Date.now() } : c)),
       )
-      try {
-        const greeting = await resolveGenAiOpeningGreeting(conv.id, {
-          pathname: location.pathname,
-          search: location.search,
-          chatScreen: screen,
-          activeConversationTitle: conv.title,
-          activeConversationMode: conv.mode,
-          documentId: documentContext?.documentId ?? null,
-          documentTitle: documentContext?.documentTitle ?? null,
-          assistantId: conv.assistantId ?? null,
-        })
-        if (cancelled) return
-        const synced = await syncThreadFromBackend()
-        if (!synced) {
-          applyGreetingToThread(loadingMsgId, greeting)
+
+      const run = (async () => {
+        try {
+          const greeting = await resolveGenAiOpeningGreeting(conv.id, {
+            pathname: location.pathname,
+            search: location.search,
+            chatScreen: screen,
+            activeConversationTitle: conv.title,
+            activeConversationMode: conv.mode,
+            documentId: documentContext?.documentId ?? null,
+            documentTitle: documentContext?.documentTitle ?? null,
+            assistantId: conv.assistantId ?? null,
+          })
+          const synced = await syncThreadFromBackend({ force: true })
+          if (!synced) {
+            applyGreetingToThread(loadingMsgId, greeting)
+          }
+        } catch {
+          applyGreetingToThread(loadingMsgId, buildGenAiGreetingErrorMessage())
         }
-      } catch {
-        if (cancelled) return
-        applyGreetingToThread(loadingMsgId, buildGenAiGreetingErrorMessage())
+      })()
+
+      genaiGreetInFlightRef.current.set(conv.id, run)
+      try {
+        await run
+      } finally {
+        genaiGreetInFlightRef.current.delete(conv.id)
       }
     }
 
@@ -2420,25 +2450,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         }
 
         if (genAiThreadHasPendingGreeting(existing)) {
-          // Effect re-run cancelled the in-flight greet — finish it now.
-          try {
-            const greeting = await resolveGenAiOpeningGreeting(conv.id, {
-              pathname: location.pathname,
-              search: location.search,
-              chatScreen: screen,
-              activeConversationTitle: conv.title,
-              activeConversationMode: conv.mode,
-              assistantId: conv.assistantId ?? null,
-            })
-            if (cancelled) return
-            const synced = await syncThreadFromBackend()
-            if (!synced) {
-              applyGreetingToThread(loadingMsgId, greeting)
-            }
-          } catch {
-            if (cancelled) return
-            applyGreetingToThread(loadingMsgId, buildGenAiGreetingErrorMessage())
-          }
+          // Finish the greet an earlier run started — runOpeningGreet awaits that
+          // same promise instead of issuing (and persisting) a second greeting.
+          await runOpeningGreet(loadingMsgId)
           genaiHydratedRef.current.add(conv.id)
           return
         }
