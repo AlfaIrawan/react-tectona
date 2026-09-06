@@ -143,13 +143,13 @@ function statusLabel(status: ExplainerAssistant['status']): string {
 }
 
 /**
- * Colour enters from the right edge and fades into the card, so status is readable
+ * Colour enters from the left edge and fades into the card, so status is readable
  * at a glance across a grid without every card shouting a full tinted background.
  */
 function statusWash(status: ExplainerAssistant['status']): string {
-  if (status === 'published') return 'from-transparent via-emerald-500/[0.06] to-emerald-500/20'
-  if (status === 'archived') return 'from-transparent via-slate-500/[0.05] to-slate-500/15'
-  return 'from-transparent via-amber-500/[0.06] to-amber-500/20'
+  if (status === 'published') return 'from-emerald-500/20 via-emerald-500/[0.06] to-transparent'
+  if (status === 'archived') return 'from-slate-500/15 via-slate-500/[0.05] to-transparent'
+  return 'from-amber-500/20 via-amber-500/[0.06] to-transparent'
 }
 
 function statusEdge(status: ExplainerAssistant['status']): string {
@@ -169,6 +169,7 @@ export const ExplainerAssistantsPanel = forwardRef<
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [menuFor, setMenuFor] = useState<{ assistant: ExplainerAssistant; x: number; y: number } | null>(null)
+  const [detailFor, setDetailFor] = useState<ExplainerAssistant | null>(null)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerFullscreen, setDrawerFullscreen] = useState(false)
@@ -212,7 +213,7 @@ export const ExplainerAssistantsPanel = forwardRef<
 
   // Corpus pickers only need the catalog when the drawer is actually opened.
   useEffect(() => {
-    if (!drawerOpen || !workspaceId) return
+    if ((!drawerOpen && !detailFor) || !workspaceId) return
     let cancelled = false
     void (async () => {
       try {
@@ -236,7 +237,16 @@ export const ExplainerAssistantsPanel = forwardRef<
     return () => {
       cancelled = true
     }
-  }, [drawerOpen, workspaceId])
+  }, [drawerOpen, detailFor, workspaceId])
+
+  useEffect(() => {
+    if (!detailFor) return
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailFor(null)
+    }
+    window.addEventListener('keydown', onEscape)
+    return () => window.removeEventListener('keydown', onEscape)
+  }, [detailFor])
 
   useEffect(() => {
     if (!drawerOpen) return
@@ -402,6 +412,18 @@ export const ExplainerAssistantsPanel = forwardRef<
     })
   }, [explorerGroups])
 
+  // The detail view shows names, not ids; both catalogs are already loaded for the
+  // corpus picker, so this reuses them rather than fetching per assistant.
+  const folderNameById = useMemo(
+    () => new Map(folders.map((folder) => [folder.id, folder.name])),
+    [folders],
+  )
+
+  const documentTitleById = useMemo(
+    () => new Map(documents.map((doc) => [doc.id, doc.title])),
+    [documents],
+  )
+
   const canSave = !!workspaceId && draft.displayName.trim().length > 0
 
   const handleSave = async () => {
@@ -474,9 +496,6 @@ export const ExplainerAssistantsPanel = forwardRef<
               Assistants that only explain the documents bound to them. They carry no operational tooling — every
               answer is grounded in a citation from their own corpus, or the assistant says it does not know.
             </p>
-            <p className="mt-1 text-[11px] text-muted-foreground/80">
-              Right-click a card to edit, publish, or archive it.
-            </p>
           </div>
         </div>
 
@@ -500,12 +519,21 @@ export const ExplainerAssistantsPanel = forwardRef<
               {assistants.map((assistant) => (
                 <article
                   key={assistant.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setDetailFor(assistant)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    setDetailFor(assistant)
+                  }}
                   onContextMenu={(event) => {
                     event.preventDefault()
                     setMenuFor({ assistant, x: event.clientX, y: event.clientY })
                   }}
                   className={cn(
-                    'group relative flex flex-col overflow-hidden rounded-2xl',
+                    'group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl text-left',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                     // Depth comes from three stacked layers: an ambient drop shadow, a
                     // 1px inner top highlight, and a tinted base — not a fake bevel.
                     'border border-white/60 bg-gradient-to-b from-white/90 via-white/70 to-slate-100/70',
@@ -518,18 +546,18 @@ export const ExplainerAssistantsPanel = forwardRef<
                     'dark:hover:shadow-[0_1px_0_0_rgba(255,255,255,0.08)_inset,0_26px_54px_-20px_rgba(0,0,0,0.85)]',
                   )}
                 >
-                  {/* Status colour: a saturated right edge bleeding left into the card. */}
+                  {/* Status colour: a saturated left edge bleeding right into the card. */}
                   <span
                     aria-hidden
                     className={cn(
-                      'pointer-events-none absolute inset-y-0 right-0 w-1.5 bg-gradient-to-b',
+                      'pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b',
                       statusEdge(assistant.status),
                     )}
                   />
                   <span
                     aria-hidden
                     className={cn(
-                      'pointer-events-none absolute inset-y-0 right-0 w-2/3 bg-gradient-to-r',
+                      'pointer-events-none absolute inset-y-0 left-0 w-2/3 bg-gradient-to-r',
                       statusWash(assistant.status),
                     )}
                   />
@@ -618,6 +646,215 @@ export const ExplainerAssistantsPanel = forwardRef<
           )}
         </div>
       </div>
+
+      {typeof document !== 'undefined' && detailFor
+        ? createPortal(
+            <>
+              <div
+                className="fixed inset-0 z-[1150] bg-black/20 backdrop-blur-sm"
+                onClick={() => setDetailFor(null)}
+                aria-hidden="true"
+              />
+              <div
+                className={cn(
+                  'fixed top-0 right-0 z-[1200] flex h-screen w-[460px] max-w-[92vw] flex-col',
+                  'border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl',
+                )}
+                role="dialog"
+                aria-modal="true"
+                aria-label={`${detailFor.display_name} details`}
+              >
+                <div className="relative flex shrink-0 items-start gap-3 border-b border-border px-5 py-4">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b',
+                      statusEdge(detailFor.status),
+                    )}
+                  />
+                  {detailFor.avatar ? (
+                    <img
+                      src={AVATAR_SRC[detailFor.avatar]}
+                      alt=""
+                      aria-hidden
+                      className="h-12 w-12 shrink-0 rounded-full bg-muted object-cover ring-2 ring-white/80 dark:ring-white/15"
+                    />
+                  ) : (
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-muted">
+                      <Bot className="h-5 w-5 text-muted-foreground" aria-hidden />
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-lg font-semibold text-foreground">{detailFor.display_name}</h2>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        'mt-1 text-[9px] font-semibold uppercase tracking-[0.08em]',
+                        statusTone(detailFor.status),
+                      )}
+                    >
+                      {statusLabel(detailFor.status)}
+                    </Badge>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setDetailFor(null)}
+                    aria-label="Close assistant details"
+                  >
+                    <X className="h-5 w-5" />
+                  </Button>
+                </div>
+
+                <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+                  <section className="space-y-1.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Description
+                    </p>
+                    <p className="text-sm leading-relaxed text-foreground">
+                      {detailFor.description || 'No description.'}
+                    </p>
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Coverage
+                    </p>
+                    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border/50 ring-1 ring-black/[0.04] dark:bg-white/10">
+                      <div className="flex flex-col items-center bg-background/85 px-2 py-2.5 dark:bg-slate-900/70">
+                        <span className="text-base font-semibold tabular-nums text-foreground">
+                          {detailFor.corpus.folder_ids.length}
+                        </span>
+                        <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                          Folders
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-center bg-background/85 px-2 py-2.5 dark:bg-slate-900/70">
+                        <span
+                          className={cn(
+                            'text-base font-semibold tabular-nums',
+                            detailFor.resolved_document_count === 0
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-foreground',
+                          )}
+                        >
+                          {detailFor.resolved_document_count}
+                        </span>
+                        <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                          Documents
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Documents counts everything inside the bound folders plus any directly bound document. It is
+                      the only material this assistant can answer from.
+                    </p>
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Bound folders
+                    </p>
+                    {detailFor.corpus.folder_ids.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No folders bound.</p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {detailFor.corpus.folder_ids.map((folderId) => (
+                          <li key={folderId} className="flex items-center gap-2 text-xs text-foreground">
+                            <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+                            <span className="truncate">{folderNameById.get(folderId) ?? folderId}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Documents in scope
+                    </p>
+                    {detailFor.resolved_document_ids.length === 0 ? (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        Nothing resolves yet — this assistant cannot be published.
+                      </p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {detailFor.resolved_document_ids.slice(0, 40).map((docId) => (
+                          <li key={docId} className="flex items-center gap-2 text-xs text-foreground">
+                            <FileText className="h-3.5 w-3.5 shrink-0 text-sky-500" aria-hidden />
+                            <span className="truncate">{documentTitleById.get(docId) ?? docId}</span>
+                          </li>
+                        ))}
+                        {detailFor.resolved_document_ids.length > 40 ? (
+                          <li className="pl-5 text-[11px] text-muted-foreground">
+                            +{detailFor.resolved_document_ids.length - 40} more
+                          </li>
+                        ) : null}
+                      </ul>
+                    )}
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Details
+                    </p>
+                    <dl className="space-y-1.5 text-xs">
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Visibility</dt>
+                        <dd className="text-foreground">{detailFor.visibility}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Version</dt>
+                        <dd className="tabular-nums text-foreground">{detailFor.version}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Created</dt>
+                        <dd className="tabular-nums text-foreground">{formatModified(detailFor.created_date)}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Updated</dt>
+                        <dd className="tabular-nums text-foreground">{formatModified(detailFor.updated_date)}</dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <dt className="text-muted-foreground">Assistant ID</dt>
+                        <dd className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate font-mono text-[10px] text-muted-foreground">{detailFor.id}</span>
+                          <button
+                            type="button"
+                            onClick={() => void navigator.clipboard?.writeText(detailFor.id)}
+                            aria-label="Copy assistant ID"
+                            title="Copy assistant ID"
+                            className="shrink-0 rounded p-1 hover:bg-muted"
+                          >
+                            <Copy className="h-3 w-3 text-muted-foreground" aria-hidden />
+                          </button>
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
+                </div>
+
+                <div className="shrink-0 border-t border-border px-5 py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(enterpriseSecondaryButtonClass(), 'w-full justify-center gap-2')}
+                    onClick={() => {
+                      const target = detailFor
+                      setDetailFor(null)
+                      openEdit(target)
+                    }}
+                  >
+                    <Pencil className="h-4 w-4 shrink-0" aria-hidden />
+                    Edit assistant
+                  </Button>
+                </div>
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
 
       {menuFor ? (
         <ContextMenu
