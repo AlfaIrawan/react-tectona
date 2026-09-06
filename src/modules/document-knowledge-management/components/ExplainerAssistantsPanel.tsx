@@ -8,10 +8,11 @@
  */
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Bot, Check, ChevronDown, ChevronRight, FileText, Folder, Loader2, Maximize2, Minimize2, Plus, Save, Search, X } from 'lucide-react'
+import { Archive, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -134,6 +135,29 @@ function statusTone(status: ExplainerAssistant['status']): string {
   return 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400'
 }
 
+/** Status label the user actually thinks in: a draft is simply not published yet. */
+function statusLabel(status: ExplainerAssistant['status']): string {
+  if (status === 'published') return 'Published'
+  if (status === 'archived') return 'Archived'
+  return 'Unpublished'
+}
+
+/**
+ * Colour enters from the right edge and fades into the card, so status is readable
+ * at a glance across a grid without every card shouting a full tinted background.
+ */
+function statusWash(status: ExplainerAssistant['status']): string {
+  if (status === 'published') return 'from-transparent via-emerald-500/[0.06] to-emerald-500/20'
+  if (status === 'archived') return 'from-transparent via-slate-500/[0.05] to-slate-500/15'
+  return 'from-transparent via-amber-500/[0.06] to-amber-500/20'
+}
+
+function statusEdge(status: ExplainerAssistant['status']): string {
+  if (status === 'published') return 'from-emerald-400/50 via-emerald-500 to-emerald-600/70'
+  if (status === 'archived') return 'from-slate-300/50 via-slate-400 to-slate-500/70'
+  return 'from-amber-300/50 via-amber-500 to-amber-600/70'
+}
+
 export const ExplainerAssistantsPanel = forwardRef<
   ExplainerAssistantsPanelHandle,
   ExplainerAssistantsPanelProps
@@ -144,6 +168,7 @@ export const ExplainerAssistantsPanel = forwardRef<
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [menuFor, setMenuFor] = useState<{ assistant: ExplainerAssistant; x: number; y: number } | null>(null)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerFullscreen, setDrawerFullscreen] = useState(false)
@@ -449,6 +474,9 @@ export const ExplainerAssistantsPanel = forwardRef<
               Assistants that only explain the documents bound to them. They carry no operational tooling — every
               answer is grounded in a citation from their own corpus, or the assistant says it does not know.
             </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/80">
+              Right-click a card to edit, publish, or archive it.
+            </p>
           </div>
         </div>
 
@@ -472,6 +500,10 @@ export const ExplainerAssistantsPanel = forwardRef<
               {assistants.map((assistant) => (
                 <article
                   key={assistant.id}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    setMenuFor({ assistant, x: event.clientX, y: event.clientY })
+                  }}
                   className={cn(
                     'group relative flex flex-col overflow-hidden rounded-2xl',
                     // Depth comes from three stacked layers: an ambient drop shadow, a
@@ -486,13 +518,27 @@ export const ExplainerAssistantsPanel = forwardRef<
                     'dark:hover:shadow-[0_1px_0_0_rgba(255,255,255,0.08)_inset,0_26px_54px_-20px_rgba(0,0,0,0.85)]',
                   )}
                 >
-                  {/* Sheen sweep across the top edge — the only decorative layer. */}
+                  {/* Status colour: a saturated right edge bleeding left into the card. */}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'pointer-events-none absolute inset-y-0 right-0 w-1.5 bg-gradient-to-b',
+                      statusEdge(assistant.status),
+                    )}
+                  />
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'pointer-events-none absolute inset-y-0 right-0 w-2/3 bg-gradient-to-r',
+                      statusWash(assistant.status),
+                    )}
+                  />
                   <span
                     aria-hidden
                     className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-white/25"
                   />
 
-                  <div className="flex items-start gap-3 p-4 pb-3">
+                  <div className="relative flex items-start gap-3 p-4 pb-3">
                     <span className="relative shrink-0">
                       <span
                         aria-hidden
@@ -520,11 +566,14 @@ export const ExplainerAssistantsPanel = forwardRef<
                         <Badge
                           variant="outline"
                           className={cn(
-                            'shrink-0 text-[9px] font-semibold uppercase tracking-[0.08em] shadow-sm',
+                            'shrink-0 gap-1 text-[9px] font-semibold uppercase tracking-[0.08em] shadow-sm',
                             statusTone(assistant.status),
                           )}
                         >
-                          {assistant.status}
+                          {busyId === assistant.id ? (
+                            <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
+                          ) : null}
+                          {busyId === assistant.id ? 'Working' : statusLabel(assistant.status)}
                         </Badge>
                       </div>
                       <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
@@ -533,73 +582,35 @@ export const ExplainerAssistantsPanel = forwardRef<
                     </div>
                   </div>
 
-                  {/* Corpus reads as one instrument cluster: bound inputs, then what
-                      they actually resolve to — the number that gates publishing. */}
-                  <div className="mx-4 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-border/50 shadow-[0_1px_2px_rgba(15,23,42,0.08)_inset] ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/[0.06]">
-                    {[
-                      { label: 'Folders', value: assistant.corpus.folder_ids.length, strong: false },
-                      { label: 'Documents', value: assistant.corpus.document_ids.length, strong: false },
-                      { label: 'Resolved', value: assistant.resolved_document_count, strong: true },
-                    ].map((stat) => (
-                      <div
-                        key={stat.label}
-                        className="flex flex-col items-center bg-background/85 px-2 py-2 dark:bg-slate-900/70"
-                      >
-                        <span
-                          className={cn(
-                            'text-sm font-semibold tabular-nums',
-                            stat.strong && stat.value === 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground',
-                          )}
-                        >
-                          {stat.value}
-                        </span>
-                        <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                          {stat.label}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-auto flex items-center gap-2 p-4 pt-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="flex-1 bg-background/70 shadow-sm"
-                      onClick={() => openEdit(assistant)}
+                  {/* Documents is the resolved total — folders expanded plus any directly
+                      bound document — because that is what the assistant can answer from. */}
+                  <div className="relative mx-4 mb-4 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border/50 shadow-[0_1px_2px_rgba(15,23,42,0.08)_inset] ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/[0.06]">
+                    <div className="flex flex-col items-center bg-background/85 px-2 py-2 dark:bg-slate-900/70">
+                      <span className="text-sm font-semibold tabular-nums text-foreground">
+                        {assistant.corpus.folder_ids.length}
+                      </span>
+                      <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                        Folders
+                      </span>
+                    </div>
+                    <div
+                      className="flex flex-col items-center bg-background/85 px-2 py-2 dark:bg-slate-900/70"
+                      title="Documents this assistant can answer from, including everything inside the bound folders."
                     >
-                      Edit
-                    </Button>
-                    {assistant.status !== 'published' ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="flex-1 shadow-[0_2px_6px_-1px_rgba(37,99,235,0.45)]"
-                        disabled={busyId === assistant.id || assistant.resolved_document_count === 0}
-                        title={
+                      <span
+                        className={cn(
+                          'text-sm font-semibold tabular-nums',
                           assistant.resolved_document_count === 0
-                            ? 'Empty corpus — an assistant with no documents cannot answer anything.'
-                            : undefined
-                        }
-                        onClick={() => void runAction(assistant, 'publish')}
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-foreground',
+                        )}
                       >
-                        {busyId === assistant.id ? (
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-                        ) : null}
-                        Publish
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 bg-background/70 shadow-sm"
-                        disabled={busyId === assistant.id}
-                        onClick={() => void runAction(assistant, 'archive')}
-                      >
-                        Archive
-                      </Button>
-                    )}
+                        {assistant.resolved_document_count}
+                      </span>
+                      <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                        Documents
+                      </span>
+                    </div>
                   </div>
                 </article>
               ))}
@@ -607,6 +618,69 @@ export const ExplainerAssistantsPanel = forwardRef<
           )}
         </div>
       </div>
+
+      {menuFor ? (
+        <ContextMenu
+          open
+          x={menuFor.x}
+          y={menuFor.y}
+          onClose={() => setMenuFor(null)}
+          zIndex={1400}
+        >
+          <ContextMenuItem
+            onSelect={() => {
+              openEdit(menuFor.assistant)
+              setMenuFor(null)
+            }}
+          >
+            <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            Edit assistant
+          </ContextMenuItem>
+
+          {menuFor.assistant.status !== 'published' ? (
+            <ContextMenuItem
+              disabled={menuFor.assistant.resolved_document_count === 0 || busyId === menuFor.assistant.id}
+              title={
+                menuFor.assistant.resolved_document_count === 0
+                  ? 'Empty corpus — an assistant with no documents cannot answer anything.'
+                  : undefined
+              }
+              onSelect={() => {
+                const target = menuFor.assistant
+                setMenuFor(null)
+                void runAction(target, 'publish')
+              }}
+            >
+              <Send className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              Publish
+            </ContextMenuItem>
+          ) : (
+            <ContextMenuItem
+              disabled={busyId === menuFor.assistant.id}
+              onSelect={() => {
+                const target = menuFor.assistant
+                setMenuFor(null)
+                void runAction(target, 'archive')
+              }}
+            >
+              <Archive className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              Archive
+            </ContextMenuItem>
+          )}
+
+          <ContextMenuSeparator />
+
+          <ContextMenuItem
+            onSelect={() => {
+              void navigator.clipboard?.writeText(menuFor.assistant.id)
+              setMenuFor(null)
+            }}
+          >
+            <Copy className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            Copy assistant ID
+          </ContextMenuItem>
+        </ContextMenu>
+      ) : null}
 
       {typeof document !== 'undefined'
         ? createPortal(
