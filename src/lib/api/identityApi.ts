@@ -577,3 +577,49 @@ export async function sendWorkspaceInviteEmail(input: {
     throw new Error(parseTokenError(res.status, text) || 'Could not send the invitation email.')
   }
 }
+
+export async function requestPartnerPasswordReset(input: {
+  accessToken: string
+  email: string
+}): Promise<{ accepted: boolean; message: string }> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/password-reset/help`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${input.accessToken}`,
+    },
+    body: JSON.stringify({ email: normalizeLoginEmail(input.email) }),
+  })
+  if (!res.ok) {
+    if (res.status === 429) {
+      throw new Error('Too many reset requests. Please wait before trying again.')
+    }
+    const body = await res.text().catch(() => '')
+    throw new Error(parseTokenError(res.status, body) || 'Unable to request a password reset right now.')
+  }
+  return res.json() as Promise<{ accepted: boolean; message: string }>
+}
+
+export async function completePasswordReset(input: {
+  token: string
+  newPassword: string
+  confirmPassword: string
+}): Promise<void> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/password-reset/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      token: input.token,
+      new_password: input.newPassword,
+      confirm_password: input.confirmPassword,
+    }),
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    if (res.status === 400) {
+      throw new Error('This password reset link is invalid, expired, or has already been used.')
+    }
+    throw new Error(parseTokenError(res.status, body) || 'Unable to reset your password right now.')
+  }
+}

@@ -17,9 +17,11 @@ import {
   Edit3,
   Fingerprint,
   Globe,
+  HeartHandshake,
   Laptop,
   LogOut,
   MessageSquare,
+  Send,
   RefreshCw,
   Server,
   Shield,
@@ -32,7 +34,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { getSession, logoutAsync, requireAuth, registerPasskey, type Session } from '@/auth/authService'
-import { fetchTokenAudit, fetchUserInfo, type OidcUserInfo } from '@/lib/api/identityApi'
+import { fetchTokenAudit, fetchUserInfo, requestPartnerPasswordReset, type OidcUserInfo } from '@/lib/api/identityApi'
 import { listAuthzAssignments, type AuthzAssignmentDto } from '@/lib/api/authzApi'
 import { passkeyErrorMessage } from '@/lib/api/webauthnApi'
 import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
@@ -615,6 +617,9 @@ export function ProfilePage() {
   const [authzAssignments, setAuthzAssignments] = useState<AuthzAssignmentDto[]>([])
   const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [passkeyMsg, setPasskeyMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [partnerEmail, setPartnerEmail] = useState('')
+  const [partnerResetBusy, setPartnerResetBusy] = useState(false)
+  const [partnerResetMsg, setPartnerResetMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
   const handleAddPasskey = async () => {
@@ -627,6 +632,27 @@ export function ProfilePage() {
       setPasskeyMsg({ ok: false, text: passkeyErrorMessage(err, 'enroll') })
     } finally {
       setPasskeyBusy(false)
+    }
+  }
+
+  const handlePartnerReset = async () => {
+    if (!session || !partnerEmail.trim()) return
+    setPartnerResetBusy(true)
+    setPartnerResetMsg(null)
+    try {
+      const result = await requestPartnerPasswordReset({
+        accessToken: session.token,
+        email: partnerEmail,
+      })
+      setPartnerEmail('')
+      setPartnerResetMsg({ ok: true, text: result.message })
+    } catch (err) {
+      setPartnerResetMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : 'Unable to request a password reset right now.',
+      })
+    } finally {
+      setPartnerResetBusy(false)
     }
   }
 
@@ -912,6 +938,52 @@ export function ProfilePage() {
                     {passkeyMsg.text}
                   </p>
                 )}
+              </div>
+              <div className="border-t border-border/40 py-5">
+                <div className="rounded-xl border border-border/60 bg-gradient-to-br from-primary/[0.045] via-background to-background p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <HeartHandshake className="h-4 w-4" aria-hidden />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground">Help your partner</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        Send a secure password reset link to a colleague with a password-based Tectona account. Microsoft and other SSO-only accounts are not changed.
+                      </p>
+                    </div>
+                  </div>
+                  <form
+                    className="mt-4 flex flex-col gap-2 sm:flex-row"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      void handlePartnerReset()
+                    }}
+                  >
+                    <label htmlFor="partner-reset-email" className="sr-only">Partner email address</label>
+                    <input
+                      id="partner-reset-email"
+                      type="email"
+                      value={partnerEmail}
+                      onChange={(event) => setPartnerEmail(event.target.value)}
+                      placeholder="partner@company.com"
+                      autoComplete="email"
+                      required
+                      className="h-10 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-shadow placeholder:text-muted-foreground/70 focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                    <Button type="submit" className="shrink-0 gap-2" disabled={partnerResetBusy || !partnerEmail.trim()}>
+                      <Send className="h-4 w-4" aria-hidden />
+                      {partnerResetBusy ? 'Sending…' : 'Send reset link'}
+                    </Button>
+                  </form>
+                  <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                    For privacy, Tectona does not reveal whether an email is registered or eligible.
+                  </p>
+                  {partnerResetMsg ? (
+                    <p role="status" className={cn('mt-3 rounded-lg border px-3 py-2 text-xs', partnerResetMsg.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-destructive/20 bg-destructive/[0.04] text-destructive')}>
+                      {partnerResetMsg.text}
+                    </p>
+                  ) : null}
+                </div>
               </div>
               <div className="border-t border-border/40 py-4">
                 <div className="flex items-center gap-3">

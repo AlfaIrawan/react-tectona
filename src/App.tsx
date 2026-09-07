@@ -21,6 +21,7 @@ import { OAuthCallbackPage } from './pages/OAuthCallbackPage'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { OnboardingStatusPage } from './pages/OnboardingStatusPage'
 import { VerifyEmailPage } from './pages/VerifyEmailPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { TenantDeepLinkPage } from './pages/TenantDeepLinkPage'
 import { AccessDeniedPage } from './pages/AccessDeniedPage'
 import { AppBackgroundVideo } from './components/layout/AppBackgroundVideo'
@@ -99,6 +100,7 @@ function App() {
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/verify-email" element={<VerifyEmailPage />} />
                 <Route path="/verify_email" element={<VerifyEmailPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
 
                 <Route element={<ProtectedRoute />}>
                   <Route path="/onboarding" element={<OnboardingPage />} />
