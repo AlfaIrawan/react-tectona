@@ -794,7 +794,7 @@ export function ProfilePage() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-              <Button type="button" variant="outline" className="gap-2" onClick={() => setEditOpen(true)}>
+              <Button type="button" variant="outline" className="h-10 gap-2" onClick={() => setEditOpen(true)}>
                 <Edit3 className="h-4 w-4" aria-hidden /> Edit profile
               </Button>
               <Button type="button" variant="outline" className={cn(authCardButtonClass, 'sm:w-auto sm:min-w-[10rem] border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive')} onClick={handleLogout}>
@@ -925,7 +925,7 @@ export function ProfilePage() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="shrink-0 gap-2"
+                    className="h-10 shrink-0 gap-2"
                     onClick={() => void handleAddPasskey()}
                     disabled={passkeyBusy}
                   >
@@ -970,7 +970,7 @@ export function ProfilePage() {
                       required
                       className="h-10 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-shadow placeholder:text-muted-foreground/70 focus-visible:ring-2 focus-visible:ring-ring"
                     />
-                    <Button type="submit" className="shrink-0 gap-2" disabled={partnerResetBusy || !partnerEmail.trim()}>
+                    <Button type="submit" className="h-10 shrink-0 gap-2" disabled={partnerResetBusy || !partnerEmail.trim()}>
                       <Send className="h-4 w-4" aria-hidden />
                       {partnerResetBusy ? 'Sending…' : 'Send reset link'}
                     </Button>
@@ -994,7 +994,7 @@ export function ProfilePage() {
                   </div>
                   <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">Active</span>
                 </div>
-                <Button type="button" variant="outline" className="mt-3 w-full gap-2 text-xs" onClick={handleLogout}>
+                <Button type="button" variant="outline" className="mt-3 h-10 w-full gap-2 text-xs" onClick={handleLogout}>
                   <Shield className="h-3.5 w-3.5" aria-hidden /> Sign out all devices
                 </Button>
               </div>
