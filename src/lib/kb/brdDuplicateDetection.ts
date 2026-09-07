@@ -2,7 +2,8 @@
  * Duplicate detection for BRD uploads.
  *
  * Tiers:
- *  1. EXACT  — identical normalized content (SHA-256 fingerprint) → block.
+ *  1. EXACT  — identical normalized content (SHA-256 fingerprint) → confirm; user may
+ *     upload a copy as a new document or save as a new version in the same folder.
  *  2. NAME   — same BRD family (project+module, optionally same version) by structured file name.
  *  3. PURPOSE— heuristic keyword shortlist → confirmed by an injected LLM compare function.
  *
@@ -18,6 +19,10 @@ export type ExistingBrdDoc = {
   projectName: string
   contentSha256: string
   structured: ReturnType<typeof parseBrdStructuredName>
+  /** Repository folder that currently holds this document, if known. */
+  folderId?: string | null
+  /** Workspace that owns the document, if known. */
+  workspaceId?: string | null
   /** Optional repository fields used when a duplicate is promoted to a revision. */
   version?: number
   metadata?: Record<string, unknown>
@@ -34,7 +39,7 @@ export type BrdDuplicateReport = {
   nameMatches: ExistingBrdDoc[]
   samePurpose: BrdPurposeMatch[]
   kbGeneratedDocIds: Set<string>
-  /** Hard block: identical content already exists. */
+  /** True when identical content exists; UI confirms instead of silently uploading. */
   block: boolean
 }
 
@@ -208,6 +213,19 @@ export function pickContentCompareCandidates(
 export function findExactDuplicate(fingerprint: string, existing: ExistingBrdDoc[]): ExistingBrdDoc | null {
   if (!fingerprint) return null
   return existing.find((doc) => doc.contentSha256 && doc.contentSha256 === fingerprint) ?? null
+}
+
+/**
+ * True when identical content already lives in the destination folder.
+ * Used to offer "Save as new version" on that document; a copy in another folder
+ * should still be allowed via "Upload as new document".
+ */
+export function isExactDuplicateInSameFolder(
+  exact: ExistingBrdDoc | null,
+  destinationFolderId: string | null,
+): boolean {
+  if (!exact) return false
+  return (exact.folderId ?? null) === (destinationFolderId ?? null)
 }
 
 /** Strip draft tags, version suffixes, and punctuation so informal names can be compared. */

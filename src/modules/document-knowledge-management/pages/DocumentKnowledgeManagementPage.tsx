@@ -178,6 +178,15 @@ import { DocumentRepositoryFolderCard } from '@/modules/document-knowledge-manag
 import { DocumentRepositoryExplorerView } from '@/modules/document-knowledge-management/components/DocumentRepositoryExplorerView'
 import { DocumentRepositoryUploadProgressOverlay } from '@/modules/document-knowledge-management/components/DocumentRepositoryUploadProgressOverlay'
 import { collectBrowserFiles } from '@/modules/document-knowledge-management/lib/collectBrowserFiles'
+import {
+  collectUploadItemsFromDataTransfer,
+  collectUploadItemsFromFiles,
+  type DroppedUploadItem,
+} from '@/modules/document-knowledge-management/lib/droppedFolderUpload'
+import {
+  ensureDroppedFolderTree,
+  folderKeyFromRelativeDirectory,
+} from '@/modules/document-knowledge-management/lib/ensureDroppedFolderTree'
 import { DocumentRepositoryPreviewDrawer } from '@/modules/document-knowledge-management/components/DocumentRepositoryPreviewDrawer'
 import {
   DocumentOnlyOfficeEditor,
@@ -365,6 +374,7 @@ import {
 import { isSpreadsheetFile } from '@/lib/kb/extractSpreadsheetText'
 import {
   buildRepositoryFolderPathNames,
+  formatDocumentRepositoryPath,
   detectRepositoryDocumentKind,
   deriveMemoKbTitle,
   ensureMemoKbStandardContent,
@@ -408,6 +418,7 @@ import {
   findExactDuplicate,
   findKbGeneratedDocIds,
   findNameMatches,
+  isExactDuplicateInSameFolder,
   pickContentCompareCandidates,
   retrieveSimilarChunks,
   retrieveSimilarChunksFromVectors,
@@ -474,14 +485,24 @@ import {
 import {
   createDocumentFolder,
   deleteDocumentFolder,
-  ensureDocumentSamplesFolders,
   fetchAllDocumentFolders,
   updateDocumentFolder,
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
-import { isFolderInSamplesTree, isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
+import { bootstrapSamplesLibraryIfMissing, pruneEmptySeededSampleCategoryFolders } from '@/modules/document-knowledge-management/lib/ensureSamplesLibrary'
+import { isFolderInSamplesTree, isSamplesRootFolder, isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
 import { isDocumentFolderDescendant } from '@/modules/document-knowledge-management/lib/repositoryFolderNav'
 import { RepositoryMoveFolderPicker } from '@/modules/document-knowledge-management/components/RepositoryMoveFolderPicker'
+import { SampleShareDialog } from '@/modules/document-knowledge-management/components/SampleShareDialog'
+import {
+  buildSamplesShareFolderDescription,
+  listNonPersonalSampleShareTargets,
+  parseSamplesShareWorkspaceIds,
+} from '@/modules/document-knowledge-management/lib/samplesShare'
+import { syncSamplesShareToWorkspaces } from '@/modules/document-knowledge-management/lib/syncSharedSamples'
+import { resolveSampleGoldWorkspacePlan } from '@/modules/document-knowledge-management/lib/resolveSampleGoldWorkspacePlan'
+import { classifyQueryAgainstOrgSampleWorkspaces } from '@/modules/document-knowledge-management/lib/classifyQueryAgainstOrgSampleWorkspaces'
+import type { OrgSampleKindReconcile, WorkspaceSampleKindVote } from '@/modules/document-knowledge-management/lib/reconcileOrgSampleKindVotes'
 import {
   SAMPLE_KIND_LABELS,
   isSampleDocumentKind,
@@ -2474,6 +2495,59 @@ function formatKbWorkspaceLabel(value: string | null | undefined, workspaces: Wo
   if (KB_WORKSPACE_ALIAS_LABELS[canonical]) return KB_WORKSPACE_ALIAS_LABELS[canonical]
 
   return canonical
+}
+
+function resolveDuplicateWorkspaceLabel(
+  workspaceId: string | null | undefined,
+  directory: WorkspaceOrgWorkspaceDto[],
+  userOptions: Array<{ workspaceId: string; workspaceName: string }>,
+): string {
+  const id = (workspaceId ?? '').trim()
+  if (!id) return 'Unassigned'
+  const matched = resolveKbWorkspaceOption(id, directory)
+  if (matched?.name?.trim()) return matched.name.trim()
+  const fromUser = userOptions.find((option) => option.workspaceId === id)?.workspaceName?.trim()
+  if (fromUser) return fromUser
+  const labeled = formatKbWorkspaceLabel(id, directory)
+  return labeled === id ? (fromUser || id) : labeled
+}
+
+function RepositoryDuplicateMatchDetails({ match }: {
+  match: {
+    title: string
+    projectName: string
+    workspaceName: string
+    repositoryPath: string
+    kbGenerated: boolean
+    reason?: string
+  }
+}) {
+  return (
+    <div className="min-w-0 flex-1">
+      <span className="font-medium text-foreground">{match.title}</span>
+      <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+        <p>
+          <span className="font-semibold text-foreground/75">Workspace</span>
+          {' · '}
+          {match.workspaceName}
+        </p>
+        <p className="break-words">
+          <span className="font-semibold text-foreground/75">Document repository</span>
+          {' · '}
+          {match.repositoryPath}
+        </p>
+        {match.projectName ? (
+          <p>
+            <span className="font-semibold text-foreground/75">Project</span>
+            {' · '}
+            {match.projectName}
+          </p>
+        ) : null}
+        <p>KB: {match.kbGenerated ? 'already generated' : 'not generated yet'}</p>
+        {match.reason ? <p className="text-muted-foreground/80">{match.reason}</p> : null}
+      </div>
+    </div>
+  )
 }
 
 function escapeKbHtml(value: string): string {
@@ -5332,7 +5406,6 @@ export function DocumentKnowledgeManagementPage() {
   } | null>(null)
   const [repositoryRowContextMenu, setRepositoryRowContextMenu] = useState<{ documentId: string; detailId: string; x: number; y: number } | null>(null)
   const [repositoryFolderContextMenu, setRepositoryFolderContextMenu] = useState<{ folderId: string; x: number; y: number } | null>(null)
-  const samplesFoldersBootstrappedRef = useRef(false)
   const [templateRowContextMenu, setTemplateRowContextMenu] = useState<{ templateId: string; x: number; y: number } | null>(null)
   const [templateDownloadBusyId, setTemplateDownloadBusyId] = useState<string | null>(null)
   const [templateStatusBusyId, setTemplateStatusBusyId] = useState<string | null>(null)
@@ -6291,35 +6364,34 @@ export function DocumentKnowledgeManagementPage() {
 
   const loadRepositoryFolders = useCallback(async () => {
     try {
-      const workspaceIds = new Set<string>()
-      if (activeWorkspaceApiId) workspaceIds.add(activeWorkspaceApiId)
-      if (!samplesFoldersBootstrappedRef.current) {
-        try {
-          const directory = await fetchAllWorkspaceOrgWorkspaces()
-          for (const workspace of directory) {
-            if ((workspace.status_code || '').toLowerCase() === 'archived') continue
-            if (workspace.id) workspaceIds.add(workspace.id)
-          }
-        } catch {
-          /* still ensure the active workspace */
-        }
-      }
-      try {
-        const ids = [...workspaceIds]
-        for (let offset = 0; offset < ids.length; offset += 200) {
-          await ensureDocumentSamplesFolders(ids.slice(offset, offset + 200))
-        }
-        if (ids.length > 1) samplesFoldersBootstrappedRef.current = true
-      } catch {
-        /* listing still proceeds if bootstrap is unavailable */
-      }
-      const folders = await fetchAllDocumentFolders(activeWorkspaceApiId)
+      let folders = await fetchAllDocumentFolders(activeWorkspaceApiId)
       const session = getSession()
       const currentOwnerId = session?.user.id || session?.user.email || null
+      if (activeWorkspaceApiId && !folders.some((folder) => isSamplesRootFolder(folder))) {
+        try {
+          folders = await bootstrapSamplesLibraryIfMissing(activeWorkspaceApiId, currentOwnerId)
+        } catch {
+          /* keep listing without Samples if folder create is unavailable */
+        }
+      }
+      const occupiedFolderIds = new Set(
+        repositoryItems
+          .map((item) => item.folderId)
+          .filter((folderId): folderId is string => Boolean(folderId)),
+      )
+      try {
+        const pruned = await pruneEmptySeededSampleCategoryFolders(folders, occupiedFolderIds)
+        if (pruned) folders = await fetchAllDocumentFolders(activeWorkspaceApiId)
+      } catch {
+        /* listing still proceeds if leftover category folders cannot be deleted */
+      }
       const scopedFolders = filterDkmFoldersForRepositoryScope(
         folders,
         repositoryItems.map((item) => item.folderId),
         currentOwnerId,
+        {
+          alwaysRetain: (folder) => isFolderInSamplesTree(folder.id, folders),
+        },
       )
       const activeProjectIds = new Set(repositoryProjects.map((project) => project.id))
       const folderById = new Map(scopedFolders.map((folder) => [folder.id, folder]))
@@ -7634,16 +7706,39 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [kbApiItems])
 
-  type RepositoryDuplicateMatch = { id: string; title: string; projectName: string; kbGenerated: boolean; reason?: string }
+  type RepositoryDuplicateMatch = {
+    id: string
+    title: string
+    projectName: string
+    workspaceName: string
+    repositoryPath: string
+    kbGenerated: boolean
+    reason?: string
+  }
   type RepositoryDuplicatePrompt = {
     fileName: string
     pendingFile: File
     revisionTargetId: string | null
+    exactMatches: RepositoryDuplicateMatch[]
     nameMatches: RepositoryDuplicateMatch[]
     samePurpose: RepositoryDuplicateMatch[]
     resolve: (action: 'cancel' | 'upload_new' | 'new_version') => void
   }
   const [repositoryDuplicatePrompt, setRepositoryDuplicatePrompt] = useState<RepositoryDuplicatePrompt | null>(null)
+  type SampleKindConflictPrompt = {
+    fileName: string
+    conflict: Extract<OrgSampleKindReconcile, { outcome: 'conflict' }>
+    resolve: (choice: SampleKindConflictChoice) => void
+  }
+  const [sampleKindConflictPrompt, setSampleKindConflictPrompt] = useState<SampleKindConflictPrompt | null>(null)
+  type SamplesShareDialogState = {
+    kind: 'folder' | 'document'
+    id: string
+    name: string
+    selectedIds: Set<string>
+  }
+  const [samplesShareDialog, setSamplesShareDialog] = useState<SamplesShareDialogState | null>(null)
+  const [samplesShareBusy, setSamplesShareBusy] = useState(false)
   type TemplateDuplicateMatch = { id: string; title: string; workspaceName: string; reason?: string }
   type TemplateDuplicatePrompt = {
     fileName: string
@@ -7662,6 +7757,7 @@ export function DocumentKnowledgeManagementPage() {
     candidates: Array<{ id: string; name: string }>
     pendingFile?: File
     pendingFiles?: File[]
+    pendingTreeItems?: DroppedUploadItem[]
     targetFolderId?: string | null
     templateUploadOptions?: { category_code?: string; document_type_code?: string }
   }
@@ -7718,6 +7814,8 @@ export function DocumentKnowledgeManagementPage() {
           projectName: storageProjectName || fallbackProjectName || '',
           contentSha256: typeof meta.content_sha256 === 'string' ? meta.content_sha256 : '',
           structured: parseBrdStructuredName(fileName),
+          folderId: typeof doc.folder_id === 'string' ? doc.folder_id : null,
+          workspaceId: typeof doc.workspace_id === 'string' ? doc.workspace_id : null,
         })
         summaryById.set(doc.id, doc.summary?.trim() || '')
       }
@@ -7725,8 +7823,7 @@ export function DocumentKnowledgeManagementPage() {
     return { docs, summaryById, kbContents: kbApiItems.map((entry) => entry.content ?? '') }
   }, [kbApiItems])
 
-  // Returns { proceed }. Blocks (proceed=false) on identical content; otherwise prompts the user
-  // when a same-family or same-purpose document already exists.
+  // Returns { proceed }. Prompts on identical content and on same-family / same-purpose matches.
   const checkUploadForDuplicates = useCallback(async (
     fileName: string,
     extractText: string,
@@ -7751,26 +7848,101 @@ export function DocumentKnowledgeManagementPage() {
       projectName: item.storageProjectName || item.project || '',
       contentSha256: '',
       structured: parseBrdStructuredName(item.fileName || item.name) ?? parseBrdStructuredName(item.name),
+      folderId: item.folderId ?? null,
+      workspaceId: item.workspace && item.workspace !== 'Unassigned' ? item.workspace : null,
     }))
     const docsById = new Map<string, ExistingBrdDoc>()
     for (const doc of fromRepository) docsById.set(doc.id, doc)
     for (const doc of fetchedDocs) {
       const prior = docsById.get(doc.id)
       docsById.set(doc.id, prior
-        ? { ...prior, ...doc, contentSha256: doc.contentSha256 || prior.contentSha256 }
+        ? {
+          ...prior,
+          ...doc,
+          contentSha256: doc.contentSha256 || prior.contentSha256,
+          folderId: doc.folderId ?? prior.folderId ?? null,
+          workspaceId: doc.workspaceId ?? prior.workspaceId ?? null,
+        }
         : doc)
     }
     const docs = [...docsById.values()]
+    const uploadFolderId = repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId
+    const folderListsByWorkspace = new Map<string, DocumentFolder[]>()
+    folderListsByWorkspace.set(activeWorkspaceApiId ?? '', repositoryFolders)
+    let allFoldersPromise: Promise<DocumentFolder[]> | null = null
+    const loadAllFolders = () => {
+      if (!allFoldersPromise) {
+        allFoldersPromise = fetchAllDocumentFolders().catch(() => [])
+      }
+      return allFoldersPromise
+    }
+    const foldersForMatch = async (workspaceId: string | null | undefined, folderId: string | null | undefined) => {
+      const key = (workspaceId ?? '').trim()
+      let folders = folderListsByWorkspace.get(key)
+      if (!folders) {
+        try {
+          folders = await fetchAllDocumentFolders(key || null)
+        } catch {
+          folders = repositoryFolders
+        }
+        folderListsByWorkspace.set(key, folders)
+      }
+      if (folderId && !folders.some((folder) => folder.id === folderId)) {
+        const extra = await loadAllFolders()
+        const byId = new Map(folders.map((folder) => [folder.id, folder]))
+        for (const folder of extra) byId.set(folder.id, folder)
+        folders = [...byId.values()]
+        folderListsByWorkspace.set(key, folders)
+      }
+      return folders
+    }
+    const toDuplicateMatch = async (
+      doc: ExistingBrdDoc,
+      extras: { kbGenerated: boolean; reason?: string },
+    ): Promise<RepositoryDuplicateMatch> => {
+      const folders = await foldersForMatch(doc.workspaceId, doc.folderId)
+      return {
+        id: doc.id,
+        title: doc.title,
+        projectName: doc.projectName,
+        workspaceName: resolveDuplicateWorkspaceLabel(doc.workspaceId, kbWorkspaceOptions, userWorkspaceOptions),
+        repositoryPath: formatDocumentRepositoryPath(
+          buildRepositoryFolderPathNames(folders, doc.folderId ?? null),
+          doc.fileName || doc.title,
+        ),
+        kbGenerated: extras.kbGenerated,
+        reason: extras.reason,
+      }
+    }
 
     const exact = findExactDuplicate(fingerprint, docs)
     if (exact) {
       const kbGenerated = findKbGeneratedDocIds([exact.id], kbContents).has(exact.id)
-      addToast({
-        title: 'Upload blocked — identical document already exists',
-        description: `Identical content to "${exact.title}" (project: ${exact.projectName || '—'}). KB: ${kbGenerated ? 'already generated' : 'not generated yet'}.`,
-        variant: 'error',
+      const sameFolder = isExactDuplicateInSameFolder(exact, uploadFolderId)
+      const revisionTargetId = sameFolder ? exact.id : null
+      const exactMatch = await toDuplicateMatch(exact, {
+        kbGenerated,
+        reason: sameFolder
+          ? 'Identical file content already exists in this folder.'
+          : 'Identical file content already exists in another workspace or folder. Upload as new document to keep a copy here.',
       })
-      return { proceed: false, revisionTargetId: null }
+      return new Promise<{ proceed: boolean; revisionTargetId: string | null }>((resolve) => {
+        setRepositoryDuplicatePrompt({
+          fileName,
+          pendingFile,
+          revisionTargetId,
+          exactMatches: [exactMatch],
+          nameMatches: [],
+          samePurpose: [],
+          resolve: (action) => {
+            setRepositoryDuplicatePrompt(null)
+            resolve({
+              proceed: action !== 'cancel',
+              revisionTargetId: action === 'new_version' ? revisionTargetId : null,
+            })
+          },
+        })
+      })
     }
 
     const subject: ExistingBrdDoc = {
@@ -7787,7 +7959,6 @@ export function DocumentKnowledgeManagementPage() {
       .filter((d) => highOverlapIds.has(d.id))
       .map((d) => ({ doc: d, reason: 'Very similar file name' }))
 
-    const uploadFolderId = repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId
     const preferredIds = new Set(
       repositoryItems
         .filter((item) => (item.folderId ?? null) === (uploadFolderId ?? null))
@@ -7940,26 +8111,39 @@ export function DocumentKnowledgeManagementPage() {
       kbContents,
     )
     const revisionTargetId = pickTemplateRevisionTargetId(nameMatches, samePurpose)
+    const mappedNameMatches = await Promise.all(nameMatches.map((doc) => toDuplicateMatch(doc, {
+      kbGenerated: kbGen.has(doc.id),
+      reason: agentReasonById.get(doc.id),
+    })))
+    const mappedSamePurpose = await Promise.all(samePurpose.map((entry) => toDuplicateMatch(entry.doc, {
+      kbGenerated: kbGen.has(entry.doc.id),
+      reason: entry.reason,
+    })))
     return new Promise<{ proceed: boolean; revisionTargetId: string | null }>((resolve) => {
       setRepositoryDuplicatePrompt({
         fileName,
         pendingFile,
         revisionTargetId,
-        nameMatches: nameMatches.map((d) => ({
-          id: d.id,
-          title: d.title,
-          projectName: d.projectName,
-          kbGenerated: kbGen.has(d.id),
-          reason: agentReasonById.get(d.id),
-        })),
-        samePurpose: samePurpose.map((s) => ({ id: s.doc.id, title: s.doc.title, projectName: s.doc.projectName, kbGenerated: kbGen.has(s.doc.id), reason: s.reason })),
+        exactMatches: [],
+        nameMatches: mappedNameMatches,
+        samePurpose: mappedSamePurpose,
         resolve: (action) => {
           setRepositoryDuplicatePrompt(null)
           resolve({ proceed: action !== 'cancel', revisionTargetId: action === 'new_version' ? revisionTargetId : null })
         },
       })
     })
-  }, [addToast, gatherExistingBrdDocs, kbApiItems, repositoryCurrentFolderId, repositoryItems])
+  }, [
+    addToast,
+    activeWorkspaceApiId,
+    gatherExistingBrdDocs,
+    kbApiItems,
+    kbWorkspaceOptions,
+    repositoryCurrentFolderId,
+    repositoryFolders,
+    repositoryItems,
+    userWorkspaceOptions,
+  ])
 
   const processRepositoryUploadFile = useCallback(async (
     file: File,
@@ -8021,9 +8205,10 @@ export function DocumentKnowledgeManagementPage() {
           ? 'Samples folder is not a known document category.'
           : '',
       }
+    let sampleKindVotes: WorkspaceSampleKindVote[] | undefined
 
     if (!skipAutoGenerateKbInSamples) {
-      try {
+      const runLocalSampleCompare = async () => {
         const goldItems = selectSampleGoldItems(repositoryItems, repositoryFolders)
         const goldDocs: SampleGoldDocument[] = []
         await Promise.all(goldItems.map(async (item) => {
@@ -8046,10 +8231,84 @@ export function DocumentKnowledgeManagementPage() {
           } catch {
             vectorsByText = null
           }
-          sampleClassification = classifyAgainstSampleGoldSet(extract.text, goldDocs, vectorsByText)
+          sampleClassification = classifyAgainstSampleGoldSet(extract.text, goldDocs, vectorsByText, { fileName: file.name })
+        }
+      }
+
+      try {
+        const accessible = userWorkspaceOptions.map((option) => ({
+          id: option.workspaceId,
+          name: option.workspaceName,
+          organizationId: option.organizationId,
+          tenantMode: option.tenantMode,
+          isNestedOrgPersonal: option.isNestedOrgPersonal,
+          metadata: kbWorkspaceOptions.find((workspace) => workspace.id === option.workspaceId)?.metadata ?? null,
+        }))
+        const catalog = kbWorkspaceOptions.map((workspace) => ({
+          id: workspace.id,
+          name: workspace.name,
+          organizationId: workspace.organization_id,
+          tenantMode: workspace.tenant_mode,
+          metadata: workspace.metadata ?? null,
+        }))
+        const plan = resolveSampleGoldWorkspacePlan({
+          uploadWorkspaceId,
+          accessible,
+          catalog,
+        })
+        if (plan.mode === 'org_vote' && plan.home && extract.text.trim()) {
+          const reconciled = await classifyQueryAgainstOrgSampleWorkspaces({
+            queryText: extract.text,
+            fileName: file.name,
+            home: plan.home,
+            overlays: plan.overlays,
+          })
+          sampleKindVotes = reconciled.votes
+          if (reconciled.outcome === 'conflict') {
+            const choice = await new Promise<SampleKindConflictChoice>((resolve) => {
+              setSampleKindConflictPrompt({
+                fileName: file.name,
+                conflict: reconciled,
+                resolve,
+              })
+            })
+            setSampleKindConflictPrompt(null)
+            if (choice.action === 'cancel') {
+              if (!skipBusy) repositoryUploadTargetFolderIdRef.current = null
+              return false
+            }
+            if (choice.action === 'unclassified') {
+              sampleClassification = {
+                kind: 'unknown',
+                source: 'user_confirm',
+                confidence: 0,
+                reason: 'User left the document unclassified after Samples disagreed.',
+              }
+            } else {
+              sampleClassification = {
+                kind: choice.kind,
+                source: 'user_confirm',
+                confidence: 1,
+                reason: `User confirmed ${choice.kind} from workspace ${choice.workspaceId}.`,
+              }
+            }
+          } else {
+            sampleClassification = {
+              kind: reconciled.kind,
+              source: reconciled.source,
+              confidence: reconciled.confidence,
+              reason: reconciled.reason,
+            }
+          }
+        } else {
+          await runLocalSampleCompare()
         }
       } catch {
-        /* keep unknown — do not guess Kartu Keluarga / KTP from body text */
+        try {
+          await runLocalSampleCompare()
+        } catch {
+          /* keep unknown — do not guess Kartu Keluarga / KTP from body text */
+        }
       }
     }
 
@@ -8083,14 +8342,28 @@ export function DocumentKnowledgeManagementPage() {
       skipAutoGenerateKbInSamples
       || uploadDocumentKind !== 'brd'
     const classifiedKindToast =
-      sampleClassification.source === 'samples_compare' && persistDocumentKind !== 'unknown'
-        ? ` Classified as ${SAMPLE_KIND_LABELS[persistDocumentKind]} from Samples.`
+      persistDocumentKind !== 'unknown'
+      && (
+        sampleClassification.source === 'samples_compare'
+        || sampleClassification.source === 'organization_fallback'
+        || sampleClassification.source === 'org_consensus'
+        || sampleClassification.source === 'user_confirm'
+      )
+        ? ` Classified as ${SAMPLE_KIND_LABELS[persistDocumentKind]}${sampleClassification.source === 'user_confirm' ? ' (confirmed).' : ' from Samples.'}`
         : ''
     const documentKindMetadata = {
       document_kind: persistDocumentKind === 'unknown' ? null : persistDocumentKind,
       document_kind_source: sampleClassification.source,
       document_kind_confidence: sampleClassification.confidence,
       document_kind_reason: sampleClassification.reason || null,
+      samples_kind_votes: sampleKindVotes?.map((vote) => ({
+        workspace_id: vote.workspaceId,
+        workspace_name: vote.workspaceName,
+        role: vote.role,
+        has_gold_set: vote.hasGoldSet,
+        kind: vote.kind,
+        confidence: vote.confidence,
+      })),
       samples_excerpt: skipAutoGenerateKbInSamples ? clipSampleExcerpt(extract.text) : undefined,
     }
     const versionFromContent = extractBrdVersionFromDocumentText(extract.text)
@@ -8138,7 +8411,7 @@ export function DocumentKnowledgeManagementPage() {
 
     const inferredTitle = effectiveFileName.replace(/\.[^/.]+$/, '').trim() || effectiveFileName
 
-    // Duplicate detection: block on identical content, prompt on same-family / same-purpose.
+    // Duplicate detection: prompt on identical content and on same-family / same-purpose.
     const contentFingerprint = await computeContentFingerprint(extract.text)
     const duplicateVerdict = await checkUploadForDuplicates(effectiveFileName, extract.text, contentFingerprint, uploadFile)
     if (!duplicateVerdict.proceed) {
@@ -8418,6 +8691,87 @@ export function DocumentKnowledgeManagementPage() {
     kbApiItems,
     repositoryItems,
     checkUploadForDuplicates,
+    userWorkspaceOptions,
+    kbWorkspaceOptions,
+  ])
+
+  const samplesShareTargets = useMemo(() => {
+    const current = userWorkspaceOptions.find((option) => option.workspaceId === activeWorkspaceApiId)
+    const organizationId = current?.organizationId
+      || kbWorkspaceOptions.find((workspace) => workspace.id === activeWorkspaceApiId)?.organization_id
+      || null
+    return listNonPersonalSampleShareTargets({
+      currentWorkspaceId: activeWorkspaceApiId,
+      organizationId,
+      workspaces: userWorkspaceOptions.map((option) => ({
+        id: option.workspaceId,
+        name: option.workspaceName,
+        organizationId: option.organizationId,
+        tenantMode: option.tenantMode,
+      })),
+    })
+  }, [activeWorkspaceApiId, kbWorkspaceOptions, userWorkspaceOptions])
+
+  const handleSaveSamplesShare = useCallback(async () => {
+    if (!samplesShareDialog || samplesShareBusy) return
+    const session = getSession()
+    const ownerId = session?.user.id || session?.user.email || null
+    const selected = [...samplesShareDialog.selectedIds]
+    setSamplesShareBusy(true)
+    try {
+      if (samplesShareDialog.kind === 'folder') {
+        const folder = repositoryFolders.find((item) => item.id === samplesShareDialog.id)
+        if (parseProjectIdFromDocumentFolderDescription(folder?.description)) {
+          throw new Error('Project-linked folders cannot use Samples sharing.')
+        }
+        await updateDocumentFolder(samplesShareDialog.id, {
+          description: buildSamplesShareFolderDescription(selected),
+        })
+      } else {
+        const latest = await getDocument(samplesShareDialog.id)
+        await patchDocument(samplesShareDialog.id, {
+          version: latest.version,
+          metadata: {
+            ...(latest.metadata ?? {}),
+            shared_with_workspace_ids: selected,
+          },
+        })
+      }
+      const result = await syncSamplesShareToWorkspaces({
+        kind: samplesShareDialog.kind,
+        sourceWorkspaceId: activeWorkspaceApiId ?? '',
+        ownerId,
+        folderId: samplesShareDialog.kind === 'folder'
+          ? samplesShareDialog.id
+          : (repositoryItems.find((item) => item.id === samplesShareDialog.id)?.folderId ?? null),
+        documentId: samplesShareDialog.kind === 'document' ? samplesShareDialog.id : undefined,
+        targetWorkspaceIds: selected,
+        folders: repositoryFolders,
+      })
+      setSamplesShareDialog(null)
+      addToast({
+        title: 'Samples shared',
+        description: selected.length === 0
+          ? 'Sharing cleared. Existing copies in other workspaces were not deleted.'
+          : `Synced ${result.copied} file(s) to ${selected.length} workspace(s)${result.skipped ? ` (${result.skipped} skipped)` : ''}.`,
+        variant: 'success',
+      })
+    } catch (error) {
+      addToast({
+        title: 'Share failed',
+        description: error instanceof Error ? error.message : 'Unable to share Samples to other workspaces.',
+        variant: 'error',
+      })
+    } finally {
+      setSamplesShareBusy(false)
+    }
+  }, [
+    activeWorkspaceApiId,
+    addToast,
+    repositoryFolders,
+    repositoryItems,
+    samplesShareBusy,
+    samplesShareDialog,
   ])
 
   const resolveRepositoryUploadWorkspaceCandidates = useCallback(():
@@ -8700,6 +9054,100 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [addToast, processRepositoryUploadFile])
 
+  const runRepositoryUploadTree = useCallback(async (
+    items: DroppedUploadItem[],
+    parentFolderId: string | null | undefined,
+    workspaceId?: string | null,
+  ) => {
+    if (items.length === 0) return
+    const targetParent = parentFolderId !== undefined
+      ? parentFolderId
+      : (repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId)
+    const session = getSession()
+    const ownerId = session?.user.id || session?.user.email || null
+    const filesToUpload = items.filter((item): item is DroppedUploadItem & { file: File } => Boolean(item.file))
+    setRepositoryUploadBusy(true)
+    try {
+      const folderByKey = await ensureDroppedFolderTree({
+        parentFolderId: targetParent,
+        items,
+        workspaceId: workspaceId ?? activeWorkspaceApiId,
+        ownerId,
+        folders: repositoryFolders,
+        createFolder: (payload) => createDocumentFolder({
+          ...payload,
+          description: null,
+        }),
+      })
+      await loadRepositoryFolders()
+
+      if (filesToUpload.length === 0) {
+        addToast({
+          title: 'Folder created',
+          description: 'The dropped folder structure was added to the repository.',
+          variant: 'success',
+        })
+        return
+      }
+
+      const skipSuccessToast = filesToUpload.length > 1
+      let succeeded = 0
+      let failed = 0
+      for (let index = 0; index < filesToUpload.length; index += 1) {
+        const item = filesToUpload[index]
+        const key = folderKeyFromRelativeDirectory(item.relativeDirectory)
+        repositoryUploadTargetFolderIdRef.current = folderByKey.get(key) ?? targetParent
+        setRepositoryUploadProgress({
+          total: filesToUpload.length,
+          index: index + 1,
+          fileName: item.file.name,
+          succeeded,
+          failed,
+        })
+        try {
+          const ok = await processRepositoryUploadFile(item.file, workspaceId, { skipBusy: true, skipSuccessToast })
+          if (ok) succeeded += 1
+          else failed += 1
+        } catch {
+          failed += 1
+        }
+        setRepositoryUploadProgress({
+          total: filesToUpload.length,
+          index: Math.min(index + 1, filesToUpload.length),
+          fileName: item.file.name,
+          succeeded,
+          failed,
+        })
+      }
+      if (filesToUpload.length > 1) {
+        addToast({
+          title: failed > 0 ? 'Bulk upload finished with errors' : 'Bulk upload complete',
+          description: failed > 0
+            ? `${succeeded} of ${filesToUpload.length} document(s) uploaded; ${failed} failed or skipped.`
+            : `${succeeded} document(s) uploaded into the dropped folder structure.`,
+          variant: failed > 0 ? 'error' : 'success',
+        })
+      }
+    } catch (error) {
+      addToast({
+        title: 'Failed to upload dropped folder',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      repositoryUploadTargetFolderIdRef.current = null
+      setRepositoryUploadBusy(false)
+      setRepositoryUploadProgress(null)
+    }
+  }, [
+    activeWorkspaceApiId,
+    addToast,
+    loadRepositoryFolders,
+    processRepositoryUploadFile,
+    repositoryCurrentFolderId,
+    repositoryFolders,
+  ])
+
   const queueRepositoryUploadFiles = useCallback((files: File[], folderId?: string | null) => {
     const list = collectBrowserFiles(files)
     if (list.length === 0) return
@@ -8720,6 +9168,37 @@ export function DocumentKnowledgeManagementPage() {
     void runRepositoryUploadBatch(list, resolved.workspaceId)
   }, [repositoryCurrentFolderId, resolveRepositoryUploadWorkspaceCandidates, runRepositoryUploadBatch])
 
+  const queueRepositoryUploadTree = useCallback((items: DroppedUploadItem[], folderId?: string | null) => {
+    if (items.length === 0) return
+    const hasNestedFolders = items.some((item) => item.relativeDirectory.length > 0)
+    const files = items.map((item) => item.file).filter((file): file is File => Boolean(file))
+    if (!hasNestedFolders && files.length > 0) {
+      queueRepositoryUploadFiles(files, folderId)
+      return
+    }
+    const resolved = resolveRepositoryUploadWorkspaceCandidates()
+    const targetFolderId = folderId !== undefined
+      ? folderId
+      : (repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId)
+    if (resolved.mode === 'choose') {
+      setUploadWorkspacePicker({
+        purpose: 'repository-document',
+        candidates: resolved.candidates,
+        pendingFile: files[0],
+        pendingFiles: files,
+        pendingTreeItems: items,
+        targetFolderId,
+      })
+      return
+    }
+    void runRepositoryUploadTree(items, targetFolderId, resolved.workspaceId)
+  }, [
+    queueRepositoryUploadFiles,
+    repositoryCurrentFolderId,
+    resolveRepositoryUploadWorkspaceCandidates,
+    runRepositoryUploadTree,
+  ])
+
   const queueRepositoryUploadFile = useCallback((file: File, folderId?: string | null) => {
     queueRepositoryUploadFiles([file], folderId)
   }, [queueRepositoryUploadFiles])
@@ -8728,8 +9207,13 @@ export function DocumentKnowledgeManagementPage() {
     const files = collectBrowserFiles(event.target.files)
     event.target.value = ''
     if (files.length === 0) return
+    const items = collectUploadItemsFromFiles(files)
+    if (items.some((item) => item.relativeDirectory.length > 0)) {
+      queueRepositoryUploadTree(items)
+      return
+    }
     queueRepositoryUploadFiles(files)
-  }, [queueRepositoryUploadFiles])
+  }, [queueRepositoryUploadFiles, queueRepositoryUploadTree])
 
   const handleRepositoryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     // Only show the file-upload highlight for external file drags, not internal document drags.
@@ -8770,22 +9254,28 @@ export function DocumentKnowledgeManagementPage() {
     event.preventDefault()
     event.stopPropagation()
     setIsRepositoryDragActive(false)
-
-    const files = collectBrowserFiles(event.dataTransfer.files)
-    if (files.length > 0) {
-      queueRepositoryUploadFiles(files)
-    }
-  }, [queueRepositoryUploadFiles])
+    const dataTransfer = event.dataTransfer
+    void (async () => {
+      const items = await collectUploadItemsFromDataTransfer(dataTransfer)
+      if (items.length === 0) return
+      queueRepositoryUploadTree(items)
+    })()
+  }, [queueRepositoryUploadTree])
 
   const handleFolderDrop = useCallback((event: React.DragEvent, folderId: string | null) => {
-    const files = collectBrowserFiles(event.dataTransfer.files)
-    if (files.length > 0) {
+    const types = Array.from(event.dataTransfer.types || [])
+    if (types.includes('Files')) {
       event.preventDefault()
       event.stopPropagation()
       setRepositoryDropTarget(null)
       setIsRepositoryDragActive(false)
       repositoryUploadTargetFolderIdRef.current = folderId
-      queueRepositoryUploadFiles(files, folderId)
+      const dataTransfer = event.dataTransfer
+      void (async () => {
+        const items = await collectUploadItemsFromDataTransfer(dataTransfer)
+        if (items.length === 0) return
+        queueRepositoryUploadTree(items, folderId)
+      })()
       return
     }
 
@@ -8796,7 +9286,7 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryDropTarget(null)
     const item = repositoryItems.find((entry) => entry.id === documentId)
     if (item) void handleMoveDocumentToFolder(item, folderId)
-  }, [repositoryItems, handleMoveDocumentToFolder, queueRepositoryUploadFiles])
+  }, [repositoryItems, handleMoveDocumentToFolder, queueRepositoryUploadTree])
 
   const loadKbRelations = useCallback(
     async (entryId: string) => {
@@ -16763,8 +17253,8 @@ export function DocumentKnowledgeManagementPage() {
                   <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-blue-500/5">
                     <div className="text-center">
                       <Upload className="mx-auto mb-2 h-8 w-8 text-blue-500" />
-                      <p className="text-sm font-semibold text-blue-700">Drop documents to upload</p>
-                      <p className="mt-1 text-xs font-medium text-blue-600/80">You can drop multiple files at once</p>
+                      <p className="text-sm font-semibold text-blue-700">Drop files or folders to upload</p>
+                      <p className="mt-1 text-xs font-medium text-blue-600/80">Folders keep their name and nested files</p>
                     </div>
                   </div>
                 ) : null}
@@ -17368,8 +17858,8 @@ export function DocumentKnowledgeManagementPage() {
                 ) : (
                   <div className="flex h-full min-h-[360px] w-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/50 px-4 py-10 text-center md:min-h-[420px]">
                     <Upload className="mb-3 h-8 w-8 text-muted-foreground/60" strokeWidth={1.75} />
-                    <p className="text-sm font-medium text-muted-foreground">Drag and drop documents anywhere in this panel to upload</p>
-                    <p className="mt-1 text-xs text-muted-foreground/80">Or drop directly onto a folder · Or use Upload document repository above</p>
+                    <p className="text-sm font-medium text-muted-foreground">Drag and drop files or folders anywhere in this panel to upload</p>
+                    <p className="mt-1 text-xs text-muted-foreground/80">Dropped folders keep their name and contents · Or drop onto a folder · Or use Upload document repository above</p>
                   </div>
                 )}
                 </div>
@@ -21081,6 +21571,41 @@ export function DocumentKnowledgeManagementPage() {
           )
         : null}
 
+      {samplesShareDialog && typeof document !== 'undefined'
+        ? createPortal(
+            <SampleShareDialog
+              title={samplesShareDialog.kind === 'folder' ? 'Share Samples folder' : 'Share Samples file'}
+              itemName={samplesShareDialog.name}
+              targets={samplesShareTargets}
+              selectedIds={samplesShareDialog.selectedIds}
+              busy={samplesShareBusy}
+              onToggle={(workspaceId) => {
+                setSamplesShareDialog((prev) => {
+                  if (!prev) return prev
+                  const next = new Set(prev.selectedIds)
+                  if (next.has(workspaceId)) next.delete(workspaceId)
+                  else next.add(workspaceId)
+                  return { ...prev, selectedIds: next }
+                })
+              }}
+              onCancel={() => { if (!samplesShareBusy) setSamplesShareDialog(null) }}
+              onSave={() => void handleSaveSamplesShare()}
+            />,
+            document.body,
+          )
+        : null}
+
+      {sampleKindConflictPrompt && typeof document !== 'undefined'
+        ? createPortal(
+            <SampleKindConflictDialog
+              fileName={sampleKindConflictPrompt.fileName}
+              conflict={sampleKindConflictPrompt.conflict}
+              onChoose={(choice) => sampleKindConflictPrompt.resolve(choice)}
+            />,
+            document.body,
+          )
+        : null}
+
       {repositoryDuplicatePrompt && !repositoryCompareSession && typeof document !== 'undefined'
         ? createPortal(
             <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
@@ -21104,10 +21629,12 @@ export function DocumentKnowledgeManagementPage() {
                     </div>
                     <div className="space-y-1">
                       <h3 id="repository-duplicate-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
-                        Possible duplicate document
+                        {repositoryDuplicatePrompt.exactMatches.length > 0 ? 'Identical document already exists' : 'Possible duplicate document'}
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        File name and an agent content check (requirements/purpose) found similar documents. What would you like to do?
+                        {repositoryDuplicatePrompt.exactMatches.length > 0
+                          ? 'This file matches an existing document byte-for-byte. You can still upload it as a new document in the current folder.'
+                          : 'File name and an agent content check (requirements/purpose) found similar documents. What would you like to do?'}
                       </p>
                     </div>
                   </div>
@@ -21119,6 +21646,31 @@ export function DocumentKnowledgeManagementPage() {
                     <p className="mt-1 break-words text-sm font-semibold text-foreground">{repositoryDuplicatePrompt.fileName}</p>
                   </div>
 
+                  {repositoryDuplicatePrompt.exactMatches.length > 0 ? (
+                    <div>
+                      <div className="font-medium text-foreground">Identical content</div>
+                      <ul className="mt-2 space-y-2">
+                        {repositoryDuplicatePrompt.exactMatches.map((m) => (
+                          <li key={m.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <RepositoryDuplicateMatchDetails match={m} />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1.5 px-2 text-[11px]"
+                                onClick={() => openRepositoryDuplicateCompare(m.id, m.title)}
+                              >
+                                <ArrowRightLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                Compare versions
+                              </Button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
                   {repositoryDuplicatePrompt.nameMatches.length > 0 ? (
                     <div>
                       <div className="font-medium text-foreground">Similar document (same name/version)</div>
@@ -21126,11 +21678,7 @@ export function DocumentKnowledgeManagementPage() {
                         {repositoryDuplicatePrompt.nameMatches.map((m) => (
                           <li key={m.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <span className="font-medium text-foreground">{m.title}</span>
-                                {m.projectName ? ` · ${m.projectName}` : ''} · KB: {m.kbGenerated ? 'already generated' : 'not generated yet'}
-                                {m.reason ? <div className="mt-1 text-xs text-muted-foreground/80">{m.reason}</div> : null}
-                              </div>
+                              <RepositoryDuplicateMatchDetails match={m} />
                               <Button
                                 type="button"
                                 variant="outline"
@@ -21155,11 +21703,7 @@ export function DocumentKnowledgeManagementPage() {
                         {repositoryDuplicatePrompt.samePurpose.map((m) => (
                           <li key={m.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-muted-foreground">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <span className="font-medium text-foreground">{m.title}</span>
-                                {m.projectName ? ` · ${m.projectName}` : ''} · KB: {m.kbGenerated ? 'already generated' : 'not generated yet'}
-                                {m.reason ? <div className="mt-1 text-xs text-muted-foreground/80">{m.reason}</div> : null}
-                              </div>
+                              <RepositoryDuplicateMatchDetails match={m} />
                               <Button
                                 type="button"
                                 variant="outline"
@@ -21178,7 +21722,9 @@ export function DocumentKnowledgeManagementPage() {
                   ) : null}
 
                   <p className="text-xs text-muted-foreground">
-                    Identical file content is always blocked. Matching sections are retrieved from the whole document, then an agent reranks those sections. Save as new version attaches this file to the matched document as its next revision.
+                    {repositoryDuplicatePrompt.exactMatches.length > 0
+                      ? 'Upload as new document creates a separate copy in this folder. Save as new version attaches this file to the matched document as its next revision.'
+                      : 'Matching sections are retrieved from the whole document, then an agent reranks those sections. Save as new version attaches this file to the matched document as its next revision.'}
                   </p>
                 </div>
 
@@ -21438,9 +21984,13 @@ export function DocumentKnowledgeManagementPage() {
                           const pending = uploadWorkspacePicker
                           setUploadWorkspacePicker(null)
                           if (pending.purpose === 'repository-document') {
+                            repositoryUploadTargetFolderIdRef.current = pending.targetFolderId ?? null
+                            if (pending.pendingTreeItems?.length) {
+                              void runRepositoryUploadTree(pending.pendingTreeItems, pending.targetFolderId ?? null, candidate.id)
+                              return
+                            }
                             const files = pending.pendingFiles?.length ? pending.pendingFiles : pending.pendingFile ? [pending.pendingFile] : []
                             if (files.length === 0) return
-                            repositoryUploadTargetFolderIdRef.current = pending.targetFolderId ?? null
                             void runRepositoryUploadBatch(files, candidate.id)
                             return
                           }
@@ -24304,6 +24854,37 @@ export function DocumentKnowledgeManagementPage() {
               <Sparkles className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">Generate KB from {repositoryContextMenuItem.name}</span>
             </ContextMenuItem>
+            {isFolderInSamplesTree(repositoryContextMenuItem.folderId, repositoryFolders) ? (
+              <ContextMenuItem
+                onClick={() => {
+                  const target = repositoryContextMenuItem
+                  setRepositoryRowContextMenu(null)
+                  void (async () => {
+                    try {
+                      const latest = await getDocument(target.id)
+                      const shared = Array.isArray(latest.metadata?.shared_with_workspace_ids)
+                        ? (latest.metadata!.shared_with_workspace_ids as string[])
+                        : []
+                      setSamplesShareDialog({
+                        kind: 'document',
+                        id: target.id,
+                        name: target.name,
+                        selectedIds: new Set(shared.filter((id) => typeof id === 'string')),
+                      })
+                    } catch (error) {
+                      addToast({
+                        title: 'Share unavailable',
+                        description: error instanceof Error ? error.message : 'Unable to load document sharing.',
+                        variant: 'error',
+                      })
+                    }
+                  })()
+                }}
+              >
+                <Globe className="w-4 h-4 mr-2 shrink-0" />
+                Share with workspaces…
+              </ContextMenuItem>
+            ) : null}
             <ContextMenuSeparator />
             <ContextMenuSubmenu
               trigger={
@@ -24381,6 +24962,23 @@ export function DocumentKnowledgeManagementPage() {
               <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">Open {repositoryFolderContextMenuItem.name}</span>
             </ContextMenuItem>
+            {isFolderInSamplesTree(repositoryFolderContextMenuItem.id, repositoryFolders) ? (
+              <ContextMenuItem
+                onClick={() => {
+                  const target = repositoryFolderContextMenuItem
+                  setRepositoryFolderContextMenu(null)
+                  setSamplesShareDialog({
+                    kind: 'folder',
+                    id: target.id,
+                    name: target.name,
+                    selectedIds: new Set(parseSamplesShareWorkspaceIds(target.description)),
+                  })
+                }}
+              >
+                <Globe className="w-4 h-4 mr-2 shrink-0" />
+                Share with workspaces…
+              </ContextMenuItem>
+            ) : null}
             {isSamplesSystemFolder(repositoryFolderContextMenuItem) ? null : (
               <>
             <ContextMenuSeparator />

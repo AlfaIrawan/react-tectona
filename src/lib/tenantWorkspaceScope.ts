@@ -188,6 +188,7 @@ export function filterDkmFoldersForRepositoryScope<T extends {
   folders: T[],
   scopedDocumentFolderIds: Array<string | null | undefined>,
   currentOwnerId: string | null | undefined,
+  options?: { alwaysRetain?: (folder: T) => boolean },
 ): T[] {
   if (folders.length === 0) return folders
 
@@ -213,6 +214,12 @@ export function filterDkmFoldersForRepositoryScope<T extends {
   if (owner) {
     for (const folder of folders) {
       if (folder.owner_id === owner) retainWithAncestors(folder.id)
+    }
+  }
+
+  if (options?.alwaysRetain) {
+    for (const folder of folders) {
+      if (options.alwaysRetain(folder)) retainWithAncestors(folder.id)
     }
   }
 

@@ -7,6 +7,7 @@ import {
   computeContentFingerprint,
   findExactDuplicate,
   findKbGeneratedDocIds,
+  isExactDuplicateInSameFolder,
   findNameMatches,
   normalizeForFingerprint,
   shortlistByKeywordOverlap,
@@ -65,6 +66,19 @@ describe('BRD duplicate detection', () => {
     expect(findExactDuplicate('hash-bbb', existing)?.id).toBe('b')
     expect(findExactDuplicate('hash-zzz', existing)).toBeNull()
     expect(findExactDuplicate('', existing)).toBeNull()
+  })
+
+  it('treats identical content in another folder as a copy, not a same-folder revision', () => {
+    const exact = makeDoc({
+      id: 'lampiran',
+      fileName: 'Lampiran 2 - Surat Persetujuan Pasangan.pdf',
+      contentSha256: 'hash-same',
+      folderId: 'salesforce-folder',
+    })
+    expect(isExactDuplicateInSameFolder(exact, 'salesforce-folder')).toBe(true)
+    expect(isExactDuplicateInSameFolder(exact, 'ks-002a-folder')).toBe(false)
+    expect(isExactDuplicateInSameFolder(exact, null)).toBe(false)
+    expect(isExactDuplicateInSameFolder(null, 'ks-002a-folder')).toBe(false)
   })
 
   it('matches the same BRD family by structured file name', () => {

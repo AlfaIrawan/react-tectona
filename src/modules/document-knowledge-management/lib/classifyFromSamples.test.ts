@@ -53,4 +53,41 @@ describe('classifyFromSamples', () => {
     expect(picked[0]?.sampleKind).toBe('memo_internal')
     expect(picked[1]?.sampleKind).toBe('ketetapan_sementara')
   })
+
+  it('includes SOP and other Samples categories in the default gold set', () => {
+    const folders = [
+      { id: 'root', name: 'Samples', parent_id: null },
+      { id: 'sop', name: 'SOP', parent_id: 'root' },
+      { id: 'fsd', name: 'FSD', parent_id: 'root' },
+    ]
+    const picked = selectSampleGoldItems(
+      [
+        { id: 's1', folderId: 'sop' },
+        { id: 'f1', folderId: 'fsd' },
+      ],
+      folders,
+    )
+    expect(picked.map((row) => row.sampleKind).sort()).toEqual(['fsd', 'sop'])
+  })
+
+  it('does not classify a policy memo as KTP just because the body mentions KTP', () => {
+    const result = decideSampleKindFromScores(
+      [
+        { kind: 'ktp', score: 0.88 },
+        { kind: 'memo_internal', score: 0.8 },
+      ],
+      true,
+      { fileName: 'Kebijakan SMKI.pdf' },
+    )
+    expect(result.kind).toBe('memo_internal')
+  })
+
+  it('allows KTP when the filename is an identity scan', () => {
+    const result = decideSampleKindFromScores(
+      [{ kind: 'ktp', score: 0.88 }],
+      true,
+      { fileName: 'KTP_nasabah_depan.pdf' },
+    )
+    expect(result.kind).toBe('ktp')
+  })
 })

@@ -76,4 +76,16 @@ describe('filterDkmFoldersForRepositoryScope', () => {
     expect(visible.find((folder) => folder.id === 'root-brd')?.document_count).toBe(0)
     expect(visible.find((folder) => folder.id === 'root-brd')?.children_count).toBe(1)
   })
+
+  it('keeps an empty system Samples library even when the repository has no documents', () => {
+    const withSamples = [
+      ...folders,
+      { id: 'samples', name: 'Samples', parent_id: null, owner_id: 'system', document_count: 0, children_count: 1 },
+      { id: 'samples-mi', name: 'Memo Internal', parent_id: 'samples', owner_id: 'system', document_count: 0, children_count: 0 },
+    ]
+    const visible = filterDkmFoldersForRepositoryScope(withSamples, [], 'jokowi', {
+      alwaysRetain: (folder) => folder.id === 'samples' || folder.parent_id === 'samples',
+    })
+    expect(visible.map((folder) => folder.id).sort()).toEqual(['mine', 'samples', 'samples-mi'])
+  })
 })

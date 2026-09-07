@@ -4,15 +4,14 @@ import {
   retrieveSimilarChunksFromVectors,
 } from '@/lib/kb/brdDuplicateDetection'
 import {
+  IDENTITY_SAMPLE_KINDS,
+  SAMPLE_DOCUMENT_KIND_CODES,
   resolveSampleKindFromFolderId,
   type SampleDocumentKind,
 } from './sampleDocumentKind'
 
-/** Kinds currently used as the Samples gold set (user library: MI + KS). */
-export const ACTIVE_SAMPLE_GOLD_KINDS: readonly SampleDocumentKind[] = [
-  'memo_internal',
-  'ketetapan_sementara',
-]
+/** Every Samples category folder is part of the gold set — not MI/KS only. */
+export const ACTIVE_SAMPLE_GOLD_KINDS: readonly SampleDocumentKind[] = SAMPLE_DOCUMENT_KIND_CODES
 
 export type SampleGoldDocument = {
   id: string
@@ -22,7 +21,7 @@ export type SampleGoldDocument = {
 
 export type SampleKindClassification = {
   kind: SampleDocumentKind | 'unknown'
-  source: 'samples_path' | 'samples_compare' | 'unknown'
+  source: 'samples_path' | 'samples_compare' | 'organization_fallback' | 'org_consensus' | 'user_confirm' | 'unknown'
   confidence: number
   reason: string
 }
@@ -69,11 +68,21 @@ function bestScoreByKind(
     .sort((left, right) => right.score - left.score)
 }
 
+export function looksLikeIdentitySampleFileName(fileName: string): boolean {
+  const normalized = fileName.toLowerCase().replace(/[_-]+/g, ' ')
+  return /\b(ktp|npwp|bpkb|kk|kartu keluarga)\b/.test(normalized)
+}
+
 export function decideSampleKindFromScores(
   ranked: readonly { kind: SampleDocumentKind; score: number }[],
   usedEmbedding: boolean,
+  options?: { fileName?: string },
 ): SampleKindClassification {
-  if (ranked.length === 0 || ranked[0].score <= 0) {
+  const allowIdentity = looksLikeIdentitySampleFileName(options?.fileName ?? '')
+  const filtered = allowIdentity
+    ? ranked
+    : ranked.filter((row) => !IDENTITY_SAMPLE_KINDS.has(row.kind))
+  if (filtered.length === 0 || !filtered[0] || filtered[0].score <= 0) {
     return {
       kind: 'unknown',
       source: 'unknown',
@@ -81,8 +90,8 @@ export function decideSampleKindFromScores(
       reason: 'No Samples gold-set text to compare.',
     }
   }
-  const best = ranked[0]
-  const second = ranked[1]?.score ?? 0
+  const best = filtered[0]
+  const second = filtered[1]?.score ?? 0
   const accept = usedEmbedding ? SAMPLE_CLASSIFY_EMBED_ACCEPT : SAMPLE_CLASSIFY_LEXICAL_ACCEPT
   const margin = usedEmbedding ? SAMPLE_CLASSIFY_EMBED_MARGIN : SAMPLE_CLASSIFY_LEXICAL_MARGIN
   if (best.score >= accept && best.score - second >= margin) {
@@ -105,6 +114,7 @@ export function classifyAgainstSampleGoldSet(
   queryText: string,
   samples: readonly SampleGoldDocument[],
   vectorsByText: Map<string, number[]> | null,
+  options?: { fileName?: string },
 ): SampleKindClassification {
   const usable = samples.filter((sample) => sample.text.trim().length >= 24)
   if (usable.length === 0) {
@@ -116,7 +126,7 @@ export function classifyAgainstSampleGoldSet(
     }
   }
   const ranked = bestScoreByKind(queryText, usable, vectorsByText)
-  return decideSampleKindFromScores(ranked, Boolean(vectorsByText && vectorsByText.size > 0))
+  return decideSampleKindFromScores(ranked, Boolean(vectorsByText && vectorsByText.size > 0), options)
 }
 
 export function collectTextsForSampleClassifyEmbed(
@@ -165,8 +175,8 @@ export function selectSampleGoldItems<T extends { id: string; folderId: string |
   },
 ): Array<T & { sampleKind: SampleDocumentKind }> {
   const kinds = new Set(options?.kinds ?? ACTIVE_SAMPLE_GOLD_KINDS)
-  const maxTotal = options?.maxTotal ?? 20
-  const maxPerKind = options?.maxPerKind ?? 10
+  const maxTotal = options?.maxTotal ?? 88
+  const maxPerKind = options?.maxPerKind ?? 8
   const counts = new Map<SampleDocumentKind, number>()
   const picked: Array<T & { sampleKind: SampleDocumentKind }> = []
   for (const item of items) {

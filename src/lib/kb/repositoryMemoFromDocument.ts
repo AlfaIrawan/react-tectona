@@ -194,6 +194,17 @@ export function buildRepositoryFolderPathNames(
   return path
 }
 
+/** Breadcrumb-style Document Repository path used as duplicate-match evidence. */
+export function formatDocumentRepositoryPath(
+  folderNames: readonly string[],
+  fileName?: string | null,
+): string {
+  const folders = folderNames.map((name) => name.trim()).filter(Boolean)
+  const file = fileName?.trim() ?? ''
+  const parts = file ? [...folders, file] : [...folders]
+  return parts.length > 0 ? parts.join(' > ') : 'Document repository'
+}
+
 export function looksLikeMemoUploadFileName(fileName: string): boolean {
   const lower = fileName.trim().toLowerCase()
   if (!lower) return false

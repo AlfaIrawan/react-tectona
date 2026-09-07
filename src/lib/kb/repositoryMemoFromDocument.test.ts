@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildRepositoryFolderPathNames,
+  formatDocumentRepositoryPath,
   buildMemoAttachmentSelfEntry,
   buildMemoPolicySummaryHtml,
   detectRepositoryDocumentKind,
@@ -90,6 +91,19 @@ describe('repositoryMemoFromDocument', () => {
         'child-smki',
       ),
     ).toEqual(['Memo Internal', 'Kebijakan SMKI'])
+  })
+
+  it('formats Document Repository paths the same way as the folder breadcrumb', () => {
+    expect(
+      formatDocumentRepositoryPath(
+        ['Ketetapan Sementara', 'KS-002A_RISK_CRPL&INC_II_2026 Ketentuan'],
+        'Lampiran 2 - Surat Persetujuan Pasangan.pdf',
+      ),
+    ).toBe(
+      'Ketetapan Sementara > KS-002A_RISK_CRPL&INC_II_2026 Ketentuan > Lampiran 2 - Surat Persetujuan Pasangan.pdf',
+    )
+    expect(formatDocumentRepositoryPath([], 'root-note.pdf')).toBe('root-note.pdf')
+    expect(formatDocumentRepositoryPath([], '')).toBe('Document repository')
   })
 
   it('extracts memo metadata and attachments', () => {
