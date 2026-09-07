@@ -51,6 +51,47 @@ describe('buildDirectoryTreeParentById', () => {
     expect(parents.get(IT_BP)).toBe(ORG_HOME)
   })
 
+  it('nests unjoined operational created under org home, not as a sibling root', () => {
+    const child = 'ws-credit-system'
+    const workspaces = [
+      row({
+        id: ORG_HOME,
+        type: 'Organization',
+        isPersonalWorkspace: false,
+      }),
+      row({
+        id: child,
+        type: 'Department',
+        isPersonalWorkspace: false,
+        orgDirectoryJoined: false,
+        parentWorkspaceId: ORG_HOME,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+    ]
+    const parents = buildDirectoryTreeParentById(workspaces)
+    expect(parents.get(child)).toBe(ORG_HOME)
+  })
+
+  it('keeps unjoined operational without parent as a root beside org home', () => {
+    const stray = 'ws-bootstrap-ops'
+    const workspaces = [
+      row({
+        id: ORG_HOME,
+        type: 'Organization',
+        isPersonalWorkspace: false,
+      }),
+      row({
+        id: stray,
+        type: 'Department',
+        isPersonalWorkspace: false,
+        orgDirectoryJoined: false,
+        ownerIdentityRef: 'sub-alfa',
+      }),
+    ]
+    const parents = buildDirectoryTreeParentById(workspaces)
+    expect(parents.get(stray)).toBeNull()
+  })
+
   it('nests owner personal workspace under owned operational workspace', () => {
     const workspaces = [
       row({

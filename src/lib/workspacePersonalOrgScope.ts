@@ -108,10 +108,10 @@ function operationalDirectoryAnchorId(
   orgHomeId: string | null,
   byId: ReadonlyMap<string, DirectoryTreeWorkspace>,
 ): string | null {
-  const explicitParent = workspace.parentWorkspaceId?.trim() || null
-  if (explicitParent && explicitParent !== orgHomeId && byId.has(explicitParent)) {
-    return explicitParent
-  }
+    const explicitParent = workspace.parentWorkspaceId?.trim() || null
+    if (explicitParent && byId.has(explicitParent)) {
+      return explicitParent
+    }
   const anchor = workspace.provisionedUnderWorkspaceId?.trim() || orgHomeId || null
   return anchor && byId.has(anchor) ? anchor : null
 }
@@ -187,14 +187,17 @@ export function buildDirectoryTreeParentById(
 
     const orgHomeId = orgHomeByOrgId.get(workspace.primaryOrganizationId) ?? null
 
-    // An explicit parent pointing at some *other* workspace in the tree (not the org
-    // home) reflects a deliberate placement choice -- Create Child Workspace, or moving
-    // a personal workspace under someone's operational workspace -- and always wins
-    // over the heuristics below, regardless of org-directory-join status.
     const explicitParent = workspace.parentWorkspaceId?.trim() || null
-    if (explicitParent && explicitParent !== orgHomeId && byId.has(explicitParent)) {
-      result.set(workspace.id, explicitParent)
-      continue
+    if (explicitParent && byId.has(explicitParent)) {
+      if (workspace.isPersonalWorkspace) {
+        if (explicitParent !== orgHomeId) {
+          result.set(workspace.id, explicitParent)
+          continue
+        }
+      } else {
+        result.set(workspace.id, explicitParent)
+        continue
+      }
     }
 
     if (!workspace.isPersonalWorkspace) {

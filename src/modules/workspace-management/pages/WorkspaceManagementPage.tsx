@@ -5401,6 +5401,20 @@ function generateWorkspaceCode(name: string, takenLower: Set<string>): string {
   return fallback || sanitize(`${prefix}-WS01`)
 }
 
+/** Prefer the form code when free; otherwise mint a new suffix. Same name always hashes to the same first suffix. */
+function allocateWorkspaceCode(name: string, preferred: string, takenLower: Set<string>): string {
+  const existing = preferred.trim().toUpperCase()
+  if (existing && !takenLower.has(existing.toLowerCase())) return existing
+  return generateWorkspaceCode(name, takenLower)
+}
+
+function verifiedDomainListFingerprint(domains: VerifiedDomainEntry[]): string {
+  return normalizeVerifiedDomainEntries(domains)
+    .map((row) => `${row.category}:${row.value}:${row.verified === false ? '0' : '1'}`)
+    .sort()
+    .join('|')
+}
+
 type NewWorkspaceWizardField =
   | 'name'
   | 'code'
@@ -5491,14 +5505,13 @@ function validateNewWorkspaceWizardStep(
       const r = validateNewWorkspaceWizardStep(s, form, allWorkspaces, options)
       if (!r.ok) return r
     }
-    const taken = new Set(allWorkspaces.map((w) => w.code.toLowerCase()))
+    const taken = new Set(allWorkspaces.map((w) => w.code.toLowerCase()).filter(Boolean))
     const nameTrim = form.name.trim()
-    const code = (form.code.trim() || generateWorkspaceCode(nameTrim, taken)).toUpperCase()
+    const code = allocateWorkspaceCode(nameTrim, form.code, taken)
     if (!code) {
       return { ok: false, error: 'Workspace name is required.', highlights: { name: true } }
     }
-    const dup = allWorkspaces.some((w) => w.code.toLowerCase() === code.toLowerCase())
-    if (dup) {
+    if (taken.has(code.toLowerCase())) {
       return {
         ok: false,
         error: 'Could not allocate a unique code. Change the workspace name slightly and try again.',
@@ -10650,21 +10663,27 @@ export function WorkspaceManagementPage() {
     }
 
     for (const tree of directoryTreeByOrgId.values()) {
-      if (!tree.memberships_included) continue
       const orgId = tree.organization_id
-      for (const workspace of allWorkspacesForList) {
-        if (workspace.primaryOrganizationId === orgId && workspace.isPersonalWorkspace) {
-          result.delete(workspace.id)
+      if (tree.memberships_included) {
+        for (const workspace of allWorkspacesForList) {
+          if (workspace.primaryOrganizationId === orgId && workspace.isPersonalWorkspace) {
+            result.delete(workspace.id)
+          }
         }
       }
       for (const link of tree.personal_links ?? []) {
-        result.set(
-          link.workspace_id,
-          (link.hosts ?? []).map((host) => ({
-            parentId: host.host_workspace_id,
-            role: wacRoleCodeToUiRole(host.role_code),
-          })),
-        )
+        const hosts = (link.hosts ?? []).map((host) => ({
+          parentId: host.host_workspace_id,
+          role: wacRoleCodeToUiRole(host.role_code),
+        }))
+        if (hosts.length === 0) {
+          if (tree.memberships_included) result.delete(link.workspace_id)
+          continue
+        }
+        const existing = result.get(link.workspace_id) ?? []
+        const byParent = new Map(existing.map((item) => [item.parentId, item]))
+        for (const host of hosts) byParent.set(host.parentId, host)
+        result.set(link.workspace_id, [...byParent.values()])
       }
     }
     return result
@@ -11529,7 +11548,7 @@ export function WorkspaceManagementPage() {
       return
     }
 
-      const taken = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
+      const taken = new Set(directoryWorkspaces.map((w) => w.code.toLowerCase()).filter(Boolean))
     const currentCode = newWorkspaceForm.code.trim().toLowerCase()
     const nameUnchanged = trimmedName === lastAutoCodeNameRef.current
     if (nameUnchanged && currentCode && !taken.has(currentCode)) return
@@ -11545,7 +11564,7 @@ export function WorkspaceManagementPage() {
     newWorkspaceForm.code,
     newWorkspaceWizardStep,
     newWorkspaceDrawerOpen,
-    allWorkspacesForList,
+    directoryWorkspaces,
   ])
 
   const tryGoToWizardStep = (targetStep: number) => {
@@ -11558,7 +11577,7 @@ export function WorkspaceManagementPage() {
       return
     }
     for (let s = 1; s < targetStep; s += 1) {
-      const r = validateNewWorkspaceWizardStep(s, newWorkspaceForm, allWorkspacesForList, wizardValidationOptions)
+      const r = validateNewWorkspaceWizardStep(s, newWorkspaceForm, directoryWorkspaces, wizardValidationOptions)
       if ('error' in r) {
         setNewWorkspaceWizardStep(s)
         setNewWorkspaceFormError(r.error)
@@ -11577,7 +11596,7 @@ export function WorkspaceManagementPage() {
     const r = validateNewWorkspaceWizardStep(
       newWorkspaceWizardStep,
       formForStep,
-      allWorkspacesForList,
+      directoryWorkspaces,
       wizardValidationOptions
     )
     if ('error' in r) {
@@ -11591,10 +11610,18 @@ export function WorkspaceManagementPage() {
       if (newWorkspaceWizardStep === 1) {
         const name = newWorkspaceForm.name.trim()
         if (name && !newWorkspaceForm.code.trim()) {
-        const taken = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
-        const code = generateWorkspaceCode(name, taken)
+          const taken = new Set(directoryWorkspaces.map((w) => w.code.toLowerCase()).filter(Boolean))
+          const code = generateWorkspaceCode(name, taken)
           lastAutoCodeNameRef.current = name
-        setNewWorkspaceForm((prev) => ({ ...prev, code }))
+          setNewWorkspaceForm((prev) => ({ ...prev, code }))
+        }
+      }
+      if (newWorkspaceWizardStep === 5) {
+        const name = newWorkspaceForm.name.trim()
+        const taken = new Set(directoryWorkspaces.map((w) => w.code.toLowerCase()).filter(Boolean))
+        const code = allocateWorkspaceCode(name, newWorkspaceForm.code, taken)
+        if (code && code !== newWorkspaceForm.code.trim().toUpperCase()) {
+          setNewWorkspaceForm((prev) => ({ ...prev, code }))
         }
       }
       setNewWorkspaceWizardStep((prev) => prev + 1)
@@ -12208,7 +12235,7 @@ export function WorkspaceManagementPage() {
       setNewWorkspaceFormError('Confirm the summary to create the workspace.')
       return
     }
-    const review = validateNewWorkspaceWizardStep(6, newWorkspaceForm, allWorkspacesForList, wizardValidationOptions)
+    const review = validateNewWorkspaceWizardStep(6, newWorkspaceForm, directoryWorkspaces, wizardValidationOptions)
     if ('error' in review) {
       setNewWorkspaceFormError(review.error)
       setWizardFieldHighlights(review.highlights ?? {})
@@ -12231,7 +12258,7 @@ export function WorkspaceManagementPage() {
     setWizardFieldHighlights({})
 
     const name = newWorkspaceForm.name.trim()
-    const takenCodes = new Set(allWorkspacesForList.map((w) => w.code.toLowerCase()))
+    const takenCodes = new Set(directoryWorkspaces.map((w) => w.code.toLowerCase()).filter(Boolean))
     // The code field is auto-generated (not user-editable) — if the value already in
     // form state collides with a workspace this client currently has loaded (e.g.
     // leftover from a prior failed attempt), regenerate instead of submitting a code
@@ -12239,10 +12266,7 @@ export function WorkspaceManagementPage() {
     // workspaces are dropped from local state on delete, so the client can't see every
     // taken code — the retry loop around the actual create call below is what
     // guarantees correctness against the server's full record set.
-    const formCode = newWorkspaceForm.code.trim()
-    let codeKey = (
-      formCode && !takenCodes.has(formCode.toLowerCase()) ? formCode : generateWorkspaceCode(name, takenCodes)
-    ).toLowerCase()
+    let codeKey = allocateWorkspaceCode(name, newWorkspaceForm.code, takenCodes).toLowerCase()
 
     const primaryNode = organizationNodes.find((n) => n.id === newWorkspaceForm.primaryOrganizationId)
     const primaryOrganizationLabel = primaryNode?.label ?? newWorkspaceForm.primaryOrganizationId
@@ -12336,9 +12360,6 @@ export function WorkspaceManagementPage() {
           tectona_assets_count: 0,
           tectona_last_updated: new Date().toISOString(),
         }
-        if (newWorkspaceForm.parentWorkspaceId) {
-          metadata.parent_workspace_id = newWorkspaceForm.parentWorkspaceId
-        }
         if (newWorkspaceForm.businessOwner.trim()) {
           metadata.tectona_business_owner = businessOwnerName
         }
@@ -12372,6 +12393,15 @@ export function WorkspaceManagementPage() {
           }
           if (tenant?.workspaceId && !isAllWorkspacesSelection(tenant.workspaceId)) {
             metadata.tectona_provisioned_from_tenant_workspace_id = tenant.workspaceId
+          }
+        }
+        // Create Child Workspace (right-click a row) sets parentWorkspaceId → join the org tree.
+        // Toolbar "Create workspace" leaves it null → stays outside the organization tree.
+        const childOfDirectoryRow = newWorkspaceForm.parentWorkspaceId?.trim()
+        if (childOfDirectoryRow) {
+          metadata.parent_workspace_id = childOfDirectoryRow
+          if (!isPersonalClassification) {
+            metadata.tectona_org_directory_joined = true
           }
         }
 
@@ -12409,24 +12439,55 @@ export function WorkspaceManagementPage() {
         // organization version here (e.g. concurrent domain edits) must not abort
         // ownership/membership provisioning below and leave the new workspace
         // ownerless.
+        const domainPayload = domainRows.map((d) => ({
+          value: d.value.trim().toLowerCase(),
+          category: d.category,
+          verified: d.verified !== false,
+        }))
         const primaryOrg = organizationNodes.find((n) => n.id === orgId)
-        if (primaryOrg) {
+        const domainsUnchanged =
+          Boolean(primaryOrg)
+          && verifiedDomainListFingerprint(primaryOrg?.verifiedDomains ?? [])
+            === verifiedDomainListFingerprint(domainPayload)
+        if (primaryOrg && !domainsUnchanged) {
           try {
             await patchWorkspaceOrgOrganization(orgId, {
-              verified_domains: domainRows.map((d) => ({
-                value: d.value.trim().toLowerCase(),
-                category: d.category,
-                verified: d.verified !== false,
-              })),
+              verified_domains: domainPayload,
               version: primaryOrg.version ?? 1,
             })
           } catch (domainSyncError) {
-            console.warn('Organization domain sync skipped (workspace already created):', domainSyncError)
-            addToast({
-              variant: 'warning',
-              title: 'Domain list not updated',
-              description: 'The workspace was created, but the organization’s domain list could not be synced (stale version). Update it from Manage Primary Organization if needed.',
-            })
+            let synced = false
+            try {
+              const latest = await fetchWorkspaceOrgOrganizations({
+                page: 1,
+                page_size: 200,
+                organization_type: 'organization',
+                status_code: 'active',
+              })
+              const fresh = (latest.items ?? []).find((item) => item.id === orgId)
+              if (fresh) {
+                const freshDomains = normalizeVerifiedDomainEntries(fresh.verified_domains)
+                if (verifiedDomainListFingerprint(freshDomains) === verifiedDomainListFingerprint(domainPayload)) {
+                  synced = true
+                } else {
+                  await patchWorkspaceOrgOrganization(orgId, {
+                    verified_domains: domainPayload,
+                    version: fresh.version ?? 1,
+                  })
+                  synced = true
+                }
+              }
+            } catch {
+              synced = false
+            }
+            if (!synced) {
+              console.warn('Organization domain sync skipped (workspace already created):', domainSyncError)
+              addToast({
+                variant: 'warning',
+                title: 'Domain list not updated',
+                description: 'The workspace was created, but the organization’s domain list could not be synced (stale version). Update it from Manage Primary Organization if needed.',
+              })
+            }
           }
         }
 
@@ -20712,14 +20773,17 @@ export function WorkspaceManagementPage() {
         )}
       </div>
 
-      {/* â”€â”€ New Workspace Drawer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* New Workspace Drawer — portal to document.body so `fixed` is viewport-aligned
+          (page chrome already has pt-12 + py-3; keeping the panel in-tree stacked that offset). */}
+      {typeof document !== 'undefined'
+        ? createPortal(
+            <>
       <div
         className={cn(
-          'fixed bottom-0 left-0 right-0 top-0 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity',
+          'fixed inset-x-0 bottom-0 top-12 z-[1050] bg-black/20 backdrop-blur-sm transition-opacity',
           newWorkspaceDrawerOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
         data-tour-target="wm-new-workspace-drawer-backdrop"
-        style={{ margin: 0, padding: 0, width: '100vw', height: '100vh', top: 0, left: 0 }}
         onClick={closeNewWorkspaceDrawer}
         aria-hidden={!newWorkspaceDrawerOpen}
         role="button"
@@ -20728,14 +20792,12 @@ export function WorkspaceManagementPage() {
 
       <div
         className={cn(
-          'fixed right-0 top-0 z-[1100] flex h-screen w-[min(900px,98vw)] max-w-[98vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
+          'fixed inset-y-0 right-0 z-[1100] flex w-[min(900px,98vw)] max-w-[98vw] flex-col border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
           newWorkspaceDrawerOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
         data-tour-target="wm-new-workspace-drawer"
         style={{
           boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
-          margin: 0,
-          padding: 0,
         }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
@@ -22171,6 +22233,9 @@ export function WorkspaceManagementPage() {
           </div>
         </>
       ) : null}
+            </>
+          , document.body)
+        : null}
 
       {/* Manage Primary Organization — pattern aligned with Tilia Service Onboarding "Manage Business Domainsâ€. */}
       <div
