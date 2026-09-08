@@ -1229,6 +1229,7 @@ export async function fetchTemplateCompareOnlyOfficeConfig(
 
 export type ExplainerAssistantStatus = 'draft' | 'published' | 'archived'
 export type ExplainerAssistantVisibility = 'workspace' | 'private'
+export type ExplainerChatLimitKind = 'token' | 'question' | 'cost'
 
 /**
  * Portrait tokens, not image URLs. Each client maps a token to its own bundled
@@ -1272,6 +1273,9 @@ export interface ExplainerAssistant {
   parent_persona: string | null
   corpus: ExplainerAssistantCorpus
   access_grants?: ExplainerAccessGrant[]
+  /** Exclusive budget; omit both for unlimited. Runtime enforces on chat. */
+  chat_limit_kind?: ExplainerChatLimitKind | null
+  chat_limit_value?: number | null
   version: number
   created_date: string
   updated_date: string | null
@@ -1296,6 +1300,8 @@ export interface CreateExplainerAssistantPayload {
   avatar?: ExplainerAssistantAvatar | null
   parent_persona?: string | null
   access_grants?: ExplainerAccessGrant[]
+  chat_limit_kind?: ExplainerChatLimitKind | null
+  chat_limit_value?: number | null
 }
 
 export interface PatchExplainerAssistantPayload {
@@ -1306,6 +1312,8 @@ export interface PatchExplainerAssistantPayload {
   avatar?: ExplainerAssistantAvatar | null
   parent_persona?: string | null
   access_grants?: ExplainerAccessGrant[]
+  chat_limit_kind?: ExplainerChatLimitKind | null
+  chat_limit_value?: number | null
   /** Optimistic lock — send the version last read to detect concurrent edits. */
   version?: number
 }
@@ -1355,6 +1363,8 @@ export async function createExplainerAssistant(
       avatar: payload.avatar ?? null,
       parent_persona: payload.parent_persona ?? 'smith',
       access_grants: payload.access_grants ?? undefined,
+      chat_limit_kind: payload.chat_limit_kind ?? null,
+      chat_limit_value: payload.chat_limit_value ?? null,
     }),
   })
   return handleJson<ExplainerAssistant>(res)
@@ -1372,6 +1382,8 @@ export async function patchExplainerAssistant(
   if (payload.avatar !== undefined) body.avatar = payload.avatar
   if (payload.parent_persona !== undefined) body.parent_persona = payload.parent_persona
   if (payload.access_grants !== undefined) body.access_grants = payload.access_grants
+  if (payload.chat_limit_kind !== undefined) body.chat_limit_kind = payload.chat_limit_kind
+  if (payload.chat_limit_value !== undefined) body.chat_limit_value = payload.chat_limit_value
   if (payload.version !== undefined) body.version = payload.version
 
   const res = await apiFetch(`${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}`, {

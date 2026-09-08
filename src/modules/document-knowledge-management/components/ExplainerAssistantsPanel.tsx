@@ -33,6 +33,7 @@ import {
   type ExplainerAccessGrant,
   type ExplainerAssistant,
   type ExplainerAssistantAvatar,
+  type ExplainerChatLimitKind,
 } from '@/lib/api/documentKnowledgeApi'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import { getSession } from '@/auth/authService'
@@ -47,6 +48,10 @@ import {
   type WacRoleDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { fetchAllDocumentFolders, type DocumentFolder } from '@/lib/api/documentFolderApi'
+import {
+  fetchExplainerAssistantInsights,
+  type ExplainerAssistantInsights,
+} from '@/lib/api/tectonaAgentRuntimeApi'
 import { isFolderInSamplesTree } from '@/modules/document-knowledge-management/lib/samplesFolder'
 
 /**
@@ -95,6 +100,8 @@ interface DraftState {
   folderIds: string[]
   documentIds: string[]
   accessGrants: ExplainerAccessGrant[]
+  chatLimitKind: 'none' | ExplainerChatLimitKind
+  chatLimitValue: string
 }
 
 const EMPTY_DRAFT: DraftState = {
@@ -106,6 +113,72 @@ const EMPTY_DRAFT: DraftState = {
   folderIds: [],
   documentIds: [],
   accessGrants: [],
+  chatLimitKind: 'none',
+  chatLimitValue: '',
+}
+
+const CHAT_LIMIT_OPTIONS: Array<{
+  kind: DraftState['chatLimitKind']
+  label: string
+  hint: string
+}> = [
+  { kind: 'none', label: 'Unlimited', hint: 'No cap until you set one.' },
+  { kind: 'token', label: 'Tokens', hint: 'Total LLM tokens for this assistant.' },
+  { kind: 'question', label: 'Questions', hint: 'User questions, excluding the opening greeting.' },
+  { kind: 'cost', label: 'Cost (IDR)', hint: 'Estimated LLM cost in rupiah.' },
+]
+
+function parseChatLimitDraft(
+  kind: DraftState['chatLimitKind'],
+  rawValue: string,
+): { chat_limit_kind: ExplainerChatLimitKind | null; chat_limit_value: number | null } {
+  if (kind === 'none') {
+    return { chat_limit_kind: null, chat_limit_value: null }
+  }
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    throw new Error('Enter a chat limit greater than zero, or choose Unlimited.')
+  }
+  return {
+    chat_limit_kind: kind,
+    chat_limit_value: kind === 'question' ? Math.floor(numeric) : numeric,
+  }
+}
+
+function chatLimitDraftFromAssistant(assistant: ExplainerAssistant): {
+  chatLimitKind: DraftState['chatLimitKind']
+  chatLimitValue: string
+} {
+  const kind = assistant.chat_limit_kind
+  if (kind === 'token' || kind === 'question' || kind === 'cost') {
+    return {
+      chatLimitKind: kind,
+      chatLimitValue: assistant.chat_limit_value != null ? String(assistant.chat_limit_value) : '',
+    }
+  }
+  return { chatLimitKind: 'none', chatLimitValue: '' }
+}
+
+function chatLimitKindLabel(kind: string | null | undefined): string {
+  if (kind === 'token') return 'Tokens'
+  if (kind === 'question') return 'Questions'
+  if (kind === 'cost') return 'Cost (IDR)'
+  return 'Unlimited'
+}
+
+function formatUsageAmount(kind: string | null | undefined, value: number | null | undefined): string {
+  if (value == null) return '—'
+  if (kind === 'cost') {
+    return value.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  }
+  return String(Math.round(value))
+}
+
+function chatLimitValuePlaceholder(kind: DraftState['chatLimitKind']): string {
+  if (kind === 'token') return 'e.g. 500000'
+  if (kind === 'question') return 'e.g. 200'
+  if (kind === 'cost') return 'e.g. 250000'
+  return ''
 }
 
 function workspaceGrantLabel(workspaceName?: string | null): string {
@@ -308,6 +381,8 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   const [busyId, setBusyId] = useState<string | null>(null)
   const [menuFor, setMenuFor] = useState<GrantMenuFor | null>(null)
   const [detailFor, setDetailFor] = useState<ExplainerAssistant | null>(null)
+  const [detailInsights, setDetailInsights] = useState<ExplainerAssistantInsights | null>(null)
+  const [detailInsightsLoading, setDetailInsightsLoading] = useState(false)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerFullscreen, setDrawerFullscreen] = useState(false)
@@ -530,6 +605,31 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   ])
 
   useEffect(() => {
+    if (!detailFor) {
+      setDetailInsights(null)
+      setDetailInsightsLoading(false)
+      return
+    }
+    const assistantId = detailFor.id
+    let cancelled = false
+    setDetailInsights(null)
+    setDetailInsightsLoading(true)
+    void fetchExplainerAssistantInsights(assistantId)
+      .then((payload) => {
+        if (!cancelled) setDetailInsights(payload)
+      })
+      .catch(() => {
+        if (!cancelled) setDetailInsights(null)
+      })
+      .finally(() => {
+        if (!cancelled) setDetailInsightsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [detailFor?.id])
+
+  useEffect(() => {
     if (!detailFor) return
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setDetailFor(null)
@@ -586,6 +686,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
         workspaceId ?? assistant.workspace_id,
         workspaceName,
       ),
+      ...chatLimitDraftFromAssistant(assistant),
     })
     setSaveError(null)
     setCorpusQuery('')
@@ -802,7 +903,10 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   const showEmptyMembers = !grantRosterLoading && uniqueMembers.length === 0
   const showEmptyRoles = !grantRosterLoading && pickerRoles.length === 0
 
-  const canSave = !!workspaceId && draft.displayName.trim().length > 0
+  const chatLimitReady =
+    draft.chatLimitKind === 'none'
+    || (Number.isFinite(Number(draft.chatLimitValue)) && Number(draft.chatLimitValue) > 0)
+  const canSave = !!workspaceId && draft.displayName.trim().length > 0 && chatLimitReady
 
   const handleSave = async () => {
     if (!workspaceId || !canSave) return
@@ -810,6 +914,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     setSaveError(null)
     try {
       const corpus = { folder_ids: draft.folderIds, document_ids: draft.documentIds }
+      const chatLimit = parseChatLimitDraft(draft.chatLimitKind, draft.chatLimitValue)
       if (draft.id) {
         await patchExplainerAssistant(draft.id, {
           display_name: draft.displayName.trim(),
@@ -817,6 +922,8 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           avatar: draft.avatar,
           corpus,
           access_grants: draft.accessGrants,
+          chat_limit_kind: chatLimit.chat_limit_kind,
+          chat_limit_value: chatLimit.chat_limit_value,
           version: draft.version ?? undefined,
         })
       } else {
@@ -827,6 +934,8 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           avatar: draft.avatar,
           corpus,
           access_grants: draft.accessGrants,
+          chat_limit_kind: chatLimit.chat_limit_kind,
+          chat_limit_value: chatLimit.chat_limit_value,
         })
       }
       setDrawerOpen(false)
@@ -874,7 +983,8 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
             </div>
             <p className="mt-0.5 max-w-3xl text-[11px] text-muted-foreground">
               Assistants that only explain the documents bound to them. They carry no operational tooling — every
-              answer is grounded in a citation from their own corpus, or the assistant says it does not know.
+              answer is grounded in a citation from their own corpus. Questions outside that corpus are refused
+              politely. You can cap usage by tokens, questions, or cost.
             </p>
           </div>
         </div>
@@ -1128,8 +1238,48 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     </div>
                     <p className="text-[11px] text-muted-foreground">
                       Documents counts everything inside the bound folders plus any directly bound document. It is
-                      the only material this assistant can answer from.
+                      the only material this assistant can answer from. Questions outside that corpus are refused.
                     </p>
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Frequently asked questions
+                    </p>
+                    {detailInsightsLoading ? (
+                      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        Loading question stats…
+                      </p>
+                    ) : null}
+                    {!detailInsightsLoading && (!detailInsights || detailInsights.frequently_asked.length === 0) ? (
+                      <p className="text-xs text-muted-foreground">
+                        No user questions recorded yet. Stats appear after people chat with this assistant.
+                      </p>
+                    ) : null}
+                    {!detailInsightsLoading && detailInsights && detailInsights.frequently_asked.length > 0 ? (
+                      <ol className="space-y-1.5">
+                        {detailInsights.frequently_asked.map((item, index) => (
+                          <li
+                            key={`${item.question}-${index}`}
+                            className="flex items-start justify-between gap-3 text-xs"
+                          >
+                            <span className="min-w-0 flex-1 text-foreground">{item.question}</span>
+                            <span className="shrink-0 tabular-nums text-muted-foreground">{item.count}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : null}
+                    {detailInsights ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        Chat budget:{' '}
+                        {detailInsights.limit_kind
+                          ? `${chatLimitKindLabel(detailInsights.limit_kind)} ${formatUsageAmount(detailInsights.limit_kind, detailInsights.limit_value)} · remaining ${formatUsageAmount(detailInsights.limit_kind, detailInsights.remaining)}`
+                          : 'Unlimited'}
+                        {' · '}
+                        {detailInsights.questions_asked} questions asked
+                      </p>
+                    ) : null}
                   </section>
 
                   <section className="space-y-2">
@@ -1441,6 +1591,59 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))}
                       />
                       <p className="text-[10px] text-muted-foreground">{draft.description.length} / 500</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Chat limit</Label>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        Choose one cap for all users of this assistant, or leave it unlimited. The runtime
+                        enforces the budget before each LLM turn.
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {CHAT_LIMIT_OPTIONS.map((option) => {
+                          const selected = draft.chatLimitKind === option.kind
+                          return (
+                            <button
+                              key={option.kind}
+                              type="button"
+                              onClick={() =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  chatLimitKind: option.kind,
+                                }))
+                              }
+                              className={cn(
+                                'rounded-lg border px-3 py-2 text-left',
+                                selected ? 'border-primary/40 bg-primary/5' : 'border-border/60',
+                              )}
+                            >
+                              <span className="block text-xs font-medium text-foreground">{option.label}</span>
+                              <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                                {option.hint}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {draft.chatLimitKind !== 'none' ? (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="explainer-chat-limit-value" className="text-xs text-muted-foreground">
+                            Limit value <span className="text-red-500">*</span>
+                          </Label>
+                          <Input
+                            id="explainer-chat-limit-value"
+                            type="number"
+                            min={1}
+                            step={draft.chatLimitKind === 'cost' ? '0.01' : '1'}
+                            value={draft.chatLimitValue}
+                            placeholder={chatLimitValuePlaceholder(draft.chatLimitKind)}
+                            className="h-10 text-sm"
+                            onChange={(event) =>
+                              setDraft((prev) => ({ ...prev, chatLimitValue: event.target.value }))
+                            }
+                          />
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="space-y-2">

@@ -2191,3 +2191,32 @@ export async function listRuntimeAssistants(
   const res = await fetchWithTimeout(`${BASE_URL}/v1/assistants?${sp.toString()}`, { method: 'GET' }, 15_000)
   return handleResponse<RuntimeAssistantListResponse>(res)
 }
+
+export interface ExplainerFaqItem {
+  question: string
+  count: number
+}
+
+export interface ExplainerAssistantInsights {
+  assistant_id: string
+  frequently_asked: ExplainerFaqItem[]
+  questions_asked: number
+  tokens_used: number
+  cost_idr: number
+  limit_kind: 'token' | 'question' | 'cost' | null
+  limit_value: number | null
+  remaining: number | null
+  warnings: string[]
+  correlation_id: string
+}
+
+export async function fetchExplainerAssistantInsights(
+  assistantId: string,
+): Promise<ExplainerAssistantInsights> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/assistants/${encodeURIComponent(assistantId)}/insights`,
+    { method: 'GET' },
+    15_000,
+  )
+  return handleResponse<ExplainerAssistantInsights>(res)
+}
