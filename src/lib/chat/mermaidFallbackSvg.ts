@@ -214,12 +214,29 @@ export function parseFlowchartFallback(source: string): FallbackGraph | null {
   collapseBareFallbackNodes(nodes, edges)
   connectOrphanNodes(nodes, edges)
   normalizeEndEvents(nodes, edges)
+  promoteXorSplitsToDiamonds(nodes, edges)
   if (nodes.size === 0) return null
   return { direction, nodes: [...nodes.values()], edges }
 }
 
 export function isEndLike(node: { label: string; shape: FallbackNodeShape }): boolean {
   return /^(selesai|end)$/i.test(node.label.trim())
+}
+
+/** Exclusive split without `{…}` still renders as a BPMN gateway, not a forked rectangle. */
+function promoteXorSplitsToDiamonds(
+  nodes: Map<string, { id: string; label: string; shape: FallbackNodeShape }>,
+  edges: FallbackGraph['edges'],
+) {
+  const outgoing = new Map<string, number>()
+  for (const edge of edges) {
+    outgoing.set(edge.source, (outgoing.get(edge.source) ?? 0) + 1)
+  }
+  for (const node of nodes.values()) {
+    if ((outgoing.get(node.id) ?? 0) < 2) continue
+    if (isEventNode(node) || isEndLike(node)) continue
+    node.shape = 'diamond'
+  }
 }
 
 function normalizeEndEvents(

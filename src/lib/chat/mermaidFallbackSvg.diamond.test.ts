@@ -17,4 +17,21 @@ flowchart TD
     expect(box).toBeDefined()
     expect(box!.w).toBe(box!.h)
   })
+
+  it('promotes a task with two outgoing branches to a diamond gateway', () => {
+    const graph = parseFlowchartFallback(`
+flowchart TD
+  start((Mulai)) --> A[Tim Cabang hadapi isu nasabah]
+  A --> B[Tanya ke Chat Gen AI]
+  B --> C[Solusi diterima Real time]
+  B --> D[Sistem alihkan otomatis ke tim HO terkait]
+  C --> E[Tim HO selesaikan isu]
+  D --> E
+  E --> done((Selesai))
+`)
+    expect(graph).not.toBeNull()
+    const ask = graph!.nodes.find((node) => /tanya ke chat gen ai/i.test(node.label))
+    expect(ask?.shape).toBe('diamond')
+    expect(graph!.nodes.find((node) => /tim cabang/i.test(node.label))?.shape).toBe('rect')
+  })
 })
