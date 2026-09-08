@@ -592,16 +592,22 @@ export async function requestPartnerPasswordReset(input: {
     body: JSON.stringify({ email: normalizeLoginEmail(input.email) }),
   })
   if (!res.ok) {
+    const body = await res.text().catch(() => '')
     if (res.status === 429) {
       throw new Error('Too many reset requests. Please wait before trying again.')
     }
     if (res.status === 404) {
+      if (body.includes('password_reset_account_not_eligible')) {
+        throw new Error('No active password-based Tectona account was found for this email.')
+      }
       throw new Error('Password reset service is not available. Refresh the page and try again.')
     }
     if (res.status === 401) {
       throw new Error('Your session has expired. Sign in again before sending a reset link.')
     }
-    const body = await res.text().catch(() => '')
+    if (res.status === 503 && body.includes('password_reset_email_delivery_failed')) {
+      throw new Error('The account was found, but the email could not be delivered. Please try again shortly.')
+    }
     throw new Error(parseTokenError(res.status, body) || 'Unable to request a password reset right now.')
   }
   return res.json() as Promise<{ accepted: boolean; message: string }>
