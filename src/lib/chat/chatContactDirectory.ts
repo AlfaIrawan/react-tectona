@@ -74,17 +74,6 @@ export const COMING_SOON_AGENT_CONTACTS: ChatContact[] = [
     presence: 'offline',
   },
   {
-    id: 'agent-runtime-vanya',
-    name: 'Vanya',
-    subtitle: 'Sales, Survey & Dealer Assistant',
-    mode: 'genai',
-    initials: 'VA',
-    isAssistant: true,
-    disabled: true,
-    avatarClassName: 'bg-amber-600 text-white',
-    presence: 'offline',
-  },
-  {
     id: 'agent-runtime-desy',
     name: 'Desy',
     subtitle: 'Data Scientist Assistant',
@@ -93,17 +82,6 @@ export const COMING_SOON_AGENT_CONTACTS: ChatContact[] = [
     isAssistant: true,
     disabled: true,
     avatarClassName: 'bg-sky-600 text-white',
-    presence: 'offline',
-  },
-  {
-    id: 'agent-runtime-john',
-    name: 'John',
-    subtitle: 'Credit Assistant',
-    mode: 'genai',
-    initials: 'JO',
-    isAssistant: true,
-    disabled: true,
-    avatarClassName: 'bg-slate-600 text-white',
     presence: 'offline',
   },
 ]
@@ -138,7 +116,7 @@ export function explainerContactId(assistantId: string): string {
  * The catalog comes from tectona-agent-runtime (`GET /v1/assistants`), which reads
  * document-knowledge-management — so Tectona and Advena always show the same list and
  * neither maintains its own persona table. A published pack replaces the "coming soon"
- * placeholder that shares its name (e.g. "John"), because the real pack is now usable.
+ * placeholder that shares its name (e.g. "Desy"), because the real pack is now usable.
  */
 export async function fetchExplainerAssistantContacts(workspaceId: string): Promise<ChatContact[]> {
   if (!workspaceId.trim()) return []
@@ -169,6 +147,28 @@ export function mergeExplainerContacts(base: ChatContact[], explainers: ChatCont
   const kept = base.filter((contact) => !(contact.disabled && liveNames.has(contact.name.trim().toLowerCase())))
   const seen = new Set(kept.map((contact) => contact.id))
   return [...kept, ...explainers.filter((contact) => !seen.has(contact.id))]
+}
+
+const GENERIC_GENAI_TITLES = new Set(['new conversation', 'percakapan baru'])
+
+/** Name shown on typing/greeting status for the active Gen AI thread. */
+export function genAiAssistantDisplayName(
+  conversation: { assistantId?: string | null; title?: string | null } | null | undefined,
+  contacts: Array<{ id: string; name: string; assistantId?: string | null }> = [],
+  fallback = TECTONA_ASSISTANT_CONTACT.name,
+): string {
+  const assistantId = conversation?.assistantId?.trim()
+  if (assistantId) {
+    const match = contacts.find(
+      (contact) => contact.assistantId === assistantId || contact.id === explainerContactId(assistantId),
+    )
+    if (match?.name?.trim()) return match.name.trim()
+    const title = conversation?.title?.trim()
+    if (title && !GENERIC_GENAI_TITLES.has(title.toLowerCase()) && title !== fallback) {
+      return title
+    }
+  }
+  return fallback
 }
 
 const AVATAR_GRADIENTS = [

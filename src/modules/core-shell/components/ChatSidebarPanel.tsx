@@ -149,7 +149,7 @@ import {
   type TectonaAgentActionState,
   type TectonaProposedAction,
 } from '@/lib/chat/tectonaAgentActions'
-import { shouldOpenWorkspaceIntelligence } from '@/lib/chat/workspaceIntelligenceIntent'
+import { shouldOpenWorkspaceIntelligence, shouldOpenTaskWorkIntelligence } from '@/lib/chat/workspaceIntelligenceIntent'
 import { AssistantChatMarkdown, TECTONA_ASSISTANT_LABEL } from './AssistantChatMarkdown'
 import { AssistantActionCard } from './AssistantActionCard'
 import { ChatComposerContextToolbar } from './chat/ChatComposerContextToolbar'
@@ -180,6 +180,7 @@ import {
   TECTONA_ASSISTANT_CONTACT,
   AGENT_RUNTIME_CONTACTS,
   fetchExplainerAssistantContacts,
+  genAiAssistantDisplayName,
   mergeExplainerContacts,
   type ChatContact,
   type ChatMode,
@@ -1112,8 +1113,8 @@ async function resolveGenAiOpeningGreeting(
   }
 }
 
-function greetPreviewText(): string {
-  return `${TECTONA_ASSISTANT_LABEL} is greeting…`
+function greetPreviewText(assistantName = TECTONA_ASSISTANT_LABEL): string {
+  return `${assistantName} is greeting…`
 }
 
 function buildGenAiGreetingErrorMessage(): ChatMessage {
@@ -1154,7 +1155,15 @@ async function retryGenAiGreetingInternal(
     return { ...prev, [conversationId]: next }
   })
   opts.setConversations((prev) =>
-    prev.map((c) => (c.id === conversationId ? { ...c, preview: greetPreviewText(), updatedAt: Date.now() } : c)),
+    prev.map((c) =>
+      c.id === conversationId
+        ? {
+            ...c,
+            preview: greetPreviewText(genAiAssistantDisplayName(c)),
+            updatedAt: Date.now(),
+          }
+        : c,
+    ),
   )
 
   try {
@@ -2388,7 +2397,11 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         [conv.id]: [{ id: loadingMsgId, role: 'assistant', text: '', at: Date.now(), isLoading: true }],
       }))
       setConversations((prev) =>
-        prev.map((c) => (c.id === conv.id ? { ...c, preview: greetPreviewText(), updatedAt: Date.now() } : c)),
+        prev.map((c) =>
+          c.id === conv.id
+            ? { ...c, preview: greetPreviewText(genAiAssistantDisplayName(c, chatContacts)), updatedAt: Date.now() }
+            : c,
+        ),
       )
 
       const run = (async () => {
@@ -4778,6 +4791,18 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         }))
 
         if (
+          shouldOpenTaskWorkIntelligence({
+            userText: t,
+            assistantText: runtime.answer,
+            proposedActions: runtime.proposed_actions,
+          })
+        ) {
+          window.dispatchEvent(
+            new CustomEvent('tectona:navigate', {
+              detail: { pathname: '/task-work-management', search: null },
+            }),
+          )
+        } else if (
           shouldOpenWorkspaceIntelligence({
             userText: t,
             assistantText: runtime.answer,
@@ -8217,11 +8242,15 @@ function WhatsAppMetaRow({
   )
 }
 
-function AssistantTypingDots({ variant = 'reply' }: { variant?: 'greeting' | 'reply' }) {
+function AssistantTypingDots({
+  variant = 'reply',
+  assistantName = TECTONA_ASSISTANT_LABEL,
+}: {
+  variant?: 'greeting' | 'reply'
+  assistantName?: string
+}) {
   const statusLabel =
-    variant === 'greeting'
-      ? `${TECTONA_ASSISTANT_LABEL} is greeting…`
-      : `${TECTONA_ASSISTANT_LABEL} is thinking…`
+    variant === 'greeting' ? `${assistantName} is greeting…` : `${assistantName} is thinking…`
   return (
     <div
       className="inline-flex items-center gap-2 py-0.5"
@@ -8487,7 +8516,10 @@ function WhatsAppChatBubble({
         {showTyping ? (
           <div className="flex items-end gap-2">
             <div className="min-w-0 flex-1">
-              <AssistantTypingDots variant={m.id.startsWith('greet-loading-') ? 'greeting' : 'reply'} />
+              <AssistantTypingDots
+                variant={m.id.startsWith('greet-loading-') ? 'greeting' : 'reply'}
+                assistantName={genAiAssistantDisplayName(conversation, chatContacts)}
+              />
             </div>
             <WhatsAppMetaRow time={time} isUser={isUser} deliveryStatus={deliveryStatus} />
           </div>

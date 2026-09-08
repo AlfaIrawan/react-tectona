@@ -4,6 +4,7 @@ import {
   AGENT_RUNTIME_CONTACTS,
   buildChatContactsFromWorkspaceMembers,
   explainerContactId,
+  genAiAssistantDisplayName,
   mergeExplainerContacts,
   isPlaceholderChatContactName,
   pickChatDirectoryWorkspaceIds,
@@ -208,31 +209,52 @@ describe('isPlaceholderChatContactName', () => {
 })
 
 describe('mergeExplainerContacts', () => {
-  const john = {
+  const desy = {
     id: explainerContactId('a1'),
     assistantId: 'a1',
-    name: 'John',
-    subtitle: 'Penjelas MI Kredit',
+    name: 'Desy',
+    subtitle: 'Penjelas data scientist',
     mode: 'genai' as const,
-    initials: 'JO',
+    initials: 'DE',
     isAssistant: true,
   }
 
   it('replaces the coming-soon placeholder that shares the pack name', () => {
-    const merged = mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [john])
-    const johns = merged.filter((contact) => contact.name === 'John')
-    expect(johns).toHaveLength(1)
-    expect(johns[0].assistantId).toBe('a1')
-    expect(johns[0].disabled).toBeUndefined()
+    const merged = mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [desy])
+    const desys = merged.filter((contact) => contact.name === 'Desy')
+    expect(desys).toHaveLength(1)
+    expect(desys[0].assistantId).toBe('a1')
+    expect(desys[0].disabled).toBeUndefined()
   })
 
   it('keeps the default assistant and unrelated placeholders', () => {
-    const merged = mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [john])
+    const merged = mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [desy])
     expect(merged.find((contact) => contact.id === TECTONA_ASSISTANT_CONTACT.id)).toBeDefined()
-    expect(merged.find((contact) => contact.name === 'Vanya')?.disabled).toBe(true)
+    expect(merged.find((contact) => contact.name === 'Vena')?.disabled).toBe(true)
   })
 
   it('is a no-op when no packs are published', () => {
     expect(mergeExplainerContacts(AGENT_RUNTIME_CONTACTS, [])).toBe(AGENT_RUNTIME_CONTACTS)
+  })
+})
+
+describe('genAiAssistantDisplayName', () => {
+  it('uses the default assistant when the thread has no explainer pack', () => {
+    expect(genAiAssistantDisplayName({ title: 'New conversation' }, [])).toBe(TECTONA_ASSISTANT_CONTACT.name)
+  })
+
+  it('uses the explainer contact name when assistantId matches', () => {
+    const contact = {
+      id: explainerContactId('pack-1'),
+      name: 'Niko Explainer',
+      assistantId: 'pack-1',
+    }
+    expect(genAiAssistantDisplayName({ assistantId: 'pack-1', title: 'New conversation' }, [contact])).toBe(
+      'Niko Explainer',
+    )
+  })
+
+  it('falls back to the conversation title when contacts are not loaded yet', () => {
+    expect(genAiAssistantDisplayName({ assistantId: 'pack-1', title: 'Niko Explainer' }, [])).toBe('Niko Explainer')
   })
 })
