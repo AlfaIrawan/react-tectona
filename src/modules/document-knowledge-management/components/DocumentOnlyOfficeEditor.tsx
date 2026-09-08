@@ -67,10 +67,23 @@ function extractOnlyOfficeError(code: unknown): { code: number | null; descripti
 
 export function describeOnlyOfficeError(code: unknown): string {
   const { code: num, description } = extractOnlyOfficeError(code)
-  if (description) {
-    const lower = description.toLowerCase()
+  const cleaned = description
+    ? description
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\s+\n/g, '\n')
+        .trim()
+    : null
+  if (cleaned) {
+    const lower = cleaned.toLowerCase()
+    if (lower.includes('does not match the file extension') || lower.includes('content does not match')) {
+      return (
+        'OnlyOffice menolak file ini karena isi tidak cocok dengan ekstensi (misalnya .xlsx dibuka sebagai Word, atau unduhan HTML). '
+        + 'Coba unduh file, pastikan ekstensinya benar, lalu unggah ulang.'
+      )
+    }
     if (lower.includes('minio') || lower.includes('object storage')) {
-      return `${description} Pastikan container minio berjalan (docker start minio).`
+      return `${cleaned} Pastikan container minio berjalan (docker start minio).`
     }
   }
   switch (num) {
@@ -92,7 +105,7 @@ export function describeOnlyOfficeError(code: unknown): string {
       return 'Token JWT OnlyOffice tidak valid. Pastikan TECTONA_ONLYOFFICE_JWT_SECRET sama di container Document Server dan document-knowledge-management.'
     case -1:
     default:
-      if (description) return description
+      if (cleaned) return cleaned
       return 'OnlyOffice melaporkan error saat membuka dokumen. Periksa log container onlyoffice-documentserver dan document-knowledge-management.'
   }
 }
