@@ -5009,6 +5009,30 @@ export function DocumentKnowledgeManagementPage() {
     () => buildWorkspaceScopeFromTenant(tenant ?? undefined),
     [tenant?.selectedWorkspaceIds, tenant?.tenantMode, tenant?.workspaceId],
   )
+  const explainerWorkspaceId = resolveWorkspaceIdForWrite(dkmWorkspaceScope) ?? activeWorkspaceApiId
+  const explainerWorkspaceName = useMemo(() => {
+    if (!explainerWorkspaceId) return tenant?.displayName?.trim() || null
+    const match = userWorkspaceOptions.find(
+      (option) => option.workspaceId === explainerWorkspaceId || option.slug === explainerWorkspaceId,
+    )
+    return match?.workspaceName?.trim() || tenant?.displayName?.trim() || null
+  }, [explainerWorkspaceId, userWorkspaceOptions, tenant?.displayName])
+  const explainerWacWorkspaceId = useMemo(() => {
+    if (!explainerWorkspaceId) return null
+    const match = userWorkspaceOptions.find(
+      (option) => option.workspaceId === explainerWorkspaceId || option.slug === explainerWorkspaceId,
+    )
+    return match?.workspaceId || explainerWorkspaceId
+  }, [explainerWorkspaceId, userWorkspaceOptions])
+  const explainerAccessibleWorkspaces = useMemo(
+    () =>
+      userWorkspaceOptions.map((option) => ({
+        id: option.workspaceId,
+        name: option.workspaceName,
+        organizationId: option.organizationId,
+      })),
+    [userWorkspaceOptions],
+  )
   const adiraWorkspaceCatalog = useMemo(
     () => userWorkspaceOptions.map((option) => ({
       id: option.workspaceId,
@@ -19886,7 +19910,10 @@ export function DocumentKnowledgeManagementPage() {
             <div id="explainers" ref={explainersPanelRef} className="flex min-h-0 flex-1 flex-col">
               <ExplainerAssistantsPanel
                 ref={explainerAssistantsApiRef}
-                workspaceId={resolveWorkspaceIdForWrite(dkmWorkspaceScope) ?? activeWorkspaceApiId}
+                workspaceId={explainerWorkspaceId}
+                wacWorkspaceId={explainerWacWorkspaceId}
+                workspaceName={explainerWorkspaceName}
+                accessibleWorkspaces={explainerAccessibleWorkspaces}
                 style={resolveWorkspacePanelHeightStyle(
                   docMainPanelViewportHeightPx,
                   null,

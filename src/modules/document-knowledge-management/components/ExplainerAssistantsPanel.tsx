@@ -6,9 +6,9 @@
  * which reads this same catalog. Publishing is what makes a pack selectable in chat,
  * so the button is deliberately gated on the corpus resolving to at least one document.
  */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { Archive, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, X } from 'lucide-react'
+import { Archive, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, Shield, Users, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,9 +30,22 @@ import {
   patchExplainerAssistant,
   publishExplainerAssistant,
   type DocumentResponse,
+  type ExplainerAccessGrant,
   type ExplainerAssistant,
   type ExplainerAssistantAvatar,
 } from '@/lib/api/documentKnowledgeApi'
+import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { getSession } from '@/auth/authService'
+import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
+import { isUuidLike } from '@/modules/projects/lib/projectMemberIdentity'
+import { identityUserDisplayName, resolveActiveWorkspaceMembershipRows } from '@/modules/task-work-management/utils/tectonaAssigneeOptions'
+import {
+  fetchWorkspaceMembers,
+  fetchWorkspaceRoles,
+  TECTONA_WAC_APP_ID,
+  type WacMembershipDto,
+  type WacRoleDto,
+} from '@/lib/api/workspaceAccessControlApi'
 import { fetchAllDocumentFolders, type DocumentFolder } from '@/lib/api/documentFolderApi'
 import { isFolderInSamplesTree } from '@/modules/document-knowledge-management/lib/samplesFolder'
 
@@ -45,10 +58,32 @@ export interface ExplainerAssistantsPanelHandle {
   openCreate: () => void
 }
 
+interface AccessibleWorkspaceOption {
+  id: string
+  name: string
+  organizationId?: string
+}
+
+interface GrantMemberRow extends WacMembershipDto {
+  workspaceNames: string[]
+}
+
 interface ExplainerAssistantsPanelProps {
   workspaceId: string | null
+  /** WAC directory id (UUID). May differ from DKM `workspaceId` when the switcher holds a slug. */
+  wacWorkspaceId?: string | null
+  /** Display name of the Tectona workspace this pack is stored in (tenant switcher). */
+  workspaceName?: string | null
+  /** Workspaces the current user can grant chat access to (switcher roster). */
+  accessibleWorkspaces?: AccessibleWorkspaceOption[]
   className?: string
   style?: React.CSSProperties
+}
+
+interface GrantMenuFor {
+  assistant: ExplainerAssistant
+  x: number
+  y: number
 }
 
 interface DraftState {
@@ -59,6 +94,7 @@ interface DraftState {
   avatar: ExplainerAssistantAvatar
   folderIds: string[]
   documentIds: string[]
+  accessGrants: ExplainerAccessGrant[]
 }
 
 const EMPTY_DRAFT: DraftState = {
@@ -69,6 +105,101 @@ const EMPTY_DRAFT: DraftState = {
   avatar: 'meta-human-adira-01',
   folderIds: [],
   documentIds: [],
+  accessGrants: [],
+}
+
+function workspaceGrantLabel(workspaceName?: string | null): string {
+  const name = (workspaceName || '').trim()
+  return name ? `Everyone in ${name}` : 'Everyone in this workspace'
+}
+
+function defaultWorkspaceGrant(workspaceId: string, workspaceName?: string | null): ExplainerAccessGrant {
+  return { kind: 'workspace', value: workspaceId, label: workspaceGrantLabel(workspaceName) }
+}
+
+function grantsFromAssistant(
+  assistant: ExplainerAssistant,
+  workspaceId: string,
+  workspaceName?: string | null,
+): ExplainerAccessGrant[] {
+  if (Array.isArray(assistant.access_grants)) return assistant.access_grants
+  if (assistant.visibility === 'private') return []
+  return [defaultWorkspaceGrant(workspaceId, workspaceName)]
+}
+
+function grantIdentity(grant: ExplainerAccessGrant): string {
+  const value = grant.kind === 'role' ? grant.value.toLowerCase() : grant.value
+  return `${grant.kind}:${value}`
+}
+
+function hasGrant(grants: ExplainerAccessGrant[], kind: ExplainerAccessGrant['kind'], value: string): boolean {
+  return grants.some((grant) => grantIdentity(grant) === grantIdentity({ kind, value }))
+}
+
+function toggleAccessGrant(grants: ExplainerAccessGrant[], next: ExplainerAccessGrant): ExplainerAccessGrant[] {
+  const key = grantIdentity(next)
+  return grants.some((grant) => grantIdentity(grant) === key)
+    ? grants.filter((grant) => grantIdentity(grant) !== key)
+    : [...grants, next]
+}
+
+const ORG_GRANT_ROSTER_KEY = '__organization__'
+
+interface GrantRosterMerge {
+  members: GrantMemberRow[]
+  roles: WacRoleDto[]
+}
+
+interface GrantRosterWorkspaceBatch {
+  workspace: AccessibleWorkspaceOption
+  memberItems: WacMembershipDto[]
+}
+
+type GrantBrowseMode = 'workspace' | 'users'
+
+function mergeGrantRoster(
+  rosterResults: GrantRosterWorkspaceBatch[],
+  roleItems: WacRoleDto[],
+  preferredWorkspaceId?: string,
+): GrantRosterMerge {
+  const membersBySubject = new Map<string, GrantMemberRow>()
+  const roleByCode = new Map<string, WacRoleDto>()
+  for (const role of roleItems) {
+    if (role.role_code) roleByCode.set(role.role_code.toLowerCase(), role)
+  }
+  for (const { workspace, memberItems } of rosterResults) {
+    for (const member of memberItems) {
+      const existing = membersBySubject.get(member.subject_id)
+      if (existing) {
+        if (workspace.name && !existing.workspaceNames.includes(workspace.name)) {
+          existing.workspaceNames = [...existing.workspaceNames, workspace.name]
+        }
+        if (preferredWorkspaceId && workspace.id === preferredWorkspaceId) {
+          existing.role_code = member.role_code
+          existing.role_display_name = member.role_display_name
+        }
+        continue
+      }
+      membersBySubject.set(member.subject_id, {
+        ...member,
+        workspaceNames: workspace.name ? [workspace.name] : [],
+      })
+      const code = member.role_code?.trim()
+      if (code && !roleByCode.has(code.toLowerCase())) {
+        roleByCode.set(code.toLowerCase(), {
+          id: `from-member:${code}`,
+          role_code: code,
+          display_name: member.role_display_name?.trim() || code,
+        })
+      }
+    }
+  }
+  return {
+    members: Array.from(membersBySubject.values()),
+    roles: Array.from(roleByCode.values()).sort((left, right) =>
+      left.display_name.localeCompare(right.display_name, undefined, { sensitivity: 'base' }),
+    ),
+  }
 }
 
 /**
@@ -158,17 +289,24 @@ function statusEdge(status: ExplainerAssistant['status']): string {
   return 'from-amber-300/50 via-amber-500 to-amber-600/70'
 }
 
-export const ExplainerAssistantsPanel = forwardRef<
-  ExplainerAssistantsPanelHandle,
-  ExplainerAssistantsPanelProps
->(function ExplainerAssistantsPanel({ workspaceId, className, style }, ref) {
+export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsPanel(
+  {
+    workspaceId,
+    wacWorkspaceId,
+    workspaceName,
+    accessibleWorkspaces = [],
+    className,
+    style,
+  }: ExplainerAssistantsPanelProps,
+  ref: Ref<ExplainerAssistantsPanelHandle>,
+) {
   const [assistants, setAssistants] = useState<ExplainerAssistant[]>([])
   const [folders, setFolders] = useState<DocumentFolder[]>([])
   const [documents, setDocuments] = useState<DocumentResponse[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [menuFor, setMenuFor] = useState<{ assistant: ExplainerAssistant; x: number; y: number } | null>(null)
+  const [menuFor, setMenuFor] = useState<GrantMenuFor | null>(null)
   const [detailFor, setDetailFor] = useState<ExplainerAssistant | null>(null)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -179,6 +317,15 @@ export const ExplainerAssistantsPanel = forwardRef<
   const [corpusQuery, setCorpusQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
+  const [grantQuery, setGrantQuery] = useState('')
+  const [grantBrowseMode, setGrantBrowseMode] = useState<GrantBrowseMode>('workspace')
+  const [grantPickerWorkspaceId, setGrantPickerWorkspaceId] = useState<string | null>(null)
+  const [membershipWorkspaceIds, setMembershipWorkspaceIds] = useState<string[] | null>(null)
+  const [membersByWorkspaceId, setMembersByWorkspaceId] = useState<Record<string, GrantMemberRow[]>>({})
+  const [rolesByWorkspaceId, setRolesByWorkspaceId] = useState<Record<string, WacRoleDto[]>>({})
+  const [identityNameById, setIdentityNameById] = useState<Map<string, string>>(new Map())
+  const [grantRosterLoading, setGrantRosterLoading] = useState(false)
+  const [grantRosterError, setGrantRosterError] = useState<string | null>(null)
 
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]))
@@ -240,6 +387,149 @@ export const ExplainerAssistantsPanel = forwardRef<
   }, [drawerOpen, detailFor, workspaceId])
 
   useEffect(() => {
+    if (!drawerOpen || !workspaceId) return
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const identityItems = await fetchIdentityUsers({ limit: 400, offset: 0 })
+          .then((res) => res.items)
+          .catch(() => [] as IdentityUserDto[])
+        if (cancelled) return
+        const nameById = new Map<string, string>()
+        for (const user of identityItems) {
+          const name = identityUserDisplayName(user)
+          if (name) nameById.set(user.id, name)
+        }
+        setIdentityNameById(nameById)
+      } catch {
+        if (!cancelled) setIdentityNameById(new Map())
+      }
+    })()
+
+    const subjectId = getSession()?.user?.id?.trim()
+    if (subjectId) {
+      void fetchSubjectMembershipsCached(subjectId, { activeOnly: true })
+        .then((res) => {
+          if (cancelled) return
+          setMembershipWorkspaceIds(
+            (res.items ?? [])
+              .map((item) => (item.workspace_id || '').trim())
+              .filter(Boolean),
+          )
+        })
+        .catch(() => {
+          if (!cancelled) setMembershipWorkspaceIds(null)
+        })
+    } else if (!cancelled) {
+      setMembershipWorkspaceIds(null)
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [drawerOpen, workspaceId])
+
+  useEffect(() => {
+    if (!drawerOpen) return
+    const packId = (wacWorkspaceId || workspaceId || '').trim()
+    const catalog =
+      accessibleWorkspaces.length > 0
+        ? accessibleWorkspaces
+        : [{ id: packId, name: workspaceName?.trim() || 'This workspace' }]
+    const selectedId = (grantPickerWorkspaceId || '').trim()
+
+    let rosterTargets: AccessibleWorkspaceOption[] = []
+    let rosterKey = selectedId
+    let rolesWorkspaceId = selectedId
+
+    if (grantBrowseMode === 'workspace') {
+      if (!selectedId) {
+        setGrantRosterLoading(false)
+        setGrantRosterError(null)
+        return
+      }
+      const selected = catalog.find((item) => item.id === selectedId)
+      rosterTargets = [
+        {
+          id: selectedId,
+          name: selected?.name || workspaceName?.trim() || 'This workspace',
+          organizationId: selected?.organizationId,
+        },
+      ]
+    } else {
+      rosterKey = ORG_GRANT_ROSTER_KEY
+      rolesWorkspaceId = packId || selectedId
+      const packOrgId = (
+        catalog.find((item) => item.id === packId)?.organizationId
+        || catalog.find((item) => item.id === selectedId)?.organizationId
+        || ''
+      ).trim()
+      rosterTargets = catalog.filter((item) => {
+        if (!item.id.trim()) return false
+        if (membershipWorkspaceIds && membershipWorkspaceIds.length > 0 && !membershipWorkspaceIds.includes(item.id)) {
+          return item.id === packId
+        }
+        if (packOrgId && (item.organizationId || '').trim() && (item.organizationId || '').trim() !== packOrgId) {
+          return false
+        }
+        return true
+      })
+      if (rosterTargets.length === 0 && packId) {
+        rosterTargets = [{ id: packId, name: workspaceName?.trim() || 'This workspace' }]
+      }
+    }
+
+    let cancelled = false
+    setGrantRosterLoading(true)
+    setGrantRosterError(null)
+
+    void (async () => {
+      try {
+        const [roleItems, rosterResults] = await Promise.all([
+          rolesWorkspaceId
+            ? fetchWorkspaceRoles(TECTONA_WAC_APP_ID, rolesWorkspaceId)
+                .then((res) => res.items)
+                .catch(() => [] as WacRoleDto[])
+            : Promise.resolve([] as WacRoleDto[]),
+          Promise.all(
+            rosterTargets.map(async (workspace) => ({
+              workspace,
+              memberItems: await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspace.id)
+                .then((res) => resolveActiveWorkspaceMembershipRows(res.items))
+                .catch(() => [] as WacMembershipDto[]),
+            })),
+          ),
+        ])
+        if (cancelled) return
+        const merged = mergeGrantRoster(rosterResults, roleItems, rolesWorkspaceId)
+        setMembersByWorkspaceId((prev) => ({ ...prev, [rosterKey]: merged.members }))
+        setRolesByWorkspaceId((prev) => ({ ...prev, [rosterKey]: merged.roles }))
+        setGrantRosterError(
+          merged.members.length === 0 && rosterTargets.some((item) => !isUuidLike(item.id))
+            ? 'Workspace Access Control needs workspace UUIDs to list members.'
+            : null,
+        )
+      } finally {
+        if (!cancelled) setGrantRosterLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    drawerOpen,
+    grantBrowseMode,
+    grantPickerWorkspaceId,
+    accessibleWorkspaces,
+    membershipWorkspaceIds,
+    wacWorkspaceId,
+    workspaceId,
+    workspaceName,
+  ])
+
+  useEffect(() => {
     if (!detailFor) return
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setDetailFor(null)
@@ -264,13 +554,21 @@ export const ExplainerAssistantsPanel = forwardRef<
   }, [drawerOpen, drawerFullscreen, closeDrawer])
 
   const openCreate = useCallback(() => {
-    setDraft(EMPTY_DRAFT)
+    setDraft({
+      ...EMPTY_DRAFT,
+      accessGrants: (wacWorkspaceId || workspaceId)
+        ? [defaultWorkspaceGrant(wacWorkspaceId || workspaceId, workspaceName)]
+        : [],
+    })
     setSaveError(null)
     setCorpusQuery('')
+    setGrantQuery('')
+    setGrantBrowseMode('workspace')
+    setGrantPickerWorkspaceId(wacWorkspaceId || workspaceId || null)
     setCurrentFolderId(null)
     setDrawerFullscreen(false)
     setDrawerOpen(true)
-  }, [])
+  }, [workspaceId, wacWorkspaceId, workspaceName])
 
   useImperativeHandle(ref, () => ({ openCreate }), [openCreate])
 
@@ -283,9 +581,17 @@ export const ExplainerAssistantsPanel = forwardRef<
       avatar: assistant.avatar ?? 'meta-human-adira-01',
       folderIds: assistant.corpus.folder_ids ?? [],
       documentIds: assistant.corpus.document_ids ?? [],
+      accessGrants: grantsFromAssistant(
+        assistant,
+        workspaceId ?? assistant.workspace_id,
+        workspaceName,
+      ),
     })
     setSaveError(null)
     setCorpusQuery('')
+    setGrantQuery('')
+    setGrantBrowseMode('workspace')
+    setGrantPickerWorkspaceId(wacWorkspaceId || workspaceId || null)
     setCurrentFolderId(null)
     setDrawerFullscreen(false)
     setDrawerOpen(true)
@@ -424,6 +730,78 @@ export const ExplainerAssistantsPanel = forwardRef<
     [documents],
   )
 
+  const uniqueMembers = useMemo(() => {
+    const rosterKey =
+      grantBrowseMode === 'users' ? ORG_GRANT_ROSTER_KEY : (grantPickerWorkspaceId || '').trim()
+    if (!rosterKey) return []
+    return (membersByWorkspaceId[rosterKey] ?? [])
+      .slice()
+      .sort((left, right) => {
+        const leftName = identityNameById.get(left.subject_id) || left.subject_id
+        const rightName = identityNameById.get(right.subject_id) || right.subject_id
+        return leftName.localeCompare(rightName, undefined, { sensitivity: 'base' })
+      })
+  }, [grantBrowseMode, grantPickerWorkspaceId, membersByWorkspaceId, identityNameById])
+
+  const pickerRoles = useMemo(() => {
+    const rosterKey =
+      grantBrowseMode === 'users' ? ORG_GRANT_ROSTER_KEY : (grantPickerWorkspaceId || '').trim()
+    if (!rosterKey) return []
+    return rolesByWorkspaceId[rosterKey] ?? []
+  }, [grantBrowseMode, grantPickerWorkspaceId, rolesByWorkspaceId])
+
+  const workspaceGrantTargets = useMemo(() => {
+    const packId = (wacWorkspaceId || workspaceId || '').trim()
+    const merged = new Map<string, AccessibleWorkspaceOption>()
+    for (const item of accessibleWorkspaces) {
+      if (!item.id.trim()) continue
+      if (
+        membershipWorkspaceIds
+        && membershipWorkspaceIds.length > 0
+        && !membershipWorkspaceIds.includes(item.id)
+        && item.id !== packId
+      ) {
+        continue
+      }
+      if (!merged.has(item.id)) merged.set(item.id, item)
+    }
+    if (merged.size === 0 && packId) {
+      return [{ id: packId, name: workspaceName?.trim() || 'This workspace' }]
+    }
+    return Array.from(merged.values()).sort((left, right) => {
+      if (packId && left.id === packId) return -1
+      if (packId && right.id === packId) return 1
+      return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+    })
+  }, [accessibleWorkspaces, membershipWorkspaceIds, wacWorkspaceId, workspaceId, workspaceName])
+
+  const pickerWorkspace = useMemo(
+    () => workspaceGrantTargets.find((item) => item.id === grantPickerWorkspaceId) ?? null,
+    [workspaceGrantTargets, grantPickerWorkspaceId],
+  )
+
+  const everyoneSelected = Boolean(
+    pickerWorkspace && hasGrant(draft.accessGrants, 'workspace', pickerWorkspace.id),
+  )
+
+  const pickerHasSelectedMember = uniqueMembers.some((member) =>
+    hasGrant(draft.accessGrants, 'user', member.subject_id),
+  )
+  const grantRosterLoadingLabel =
+    grantBrowseMode === 'users'
+      ? 'organization users'
+      : `members of ${pickerWorkspace?.name || 'this workspace'}`
+  const emptyMembersHint = grantRosterError
+    ? 'Members could not be loaded.'
+    : grantBrowseMode === 'users'
+      ? 'No organization users found.'
+      : `No active members in ${pickerWorkspace?.name || 'this workspace'}.`
+  const showWorkspacePicker = grantBrowseMode === 'workspace'
+  const showPickWorkspaceHint = showWorkspacePicker && !grantPickerWorkspaceId
+  const showMemberRoster = grantBrowseMode === 'users' || Boolean(grantPickerWorkspaceId)
+  const showEmptyMembers = !grantRosterLoading && uniqueMembers.length === 0
+  const showEmptyRoles = !grantRosterLoading && pickerRoles.length === 0
+
   const canSave = !!workspaceId && draft.displayName.trim().length > 0
 
   const handleSave = async () => {
@@ -438,6 +816,7 @@ export const ExplainerAssistantsPanel = forwardRef<
           description: draft.description.trim() || null,
           avatar: draft.avatar,
           corpus,
+          access_grants: draft.accessGrants,
           version: draft.version ?? undefined,
         })
       } else {
@@ -447,6 +826,7 @@ export const ExplainerAssistantsPanel = forwardRef<
           description: draft.description.trim() || null,
           avatar: draft.avatar,
           corpus,
+          access_grants: draft.accessGrants,
         })
       }
       setDrawerOpen(false)
@@ -997,6 +1377,42 @@ export const ExplainerAssistantsPanel = forwardRef<
                   className="flex min-h-0 flex-1 flex-col"
                 >
                   <div className="min-h-0 min-w-0 flex-1 space-y-5 overflow-x-hidden overflow-y-auto px-5 py-5 scrollbar-hide">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Avatar</Label>
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={AVATAR_SRC[draft.avatar]}
+                          alt=""
+                          aria-hidden
+                          className="h-14 w-14 shrink-0 rounded-full bg-muted object-cover"
+                        />
+                        <p className="min-w-0 text-[11px] text-muted-foreground">{AVATAR_LABEL[draft.avatar]}</p>
+                      </div>
+                      <div className="grid grid-cols-5 gap-2 sm:grid-cols-9">
+                        {EXPLAINER_AVATARS.map((token) => (
+                          <button
+                            key={token}
+                            type="button"
+                            onClick={() => setDraft((prev) => ({ ...prev, avatar: token }))}
+                            aria-label={AVATAR_LABEL[token]}
+                            aria-pressed={draft.avatar === token}
+                            title={AVATAR_LABEL[token]}
+                            className={cn(
+                              'aspect-square overflow-hidden rounded-full bg-muted transition-transform',
+                              draft.avatar === token
+                                ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
+                                : 'opacity-80 hover:scale-105 hover:opacity-100',
+                            )}
+                          >
+                            <img src={AVATAR_SRC[token]} alt="" className="h-full w-full object-cover" />
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        The same avatar is rendered in the assistant picker of both chat clients.
+                      </p>
+                    </div>
+
                     <div className="space-y-1.5">
                       <Label htmlFor="explainer-name" className="text-xs text-muted-foreground">
                         Display name <span className="text-red-500">*</span>
@@ -1028,44 +1444,301 @@ export const ExplainerAssistantsPanel = forwardRef<
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-xs text-muted-foreground">Avatar</Label>
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={AVATAR_SRC[draft.avatar]}
-                          alt=""
-                          aria-hidden
-                          className="h-14 w-14 shrink-0 rounded-full bg-muted object-cover"
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-foreground">
-                            {draft.displayName.trim() || 'Untitled assistant'}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">{AVATAR_LABEL[draft.avatar]}</p>
-                        </div>
+                      <Label htmlFor="explainer-grant-workspace" className="text-xs text-muted-foreground">
+                        Who can chat
+                      </Label>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        This assistant is stored in{' '}
+                        <span className="font-medium text-foreground">
+                          {workspaceName?.trim() || 'the currently selected workspace'}
+                        </span>
+                        . Use <span className="font-medium text-foreground">By workspace</span> to grant
+                        everyone or members of one workspace. Use{' '}
+                        <span className="font-medium text-foreground">By all users</span> when you want
+                        people from the organization, regardless of workspace. Roles appear after you
+                        select a member. Grants combine with OR.
+                      </p>
+                      <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/30 p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGrantBrowseMode('workspace')
+                            setGrantQuery('')
+                          }}
+                          className={cn(
+                            'rounded-md px-2 py-1.5 text-xs font-medium',
+                            grantBrowseMode === 'workspace'
+                              ? 'bg-background text-foreground shadow-sm'
+                              : 'text-muted-foreground',
+                          )}
+                        >
+                          By workspace
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGrantBrowseMode('users')
+                            setGrantQuery('')
+                          }}
+                          className={cn(
+                            'rounded-md px-2 py-1.5 text-xs font-medium',
+                            grantBrowseMode === 'users'
+                              ? 'bg-background text-foreground shadow-sm'
+                              : 'text-muted-foreground',
+                          )}
+                        >
+                          By all users
+                        </button>
                       </div>
-                      <div className="grid grid-cols-5 gap-2 sm:grid-cols-9">
-                        {EXPLAINER_AVATARS.map((token) => (
+                      {draft.accessGrants.length === 0 ? (
+                        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                          No grants selected. Publishing will still work, but chat will be denied for everyone.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {draft.accessGrants.map((grant) => {
+                            let chipLabel = grant.label
+                            if (!chipLabel) {
+                              if (grant.kind === 'workspace') {
+                                const workspaceLabel = workspaceGrantTargets.find((item) => item.id === grant.value)?.name
+                                chipLabel = workspaceGrantLabel(workspaceLabel)
+                              } else if (grant.kind === 'user') {
+                                chipLabel = identityNameById.get(grant.value) || grant.value
+                              } else {
+                                chipLabel = grant.value
+                              }
+                            }
+                            return (
+                              <button
+                                key={grantIdentity(grant)}
+                                type="button"
+                                onClick={() =>
+                                  setDraft((prev) => ({
+                                    ...prev,
+                                    accessGrants: prev.accessGrants.filter(
+                                      (item) => grantIdentity(item) !== grantIdentity(grant),
+                                    ),
+                                  }))
+                                }
+                                className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] text-foreground"
+                              >
+                                <span className="truncate">{chipLabel}</span>
+                                <X className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {showWorkspacePicker ? (
+                      <select
+                        id="explainer-grant-workspace"
+                        value={grantPickerWorkspaceId || ''}
+                        onChange={(event) => {
+                          setGrantQuery('')
+                          setGrantPickerWorkspaceId(event.target.value || null)
+                        }}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="">Select a workspace...</option>
+                        {workspaceGrantTargets.map((workspace) => (
+                          <option key={workspace.id} value={workspace.id}>
+                            {workspace.name}
+                            {workspace.id === (wacWorkspaceId || workspaceId) ? ' (this assistant workspace)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">
+                          Showing people from the organization across workspaces you belong to.
+                        </p>
+                      )}
+                      {showPickWorkspaceHint ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          Choose a workspace to see its members.
+                        </p>
+                      ) : null}
+                      {showMemberRoster ? (
+                        <div className="space-y-2">
+                          {grantRosterError ? (
+                            <p className="text-[11px] text-amber-700 dark:text-amber-400">{grantRosterError}</p>
+                          ) : null}
+                          {showWorkspacePicker ? (
                           <button
-                            key={token}
                             type="button"
-                            onClick={() => setDraft((prev) => ({ ...prev, avatar: token }))}
-                            aria-label={AVATAR_LABEL[token]}
-                            aria-pressed={draft.avatar === token}
-                            title={AVATAR_LABEL[token]}
+                            onClick={() => {
+                              if (!pickerWorkspace) return
+                              setDraft((prev) => ({
+                                ...prev,
+                                accessGrants: toggleAccessGrant(
+                                  prev.accessGrants,
+                                  defaultWorkspaceGrant(pickerWorkspace.id, pickerWorkspace.name),
+                                ),
+                              }))
+                            }}
                             className={cn(
-                              'aspect-square overflow-hidden rounded-full bg-muted transition-transform',
-                              draft.avatar === token
-                                ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                                : 'opacity-80 hover:scale-105 hover:opacity-100',
+                              'flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm',
+                              everyoneSelected ? 'border-primary/40 bg-primary/5' : 'border-border/60',
                             )}
                           >
-                            <img src={AVATAR_SRC[token]} alt="" className="h-full w-full object-cover" />
+                            <span
+                              className={cn(
+                                'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                                everyoneSelected
+                                  ? 'border-primary bg-primary text-primary-foreground'
+                                  : 'border-muted-foreground/40 bg-background',
+                              )}
+                            >
+                              {everyoneSelected ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : null}
+                            </span>
+                            <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                            <span className="min-w-0">
+                              <span className="block truncate">
+                                {workspaceGrantLabel(pickerWorkspace?.name)}
+                              </span>
+                              <span className="block text-[10px] font-normal text-muted-foreground">
+                                Select all members in this workspace
+                              </span>
+                            </span>
                           </button>
-                        ))}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        The same avatar is rendered in the assistant picker of both chat clients.
-                      </p>
+                          ) : null}
+                          <div className="relative">
+                            <Search
+                              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <Input
+                              value={grantQuery}
+                              onChange={(event) => setGrantQuery(event.target.value)}
+                              placeholder={pickerHasSelectedMember ? 'Search members or roles…' : 'Search members…'}
+                              className="h-9 pl-8 text-sm"
+                            />
+                          </div>
+                          {grantRosterLoading ? (
+                            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                              Loading {grantRosterLoadingLabel}…
+                            </p>
+                          ) : null}
+                          <div className="max-h-56 space-y-3 overflow-y-auto rounded-lg border border-border/60 p-2">
+                            <div>
+                              <p className="mb-1 flex items-center gap-1 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                <Users className="h-3 w-3" aria-hidden />
+                                Members
+                              </p>
+                              {uniqueMembers
+                                .filter((member) => {
+                                  const q = grantQuery.trim().toLowerCase()
+                                  if (!q) return true
+                                  const name = (identityNameById.get(member.subject_id) || member.subject_id).toLowerCase()
+                                  return (
+                                    name.includes(q)
+                                    || member.role_code.toLowerCase().includes(q)
+                                  )
+                                })
+                                .map((member) => {
+                                  const label = identityNameById.get(member.subject_id) || member.subject_id
+                                  const selected = hasGrant(draft.accessGrants, 'user', member.subject_id)
+                                  return (
+                                    <button
+                                      key={member.id}
+                                      type="button"
+                                      onClick={() =>
+                                        setDraft((prev) => ({
+                                          ...prev,
+                                          accessGrants: toggleAccessGrant(prev.accessGrants, {
+                                            kind: 'user',
+                                            value: member.subject_id,
+                                            label,
+                                          }),
+                                        }))
+                                      }
+                                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted/50"
+                                    >
+                                      <span
+                                        className={cn(
+                                          'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                                          selected
+                                            ? 'border-primary bg-primary text-primary-foreground'
+                                            : 'border-muted-foreground/40 bg-background',
+                                        )}
+                                      >
+                                        {selected ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : null}
+                                      </span>
+                                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                                      <span className="max-w-[42%] shrink-0 truncate text-[10px] text-muted-foreground">
+                                        {(member.workspaceNames ?? []).join(' · ')
+                                          || member.role_display_name
+                                          || member.role_code}
+                                      </span>
+                                    </button>
+                                  )
+                                })}
+                              {showEmptyMembers ? (
+                                <p className="px-2 py-1 text-[11px] text-muted-foreground">
+                                  {emptyMembersHint}
+                                </p>
+                              ) : null}
+                            </div>
+                            {pickerHasSelectedMember ? (
+                            <div>
+                              <p className="mb-1 flex items-center gap-1 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                <Shield className="h-3 w-3" aria-hidden />
+                                Roles
+                              </p>
+                              {pickerRoles
+                                .filter((role) => {
+                                  const q = grantQuery.trim().toLowerCase()
+                                  if (!q) return true
+                                  return (
+                                    role.role_code.toLowerCase().includes(q) ||
+                                    role.display_name.toLowerCase().includes(q)
+                                  )
+                                })
+                                .map((role) => {
+                                  const selected = hasGrant(draft.accessGrants, 'role', role.role_code)
+                                  return (
+                                    <button
+                                      key={role.id}
+                                      type="button"
+                                      onClick={() =>
+                                        setDraft((prev) => ({
+                                          ...prev,
+                                          accessGrants: toggleAccessGrant(prev.accessGrants, {
+                                            kind: 'role',
+                                            value: role.role_code,
+                                            label: role.display_name,
+                                          }),
+                                        }))
+                                      }
+                                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted/50"
+                                    >
+                                      <span
+                                        className={cn(
+                                          'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                                          selected
+                                            ? 'border-primary bg-primary text-primary-foreground'
+                                            : 'border-muted-foreground/40 bg-background',
+                                        )}
+                                      >
+                                        {selected ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : null}
+                                      </span>
+                                      <span className="min-w-0 flex-1 truncate">{role.display_name}</span>
+                                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                                        {role.role_code}
+                                      </span>
+                                    </button>
+                                  )
+                                })}
+                              {showEmptyRoles ? (
+                                <p className="px-2 py-1 text-[11px] text-muted-foreground">
+                                  No workspace roles available yet.
+                                </p>
+                              ) : null}
+                            </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="space-y-2">

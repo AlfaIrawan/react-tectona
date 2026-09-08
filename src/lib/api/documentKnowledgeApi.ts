@@ -1252,6 +1252,14 @@ export interface ExplainerAssistantCorpus {
   folder_ids: string[]
 }
 
+export type ExplainerAccessGrantKind = 'workspace' | 'user' | 'role'
+
+export interface ExplainerAccessGrant {
+  kind: ExplainerAccessGrantKind
+  value: string
+  label?: string | null
+}
+
 export interface ExplainerAssistant {
   id: string
   workspace_id: string
@@ -1263,6 +1271,7 @@ export interface ExplainerAssistant {
   avatar: ExplainerAssistantAvatar | null
   parent_persona: string | null
   corpus: ExplainerAssistantCorpus
+  access_grants?: ExplainerAccessGrant[]
   version: number
   created_date: string
   updated_date: string | null
@@ -1286,6 +1295,7 @@ export interface CreateExplainerAssistantPayload {
   visibility?: ExplainerAssistantVisibility
   avatar?: ExplainerAssistantAvatar | null
   parent_persona?: string | null
+  access_grants?: ExplainerAccessGrant[]
 }
 
 export interface PatchExplainerAssistantPayload {
@@ -1295,6 +1305,7 @@ export interface PatchExplainerAssistantPayload {
   visibility?: ExplainerAssistantVisibility
   avatar?: ExplainerAssistantAvatar | null
   parent_persona?: string | null
+  access_grants?: ExplainerAccessGrant[]
   /** Optimistic lock — send the version last read to detect concurrent edits. */
   version?: number
 }
@@ -1343,6 +1354,7 @@ export async function createExplainerAssistant(
       visibility: payload.visibility ?? 'workspace',
       avatar: payload.avatar ?? null,
       parent_persona: payload.parent_persona ?? 'smith',
+      access_grants: payload.access_grants ?? undefined,
     }),
   })
   return handleJson<ExplainerAssistant>(res)
@@ -1359,6 +1371,7 @@ export async function patchExplainerAssistant(
   if (payload.visibility !== undefined) body.visibility = payload.visibility
   if (payload.avatar !== undefined) body.avatar = payload.avatar
   if (payload.parent_persona !== undefined) body.parent_persona = payload.parent_persona
+  if (payload.access_grants !== undefined) body.access_grants = payload.access_grants
   if (payload.version !== undefined) body.version = payload.version
 
   const res = await apiFetch(`${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}`, {
