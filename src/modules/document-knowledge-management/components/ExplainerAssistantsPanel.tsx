@@ -855,10 +855,32 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   }, [detailInsights])
 
   const faqChartHeight = Math.min(320, Math.max(128, repeatedFaq.length * 36))
+  const askedDocuments = useMemo(() => {
+    const items = detailInsights?.documents_asked ?? []
+    const usedLabels = new Set<string>()
+    return items.map((item, index) => {
+      const resolvedTitle =
+        (item.document_id ? documentTitleById.get(item.document_id) : undefined) || item.title || 'Document'
+      let label = truncateFaqLabel(resolvedTitle)
+      if (usedLabels.has(label)) {
+        label = truncateFaqLabel(`${index + 1}. ${resolvedTitle}`)
+      }
+      usedLabels.add(label)
+      return {
+        title: resolvedTitle,
+        count: item.count,
+        label,
+        documentId: item.document_id,
+      }
+    })
+  }, [detailInsights, documentTitleById])
+  const documentsChartHeight = Math.min(320, Math.max(128, askedDocuments.length * 36))
   const askedAnyQuestions = (detailInsights?.questions_asked ?? 0) > 0
   const showFaqNoneAsked = !detailInsightsLoading && Boolean(detailInsights) && !askedAnyQuestions && repeatedFaq.length === 0
   const showFaqNoneRepeated = !detailInsightsLoading && askedAnyQuestions && repeatedFaq.length === 0
   const showFaqChart = !detailInsightsLoading && repeatedFaq.length > 0
+  const showDocumentsChart = !detailInsightsLoading && askedDocuments.length > 0
+  const showDocumentsEmpty = !detailInsightsLoading && askedAnyQuestions && askedDocuments.length === 0
 
   const uniqueMembers = useMemo(() => {
     const rosterKey =
@@ -1240,7 +1262,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                       Coverage
                     </p>
-                    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border/50 ring-1 ring-black/[0.04] dark:bg-white/10">
+                    <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-border/50 ring-1 ring-black/[0.04] dark:bg-white/10">
                       <div className="flex flex-col items-center bg-background/85 px-2 py-2.5 dark:bg-slate-900/70">
                         <span className="text-base font-semibold tabular-nums text-foreground">
                           {detailFor.corpus.folder_ids.length}
@@ -1262,6 +1284,14 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         </span>
                         <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                           Documents
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-center bg-background/85 px-2 py-2.5 dark:bg-slate-900/70">
+                        <span className="text-base font-semibold tabular-nums text-foreground">
+                          {detailInsightsLoading ? '…' : (detailInsights?.users_chatted ?? 0)}
+                        </span>
+                        <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                          Users
                         </span>
                       </div>
                     </div>
@@ -1370,7 +1400,91 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                           : 'Unlimited'}
                         {' · '}
                         {detailInsights.questions_asked} questions asked
+                        {' · '}
+                        {detailInsights.users_chatted} users
                       </p>
+                    ) : null}
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Documents asked about
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Ranked by how often answers cited the document, or how often users named it in a question.
+                    </p>
+                    {showDocumentsEmpty ? (
+                      <p className="text-xs text-muted-foreground">
+                        No bound document has been cited or named in a question yet.
+                      </p>
+                    ) : null}
+                    {showDocumentsChart ? (
+                      <div
+                        className="rounded-xl border border-border/60 bg-background/80 px-1 py-2 dark:bg-slate-900/50"
+                        style={{ height: documentsChartHeight }}
+                      >
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={askedDocuments}
+                            layout="vertical"
+                            margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
+                          >
+                            <XAxis
+                              type="number"
+                              allowDecimals={false}
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                            />
+                            <YAxis
+                              type="category"
+                              dataKey="label"
+                              width={132}
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: 'hsl(var(--foreground))', fontSize: 9 }}
+                            />
+                            <Tooltip
+                              cursor={{ fill: 'hsl(var(--muted) / 0.45)' }}
+                              content={({ active, payload }) => {
+                                if (!active || !payload || payload.length === 0) return null
+                                const row = payload[0]?.payload as
+                                  | { title?: string; count?: number }
+                                  | undefined
+                                if (!row?.title) return null
+                                return (
+                                  <div className="max-w-[240px] rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] shadow-md">
+                                    <p className="text-foreground">{row.title}</p>
+                                    <p className="mt-0.5 tabular-nums text-muted-foreground">
+                                      Asked {row.count} times
+                                    </p>
+                                  </div>
+                                )
+                              }}
+                            />
+                            <Bar
+                              dataKey="count"
+                              fill="hsl(var(--primary))"
+                              radius={[0, 6, 6, 0]}
+                              barSize={14}
+                              name="Asked"
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : null}
+                    {showDocumentsChart ? (
+                      <ol className="space-y-1.5">
+                        {askedDocuments.map((item, index) => (
+                          <li
+                            key={`${item.documentId || item.title}-${index}`}
+                            className="flex items-start justify-between gap-3 text-xs"
+                          >
+                            <span className="min-w-0 flex-1 text-foreground">{item.title}</span>
+                            <span className="shrink-0 tabular-nums text-muted-foreground">{item.count}</span>
+                          </li>
+                        ))}
+                      </ol>
                     ) : null}
                   </section>
 

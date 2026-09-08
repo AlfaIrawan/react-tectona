@@ -2197,10 +2197,18 @@ export interface ExplainerFaqItem {
   count: number
 }
 
+export interface ExplainerDocumentStat {
+  document_id?: string | null
+  title: string
+  count: number
+}
+
 export interface ExplainerAssistantInsights {
   assistant_id: string
   frequently_asked: ExplainerFaqItem[]
+  documents_asked: ExplainerDocumentStat[]
   questions_asked: number
+  users_chatted: number
   tokens_used: number
   cost_idr: number
   limit_kind: 'token' | 'question' | 'cost' | null
