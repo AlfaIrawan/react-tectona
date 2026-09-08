@@ -427,8 +427,62 @@ function layoutGraph(graph: FallbackGraph): {
     buckets.set(r, list)
   }
   const ranks = [...buckets.keys()].sort((a, b) => a - b)
+
+  const preds = new Map<string, string[]>()
+  for (const node of graph.nodes) preds.set(node.id, [])
+  for (const edge of graph.edges) {
+    if (!preds.has(edge.target) || !preds.has(edge.source)) continue
+    preds.get(edge.target)?.push(edge.source)
+  }
+
+  const xorChildOrder = (parentId: string): string[] => {
+    const outs = graph.edges.filter((edge) => edge.source === parentId && indegree.has(edge.target))
+    const score = (label?: string) => {
+      const text = (label || '').trim().toLowerCase()
+      if (/^(ya|yes|y|true|ok|berhasil|sukses|real[\s-]?time)$/i.test(text)) return -1
+      if (/^(tidak|no|n|false|gagal|escalate|alihkan)$/i.test(text)) return 1
+      return 0
+    }
+    return [...outs]
+      .sort((a, b) => score(a.label) - score(b.label) || a.target.localeCompare(b.target))
+      .map((edge) => edge.target)
+  }
+
+  const columns = new Map<string, number>()
+  for (const r of ranks) {
+    for (const id of buckets.get(r) ?? []) {
+      if (columns.has(id)) continue
+      const parents = (preds.get(id) ?? []).filter((parent) => parent !== id)
+      const splitParent = parents.find((parent) => (children.get(parent) ?? []).length >= 2)
+      if (splitParent) {
+        const ordered = xorChildOrder(splitParent)
+        const index = Math.max(0, ordered.indexOf(id))
+        const count = Math.max(ordered.length, 1)
+        const parentCol = columns.get(splitParent) ?? 0
+        if (count === 2) {
+          columns.set(id, parentCol + (index === 0 ? -1 : 1))
+        } else {
+          columns.set(id, parentCol + index - (count - 1) / 2)
+        }
+        continue
+      }
+      if (parents.length >= 2) {
+        const avg = parents.reduce((sum, parent) => sum + (columns.get(parent) ?? 0), 0) / parents.length
+        columns.set(id, Math.round(avg))
+        continue
+      }
+      if (parents.length === 1) {
+        columns.set(id, columns.get(parents[0]) ?? 0)
+        continue
+      }
+      columns.set(id, 0)
+    }
+  }
+
+  const colValues = [...columns.values()]
+  const minCol = colValues.length ? Math.min(...colValues) : 0
   const columnWidth = processWidth
-  const centerX = pad + columnWidth / 2
+  const branchGapX = 72
 
   const positions = new Map<string, { x: number; y: number; w: number; h: number }>()
   let maxX = 0
@@ -436,20 +490,21 @@ function layoutGraph(graph: FallbackGraph): {
   let cursor = pad
 
   ranks.forEach((r, rankIndex) => {
-    const ids = buckets.get(r) ?? []
+    const ids = [...(buckets.get(r) ?? [])].sort(
+      (a, b) => (columns.get(a) ?? 0) - (columns.get(b) ?? 0) || a.localeCompare(b),
+    )
     const rankHeights = ids.map((id) => boxes.get(id)?.h ?? 80)
     const rowH = Math.max(...rankHeights, 44)
-    ids.forEach((id, colIndex) => {
+    ids.forEach((id) => {
       const box = boxes.get(id) ?? { w: columnWidth, h: 80 }
+      const col = columns.get(id) ?? 0
       const x =
         graph.direction === 'LR'
           ? pad + rankIndex * (columnWidth + gapX) + (columnWidth - box.w) / 2
-          : ids.length === 1
-            ? centerX - box.w / 2
-            : pad + colIndex * (columnWidth + gapX) + (columnWidth - box.w) / 2
+          : pad + (col - minCol) * (columnWidth + branchGapX) + (columnWidth - box.w) / 2
       const y =
         graph.direction === 'LR'
-          ? pad + colIndex * (rowH + gapY) + (rowH - box.h) / 2
+          ? pad + (col - minCol) * (rowH + gapY) + (rowH - box.h) / 2
           : cursor + (rowH - box.h) / 2
       positions.set(id, { x, y, w: box.w, h: box.h })
       maxX = Math.max(maxX, x + box.w)

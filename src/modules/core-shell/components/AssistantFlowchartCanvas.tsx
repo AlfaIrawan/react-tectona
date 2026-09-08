@@ -228,7 +228,8 @@ function graphToFlow(graph: FallbackGraph): { nodes: Node<AssistantFlowchartNode
           : 'target-top'
         : undefined,
       label: edge.label,
-      type: 'smoothstep',
+      type: 'step',
+      pathOptions: { offset: 24, borderRadius: 10 },
       markerEnd: { type: MarkerType.ArrowClosed, color: '#111827', width: 18, height: 18 },
       style: { stroke: '#111827', strokeWidth: 1.8 },
       labelStyle: { fontSize: 11, fill: '#475569' },
@@ -288,7 +289,7 @@ function AssistantFlowchartCanvasInner({ source, className, height, showControls
         zoomOnPinch
         preventScrolling
         proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: 'smoothstep' }}
+        defaultEdgeOptions={{ type: 'step', pathOptions: { offset: 24, borderRadius: 10 } }}
         className="h-full w-full"
       >
         <Background id="assistant-flow-grid" variant={BackgroundVariant.Dots} color="#e2e8f0" gap={18} size={1} />

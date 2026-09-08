@@ -34,4 +34,29 @@ flowchart TD
     expect(ask?.shape).toBe('diamond')
     expect(graph!.nodes.find((node) => /tim cabang/i.test(node.label))?.shape).toBe('rect')
   })
+
+  it('places XOR branches symmetrically around the gateway', () => {
+    const graph = parseFlowchartFallback(`
+flowchart TD
+  start((Mulai)) --> A[Tanya ke Chat Gen AI]
+  A --> gw{AI bisa jawab?}
+  gw -->|Ya| C[Isu selesai secara real-time]
+  gw -->|Tidak| D[Alihkan ke tim HO terkait]
+  C --> done((Selesai))
+  D --> ho[Tim HO selesaikan isu]
+  ho --> done2((Selesai))
+`)
+    expect(graph).not.toBeNull()
+    const { positions } = layoutFlowchartGraph(graph!)
+    const gw = positions.get('gw')!
+    const left = positions.get('C')!
+    const right = positions.get('D')!
+    const gwCx = gw.x + gw.w / 2
+    const leftCx = left.x + left.w / 2
+    const rightCx = right.x + right.w / 2
+    expect(Math.abs(gwCx - leftCx - (rightCx - gwCx))).toBeLessThan(8)
+    expect(left.y).toBe(right.y)
+    expect(leftCx).toBeLessThan(gwCx)
+    expect(rightCx).toBeGreaterThan(gwCx)
+  })
 })
