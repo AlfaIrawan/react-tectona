@@ -76,11 +76,15 @@ export function describeOnlyOfficeError(code: unknown): string {
     : null
   if (cleaned) {
     const lower = cleaned.toLowerCase()
-    if lower.includes('does not match the file extension') || lower.includes('content does not match')) {
+    if (
+      lower.includes('does not match the file extension') ||
+      lower.includes('content does not match')
+    ) {
       return (
         'OnlyOffice menolak file ini karena isi tidak cocok dengan ekstensi. '
-        + 'Sering terjadi file Word lama (.doc biner) atau HTML tersimpan dengan nama .docx. '
-        + 'Tutup editor, buka ulang setelah layanan Document Knowledge di-deploy; atau unduh file lalu Save As .docx di Word dan unggah ulang.'
+        + 'Tectona sekarang mengonversi Word lama (.doc) ke .docx saat membuka editor. '
+        + 'Tutup dialog ini, muat ulang halaman, lalu buka ulang dokumen. '
+        + 'Jika masih gagal, layanan Document Knowledge di server belum di-deploy ulang.'
       )
     }
     if (lower.includes('minio') || lower.includes('object storage')) {
