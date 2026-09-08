@@ -9,6 +9,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { Archive, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, Shield, Users, X } from 'lucide-react'
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -179,6 +180,15 @@ function chatLimitValuePlaceholder(kind: DraftState['chatLimitKind']): string {
   if (kind === 'question') return 'e.g. 200'
   if (kind === 'cost') return 'e.g. 250000'
   return ''
+}
+
+const FAQ_REPEAT_MIN = 2
+const FAQ_LABEL_MAX = 34
+
+function truncateFaqLabel(text: string, max = FAQ_LABEL_MAX): string {
+  const compact = text.replace(/\s+/g, ' ').trim()
+  if (compact.length <= max) return compact
+  return `${compact.slice(0, Math.max(1, max - 1))}…`
 }
 
 function workspaceGrantLabel(workspaceName?: string | null): string {
@@ -831,6 +841,25 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     [documents],
   )
 
+  const repeatedFaq = useMemo(() => {
+    const items = (detailInsights?.frequently_asked ?? []).filter((item) => item.count >= FAQ_REPEAT_MIN)
+    const usedLabels = new Set<string>()
+    return items.map((item, index) => {
+      let label = truncateFaqLabel(item.question)
+      if (usedLabels.has(label)) {
+        label = truncateFaqLabel(`${index + 1}. ${item.question}`)
+      }
+      usedLabels.add(label)
+      return { question: item.question, count: item.count, label }
+    })
+  }, [detailInsights])
+
+  const faqChartHeight = Math.min(320, Math.max(128, repeatedFaq.length * 36))
+  const askedAnyQuestions = (detailInsights?.questions_asked ?? 0) > 0
+  const showFaqNoneAsked = !detailInsightsLoading && Boolean(detailInsights) && !askedAnyQuestions && repeatedFaq.length === 0
+  const showFaqNoneRepeated = !detailInsightsLoading && askedAnyQuestions && repeatedFaq.length === 0
+  const showFaqChart = !detailInsightsLoading && repeatedFaq.length > 0
+
   const uniqueMembers = useMemo(() => {
     const rosterKey =
       grantBrowseMode === 'users' ? ORG_GRANT_ROSTER_KEY : (grantPickerWorkspaceId || '').trim()
@@ -1246,20 +1275,83 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                       Frequently asked questions
                     </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Only questions asked more than once. The chart ranks them by how often they appear.
+                    </p>
                     {detailInsightsLoading ? (
                       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                         Loading question stats…
                       </p>
                     ) : null}
-                    {!detailInsightsLoading && (!detailInsights || detailInsights.frequently_asked.length === 0) ? (
+                    {showFaqNoneAsked ? (
                       <p className="text-xs text-muted-foreground">
                         No user questions recorded yet. Stats appear after people chat with this assistant.
                       </p>
                     ) : null}
-                    {!detailInsightsLoading && detailInsights && detailInsights.frequently_asked.length > 0 ? (
+                    {showFaqNoneRepeated ? (
+                      <p className="text-xs text-muted-foreground">
+                        No question has been asked more than once yet.
+                      </p>
+                    ) : null}
+                    {showFaqChart ? (
+                      <div
+                        className="rounded-xl border border-border/60 bg-background/80 px-1 py-2 dark:bg-slate-900/50"
+                        style={{ height: faqChartHeight }}
+                      >
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={repeatedFaq}
+                            layout="vertical"
+                            margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
+                          >
+                            <XAxis
+                              type="number"
+                              allowDecimals={false}
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                            />
+                            <YAxis
+                              type="category"
+                              dataKey="label"
+                              width={132}
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: 'hsl(var(--foreground))', fontSize: 9 }}
+                            />
+                            <Tooltip
+                              cursor={{ fill: 'hsl(var(--muted) / 0.45)' }}
+                              content={({ active, payload }) => {
+                                if (!active || !payload || payload.length === 0) return null
+                                const row = payload[0]?.payload as
+                                  | { question?: string; count?: number }
+                                  | undefined
+                                if (!row?.question) return null
+                                return (
+                                  <div className="max-w-[240px] rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] shadow-md">
+                                    <p className="text-foreground">{row.question}</p>
+                                    <p className="mt-0.5 tabular-nums text-muted-foreground">
+                                      Asked {row.count} times
+                                    </p>
+                                  </div>
+                                )
+                              }}
+                            />
+                            <Bar
+                              dataKey="count"
+                              fill="hsl(var(--primary))"
+                              radius={[0, 6, 6, 0]}
+                              barSize={14}
+                              name="Asked"
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : null}
+                    {showFaqChart ? (
                       <ol className="space-y-1.5">
-                        {detailInsights.frequently_asked.map((item, index) => (
+                        {repeatedFaq.map((item, index) => (
                           <li
                             key={`${item.question}-${index}`}
                             className="flex items-start justify-between gap-3 text-xs"
