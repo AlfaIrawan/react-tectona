@@ -81,9 +81,14 @@ export function describeOnlyOfficeError(code: unknown): string {
       lower.includes('content does not match')
     ) {
       return (
-        'OnlyOffice menolak file ini karena isi tidak cocok dengan ekstensi. '
-        + 'Layanan Document Knowledge harus mengonversi Word lama (.doc) ke .docx sebelum editor mengunduhnya. '
-        + 'Jika pesan ini masih muncul, image document-knowledge-management di server belum di-pull/recreate.'
+        'OnlyOffice menolak paket file ini (sering ZIP Word/ZIP64, bukan karena Git belum di-push). '
+        + 'Document Knowledge menormalisasi .docx sebelum diunduh. Tutup editor, hard-refresh, buka ulang.'
+      )
+    }
+    if (lower.includes('an error has occurred while opening')) {
+      return (
+        'OnlyOffice gagal membuka file (token JWT, cache dokumen, atau paket .docx). '
+        + 'Tutup editor, hard-refresh (Ctrl+F5), lalu buka ulang. Jika berulang, restart container onlyoffice-documentserver.'
       )
     }
     if (lower.includes('minio') || lower.includes('object storage')) {
