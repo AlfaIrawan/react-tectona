@@ -82,9 +82,8 @@ export function describeOnlyOfficeError(code: unknown): string {
     ) {
       return (
         'OnlyOffice menolak file ini karena isi tidak cocok dengan ekstensi. '
-        + 'Tectona sekarang mengonversi Word lama (.doc) ke .docx saat membuka editor. '
-        + 'Tutup dialog ini, muat ulang halaman, lalu buka ulang dokumen. '
-        + 'Jika masih gagal, layanan Document Knowledge di server belum di-deploy ulang.'
+        + 'Layanan Document Knowledge harus mengonversi Word lama (.doc) ke .docx sebelum editor mengunduhnya. '
+        + 'Jika pesan ini masih muncul, image document-knowledge-management di server belum di-pull/recreate.'
       )
     }
     if (lower.includes('minio') || lower.includes('object storage')) {
