@@ -201,11 +201,6 @@ export function buildDirectoryTreeParentById(
     }
 
     if (!workspace.isPersonalWorkspace) {
-      if (!isOperationalInOrgDirectoryTree(workspace)) {
-        result.set(workspace.id, null)
-        continue
-      }
-
       const anchor = workspace.provisionedUnderWorkspaceId?.trim() || orgHomeId || null
       result.set(workspace.id, anchor && byId.has(anchor) ? anchor : null)
       continue

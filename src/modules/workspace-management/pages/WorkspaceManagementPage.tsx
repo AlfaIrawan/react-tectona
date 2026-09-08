@@ -329,6 +329,7 @@ import {
   type DirectoryTreeBuildOptions,
 } from '@/lib/workspacePersonalOrgScope'
 import { isCorporateOrganizationForPicker } from '@/lib/workspaceOrganizationPicker'
+import { sliceDirectoryTreePage } from '@/lib/directoryTreePagination'
 import {
   canReparentOperationalWorkspace,
   listOperationalDirectoryReparentTargets,
@@ -8698,7 +8699,7 @@ export function WorkspaceManagementPage() {
           && !row.parentWorkspaceId,
       )?.id ?? null
     const selected = moveDirectoryParentId.trim()
-    const parentId = !selected || selected === orgHomeId ? null : selected
+    const parentId = selected || orgHomeId || null
     setMoveDirectorySubmitting(true)
     try {
       const updated = await patchWorkspaceOrgDirectoryParent(
@@ -10634,8 +10635,6 @@ export function WorkspaceManagementPage() {
     return rows
   }, [directoryFilteredWorkspaces, directorySort])
 
-  const directoryTotalPages = Math.max(1, Math.ceil(sortedFilteredWorkspaces.length / directoryPageSize))
-
   // Extra "linked" placements for personal workspaces whose owner is a WAC member
   // of operational workspaces. Ancestor duplicates are collapsed later (member of
   // a department under Adira Finance should not also sit at org-home/root).
@@ -10727,9 +10726,10 @@ export function WorkspaceManagementPage() {
     directoryServerCanonicalParentById,
   ])
 
+  const directoryTotalPages = Math.max(1, Math.ceil(directoryFlatRows.length / directoryPageSize))
+
   const directoryTableRows = useMemo(() => {
-    const start = (directoryPage - 1) * directoryPageSize
-    return directoryFlatRows.slice(start, start + directoryPageSize)
+    return sliceDirectoryTreePage(directoryFlatRows, directoryPage, directoryPageSize)
   }, [directoryFlatRows, directoryPage, directoryPageSize])
 
   const toggleDirectorySort = (key: DirectoryTableSortKey) => {
@@ -15544,15 +15544,15 @@ export function WorkspaceManagementPage() {
                         <p className="shrink-0 text-xs text-muted-foreground">
                           Showing{' '}
                           <span className="font-semibold text-foreground">
-                            {sortedFilteredWorkspaces.length === 0
+                            {directoryFlatRows.length === 0
                               ? 0
-                              : Math.min(sortedFilteredWorkspaces.length, (directoryPage - 1) * directoryPageSize + 1)}
+                              : Math.min(directoryFlatRows.length, (directoryPage - 1) * directoryPageSize + 1)}
                           </span>
                           -
                           <span className="font-semibold text-foreground">
-                            {Math.min(sortedFilteredWorkspaces.length, directoryPage * directoryPageSize)}
+                            {Math.min(directoryFlatRows.length, directoryPage * directoryPageSize)}
                           </span>{' '}
-                          of <span className="font-semibold text-foreground">{sortedFilteredWorkspaces.length}</span>
+                          of <span className="font-semibold text-foreground">{directoryFlatRows.length}</span>
                         </p>
                         <span className="shrink-0 text-xs text-muted-foreground">Rows:</span>
                         <Select

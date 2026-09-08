@@ -72,7 +72,7 @@ describe('buildDirectoryTreeParentById', () => {
     expect(parents.get(child)).toBe(ORG_HOME)
   })
 
-  it('keeps unjoined operational without parent as a root beside org home', () => {
+  it('nests unjoined operational without parent under org home, not beside it', () => {
     const stray = 'ws-bootstrap-ops'
     const workspaces = [
       row({
@@ -89,7 +89,7 @@ describe('buildDirectoryTreeParentById', () => {
       }),
     ]
     const parents = buildDirectoryTreeParentById(workspaces)
-    expect(parents.get(stray)).toBeNull()
+    expect(parents.get(stray)).toBe(ORG_HOME)
   })
 
   it('nests owner personal workspace under owned operational workspace', () => {
