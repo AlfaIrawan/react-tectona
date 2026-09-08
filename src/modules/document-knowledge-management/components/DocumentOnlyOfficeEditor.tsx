@@ -81,8 +81,7 @@ export function describeOnlyOfficeError(code: unknown): string {
       lower.includes('content does not match')
     ) {
       return (
-        'OnlyOffice menolak paket file ini (sering ZIP Word/ZIP64, bukan karena Git belum di-push). '
-        + 'Document Knowledge menormalisasi .docx sebelum diunduh. Tutup editor, hard-refresh, buka ulang.'
+        'OnlyOffice menolak paket file ini. Tutup editor, hard-refresh (Ctrl+F5), buka ulang.'
       )
     }
     if (lower.includes('an error has occurred while opening')) {
