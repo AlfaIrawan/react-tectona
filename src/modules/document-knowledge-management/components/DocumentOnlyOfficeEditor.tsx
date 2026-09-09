@@ -81,7 +81,9 @@ export function describeOnlyOfficeError(code: unknown): string {
       lower.includes('content does not match')
     ) {
       return (
-        'OnlyOffice menolak paket file ini. Tutup editor, hard-refresh (Ctrl+F5), buka ulang.'
+        'OnlyOffice error -85 (paket .docx ditolak Document Server). '
+        + 'Tutup tab editor, hard-refresh Ctrl+F5, buka ulang. '
+        + 'Jangan pakai tab yang sudah error — cache OnlyOffice menahan kegagalan lama.'
       )
     }
     if (lower.includes('an error has occurred while opening')) {
