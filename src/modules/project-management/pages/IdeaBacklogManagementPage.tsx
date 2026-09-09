@@ -2879,6 +2879,11 @@ export function IdeaBacklogManagementPage() {
     const onEsc = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       if (isDraftContinuing || isBrainstormSending) return
+      // A stray Escape (dismissing an IME candidate, a browser autofill popup, or
+      // plain habit) must not tear down a live conversation while the assistant is
+      // still waiting on an answer. Closing stays deliberate: the header's back and
+      // X buttons.
+      if (isBrainstormMode && brainstormMessages.length > 0) return
       event.preventDefault()
       event.stopImmediatePropagation()
       setIsEvidenceDialogOpen(false)
@@ -2886,7 +2891,7 @@ export function IdeaBacklogManagementPage() {
     }
     window.addEventListener('keydown', onEsc, true)
     return () => window.removeEventListener('keydown', onEsc, true)
-  }, [isEvidenceDialogOpen, isDraftContinuing, isBrainstormSending])
+  }, [isEvidenceDialogOpen, isDraftContinuing, isBrainstormSending, isBrainstormMode, brainstormMessages.length])
 
   useEffect(() => {
     const ideaIds = ideas.map((idea) => idea.id)
@@ -3482,9 +3487,22 @@ export function IdeaBacklogManagementPage() {
   }
 
   const handleSendBrainstormMessage = async (messageOverride?: string) => {
-    if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input') return
+    if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input') {
+      // Never swallow the send silently: a dead composer with no explanation reads
+      // as "the chat closed itself" to the user.
+      setBrainstormError(
+        isBrainstormThreadIndonesian(brainstormMessages)
+          ? 'Sesi brainstorm ini sudah tidak menerima pesan baru. Tutup lalu mulai Generate Draft lagi untuk melanjutkan.'
+          : 'This brainstorm session is no longer accepting messages. Close it and start Generate Draft again to continue.',
+      )
+      return
+    }
     const message = (messageOverride ?? brainstormInput).trim()
-    if (!message || isBrainstormSending || brainstormReady) return
+    // Deliberately NOT gated on brainstormReady: "enough context" only unlocks
+    // Generate draft, it does not end the conversation. The assistant often asks
+    // one more question in the same turn, and blocking the send left that question
+    // unanswerable.
+    if (!message || isBrainstormSending) return
     const historyBeforeSend = brainstormMessages
     setIsBrainstormSending(true)
     setBrainstormError('')
@@ -3532,7 +3550,9 @@ export function IdeaBacklogManagementPage() {
       setBrainstormMessages(mergedMessages)
       const lastAssistantIndex = mergedMessages.findLastIndex((item) => item.role === 'assistant')
       setBrainstormAnimatingAssistantIndex(lastAssistantIndex >= 0 ? lastAssistantIndex : null)
-      setBrainstormReady(response.ready_to_continue)
+      // Sticky: further answers can only add context, so never drop back to
+      // not-ready and pull the Generate draft button out from under the user.
+      setBrainstormReady((current) => current || response.ready_to_continue)
       setBrainstormRemainingGaps(response.remaining_gaps)
       setBrainstormOfferGenerateAnyway(Boolean(response.offer_generate_anyway) && !response.ready_to_continue)
       setBrainstormChecklist(response.intake_checklist ?? response.evidence_progress?.items ?? [])
@@ -3549,7 +3569,7 @@ export function IdeaBacklogManagementPage() {
         ? {
             ...current,
             brainstorm_messages: response.messages,
-            brainstorm_ready: response.ready_to_continue,
+            brainstorm_ready: current.brainstorm_ready || response.ready_to_continue,
             brainstorm_remaining_gaps: response.remaining_gaps,
             intake_checklist: response.intake_checklist ?? current.intake_checklist,
             evidence_progress: response.evidence_progress ?? current.evidence_progress,
@@ -3681,9 +3701,9 @@ export function IdeaBacklogManagementPage() {
   }
 
   useLayoutEffect(() => {
-    if (!isBrainstormMode || brainstormReady) return
+    if (!isBrainstormMode) return
     syncBrainstormComposerHeight()
-  }, [isBrainstormMode, brainstormReady, brainstormInput])
+  }, [isBrainstormMode, brainstormInput])
 
   const handleCancelIdeaDraft = async () => {
     if (!ideaDraftJob || !['queued', 'running', 'awaiting_input'].includes(ideaDraftJob.status)) return
@@ -5972,77 +5992,10 @@ export function IdeaBacklogManagementPage() {
                       <div className="shrink-0 bg-gradient-to-t from-background via-background to-background/80 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
                         <div className="mx-auto w-full max-w-3xl space-y-2">
                           {brainstormError && <p className="px-3 text-xs text-destructive">{brainstormError}</p>}
-                          {!brainstormReady ? (
-                            <div className="rounded-[28px] border border-black/[0.08] bg-white px-2.5 pb-2 pt-2.5 shadow-[0_2px_12px_rgba(15,23,42,0.06)] focus-within:shadow-[0_4px_18px_rgba(15,23,42,0.1)] dark:bg-background">
-                              <textarea
-                                ref={brainstormComposerRef}
-                                value={brainstormInput}
-                                onChange={(event) => setBrainstormInput(event.target.value)}
-                                placeholder={
-                                  brainstormOfferGenerateAnyway
-                                    ? (isBrainstormThreadIndonesian(brainstormMessages)
-                                      ? 'Opsional: koreksi diagram atau tambah catatan'
-                                      : 'Optional: correct the diagram or add a note')
-                                    : 'Ask Tectona Assistant'
-                                }
-                                spellCheck={false}
-                                rows={1}
-                                className="block w-full resize-none border-0 bg-transparent px-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
-                                style={{ height: 24, overflowY: 'hidden' }}
-                                disabled={isBrainstormSending || isDraftContinuing}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' && !event.shiftKey) {
-                                    event.preventDefault()
-                                    void handleSendBrainstormMessage()
-                                  }
-                                }}
-                              />
-                              <div className="mt-1 flex items-center justify-between gap-2">
-                                <button
-                                  type="button"
-                                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black/10 bg-transparent text-[#5d5d5d] transition-colors hover:bg-black/[0.04] disabled:opacity-40"
-                                  aria-label="Add attachment"
-                                  title="Coming soon"
-                                  disabled
-                                >
-                                  <Plus className="h-4 w-4" strokeWidth={2} />
-                                </button>
-                                <div className="flex items-center gap-0.5">
-                                  <button
-                                    type="button"
-                                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#5d5d5d] transition-colors hover:bg-black/[0.04] disabled:opacity-40"
-                                    aria-label="Voice input"
-                                    title="Coming soon"
-                                    disabled
-                                  >
-                                    <Mic className="h-4 w-4" strokeWidth={1.75} />
-                                  </button>
-                                  <Button
-                                    type="button"
-                                    size="icon"
-                                    className={cn(
-                                      'ml-0.5 h-8 w-8 shrink-0 rounded-full transition-colors',
-                                      brainstormInput.trim() && !isBrainstormSending && !isDraftContinuing
-                                        ? 'bg-[#0d0d0d] text-white hover:bg-black'
-                                        : 'bg-[#e5e5e5] text-[#9a9a9a] hover:bg-[#e5e5e5]',
-                                    )}
-                                    disabled={!brainstormInput.trim() || isBrainstormSending || isDraftContinuing}
-                                    onClick={() => void handleSendBrainstormMessage()}
-                                    aria-label="Send message"
-                                  >
-                                    {isBrainstormSending ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                      <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
-                                    )}
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
+                          {brainstormReady ? (
                             <button
                               type="button"
-                              disabled={!brainstormReady || isBrainstormSending || isDraftContinuing}
+                              disabled={isBrainstormSending || isDraftContinuing}
                               className={cn(
                                 enterpriseCyanGradientActionButtonClass(),
                                 'h-11 w-full justify-center sm:hidden',
@@ -6053,9 +6006,87 @@ export function IdeaBacklogManagementPage() {
                               <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
                               {isDraftContinuing ? 'Generating…' : 'Generate draft'}
                             </button>
-                          )}
+                          ) : null}
+                          {/* The composer stays mounted after the draft becomes generatable.
+                              "Enough context" is permission to generate, not the end of the
+                              conversation — the assistant usually still has an open question,
+                              and unmounting this left the user staring at a dead chat. */}
+                          <div className="rounded-[28px] border border-black/[0.08] bg-white px-2.5 pb-2 pt-2.5 shadow-[0_2px_12px_rgba(15,23,42,0.06)] focus-within:shadow-[0_4px_18px_rgba(15,23,42,0.1)] dark:bg-background">
+                            <textarea
+                              ref={brainstormComposerRef}
+                              value={brainstormInput}
+                              onChange={(event) => setBrainstormInput(event.target.value)}
+                              placeholder={
+                                brainstormReady
+                                  ? (isBrainstormThreadIndonesian(brainstormMessages)
+                                    ? 'Lanjut tanya atau jawab di sini'
+                                    : 'Keep asking or answering here')
+                                  : brainstormOfferGenerateAnyway
+                                  ? (isBrainstormThreadIndonesian(brainstormMessages)
+                                    ? 'Opsional: koreksi diagram atau tambah catatan'
+                                    : 'Optional: correct the diagram or add a note')
+                                  : 'Ask Tectona Assistant'
+                              }
+                              spellCheck={false}
+                              rows={1}
+                              className="block w-full resize-none border-0 bg-transparent px-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
+                              style={{ height: 24, overflowY: 'hidden' }}
+                              disabled={isBrainstormSending || isDraftContinuing}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' && !event.shiftKey) {
+                                  event.preventDefault()
+                                  void handleSendBrainstormMessage()
+                                }
+                              }}
+                            />
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black/10 bg-transparent text-[#5d5d5d] transition-colors hover:bg-black/[0.04] disabled:opacity-40"
+                                aria-label="Add attachment"
+                                title="Coming soon"
+                                disabled
+                              >
+                                <Plus className="h-4 w-4" strokeWidth={2} />
+                              </button>
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#5d5d5d] transition-colors hover:bg-black/[0.04] disabled:opacity-40"
+                                  aria-label="Voice input"
+                                  title="Coming soon"
+                                  disabled
+                                >
+                                  <Mic className="h-4 w-4" strokeWidth={1.75} />
+                                </button>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  className={cn(
+                                    'ml-0.5 h-8 w-8 shrink-0 rounded-full transition-colors',
+                                    brainstormInput.trim() && !isBrainstormSending && !isDraftContinuing
+                                      ? 'bg-[#0d0d0d] text-white hover:bg-black'
+                                      : 'bg-[#e5e5e5] text-[#9a9a9a] hover:bg-[#e5e5e5]',
+                                  )}
+                                  disabled={!brainstormInput.trim() || isBrainstormSending || isDraftContinuing}
+                                  onClick={() => void handleSendBrainstormMessage()}
+                                  aria-label="Send message"
+                                >
+                                  {isBrainstormSending ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
                           <p className="px-1 text-center text-[11px] text-muted-foreground">
-                            {brainstormOfferGenerateAnyway
+                            {brainstormReady
+                              ? (isBrainstormThreadIndonesian(brainstormMessages)
+                                ? 'Masih bisa lanjut ngobrol. Klik Generate draft kalau sudah cukup.'
+                                : 'You can keep chatting. Click Generate draft when you are done.')
+                              : brainstormOfferGenerateAnyway
                               ? (isBrainstormThreadIndonesian(brainstormMessages)
                                 ? 'Pakai tombol di atas untuk pilih. Input hanya jika mau menambah konteks.'
                                 : 'Use the buttons above to choose. Type here only to add extra context.')
