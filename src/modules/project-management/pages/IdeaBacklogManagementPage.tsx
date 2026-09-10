@@ -3723,6 +3723,33 @@ export function IdeaBacklogManagementPage() {
   // server-side status — independent of isEvidenceDialogOpen, so closing the
   // modal (a UI-only state) never drops the pointer while the job is still
   // awaiting brainstorm input.
+  // A signature drives the write below rather than the raw values:
+  // effectiveCreateIdeaTags and brainstormMessages get fresh identities on most
+  // renders, and re-writing the pointer every render would churn the chat
+  // panel's session row on each keystroke.
+  const brainstormPointerSignature = useMemo(() => {
+    if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input') return ''
+    const last = brainstormMessages[brainstormMessages.length - 1]
+    return [
+      ideaDraftJob.job_id,
+      createIdeaForm.title.trim(),
+      createIdeaForm.workspaceId,
+      effectiveCreateIdeaTags.join(','),
+      brainstormMessages.length,
+      last ? `${last.role}:${last.text.slice(0, 80)}` : '',
+      brainstormReady ? 'ready' : 'open',
+      brainstormRemainingGaps.length,
+    ].join('|')
+  }, [
+    ideaDraftJob,
+    createIdeaForm.title,
+    createIdeaForm.workspaceId,
+    effectiveCreateIdeaTags,
+    brainstormMessages,
+    brainstormReady,
+    brainstormRemainingGaps,
+  ])
+
   useEffect(() => {
     if (!ideaDraftJob) return
     if (ideaDraftJob.status === 'awaiting_input') {
@@ -3730,11 +3757,20 @@ export function IdeaBacklogManagementPage() {
         jobId: ideaDraftJob.job_id,
         title: createIdeaForm.title.trim() || 'Untitled idea',
         updatedAt: Date.now(),
+        // Recovery snapshot — see the store's comment. Without it, reopening a
+        // session whose job the runtime has evicted can only fail.
+        tags: effectiveCreateIdeaTags,
+        workspaceId: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+        sessionId: ideaDraftJob.correlation_id || null,
+        messages: brainstormMessages.map(({ role, text }) => ({ role, text })),
+        remainingGaps: brainstormRemainingGaps,
+        readyToContinue: brainstormReady,
       })
       return
     }
     useIdeaDraftBrainstormPointerStore.getState().clearPointer(ideaDraftJob.job_id)
-  }, [ideaDraftJob, createIdeaForm.title])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- brainstormPointerSignature stands in for the unstable values read here
+  }, [ideaDraftJob, brainstormPointerSignature])
 
   // Resume entry point: the chat panel navigates here with
   // navigate('/idea-backlog', { state: { resumeBrainstormJobId } }). Uses router
@@ -3749,11 +3785,35 @@ export function IdeaBacklogManagementPage() {
 
     let cancelled = false
     void (async () => {
+      const pointer = useIdeaDraftBrainstormPointerStore.getState().pointer
       try {
-        const status = await getIdeaDraftJob(jobId)
+        let status: IdeaDraftJobStatusResponse
+        try {
+          status = await getIdeaDraftJob(jobId)
+        } catch (lookupError) {
+          const rawLookup = lookupError instanceof Error ? lookupError.message : String(lookupError)
+          const snapshot = pointer?.jobId === jobId ? pointer : null
+          // Rebuild an evicted job from the snapshot — the same recovery the
+          // composer performs on send. Anything other than a lost job (offline,
+          // 5xx, timeout) is transient and must not cost the user the session.
+          if (!isIdeaDraftJobLostError(rawLookup) || !snapshot?.messages?.length) throw lookupError
+          status = await restoreIdeaDraftBrainstormSession({
+            title: snapshot.title || 'Untitled idea',
+            tags: snapshot.tags ?? [],
+            context: {
+              workspace_id: snapshot.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+              user_id: currentUserId || null,
+              user_name: currentUserDisplayName || null,
+              session_id: snapshot.sessionId ?? null,
+            },
+            messages: snapshot.messages,
+            remaining_gaps: snapshot.remainingGaps ?? [],
+            ready_to_continue: Boolean(snapshot.readyToContinue),
+          })
+        }
         if (cancelled) return
         setIsCreateIdeaDrawerOpen(true)
-        const pointerTitle = useIdeaDraftBrainstormPointerStore.getState().pointer?.title
+        const pointerTitle = pointer?.title
         if (pointerTitle) {
           setCreateIdeaForm((prev) => (prev.title.trim() ? prev : { ...prev, title: pointerTitle }))
         }
@@ -3764,8 +3824,19 @@ export function IdeaBacklogManagementPage() {
         } else {
           setIdeaDraftJob(status)
         }
-      } catch {
-        if (!cancelled) useIdeaDraftBrainstormPointerStore.getState().clearPointer(jobId)
+      } catch (error) {
+        if (cancelled) return
+        const raw = error instanceof Error ? error.message : String(error)
+        const unrecoverable = isIdeaDraftJobLostError(raw)
+        // Only forget the session when it is genuinely gone. Clearing on every
+        // failure is what made the entry vanish the moment it was clicked.
+        if (unrecoverable) useIdeaDraftBrainstormPointerStore.getState().clearPointer(jobId)
+        setIsCreateIdeaDrawerOpen(true)
+        setAiAssistanceError(
+          unrecoverable
+            ? 'That brainstorm session has expired on the server and cannot be resumed. Start Generate Draft again for a new one.'
+            : `Could not reopen the brainstorm session (${raw}). It is still listed in the chat panel — try again.`,
+        )
       } finally {
         if (cancelled) return
         const rest = { ...((location.state as Record<string, unknown> | null) ?? {}) }
@@ -3776,7 +3847,7 @@ export function IdeaBacklogManagementPage() {
     return () => {
       cancelled = true
     }
-  }, [location.state, navigate])
+  }, [location.state, navigate, currentUserId, currentUserDisplayName])
 
   const handleApplyAiResult = () => {
     if (aiAssistanceResult?.result) {
