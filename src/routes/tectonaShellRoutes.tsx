@@ -1,8 +1,9 @@
-import { lazy, Suspense, type ReactNode } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { Navigate, Route } from 'react-router-dom'
 import { PlatformRouteLoadingFallback } from '@/components/loading'
 import { ModuleRouteGuard } from '@/auth/ModuleRouteGuard'
 import { useModuleAccess } from '@/auth/useModuleAccess'
+import { lazyWithReload } from '@/lib/lazyWithReload'
 import { GovernanceConfigurationCenterPage } from '@/modules/governance-configuration/pages/GovernanceConfigurationCenterPage'
 import { EnterpriseGovernanceModelLayout } from '@/modules/enterprise-governance-model/components/EnterpriseGovernanceModelLayout'
 import { GovernanceOverviewPage } from '@/modules/enterprise-governance-model/pages/GovernanceOverviewPage'
@@ -33,27 +34,27 @@ import { UserActivityAuditPage } from '@/modules/traceability-monitoring/pages/U
 import { EntityLineagePage } from '@/modules/traceability-monitoring/pages/EntityLineagePage'
 import { PlatformHealthPage } from '@/modules/traceability-monitoring/pages/PlatformHealthPage'
 
-const WorkspaceManagementPage = lazy(() =>
+const WorkspaceManagementPage = lazyWithReload(() =>
   import('@/modules/workspace-management/pages/WorkspaceManagementPage').then((m) => ({
     default: m.WorkspaceManagementPage,
   })),
 )
-const DocumentKnowledgeManagementPage = lazy(() =>
+const DocumentKnowledgeManagementPage = lazyWithReload(() =>
   import('@/modules/document-knowledge-management/pages/DocumentKnowledgeManagementPage').then((m) => ({
     default: m.DocumentKnowledgeManagementPage,
   })),
 )
-const TaskWorkManagementPage = lazy(() =>
+const TaskWorkManagementPage = lazyWithReload(() =>
   import('@/modules/task-work-management/pages/TaskWorkManagementPage').then((m) => ({
     default: m.TaskWorkManagementPage,
   })),
 )
-const PlanningSchedulingPage = lazy(() =>
+const PlanningSchedulingPage = lazyWithReload(() =>
   import('@/modules/planning-scheduling/pages/PlanningSchedulingPage').then((m) => ({
     default: m.PlanningSchedulingPage,
   })),
 )
-const IdeaBacklogManagementPage = lazy(() =>
+const IdeaBacklogManagementPage = lazyWithReload(() =>
   import('@/modules/project-management/pages/IdeaBacklogManagementPage').then((m) => ({
     default: m.IdeaBacklogManagementPage,
   })),

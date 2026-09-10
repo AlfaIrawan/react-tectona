@@ -1,9 +1,10 @@
-import { Suspense, lazy } from 'react'
+import { Suspense } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AppLayout } from './modules/core-shell/components/AppLayout'
 import { ToastProvider } from './components/ui/toast'
 import { PlatformRouteLoadingFallback } from './components/loading'
+import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { AppAccessGate } from './auth/AppAccessGate'
 import { OnboardingGate } from './auth/OnboardingGate'
@@ -25,8 +26,9 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { TenantDeepLinkPage } from './pages/TenantDeepLinkPage'
 import { AccessDeniedPage } from './pages/AccessDeniedPage'
 import { AppBackgroundVideo } from './components/layout/AppBackgroundVideo'
+import { lazyWithReload } from './lib/lazyWithReload'
 
-const ProfilePage = lazy(() => import('./pages/Profile').then((m) => ({ default: m.ProfilePage })))
+const ProfilePage = lazyWithReload(() => import('./pages/Profile').then((m) => ({ default: m.ProfilePage })))
 
 function readStoredTenantForRouting(): StoredTenantSelection | null {
   try {
@@ -91,6 +93,7 @@ function App() {
       <AppBackgroundVideo />
       <ToastProvider>
         <BrowserRouter>
+          <AppErrorBoundary>
           <SessionProvider>
             <TectonaNavigateBridge />
             <Suspense fallback={<PlatformRouteLoadingFallback />}>
@@ -128,6 +131,7 @@ function App() {
               </Routes>
             </Suspense>
           </SessionProvider>
+          </AppErrorBoundary>
         </BrowserRouter>
       </ToastProvider>
     </QueryClientProvider>
