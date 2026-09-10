@@ -8,8 +8,8 @@
  */
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { Archive, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, Shield, Users, X } from 'lucide-react'
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Archive, AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, Shield, Users, X } from 'lucide-react'
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,17 +24,24 @@ import {
 import { cn } from '@/lib/utils'
 import {
   EXPLAINER_AVATARS,
+  EXPLAINER_CHARACTERS,
+  EXPLAINER_CHARACTER_LABEL,
   archiveExplainerAssistant,
   createExplainerAssistant,
   listAllDocuments,
+  listExplainerAssistantRevisions,
   listExplainerAssistants,
   patchExplainerAssistant,
   publishExplainerAssistant,
+  restoreExplainerAssistantRevision,
   type DocumentResponse,
   type ExplainerAccessGrant,
   type ExplainerAssistant,
   type ExplainerAssistantAvatar,
+  type ExplainerAssistantRevision,
+  type ExplainerCharacter,
   type ExplainerChatLimitKind,
+  type ExplainerCorpusAlert,
 } from '@/lib/api/documentKnowledgeApi'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import { getSession } from '@/auth/authService'
@@ -103,6 +110,7 @@ interface DraftState {
   accessGrants: ExplainerAccessGrant[]
   chatLimitKind: 'none' | ExplainerChatLimitKind
   chatLimitValue: string
+  character: ExplainerCharacter
 }
 
 const EMPTY_DRAFT: DraftState = {
@@ -116,6 +124,7 @@ const EMPTY_DRAFT: DraftState = {
   accessGrants: [],
   chatLimitKind: 'none',
   chatLimitValue: '',
+  character: 'polite',
 }
 
 const CHAT_LIMIT_OPTIONS: Array<{
@@ -189,6 +198,26 @@ function truncateFaqLabel(text: string, max = FAQ_LABEL_MAX): string {
   const compact = text.replace(/\s+/g, ' ').trim()
   if (compact.length <= max) return compact
   return `${compact.slice(0, Math.max(1, max - 1))}…`
+}
+
+function characterLabel(value: string | null | undefined): string {
+  if (value === 'cool' || value === 'formal' || value === 'friendly' || value === 'concise' || value === 'polite') {
+    return EXPLAINER_CHARACTER_LABEL[value]
+  }
+  return EXPLAINER_CHARACTER_LABEL.polite
+}
+
+function formatWeekLabel(weekStart: string): string {
+  const parsed = Date.parse(`${weekStart}T00:00:00Z`)
+  if (!Number.isFinite(parsed)) return weekStart
+  return new Date(parsed).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+function corpusAlertTone(alert: ExplainerCorpusAlert): string {
+  if (alert.severity === 'error') {
+    return 'border-destructive/40 bg-destructive/10 text-destructive'
+  }
+  return 'border-amber-400/50 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
 }
 
 function workspaceGrantLabel(workspaceName?: string | null): string {
@@ -393,6 +422,9 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   const [detailFor, setDetailFor] = useState<ExplainerAssistant | null>(null)
   const [detailInsights, setDetailInsights] = useState<ExplainerAssistantInsights | null>(null)
   const [detailInsightsLoading, setDetailInsightsLoading] = useState(false)
+  const [detailRevisions, setDetailRevisions] = useState<ExplainerAssistantRevision[]>([])
+  const [detailRevisionsLoading, setDetailRevisionsLoading] = useState(false)
+  const [restoringRevision, setRestoringRevision] = useState<number | null>(null)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerFullscreen, setDrawerFullscreen] = useState(false)
@@ -640,6 +672,37 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   }, [detailFor?.id])
 
   useEffect(() => {
+    if (!detailFor) {
+      setDetailRevisions([])
+      setDetailRevisionsLoading(false)
+      return
+    }
+    const assistantId = detailFor.id
+    let cancelled = false
+    setDetailRevisionsLoading(true)
+    void listExplainerAssistantRevisions(assistantId)
+      .then((payload) => {
+        if (!cancelled) setDetailRevisions(payload.revisions ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setDetailRevisions([])
+      })
+      .finally(() => {
+        if (!cancelled) setDetailRevisionsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [detailFor?.id])
+
+  useEffect(() => {
+    setDetailFor((current) => {
+      if (!current) return current
+      return assistants.find((item) => item.id === current.id) ?? current
+    })
+  }, [assistants])
+
+  useEffect(() => {
     if (!detailFor) return
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setDetailFor(null)
@@ -697,6 +760,13 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
         workspaceName,
       ),
       ...chatLimitDraftFromAssistant(assistant),
+      character:
+        assistant.character === 'cool'
+        || assistant.character === 'formal'
+        || assistant.character === 'friendly'
+        || assistant.character === 'concise'
+          ? assistant.character
+          : 'polite',
     })
     setSaveError(null)
     setCorpusQuery('')
@@ -875,6 +945,16 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     })
   }, [detailInsights, documentTitleById])
   const documentsChartHeight = Math.min(320, Math.max(128, askedDocuments.length * 36))
+  const weeklyTrend = useMemo(
+    () =>
+      (detailInsights?.questions_by_week ?? []).map((item) => ({
+        weekStart: item.week_start,
+        label: formatWeekLabel(item.week_start),
+        count: item.count,
+      })),
+    [detailInsights],
+  )
+  const showWeeklyChart = !detailInsightsLoading && weeklyTrend.length > 0
   const askedAnyQuestions = (detailInsights?.questions_asked ?? 0) > 0
   const showFaqNoneAsked = !detailInsightsLoading && Boolean(detailInsights) && !askedAnyQuestions && repeatedFaq.length === 0
   const showFaqNoneRepeated = !detailInsightsLoading && askedAnyQuestions && repeatedFaq.length === 0
@@ -975,6 +1055,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           access_grants: draft.accessGrants,
           chat_limit_kind: chatLimit.chat_limit_kind,
           chat_limit_value: chatLimit.chat_limit_value,
+          character: draft.character,
           version: draft.version ?? undefined,
         })
       } else {
@@ -987,6 +1068,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           access_grants: draft.accessGrants,
           chat_limit_kind: chatLimit.chat_limit_kind,
           chat_limit_value: chatLimit.chat_limit_value,
+          character: draft.character,
         })
       }
       setDrawerOpen(false)
@@ -1010,6 +1092,21 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
       setError(err instanceof Error ? err.message : 'The action could not be completed.')
     } finally {
       setBusyId(null)
+    }
+  }
+
+  const restoreRevision = async (revisionNo: number) => {
+    if (!detailFor) return
+    setRestoringRevision(revisionNo)
+    setError(null)
+    try {
+      const restored = await restoreExplainerAssistantRevision(detailFor.id, revisionNo)
+      setDetailFor(restored)
+      await reload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not restore that revision.')
+    } finally {
+      setRestoringRevision(null)
     }
   }
 
@@ -1148,6 +1245,17 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                       <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
                         {assistant.description || 'No description.'}
                       </p>
+                      {(assistant.corpus_alerts ?? []).length > 0 ? (
+                        <p className="mt-1.5 flex items-start gap-1 text-[11px] text-amber-700 dark:text-amber-300">
+                          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                          <span className="line-clamp-2">
+                            {assistant.corpus_alerts?.[0]?.message}
+                            {(assistant.corpus_alerts?.length ?? 0) > 1
+                              ? ` (+${(assistant.corpus_alerts?.length ?? 0) - 1} more)`
+                              : ''}
+                          </span>
+                        </p>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1257,6 +1365,29 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                       {detailFor.description || 'No description.'}
                     </p>
                   </section>
+
+                  {(detailFor.corpus_alerts ?? []).length > 0 ? (
+                    <section className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                        Corpus health
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        New files in a bound folder are included automatically. These alerts fire when a
+                        folder is empty, a bound document is gone, or the last publish failed.
+                      </p>
+                      <ul className="space-y-1.5">
+                        {(detailFor.corpus_alerts ?? []).map((alert, index) => (
+                          <li
+                            key={`${alert.code}-${index}`}
+                            className={cn('flex items-start gap-2 rounded-lg border px-3 py-2 text-xs', corpusAlertTone(alert))}
+                          >
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                            <span>{alert.message}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
 
                   <section className="space-y-2">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
@@ -1408,6 +1539,64 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
 
                   <section className="space-y-2">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Questions per week
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      User questions over the last eight weeks, not just the lifetime total.
+                    </p>
+                    {showWeeklyChart ? (
+                      <div className="h-40 rounded-xl border border-border/60 bg-background/80 px-1 py-2 dark:bg-slate-900/50">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={weeklyTrend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                            <XAxis
+                              dataKey="label"
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 9 }}
+                            />
+                            <YAxis
+                              allowDecimals={false}
+                              width={28}
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                            />
+                            <Tooltip
+                              content={({ active, payload }) => {
+                                if (!active || !payload || payload.length === 0) return null
+                                const row = payload[0]?.payload as
+                                  | { label?: string; count?: number }
+                                  | undefined
+                                if (!row) return null
+                                return (
+                                  <div className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] shadow-md">
+                                    <p className="text-foreground">Week of {row.label}</p>
+                                    <p className="tabular-nums text-muted-foreground">{row.count} questions</p>
+                                  </div>
+                                )
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="count"
+                              stroke="hsl(var(--primary))"
+                              strokeWidth={2}
+                              dot={{ r: 3 }}
+                              name="Questions"
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Weekly trend appears after people chat with this assistant.
+                      </p>
+                    )}
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                       Documents asked about
                     </p>
                     <p className="text-[11px] text-muted-foreground">
@@ -1541,6 +1730,14 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         <dd className="text-foreground">{detailFor.visibility}</dd>
                       </div>
                       <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Character</dt>
+                        <dd className="text-foreground">{characterLabel(detailFor.character)}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Published revision</dt>
+                        <dd className="tabular-nums text-foreground">{detailFor.revision_no ?? 0}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
                         <dt className="text-muted-foreground">Version</dt>
                         <dd className="tabular-nums text-foreground">{detailFor.version}</dd>
                       </div>
@@ -1568,6 +1765,60 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         </dd>
                       </div>
                     </dl>
+                  </section>
+
+                  <section className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Published revisions
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Each successful publish stores a snapshot. Restore writes it back as a draft — publish
+                      again to make it live in chat.
+                    </p>
+                    {detailRevisionsLoading ? (
+                      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        Loading revisions…
+                      </p>
+                    ) : null}
+                    {!detailRevisionsLoading && detailRevisions.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No published revisions yet.</p>
+                    ) : null}
+                    {detailRevisions.length > 0 ? (
+                      <ul className="space-y-2">
+                        {detailRevisions.map((revision) => (
+                          <li
+                            key={revision.revision_no}
+                            className="flex items-start justify-between gap-3 rounded-lg border border-border/60 px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-foreground">
+                                Revision {revision.revision_no}
+                                {detailFor.revision_no === revision.revision_no ? ' · current published' : ''}
+                              </p>
+                              <p className="truncate text-[11px] text-muted-foreground">
+                                {revision.snapshot.display_name || detailFor.display_name}
+                                {' · '}
+                                {characterLabel(revision.snapshot.character)}
+                              </p>
+                              <p className="text-[10px] tabular-nums text-muted-foreground">
+                                {formatModified(revision.created_date)}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 shrink-0 px-2 text-[10px]"
+                              disabled={restoringRevision === revision.revision_no}
+                              onClick={() => void restoreRevision(revision.revision_no)}
+                            >
+                              {restoringRevision === revision.revision_no ? 'Restoring…' : 'Restore'}
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </section>
                 </div>
 
@@ -1797,6 +2048,31 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))}
                       />
                       <p className="text-[10px] text-muted-foreground">{draft.description.length} / 500</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Character</Label>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        Default speaking tone in chat. People can still pick a different tone per conversation.
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                        {EXPLAINER_CHARACTERS.map((token) => {
+                          const selected = draft.character === token
+                          return (
+                            <button
+                              key={token}
+                              type="button"
+                              onClick={() => setDraft((prev) => ({ ...prev, character: token }))}
+                              className={cn(
+                                'rounded-lg border px-3 py-2 text-left text-xs font-medium',
+                                selected ? 'border-primary/40 bg-primary/5' : 'border-border/60',
+                              )}
+                            >
+                              {EXPLAINER_CHARACTER_LABEL[token]}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
 
                     <div className="space-y-2">

@@ -1230,6 +1230,29 @@ export async function fetchTemplateCompareOnlyOfficeConfig(
 export type ExplainerAssistantStatus = 'draft' | 'published' | 'archived'
 export type ExplainerAssistantVisibility = 'workspace' | 'private'
 export type ExplainerChatLimitKind = 'token' | 'question' | 'cost'
+export type ExplainerCharacter = 'polite' | 'cool' | 'formal' | 'friendly' | 'concise'
+
+export const EXPLAINER_CHARACTERS: ExplainerCharacter[] = [
+  'polite',
+  'cool',
+  'formal',
+  'friendly',
+  'concise',
+]
+
+export const EXPLAINER_CHARACTER_LABEL: Record<ExplainerCharacter, string> = {
+  polite: 'Polite',
+  cool: 'Cool',
+  formal: 'Formal',
+  friendly: 'Friendly',
+  concise: 'Concise',
+}
+
+export interface ExplainerCorpusAlert {
+  code: 'folder_empty' | 'folder_missing' | 'document_deleted' | 'publish_failed'
+  severity: 'warning' | 'error'
+  message: string
+}
 
 /**
  * Portrait tokens, not image URLs. Each client maps a token to its own bundled
@@ -1276,12 +1299,17 @@ export interface ExplainerAssistant {
   /** Exclusive budget; omit both for unlimited. Runtime enforces on chat. */
   chat_limit_kind?: ExplainerChatLimitKind | null
   chat_limit_value?: number | null
+  character?: ExplainerCharacter
+  revision_no?: number
+  last_publish_error?: string | null
+  last_publish_failed_at?: string | null
   version: number
   created_date: string
   updated_date: string | null
   /** Corpus expanded to the documents readable today; drives retrieval filtering. */
   resolved_document_ids: string[]
   resolved_document_count: number
+  corpus_alerts?: ExplainerCorpusAlert[]
 }
 
 export interface ExplainerAssistantListResponse {
@@ -1302,6 +1330,7 @@ export interface CreateExplainerAssistantPayload {
   access_grants?: ExplainerAccessGrant[]
   chat_limit_kind?: ExplainerChatLimitKind | null
   chat_limit_value?: number | null
+  character?: ExplainerCharacter
 }
 
 export interface PatchExplainerAssistantPayload {
@@ -1314,6 +1343,7 @@ export interface PatchExplainerAssistantPayload {
   access_grants?: ExplainerAccessGrant[]
   chat_limit_kind?: ExplainerChatLimitKind | null
   chat_limit_value?: number | null
+  character?: ExplainerCharacter
   /** Optimistic lock — send the version last read to detect concurrent edits. */
   version?: number
 }
@@ -1365,6 +1395,7 @@ export async function createExplainerAssistant(
       access_grants: payload.access_grants ?? undefined,
       chat_limit_kind: payload.chat_limit_kind ?? null,
       chat_limit_value: payload.chat_limit_value ?? null,
+      character: payload.character ?? 'polite',
     }),
   })
   return handleJson<ExplainerAssistant>(res)
@@ -1384,6 +1415,7 @@ export async function patchExplainerAssistant(
   if (payload.access_grants !== undefined) body.access_grants = payload.access_grants
   if (payload.chat_limit_kind !== undefined) body.chat_limit_kind = payload.chat_limit_kind
   if (payload.chat_limit_value !== undefined) body.chat_limit_value = payload.chat_limit_value
+  if (payload.character !== undefined) body.character = payload.character
   if (payload.version !== undefined) body.version = payload.version
 
   const res = await apiFetch(`${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}`, {
@@ -1399,6 +1431,49 @@ export async function publishExplainerAssistant(assistantId: string): Promise<Ex
   const res = await apiFetch(
     `${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}:publish`,
     { method: 'POST', headers: tectonaServiceHeaders({ Accept: 'application/json' }) },
+  )
+  return handleJson<ExplainerAssistant>(res)
+}
+
+export interface ExplainerAssistantRevision {
+  revision_no: number
+  snapshot: {
+    display_name?: string
+    description?: string | null
+    character?: ExplainerCharacter
+    corpus?: Partial<ExplainerAssistantCorpus>
+  }
+  created_date: string
+  created_by?: string | null
+}
+
+export interface ExplainerAssistantRevisionListResponse {
+  assistant_id: string
+  revisions: ExplainerAssistantRevision[]
+}
+
+export async function listExplainerAssistantRevisions(
+  assistantId: string,
+): Promise<ExplainerAssistantRevisionListResponse> {
+  const res = await apiFetch(
+    `${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}/revisions`,
+    { headers: tectonaServiceHeaders({ Accept: 'application/json' }) },
+  )
+  return handleJson<ExplainerAssistantRevisionListResponse>(res)
+}
+
+/** Restore copies a published snapshot onto the current pack as draft. Republish to chat again. */
+export async function restoreExplainerAssistantRevision(
+  assistantId: string,
+  revisionNo: number,
+): Promise<ExplainerAssistant> {
+  const res = await apiFetch(
+    `${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}:restore-revision`,
+    {
+      method: 'POST',
+      headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+      body: JSON.stringify({ revision_no: revisionNo }),
+    },
   )
   return handleJson<ExplainerAssistant>(res)
 }

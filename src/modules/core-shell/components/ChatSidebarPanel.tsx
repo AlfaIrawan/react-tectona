@@ -164,6 +164,11 @@ import {
   type GenAiChatSessionSummary,
   type RuntimeChatEvidence,
 } from '@/lib/api/tectonaAgentRuntimeApi'
+import {
+  EXPLAINER_CHARACTERS,
+  EXPLAINER_CHARACTER_LABEL,
+  type ExplainerCharacter,
+} from '@/lib/api/documentKnowledgeApi'
 import { AssistantEvidenceFootnotes } from './AssistantEvidenceFootnotes'
 import { useTectonaVoiceWake } from '@/hooks/useTectonaVoiceWake'
 import { speak as speakReply, stopSpeaking, isTtsSupported } from '@/lib/voice/tts'
@@ -615,6 +620,8 @@ interface Conversation {
    * assistant, which is what every pre-existing conversation stays as.
    */
   assistantId?: string | null
+  /** Explainer speaking tone for this thread; pack default until the user picks another. */
+  explainerCharacter?: ExplainerCharacter
   /** Local-only pointer row for a resumable "Generate Draft" brainstorm (idea-draft-job). */
   isBrainstormPointer?: boolean
   brainstormJobId?: string
@@ -1075,6 +1082,7 @@ type GenAiOpeningGreetingContext = {
   documentTitle?: string | null
   /** Explainer pack to greet as; omitted/null greets as the default Tectona assistant. */
   assistantId?: string | null
+  explainerCharacter?: ExplainerCharacter | null
 }
 
 const BACKEND_OPENING_GREETING_TOKEN = '__TECTONA_OPENING_GREETING__'
@@ -1101,6 +1109,7 @@ async function resolveGenAiOpeningGreeting(
       document_id: context.documentId ?? null,
       document_title: context.documentTitle ?? null,
       assistant_id: context.assistantId ?? null,
+      explainer_character: context.explainerCharacter ?? null,
     },
   })
 
@@ -1115,6 +1124,11 @@ async function resolveGenAiOpeningGreeting(
 
 function greetPreviewText(assistantName = TECTONA_ASSISTANT_LABEL): string {
   return `${assistantName} is greeting…`
+}
+
+function explainerCharacterFromValue(raw: string | null | undefined): ExplainerCharacter {
+  if (raw === 'cool' || raw === 'formal' || raw === 'friendly' || raw === 'concise') return raw
+  return 'polite'
 }
 
 function buildGenAiGreetingErrorMessage(): ChatMessage {
@@ -2415,6 +2429,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             documentId: documentContext?.documentId ?? null,
             documentTitle: documentContext?.documentTitle ?? null,
             assistantId: conv.assistantId ?? null,
+            explainerCharacter: conv.explainerCharacter ?? null,
           })
           const synced = await syncThreadFromBackend({ force: true })
           if (!synced) {
@@ -3806,6 +3821,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       // same-session title drift after close/reopen hydration.
       title: isAi ? (contact.assistantId ? contact.name : 'New conversation') : contact.name,
       assistantId: isAi ? contact.assistantId ?? undefined : undefined,
+      explainerCharacter: isAi && contact.assistantId
+        ? explainerCharacterFromValue(contact.defaultCharacter)
+        : undefined,
       contactId: contact.mode === 'team' ? contact.id : undefined,
       contactName: contact.mode === 'team' ? contact.name : undefined,
       contactAvatarSrc: contact.mode === 'team' ? contact.avatarSrc : undefined,
@@ -4704,6 +4722,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             document_title: documentContext?.documentTitle ?? null,
             assistant_id:
               conversationsRef.current.find((c) => c.id === conversationId)?.assistantId ?? null,
+            explainer_character:
+              conversationsRef.current.find((c) => c.id === conversationId)?.explainerCharacter
+              ?? null,
           },
         })
 
@@ -6169,6 +6190,37 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                 ) : null}
               </>
             )}
+            {activeConversation?.assistantId ? (
+              <div className="flex flex-wrap gap-1 px-0.5 pb-1">
+                {EXPLAINER_CHARACTERS.map((token) => {
+                  const selected =
+                    explainerCharacterFromValue(activeConversation.explainerCharacter) === token
+                  return (
+                    <button
+                      key={token}
+                      type="button"
+                      onClick={() =>
+                        setConversations((prev) =>
+                          prev.map((conv) =>
+                            conv.id === activeConversation.id
+                              ? { ...conv, explainerCharacter: token }
+                              : conv,
+                          ),
+                        )
+                      }
+                      className={cn(
+                        'rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                        selected
+                          ? 'border-primary/40 bg-primary/10 text-foreground'
+                          : 'border-border/60 text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {EXPLAINER_CHARACTER_LABEL[token]}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
             <Textarea
               placeholder="Ask Gen AI…"
               value={draft}

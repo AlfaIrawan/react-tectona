@@ -46,6 +46,7 @@ export interface ChatContact {
    * omit `assistant_id` and take the default path.
    */
   assistantId?: string | null
+  defaultCharacter?: string | null
 }
 
 export const TECTONA_ASSISTANT_CONTACT: ChatContact = {
@@ -127,6 +128,7 @@ export async function fetchExplainerAssistantContacts(workspaceId: string): Prom
     .map((assistant) => ({
       id: explainerContactId(assistant.assistant_id as string),
       assistantId: assistant.assistant_id,
+      defaultCharacter: assistant.character || 'polite',
       name: assistant.display_name,
       subtitle:
         assistant.description

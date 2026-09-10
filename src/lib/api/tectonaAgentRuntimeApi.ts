@@ -724,6 +724,7 @@ export interface RuntimeChatRequest {
      * Omit for the default Tectona assistant.
      */
     assistant_id?: string | null
+    explainer_character?: string | null
   }
   options?: {
     mode?: 'deterministic_first' | 'llm_first'
@@ -897,6 +898,7 @@ function chatContext(
     document_id: context?.document_id ?? null,
     document_title: context?.document_title ?? null,
     assistant_id: context?.assistant_id ?? null,
+    explainer_character: context?.explainer_character ?? null,
   }
 }
 
@@ -2176,6 +2178,7 @@ export interface RuntimeAssistantSummary {
   document_count: number
   /** Palette token chosen on the pack; each client applies its own avatar chrome. */
   avatar?: string | null
+  character?: string | null
 }
 
 export interface RuntimeAssistantListResponse {
@@ -2203,10 +2206,16 @@ export interface ExplainerDocumentStat {
   count: number
 }
 
+export interface ExplainerWeeklyStat {
+  week_start: string
+  count: number
+}
+
 export interface ExplainerAssistantInsights {
   assistant_id: string
   frequently_asked: ExplainerFaqItem[]
   documents_asked: ExplainerDocumentStat[]
+  questions_by_week?: ExplainerWeeklyStat[]
   questions_asked: number
   users_chatted: number
   tokens_used: number
