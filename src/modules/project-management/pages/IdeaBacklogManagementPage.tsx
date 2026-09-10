@@ -140,6 +140,9 @@ import {
   continueIdeaDraftJob,
   getIdeaDraftJob,
   getIdeaSummaryJob,
+  getIdeaDraftVersion,
+  listIdeaDraftVersions,
+  reanalyzeIdeaDraftJob,
   restoreIdeaDraftBrainstormSession,
   startIdeaDraftJob,
   startIdeaSummaryJob,
@@ -148,6 +151,7 @@ import {
   type IdeaDraftDiscoveryProgress,
   type IdeaDraftEvidenceProgress,
   type IdeaDraftJobStatusResponse,
+  type IdeaDraftVersionDetail,
 } from '@/lib/api/tectonaAgentRuntimeApi'
 
 type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
@@ -1776,6 +1780,11 @@ export function IdeaBacklogManagementPage() {
   const [brainstormConfidencePercent, setBrainstormConfidencePercent] = useState(0)
   const [brainstormOfferGenerateAnyway, setBrainstormOfferGenerateAnyway] = useState(false)
   const [brainstormEvidenceRailCollapsed, setBrainstormEvidenceRailCollapsed] = useState(false)
+  // Re-analysis of an already generated draft: the resulting version is shown
+  // as a card in the conversation and only replaces the description once the
+  // user says so, so an unsaved manual edit is never overwritten silently.
+  const [isReanalyzing, setIsReanalyzing] = useState(false)
+  const [draftVersionCard, setDraftVersionCard] = useState<IdeaDraftVersionDetail | null>(null)
   const brainstormScrollRef = useRef<HTMLDivElement | null>(null)
   const brainstormComposerRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -3487,7 +3496,9 @@ export function IdeaBacklogManagementPage() {
   }
 
   const handleSendBrainstormMessage = async (messageOverride?: string) => {
-    if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input') {
+    // 'completed' is accepted too: chatting on a finished draft is what feeds
+    // the next re-analysis.
+    if (!ideaDraftJob || !['awaiting_input', 'completed'].includes(ideaDraftJob.status)) {
       // Never swallow the send silently: a dead composer with no explanation reads
       // as "the chat closed itself" to the user.
       setBrainstormError(
@@ -3705,6 +3716,44 @@ export function IdeaBacklogManagementPage() {
     syncBrainstormComposerHeight()
   }, [isBrainstormMode, brainstormInput])
 
+  // The conversation continued after a draft already existed, so ask the agent
+  // to redo the analysis. The outcome is the NEXT version: the description the
+  // user is looking at is left untouched until they pick "Pakai versi ini",
+  // which is what keeps an unsaved manual edit from being overwritten.
+  const handleReanalyzeDraft = async () => {
+    if (!ideaDraftJob || ideaDraftJob.status !== 'completed' || isReanalyzing) return
+    setIsReanalyzing(true)
+    setBrainstormError('')
+    setDraftVersionCard(null)
+    try {
+      const started = await reanalyzeIdeaDraftJob(ideaDraftJob.job_id)
+      setIdeaDraftJob(started)
+      const terminal = await waitForIdeaDraftJob(started.job_id)
+      if (terminal.status !== 'completed') {
+        throw new Error(terminal.error_message || 'Re-analysis did not finish.')
+      }
+      setIdeaDraftJob(terminal)
+      const listed = await listIdeaDraftVersions(terminal.job_id)
+      const latest = listed.versions[0]
+      if (latest) {
+        setDraftVersionCard(await getIdeaDraftVersion(terminal.job_id, latest.version_no))
+      }
+    } catch (error) {
+      setBrainstormError(
+        friendlyBrainstormError(error instanceof Error ? error.message : String(error)),
+      )
+    } finally {
+      setIsReanalyzing(false)
+    }
+  }
+
+  const applyDraftVersion = (version: IdeaDraftVersionDetail) => {
+    setCreateIdeaDescriptionFromPlainText(version.draft_text)
+    setDraftVersionCard(null)
+    setIsEvidenceDialogOpen(false)
+    setIsBrainstormMode(false)
+  }
+
   const handleCancelIdeaDraft = async () => {
     if (!ideaDraftJob || !['queued', 'running', 'awaiting_input'].includes(ideaDraftJob.status)) return
     try {
@@ -3752,7 +3801,10 @@ export function IdeaBacklogManagementPage() {
 
   useEffect(() => {
     if (!ideaDraftJob) return
-    if (ideaDraftJob.status === 'awaiting_input') {
+    // 'completed' is kept on purpose: a generated draft no longer ends the
+    // session, so the entry must stay resumable for a follow-up re-analysis.
+    // Only failed/cancelled/queued drop it.
+    if (ideaDraftJob.status === 'awaiting_input' || ideaDraftJob.status === 'completed') {
       useIdeaDraftBrainstormPointerStore.getState().setPointer({
         jobId: ideaDraftJob.job_id,
         title: createIdeaForm.title.trim() || 'Untitled idea',
@@ -3817,7 +3869,7 @@ export function IdeaBacklogManagementPage() {
         if (pointerTitle) {
           setCreateIdeaForm((prev) => (prev.title.trim() ? prev : { ...prev, title: pointerTitle }))
         }
-        if (status.status === 'awaiting_input') {
+        if (status.status === 'awaiting_input' || status.status === 'completed') {
           applyIdeaDraftBrainstormState(status)
           setIsEvidenceDialogOpen(true)
           setIsBrainstormMode(true)
@@ -5796,7 +5848,13 @@ export function IdeaBacklogManagementPage() {
               </form>
             </div>
 
-            {isEvidenceDialogOpen && ideaDraftJob?.status === 'awaiting_input' && typeof document !== 'undefined'
+            {/* 'completed' keeps the conversation open after a draft exists, and
+                'running' keeps it open while a re-analysis is in flight — unmounting
+                the overlay there would make the chat appear to close itself again.
+                The first generation still closes it, via isEvidenceDialogOpen. */}
+            {isEvidenceDialogOpen
+            && ['awaiting_input', 'running', 'completed'].includes(ideaDraftJob?.status ?? '')
+            && typeof document !== 'undefined'
               ? createPortal(
                   isBrainstormMode ? (
                     <div
@@ -6057,6 +6115,111 @@ export function IdeaBacklogManagementPage() {
                               {brainstormRemainingGaps.length > 3 ? ' · …' : ''}
                             </p>
                           )}
+
+                          {/* The draft already exists and the conversation has moved on.
+                              Re-analysis is offered rather than fired on every turn: a full
+                              regeneration is a slow, paid LLM call, and "ok" or "thanks" is
+                              not a reason to redo eleven sections. */}
+                          {ideaDraftJob?.status === 'completed' && !draftVersionCard && (
+                            <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3">
+                              <p className="text-xs leading-5 text-muted-foreground">
+                                {isBrainstormThreadIndonesian(brainstormMessages)
+                                  ? 'Draft sudah dibuat. Kalau ada tambahan dari obrolan di atas, minta Agent menganalisa ulang — hasilnya jadi versi baru, draft yang sekarang tidak ditimpa.'
+                                  : 'The draft already exists. If the conversation above adds something, ask the agent to re-analyze — the result becomes a new version and the current draft is left as is.'}
+                              </p>
+                              <button
+                                type="button"
+                                disabled={isReanalyzing || isBrainstormSending || isDraftContinuing}
+                                className={cn(
+                                  enterpriseCyanGradientActionButtonClass(),
+                                  'h-9',
+                                  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
+                                )}
+                                onClick={() => void handleReanalyzeDraft()}
+                              >
+                                {isReanalyzing ? (
+                                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                                ) : (
+                                  <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
+                                )}
+                                {isReanalyzing
+                                  ? (isBrainstormThreadIndonesian(brainstormMessages) ? 'Menganalisa ulang…' : 'Re-analyzing…')
+                                  : (isBrainstormThreadIndonesian(brainstormMessages) ? 'Analisa ulang draft' : 'Re-analyze draft')}
+                              </button>
+                            </div>
+                          )}
+
+                          {draftVersionCard && (() => {
+                            const indonesian = isBrainstormThreadIndonesian(brainstormMessages)
+                            const moved = draftVersionCard.sections.filter(
+                              (section) => section.change_kind !== 'unchanged',
+                            )
+                            return (
+                              <div className="space-y-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-950">
+                                <div>
+                                  <p className="text-sm font-semibold">
+                                    {indonesian
+                                      ? `Draft v${draftVersionCard.version_no} siap`
+                                      : `Draft v${draftVersionCard.version_no} ready`}
+                                  </p>
+                                  <p className="mt-0.5 text-xs leading-5 text-emerald-900/80">
+                                    {moved.length === 0
+                                      ? (indonesian
+                                        ? 'Analisa ulang tidak mengubah satu section pun.'
+                                        : 'The re-analysis changed no sections.')
+                                      : (indonesian
+                                        ? `${moved.length} dari ${draftVersionCard.sections.length} section diperbarui.`
+                                        : `${moved.length} of ${draftVersionCard.sections.length} sections updated.`)}
+                                  </p>
+                                </div>
+                                {moved.length > 0 && (
+                                  <ul className="space-y-1">
+                                    {moved.map((section) => (
+                                      <li
+                                        key={section.section_key}
+                                        className="flex items-center gap-2 text-xs leading-5"
+                                      >
+                                        <span
+                                          className={cn(
+                                            'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+                                            section.change_kind === 'added' && 'bg-emerald-200 text-emerald-900',
+                                            section.change_kind === 'changed' && 'bg-amber-200 text-amber-900',
+                                            section.change_kind === 'removed' && 'bg-rose-200 text-rose-900',
+                                          )}
+                                        >
+                                          {section.change_kind === 'added'
+                                            ? (indonesian ? 'baru' : 'added')
+                                            : section.change_kind === 'removed'
+                                              ? (indonesian ? 'dihapus' : 'removed')
+                                              : (indonesian ? 'diubah' : 'changed')}
+                                        </span>
+                                        <span className="min-w-0 truncate">
+                                          {section.section_title || section.section_key}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className={cn(enterpriseCyanGradientActionButtonClass(), 'h-9')}
+                                    onClick={() => applyDraftVersion(draftVersionCard)}
+                                  >
+                                    <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
+                                    {indonesian ? 'Pakai versi ini' : 'Use this version'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={cn(enterpriseSecondaryButtonClass(), 'inline-flex h-9 items-center gap-2')}
+                                    onClick={() => setDraftVersionCard(null)}
+                                  >
+                                    {indonesian ? 'Nanti saja' : 'Not now'}
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          })()}
                             </div>
                           </div>
 

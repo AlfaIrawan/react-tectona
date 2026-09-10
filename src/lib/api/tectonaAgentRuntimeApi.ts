@@ -620,6 +620,37 @@ export interface RestoreIdeaDraftBrainstormRequest {
   ready_to_continue?: boolean
 }
 
+export interface IdeaDraftSectionVersion {
+  ordinal: number
+  section_key: string
+  section_title: string
+  body: string
+  /** How this section moved against the previous version. */
+  change_kind: 'added' | 'changed' | 'unchanged' | 'removed'
+}
+
+export interface IdeaDraftVersionSummary {
+  version_no: number
+  language: string
+  confidence_score: number
+  /** 'initial' for the first draft, 'rechat' for a re-analysis after more chat. */
+  trigger_kind: string
+  trigger_message: string
+  changed_sections: number
+  total_sections: number
+  created_date?: string | null
+}
+
+export interface IdeaDraftVersionDetail extends IdeaDraftVersionSummary {
+  draft_text: string
+  sections: IdeaDraftSectionVersion[]
+}
+
+export interface IdeaDraftVersionListResponse {
+  job_id: string
+  versions: IdeaDraftVersionSummary[]
+}
+
 export interface CreateIdeaDraftJobResponse {
   job_id: string
   status: IdeaDraftJobStatus
@@ -1822,6 +1853,41 @@ export async function brainstormIdeaDraftJob(
     MULTI_ROLE_SUMMARY_TIMEOUT_MS,
   )
   return handleResponse<IdeaDraftBrainstormResponse>(res)
+}
+
+/**
+ * Re-run the analysis on an already generated draft after the user has chatted
+ * further. Returns the job in `running`; poll it the same way the first
+ * generation is polled. The result is a NEW draft version, not a replacement.
+ */
+export async function reanalyzeIdeaDraftJob(jobId: string): Promise<IdeaDraftJobStatusResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/reanalyze`,
+    { method: 'POST' },
+    30_000,
+  )
+  return handleResponse<IdeaDraftJobStatusResponse>(res)
+}
+
+export async function listIdeaDraftVersions(jobId: string): Promise<IdeaDraftVersionListResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/versions`,
+    { method: 'GET' },
+    20_000,
+  )
+  return handleResponse<IdeaDraftVersionListResponse>(res)
+}
+
+export async function getIdeaDraftVersion(
+  jobId: string,
+  versionNo: number,
+): Promise<IdeaDraftVersionDetail> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/versions/${versionNo}`,
+    { method: 'GET' },
+    20_000,
+  )
+  return handleResponse<IdeaDraftVersionDetail>(res)
 }
 
 export async function restoreIdeaDraftBrainstormSession(
