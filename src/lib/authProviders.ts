@@ -85,7 +85,7 @@ export function isSocialProviderEnabled(id: SocialAuthProviderId): boolean {
 export function buildOidcAuthorizeUrl(
   provider: SocialAuthProviderId,
   redirectUri: string,
-  opts?: { state?: string; codeChallenge?: string; codeVerifier?: string; oauthIntent?: 'signin' | 'signup' },
+  opts?: { state?: string; codeChallenge?: string; codeVerifier?: string; oauthIntent?: 'signin' | 'signup' | 'graph' },
 ): string {
   const base = (envFlag('VITE_IDENTITY_LITE_API_URL') ?? '/api/identity-lite').replace(/\/$/, '')
   const clientId = envFlag('VITE_TECTONA_OIDC_CLIENT_ID') ?? 'tectona-spa'
@@ -110,7 +110,10 @@ export function buildOidcAuthorizeUrl(
   return `${base}/oauth2/authorize?${params}`
 }
 
-export async function startSocialOAuthLogin(provider: SocialAuthProviderId): Promise<void> {
+export async function startSocialOAuthLogin(
+  provider: SocialAuthProviderId,
+  opts?: { oauthIntent?: 'signin' | 'signup' | 'graph' },
+): Promise<void> {
   if (!isSocialProviderEnabled(provider)) {
     throw new Error(`${SOCIAL_CATALOG[provider].label} sign-in is disabled in VITE_AUTH_PROVIDERS.`)
   }
@@ -122,7 +125,7 @@ export async function startSocialOAuthLogin(provider: SocialAuthProviderId): Pro
   const state = createOAuthState()
   storeOAuthSession(verifier, state)
   const redirectUri = `${window.location.origin}/login/oauth/callback`
-  const oauthIntent = readOAuthIntent() ?? 'signin'
+  const oauthIntent = opts?.oauthIntent ?? readOAuthIntent() ?? 'signin'
   window.location.href = buildOidcAuthorizeUrl(provider, redirectUri, {
     state,
     codeChallenge: challenge,

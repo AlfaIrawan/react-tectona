@@ -41,6 +41,7 @@ import {
   type ExplainerAssistantRevision,
   type ExplainerCharacter,
   type ExplainerChatLimitKind,
+  type ExplainerChatLimitScope,
   type ExplainerCorpusAlert,
 } from '@/lib/api/documentKnowledgeApi'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
@@ -110,6 +111,7 @@ interface DraftState {
   accessGrants: ExplainerAccessGrant[]
   chatLimitKind: 'none' | ExplainerChatLimitKind
   chatLimitValue: string
+  chatLimitScopes: ExplainerChatLimitScope[]
   character: ExplainerCharacter
 }
 
@@ -124,6 +126,7 @@ const EMPTY_DRAFT: DraftState = {
   accessGrants: [],
   chatLimitKind: 'none',
   chatLimitValue: '',
+  chatLimitScopes: [],
   character: 'polite',
 }
 
@@ -443,6 +446,10 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   const [identityNameById, setIdentityNameById] = useState<Map<string, string>>(new Map())
   const [grantRosterLoading, setGrantRosterLoading] = useState(false)
   const [grantRosterError, setGrantRosterError] = useState<string | null>(null)
+  const [scopeSubjectKind, setScopeSubjectKind] = useState<'workspace' | 'user'>('workspace')
+  const [scopeSubjectValue, setScopeSubjectValue] = useState('')
+  const [scopeLimitKind, setScopeLimitKind] = useState<ExplainerChatLimitKind>('question')
+  const [scopeLimitValue, setScopeLimitValue] = useState('')
 
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]))
@@ -739,6 +746,10 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     setGrantBrowseMode('workspace')
     setGrantPickerWorkspaceId(wacWorkspaceId || workspaceId || null)
     setCurrentFolderId(null)
+    setScopeSubjectKind('workspace')
+    setScopeSubjectValue('')
+    setScopeLimitKind('question')
+    setScopeLimitValue('')
     setDrawerFullscreen(false)
     setDrawerOpen(true)
   }, [workspaceId, wacWorkspaceId, workspaceName])
@@ -760,6 +771,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
         workspaceName,
       ),
       ...chatLimitDraftFromAssistant(assistant),
+      chatLimitScopes: Array.isArray(assistant.chat_limit_scopes) ? assistant.chat_limit_scopes : [],
       character:
         assistant.character === 'cool'
         || assistant.character === 'formal'
@@ -774,6 +786,10 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     setGrantBrowseMode('workspace')
     setGrantPickerWorkspaceId(wacWorkspaceId || workspaceId || null)
     setCurrentFolderId(null)
+    setScopeSubjectKind('workspace')
+    setScopeSubjectValue('')
+    setScopeLimitKind('question')
+    setScopeLimitValue('')
     setDrawerFullscreen(false)
     setDrawerOpen(true)
   }
@@ -975,6 +991,26 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
       })
   }, [grantBrowseMode, grantPickerWorkspaceId, membersByWorkspaceId, identityNameById])
 
+  const scopedLimitUsers = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const rows of Object.values(membersByWorkspaceId)) {
+      for (const row of rows) {
+        if (!byId.has(row.subject_id)) {
+          byId.set(row.subject_id, identityNameById.get(row.subject_id) || row.subject_id)
+        }
+      }
+    }
+    for (const grant of draft.accessGrants) {
+      if (grant.kind !== 'user') continue
+      if (!byId.has(grant.value)) {
+        byId.set(grant.value, grant.label || identityNameById.get(grant.value) || grant.value)
+      }
+    }
+    return [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
+  }, [membersByWorkspaceId, identityNameById, draft.accessGrants])
+
   const pickerRoles = useMemo(() => {
     const rosterKey =
       grantBrowseMode === 'users' ? ORG_GRANT_ROSTER_KEY : (grantPickerWorkspaceId || '').trim()
@@ -1039,6 +1075,50 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     || (Number.isFinite(Number(draft.chatLimitValue)) && Number(draft.chatLimitValue) > 0)
   const canSave = !!workspaceId && draft.displayName.trim().length > 0 && chatLimitReady
 
+  const addScopedChatLimit = () => {
+    let parsed: { chat_limit_kind: ExplainerChatLimitKind | null; chat_limit_value: number | null }
+    try {
+      parsed = parseChatLimitDraft(scopeLimitKind, scopeLimitValue)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Enter a scoped limit greater than zero.')
+      return
+    }
+    if (!parsed.chat_limit_kind || parsed.chat_limit_value == null) {
+      setSaveError('Enter a scoped limit greater than zero.')
+      return
+    }
+    const targetId = scopeSubjectValue.trim()
+    if (!targetId) {
+      setSaveError('Choose a workspace or user for the scoped limit.')
+      return
+    }
+    let label = targetId
+    if (scopeSubjectKind === 'workspace') {
+      label = workspaceGrantTargets.find((item) => item.id === targetId)?.name || targetId
+    } else {
+      label =
+        scopedLimitUsers.find((user) => user.id === targetId)?.name
+        || identityNameById.get(targetId)
+        || targetId
+    }
+    const next: ExplainerChatLimitScope = {
+      kind: scopeSubjectKind,
+      value: targetId,
+      label,
+      limit_kind: parsed.chat_limit_kind,
+      limit_value: parsed.chat_limit_value,
+    }
+    setDraft((prev) => {
+      const without = prev.chatLimitScopes.filter(
+        (item) => !(item.kind === next.kind && item.value === next.value),
+      )
+      return { ...prev, chatLimitScopes: [...without, next] }
+    })
+    setScopeSubjectValue('')
+    setScopeLimitValue('')
+    setSaveError(null)
+  }
+
   const handleSave = async () => {
     if (!workspaceId || !canSave) return
     setSaving(true)
@@ -1055,6 +1135,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           access_grants: draft.accessGrants,
           chat_limit_kind: chatLimit.chat_limit_kind,
           chat_limit_value: chatLimit.chat_limit_value,
+          chat_limit_scopes: draft.chatLimitScopes,
           character: draft.character,
           version: draft.version ?? undefined,
         })
@@ -1068,6 +1149,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           access_grants: draft.accessGrants,
           chat_limit_kind: chatLimit.chat_limit_kind,
           chat_limit_value: chatLimit.chat_limit_value,
+          chat_limit_scopes: draft.chatLimitScopes,
           character: draft.character,
         })
       }
@@ -1525,7 +1607,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     ) : null}
                     {detailInsights ? (
                       <p className="text-[11px] text-muted-foreground">
-                        Chat budget:{' '}
+                        Default chat budget:{' '}
                         {detailInsights.limit_kind
                           ? `${chatLimitKindLabel(detailInsights.limit_kind)} ${formatUsageAmount(detailInsights.limit_kind, detailInsights.limit_value)} · remaining ${formatUsageAmount(detailInsights.limit_kind, detailInsights.remaining)}`
                           : 'Unlimited'}
@@ -1534,6 +1616,17 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         {' · '}
                         {detailInsights.users_chatted} users
                       </p>
+                    ) : null}
+                    {(detailFor.chat_limit_scopes ?? []).length > 0 ? (
+                      <ul className="space-y-1 text-[11px] text-muted-foreground">
+                        {(detailFor.chat_limit_scopes ?? []).map((scope) => (
+                          <li key={`${scope.kind}:${scope.value}`}>
+                            {scope.kind === 'workspace' ? 'Workspace' : 'User'} · {scope.label || scope.value}
+                            {' · '}
+                            {chatLimitKindLabel(scope.limit_kind)} {formatUsageAmount(scope.limit_kind, scope.limit_value)}
+                          </li>
+                        ))}
+                      </ul>
                     ) : null}
                   </section>
 
@@ -2078,8 +2171,9 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     <div className="space-y-2">
                       <Label className="text-xs text-muted-foreground">Chat limit</Label>
                       <p className="text-[11px] leading-relaxed text-muted-foreground">
-                        Choose one cap for all users of this assistant, or leave it unlimited. The runtime
-                        enforces the budget before each LLM turn.
+                        Default cap for everyone who chats with this assistant. You can also add a tighter
+                        budget for a selected workspace or a specific user. The most specific match is
+                        enforced: user, then workspace, then this default.
                       </p>
                       <div className="grid grid-cols-2 gap-1.5">
                         {CHAT_LIMIT_OPTIONS.map((option) => {
@@ -2126,6 +2220,128 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                           />
                         </div>
                       ) : null}
+                      <div className="space-y-2 rounded-lg border border-border/60 p-3">
+                        <p className="text-xs font-medium text-foreground">Workspace or user caps</p>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground">
+                          Optional. These override the default above for that workspace or person only.
+                        </p>
+                        {draft.chatLimitScopes.length > 0 ? (
+                          <ul className="space-y-1.5">
+                            {draft.chatLimitScopes.map((scope) => (
+                              <li
+                                key={`${scope.kind}:${scope.value}`}
+                                className="flex items-start justify-between gap-2 rounded-md border border-border/50 px-2 py-1.5"
+                              >
+                                <span className="min-w-0 text-[11px] text-foreground">
+                                  <span className="font-medium">
+                                    {scope.kind === 'workspace' ? 'Workspace' : 'User'}
+                                  </span>
+                                  {' · '}
+                                  {scope.label || scope.value}
+                                  {' · '}
+                                  {chatLimitKindLabel(scope.limit_kind)} {formatUsageAmount(scope.limit_kind, scope.limit_value)}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  onClick={() =>
+                                    setDraft((prev) => ({
+                                      ...prev,
+                                      chatLimitScopes: prev.chatLimitScopes.filter(
+                                        (item) => !(item.kind === scope.kind && item.value === scope.value),
+                                      ),
+                                    }))
+                                  }
+                                  aria-label="Remove scoped limit"
+                                >
+                                  <X className="h-3.5 w-3.5" aria-hidden />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/30 p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScopeSubjectKind('workspace')
+                              setScopeSubjectValue('')
+                            }}
+                            className={cn(
+                              'rounded-md px-2 py-1.5 text-xs font-medium',
+                              scopeSubjectKind === 'workspace'
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            Workspace
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScopeSubjectKind('user')
+                              setScopeSubjectValue('')
+                            }}
+                            className={cn(
+                              'rounded-md px-2 py-1.5 text-xs font-medium',
+                              scopeSubjectKind === 'user'
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            User
+                          </button>
+                        </div>
+                        <select
+                          className="h-9 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                          value={scopeSubjectValue}
+                          onChange={(event) => setScopeSubjectValue(event.target.value)}
+                        >
+                          <option value="">
+                            {scopeSubjectKind === 'workspace' ? 'Select a workspace' : 'Select a user'}
+                          </option>
+                          {scopeSubjectKind === 'workspace'
+                            ? workspaceGrantTargets.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.name}
+                                </option>
+                              ))
+                            : scopedLimitUsers.map((user) => (
+                                <option key={user.id} value={user.id}>
+                                  {user.name}
+                                </option>
+                              ))}
+                        </select>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(['question', 'token', 'cost'] as ExplainerChatLimitKind[]).map((kind) => (
+                            <button
+                              key={kind}
+                              type="button"
+                              onClick={() => setScopeLimitKind(kind)}
+                              className={cn(
+                                'rounded-md border px-2 py-1.5 text-[11px] font-medium',
+                                scopeLimitKind === kind ? 'border-primary/40 bg-primary/5' : 'border-border/60',
+                              )}
+                            >
+                              {chatLimitKindLabel(kind)}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            step={scopeLimitKind === 'cost' ? '0.01' : '1'}
+                            value={scopeLimitValue}
+                            placeholder={chatLimitValuePlaceholder(scopeLimitKind)}
+                            className="h-9 text-sm"
+                            onChange={(event) => setScopeLimitValue(event.target.value)}
+                          />
+                          <Button type="button" variant="outline" className="h-9 shrink-0" onClick={addScopedChatLimit}>
+                            Add
+                          </Button>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="space-y-2">

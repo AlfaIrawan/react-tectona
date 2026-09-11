@@ -2,7 +2,7 @@ const PKCE_VERIFIER_KEY = 'tectona:oauth:pkce-verifier'
 const PKCE_STATE_KEY = 'tectona:oauth:state'
 const OAUTH_INTENT_KEY = 'tectona:oauth-intent'
 
-export type OAuthIntent = 'signin' | 'signup'
+export type OAuthIntent = 'signin' | 'signup' | 'graph'
 
 function randomString(length: number): string {
   const bytes = new Uint8Array(length)
@@ -56,7 +56,7 @@ export function storeOAuthIntent(intent: OAuthIntent): void {
 
 export function readOAuthIntent(): OAuthIntent | null {
   const value = sessionStorage.getItem(OAUTH_INTENT_KEY)
-  return value === 'signup' || value === 'signin' ? value : null
+  return value === 'signup' || value === 'signin' || value === 'graph' ? value : null
 }
 
 export function clearOAuthIntent(): void {

@@ -77,6 +77,7 @@ import {
   Clock3,
   Code2,
   BarChart3,
+  Cloud,
   Download,
   Eye,
   FileClock,
@@ -176,6 +177,7 @@ import { Breadcrumb } from '@/components/ui/breadcrumb'
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import { DocumentRepositoryFolderCard } from '@/modules/document-knowledge-management/components/DocumentRepositoryFolderCard'
 import { DocumentRepositoryExplorerView } from '@/modules/document-knowledge-management/components/DocumentRepositoryExplorerView'
+import { PersonalOneDrivePanel } from '@/modules/document-knowledge-management/components/PersonalOneDrivePanel'
 import { DocumentRepositoryUploadProgressOverlay } from '@/modules/document-knowledge-management/components/DocumentRepositoryUploadProgressOverlay'
 import { collectBrowserFiles } from '@/modules/document-knowledge-management/lib/collectBrowserFiles'
 import {
@@ -5239,6 +5241,11 @@ export function DocumentKnowledgeManagementPage() {
       return 'folders'
     }
   })
+  const isPersonalWorkspace = tenant?.tenantMode === 'personal'
+  const [repositoryLibrary, setRepositoryLibrary] = useState<'tectona' | 'onedrive'>('tectona')
+  useEffect(() => {
+    if (!isPersonalWorkspace) setRepositoryLibrary('tectona')
+  }, [isPersonalWorkspace])
   const [repositoryFolderBusy, setRepositoryFolderBusy] = useState(false)
   const [repositoryFolderRenameId, setRepositoryFolderRenameId] = useState<string | null>(null)
   // Drag-and-drop: which folder drop target is currently hovered ('root' = move out to root).
@@ -15925,6 +15932,37 @@ export function DocumentKnowledgeManagementPage() {
                 >
                   {activePanel === 'repository' ? (
                     <>
+                      {isPersonalWorkspace ? (
+                        <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/30 p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setRepositoryLibrary('tectona')}
+                            className={cn(
+                              'rounded-md px-3 py-1.5 text-xs font-medium',
+                              repositoryLibrary === 'tectona'
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            Tectona
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRepositoryLibrary('onedrive')}
+                            className={cn(
+                              'inline-flex items-center justify-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium',
+                              repositoryLibrary === 'onedrive'
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            <Cloud className="h-3.5 w-3.5" aria-hidden />
+                            OneDrive
+                          </button>
+                        </div>
+                      ) : null}
+                      {repositoryLibrary === 'tectona' ? (
+                      <>
                       <button
                         type="button"
                         className={enterpriseCyanGradientActionButtonClass()}
@@ -15980,7 +16018,16 @@ export function DocumentKnowledgeManagementPage() {
                           </p>
                         </div>
                       </div>
-                      <div className="ml-auto flex h-10 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm sm:absolute sm:right-0 sm:top-3" role="group" aria-label="Repository view mode">
+                      </>
+                      ) : null}
+                      <div
+                        className={cn(
+                          'ml-auto flex h-10 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm sm:absolute sm:right-0 sm:top-3',
+                          repositoryLibrary === 'onedrive' && 'hidden',
+                        )}
+                        role="group"
+                        aria-label="Repository view mode"
+                      >
                         <button
                           type="button"
                           aria-label="Folder card view"
@@ -17263,11 +17310,15 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
               }
             >
+              {repositoryLibrary === 'onedrive' ? (
+                <PersonalOneDrivePanel className="min-h-[420px]" />
+              ) : null}
               <div
                 className={cn(
                   'relative flex h-full min-h-0 flex-col gap-3 overflow-visible transition-all duration-200',
                   repositoryViewMode === 'split' && 'grid grid-cols-[220px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]',
                   isRepositoryDragActive && 'rounded-xl bg-blue-50/30 ring-2 ring-inset ring-blue-400/70',
+                  repositoryLibrary === 'onedrive' && 'hidden',
                 )}
                 onDragOver={handleRepositoryDragOver}
                 onDragLeave={handleRepositoryDragLeave}

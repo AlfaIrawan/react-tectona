@@ -1284,6 +1284,14 @@ export interface ExplainerAccessGrant {
   label?: string | null
 }
 
+export interface ExplainerChatLimitScope {
+  kind: 'workspace' | 'user'
+  value: string
+  label?: string | null
+  limit_kind: ExplainerChatLimitKind
+  limit_value: number
+}
+
 export interface ExplainerAssistant {
   id: string
   workspace_id: string
@@ -1299,6 +1307,7 @@ export interface ExplainerAssistant {
   /** Exclusive budget; omit both for unlimited. Runtime enforces on chat. */
   chat_limit_kind?: ExplainerChatLimitKind | null
   chat_limit_value?: number | null
+  chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
   revision_no?: number
   last_publish_error?: string | null
@@ -1330,6 +1339,7 @@ export interface CreateExplainerAssistantPayload {
   access_grants?: ExplainerAccessGrant[]
   chat_limit_kind?: ExplainerChatLimitKind | null
   chat_limit_value?: number | null
+  chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
 }
 
@@ -1343,6 +1353,7 @@ export interface PatchExplainerAssistantPayload {
   access_grants?: ExplainerAccessGrant[]
   chat_limit_kind?: ExplainerChatLimitKind | null
   chat_limit_value?: number | null
+  chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
   /** Optimistic lock — send the version last read to detect concurrent edits. */
   version?: number
@@ -1395,6 +1406,7 @@ export async function createExplainerAssistant(
       access_grants: payload.access_grants ?? undefined,
       chat_limit_kind: payload.chat_limit_kind ?? null,
       chat_limit_value: payload.chat_limit_value ?? null,
+      chat_limit_scopes: payload.chat_limit_scopes ?? [],
       character: payload.character ?? 'polite',
     }),
   })
@@ -1415,6 +1427,7 @@ export async function patchExplainerAssistant(
   if (payload.access_grants !== undefined) body.access_grants = payload.access_grants
   if (payload.chat_limit_kind !== undefined) body.chat_limit_kind = payload.chat_limit_kind
   if (payload.chat_limit_value !== undefined) body.chat_limit_value = payload.chat_limit_value
+  if (payload.chat_limit_scopes !== undefined) body.chat_limit_scopes = payload.chat_limit_scopes
   if (payload.character !== undefined) body.character = payload.character
   if (payload.version !== undefined) body.version = payload.version
 
