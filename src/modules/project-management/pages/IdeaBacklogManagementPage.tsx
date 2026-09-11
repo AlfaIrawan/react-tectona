@@ -207,7 +207,8 @@ function formatBrainstormChecklistPrompt(prompt: string): string {
 }
 
 function formatBrainstormExploringNext(gaps: string[]): string {
-  return gaps.slice(0, 3).map(formatBrainstormGapLabel).join(' · ')
+  const current = gaps[0]?.trim()
+  return current ? formatBrainstormGapLabel(current) : ''
 }
 
 function isBrainstormThreadIndonesian(messages: Array<{ role: string; text: string }>): boolean {
@@ -302,11 +303,24 @@ function friendlyBrainstormError(rawMessage: string): string {
 type BrainstormTextBlock =
   | { type: 'paragraph'; text: string }
   | { type: 'list'; items: string[] }
+  // Lines that are already markdown structure — bullets, table rows, headings.
+  // AssistantChatMarkdown renders these properly (react-markdown + remark-gfm,
+  // table styling included); they only ever looked broken because the paragraph
+  // branch below merged them into one run-on line before they got there.
+  | { type: 'markdown'; lines: string[] }
 
 /** Turn inline "(1) … (2) …" / "1. …" into paragraph + ordered-list blocks for chat rendering. */
 function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
   const normalized = text
     .replace(/\s*(?:atau|or|,)?\s*\((\d+)\)\s+/gi, '\n$1. ')
+    // "- Aktor: … - Sistem: … - Alur: …" arrives as ONE line and has to become
+    // three bullets. Only split a line that already begins with a bullet, so a
+    // hyphen used mid-sentence in ordinary prose is left alone.
+    .split('\n')
+    .map((line) =>
+      /^\s*[-*•]\s+/.test(line) ? line.replace(/\s+[-*•]\s+/g, '\n- ') : line,
+    )
+    .join('\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -317,6 +331,7 @@ function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
   const blocks: BrainstormTextBlock[] = []
   let paragraphParts: string[] = []
   let listItems: string[] = []
+  let markdownLines: string[] = []
 
   const flushParagraph = () => {
     const joined = paragraphParts.join(' ').replace(/\s+/g, ' ').trim()
@@ -327,21 +342,37 @@ function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
     if (listItems.length > 0) blocks.push({ type: 'list', items: listItems })
     listItems = []
   }
+  const flushMarkdown = () => {
+    if (markdownLines.length > 0) blocks.push({ type: 'markdown', lines: markdownLines })
+    markdownLines = []
+  }
 
   for (const rawLine of lines) {
     const line = rawLine.trim()
     if (!line) {
       flushList()
+      flushMarkdown()
       flushParagraph()
       continue
     }
     const numbered = line.match(/^\d+[\.\)]\s+(.+)$/)
     if (numbered?.[1]) {
       flushParagraph()
+      flushMarkdown()
       listItems.push(numbered[1].trim())
       continue
     }
+    // Bullets, table rows and headings pass through verbatim so remark-gfm can
+    // render them; joining them into a paragraph is what produced the run-on
+    // "- Aktor: … - Sistem: …" line.
+    if (/^[-*•]\s+/.test(line) || line.startsWith('|') || /^#{1,6}\s+/.test(line)) {
+      flushList()
+      flushParagraph()
+      markdownLines.push(line)
+      continue
+    }
     flushList()
+    flushMarkdown()
     paragraphParts.push(line)
   }
 
@@ -360,6 +391,7 @@ function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
   }
 
   flushList()
+  flushMarkdown()
   flushParagraph()
   return blocks
 }
@@ -370,6 +402,7 @@ function formatBrainstormProse(chunk: string): string {
   return blocks
     .map((block) => {
       if (block.type === 'paragraph') return block.text
+      if (block.type === 'markdown') return block.lines.join('\n')
       return block.items.map((item, index) => `${index + 1}. ${item}`).join('\n')
     })
     .join('\n\n')
@@ -1971,6 +2004,25 @@ export function IdeaBacklogManagementPage() {
   const brainstormInitiativeMatches = useMemo(
     () => inferInitiativeLens(createIdeaForm.title, effectiveCreateIdeaTags, brainstormMessages),
     [createIdeaForm.title, effectiveCreateIdeaTags, brainstormMessages],
+  )
+
+  const brainstormAskedItem = useMemo(() => {
+    const items = brainstormChecklist.length > 0
+      ? brainstormChecklist
+      : brainstormEvidenceProgress?.items ?? []
+    return items.find((item) => item.status === 'asked') ?? null
+  }, [brainstormChecklist, brainstormEvidenceProgress])
+
+  const brainstormNextHint = useMemo(() => {
+    if (brainstormAskedItem?.prompt) {
+      return formatBrainstormChecklistPrompt(brainstormAskedItem.prompt)
+    }
+    return formatBrainstormExploringNext(brainstormRemainingGaps)
+  }, [brainstormAskedItem, brainstormRemainingGaps])
+
+  const brainstormThreadIndonesian = useMemo(
+    () => isBrainstormThreadIndonesian(brainstormMessages),
+    [brainstormMessages],
   )
 
   const quickCreateIdeaTagSuggestions = useMemo(() => {
@@ -6109,10 +6161,10 @@ export function IdeaBacklogManagementPage() {
                               </div>
                             </div>
                           )}
-                          {!brainstormReady && !brainstormOfferGenerateAnyway && brainstormRemainingGaps.length > 0 && brainstormMessages.length > 0 && (
+                          {!brainstormReady && !brainstormOfferGenerateAnyway && brainstormNextHint && brainstormMessages.length > 0 && (
                             <p className="text-xs leading-5 text-muted-foreground">
-                              Next: {formatBrainstormExploringNext(brainstormRemainingGaps)}
-                              {brainstormRemainingGaps.length > 3 ? ' · …' : ''}
+                              {brainstormThreadIndonesian ? 'Selanjutnya: ' : 'Next: '}
+                              {brainstormNextHint}
                             </p>
                           )}
 
