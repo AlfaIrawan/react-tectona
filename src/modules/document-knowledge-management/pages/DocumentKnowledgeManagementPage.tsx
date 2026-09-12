@@ -5181,6 +5181,8 @@ export function DocumentKnowledgeManagementPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
   const [selectedDetailId, setSelectedDetailId] = useState('')
+  /** Set when the user deliberately cleared the selection, so auto-select stands down. */
+  const [detailAutoSelectSuppressed, setDetailAutoSelectSuppressed] = useState(false)
   const deferredQuery = useDeferredValue(searchQuery.trim().toLowerCase())
   const [repositoryItems, setRepositoryItems] = useState<RepositoryItem[]>([])
   const [repositoryLoading, setRepositoryLoading] = useState(false)
@@ -6861,9 +6863,10 @@ export function DocumentKnowledgeManagementPage() {
   useEffect(() => {
     if (activePanel !== 'repository') return
     if (repositoryItems.length === 0) return
+    if (detailAutoSelectSuppressed) return
     if (repositoryItems.some((item) => item.id === selectedDetailId)) return
     setSelectedDetailId(repositoryItems[0].id)
-  }, [activePanel, repositoryItems, selectedDetailId])
+  }, [activePanel, repositoryItems, selectedDetailId, detailAutoSelectSuppressed])
 
   useEffect(() => {
     if (!detailDrawerOpen || !selectedRepositoryItem) return
@@ -9465,11 +9468,18 @@ export function DocumentKnowledgeManagementPage() {
    * interacting with the list, and clearing there would fight the user.
    */
   const handleRepositoryBackgroundClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (repositoryTableSelectedIds.length === 0) return
     const target = event.target as HTMLElement | null
     if (target?.closest('tr, button, a, input, label, [role="menuitem"], [data-no-clear-selection]')) return
-    setRepositoryTableSelectedIds([])
-  }, [repositoryTableSelectedIds.length])
+    if (repositoryTableSelectedIds.length > 0) setRepositoryTableSelectedIds([])
+    // The highlighted row is selectedDetailId, not the bulk-selection list — clearing
+    // only the latter left the row looking selected, which is what it looked like.
+    if (selectedDetailId) {
+      setSelectedDetailId('')
+      // An effect re-selects the first item whenever nothing matches, so without
+      // this the clear would be undone on the very next render.
+      setDetailAutoSelectSuppressed(true)
+    }
+  }, [repositoryTableSelectedIds.length, selectedDetailId])
 
   const handleRepositoryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     // A OneDrive row carries our own MIME type and no OS files, so without this the
@@ -10232,6 +10242,7 @@ export function DocumentKnowledgeManagementPage() {
       return null
     })
     setSelectedDetailId(id)
+    setDetailAutoSelectSuppressed(false)
     setDocDetailTab(tab)
     setDetailDrawerOpen(true)
   }
@@ -17765,6 +17776,7 @@ export function DocumentKnowledgeManagementPage() {
                   }
                   page={onedrivePageSafe}
                   pageSize={repositoryPageSize}
+                  matchRepositorySpacing={repositorySplitActive}
                   onStatsChange={handleOnedriveStatsChange}
                   onFolderNavigate={handleOnedriveFolderNavigate}
                 />
