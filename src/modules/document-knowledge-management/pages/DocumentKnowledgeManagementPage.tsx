@@ -5388,6 +5388,17 @@ export function DocumentKnowledgeManagementPage() {
       setRepositorySplitView(false)
     }
   }, [showOneDriveLibrary, setRepositoryLibrary, setRepositorySplitView])
+
+  // Split View *is* the explorer details view on both sides, so hold that as an
+  // invariant rather than trusting two values to stay in step. They did not: the
+  // split flag persists through the preference store while the view mode persists
+  // through its own localStorage key, and only changeRepositoryViewMode writes that
+  // key — so after a reload the split came back over a folder-card view.
+  useEffect(() => {
+    if (repositorySplitActive && repositoryViewMode !== 'explorer') {
+      setRepositoryViewMode('explorer')
+    }
+  }, [repositorySplitActive, repositoryViewMode])
   useEffect(() => {
     setRepositoryPage(1)
   }, [repositoryLibrary])
