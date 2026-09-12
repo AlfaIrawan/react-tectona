@@ -42,6 +42,7 @@ import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
+import { UI_SCOPE_DOCUMENT_KNOWLEDGE, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 import {
   ExplainerAssistantsPanel,
   type ExplainerAssistantsPanelHandle,
@@ -213,6 +214,13 @@ import {
 } from '@/lib/documents/revisionContentHighlight'
 import { getSession } from '@/auth/authService'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { resolveMicrosoftAccountLinked } from '@/lib/api/microsoftGraphApi'
+import { startSocialOAuthLogin } from '@/lib/authProviders'
+import { storeOAuthIntent } from '@/lib/oauthPkce'
+import {
+  readOnedriveWorkspaceConnected,
+  writeOnedriveWorkspaceConnected,
+} from '@/modules/document-knowledge-management/lib/onedriveWorkspacePref'
 import {
   fetchWorkspaceMembers,
   TECTONA_WAC_APP_ID,
@@ -5242,10 +5250,53 @@ export function DocumentKnowledgeManagementPage() {
     }
   })
   const isPersonalWorkspace = tenant?.tenantMode === 'personal'
+  const sessionUserId = getSession()?.user.id ?? null
+  const onedriveWorkspaceId = explainerWorkspaceId || activeWorkspaceApiId
+  const [microsoftAccountLinked, setMicrosoftAccountLinked] = useState(false)
+  const [onedriveWorkspaceConnected, setOnedriveWorkspaceConnected] = useState(false)
+  const [onedriveConnectBusy, setOnedriveConnectBusy] = useState(false)
   const [repositoryLibrary, setRepositoryLibrary] = useState<'tectona' | 'onedrive'>('tectona')
+  const showOneDriveLibrary = isPersonalWorkspace && onedriveWorkspaceConnected
   useEffect(() => {
-    if (!isPersonalWorkspace) setRepositoryLibrary('tectona')
-  }, [isPersonalWorkspace])
+    setOnedriveWorkspaceConnected(readOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId))
+  }, [sessionUserId, onedriveWorkspaceId])
+  useEffect(() => {
+    let cancelled = false
+    void resolveMicrosoftAccountLinked().then((linked) => {
+      if (!cancelled) setMicrosoftAccountLinked(linked)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [tenant?.workspaceId, sessionUserId])
+  useEffect(() => {
+    if (!showOneDriveLibrary) setRepositoryLibrary('tectona')
+  }, [showOneDriveLibrary])
+  const handleToggleOnedriveWorkspace = async () => {
+    if (!isPersonalWorkspace || !sessionUserId || !onedriveWorkspaceId) return
+    if (onedriveWorkspaceConnected) {
+      writeOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId, false)
+      setOnedriveWorkspaceConnected(false)
+      setRepositoryLibrary('tectona')
+      return
+    }
+    writeOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId, true)
+    setOnedriveWorkspaceConnected(true)
+    setActivePanel('repository')
+    setRepositoryLibrary('onedrive')
+    if (microsoftAccountLinked) return
+    setOnedriveConnectBusy(true)
+    try {
+      storeOAuthIntent('graph')
+      sessionStorage.setItem('tectona:oauth-next', `${window.location.pathname}${window.location.search}`)
+      await startSocialOAuthLogin('microsoft', { oauthIntent: 'graph' })
+    } catch {
+      writeOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId, false)
+      setOnedriveWorkspaceConnected(false)
+      setRepositoryLibrary('tectona')
+      setOnedriveConnectBusy(false)
+    }
+  }
   const [repositoryFolderBusy, setRepositoryFolderBusy] = useState(false)
   const [repositoryFolderRenameId, setRepositoryFolderRenameId] = useState<string | null>(null)
   // Drag-and-drop: which folder drop target is currently hovered ('root' = move out to root).
@@ -5465,10 +5516,29 @@ export function DocumentKnowledgeManagementPage() {
     return 'repository'
   })
 
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
-  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useState(true)
-  const [showKpiCards, setShowKpiCards] = useState(true)
+  // Layout choices persist per user (identity-lite), hydrated from localStorage on
+  // first paint so the page never flashes its default layout before restoring.
+  // Same tuple shape as useState, so every call site below is unchanged.
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_DOCUMENT_KNOWLEDGE,
+    'isWorkspaceCollapsed',
+    false,
+  )
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_DOCUMENT_KNOWLEDGE,
+    'showFiltersPanel',
+    true,
+  )
+  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useUiLayoutBoolean(
+    UI_SCOPE_DOCUMENT_KNOWLEDGE,
+    'showEnterpriseNavPanel',
+    true,
+  )
+  const [showKpiCards, setShowKpiCards] = useUiLayoutBoolean(
+    UI_SCOPE_DOCUMENT_KNOWLEDGE,
+    'showKpiCards',
+    true,
+  )
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false)
   const [repositoryPreviewOpen, setRepositoryPreviewOpen] = useState(false)
   const [repositoryPreviewItem, setRepositoryPreviewItem] = useState<RepositoryItem | null>(null)
@@ -15622,6 +15692,34 @@ export function DocumentKnowledgeManagementPage() {
         right={(
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-sm flex-nowrap shrink-0">
+              {isPersonalWorkspace ? (
+                <button
+                  type="button"
+                  onClick={() => void handleToggleOnedriveWorkspace()}
+                  disabled={onedriveConnectBusy || !sessionUserId || !onedriveWorkspaceId}
+                  className={cn(
+                    'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm disabled:pointer-events-none disabled:opacity-50',
+                    onedriveWorkspaceConnected && 'bg-background text-foreground shadow-sm ring-1 ring-border/50',
+                  )}
+                  aria-pressed={onedriveWorkspaceConnected}
+                  aria-label={
+                    onedriveConnectBusy
+                      ? 'Connecting OneDrive'
+                      : onedriveWorkspaceConnected
+                        ? 'Disconnect OneDrive'
+                        : 'Connect to OneDrive'
+                  }
+                  title={
+                    onedriveConnectBusy
+                      ? 'Connecting OneDrive…'
+                      : onedriveWorkspaceConnected
+                        ? 'Disconnect OneDrive'
+                        : 'Connect to OneDrive'
+                  }
+                >
+                  <Cloud className="w-5 h-5" />
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setShowKpiCards((v) => !v)}
@@ -15932,7 +16030,7 @@ export function DocumentKnowledgeManagementPage() {
                 >
                   {activePanel === 'repository' ? (
                     <>
-                      {isPersonalWorkspace ? (
+                      {showOneDriveLibrary ? (
                         <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/30 p-0.5">
                           <button
                             type="button"
@@ -17248,20 +17346,17 @@ export function DocumentKnowledgeManagementPage() {
                     value={
                       repositoryViewMode === 'grouped'
                         ? 'folder'
-                        : repositoryViewMode === 'explorer'
-                          ? 'type'
-                          : repositoryTableGroupBy
+                        : repositoryTableGroupBy
                     }
-                    disabled={repositoryViewMode === 'grouped' || repositoryViewMode === 'explorer'}
+                    disabled={repositoryViewMode === 'grouped'}
                     onChange={(value) => {
-                      if (repositoryViewMode !== 'grouped' && repositoryViewMode !== 'explorer') {
+                      if (repositoryViewMode !== 'grouped') {
                         setRepositoryTableGroupBy(value)
                       }
                     }}
                   />
-                  {repositoryViewMode === 'explorer' ? null : (
-                    <>
                   <EnterpriseSelectionToggle checked={showRepositoryTableSelection} onChange={setShowRepositoryTableSelection} />
+                  {repositoryViewMode === 'explorer' ? null : (
                   <EnterpriseColumnVisibilityControl
                     columns={REPOSITORY_TABLE_COLUMN_VISIBILITY_OPTIONS}
                     hidden={repositoryTableColumns.hiddenColumns}
@@ -17271,7 +17366,6 @@ export function DocumentKnowledgeManagementPage() {
                     canEnable={repositoryTableColumns.canShowColumn}
                     limitReachedMessage={`Maximum ${REPOSITORY_TABLE_MAX_VISIBLE_COLUMNS} columns shown at once — hide one below to show another.`}
                   />
-                    </>
                   )}
                   {repositoryLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   <p className="text-xs text-muted-foreground">
@@ -17565,6 +17659,17 @@ export function DocumentKnowledgeManagementPage() {
                       setRepositoryDropTarget((prev) => (prev === folderId ? null : prev))
                     }}
                     onFolderDrop={handleFolderDrop}
+                    groupByType={repositoryTableGroupBy === 'type'}
+                    showSelection={showRepositoryTableSelection}
+                    selectedIds={repositoryTableSelectedIds}
+                    onToggleRowSelection={toggleRepositoryTableRowSelection}
+                    onToggleAllVisible={(documentIds) => {
+                      setRepositoryTableSelectedIds((prev) => {
+                        const allSelected =
+                          documentIds.length > 0 && documentIds.every((id) => prev.includes(id))
+                        return allSelected ? [] : documentIds
+                      })
+                    }}
                   />
                 ) : filteredRepository.length > 0 ? (
                   <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl scrollbar-hide">

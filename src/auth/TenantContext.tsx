@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { UI_SCOPE_WORKSPACE, readRememberedWorkspace, setUiLayoutValue } from '@/stores/ui-layout-store'
 import {
   createContext,
   useCallback,
@@ -70,6 +71,18 @@ function sameTenantSelection(a: StoredTenantSelection, b: StoredTenantSelection)
   )
 }
 
+/**
+ * Remembering the workspace is a per-user preference, so it lives in identity-lite
+ * and follows the user to another machine. sessionStorage stays the per-tab active
+ * selection, which is what lets one person keep two workspaces open side by side.
+ */
+function rememberLastWorkspace(payload: StoredTenantSelection | null): void {
+  if (!payload?.workspaceId) return
+  setUiLayoutValue(UI_SCOPE_WORKSPACE, 'lastWorkspaceId', payload.workspaceId)
+  setUiLayoutValue(UI_SCOPE_WORKSPACE, 'lastTenantMode', payload.tenantMode ?? null)
+  setUiLayoutValue(UI_SCOPE_WORKSPACE, 'lastSelectedWorkspaceIds', payload.selectedWorkspaceIds ?? null)
+}
+
 function readStoredTenant(): StoredTenantSelection | null {
   try {
     const session = getSession()
@@ -78,8 +91,11 @@ function readStoredTenant(): StoredTenantSelection | null {
       return null
     }
     const raw = sessionStorage.getItem(TENANT_STORAGE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as StoredTenantSelection
+    if (raw) return JSON.parse(raw) as StoredTenantSelection
+    // Fresh tab: fall back to the workspace this user last chose anywhere. Only a
+    // fallback — a tab that already picked a workspace is never overridden, which
+    // is what keeps two workspaces open side by side working.
+    return (readRememberedWorkspace() as StoredTenantSelection | null) ?? null
   } catch {
     return null
   }
@@ -96,6 +112,7 @@ function persistTenant(payload: StoredTenantSelection | null): void {
     persistStoredTenantSubjectId(session.user.id)
   }
   sessionStorage.setItem(TENANT_STORAGE_KEY, JSON.stringify(payload))
+  rememberLastWorkspace(payload)
 }
 
 function sessionRoles(): string[] {

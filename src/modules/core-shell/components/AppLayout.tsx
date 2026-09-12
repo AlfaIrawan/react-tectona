@@ -12,7 +12,8 @@ import { cn } from '@/lib/utils'
 import { Outlet, useLocation } from 'react-router-dom'
 import ThemeSettingsPanel from '@/components/settings/ThemeSettingsPanel'
 import { TodoListPanel } from './TodoListPanel'
-import { publishOfflinePresenceOnPageHide } from '@/auth/authService'
+import { getSession, publishOfflinePresenceOnPageHide } from '@/auth/authService'
+import { useUiLayoutStore } from '@/stores/ui-layout-store'
 import { useTectonaChatRoleSync } from '@/lib/chat/tectonaChatRoleContext'
 import { useCollaborationPresenceRealtime } from '@/lib/chat/useCollaborationPresenceRealtime'
 import { usePresenceAfkTracker } from '@/lib/chat/usePresenceAfkTracker'
@@ -38,6 +39,22 @@ const LAST_ROUTE_STORAGE_KEY = 'tectona:last-route'
 
 export function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation()
+
+  // Layout preferences are per user. Hydrate from identity-lite once the session is
+  // known, and clear the cache when the signed-in user changes so one person never
+  // inherits another's layout on a shared machine.
+  const sessionUserId = getSession()?.user?.id ?? null
+  useEffect(() => {
+    const store = useUiLayoutStore.getState()
+    if (!sessionUserId) {
+      if (store.identityRef !== null) store.resetForIdentity(null)
+      return
+    }
+    if (store.identityRef && store.identityRef !== sessionUserId) {
+      store.resetForIdentity(sessionUserId)
+    }
+    void useUiLayoutStore.getState().hydrateFromServer(sessionUserId)
+  }, [sessionUserId])
   const chatOpen = useChatPanelStore((s) => s.open)
   const chatWidthPct = useChatPanelStore((s) => s.widthPct)
   const setChatWidthPct = useChatPanelStore((s) => s.setWidthPct)
