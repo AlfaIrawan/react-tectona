@@ -31,6 +31,7 @@ import {
   type MicrosoftDriveListing,
 } from '@/lib/api/microsoftGraphApi'
 import { cn } from '@/lib/utils'
+import { formatRelativeTimestamp } from '@/modules/document-knowledge-management/lib/documentRepositoryPresentation'
 import {
   ONEDRIVE_DRAG_MIME,
   encodeOneDriveDragPayload,
@@ -77,12 +78,12 @@ const HEADER_CELL_CLASS =
 const BODY_CELL_CLASS =
   'border-b border-slate-200/20 px-3 py-2 align-middle transition-colors dark:border-slate-700/20'
 
-function FileTypeIconImg({ fileName }: { fileName: string }) {
+function FileTypeIconImg({ fileName, large = false }: { fileName: string; large?: boolean }) {
   return (
     <img
       src={getFileTypeIcon(fileName)}
       alt=""
-      className="h-4 w-4 shrink-0 object-contain object-center"
+      className={cn('shrink-0 object-contain object-center', large ? 'size-14' : 'h-4 w-4')}
       draggable={false}
       aria-hidden
     />
@@ -515,6 +516,7 @@ export function PersonalOneDrivePanel({
                   items={group.items}
                   collapsed={isCollapsed}
                   groupTint={groupTint}
+                  richRows={showFolderCards}
                   onToggle={() => toggleGroup(group.label)}
                   onOpenItem={openItem}
                 />
@@ -697,6 +699,7 @@ function OneDriveGroup({
   items,
   collapsed,
   groupTint,
+  richRows,
   onToggle,
   onOpenItem,
 }: {
@@ -705,6 +708,12 @@ function OneDriveGroup({
   items: MicrosoftDriveItem[]
   collapsed: boolean
   groupTint: { row: string; first: string } | null
+  /**
+   * Folder Card View shows the same document-row treatment the repository table
+   * uses — large type icon, bold name, relative "Updated" line. The columns stay
+   * OneDrive's own; only the row presentation is shared.
+   */
+  richRows: boolean
   onToggle: () => void
   onOpenItem: (item: MicrosoftDriveItem) => void
 }) {
@@ -762,21 +771,57 @@ function OneDriveGroup({
                 )}
                 onClick={() => onOpenItem(item)}
               >
-                <td className={cn(BODY_CELL_CLASS, tintFirst)}>
-                  <span className="flex min-w-0 items-center gap-2 font-medium text-foreground">
-                    {item.kind === 'folder' ? (
-                      <Folder className="h-4 w-4 shrink-0 fill-amber-400 text-amber-500" aria-hidden />
-                    ) : (
-                      <FileTypeIconImg fileName={item.name} />
-                    )}
-                    <span className="truncate">{item.name}</span>
-                  </span>
+                <td className={cn(BODY_CELL_CLASS, richRows && 'align-top', tintFirst)}>
+                  {richRows ? (
+                    <div className="flex items-start gap-3">
+                      {item.kind === 'folder' ? (
+                        <Folder className="size-14 shrink-0 fill-amber-400 text-amber-500" aria-hidden />
+                      ) : (
+                        <FileTypeIconImg fileName={item.name} large />
+                      )}
+                      <div className="min-w-0">
+                        <p className="line-clamp-2 text-sm font-semibold text-slate-900 dark:text-foreground">
+                          {item.name}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-500 dark:text-muted-foreground">
+                          Updated {formatRelativeTimestamp(item.last_modified)}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="flex min-w-0 items-center gap-2 font-medium text-foreground">
+                      {item.kind === 'folder' ? (
+                        <Folder className="h-4 w-4 shrink-0 fill-amber-400 text-amber-500" aria-hidden />
+                      ) : (
+                        <FileTypeIconImg fileName={item.name} />
+                      )}
+                      <span className="truncate">{item.name}</span>
+                    </span>
+                  )}
                 </td>
-                <td className={cn(BODY_CELL_CLASS, 'whitespace-nowrap text-muted-foreground', tintRow)}>
+                <td
+                  className={cn(
+                    BODY_CELL_CLASS,
+                    'whitespace-nowrap text-muted-foreground',
+                    richRows && 'align-top',
+                    tintRow,
+                  )}
+                >
                   {formatExplorerDateTime(item.last_modified)}
                 </td>
-                <td className={cn(BODY_CELL_CLASS, 'truncate text-muted-foreground', tintRow)}>{typeLabel}</td>
-                <td className={cn(BODY_CELL_CLASS, 'text-right tabular-nums text-muted-foreground', tintRow)}>
+                <td
+                  className={cn(BODY_CELL_CLASS, 'truncate text-muted-foreground', richRows && 'align-top', tintRow)}
+                >
+                  {typeLabel}
+                </td>
+                <td
+                  className={cn(
+                    BODY_CELL_CLASS,
+                    'text-right tabular-nums text-muted-foreground',
+                    richRows && 'align-top',
+                    tintRow,
+                  )}
+                >
                   {formatSize(item.size, item.kind)}
                 </td>
               </tr>
