@@ -4621,6 +4621,7 @@ function RepositoryPaneBar({
   page,
   pages,
   onPageChange,
+  className,
 }: {
   label: string
   start: number
@@ -4629,9 +4630,15 @@ function RepositoryPaneBar({
   page: number
   pages: number
   onPageChange: (next: number) => void
+  className?: string
 }) {
   return (
-    <div className="flex shrink-0 items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-1.5">
+    <div
+      className={cn(
+        'flex shrink-0 items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-1.5',
+        className,
+      )}
+    >
       <span className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
         {label}
       </span>
@@ -9438,6 +9445,20 @@ export function DocumentKnowledgeManagementPage() {
     }
     queueRepositoryUploadFiles(files)
   }, [queueRepositoryUploadFiles, queueRepositoryUploadTree])
+
+  /**
+   * Clicking empty space clears the selection.
+   *
+   * Scoped by what was actually clicked rather than by a document-level listener:
+   * a click that landed on a row, a button, a link, or an input is someone
+   * interacting with the list, and clearing there would fight the user.
+   */
+  const handleRepositoryBackgroundClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (repositoryTableSelectedIds.length === 0) return
+    const target = event.target as HTMLElement | null
+    if (target?.closest('tr, button, a, input, label, [role="menuitem"], [data-no-clear-selection]')) return
+    setRepositoryTableSelectedIds([])
+  }, [repositoryTableSelectedIds.length])
 
   const handleRepositoryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     // A OneDrive row carries our own MIME type and no OS files, so without this the
@@ -17679,23 +17700,31 @@ export function DocumentKnowledgeManagementPage() {
             >
               {/* `contents` keeps this wrapper invisible to layout outside split view,
                   so the single-library rendering stays byte-for-byte as it was. */}
+              {/* Two rows, not two stacks: the pane bars share row 1 and both content
+                  panes start on row 2, so the tables line up by grid geometry instead
+                  of by matching paddings that drift apart the moment either side
+                  changes. `contents` keeps the wrapper invisible outside Split View. */}
               <div
                 className={cn(
                   repositorySplitActive
-                    ? 'grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2'
+                    ? 'grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 lg:grid-cols-2'
                     : 'contents',
                 )}
               >
-              {repositoryLibrary === 'onedrive' || repositorySplitActive ? (
-                <div
-                  className={cn(
-                    repositorySplitActive
-                      ? 'order-2 flex min-h-0 min-w-0 flex-col gap-2 rounded-xl border border-border/60 p-2'
-                      : 'contents',
-                  )}
-                >
-                {repositorySplitActive ? (
+              {repositorySplitActive ? (
+                <>
                   <RepositoryPaneBar
+                    className="col-start-1 row-start-1 min-w-0"
+                    label="Tectona"
+                    start={repositoryStart}
+                    end={repositoryEnd}
+                    total={filteredRepository.length}
+                    page={repositoryPageSafe}
+                    pages={repositoryTotalPages}
+                    onPageChange={setRepositoryPage}
+                  />
+                  <RepositoryPaneBar
+                    className="col-start-2 row-start-1 min-w-0"
                     label="OneDrive"
                     start={onedriveStart}
                     end={onedriveEnd}
@@ -17704,9 +17733,15 @@ export function DocumentKnowledgeManagementPage() {
                     pages={onedriveTotalPages}
                     onPageChange={setOnedriveSplitPage}
                   />
-                ) : null}
+                </>
+              ) : null}
+              {repositoryLibrary === 'onedrive' || repositorySplitActive ? (
                 <PersonalOneDrivePanel
-                  className={cn('min-h-[420px]', repositorySplitActive && 'min-w-0')}
+                  className={cn(
+                    'min-h-[420px]',
+                    repositorySplitActive
+                      && 'col-start-2 row-start-2 min-w-0 rounded-xl border border-border/60 p-2',
+                  )}
                   viewMode={repositorySplitActive ? 'explorer' : repositoryViewMode}
                   groupByType={
                     !repositorySplitActive
@@ -17722,7 +17757,6 @@ export function DocumentKnowledgeManagementPage() {
                   onStatsChange={handleOnedriveStatsChange}
                   onFolderNavigate={handleOnedriveFolderNavigate}
                 />
-                </div>
               ) : null}
               <div
                 className={cn(
@@ -17730,23 +17764,13 @@ export function DocumentKnowledgeManagementPage() {
                   repositoryViewMode === 'split' && !repositorySplitActive && 'grid grid-cols-[220px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]',
                   isRepositoryDragActive && 'rounded-xl bg-blue-50/30 ring-2 ring-inset ring-blue-400/70',
                   repositoryLibrary === 'onedrive' && !repositorySplitActive && 'hidden',
-                  repositorySplitActive && 'order-1 min-w-0 rounded-xl border border-border/60 p-2',
+                  repositorySplitActive && 'col-start-1 row-start-2 min-w-0 rounded-xl border border-border/60 p-2',
                 )}
+                onClick={handleRepositoryBackgroundClick}
                 onDragOver={handleRepositoryDragOver}
                 onDragLeave={handleRepositoryDragLeave}
                 onDrop={handleRepositoryDrop}
               >
-                {repositorySplitActive ? (
-                  <RepositoryPaneBar
-                    label="Tectona"
-                    start={repositoryStart}
-                    end={repositoryEnd}
-                    total={filteredRepository.length}
-                    page={repositoryPageSafe}
-                    pages={repositoryTotalPages}
-                    onPageChange={setRepositoryPage}
-                  />
-                ) : null}
                 {isRepositoryDragActive && !repositoryUploadBusy ? (
                   <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-blue-500/5">
                     <div className="text-center">
