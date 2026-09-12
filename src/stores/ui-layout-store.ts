@@ -146,6 +146,40 @@ export function setUiLayoutValue(scope: string, key: string, value: unknown): vo
 }
 
 /**
+ * Drop-in replacement for `useState<T>` on any stored layout choice — a view mode,
+ * a selected tab, a library switch. Same tuple shape as useState.
+ *
+ * `isValid` guards what comes back from storage: a stored choice can become
+ * impossible between sessions (a library the user disconnected, a tab that no
+ * longer exists), and restoring it would strand the page in a mode it cannot
+ * render. Values that fail the guard fall back to the page default.
+ */
+export function resolveStoredLayoutValue<T>(
+  stored: unknown,
+  fallback: T,
+  isValid?: (value: unknown) => value is T,
+): T {
+  if (stored === undefined) return fallback
+  if (isValid && !isValid(stored)) return fallback
+  return stored as T
+}
+
+export function useUiLayoutState<T>(
+  scope: string,
+  key: string,
+  fallback: T,
+  isValid?: (value: unknown) => value is T,
+): [T, (next: T | ((prev: T) => T)) => void] {
+  const stored = useUiLayoutValue<unknown>(scope, key, undefined)
+  const value = resolveStoredLayoutValue(stored, fallback, isValid)
+  const setValue = (next: T | ((prev: T) => T)) => {
+    const resolved = typeof next === 'function' ? (next as (prev: T) => T)(value) : next
+    setUiLayoutValue(scope, key, resolved)
+  }
+  return [value, setValue]
+}
+
+/**
  * Drop-in replacement for `useState<boolean>` on a layout toggle: same tuple shape,
  * so a page keeps its existing call sites and only its storage changes.
  */

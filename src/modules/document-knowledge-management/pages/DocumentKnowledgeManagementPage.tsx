@@ -42,7 +42,7 @@ import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
-import { UI_SCOPE_DOCUMENT_KNOWLEDGE, useUiLayoutBoolean } from '@/stores/ui-layout-store'
+import { UI_SCOPE_DOCUMENT_KNOWLEDGE, useUiLayoutBoolean, useUiLayoutState } from '@/stores/ui-layout-store'
 import {
   ExplainerAssistantsPanel,
   type ExplainerAssistantsPanelHandle,
@@ -4002,6 +4002,10 @@ const REPOSITORY_TABLE_GROUP_BY_OPTIONS: readonly { key: RepositoryTableGroupByK
   { key: 'status', label: 'Status' },
   { key: 'folder', label: 'Folder' },
 ]
+const ONEDRIVE_TABLE_GROUP_BY_OPTIONS: readonly { key: RepositoryTableGroupByKey; label: string }[] = [
+  { key: 'type', label: 'Type' },
+  { key: 'folder', label: 'Folder' },
+]
 
 function repositoryTableColumnLabel(key: RepositoryTableColumnKey): string {
   switch (key) {
@@ -5254,9 +5258,28 @@ export function DocumentKnowledgeManagementPage() {
   const sessionUserId = getSession()?.user.id ?? null
   const onedriveWorkspaceId = explainerWorkspaceId || activeWorkspaceApiId
   const [microsoftAccountLinked, setMicrosoftAccountLinked] = useState(false)
-  const [onedriveWorkspaceConnected, setOnedriveWorkspaceConnected] = useState(false)
+  // Read on the first render, not in an effect: this is a synchronous localStorage
+  // lookup, and starting at false made showOneDriveLibrary briefly false, which
+  // tripped the guard below and reset a restored OneDrive choice back to Tectona.
+  const [onedriveWorkspaceConnected, setOnedriveWorkspaceConnected] = useState(() =>
+    readOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId),
+  )
   const [onedriveConnectBusy, setOnedriveConnectBusy] = useState(false)
-  const [repositoryLibrary, setRepositoryLibrary] = useState<'tectona' | 'onedrive'>('tectona')
+  const [repositoryLibrary, setRepositoryLibrary] = useUiLayoutState<'tectona' | 'onedrive'>(
+    UI_SCOPE_DOCUMENT_KNOWLEDGE,
+    'repositoryLibrary',
+    'tectona',
+    (value): value is 'tectona' | 'onedrive' => value === 'tectona' || value === 'onedrive',
+  )
+  const [onedriveItemCount, setOnedriveItemCount] = useState(0)
+  const [onedriveListingLoading, setOnedriveListingLoading] = useState(false)
+  const handleOnedriveStatsChange = useCallback((stats: { total: number; loading: boolean }) => {
+    setOnedriveItemCount(stats.total)
+    setOnedriveListingLoading(stats.loading)
+  }, [])
+  const handleOnedriveFolderNavigate = useCallback(() => {
+    setRepositoryPage(1)
+  }, [])
   const showOneDriveLibrary = isPersonalWorkspace && onedriveWorkspaceConnected
   useEffect(() => {
     setOnedriveWorkspaceConnected(readOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId))
@@ -5273,6 +5296,14 @@ export function DocumentKnowledgeManagementPage() {
   useEffect(() => {
     if (!showOneDriveLibrary) setRepositoryLibrary('tectona')
   }, [showOneDriveLibrary])
+  useEffect(() => {
+    setRepositoryPage(1)
+  }, [repositoryLibrary])
+  useEffect(() => {
+    if (repositoryLibrary !== 'onedrive') return
+    const pages = Math.max(1, Math.ceil(onedriveItemCount / repositoryPageSize))
+    if (repositoryPage > pages) setRepositoryPage(pages)
+  }, [repositoryLibrary, repositoryPage, onedriveItemCount, repositoryPageSize])
   const handleToggleOnedriveWorkspace = async () => {
     if (!isPersonalWorkspace || !sessionUserId || !onedriveWorkspaceId) return
     if (onedriveWorkspaceConnected) {
@@ -13171,6 +13202,16 @@ export function DocumentKnowledgeManagementPage() {
   const repositoryStart = repositoryFlatRows.length === 0 ? 0 : (repositoryPageSafe - 1) * repositoryPageSize + 1
   const repositoryEnd = Math.min(repositoryFlatRows.length, repositoryPageSafe * repositoryPageSize)
   const pagedRepositoryRows = repositoryFlatRows.slice(repositoryStart === 0 ? 0 : repositoryStart - 1, repositoryEnd)
+  const onedriveTotalPages = Math.max(1, Math.ceil(onedriveItemCount / repositoryPageSize))
+  const onedrivePageSafe = Math.min(repositoryPage, onedriveTotalPages)
+  const onedriveStart = onedriveItemCount === 0 ? 0 : (onedrivePageSafe - 1) * repositoryPageSize + 1
+  const onedriveEnd = Math.min(onedriveItemCount, onedrivePageSafe * repositoryPageSize)
+  const repositoryToolbarIsOnedrive = repositoryLibrary === 'onedrive'
+  const repositoryToolbarTotal = repositoryToolbarIsOnedrive ? onedriveItemCount : filteredRepository.length
+  const repositoryToolbarPages = repositoryToolbarIsOnedrive ? onedriveTotalPages : repositoryTotalPages
+  const repositoryToolbarPage = repositoryToolbarIsOnedrive ? onedrivePageSafe : repositoryPageSafe
+  const repositoryToolbarStart = repositoryToolbarIsOnedrive ? onedriveStart : repositoryStart
+  const repositoryToolbarEnd = repositoryToolbarIsOnedrive ? onedriveEnd : repositoryEnd
 
   const repositoryTableColumns = useEnterpriseSortableColumns<RepositoryTableColumnKey>({
     initialOrder: REPOSITORY_TABLE_DEFAULT_COLUMN_ORDER,
@@ -15988,7 +16029,7 @@ export function DocumentKnowledgeManagementPage() {
             <div
               ref={docMainFiltersRef}
               className={cn(
-                'liquid-glass-enterprise-panel mb-0 shrink-0 rounded-2xl p-4 space-y-3',
+                'liquid-glass-enterprise-panel mb-0 w-full min-w-0 shrink-0 overflow-visible rounded-2xl p-4 space-y-3',
                 'border border-white/40 dark:border-white/10',
                 'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
                 'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
@@ -15996,7 +16037,7 @@ export function DocumentKnowledgeManagementPage() {
               )}
             >
               {/* Search row */}
-              <div className="relative">
+              <div className="relative w-full min-w-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <Input
                   type="search"
@@ -16016,50 +16057,26 @@ export function DocumentKnowledgeManagementPage() {
               </div>
 
               {/* Filter row */}
-              <div className="relative pt-3">
+              <div className="relative w-full pt-3">
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_0%,hsl(var(--border)/0.2)_18%,hsl(var(--border)/0.75)_50%,hsl(var(--border)/0.2)_82%,transparent_100%)]"
                 />
                 <div
                   className={cn(
-                    'flex items-center gap-2 sm:gap-3',
-                    activePanel === 'repository' || activePanel === 'artifacts' || activePanel === 'meetings'
-                      ? 'w-full flex-wrap justify-between'
-                      : 'flex-wrap',
+                    activePanel === 'repository'
+                      ? 'grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:gap-3'
+                      : cn(
+                          'flex items-center gap-2 sm:gap-3',
+                          activePanel === 'artifacts' || activePanel === 'meetings'
+                            ? 'w-full flex-wrap justify-between'
+                            : 'flex-wrap',
+                        ),
                   )}
                 >
                   {activePanel === 'repository' ? (
                     <>
-                      {showOneDriveLibrary ? (
-                        <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/30 p-0.5">
-                          <button
-                            type="button"
-                            onClick={() => setRepositoryLibrary('tectona')}
-                            className={cn(
-                              'rounded-md px-3 py-1.5 text-xs font-medium',
-                              repositoryLibrary === 'tectona'
-                                ? 'bg-background text-foreground shadow-sm'
-                                : 'text-muted-foreground',
-                            )}
-                          >
-                            Tectona
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRepositoryLibrary('onedrive')}
-                            className={cn(
-                              'inline-flex items-center justify-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium',
-                              repositoryLibrary === 'onedrive'
-                                ? 'bg-background text-foreground shadow-sm'
-                                : 'text-muted-foreground',
-                            )}
-                          >
-                            <Cloud className="h-3.5 w-3.5" aria-hidden />
-                            OneDrive
-                          </button>
-                        </div>
-                      ) : null}
+                      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                       {repositoryLibrary === 'tectona' ? (
                       <>
                       <button
@@ -16101,16 +16118,16 @@ export function DocumentKnowledgeManagementPage() {
                         onChange={(event) => void handleRepositoryFilePicked(event)}
                       />
 
-                      <div className="inline-flex items-center gap-2 rounded-xl border border-border/50 bg-background/70 px-3 py-2">
+                      <div className="inline-flex h-10 max-w-full items-center gap-2">
                         <Switch
                           checked={repositoryAutoGenerateKb && !viewingSamplesLibrary}
                           onCheckedChange={setRepositoryAutoGenerateKb}
                           disabled={viewingSamplesLibrary}
                           aria-label="Auto-generate KB after upload"
                         />
-                        <div className="leading-tight">
+                        <div className="min-w-0 leading-tight">
                           <p className="text-[11px] font-semibold text-foreground">Auto-generate KB</p>
-                          <p className="text-[10px] text-muted-foreground">
+                          <p className="truncate text-[10px] text-muted-foreground">
                             {viewingSamplesLibrary
                               ? 'Off in Samples — files here are examples only, not KB source'
                               : 'KB summary from document extraction (not a full document copy) + link to the repository'}
@@ -16119,76 +16136,113 @@ export function DocumentKnowledgeManagementPage() {
                       </div>
                       </>
                       ) : null}
-                      <div
-                        className={cn(
-                          'ml-auto flex h-10 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm sm:absolute sm:right-0 sm:top-3',
-                          repositoryLibrary === 'onedrive' && 'hidden',
-                        )}
-                        role="group"
-                        aria-label="Repository view mode"
-                      >
-                        <button
-                          type="button"
-                          aria-label="Folder card view"
-                          title="Folder card view"
-                          aria-pressed={repositoryViewMode === 'folders'}
-                          onClick={() => changeRepositoryViewMode('folders')}
-                          className={cn(
-                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-                            repositoryViewMode === 'folders'
-                              ? 'bg-slate-900 text-white shadow-sm'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                          )}
-                        >
-                          <LayoutGrid className="h-4 w-4" aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Split folder view"
-                          title="Split folder view"
-                          aria-pressed={repositoryViewMode === 'split'}
-                          onClick={() => changeRepositoryViewMode('split')}
-                          className={cn(
-                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-                            repositoryViewMode === 'split'
-                              ? 'bg-slate-900 text-white shadow-sm'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                          )}
-                        >
-                          <LayoutList className="h-4 w-4" aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Grouped table view"
-                          title="Grouped table view"
-                          aria-pressed={repositoryViewMode === 'grouped'}
-                          onClick={() => changeRepositoryViewMode('grouped')}
-                          className={cn(
-                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-                            repositoryViewMode === 'grouped'
-                              ? 'bg-slate-900 text-white shadow-sm'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                          )}
-                        >
-                          <FolderKanban className="h-4 w-4" aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Explorer details view"
-                          title="Explorer details view (group by type)"
-                          aria-pressed={repositoryViewMode === 'explorer'}
-                          onClick={() => changeRepositoryViewMode('explorer')}
-                          className={cn(
-                            'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-                            repositoryViewMode === 'explorer'
-                              ? 'bg-slate-900 text-white shadow-sm'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                          )}
-                        >
-                          <List className="h-4 w-4" aria-hidden />
-                        </button>
                       </div>
-
+                      <div className="flex h-10 shrink-0 items-center justify-end gap-2">
+                        {showOneDriveLibrary ? (
+                          <div
+                            className="flex h-10 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm"
+                            role="tablist"
+                            aria-label="Document library"
+                          >
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={repositoryLibrary === 'tectona'}
+                              onClick={() => setRepositoryLibrary('tectona')}
+                              className={cn(
+                                'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold tracking-tight transition-colors',
+                                repositoryLibrary === 'tectona'
+                                  ? 'bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900'
+                                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                              )}
+                            >
+                              <FileStack className="h-3.5 w-3.5" aria-hidden />
+                              Tectona
+                            </button>
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={repositoryLibrary === 'onedrive'}
+                              onClick={() => setRepositoryLibrary('onedrive')}
+                              className={cn(
+                                'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold tracking-tight transition-colors',
+                                repositoryLibrary === 'onedrive'
+                                  ? 'bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900'
+                                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                              )}
+                            >
+                              <Cloud className="h-3.5 w-3.5" aria-hidden />
+                              OneDrive
+                            </button>
+                          </div>
+                        ) : null}
+                        <div
+                          className="flex h-10 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm"
+                          role="group"
+                          aria-label="Repository view mode"
+                        >
+                          <button
+                            type="button"
+                            aria-label="Folder card view"
+                            title="Folder card view"
+                            aria-pressed={repositoryViewMode === 'folders'}
+                            onClick={() => changeRepositoryViewMode('folders')}
+                            className={cn(
+                              'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                              repositoryViewMode === 'folders'
+                                ? 'bg-slate-900 text-white shadow-sm'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                            )}
+                          >
+                            <LayoutGrid className="h-4 w-4" aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Split folder view"
+                            title="Split folder view"
+                            aria-pressed={repositoryViewMode === 'split'}
+                            onClick={() => changeRepositoryViewMode('split')}
+                            className={cn(
+                              'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                              repositoryViewMode === 'split'
+                                ? 'bg-slate-900 text-white shadow-sm'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                            )}
+                          >
+                            <LayoutList className="h-4 w-4" aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Grouped table view"
+                            title="Grouped table view"
+                            aria-pressed={repositoryViewMode === 'grouped'}
+                            onClick={() => changeRepositoryViewMode('grouped')}
+                            className={cn(
+                              'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                              repositoryViewMode === 'grouped'
+                                ? 'bg-slate-900 text-white shadow-sm'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                            )}
+                          >
+                            <FolderKanban className="h-4 w-4" aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Explorer details view"
+                            title="Explorer details view (group by type)"
+                            aria-pressed={repositoryViewMode === 'explorer'}
+                            onClick={() => changeRepositoryViewMode('explorer')}
+                            className={cn(
+                              'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                              repositoryViewMode === 'explorer'
+                                ? 'bg-slate-900 text-white shadow-sm'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                            )}
+                          >
+                            <List className="h-4 w-4" aria-hidden />
+                          </button>
+                        </div>
+                      </div>
                     </>
                   ) : null}
 
@@ -16388,7 +16442,7 @@ export function DocumentKnowledgeManagementPage() {
                     </>
                   ) : null}
 
-                  {activePanel !== 'artifacts' && activePanel !== 'meetings' ? (
+                  {activePanel !== 'artifacts' && activePanel !== 'meetings' && activePanel !== 'repository' ? (
                     <div className="hidden min-w-[1rem] flex-1 lg:block" aria-hidden />
                   ) : null}
                 </div>
@@ -17343,21 +17397,29 @@ export function DocumentKnowledgeManagementPage() {
               right={
                 <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
                   <EnterpriseGroupByControl
-                    options={REPOSITORY_TABLE_GROUP_BY_OPTIONS}
+                    options={repositoryLibrary === 'onedrive' ? ONEDRIVE_TABLE_GROUP_BY_OPTIONS : REPOSITORY_TABLE_GROUP_BY_OPTIONS}
                     value={
                       repositoryViewMode === 'grouped'
                         ? 'folder'
-                        : repositoryTableGroupBy
+                        : repositoryLibrary === 'onedrive'
+                          ? repositoryTableGroupBy === 'type' || repositoryTableGroupBy === 'folder'
+                            ? repositoryTableGroupBy
+                            : null
+                          : repositoryTableGroupBy
                     }
                     disabled={repositoryViewMode === 'grouped'}
                     onChange={(value) => {
                       if (repositoryViewMode !== 'grouped') {
-                        setRepositoryTableGroupBy(value)
+                        setRepositoryTableGroupBy(
+                          repositoryLibrary === 'onedrive' && value !== 'type' && value !== 'folder' ? null : value,
+                        )
                       }
                     }}
                   />
+                  {repositoryLibrary === 'onedrive' ? null : (
                   <EnterpriseSelectionToggle checked={showRepositoryTableSelection} onChange={setShowRepositoryTableSelection} />
-                  {repositoryViewMode === 'explorer' ? null : (
+                  )}
+                  {repositoryViewMode === 'explorer' || repositoryLibrary === 'onedrive' ? null : (
                   <EnterpriseColumnVisibilityControl
                     columns={REPOSITORY_TABLE_COLUMN_VISIBILITY_OPTIONS}
                     hidden={repositoryTableColumns.hiddenColumns}
@@ -17368,14 +17430,18 @@ export function DocumentKnowledgeManagementPage() {
                     limitReachedMessage={`Maximum ${REPOSITORY_TABLE_MAX_VISIBLE_COLUMNS} columns shown at once — hide one below to show another.`}
                   />
                   )}
-                  {repositoryLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {repositoryLoading && repositoryLibrary !== 'onedrive' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {onedriveListingLoading && repositoryLibrary === 'onedrive' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   <p className="text-xs text-muted-foreground">
-                    Showing <span className="font-semibold text-foreground">{repositoryStart}</span>-<span className="font-semibold text-foreground">{repositoryEnd}</span> of <span className="font-semibold text-foreground">{filteredRepository.length}</span>
+                    Showing <span className="font-semibold text-foreground">{repositoryToolbarStart}</span>-<span className="font-semibold text-foreground">{repositoryToolbarEnd}</span> of <span className="font-semibold text-foreground">{repositoryToolbarTotal}</span>
                   </p>
                   <span className="text-xs text-muted-foreground">Rows:</span>
                   <Select
                     value={String(repositoryPageSize)}
-                    onChange={(e) => setRepositoryPageSize(parseInt(e.target.value, 10))}
+                    onChange={(e) => {
+                      setRepositoryPageSize(parseInt(e.target.value, 10))
+                      setRepositoryPage(1)
+                    }}
                     className="h-10 w-[84px] text-sm"
                   >
                     <option value="5">5</option>
@@ -17388,16 +17454,16 @@ export function DocumentKnowledgeManagementPage() {
                       type="button"
                       className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
                       onClick={() => setRepositoryPage((prev) => Math.max(1, prev - 1))}
-                      disabled={repositoryPageSafe <= 1}
+                      disabled={repositoryToolbarPage <= 1}
                     >
                       Previous
                     </button>
-                    <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">{repositoryPageSafe} / {repositoryTotalPages}</div>
+                    <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">{repositoryToolbarPage} / {repositoryToolbarPages}</div>
                     <button
                       type="button"
                       className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
-                      onClick={() => setRepositoryPage((prev) => Math.min(repositoryTotalPages, prev + 1))}
-                      disabled={repositoryPageSafe >= repositoryTotalPages}
+                      onClick={() => setRepositoryPage((prev) => Math.min(repositoryToolbarPages, prev + 1))}
+                      disabled={repositoryToolbarPage >= repositoryToolbarPages}
                     >
                       Next
                     </button>
@@ -17406,7 +17472,16 @@ export function DocumentKnowledgeManagementPage() {
               }
             >
               {repositoryLibrary === 'onedrive' ? (
-                <PersonalOneDrivePanel className="min-h-[420px]" />
+                <PersonalOneDrivePanel
+                  className="min-h-[420px]"
+                  viewMode={repositoryViewMode}
+                  groupByType={repositoryViewMode !== 'grouped' && repositoryTableGroupBy === 'type'}
+                  groupByFolder={repositoryViewMode === 'grouped' || repositoryTableGroupBy === 'folder'}
+                  page={onedrivePageSafe}
+                  pageSize={repositoryPageSize}
+                  onStatsChange={handleOnedriveStatsChange}
+                  onFolderNavigate={handleOnedriveFolderNavigate}
+                />
               ) : null}
               <div
                 className={cn(
@@ -17582,7 +17657,7 @@ export function DocumentKnowledgeManagementPage() {
                         ) : null}
                       </div>
                     ) : repositoryViewMode !== 'explorer' && repositorySubfolders.length > 0 ? (
-                      <div className="flex min-w-0 shrink-0 items-center gap-2 pt-2">
+                      <div className="mb-5 flex min-w-0 shrink-0 items-center gap-2 pt-2">
                         <button
                           type="button"
                           aria-label="Previous folders"

@@ -16,6 +16,7 @@ import {
   UI_SCOPE_DOCUMENT_KNOWLEDGE,
   UI_SCOPE_WORKSPACE,
   readRememberedWorkspace,
+  resolveStoredLayoutValue,
   setUiLayoutValue,
   useUiLayoutStore,
 } from './ui-layout-store'
@@ -184,5 +185,32 @@ describe('remembered workspace', () => {
       hydratedFromServer: true,
     })
     expect(readRememberedWorkspace()).toBeNull()
+  })
+})
+
+describe('resolveStoredLayoutValue', () => {
+  const isLibrary = (value: unknown): value is 'tectona' | 'onedrive' =>
+    value === 'tectona' || value === 'onedrive'
+
+  it('returns the stored value when it is still valid', () => {
+    expect(resolveStoredLayoutValue('onedrive', 'tectona', isLibrary)).toBe('onedrive')
+  })
+
+  it('falls back when nothing was stored', () => {
+    expect(resolveStoredLayoutValue(undefined, 'tectona', isLibrary)).toBe('tectona')
+  })
+
+  it('falls back when the stored choice is no longer a legal value', () => {
+    // A mode removed between releases must not strand the page in it.
+    expect(resolveStoredLayoutValue('sharepoint', 'tectona', isLibrary)).toBe('tectona')
+  })
+
+  it('falls back on a corrupted type rather than handing back garbage', () => {
+    expect(resolveStoredLayoutValue(7, 'tectona', isLibrary)).toBe('tectona')
+    expect(resolveStoredLayoutValue(null, 'tectona', isLibrary)).toBe('tectona')
+  })
+
+  it('passes any stored value through when no guard is given', () => {
+    expect(resolveStoredLayoutValue('anything', 'fallback')).toBe('anything')
   })
 })
