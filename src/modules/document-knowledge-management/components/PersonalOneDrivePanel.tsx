@@ -59,12 +59,6 @@ type PersonalOneDrivePanelProps = {
   groupByFolder?: boolean
   page?: number
   pageSize?: number
-  /**
-   * Adds the same breadcrumb-to-table gap the repository pane has. Used by Split
-   * View, where the two panes sit side by side and any difference in vertical
-   * rhythm reads as one table being misaligned with the other.
-   */
-  matchRepositorySpacing?: boolean
   onStatsChange?: (stats: { total: number; loading: boolean }) => void
   onFolderNavigate?: () => void
 }
@@ -202,7 +196,6 @@ export function PersonalOneDrivePanel({
   groupByFolder = false,
   page = 1,
   pageSize = 10,
-  matchRepositorySpacing = false,
   onStatsChange,
   onFolderNavigate,
 }: PersonalOneDrivePanelProps) {
@@ -552,7 +545,11 @@ export function PersonalOneDrivePanel({
             showSplitFolders && 'grid grid-cols-[220px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] gap-3',
           )}
         >
-          <div className={cn(showSplitFolders && 'col-span-2', matchRepositorySpacing && 'mb-3')}>
+          {/* Split Folder View puts the breadcrumb in a grid whose gap already
+              separates it from the table. Every other mode is a plain flex column
+              with no gap, so it needs the same 12px the repository pane gets — the
+              panel knows which case it is in, so no caller has to say. */}
+          <div className={cn(showSplitFolders ? 'col-span-2' : 'mb-3')}>
             {breadcrumb}
           </div>
 

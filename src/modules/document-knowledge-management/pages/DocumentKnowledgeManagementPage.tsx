@@ -17767,7 +17767,6 @@ export function DocumentKnowledgeManagementPage() {
                   }
                   page={onedrivePageSafe}
                   pageSize={repositoryPageSize}
-                  matchRepositorySpacing={repositorySplitActive}
                   onStatsChange={handleOnedriveStatsChange}
                   onFolderNavigate={handleOnedriveFolderNavigate}
                 />
