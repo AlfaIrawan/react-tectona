@@ -5193,6 +5193,14 @@ export function DocumentKnowledgeManagementPage() {
   const [repositoryTableGroupBy, setRepositoryTableGroupBy] = useState<RepositoryTableGroupByKey | null>(null)
   const [repositoryCollapsedGroups, setRepositoryCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [showRepositoryTableSelection, setShowRepositoryTableSelection] = useState(false)
+  /**
+   * Whether Split Folder View needs its bulk-action row at all.
+   *
+   * A row that collapses to zero height still contributes its grid gap, so an
+   * always-present row left a phantom 12px above the breadcrumb. The row count
+   * therefore has to change with the bar, and every placement below reads this
+   * one value so they cannot drift apart.
+   */
   const [repositoryTableSelectedIds, setRepositoryTableSelectedIds] = useState<string[]>([])
   const [activityPage, setActivityPage] = useState(1)
   const [activityPageSize, setActivityPageSize] = useState(10)
@@ -5348,6 +5356,9 @@ export function DocumentKnowledgeManagementPage() {
   // repositoryViewMode: the Tectona pane still renders as the explorer details view,
   // so every existing `repositoryViewMode === 'explorer'` branch keeps working
   // untouched instead of needing a parallel case for a new mode.
+  const repositorySplitSelectionBar =
+    showRepositoryTableSelection && repositoryTableSelectedIds.length > 0
+
   const [repositorySplitView, setRepositorySplitView] = useUiLayoutBoolean(
     UI_SCOPE_DOCUMENT_KNOWLEDGE,
     'repositorySplitView',
@@ -17786,11 +17797,12 @@ export function DocumentKnowledgeManagementPage() {
                   'relative flex h-full min-h-0 flex-col gap-3 overflow-visible transition-all duration-200',
                   repositoryViewMode === 'split'
                     && !repositorySplitActive
-                    // Three fixed rows: bulk-action bar, breadcrumb, then the folder
-                    // sidebar beside the table. Row 1 collapses to nothing when no
-                    // selection is active, so placement stays the same either way and
-                    // no child has to know whether the bar is showing.
-                    && 'grid grid-cols-[220px_minmax(0,1fr)] grid-rows-[auto_auto_minmax(0,1fr)]',
+                    && cn(
+                      'grid grid-cols-[220px_minmax(0,1fr)]',
+                      repositorySplitSelectionBar
+                        ? 'grid-rows-[auto_auto_minmax(0,1fr)]'
+                        : 'grid-rows-[auto_minmax(0,1fr)]',
+                    ),
                   isRepositoryDragActive && 'rounded-xl bg-blue-50/30 ring-2 ring-inset ring-blue-400/70',
                   repositoryLibrary === 'onedrive' && !repositorySplitActive && 'hidden',
                   repositorySplitActive && 'col-start-1 row-start-2 min-w-0 rounded-xl border border-border/60 p-2',
@@ -17881,7 +17893,8 @@ export function DocumentKnowledgeManagementPage() {
                   <div
                     className={cn(
                       'rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900',
-                      repositoryViewMode === 'split' && 'col-span-2 row-start-2',
+                      repositoryViewMode === 'split'
+                        && cn('col-span-2', repositorySplitSelectionBar ? 'row-start-2' : 'row-start-1'),
                     )}
                   >
                     Failed to load backend repository data: {repositoryError}
@@ -17891,7 +17904,8 @@ export function DocumentKnowledgeManagementPage() {
                   <div
                     className={cn(
                       'rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900',
-                      repositoryViewMode === 'split' && 'col-span-2 row-start-2',
+                      repositoryViewMode === 'split'
+                        && cn('col-span-2', repositorySplitSelectionBar ? 'row-start-2' : 'row-start-1'),
                     )}
                   >
                     Live backend sync is temporarily unavailable. Showing latest available repository data.
@@ -17902,7 +17916,8 @@ export function DocumentKnowledgeManagementPage() {
                     <div
                       className={cn(
                         'flex flex-wrap items-center gap-1 text-sm',
-                        repositoryViewMode === 'split' && 'col-span-2 row-start-2',
+                        repositoryViewMode === 'split'
+                          && cn('col-span-2', repositorySplitSelectionBar ? 'row-start-2' : 'row-start-1'),
                       )}
                     >
                         <button
@@ -17944,7 +17959,12 @@ export function DocumentKnowledgeManagementPage() {
                         ))}
                       </div>
                     {repositoryViewMode === 'split' ? (
-                      <div className="col-start-1 row-start-3 flex min-h-0 flex-col gap-2 overflow-y-auto rounded-xl border border-border/70 bg-background/50 p-2 scrollbar-hide">
+                      <div
+                        className={cn(
+                          'col-start-1 flex min-h-0 flex-col gap-2 overflow-y-auto rounded-xl border border-border/70 bg-background/50 p-2 scrollbar-hide',
+                          repositorySplitSelectionBar ? 'row-start-3' : 'row-start-2',
+                        )}
+                      >
                         <div className="flex items-center gap-2 px-2 pb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                           <FolderOpen className="h-3.5 w-3.5" aria-hidden />
                           Folders
@@ -18029,7 +18049,8 @@ export function DocumentKnowledgeManagementPage() {
                 <div className={cn(
                   'flex min-h-0 flex-1 flex-col',
                   repositoryViewMode !== 'grouped' && 'min-h-[360px] md:min-h-[420px]',
-                  repositoryViewMode === 'split' && 'col-start-2 row-start-3 min-w-0',
+                  repositoryViewMode === 'split'
+                    && cn('col-start-2 min-w-0', repositorySplitSelectionBar ? 'row-start-3' : 'row-start-2'),
                 )}>
                 {repositoryViewMode === 'explorer' ? (
                   <DocumentRepositoryExplorerView
