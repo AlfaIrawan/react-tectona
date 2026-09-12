@@ -2,7 +2,7 @@
  * OneDrive (Microsoft Graph /me/drive) browser for a personal Tectona workspace.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Cloud, ExternalLink, FileText, Folder, Loader2, RefreshCw } from 'lucide-react'
+import { Cloud, ExternalLink, FileText, Folder, Loader2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { startSocialOAuthLogin } from '@/lib/authProviders'
@@ -75,26 +75,6 @@ export function PersonalOneDrivePanel({ className }: PersonalOneDrivePanelProps)
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col gap-3', className)}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-sm font-semibold text-foreground">OneDrive</p>
-          <p className="text-[11px] text-muted-foreground">
-            Files from your Microsoft account, shown only in this personal workspace.
-            {listing?.drive.owner_email ? ` Signed in as ${listing.drive.owner_email}.` : ''}
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-8 gap-1.5"
-          disabled={loading || connecting}
-          onClick={() => void load(folderId)}
-        >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
-          Refresh
-        </Button>
-      </div>
-
       {consentRequired ? (
         <div className="rounded-xl border border-border/70 bg-muted/30 px-4 py-6 text-center">
           <Cloud className="mx-auto mb-2 h-8 w-8 text-muted-foreground" aria-hidden />

@@ -91,6 +91,7 @@ import {
   GitBranch,
   Highlighter,
   History,
+  Home,
   RotateCcw,
   TextCursorInput,
   IndentDecrease,
@@ -17508,25 +17509,28 @@ export function DocumentKnowledgeManagementPage() {
                 ) : null}
                 {deferredQuery.length === 0 ? (
                   <>
-                    {repositoryCurrentFolderId !== null ? (
-                      <div className="flex flex-wrap items-center gap-1 text-sm">
+                    <div className="flex flex-wrap items-center gap-1 text-sm">
                         <button
                           type="button"
-                          className="inline-flex items-center rounded-md px-1.5 py-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                          title="Back to parent folder"
-                          onClick={() => {
-                            const parentId =
-                              repositoryFolderBreadcrumb.length >= 2
-                                ? repositoryFolderBreadcrumb[repositoryFolderBreadcrumb.length - 2].id
-                                : null
-                            setRepositoryCurrentFolderId(parentId)
-                          }}
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium hover:bg-muted/50 hover:text-foreground',
+                            repositoryCurrentFolderId === null
+                              ? 'text-foreground'
+                              : 'text-muted-foreground',
+                            repositoryDropTarget === 'root' && 'bg-blue-100 text-blue-700',
+                          )}
+                          title="Document repository home"
+                          onClick={() => setRepositoryCurrentFolderId(null)}
+                          onDragOver={(event) => handleFolderDragOver(event, 'root')}
+                          onDragLeave={() => setRepositoryDropTarget((prev) => (prev === 'root' ? null : prev))}
+                          onDrop={(event) => handleFolderDrop(event, null)}
                         >
-                          <ChevronLeft className="h-4 w-4" />
+                          <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          Home
                         </button>
                         {repositoryFolderBreadcrumb.map((folder, index) => (
                           <span key={folder.id} className="flex items-center gap-1">
-                            {index > 0 ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" /> : null}
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
                             <button
                               type="button"
                               className={cn(
@@ -17544,7 +17548,6 @@ export function DocumentKnowledgeManagementPage() {
                           </span>
                         ))}
                       </div>
-                    ) : null}
                     {repositoryViewMode === 'split' ? (
                       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto scrollbar-hide pt-1">
                         <div className="flex items-center gap-2 px-2 pb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">

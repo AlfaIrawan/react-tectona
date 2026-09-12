@@ -37,6 +37,7 @@ export type MicrosoftDriveListing = {
 }
 
 export type MicrosoftDriveStatus = {
+  linked?: boolean
   connected: boolean
   consent_required?: boolean
   expires_at?: string | null
@@ -50,15 +51,53 @@ export class MicrosoftGraphConsentRequiredError extends Error {
   }
 }
 
+function parseIdentityErrorMessage(raw: string, status: number): string {
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: { message?: string; error_description?: string } | string
+      detail?: { error_description?: string; message?: string } | string
+    }
+    const envelope = parsed.error
+    if (typeof envelope === 'string' && envelope.trim()) return envelope
+    if (envelope && typeof envelope === 'object') {
+      const fromEnvelope = envelope.message || envelope.error_description
+      if (fromEnvelope) return String(fromEnvelope)
+    }
+    if (typeof parsed.detail === 'string' && parsed.detail.trim()) return parsed.detail
+    if (parsed.detail && typeof parsed.detail === 'object') {
+      const fromDetail = parsed.detail.message || parsed.detail.error_description
+      if (fromDetail) return String(fromDetail)
+    }
+  } catch {
+    // keep fallback
+  }
+  if (status === 404) return 'OneDrive is not available for this account.'
+  return raw.trim() || `HTTP ${status}`
+}
+
 async function handleJson<T>(res: Response): Promise<T> {
   const raw = await res.text().catch(() => '')
   if (res.status === 409) {
-    throw new MicrosoftGraphConsentRequiredError(raw || 'Microsoft Graph consent is required.')
+    throw new MicrosoftGraphConsentRequiredError(
+      parseIdentityErrorMessage(raw, res.status) || 'Microsoft Graph consent is required.',
+    )
   }
   if (!res.ok) {
-    throw new Error(raw || `HTTP ${res.status}`)
+    throw new Error(parseIdentityErrorMessage(raw, res.status))
   }
   return JSON.parse(raw) as T
+}
+
+/** True when this identity is linked to Microsoft (SSO), not a password-only account. */
+export async function resolveMicrosoftAccountLinked(): Promise<boolean> {
+  const { readAuthMethod } = await import('@/lib/authMethodSession')
+  if (readAuthMethod() === 'microsoft') return true
+  try {
+    const status = await fetchMicrosoftDriveStatus()
+    return status.linked === true || status.connected === true
+  } catch {
+    return false
+  }
 }
 
 export async function fetchMicrosoftDriveStatus(): Promise<MicrosoftDriveStatus> {
