@@ -9,6 +9,15 @@ export const GATEWAY_RUNTIME_BASE = (
 export const IDENTITY_API_BASE = (
   (import.meta.env.VITE_IDENTITY_LITE_API_URL as string | undefined) ?? ''
 ).replace(/\/$/, '') || '/api/identity-lite'
+/**
+ * User preferences (8436). Its own service rather than part of identity-lite: UI
+ * preferences are product state, and the auth service is the wrong place to widen
+ * with a document any signed-in user may write.
+ */
+export const USER_PREFERENCES_API_BASE = (
+  (import.meta.env.VITE_USER_PREFERENCES_API_URL as string | undefined) ?? ''
+).replace(/\/$/, '') || '/api/user-preferences'
+
 export const TECTONA_OIDC_CLIENT_ID =
   (import.meta.env.VITE_TECTONA_OIDC_CLIENT_ID as string | undefined)?.trim() || 'tectona-spa'
 

@@ -1,12 +1,12 @@
 /**
- * Per-user UI layout preferences (identity-lite).
+ * Per-user UI preferences (user-preferences service, 8436).
  *
  * Preferences are a convenience, never a gate: every call here is allowed to fail
  * quietly, because a layout that falls back to defaults is a small annoyance while
  * a blocked page is not. Callers get `null` on failure rather than a thrown error.
  */
 
-import { IDENTITY_API_BASE } from './gatewayBase'
+import { USER_PREFERENCES_API_BASE } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
 /** One scope per surface, so two pages never overwrite each other's document. */
@@ -22,7 +22,7 @@ export interface UiPreferencesResponse {
 }
 
 function endpoint(identityRef: string): string {
-  return `${IDENTITY_API_BASE}/v1/users/${encodeURIComponent(identityRef)}/ui-preferences`
+  return `${USER_PREFERENCES_API_BASE}/v1/users/${encodeURIComponent(identityRef)}/ui-preferences`
 }
 
 export async function fetchUiPreferences(identityRef: string): Promise<UiPreferencesResponse | null> {
