@@ -50,7 +50,7 @@ import {
   getFileTypeIcon,
 } from '../fileTypeIcon'
 
-export type OneDriveViewMode = 'folders' | 'split' | 'grouped' | 'explorer'
+export type OneDriveViewMode = 'folders' | 'split' | 'explorer'
 
 type PersonalOneDrivePanelProps = {
   className?: string
@@ -324,7 +324,7 @@ export function PersonalOneDrivePanel({
   const tableItems = viewMode === 'explorer' ? visibleItems : fileItems
   const showFolderCards = viewMode === 'folders'
   const showSplitFolders = viewMode === 'split'
-  const useFolderGroups = viewMode === 'grouped' || groupByFolder
+  const useFolderGroups = groupByFolder
 
   useEffect(() => {
     onStatsChange?.({ total: tableItems.length, loading })

@@ -5333,10 +5333,10 @@ export function DocumentKnowledgeManagementPage() {
   // --- Document repository folders (Stage 3) ---
   const [repositoryFolders, setRepositoryFolders] = useState<DocumentFolder[]>([])
   const [repositoryCurrentFolderId, setRepositoryCurrentFolderId] = useState<string | null>(null)
-  const [repositoryViewMode, setRepositoryViewMode] = useState<'folders' | 'split' | 'grouped' | 'explorer'>(() => {
+  const [repositoryViewMode, setRepositoryViewMode] = useState<'folders' | 'split' | 'explorer'>(() => {
     try {
       const stored = localStorage.getItem('tectona-repository-view-mode')
-      return stored === 'split' || stored === 'grouped' || stored === 'explorer' ? stored : 'folders'
+      return stored === 'split' || stored === 'explorer' ? stored : 'folders'
     } catch {
       return 'folders'
     }
@@ -6840,7 +6840,7 @@ export function DocumentKnowledgeManagementPage() {
     slider.scrollBy({ left: direction === 'next' ? distance : -distance, behavior: 'smooth' })
   }, [])
 
-  const changeRepositoryViewMode = useCallback((mode: 'folders' | 'split' | 'grouped' | 'explorer') => {
+  const changeRepositoryViewMode = useCallback((mode: 'folders' | 'split' | 'explorer') => {
     setRepositoryViewMode(mode)
     setRepositorySplitView(false)
     try {
@@ -13339,7 +13339,6 @@ export function DocumentKnowledgeManagementPage() {
     // folders (like search) so the user sees every project-less document at once.
     const matchesFolder =
       activePanel !== 'repository' ||
-      repositoryViewMode === 'grouped' ||
       deferredQuery.length > 0 ||
       filters.project === UNIDENTIFIED_PROJECT_LABEL ||
       (item.folderId ?? null) === repositoryCurrentFolderId
@@ -13412,7 +13411,7 @@ export function DocumentKnowledgeManagementPage() {
   }, [filteredRepository, repositoryTableSort, repositoryKbProcessByDocumentId])
 
   const repositoryFlatRows = useMemo(() => {
-    const effectiveGroupBy = repositoryViewMode === 'grouped' ? 'folder' : repositoryTableGroupBy
+    const effectiveGroupBy = repositoryTableGroupBy
     if (effectiveGroupBy) {
       const grouped = [...sortedRepository].sort((a, b) =>
         repositoryTableGroupLabel(a, effectiveGroupBy, repositoryFolderNameById).localeCompare(
@@ -13424,7 +13423,7 @@ export function DocumentKnowledgeManagementPage() {
       return grouped.map((item) => ({ item, groupLabel: repositoryTableGroupLabel(item, effectiveGroupBy, repositoryFolderNameById) }))
     }
     return sortedRepository.map((item) => ({ item, groupLabel: null as string | null }))
-  }, [repositoryFolderNameById, repositoryTableGroupBy, repositoryViewMode, sortedRepository])
+  }, [repositoryFolderNameById, repositoryTableGroupBy, sortedRepository])
 
   const repositoryTotalPages = Math.max(1, Math.ceil(repositoryFlatRows.length / repositoryPageSize))
   const repositoryPageSafe = Math.min(repositoryPage, repositoryTotalPages)
@@ -16447,21 +16446,6 @@ export function DocumentKnowledgeManagementPage() {
                           </button>
                           <button
                             type="button"
-                            aria-label="Grouped table view"
-                            title="Grouped table view"
-                            aria-pressed={repositoryViewMode === 'grouped'}
-                            onClick={() => changeRepositoryViewMode('grouped')}
-                            className={cn(
-                              'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-                              repositoryViewMode === 'grouped'
-                                ? 'bg-slate-900 text-white shadow-sm'
-                                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                            )}
-                          >
-                            <FolderKanban className="h-4 w-4" aria-hidden />
-                          </button>
-                          <button
-                            type="button"
                             aria-label="Explorer details view"
                             title="Explorer details view (group by type)"
                             aria-pressed={repositoryViewMode === 'explorer'}
@@ -17655,17 +17639,14 @@ export function DocumentKnowledgeManagementPage() {
                   <EnterpriseGroupByControl
                     options={repositoryLibrary === 'onedrive' ? ONEDRIVE_TABLE_GROUP_BY_OPTIONS : REPOSITORY_TABLE_GROUP_BY_OPTIONS}
                     value={
-                      repositoryViewMode === 'grouped'
-                        ? 'folder'
-                        : repositoryLibrary === 'onedrive'
-                          ? repositoryTableGroupBy === 'type' || repositoryTableGroupBy === 'folder'
-                            ? repositoryTableGroupBy
-                            : null
-                          : repositoryTableGroupBy
+                      repositoryLibrary === 'onedrive'
+                        ? repositoryTableGroupBy === 'type' || repositoryTableGroupBy === 'folder'
+                          ? repositoryTableGroupBy
+                          : null
+                        : repositoryTableGroupBy
                     }
-                    disabled={repositoryViewMode === 'grouped'}
                     onChange={(value) => {
-                      if (repositoryViewMode !== 'grouped') {
+                      {
                         setRepositoryTableGroupBy(
                           repositoryLibrary === 'onedrive' && value !== 'type' && value !== 'folder' ? null : value,
                         )
@@ -17778,12 +17759,11 @@ export function DocumentKnowledgeManagementPage() {
                   viewMode={repositorySplitActive ? 'explorer' : repositoryViewMode}
                   groupByType={
                     !repositorySplitActive
-                    && repositoryViewMode !== 'grouped'
                     && repositoryTableGroupBy === 'type'
                   }
                   groupByFolder={
                     !repositorySplitActive
-                    && (repositoryViewMode === 'grouped' || repositoryTableGroupBy === 'folder')
+                    && repositoryTableGroupBy === 'folder'
                   }
                   page={onedrivePageSafe}
                   pageSize={repositoryPageSize}
@@ -17886,7 +17866,6 @@ export function DocumentKnowledgeManagementPage() {
                     the way the OneDrive panel already lays it out. */}
                 <div className={cn(
                   'flex shrink-0 flex-col gap-3',
-                  repositoryViewMode === 'grouped' && 'hidden',
                   repositoryViewMode === 'split' && 'contents',
                 )}>
                 {repositoryError && filteredRepository.length === 0 ? (
@@ -18048,7 +18027,7 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
                 <div className={cn(
                   'flex min-h-0 flex-1 flex-col',
-                  repositoryViewMode !== 'grouped' && 'min-h-[360px] md:min-h-[420px]',
+                  'min-h-[360px] md:min-h-[420px]',
                   repositoryViewMode === 'split'
                     && cn('col-start-2 min-w-0', repositorySplitSelectionBar ? 'row-start-3' : 'row-start-2'),
                 )}>
@@ -18153,7 +18132,7 @@ export function DocumentKnowledgeManagementPage() {
                       </thead>
                       <tbody>
                           {pagedRepositoryRows.map(({ item, groupLabel }, rowIndex) => {
-                            const activeRepositoryGroupBy = repositoryViewMode === 'grouped' ? 'folder' : repositoryTableGroupBy
+                            const activeRepositoryGroupBy = repositoryTableGroupBy
                             const previousGroupLabel = pagedRepositoryRows[rowIndex - 1]?.groupLabel ?? null
                             const showGroupHeader = activeRepositoryGroupBy && groupLabel && groupLabel !== previousGroupLabel
                             const groupTint = activeRepositoryGroupBy && groupLabel ? getEnterpriseGroupTint(activeRepositoryGroupBy, groupLabel) : null
