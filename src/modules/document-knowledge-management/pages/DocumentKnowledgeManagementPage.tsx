@@ -75,6 +75,7 @@ import {
   FolderPlus,
   Globe,
   ClipboardList,
+  Columns2,
   Clock3,
   Code2,
   BarChart3,
@@ -5265,6 +5266,15 @@ export function DocumentKnowledgeManagementPage() {
     readOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId),
   )
   const [onedriveConnectBusy, setOnedriveConnectBusy] = useState(false)
+  // Side-by-side Tectona + OneDrive. Kept as a separate flag rather than a fifth
+  // repositoryViewMode: the Tectona pane still renders as the explorer details view,
+  // so every existing `repositoryViewMode === 'explorer'` branch keeps working
+  // untouched instead of needing a parallel case for a new mode.
+  const [repositorySplitView, setRepositorySplitView] = useUiLayoutBoolean(
+    UI_SCOPE_DOCUMENT_KNOWLEDGE,
+    'repositorySplitView',
+    false,
+  )
   const [repositoryLibrary, setRepositoryLibrary] = useUiLayoutState<'tectona' | 'onedrive'>(
     UI_SCOPE_DOCUMENT_KNOWLEDGE,
     'repositoryLibrary',
@@ -5281,6 +5291,7 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryPage(1)
   }, [])
   const showOneDriveLibrary = isPersonalWorkspace && onedriveWorkspaceConnected
+  const repositorySplitActive = showOneDriveLibrary && repositorySplitView
   useEffect(() => {
     setOnedriveWorkspaceConnected(readOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId))
   }, [sessionUserId, onedriveWorkspaceId])
@@ -5294,8 +5305,12 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [tenant?.workspaceId, sessionUserId])
   useEffect(() => {
-    if (!showOneDriveLibrary) setRepositoryLibrary('tectona')
-  }, [showOneDriveLibrary])
+    if (!showOneDriveLibrary) {
+      setRepositoryLibrary('tectona')
+      // A split with nothing on the right is just a narrower repository.
+      setRepositorySplitView(false)
+    }
+  }, [showOneDriveLibrary, setRepositoryLibrary, setRepositorySplitView])
   useEffect(() => {
     setRepositoryPage(1)
   }, [repositoryLibrary])
@@ -6721,12 +6736,13 @@ export function DocumentKnowledgeManagementPage() {
 
   const changeRepositoryViewMode = useCallback((mode: 'folders' | 'split' | 'grouped' | 'explorer') => {
     setRepositoryViewMode(mode)
+    setRepositorySplitView(false)
     try {
       localStorage.setItem('tectona-repository-view-mode', mode)
     } catch {
       // Ignore storage failures; the view still changes for this session.
     }
-  }, [])
+  }, [setRepositorySplitView])
 
 
   const repositoryFolderBreadcrumb = useMemo(() => {
@@ -16138,7 +16154,7 @@ export function DocumentKnowledgeManagementPage() {
                       ) : null}
                       </div>
                       <div className="flex h-10 shrink-0 items-center justify-end gap-2">
-                        {showOneDriveLibrary ? (
+                        {showOneDriveLibrary && !repositorySplitActive ? (
                           <div
                             className="flex h-10 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm"
                             role="tablist"
@@ -16241,6 +16257,28 @@ export function DocumentKnowledgeManagementPage() {
                           >
                             <List className="h-4 w-4" aria-hidden />
                           </button>
+                          {showOneDriveLibrary ? (
+                            <button
+                              type="button"
+                              aria-label="Split view"
+                              title="Split view — Tectona on the left, OneDrive on the right"
+                              aria-pressed={repositorySplitActive}
+                              onClick={() => {
+                                // Both panes are the explorer details view, so the split
+                                // reuses that mode rather than inventing a fifth layout.
+                                setRepositoryViewMode('explorer')
+                                setRepositorySplitView(true)
+                              }}
+                              className={cn(
+                                'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                                repositorySplitActive
+                                  ? 'bg-slate-900 text-white shadow-sm'
+                                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                              )}
+                            >
+                              <Columns2 className="h-4 w-4" aria-hidden />
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     </>
@@ -17471,12 +17509,31 @@ export function DocumentKnowledgeManagementPage() {
                 </div>
               }
             >
-              {repositoryLibrary === 'onedrive' ? (
+              {/* `contents` keeps this wrapper invisible to layout outside split view,
+                  so the single-library rendering stays byte-for-byte as it was. */}
+              <div
+                className={cn(
+                  repositorySplitActive
+                    ? 'grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2'
+                    : 'contents',
+                )}
+              >
+              {repositoryLibrary === 'onedrive' || repositorySplitActive ? (
                 <PersonalOneDrivePanel
-                  className="min-h-[420px]"
-                  viewMode={repositoryViewMode}
-                  groupByType={repositoryViewMode !== 'grouped' && repositoryTableGroupBy === 'type'}
-                  groupByFolder={repositoryViewMode === 'grouped' || repositoryTableGroupBy === 'folder'}
+                  className={cn(
+                    'min-h-[420px]',
+                    repositorySplitActive && 'order-2 min-w-0 rounded-xl border border-border/60 p-2',
+                  )}
+                  viewMode={repositorySplitActive ? 'explorer' : repositoryViewMode}
+                  groupByType={
+                    !repositorySplitActive
+                    && repositoryViewMode !== 'grouped'
+                    && repositoryTableGroupBy === 'type'
+                  }
+                  groupByFolder={
+                    !repositorySplitActive
+                    && (repositoryViewMode === 'grouped' || repositoryTableGroupBy === 'folder')
+                  }
                   page={onedrivePageSafe}
                   pageSize={repositoryPageSize}
                   onStatsChange={handleOnedriveStatsChange}
@@ -17486,9 +17543,10 @@ export function DocumentKnowledgeManagementPage() {
               <div
                 className={cn(
                   'relative flex h-full min-h-0 flex-col gap-3 overflow-visible transition-all duration-200',
-                  repositoryViewMode === 'split' && 'grid grid-cols-[220px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]',
+                  repositoryViewMode === 'split' && !repositorySplitActive && 'grid grid-cols-[220px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]',
                   isRepositoryDragActive && 'rounded-xl bg-blue-50/30 ring-2 ring-inset ring-blue-400/70',
-                  repositoryLibrary === 'onedrive' && 'hidden',
+                  repositoryLibrary === 'onedrive' && !repositorySplitActive && 'hidden',
+                  repositorySplitActive && 'order-1 min-w-0 rounded-xl border border-border/60 p-2',
                 )}
                 onDragOver={handleRepositoryDragOver}
                 onDragLeave={handleRepositoryDragLeave}
@@ -18121,6 +18179,7 @@ export function DocumentKnowledgeManagementPage() {
                   </div>
                 )}
                 </div>
+              </div>
               </div>
             </DocPanelSection>
           ) : null}

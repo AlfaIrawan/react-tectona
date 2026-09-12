@@ -15,6 +15,7 @@
  * preferences another tab saved for a different page.
  */
 
+import { useCallback } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
@@ -172,10 +173,30 @@ export function useUiLayoutState<T>(
 ): [T, (next: T | ((prev: T) => T)) => void] {
   const stored = useUiLayoutValue<unknown>(scope, key, undefined)
   const value = resolveStoredLayoutValue(stored, fallback, isValid)
-  const setValue = (next: T | ((prev: T) => T)) => {
-    const resolved = typeof next === 'function' ? (next as (prev: T) => T)(value) : next
-    setUiLayoutValue(scope, key, resolved)
-  }
+
+  // Stable across renders, exactly like a useState setter. Call sites — and the
+  // exhaustive-deps rule — assume that, so a setter that changed identity every
+  // render would quietly turn correct effects into render loops. The functional
+  // form therefore reads the current value from the store instead of closing over it.
+  const setValue = useCallback(
+    (next: T | ((prev: T) => T)) => {
+      if (typeof next === 'function') {
+        const current = resolveStoredLayoutValue(
+          useUiLayoutStore.getState().document[scope]?.[key],
+          fallback,
+          isValid,
+        )
+        setUiLayoutValue(scope, key, (next as (prev: T) => T)(current))
+        return
+      }
+      setUiLayoutValue(scope, key, next)
+    },
+    // `fallback` and `isValid` are only read inside the functional branch and are
+    // page constants; keying on scope+key is what keeps the identity stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope, key],
+  )
+
   return [value, setValue]
 }
 
@@ -188,12 +209,12 @@ export function useUiLayoutBoolean(
   key: string,
   fallback: boolean,
 ): [boolean, (next: boolean | ((prev: boolean) => boolean)) => void] {
-  const value = useUiLayoutValue(scope, key, fallback)
-  const setValue = (next: boolean | ((prev: boolean) => boolean)) => {
-    const resolved = typeof next === 'function' ? next(value) : next
-    setUiLayoutValue(scope, key, resolved)
-  }
-  return [value, setValue]
+  return useUiLayoutState<boolean>(
+    scope,
+    key,
+    fallback,
+    (value): value is boolean => typeof value === 'boolean',
+  )
 }
 
 /**
