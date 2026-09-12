@@ -117,3 +117,26 @@ export async function fetchMicrosoftDriveChildren(itemId?: string | null): Promi
   })
   return handleJson<MicrosoftDriveListing>(res)
 }
+
+/**
+ * Downloads one OneDrive file so it can be re-uploaded through the repository's own
+ * upload path. identity-lite proxies the bytes rather than exposing Graph's
+ * pre-authenticated download URL to the page.
+ */
+export async function fetchMicrosoftDriveItemContent(itemId: string): Promise<Blob> {
+  const base = IDENTITY_API_BASE.replace(/\/$/, '')
+  const res = await apiFetch(`${base}/v1/me/microsoft/drive/items/${encodeURIComponent(itemId)}/content`, {
+    headers: tectonaServiceHeaders({ Accept: '*/*' }),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { detail?: unknown }
+      if (typeof body.detail === 'string') detail = body.detail
+    } catch {
+      // non-JSON error body; the status is enough
+    }
+    throw new Error(detail)
+  }
+  return res.blob()
+}

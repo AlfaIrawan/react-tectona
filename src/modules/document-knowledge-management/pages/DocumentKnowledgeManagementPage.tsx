@@ -189,6 +189,12 @@ import {
   type DroppedUploadItem,
 } from '@/modules/document-knowledge-management/lib/droppedFolderUpload'
 import {
+  ONEDRIVE_DRAG_MIME,
+  collectOneDriveUploadItems,
+  dataTransferHasOneDriveItems,
+  decodeOneDriveDragPayload,
+} from '@/modules/document-knowledge-management/lib/onedriveCopyToRepository'
+import {
   ensureDroppedFolderTree,
   folderKeyFromRelativeDirectory,
 } from '@/modules/document-knowledge-management/lib/ensureDroppedFolderTree'
@@ -216,7 +222,11 @@ import {
 } from '@/lib/documents/revisionContentHighlight'
 import { getSession } from '@/auth/authService'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
-import { resolveMicrosoftAccountLinked } from '@/lib/api/microsoftGraphApi'
+import {
+  fetchMicrosoftDriveChildren,
+  fetchMicrosoftDriveItemContent,
+  resolveMicrosoftAccountLinked,
+} from '@/lib/api/microsoftGraphApi'
 import { startSocialOAuthLogin } from '@/lib/authProviders'
 import { storeOAuthIntent } from '@/lib/oauthPkce'
 import {
@@ -9430,6 +9440,15 @@ export function DocumentKnowledgeManagementPage() {
   }, [queueRepositoryUploadFiles, queueRepositoryUploadTree])
 
   const handleRepositoryDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    // A OneDrive row carries our own MIME type and no OS files, so without this the
+    // browser would reject the drop outright and the copy could never start.
+    if (dataTransferHasOneDriveItems(event.dataTransfer.types)) {
+      event.preventDefault()
+      event.stopPropagation()
+      event.dataTransfer.dropEffect = 'copy'
+      setIsRepositoryDragActive(true)
+      return
+    }
     // Only show the file-upload highlight for external file drags, not internal document drags.
     if (!Array.from(event.dataTransfer.types || []).includes('Files')) return
     event.preventDefault()
@@ -9464,17 +9483,92 @@ export function DocumentKnowledgeManagementPage() {
     setIsRepositoryDragActive(false)
   }, [])
 
+  const [onedriveCopyBusy, setOnedriveCopyBusy] = useState(false)
+
+  /**
+   * Copies dragged OneDrive items into the repository by turning them into the same
+   * upload items a desktop drop produces, so folder creation, duplicate detection and
+   * Auto-generate KB all apply without a second import path.
+   */
+  const copyOneDriveItemsIntoRepository = useCallback(
+    async (dragged: ReturnType<typeof decodeOneDriveDragPayload>, folderId: string | null) => {
+      if (dragged.length === 0 || onedriveCopyBusy) return
+      setOnedriveCopyBusy(true)
+      try {
+        const result = await collectOneDriveUploadItems({
+          items: dragged,
+          listChildren: fetchMicrosoftDriveChildren,
+          fetchContent: fetchMicrosoftDriveItemContent,
+        })
+
+        if (result.items.length > 0) {
+          queueRepositoryUploadTree(result.items, folderId)
+        }
+
+        if (result.failures.length > 0) {
+          addToast({
+            title:
+              result.items.length > 0
+                ? `${result.failures.length} item(s) could not be copied`
+                : 'Nothing could be copied from OneDrive',
+            description: result.failures
+              .slice(0, 3)
+              .map((failure) => `${failure.path}: ${failure.reason}`)
+              .join(' \u00b7 '),
+            variant: result.items.length > 0 ? 'warning' : 'error',
+          })
+          return
+        }
+
+        if (result.items.length === 0) {
+          addToast({
+            title: 'Nothing to copy',
+            description: 'The dragged folder has no files in it.',
+            variant: 'info',
+          })
+          return
+        }
+
+        addToast({
+          title: `Copying ${result.items.length} file(s) from OneDrive`,
+          description: result.truncated
+            ? `Only the first ${result.items.length} files were taken \u2014 drag a smaller folder for the rest.`
+            : undefined,
+          variant: result.truncated ? 'warning' : 'success',
+        })
+      } catch (error) {
+        addToast({
+          title: 'OneDrive copy failed',
+          description: error instanceof Error ? error.message : '',
+          variant: 'error',
+        })
+      } finally {
+        setOnedriveCopyBusy(false)
+      }
+    },
+    [addToast, onedriveCopyBusy, queueRepositoryUploadTree],
+  )
+
   const handleRepositoryDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.stopPropagation()
     setIsRepositoryDragActive(false)
     const dataTransfer = event.dataTransfer
+
+    // An internal OneDrive drag carries no OS files, so it must be handled before the
+    // upload path \u2014 which would otherwise find nothing and quietly do nothing at all.
+    if (dataTransferHasOneDriveItems(dataTransfer.types)) {
+      const dragged = decodeOneDriveDragPayload(dataTransfer.getData(ONEDRIVE_DRAG_MIME))
+      void copyOneDriveItemsIntoRepository(dragged, repositoryCurrentFolderId)
+      return
+    }
+
     void (async () => {
       const items = await collectUploadItemsFromDataTransfer(dataTransfer)
       if (items.length === 0) return
       queueRepositoryUploadTree(items)
     })()
-  }, [queueRepositoryUploadTree])
+  }, [copyOneDriveItemsIntoRepository, queueRepositoryUploadTree, repositoryCurrentFolderId])
 
   const handleFolderDrop = useCallback((event: React.DragEvent, folderId: string | null) => {
     const types = Array.from(event.dataTransfer.types || [])
