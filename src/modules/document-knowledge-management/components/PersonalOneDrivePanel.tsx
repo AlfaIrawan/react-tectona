@@ -516,7 +516,7 @@ export function PersonalOneDrivePanel({
                   items={group.items}
                   collapsed={isCollapsed}
                   groupTint={groupTint}
-                  richRows={showFolderCards}
+                  richRows={showFolderCards || showSplitFolders}
                   onToggle={() => toggleGroup(group.label)}
                   onOpenItem={openItem}
                 />
@@ -709,9 +709,12 @@ function OneDriveGroup({
   collapsed: boolean
   groupTint: { row: string; first: string } | null
   /**
-   * Folder Card View shows the same document-row treatment the repository table
-   * uses — large type icon, bold name, relative "Updated" line. The columns stay
-   * OneDrive's own; only the row presentation is shared.
+   * Folder Card View and Split Folder View show the same document-row treatment the
+   * repository table uses — large type icon, bold name, relative "Updated" line. The
+   * columns stay OneDrive's own; only the row presentation is shared.
+   *
+   * Explorer details view and the Tectona/OneDrive Split View stay compact on
+   * purpose: two tables side by side with 56px rows would fit almost nothing.
    */
   richRows: boolean
   onToggle: () => void
