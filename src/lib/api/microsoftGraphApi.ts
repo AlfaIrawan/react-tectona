@@ -2,7 +2,7 @@
  * Microsoft Graph OneDrive listing via identity-lite (delegated Files.Read).
  */
 
-import { IDENTITY_API_BASE } from './gatewayBase'
+import { IDENTITY_API_BASE, serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
 export type MicrosoftDriveItemKind = 'file' | 'folder'
@@ -107,11 +107,18 @@ export async function fetchMicrosoftDriveStatus(): Promise<MicrosoftDriveStatus>
   return handleJson<MicrosoftDriveStatus>(res)
 }
 
+/**
+ * Browsing and reading OneDrive go to document-knowledge-management: they are
+ * document operations. identity-lite keeps only the credential and the question of
+ * whether this account is connected at all.
+ */
+function onedriveBase(): string {
+  return `${serviceApiBase('/api/document-knowledge', import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL)}/v1/onedrive`
+}
+
 export async function fetchMicrosoftDriveChildren(itemId?: string | null): Promise<MicrosoftDriveListing> {
-  const base = IDENTITY_API_BASE.replace(/\/$/, '')
-  const path = itemId
-    ? `/v1/me/microsoft/drive/items/${encodeURIComponent(itemId)}/children`
-    : '/v1/me/microsoft/drive'
+  const base = onedriveBase()
+  const path = itemId ? `/items/${encodeURIComponent(itemId)}/children` : '/drive'
   const res = await apiFetch(`${base}${path}`, {
     headers: tectonaServiceHeaders({ Accept: 'application/json' }),
   })
@@ -120,12 +127,11 @@ export async function fetchMicrosoftDriveChildren(itemId?: string | null): Promi
 
 /**
  * Downloads one OneDrive file so it can be re-uploaded through the repository's own
- * upload path. identity-lite proxies the bytes rather than exposing Graph's
+ * upload path. The service proxies the bytes rather than exposing Graph's
  * pre-authenticated download URL to the page.
  */
 export async function fetchMicrosoftDriveItemContent(itemId: string): Promise<Blob> {
-  const base = IDENTITY_API_BASE.replace(/\/$/, '')
-  const res = await apiFetch(`${base}/v1/me/microsoft/drive/items/${encodeURIComponent(itemId)}/content`, {
+  const res = await apiFetch(`${onedriveBase()}/items/${encodeURIComponent(itemId)}/content`, {
     headers: tectonaServiceHeaders({ Accept: '*/*' }),
   })
   if (!res.ok) {
