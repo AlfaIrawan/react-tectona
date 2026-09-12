@@ -28,6 +28,19 @@ import {
 export const UI_SCOPE_SHELL = 'shell'
 export const UI_SCOPE_WORKSPACE = 'workspace'
 export const UI_SCOPE_DOCUMENT_KNOWLEDGE = 'document-knowledge-management'
+export const UI_SCOPE_AI_IDEA_PRIORITIZATION = 'ai-idea-prioritization-intelligence'
+export const UI_SCOPE_AI_PROJECT_INTELLIGENCE = 'ai-project-intelligence'
+export const UI_SCOPE_INTEGRATION_API_PLATFORM = 'integration-api-platform'
+export const UI_SCOPE_PLANNING_SCHEDULING = 'planning-scheduling'
+export const UI_SCOPE_PORTFOLIO_GOVERNANCE = 'portfolio-governance-management'
+export const UI_SCOPE_IDEA_BACKLOG = 'idea-backlog-management'
+export const UI_SCOPE_PROJECT_LIST = 'project-list'
+export const UI_SCOPE_REPORTING_ANALYTICS = 'reporting-analytics'
+export const UI_SCOPE_RESOURCE_MANAGEMENT = 'resource-management'
+export const UI_SCOPE_SECURITY_ACCESS_CONTROL = 'security-access-control'
+export const UI_SCOPE_TASK_WORK_MANAGEMENT = 'task-work-management'
+export const UI_SCOPE_WORKFLOW_AUTOMATION = 'workflow-automation-engine'
+export const UI_SCOPE_WORKSPACE_MANAGEMENT = 'workspace-management'
 
 const PUSH_DEBOUNCE_MS = 800
 

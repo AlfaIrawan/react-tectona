@@ -184,6 +184,7 @@ import {
   workspaceNavMenuScrollClass,
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
+import { UI_SCOPE_TASK_WORK_MANAGEMENT, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type WorkItemType = 'Task' | 'Subtask' | 'Checklist' | 'Epic' | 'Feature' | 'Bug'
 type WorkStatus = 'Backlog' | 'To Do' | 'In Progress' | 'In Review' | 'Done'
@@ -2711,10 +2712,26 @@ export function TaskWorkManagementPage() {
   const workItemStatusTriggerRef = useRef<HTMLButtonElement | null>(null)
   const workItemStatusMenuPanelRef = useRef<HTMLDivElement | null>(null)
   const [activePanel, setActivePanel] = useState<(typeof PANEL_ITEMS)[number]['id']>('overview')
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
-  const [showKpiCards, setShowKpiCards] = useState(true)
-  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useState(true)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_TASK_WORK_MANAGEMENT,
+    'isWorkspaceCollapsed',
+    false,
+  )
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_TASK_WORK_MANAGEMENT,
+    'showFiltersPanel',
+    true,
+  )
+  const [showKpiCards, setShowKpiCards] = useUiLayoutBoolean(
+    UI_SCOPE_TASK_WORK_MANAGEMENT,
+    'showKpiCards',
+    true,
+  )
+  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useUiLayoutBoolean(
+    UI_SCOPE_TASK_WORK_MANAGEMENT,
+    'showEnterpriseNavPanel',
+    true,
+  )
   const [focusBlocked, setFocusBlocked] = useState(false)
   const overviewPalette: OverviewPaletteMode = 'pastel'
   const [workItems, setWorkItems] = useState<WorkItem[]>([])

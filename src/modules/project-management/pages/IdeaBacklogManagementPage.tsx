@@ -153,6 +153,7 @@ import {
   type IdeaDraftJobStatusResponse,
   type IdeaDraftVersionDetail,
 } from '@/lib/api/tectonaAgentRuntimeApi'
+import { UI_SCOPE_IDEA_BACKLOG, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
   sentAt?: string
@@ -1769,7 +1770,11 @@ export function IdeaBacklogManagementPage() {
   const [typeFilterTags, setTypeFilterTags] = useState<Set<IdeaType>>(() => new Set(IDEA_TYPES))
   const [statusFilterTags, setStatusFilterTags] = useState<Set<IdeaStatus>>(() => new Set(IDEA_STATUSES))
   const [submissionSortOrder, setSubmissionSortOrder] = useState<SubmissionSortOrder>('name-asc')
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_IDEA_BACKLOG,
+    'showFiltersPanel',
+    true,
+  )
   const [showScoringPanels, setShowScoringPanels] = useState(false)
   const [showIntakePanel, setShowIntakePanel] = useState(false)
   const [isListView, setIsListView] = useState(false)

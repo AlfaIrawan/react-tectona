@@ -62,6 +62,7 @@ import {
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { UI_SCOPE_AI_PROJECT_INTELLIGENCE, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type ConfidenceTone = 'high' | 'medium' | 'watch'
 type PriorityTone = 'critical' | 'high' | 'medium'
@@ -742,7 +743,11 @@ function SectionHeader({
 
 export function AIProjectIntelligencePage() {
   const deferredSearch = ''
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_AI_PROJECT_INTELLIGENCE,
+    'isWorkspaceCollapsed',
+    false,
+  )
   const [activeSection, setActiveSection] = useState<
     | 'overview'
     | 'assistant'

@@ -76,6 +76,7 @@ import {
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { UI_SCOPE_RESOURCE_MANAGEMENT, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type AvailabilityStatus = 'Available' | 'Partially Allocated' | 'Fully Allocated' | 'Unavailable'
 type PanelId = 'overview' | 'directory' | 'capacity' | 'insight' | 'activity'
@@ -1110,10 +1111,22 @@ export function ResourceManagementPage() {
   const [resources] = useState(resourceSeed)
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState(resourceSeed[0].id)
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
-  const [showKpiCards, setShowKpiCards] = useState(true)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_RESOURCE_MANAGEMENT,
+    'isWorkspaceCollapsed',
+    false,
+  )
+  const [showKpiCards, setShowKpiCards] = useUiLayoutBoolean(
+    UI_SCOPE_RESOURCE_MANAGEMENT,
+    'showKpiCards',
+    true,
+  )
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_RESOURCE_MANAGEMENT,
+    'showFiltersPanel',
+    true,
+  )
   const [resourceGroupBy, setResourceGroupBy] = useState<ResourceTableGroupByKey | null>(null)
   const [resourcePageSize, setResourcePageSize] = useState(10)
   const [resourcePage, setResourcePage] = useState(1)

@@ -60,6 +60,7 @@ import {
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { UI_SCOPE_PORTFOLIO_GOVERNANCE, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 // Compact warning message component for error states
 function CompactWarningMessage({
@@ -95,7 +96,11 @@ function CompactWarningMessage({
 }
 
 export function PortfolioGovernanceManagementPage() {
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_PORTFOLIO_GOVERNANCE,
+    'isWorkspaceCollapsed',
+    false,
+  )
   const [activePanel, setActivePanel] = useState<
     | 'overview'
     | 'portfolio-management'
@@ -120,7 +125,11 @@ export function PortfolioGovernanceManagementPage() {
   const [complianceFilter, setComplianceFilter] = useState('All')
   const [ownerFilter, setOwnerFilter] = useState('All')
   const [timePeriod, setTimePeriod] = useState('Q2 2026')
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_PORTFOLIO_GOVERNANCE,
+    'showFiltersPanel',
+    true,
+  )
   const [drawer, setDrawer] = useState<{ open: boolean; portfolioId: string | null }>({ open: false, portfolioId: null })
 
   const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)

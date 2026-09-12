@@ -137,6 +137,7 @@ import { getSession } from '@/auth/authService'
 import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { readStoredTenantSelection } from '@/lib/tenantWorkspaceScope'
 import { MeasuredResponsiveContainer } from '@/components/charts/MeasuredResponsiveContainer'
+import { UI_SCOPE_SECURITY_ACCESS_CONTROL, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type RoleItem = {
   id: string
@@ -1436,10 +1437,26 @@ export function SecurityAccessControlPage() {
   const [permissionMatrixLoading, setPermissionMatrixLoading] = useState(true)
   const [accessReviewLoading, setAccessReviewLoading] = useState(true)
   const [auditLoading, setAuditLoading] = useState(true)
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
-  const [showKpiCards, setShowKpiCards] = useState(true)
-  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useState(true)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_SECURITY_ACCESS_CONTROL,
+    'isWorkspaceCollapsed',
+    false,
+  )
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_SECURITY_ACCESS_CONTROL,
+    'showFiltersPanel',
+    true,
+  )
+  const [showKpiCards, setShowKpiCards] = useUiLayoutBoolean(
+    UI_SCOPE_SECURITY_ACCESS_CONTROL,
+    'showKpiCards',
+    true,
+  )
+  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useUiLayoutBoolean(
+    UI_SCOPE_SECURITY_ACCESS_CONTROL,
+    'showEnterpriseNavPanel',
+    true,
+  )
   const [activePanel, setActivePanel] = useState<(typeof PANEL_ITEMS)[number]['id']>('overview')
 
   const deferredSearch = useDeferredValue(searchInput)

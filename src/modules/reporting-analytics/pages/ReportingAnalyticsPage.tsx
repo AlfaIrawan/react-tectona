@@ -67,6 +67,7 @@ import {
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { UI_SCOPE_REPORTING_ANALYTICS, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type DashboardMetric = {
   label: string
@@ -653,7 +654,11 @@ function SectionCard({
 export function ReportingAnalyticsPage() {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_REPORTING_ANALYTICS,
+    'isWorkspaceCollapsed',
+    false,
+  )
   const [activePanel, setActivePanel] = useState<ReportingPanelId>('reporting-overview')
   const [timePeriod, setTimePeriod] = useState('Last 30 days')
   const [workspace, setWorkspace] = useState('All workspaces')

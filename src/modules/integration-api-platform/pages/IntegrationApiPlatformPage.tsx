@@ -44,6 +44,7 @@ import {
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
+import { UI_SCOPE_INTEGRATION_API_PLATFORM, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type OverviewMetric = {
   id: string
@@ -842,7 +843,11 @@ export function IntegrationApiPlatformPage() {
   const [apiStatusOverrides, setApiStatusOverrides] = useState<Record<string, string>>({})
   const [apiEnvironmentOverrides, setApiEnvironmentOverrides] = useState<Record<string, string>>({})
   const [webhookRetryOverrides, setWebhookRetryOverrides] = useState<Record<string, string>>({})
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_INTEGRATION_API_PLATFORM,
+    'isWorkspaceCollapsed',
+    false,
+  )
   const [activePanel, setActivePanel] = useState('overview')
   const deferredQuery = useDeferredValue(searchQuery.trim().toLowerCase())
 

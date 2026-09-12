@@ -56,6 +56,7 @@ import {
   workspaceOuterGridClass,
 } from '@/lib/workspaceNavLayout'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { UI_SCOPE_AI_IDEA_PRIORITIZATION, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type PriorityLevel = 'Critical' | 'High' | 'Medium' | 'Watch'
 type ReviewStatus = 'Pending review' | 'Ready for decision' | 'Approved with oversight' | 'Needs expert review'
@@ -931,8 +932,16 @@ export function AIIdeaPrioritizationIntelligencePage() {
   const [loadingPanels, setLoadingPanels] = useState<string[]>(['overview', 'scoring', 'matrix', 'queue'])
   const deferredSearch = useDeferredValue(searchTerm)
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_AI_IDEA_PRIORITIZATION,
+    'isWorkspaceCollapsed',
+    false,
+  )
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_AI_IDEA_PRIORITIZATION,
+    'showFiltersPanel',
+    true,
+  )
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {

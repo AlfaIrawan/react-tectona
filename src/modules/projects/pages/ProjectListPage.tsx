@@ -59,6 +59,7 @@ import { applyOrderedGridSelection, type GridSelectionModifiers } from '../lib/g
 import { copyFolderToClipboard, isEditableKeyboardTarget, canMoveFolderToTarget } from '../lib/folderActions'
 import { hasFolderClipboard } from '../lib/folderClipboard'
 import { buildFolderAncestorChain, filterFoldersByParent, resolveChildFolderCount } from '../lib/folderHierarchy'
+import { UI_SCOPE_PROJECT_LIST, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 function isNestDropId(id: string) {
   return id.startsWith('folder-nest-')
@@ -148,7 +149,11 @@ export function ProjectListPage() {
 
   // View state
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_PROJECT_LIST,
+    'showFiltersPanel',
+    true,
+  )
   const [showFoldersSectionVisible, setShowFoldersSectionVisible] = useState(true)
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
   const [searchQuery, setSearchQuery] = useState('')

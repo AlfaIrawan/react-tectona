@@ -111,6 +111,7 @@ import {
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import { fetchWorkspaceMembers, TECTONA_WAC_APP_ID } from '@/lib/api/workspaceAccessControlApi'
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
+import { UI_SCOPE_WORKFLOW_AUTOMATION, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused' | 'Needs Approval'
 type PanelId = 'overview' | 'catalog' | 'automation' | 'monitoring'
@@ -705,7 +706,11 @@ export function WorkflowAutomationEnginePage() {
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
 
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_WORKFLOW_AUTOMATION,
+    'isWorkspaceCollapsed',
+    false,
+  )
   const [search, setSearch] = useState('')
   const [builder, setBuilder] = useState<{ open: boolean; workflowId: string | null }>({ open: false, workflowId: null })
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([])
@@ -840,7 +845,11 @@ export function WorkflowAutomationEnginePage() {
   }, [workspaceId])
   // The filters/search card is always visible now — its show/hide toggle button was removed.
   const showFiltersPanel = true
-  const [showKpiCards, setShowKpiCards] = useState(true)
+  const [showKpiCards, setShowKpiCards] = useUiLayoutBoolean(
+    UI_SCOPE_WORKFLOW_AUTOMATION,
+    'showKpiCards',
+    true,
+  )
   const [showEnterpriseNav, setShowEnterpriseNav] = useState(true)
   const navPanelRef = useRef<HTMLDivElement | null>(null)
   const activeMainPanelRef = useRef<HTMLElement | null>(null)

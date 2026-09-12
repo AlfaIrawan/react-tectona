@@ -84,6 +84,7 @@ import {
 import { mapWorkItemsToPlanningGantt } from '@/modules/planning-scheduling/utils/mapWorkItemsToPlanningGantt'
 import { listWorkItems, type WorkItemApiModel } from '@/lib/api/workApi'
 import { fetchAllWorkspaceOrgWorkspaces, type WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
+import { UI_SCOPE_PLANNING_SCHEDULING, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type CalendarMode = 'Month' | 'Week' | 'Agenda'
 type CapacityView = 'Team' | 'Individual' | 'Sprint' | 'Project'
@@ -603,9 +604,21 @@ export function PlanningSchedulingPage() {
   const [capacityView, setCapacityView] = useState<CapacityView>('Team')
   const [selectedItemId, setSelectedItemId] = useState('')
   const [activePanel, setActivePanel] = useState<PlanningPanelId>('overview')
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
-  const [showKpiCards, setShowKpiCards] = useState(true)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_PLANNING_SCHEDULING,
+    'isWorkspaceCollapsed',
+    false,
+  )
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_PLANNING_SCHEDULING,
+    'showFiltersPanel',
+    true,
+  )
+  const [showKpiCards, setShowKpiCards] = useUiLayoutBoolean(
+    UI_SCOPE_PLANNING_SCHEDULING,
+    'showKpiCards',
+    true,
+  )
 
   const setPlanningPanel = (panel: PlanningPanelId) => {
     setActivePanel(panel)

@@ -334,6 +334,7 @@ import {
   canReparentOperationalWorkspace,
   listOperationalDirectoryReparentTargets,
 } from '@/lib/operationalDirectoryReparent'
+import { UI_SCOPE_WORKSPACE_MANAGEMENT, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 /** Organizational & execution boundary classification — not member/project counts. */
 type WorkspaceClassification = string
@@ -5716,7 +5717,11 @@ export function WorkspaceManagementPage() {
   /** Lebar konten &lt; 1000px → floating icon rail (hindari grid 1 kolom penuh di Firefox / &lt; xl). */
   const enterpriseNavFloatRail = showKpiCarousel
   const navPanelRef = useRef<HTMLDivElement | null>(null)
-  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useState(false)
+  const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
+    UI_SCOPE_WORKSPACE_MANAGEMENT,
+    'isWorkspaceCollapsed',
+    false,
+  )
   const [navPanelHeightPx, setNavPanelHeightPx] = useState<number | null>(null)
   const kpiSectionRef = useRef<HTMLElement | null>(null)
   const overviewMainPanelRef = useRef<HTMLElement | null>(null)
@@ -5788,9 +5793,21 @@ export function WorkspaceManagementPage() {
     id: string
     mode: 'detail' | 'governance'
   } | null>(null)
-  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useState(true)
-  const [showFiltersPanel, setShowFiltersPanel] = useState(true)
-  const [showKpiCards, setShowKpiCards] = useState(true)
+  const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useUiLayoutBoolean(
+    UI_SCOPE_WORKSPACE_MANAGEMENT,
+    'showEnterpriseNavPanel',
+    true,
+  )
+  const [showFiltersPanel, setShowFiltersPanel] = useUiLayoutBoolean(
+    UI_SCOPE_WORKSPACE_MANAGEMENT,
+    'showFiltersPanel',
+    true,
+  )
+  const [showKpiCards, setShowKpiCards] = useUiLayoutBoolean(
+    UI_SCOPE_WORKSPACE_MANAGEMENT,
+    'showKpiCards',
+    true,
+  )
   const [searchQuery, setSearchQuery] = useState('')
   // Archived is excluded by default -- it's soft-deleted, not a normal operating
   // status, so it should stay out of view until the user explicitly asks to see it.
