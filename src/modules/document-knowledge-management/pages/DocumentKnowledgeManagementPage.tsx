@@ -4596,6 +4596,65 @@ function isDocPanelId(value: string): value is DocPanelId {
   return DOC_PANEL_ITEMS.some((item) => item.id === value)
 }
 
+/**
+ * Per-pane counter and pager for Split View.
+ *
+ * The two libraries hold different numbers of items, so a single shared pager
+ * would page both at once and report only one side's totals — the other pane's
+ * numbers would simply be wrong.
+ */
+function RepositoryPaneBar({
+  label,
+  start,
+  end,
+  total,
+  page,
+  pages,
+  onPageChange,
+}: {
+  label: string
+  start: number
+  end: number
+  total: number
+  page: number
+  pages: number
+  onPageChange: (next: number) => void
+}) {
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-1.5">
+      <span className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </span>
+      <div className="flex items-center gap-2">
+        <span className="whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+          {start}-{end} of {total}
+        </span>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-40"
+            onClick={() => onPageChange(Math.max(1, page - 1))}
+            disabled={page <= 1}
+          >
+            Prev
+          </button>
+          <span className="px-1 text-[11px] text-muted-foreground tabular-nums">
+            {page} / {pages}
+          </span>
+          <button
+            type="button"
+            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-40"
+            onClick={() => onPageChange(Math.min(pages, page + 1))}
+            disabled={page >= pages}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function nextUntitledDocumentFolderName(folders: DocumentFolder[], parentId: string | null): string {
   const siblingFolders = folders.filter((folder) => (folder.parent_id ?? null) === parentId)
   const usedNumbers = siblingFolders
@@ -5292,6 +5351,7 @@ export function DocumentKnowledgeManagementPage() {
   }, [])
   const showOneDriveLibrary = isPersonalWorkspace && onedriveWorkspaceConnected
   const repositorySplitActive = showOneDriveLibrary && repositorySplitView
+  const [onedriveSplitPage, setOnedriveSplitPage] = useState(1)
   useEffect(() => {
     setOnedriveWorkspaceConnected(readOnedriveWorkspaceConnected(sessionUserId, onedriveWorkspaceId))
   }, [sessionUserId, onedriveWorkspaceId])
@@ -5314,6 +5374,11 @@ export function DocumentKnowledgeManagementPage() {
   useEffect(() => {
     setRepositoryPage(1)
   }, [repositoryLibrary])
+  useEffect(() => {
+    // Page size or the listing changed under the OneDrive pane; clamp rather than
+    // leave it pointing past the end and rendering an empty table.
+    setOnedriveSplitPage((prev) => Math.min(prev, Math.max(1, Math.ceil(onedriveItemCount / repositoryPageSize))))
+  }, [onedriveItemCount, repositoryPageSize])
   useEffect(() => {
     if (repositoryLibrary !== 'onedrive') return
     const pages = Math.max(1, Math.ceil(onedriveItemCount / repositoryPageSize))
@@ -13219,7 +13284,12 @@ export function DocumentKnowledgeManagementPage() {
   const repositoryEnd = Math.min(repositoryFlatRows.length, repositoryPageSafe * repositoryPageSize)
   const pagedRepositoryRows = repositoryFlatRows.slice(repositoryStart === 0 ? 0 : repositoryStart - 1, repositoryEnd)
   const onedriveTotalPages = Math.max(1, Math.ceil(onedriveItemCount / repositoryPageSize))
-  const onedrivePageSafe = Math.min(repositoryPage, onedriveTotalPages)
+  // Split View pages each side independently; outside it OneDrive keeps following
+  // the shared pager exactly as before.
+  const onedrivePageSafe = Math.min(
+    repositorySplitActive ? onedriveSplitPage : repositoryPage,
+    onedriveTotalPages,
+  )
   const onedriveStart = onedriveItemCount === 0 ? 0 : (onedrivePageSafe - 1) * repositoryPageSize + 1
   const onedriveEnd = Math.min(onedriveItemCount, onedrivePageSafe * repositoryPageSize)
   const repositoryToolbarIsOnedrive = repositoryLibrary === 'onedrive'
@@ -17470,9 +17540,11 @@ export function DocumentKnowledgeManagementPage() {
                   )}
                   {repositoryLoading && repositoryLibrary !== 'onedrive' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   {onedriveListingLoading && repositoryLibrary === 'onedrive' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {repositorySplitActive ? null : (
                   <p className="text-xs text-muted-foreground">
                     Showing <span className="font-semibold text-foreground">{repositoryToolbarStart}</span>-<span className="font-semibold text-foreground">{repositoryToolbarEnd}</span> of <span className="font-semibold text-foreground">{repositoryToolbarTotal}</span>
                   </p>
+                  )}
                   <span className="text-xs text-muted-foreground">Rows:</span>
                   <Select
                     value={String(repositoryPageSize)}
@@ -17487,6 +17559,7 @@ export function DocumentKnowledgeManagementPage() {
                     <option value="15">15</option>
                     <option value="25">25</option>
                   </Select>
+                  {repositorySplitActive ? null : (
                   <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
                     <button
                       type="button"
@@ -17506,6 +17579,7 @@ export function DocumentKnowledgeManagementPage() {
                       Next
                     </button>
                   </div>
+                  )}
                 </div>
               }
             >
@@ -17519,11 +17593,26 @@ export function DocumentKnowledgeManagementPage() {
                 )}
               >
               {repositoryLibrary === 'onedrive' || repositorySplitActive ? (
-                <PersonalOneDrivePanel
+                <div
                   className={cn(
-                    'min-h-[420px]',
-                    repositorySplitActive && 'order-2 min-w-0 rounded-xl border border-border/60 p-2',
+                    repositorySplitActive
+                      ? 'order-2 flex min-h-0 min-w-0 flex-col gap-2 rounded-xl border border-border/60 p-2'
+                      : 'contents',
                   )}
+                >
+                {repositorySplitActive ? (
+                  <RepositoryPaneBar
+                    label="OneDrive"
+                    start={onedriveStart}
+                    end={onedriveEnd}
+                    total={onedriveItemCount}
+                    page={onedrivePageSafe}
+                    pages={onedriveTotalPages}
+                    onPageChange={setOnedriveSplitPage}
+                  />
+                ) : null}
+                <PersonalOneDrivePanel
+                  className={cn('min-h-[420px]', repositorySplitActive && 'min-w-0')}
                   viewMode={repositorySplitActive ? 'explorer' : repositoryViewMode}
                   groupByType={
                     !repositorySplitActive
@@ -17539,6 +17628,7 @@ export function DocumentKnowledgeManagementPage() {
                   onStatsChange={handleOnedriveStatsChange}
                   onFolderNavigate={handleOnedriveFolderNavigate}
                 />
+                </div>
               ) : null}
               <div
                 className={cn(
@@ -17552,6 +17642,17 @@ export function DocumentKnowledgeManagementPage() {
                 onDragLeave={handleRepositoryDragLeave}
                 onDrop={handleRepositoryDrop}
               >
+                {repositorySplitActive ? (
+                  <RepositoryPaneBar
+                    label="Tectona"
+                    start={repositoryStart}
+                    end={repositoryEnd}
+                    total={filteredRepository.length}
+                    page={repositoryPageSafe}
+                    pages={repositoryTotalPages}
+                    onPageChange={setRepositoryPage}
+                  />
+                ) : null}
                 {isRepositoryDragActive && !repositoryUploadBusy ? (
                   <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-blue-500/5">
                     <div className="text-center">
