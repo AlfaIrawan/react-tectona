@@ -577,6 +577,8 @@ interface ChatMessage {
   agentActionState?: TectonaAgentActionState
   /** Gen AI: KB / index citations returned by agent runtime. */
   evidence?: RuntimeChatEvidence[]
+  /** True when tokens arrived via SSE — skip typewriter replay. */
+  streamedLive?: boolean
 }
 
 interface Conversation {
@@ -4710,7 +4712,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             ]
           : []
 
-        const runtime = await sendTectonaAgentRuntimeMessage({
+        const runtime = await sendTectonaAgentRuntimeMessage(
+          {
           message: t,
           context: {
             workspace_id: TECTONA_CHAT_WORKSPACE_ID,
@@ -4726,7 +4729,20 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               conversationsRef.current.find((c) => c.id === conversationId)?.explainerCharacter
               ?? null,
           },
-        })
+          },
+          {
+            onDelta: (chunk) => {
+              setMessagesById((prev) => ({
+                ...prev,
+                [conversationId]: (prev[conversationId] ?? []).map((m) =>
+                  m.id === loadingMsgId
+                    ? { ...m, text: `${m.text || ''}${chunk}`, streamedLive: true }
+                    : m,
+                ),
+              }))
+            },
+          },
+        )
 
         if (import.meta.env.DEV && runtime.warnings.length > 0) {
           console.debug('[Tectona Assistant]', {
@@ -4799,6 +4815,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                   text: runtime.answer.trim(),
                   at: Date.now(),
                   isLoading: false,
+                  streamedLive: Boolean(m.streamedLive),
                   ...(chatEvidence.length > 0 ? { evidence: chatEvidence } : {}),
                   ...(autoEvidenceAttachment
                     ? { attachments: [autoEvidenceAttachment] }
@@ -8510,7 +8527,9 @@ function WhatsAppChatBubble({
   const isUser = display.role === 'user'
   const time = formatWhatsAppTime(display.at)
   const hasAttachments = (display.attachments?.length ?? 0) > 0
-  const showTyping = Boolean(display.isLoading && display.role === 'assistant' && !isPeople)
+  const showTyping = Boolean(
+    display.isLoading && display.role === 'assistant' && !isPeople && !display.text?.trim(),
+  )
   const hasText = Boolean(display.text?.trim()) && !showTyping
   const isGroup = conversation?.mode === 'group'
   const groupContact = isGroup
@@ -8532,7 +8551,12 @@ function WhatsAppChatBubble({
       : undefined
 
   const usesAssistantTypewriter =
-    !isPeople && m.role === 'assistant' && !showTyping && Boolean(m.text?.trim())
+    !isPeople &&
+    m.role === 'assistant' &&
+    !showTyping &&
+    !m.isLoading &&
+    !m.streamedLive &&
+    Boolean(m.text?.trim())
   const typewriterInstant = resolvedTypingSpeed === 'instant'
   const [assistantTextRevealComplete, setAssistantTextRevealComplete] = useState(
     !usesAssistantTypewriter || typewriterInstant,
@@ -8578,6 +8602,7 @@ function WhatsAppChatBubble({
         ) : hasText ? (
           m.role === 'assistant' && !isPeople ? (
             <div className="flex min-w-0 w-full flex-col gap-1">
+              {usesAssistantTypewriter ? (
               <AssistantTypewriterText
                 text={m.text}
                 messageId={m.id}
@@ -8592,6 +8617,22 @@ function WhatsAppChatBubble({
                 choiceUiState={choiceUiState}
                 onChoiceSubmit={onChoiceSubmit}
               />
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <AssistantChatMarkdown
+                    content={m.text}
+                    emphasizeGreetingLead={emphasizeGreetingLead}
+                    choiceUiState={m.isLoading ? null : choiceUiState}
+                    onChoiceSubmit={onChoiceSubmit}
+                  />
+                  {m.isLoading ? (
+                    <span
+                      className="ml-0.5 inline-block h-[1em] w-[1px] animate-pulse bg-current align-[-0.1em]"
+                      aria-hidden
+                    />
+                  ) : null}
+                </div>
+              )}
               <div className="flex justify-end">
                 <WhatsAppMetaRow time={time} isUser={isUser} deliveryStatus={deliveryStatus} />
               </div>

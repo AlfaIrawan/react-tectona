@@ -18,6 +18,7 @@ export interface OneDriveDragItem {
   id: string
   name: string
   kind: MicrosoftDriveItem['kind']
+  etag?: string | null
 }
 
 /** Guards against a pathological or looping drive tree stalling the browser. */
@@ -25,7 +26,7 @@ export const MAX_COPY_FILES = 500
 export const MAX_COPY_DEPTH = 12
 
 export function encodeOneDriveDragPayload(items: readonly OneDriveDragItem[]): string {
-  return JSON.stringify(items.map(({ id, name, kind }) => ({ id, name, kind })))
+  return JSON.stringify(items.map(({ id, name, kind, etag }) => ({ id, name, kind, etag })))
 }
 
 export function decodeOneDriveDragPayload(raw: string | null | undefined): OneDriveDragItem[] {
@@ -38,6 +39,7 @@ export function decodeOneDriveDragPayload(raw: string | null | undefined): OneDr
         !!entry
         && typeof (entry as OneDriveDragItem).id === 'string'
         && typeof (entry as OneDriveDragItem).name === 'string'
+        && ((entry as OneDriveDragItem).etag == null || typeof (entry as OneDriveDragItem).etag === 'string')
         && ((entry as OneDriveDragItem).kind === 'file' || (entry as OneDriveDragItem).kind === 'folder'),
     )
   } catch {

@@ -28,6 +28,9 @@ type DocumentRepositoryFolderCardProps = {
   onDragOver: (event: DragEvent) => void
   onDragLeave: () => void
   onDrop: (event: DragEvent) => void
+  showSelection?: boolean
+  selected?: boolean
+  onToggleSelection?: () => void
 }
 
 export function DocumentRepositoryFolderCard({
@@ -43,6 +46,9 @@ export function DocumentRepositoryFolderCard({
   onDragOver,
   onDragLeave,
   onDrop,
+  showSelection = false,
+  selected = false,
+  onToggleSelection,
 }: DocumentRepositoryFolderCardProps) {
   const renameInputRef = useRef<HTMLInputElement>(null)
   const hasDocuments = folder.document_count > 0
@@ -76,6 +82,7 @@ export function DocumentRepositoryFolderCard({
         isSamplesLibrary && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         isDragOver && folderCardStyles.dragOver,
+        selected && 'ring-2 ring-inset ring-blue-500/80',
       )}
       style={themedStyle}
       onContextMenu={onContextMenu}
@@ -101,6 +108,16 @@ export function DocumentRepositoryFolderCard({
         ) : null}
 
         <div className={cn(folderCardStyles.folderTitleRow, compactStyles.compactTitleRow)}>
+          {showSelection ? (
+            <input
+              type="checkbox"
+              className="mr-1 shrink-0"
+              checked={selected}
+              aria-label={`Select ${folder.name}`}
+              onClick={(event) => event.stopPropagation()}
+              onChange={onToggleSelection}
+            />
+          ) : null}
           {showRenameInput ? (
             <input
               ref={renameInputRef}

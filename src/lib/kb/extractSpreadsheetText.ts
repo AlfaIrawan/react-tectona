@@ -2,6 +2,8 @@ import type { Workbook as ExcelWorkbook } from 'exceljs'
 
 const MAX_SPREADSHEET_BYTES = 15 * 1024 * 1024
 const MAX_SHEETS = 12
+const MAX_TABLE_COLUMNS = 20
+const MAX_TABLE_ROWS_PER_SHEET = 250
 
 export function isSpreadsheetFile(file: Pick<File, 'name' | 'type'>): boolean {
   const name = file.name.toLowerCase()
@@ -41,6 +43,109 @@ function cellToPlain(value: unknown): string {
   return ''
 }
 
+function normalizeCell(value: string): string {
+  return value.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function escapeMarkdownCell(value: string): string {
+  return normalizeCell(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+type SpreadsheetSheet = {
+  name: string
+  rows: string[][]
+}
+
+function readWorkbookSheets(workbook: ExcelWorkbook): SpreadsheetSheet[] {
+  return workbook.worksheets.slice(0, MAX_SHEETS).flatMap((sheet) => {
+    let firstColumn = Number.POSITIVE_INFINITY
+    let lastColumn = 0
+    const populatedRows: number[] = []
+
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      let hasValue = false
+      row.eachCell({ includeEmpty: false }, (cell, columnNumber) => {
+        const source = cell.isMerged ? cell.master : cell
+        if (!normalizeCell(cellToPlain(source.value))) return
+        hasValue = true
+        firstColumn = Math.min(firstColumn, columnNumber)
+        lastColumn = Math.max(lastColumn, columnNumber)
+      })
+      if (hasValue) populatedRows.push(rowNumber)
+    })
+
+    if (!populatedRows.length || !Number.isFinite(firstColumn) || lastColumn < firstColumn) return []
+    const columnCount = Math.min(MAX_TABLE_COLUMNS, lastColumn - firstColumn + 1)
+    const rows = populatedRows.slice(0, MAX_TABLE_ROWS_PER_SHEET).map((rowNumber) => {
+      const row = sheet.getRow(rowNumber)
+      return Array.from({ length: columnCount }, (_, index) => {
+        const cell = row.getCell(firstColumn + index)
+        const source = cell.isMerged ? cell.master : cell
+        return normalizeCell(cellToPlain(source.value))
+      })
+    })
+
+    return [{ name: sheet.name, rows }]
+  })
+}
+
+function renderMarkdownTables(sheets: SpreadsheetSheet[], maxChars: number): string {
+  const lines: string[] = []
+  let used = 0
+  const push = (line: string) => {
+    if (used >= maxChars) return false
+    lines.push(line)
+    used += line.length + 1
+    return used < maxChars
+  }
+
+  for (const sheet of sheets) {
+    if (!sheet.rows.length || !push(`--- SHEET: ${sheet.name} ---`)) break
+    const [header, ...body] = sheet.rows
+    const heading = header.map(escapeMarkdownCell)
+    if (!push(`| ${heading.join(' | ')} |`)) break
+    if (!push(`| ${heading.map(() => '---').join(' | ')} |`)) break
+    for (const row of body) {
+      if (!push(`| ${row.map(escapeMarkdownCell).join(' | ')} |`)) break
+    }
+    if (used >= maxChars) break
+    push('')
+  }
+
+  return lines.join('\n').trim().slice(0, maxChars)
+}
+
+function renderHtmlTables(sheets: SpreadsheetSheet[], maxChars: number): string {
+  const chunks: string[] = []
+  let used = 0
+  for (const sheet of sheets) {
+    if (!sheet.rows.length || used >= maxChars) break
+    const [header, ...body] = sheet.rows
+    const head = `<thead><tr>${header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join('')}</tr></thead>`
+    const rows: string[] = []
+    for (const row of body) {
+      const html = `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`
+      if (used + head.length + html.length > maxChars) break
+      rows.push(html)
+      used += html.length
+    }
+    const table = `<h3>${escapeHtml(sheet.name)}</h3><table>${head}<tbody>${rows.join('')}</tbody></table>`
+    if (used + table.length > maxChars) break
+    chunks.push(table)
+    used += table.length
+  }
+  return chunks.join('')
+}
+
 async function getWorkbookConstructor(): Promise<new () => ExcelWorkbook> {
   if (import.meta.env.MODE !== 'test') {
     const exceljsBrowser = await import('exceljs/dist/exceljs.min.js') as {
@@ -57,7 +162,7 @@ async function getWorkbookConstructor(): Promise<new () => ExcelWorkbook> {
   return Workbook
 }
 
-/** Flatten workbook sheets into tab-separated text for KB generation. */
+/** Preserve workbook rows and columns as Markdown tables for KB generation. */
 export async function extractSpreadsheetFromArrayBuffer(
   data: ArrayBuffer | Uint8Array,
   maxChars: number,
@@ -72,24 +177,7 @@ export async function extractSpreadsheetFromArrayBuffer(
     return ''
   }
 
-  const lines: string[] = []
-  let used = 0
-  for (const sheet of workbook.worksheets.slice(0, MAX_SHEETS)) {
-    const heading = `--- SHEET: ${sheet.name} ---`
-    lines.push(heading)
-    used += heading.length + 1
-    sheet.eachRow({ includeEmpty: false }, (row) => {
-      if (used >= maxChars) return
-      const values = Array.isArray(row.values) ? row.values.slice(1) : []
-      const line = values.map((cell) => cellToPlain(cell)).join('\t').replace(/\t+$/g, '')
-      if (!line.trim()) return
-      lines.push(line)
-      used += line.length + 1
-    })
-    if (used >= maxChars) break
-  }
-
-  return lines.join('\n').trim().slice(0, maxChars)
+  return renderMarkdownTables(readWorkbookSheets(workbook), maxChars)
 }
 
 export async function extractSpreadsheetText(file: File, maxChars: number): Promise<string> {
@@ -97,4 +185,28 @@ export async function extractSpreadsheetText(file: File, maxChars: number): Prom
     ? await file.arrayBuffer()
     : await new Response(file).arrayBuffer()
   return extractSpreadsheetFromArrayBuffer(buffer, maxChars)
+}
+
+/** Deterministic HTML tables for the KB body; independent of LLM table formatting. */
+export async function extractSpreadsheetTablesFromArrayBuffer(
+  data: ArrayBuffer | Uint8Array,
+  maxChars: number,
+): Promise<string> {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+  if (bytes.byteLength <= 0 || bytes.byteLength > MAX_SPREADSHEET_BYTES) return ''
+  const Workbook = await getWorkbookConstructor()
+  const workbook = new Workbook()
+  try {
+    await workbook.xlsx.load(bytes)
+  } catch {
+    return ''
+  }
+  return renderHtmlTables(readWorkbookSheets(workbook), maxChars)
+}
+
+export async function extractSpreadsheetTablesHtml(file: File, maxChars: number): Promise<string> {
+  const buffer = typeof file.arrayBuffer === 'function'
+    ? await file.arrayBuffer()
+    : await new Response(file).arrayBuffer()
+  return extractSpreadsheetTablesFromArrayBuffer(buffer, maxChars)
 }

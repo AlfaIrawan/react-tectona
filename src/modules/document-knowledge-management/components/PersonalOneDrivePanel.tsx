@@ -1,7 +1,7 @@
 /**
  * OneDrive (Microsoft Graph /me/drive) browser for a personal Tectona workspace.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   ArrowUpDown,
   CalendarClock,
@@ -61,6 +61,11 @@ type PersonalOneDrivePanelProps = {
   pageSize?: number
   onStatsChange?: (stats: { total: number; loading: boolean }) => void
   onFolderNavigate?: () => void
+  onItemContextMenu?: (event: MouseEvent, item: MicrosoftDriveItem) => void
+  contextMenuItemId?: string | null
+  refreshToken?: number
+  onSelectionChange?: (items: MicrosoftDriveItem[]) => void
+  showFolderCardSelection?: boolean
 }
 
 type SortKey = 'name' | 'dateModified' | 'type' | 'size'
@@ -129,7 +134,21 @@ function sortItems(items: MicrosoftDriveItem[], sort: { key: SortKey; dir: SortD
   })
 }
 
-function OneDriveFolderCard({ item, onOpen }: { item: MicrosoftDriveItem; onOpen: () => void }) {
+function OneDriveFolderCard({
+  item,
+  onOpen,
+  onContextMenu,
+  selected = false,
+  showSelection = false,
+  onToggleSelection,
+}: {
+  item: MicrosoftDriveItem
+  onOpen: () => void
+  onContextMenu?: (event: MouseEvent) => void
+  selected?: boolean
+  showSelection?: boolean
+  onToggleSelection?: () => void
+}) {
   const childCount = item.child_count ?? 0
   const hasItems = childCount > 0
   return (
@@ -139,11 +158,13 @@ function OneDriveFolderCard({ item, onOpen }: { item: MicrosoftDriveItem; onOpen
         compactStyles.compactCard,
         'group/folder shrink-0',
         hasItems && folderCardStyles.hasProjects,
+        selected && 'ring-2 ring-inset ring-blue-500/80',
       )}
       onDoubleClick={(event) => {
         if ((event.target as HTMLElement).closest('button')) return
         onOpen()
       }}
+      onContextMenu={onContextMenu}
     >
       <div className={cn(folderCardStyles.folderTab, compactStyles.compactTab, 'folder-tab')} aria-hidden="true" />
       <div className={cn(folderCardStyles.folderBody, compactStyles.compactBody, 'folder-body')}>
@@ -156,6 +177,16 @@ function OneDriveFolderCard({ item, onOpen }: { item: MicrosoftDriveItem; onOpen
           </div>
         ) : null}
         <div className={cn(folderCardStyles.folderTitleRow, compactStyles.compactTitleRow)}>
+          {showSelection ? (
+            <input
+              type="checkbox"
+              className="mr-1 shrink-0"
+              checked={selected}
+              aria-label={`Select ${item.name}`}
+              onClick={(event) => event.stopPropagation()}
+              onChange={onToggleSelection}
+            />
+          ) : null}
           <button
             type="button"
             className={cn(folderCardStyles.folderTitle, compactStyles.compactTitle, 'min-w-0 flex-1 text-left hover:text-sky-700')}
@@ -198,6 +229,11 @@ export function PersonalOneDrivePanel({
   pageSize = 10,
   onStatsChange,
   onFolderNavigate,
+  onItemContextMenu,
+  contextMenuItemId,
+  refreshToken,
+  onSelectionChange,
+  showFolderCardSelection = false,
 }: PersonalOneDrivePanelProps) {
   const [listing, setListing] = useState<MicrosoftDriveListing | null>(null)
   const [folderId, setFolderId] = useState<string | null>(null)
@@ -209,6 +245,7 @@ export function PersonalOneDrivePanel({
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null)
   const [typeFilters, setTypeFilters] = useState<Set<string>>(() => new Set())
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const folderSliderRef = useRef<HTMLDivElement>(null)
   const [folderSlider, setFolderSlider] = useState({ canPrev: false, canNext: false })
 
@@ -234,12 +271,13 @@ export function PersonalOneDrivePanel({
 
   useEffect(() => {
     void load(folderId)
-  }, [folderId, load])
+  }, [folderId, load, refreshToken])
 
   useEffect(() => {
     setTypeFilters(new Set())
     setCollapsed(new Set())
     setSort(null)
+    setSelectedIds(new Set())
   }, [folderId])
 
   const connect = async () => {
@@ -319,14 +357,56 @@ export function PersonalOneDrivePanel({
   const showSplitFolders = viewMode === 'split'
   const useFolderGroups = groupByFolder
 
+  const selectedItems = useMemo(
+    () => (listing?.items ?? []).filter((item) => selectedIds.has(item.id)),
+    [listing?.items, selectedIds],
+  )
+
   useEffect(() => {
-    onStatsChange?.({ total: tableItems.length, loading })
-  }, [tableItems.length, loading, onStatsChange])
+    onSelectionChange?.(selectedItems)
+  }, [onSelectionChange, selectedItems])
+
+  useEffect(() => {
+    if (!showFolderCardSelection) setSelectedIds(new Set())
+  }, [showFolderCardSelection])
 
   const totalPages = Math.max(1, Math.ceil(tableItems.length / pageSize))
   const pageSafe = Math.min(Math.max(1, page), totalPages)
   const pageStart = tableItems.length === 0 ? 0 : (pageSafe - 1) * pageSize
   const pagedItems = tableItems.slice(pageStart, pageStart + pageSize)
+  const visibleSelectableItems = pagedItems
+  const selectionAnchor = useRef<string | null>(null)
+  const selectRow = (event: MouseEvent, item: MicrosoftDriveItem) => {
+    const anchorIndex = tableItems.findIndex((entry) => entry.id === selectionAnchor.current)
+    const itemIndex = tableItems.findIndex((entry) => entry.id === item.id)
+    setSelectedIds((current) => {
+      if (event.shiftKey && anchorIndex >= 0) {
+        const next = new Set(event.ctrlKey || event.metaKey ? current : [])
+        tableItems.slice(Math.min(anchorIndex, itemIndex), Math.max(anchorIndex, itemIndex) + 1).forEach((entry) => next.add(entry.id))
+        return next
+      }
+      const next = new Set(event.ctrlKey || event.metaKey ? current : [])
+      if ((event.ctrlKey || event.metaKey) && next.has(item.id)) next.delete(item.id)
+      else next.add(item.id)
+      return next
+    })
+    if (!event.shiftKey) selectionAnchor.current = item.id
+  }
+  const allVisibleSelected = visibleSelectableItems.length > 0
+    && visibleSelectableItems.every((item) => selectedIds.has(item.id))
+  const toggleAllVisible = () => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (allVisibleSelected) visibleSelectableItems.forEach((item) => next.delete(item.id))
+      else visibleSelectableItems.forEach((item) => next.add(item.id))
+      return next
+    })
+  }
+
+  useEffect(() => {
+    onStatsChange?.({ total: tableItems.length, loading })
+  }, [tableItems.length, loading, onStatsChange])
+
 
   const groups = useMemo(() => {
     if (useFolderGroups) {
@@ -438,6 +518,7 @@ export function PersonalOneDrivePanel({
         ) : null}
         <table className="w-full min-w-[720px] table-fixed border-collapse select-none text-xs">
           <colgroup>
+            {showFolderCardSelection ? <col className="w-10" /> : null}
             <col className="w-[38%]" />
             <col className="w-[18%]" />
             <col className="w-[28%]" />
@@ -445,6 +526,15 @@ export function PersonalOneDrivePanel({
           </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="text-left text-muted-foreground">
+              {showFolderCardSelection ? <th className="w-10 border-b-[3px] border-double border-slate-300/90 bg-white/90 px-2 py-2 text-center font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  disabled={visibleSelectableItems.length === 0}
+                  onChange={toggleAllVisible}
+                  aria-label="Select all visible OneDrive items"
+                />
+              </th> : null}
               <OneDriveHeaderCell
                 label="Name"
                 icon={FileText}
@@ -512,6 +602,18 @@ export function PersonalOneDrivePanel({
                   richRows={showFolderCards || showSplitFolders}
                   onToggle={() => toggleGroup(group.label)}
                   onOpenItem={openItem}
+                  onItemContextMenu={onItemContextMenu}
+                  contextMenuItemId={contextMenuItemId}
+                  selectedIds={selectedIds}
+                  selectedItems={selectedItems}
+                  showSelection={showFolderCardSelection}
+                  onSelectRow={selectRow}
+                  onToggleSelection={(item) => setSelectedIds((current) => {
+                    const next = new Set(current)
+                    if (next.has(item.id)) next.delete(item.id)
+                    else next.add(item.id)
+                    return next
+                  })}
                 />
               )
             })}
@@ -564,8 +666,12 @@ export function PersonalOneDrivePanel({
                   <button
                     key={folder.id}
                     type="button"
-                    className="group flex min-h-12 w-full items-center gap-2 rounded-lg border border-border/70 bg-background/70 px-2.5 py-2 text-left text-foreground transition-colors hover:border-blue-200 hover:bg-blue-50/60 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+                    className={cn(
+                      'group flex min-h-12 w-full items-center gap-2 rounded-lg border border-border/70 bg-background/70 px-2.5 py-2 text-left text-foreground transition-colors hover:border-blue-200 hover:bg-blue-50/60 dark:hover:border-blue-900 dark:hover:bg-blue-950/30',
+                      contextMenuItemId === folder.id && 'ring-2 ring-inset ring-blue-400/80',
+                    )}
                     onClick={() => openItem(folder)}
+                    onContextMenu={(event) => onItemContextMenu?.(event, folder)}
                   >
                     <FolderOpen className="h-4 w-4 shrink-0 text-blue-500" aria-hidden />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>
@@ -600,7 +706,20 @@ export function PersonalOneDrivePanel({
                 onScroll={updateFolderSlider}
               >
                 {folderItems.map((folder) => (
-                  <OneDriveFolderCard key={folder.id} item={folder} onOpen={() => openItem(folder)} />
+                  <OneDriveFolderCard
+                    key={folder.id}
+                    item={folder}
+                    onOpen={() => openItem(folder)}
+                    onContextMenu={(event) => onItemContextMenu?.(event, folder)}
+                    selected={selectedIds.has(folder.id)}
+                    showSelection={showFolderCardSelection}
+                    onToggleSelection={() => setSelectedIds((current) => {
+                      const next = new Set(current)
+                      if (next.has(folder.id)) next.delete(folder.id)
+                      else next.add(folder.id)
+                      return next
+                    })}
+                  />
                 ))}
               </div>
               <button
@@ -699,6 +818,13 @@ function OneDriveGroup({
   richRows,
   onToggle,
   onOpenItem,
+  onItemContextMenu,
+  contextMenuItemId,
+  selectedIds,
+  selectedItems,
+  showSelection,
+  onSelectRow,
+  onToggleSelection,
 }: {
   label: string
   groupKind: 'folder' | 'type'
@@ -716,13 +842,20 @@ function OneDriveGroup({
   richRows: boolean
   onToggle: () => void
   onOpenItem: (item: MicrosoftDriveItem) => void
+  onItemContextMenu?: (event: MouseEvent, item: MicrosoftDriveItem) => void
+  contextMenuItemId?: string | null
+  selectedIds: ReadonlySet<string>
+  selectedItems: MicrosoftDriveItem[]
+  showSelection: boolean
+  onSelectRow: (event: MouseEvent, item: MicrosoftDriveItem) => void
+  onToggleSelection: (item: MicrosoftDriveItem) => void
 }) {
   return (
     <>
       {label ? (
         <tr>
           <td
-            colSpan={4}
+            colSpan={showSelection ? 5 : 4}
             className={cn(
               'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
               groupTint?.first,
@@ -752,6 +885,7 @@ function OneDriveGroup({
             const tintRow = groupTint?.row
             const tintFirst = groupTint?.first ?? PROJECT_LIST_FIRST_COLUMN_TINT_BODY_CLASS
             const typeLabel = itemTypeLabel(item)
+            const isContextMenuTarget = contextMenuItemId === item.id
             return (
               <tr
                 key={item.id}
@@ -761,16 +895,35 @@ function OneDriveGroup({
                 onDragStart={(event) => {
                   event.dataTransfer.setData(
                     ONEDRIVE_DRAG_MIME,
-                    encodeOneDriveDragPayload([{ id: item.id, name: item.name, kind: item.kind }]),
+                    encodeOneDriveDragPayload(selectedIds.has(item.id) ? selectedItems : [item]),
                   )
                   event.dataTransfer.effectAllowed = 'copy'
                 }}
+                onContextMenu={(event) => {
+                  if (!selectedIds.has(item.id)) onSelectRow(event, item)
+                  onItemContextMenu?.(event, item)
+                }}
                 className={cn(
                   'group cursor-pointer transition-colors',
+                  selectedIds.has(item.id) && 'relative z-[1] bg-blue-100/70 dark:bg-blue-950/35',
+                  isContextMenuTarget && 'outline outline-2 outline-inset outline-blue-400/80',
                   tintRow ? cn(tintRow, 'hover:brightness-[0.98] dark:hover:brightness-110') : 'hover:bg-accent/20',
                 )}
-                onClick={() => onOpenItem(item)}
+                onClick={(event) => onSelectRow(event, item)}
+                onDoubleClick={() => onOpenItem(item)}
+                aria-selected={selectedIds.has(item.id)}
               >
+                {showSelection ? <td
+                  className={cn(BODY_CELL_CLASS, 'w-10 text-center', tintFirst)}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(item.id)}
+                    onChange={() => onToggleSelection(item)}
+                    aria-label={`Select ${item.name}`}
+                  />
+                </td> : null}
                 <td className={cn(BODY_CELL_CLASS, richRows && 'align-top', tintFirst)}>
                   {richRows ? (
                     <div className="flex items-start gap-3">

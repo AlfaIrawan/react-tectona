@@ -18,6 +18,10 @@ export type RepositoryMoveFolderPickerProps = {
   /** Current parent of the moved item — hide no-op destinations. */
   currentParentId?: string | null
   showRootDestination?: boolean
+  actionLabel?: string
+  rootDestinationLabel?: string
+  hideAction?: boolean
+  onBrowseChange?: (folderId: string | null) => void
   onSelect: (folderId: string | null) => void
 }
 
@@ -27,6 +31,10 @@ export function RepositoryMoveFolderPicker({
   excludeFolderId = null,
   currentParentId = null,
   showRootDestination = true,
+  actionLabel = 'Move here',
+  rootDestinationLabel = 'All documents (root)',
+  hideAction = false,
+  onBrowseChange,
   onSelect,
 }: RepositoryMoveFolderPickerProps) {
   const [browseParentId, setBrowseParentId] = useState<string | null>(initialParentId)
@@ -46,17 +54,38 @@ export function RepositoryMoveFolderPicker({
   const upLabel = browseParentId
     ? (folders.find((folder) => folder.id === upParentId)?.name ?? 'All documents')
     : null
+  const browsePath = useMemo(() => {
+    const ancestors: string[] = []
+    const visited = new Set<string>()
+    let folderId = browseParentId
 
-  const canMoveHere = Boolean(
-    browseParentId
-    && browseParentId !== currentParentId
-    && browseParentId !== excludeFolderId
-    && !(excludeFolderId && isDocumentFolderDescendant(folders, excludeFolderId, browseParentId)),
-  )
-  const canMoveToRoot = showRootDestination && currentParentId !== null
+    while (folderId && !visited.has(folderId)) {
+      visited.add(folderId)
+      const folder = folders.find((candidate) => candidate.id === folderId)
+      if (!folder) break
+      ancestors.unshift(folder.name)
+      folderId = folderParentId(folders, folderId)
+    }
+
+    return ['Repository home', ...ancestors]
+  }, [browseParentId, folders])
+
+  const canMoveHere = browseParentId === null
+    ? currentParentId !== null
+    : browseParentId !== currentParentId
+      && browseParentId !== excludeFolderId
+      && !(excludeFolderId && isDocumentFolderDescendant(folders, excludeFolderId, browseParentId))
+
+  useEffect(() => {
+    onBrowseChange?.(browseParentId)
+  }, [browseParentId, onBrowseChange])
 
   return (
     <div className="w-full">
+      <div className="mb-3 flex min-w-0 items-center gap-1.5 rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0 truncate font-medium text-foreground" title={browsePath.join(' / ')}>{browsePath.join(' / ')}</span>
+      </div>
       {browseParentId ? (
         <button
           type="button"
@@ -67,24 +96,24 @@ export function RepositoryMoveFolderPicker({
           <span className="min-w-0 truncate">../ {upLabel}</span>
         </button>
       ) : null}
-      {canMoveToRoot ? (
+      {showRootDestination ? (
         <button
           type="button"
           className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm hover:bg-accent/80 hover:text-accent-foreground"
-          onClick={() => onSelect(null)}
+          onClick={() => setBrowseParentId(null)}
         >
           <Folder className="h-4 w-4 shrink-0" aria-hidden />
-          All documents (root)
+          {rootDestinationLabel}
         </button>
       ) : null}
-      {canMoveHere ? (
+      {canMoveHere && !hideAction ? (
         <button
           type="button"
-          className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm hover:bg-accent/80 hover:text-accent-foreground"
+          className="mt-3 flex w-full items-center justify-center gap-3 rounded-lg border border-primary/30 bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
           onClick={() => onSelect(browseParentId)}
         >
           <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
-          <span className="min-w-0 truncate">Move here ({browseFolder?.name ?? 'folder'})</span>
+          <span className="min-w-0 truncate">{browseParentId ? `${actionLabel} (${browseFolder?.name ?? 'folder'})` : `${actionLabel} (repository root)`}</span>
         </button>
       ) : null}
       {siblings.map((folder) => {
@@ -97,7 +126,7 @@ export function RepositoryMoveFolderPicker({
             <button
               type="button"
               className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left text-sm"
-              onClick={() => onSelect(folder.id)}
+              onClick={() => setBrowseParentId(folder.id)}
             >
               <FolderOpen className="h-4 w-4 shrink-0" aria-hidden />
               <span className="min-w-0 truncate">{folder.name}</span>
@@ -122,7 +151,7 @@ export function RepositoryMoveFolderPicker({
           </div>
         )
       })}
-      {siblings.length === 0 && !canMoveHere && !canMoveToRoot ? (
+      {siblings.length === 0 && !canMoveHere ? (
         <div className="px-4 py-2.5 text-sm text-muted-foreground">No folders at this level.</div>
       ) : null}
     </div>

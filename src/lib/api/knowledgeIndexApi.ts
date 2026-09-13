@@ -27,6 +27,51 @@ async function handleJson<T>(res: Response): Promise<T> {
   return JSON.parse(text) as T
 }
 
+export interface GraphOverviewNode {
+  id: string
+  label: string
+  category: string
+  workspace: string
+}
+
+export interface GraphOverviewLink {
+  source: string
+  target: string
+  predicate: string
+  provenance: 'global' | 'workspace-local' | 'inferred' | 'ai-suggested'
+}
+
+export interface GraphOverviewResponse {
+  nodes: GraphOverviewNode[]
+  links: GraphOverviewLink[]
+  enabled: boolean
+  correlation_id?: string
+}
+
+/**
+ * Impact/dependency graph (Neo4j GraphRAG) as nodes + links for the KB graph widget.
+ * `enabled` is false when the graph backend is off/unavailable — callers should fall back.
+ */
+export async function fetchGraphOverview(
+  params: { workspaceId?: string | null; limit?: number; kind?: 'impact' | 'structural' },
+  timeoutMs: number = 30_000,
+): Promise<GraphOverviewResponse> {
+  const res = await apiFetch(
+    `${BASE_URL}/v1/graph/overview`,
+    {
+      method: 'POST',
+      headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+      body: JSON.stringify({
+        workspace_id: params.workspaceId ?? null,
+        limit: params.limit ?? 400,
+        kind: params.kind ?? 'impact',
+      }),
+    },
+    timeoutMs,
+  )
+  return handleJson<GraphOverviewResponse>(res)
+}
+
 /** Embed ad-hoc texts via the knowledge-index provider. Does not persist chunks. */
 export async function embedKnowledgeIndexTexts(
   texts: string[],

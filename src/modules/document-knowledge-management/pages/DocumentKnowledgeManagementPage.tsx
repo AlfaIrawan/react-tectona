@@ -42,6 +42,7 @@ import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
+import { getExplorerFileTypeLabel } from '@/modules/document-knowledge-management/fileTypeIcon'
 import { UI_SCOPE_DOCUMENT_KNOWLEDGE, useUiLayoutBoolean, useUiLayoutState } from '@/stores/ui-layout-store'
 import {
   ExplainerAssistantsPanel,
@@ -78,6 +79,7 @@ import {
   Columns2,
   Clock3,
   Code2,
+  Copy,
   BarChart3,
   Cloud,
   Download,
@@ -89,11 +91,14 @@ import {
   FileType,
   Filter as FilterIcon,
   FolderKanban,
+  FolderInput,
   GitBranch,
   Highlighter,
   History,
   Home,
+  Info,
   RotateCcw,
+  RefreshCw,
   TextCursorInput,
   IndentDecrease,
   IndentIncrease,
@@ -181,6 +186,8 @@ import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIcon
 import { DocumentRepositoryFolderCard } from '@/modules/document-knowledge-management/components/DocumentRepositoryFolderCard'
 import { DocumentRepositoryExplorerView } from '@/modules/document-knowledge-management/components/DocumentRepositoryExplorerView'
 import { PersonalOneDrivePanel } from '@/modules/document-knowledge-management/components/PersonalOneDrivePanel'
+import { OneDriveZipDownload } from '@/modules/document-knowledge-management/components/OneDriveZipDownload'
+import { OneDriveMutationDialog } from '@/modules/document-knowledge-management/components/OneDriveMutationDialog'
 import { DocumentRepositoryUploadProgressOverlay } from '@/modules/document-knowledge-management/components/DocumentRepositoryUploadProgressOverlay'
 import { collectBrowserFiles } from '@/modules/document-knowledge-management/lib/collectBrowserFiles'
 import {
@@ -225,7 +232,9 @@ import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdmi
 import {
   fetchMicrosoftDriveChildren,
   fetchMicrosoftDriveItemContent,
+  mutateMicrosoftDriveItem,
   resolveMicrosoftAccountLinked,
+  type MicrosoftDriveItem,
 } from '@/lib/api/microsoftGraphApi'
 import { startSocialOAuthLogin } from '@/lib/authProviders'
 import { storeOAuthIntent } from '@/lib/oauthPkce'
@@ -248,7 +257,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectItem } from '@/components/ui/select'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Tooltip as UiTooltip } from '@/components/ui/tooltip'
-import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { DndContext } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
@@ -297,6 +306,7 @@ import {
   listAllKbEntries,
   listKbEntries,
   listKbRelations,
+  autoLinkKbRelations,
   patchKbRelation,
   patchKbEntry,
   rollbackKbEntry,
@@ -372,6 +382,7 @@ import {
   buildRepositoryKbLlmExcerpt,
   buildRepositoryKbRelationProperties,
   buildRepositoryKbSourceFooter,
+  buildSpreadsheetRepositoryKbHtml,
   detectBrdVersionFromName,
   ensureBrdKbStandardContent,
   extractAffectedApplicationsFromDocumentText,
@@ -393,7 +404,7 @@ import {
   buildNonBrdRepositoryKbHtml,
   type RepositoryKbSourceMeta,
 } from '@/lib/kb/repositoryKbFromDocument'
-import { isSpreadsheetFile } from '@/lib/kb/extractSpreadsheetText'
+import { extractSpreadsheetTablesHtml, isSpreadsheetFile } from '@/lib/kb/extractSpreadsheetText'
 import {
   buildRepositoryFolderPathNames,
   formatDocumentRepositoryPath,
@@ -449,7 +460,7 @@ import {
   type ExistingBrdDoc,
 } from '@/lib/kb/brdDuplicateDetection'
 import { notifyEvent } from '@/lib/api/notificationApi'
-import { embedKnowledgeIndexTexts } from '@/lib/api/knowledgeIndexApi'
+import { embedKnowledgeIndexTexts, fetchGraphOverview } from '@/lib/api/knowledgeIndexApi'
 import {
   generateRepositoryKbFromDocument,
   chatWithTectonaAgentRuntime,
@@ -482,7 +493,6 @@ import {
   fetchDocumentPreviewPdfBlob,
   getDocument,
   getDocumentIndexSnapshot,
-  getDocumentAttachmentDownloadUrl,
   listDocumentAttachments,
   listAllDocuments,
   listDocumentAudit,
@@ -575,6 +585,12 @@ function FileTypeIconImg({ fileName }: { fileName: string }) {
       aria-hidden
     />
   )
+}
+
+const ONLYOFFICE_VIEWABLE_FILE_PATTERN = /\.(?:doc|docm|docx|dot|dotm|dotx|epub|fb2|fodt|htm|html|mht|mhtml|odt|ott|rtf|stw|sxw|txt|wps|wpt|xml|xlsx|xls|csv|ods|pptx|ppt|odp|pdf|xps|oxps|djvu|vsdm|vsdx|vssm|vssx|vstm|vstx)$/i
+
+function isOnlyOfficeViewableFile(fileName: string | null | undefined): boolean {
+  return ONLYOFFICE_VIEWABLE_FILE_PATTERN.test((fileName ?? '').trim())
 }
 
 // Lazy mammoth import – loaded only when a .docx file is uploaded
@@ -1056,6 +1072,11 @@ type KbGraphLink = {
 }
 
 type KbGraphMode = 'federated' | 'focused'
+
+// Opsi A — the KB graph is ONE canvas with independently toggleable layers (not mutually-exclusive
+// modes). Structure is the deterministic document-centric backbone; kb overlays concept relations;
+// impact overlays AI-inferred impact/dependency edges.
+type KbGraphLayerKey = 'structure' | 'kb' | 'impact'
 
 type RepositoryKbProcessStatus = 'idle' | 'queued' | 'processing' | 'success' | 'failed'
 
@@ -3587,6 +3608,17 @@ const defaultFilters = {
   category: 'All tags',
 }
 
+/**
+ * Label for the repository Type column: the file type when the document has a real
+ * file behind it, otherwise its document type. Explorer-style wording so the Tectona
+ * and OneDrive panes read identically side by side.
+ */
+function resolveRepositoryTypeLabel(fileName: string, documentTypeCode: string | null | undefined): string {
+  const fileLabel = getExplorerFileTypeLabel(fileName)
+  if (fileLabel !== 'File') return fileLabel
+  return humanizeCode(documentTypeCode)
+}
+
 function humanizeCode(value: string | null | undefined): string {
   if (!value) return '-'
   return value
@@ -5202,6 +5234,7 @@ export function DocumentKnowledgeManagementPage() {
    * one value so they cannot drift apart.
    */
   const [repositoryTableSelectedIds, setRepositoryTableSelectedIds] = useState<string[]>([])
+  const [repositoryFolderSelectedIds, setRepositoryFolderSelectedIds] = useState<string[]>([])
   const [activityPage, setActivityPage] = useState(1)
   const [activityPageSize, setActivityPageSize] = useState(10)
   const [templateStatusFilter, setTemplateStatusFilter] = useState<'all' | 'draft' | 'active'>('all')
@@ -5323,6 +5356,8 @@ export function DocumentKnowledgeManagementPage() {
   const [repositoryBulkDeleteConfirmOpen, setRepositoryBulkDeleteConfirmOpen] = useState(false)
   const [repositoryProjects, setRepositoryProjects] = useState<Array<{ id: string; name: string }>>([])
   const [repositoryUploadBusy, setRepositoryUploadBusy] = useState(false)
+  const uploadCancelled = useRef(false)
+  const [uploadResults, setUploadResults] = useState<Array<{ file: File; folderId: string | null; workspaceId?: string | null; status: 'pending' | 'done' | 'failed'; error?: string }>>([])
   const [repositoryUploadProgress, setRepositoryUploadProgress] = useState<{
     total: number
     index: number
@@ -5333,6 +5368,21 @@ export function DocumentKnowledgeManagementPage() {
   // --- Document repository folders (Stage 3) ---
   const [repositoryFolders, setRepositoryFolders] = useState<DocumentFolder[]>([])
   const [repositoryCurrentFolderId, setRepositoryCurrentFolderId] = useState<string | null>(null)
+  const [repositoryMoveDialog, setRepositoryMoveDialog] = useState<
+    | { kind: 'document'; item: RepositoryItem }
+    | { kind: 'folder'; folder: DocumentFolder }
+    | null
+  >(null)
+  const [repositoryMoveDestinationFolderId, setRepositoryMoveDestinationFolderId] = useState<string | null>(null)
+  const [repositoryMoveBusy, setRepositoryMoveBusy] = useState(false)
+  useEffect(() => {
+    if (!repositoryMoveDialog) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRepositoryMoveDialog(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [repositoryMoveDialog])
   const [repositoryViewMode, setRepositoryViewMode] = useState<'folders' | 'split' | 'explorer'>(() => {
     try {
       const stored = localStorage.getItem('tectona-repository-view-mode')
@@ -5372,6 +5422,27 @@ export function DocumentKnowledgeManagementPage() {
   )
   const [onedriveItemCount, setOnedriveItemCount] = useState(0)
   const [onedriveListingLoading, setOnedriveListingLoading] = useState(false)
+  const [onedriveRefreshToken, setOnedriveRefreshToken] = useState(0)
+  const [onedriveDownloadBusyId, setOnedriveDownloadBusyId] = useState<string | null>(null)
+  const [onedriveSelectedItems, setOnedriveSelectedItems] = useState<MicrosoftDriveItem[]>([])
+  const [showOneDriveFolderSelection, setShowOneDriveFolderSelection] = useState(false)
+  const [onedriveZipItems, setOnedriveZipItems] = useState<MicrosoftDriveItem[] | null>(null)
+  const [onedriveMutation, setOnedriveMutation] = useState<{ items: MicrosoftDriveItem[]; operation: 'delete' | 'move' } | null>(null)
+  const [onedriveCopyDestinationItems, setOnedriveCopyDestinationItems] = useState<MicrosoftDriveItem[] | null>(null)
+  const [onedriveCopyOperation, setOnedriveCopyOperation] = useState<'copy' | 'move'>('copy')
+  const [onedriveCopyDestinationFolderId, setOnedriveCopyDestinationFolderId] = useState<string | null>(repositoryCurrentFolderId)
+  const onedriveCopyPotentialDuplicates = useMemo(() => {
+    if (!onedriveCopyDestinationItems) return []
+    const selectedNames = new Set(
+      onedriveCopyDestinationItems
+        .filter((item) => item.kind === 'file')
+        .map((item) => item.name.trim().toLocaleLowerCase()),
+    )
+    return repositoryItems.filter((item) =>
+      (item.folderId ?? null) === onedriveCopyDestinationFolderId
+      && selectedNames.has((item.fileName || item.name).trim().toLocaleLowerCase()),
+    )
+  }, [onedriveCopyDestinationFolderId, onedriveCopyDestinationItems, repositoryItems])
   const handleOnedriveStatsChange = useCallback((stats: { total: number; loading: boolean }) => {
     setOnedriveItemCount(stats.total)
     setOnedriveListingLoading(stats.loading)
@@ -5579,6 +5650,28 @@ export function DocumentKnowledgeManagementPage() {
   const [kbGraphMode, setKbGraphMode] = useState<KbGraphMode>('federated')
   const [kbFederatedScope, setKbFederatedScope] = useState<string>('all')
   const [kbFederatedPageCap, setKbFederatedPageCap] = useState(5)
+  // Opsi A — ONE graph, toggleable layers (not mutually-exclusive modes). Structure = deterministic
+  // document-centric backbone (default on, 100% metadata facts); kb = concept relations from the KB
+  // service; impact = AI-inferred impact/dependency overlay (clearly labelled, may contain noise).
+  // Any combination renders on the same canvas; kbOverviewGraph merges + dedupes them.
+  const [kbGraphLayers, setKbGraphLayers] = useState<Record<KbGraphLayerKey, boolean>>({
+    structure: true,
+    kb: false,
+    impact: false,
+  })
+  const toggleKbGraphLayer = useCallback((key: KbGraphLayerKey) => {
+    setKbGraphLayers((current) => {
+      const next = { ...current, [key]: !current[key] }
+      // Never allow zero layers — the canvas would go blank with no way to tell why.
+      if (!next.structure && !next.kb && !next.impact) return current
+      return next
+    })
+  }, [])
+  // Neo4j-backed layers are fetched independently so any combination can render together.
+  const [structuralGraph, setStructuralGraph] = useState<{ nodes: KbGraphNode[]; links: KbGraphLink[]; enabled: boolean }>({ nodes: [], links: [], enabled: true })
+  const [impactGraph, setImpactGraph] = useState<{ nodes: KbGraphNode[]; links: KbGraphLink[]; enabled: boolean }>({ nodes: [], links: [], enabled: true })
+  const [structuralLoading, setStructuralLoading] = useState(false)
+  const [impactLoading, setImpactLoading] = useState(false)
   const [kbOverviewRelationTelemetry, setKbOverviewRelationTelemetry] = useState({
     pagesLoaded: 0,
     loadedRelations: 0,
@@ -5641,6 +5734,7 @@ export function DocumentKnowledgeManagementPage() {
   } | null>(null)
   const [repositoryRowContextMenu, setRepositoryRowContextMenu] = useState<{ documentId: string; detailId: string; x: number; y: number } | null>(null)
   const [repositoryFolderContextMenu, setRepositoryFolderContextMenu] = useState<{ folderId: string; x: number; y: number } | null>(null)
+  const [onedriveContextMenu, setOnedriveContextMenu] = useState<{ item: MicrosoftDriveItem; x: number; y: number } | null>(null)
   const [templateRowContextMenu, setTemplateRowContextMenu] = useState<{ templateId: string; x: number; y: number } | null>(null)
   const [templateDownloadBusyId, setTemplateDownloadBusyId] = useState<string | null>(null)
   const [templateStatusBusyId, setTemplateStatusBusyId] = useState<string | null>(null)
@@ -5740,6 +5834,7 @@ export function DocumentKnowledgeManagementPage() {
   const [kbGraphFullscreenMounted, setKbGraphFullscreenMounted] = useState(false)
   const [kbRelationScanOpen, setKbRelationScanOpen] = useState(false)
   const [kbRelationScanBusy, setKbRelationScanBusy] = useState(false)
+  const [kbAutoLinkBusy, setKbAutoLinkBusy] = useState(false)
   const [kbRelationScanError, setKbRelationScanError] = useState<string | null>(null)
   const [kbRelationScanSuggestions, setKbRelationScanSuggestions] = useState<KbRelationScanSuggestion[]>([])
   const [kbRelationScanCreating, setKbRelationScanCreating] = useState(false)
@@ -6520,13 +6615,22 @@ export function DocumentKnowledgeManagementPage() {
         ? doc.metadata.primary_attachment_id.trim()
         : null
 
+    const resolvedFileName =
+      typeof doc.metadata?.original_file_name === 'string' && doc.metadata.original_file_name.trim()
+        ? doc.metadata.original_file_name
+        : doc.title
+
     return {
       id: doc.id,
       name: doc.title,
-      fileName: (typeof doc.metadata?.original_file_name === 'string' && doc.metadata.original_file_name.trim())
-        ? doc.metadata.original_file_name
-        : doc.title,
-      type: humanizeCode(doc.document_type_code),
+      fileName: resolvedFileName,
+      // Type shows what the file actually is, matching the OneDrive pane and the
+      // shared presentation mapper. document_type_code is hardcoded to
+      // 'delivery_artifact' by every upload path, so showing it made this column —
+      // and the Type filter built on it — read the same for every document.
+      // Documents with no uploaded file keep the document type rather than degrading
+      // to a bare "File".
+      type: resolveRepositoryTypeLabel(resolvedFileName, doc.document_type_code),
       capabilityCode: doc.capability_code ?? null,
       capability: humanizeCapabilityCode(doc.capability_code),
       linkedContext,
@@ -7034,8 +7138,18 @@ export function DocumentKnowledgeManagementPage() {
       latestAttachmentId = latest.id
     }
 
-    const result = await getDocumentAttachmentDownloadUrl(item.id, latestAttachmentId)
-    window.open(result.download_url, '_blank', 'noopener,noreferrer')
+    // Fetch through the authenticated API instead of opening MinIO's presigned URL.
+    // The MinIO endpoint can be Docker-internal (for example host.docker.internal),
+    // which is valid for the service container but not for the user's browser.
+    const { blob, fileName } = await downloadDocumentAttachmentBlob(item.id, latestAttachmentId)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName || item.name
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000)
     return true
   }, [addToast])
 
@@ -7128,6 +7242,9 @@ export function DocumentKnowledgeManagementPage() {
       truncated: false,
       method: 'none' as const,
     }
+    const spreadsheetTablesHtml = sourceFile && isSpreadsheetFile(sourceFile)
+      ? await extractSpreadsheetTablesHtml(sourceFile, 48_000).catch(() => '')
+      : ''
     // Best practice: clean running header/footer noise at the SOURCE text (once), so every downstream
     // consumer (LLM excerpt, server assembly, metadata/policy extraction) gets clean input.
     extract.text = stripRepeatedRunningLines(extract.text)
@@ -7359,7 +7476,13 @@ export function DocumentKnowledgeManagementPage() {
 
     // The backend now authoritatively assembles all required sections. Only fall back to
     // client-side assembly when the server did not (e.g. content standard unavailable).
-    const kbContentBodyStandard = isMemoInternal
+    const kbContentBodyStandard = spreadsheetTablesHtml
+      ? buildSpreadsheetRepositoryKbHtml({
+          documentTitle,
+          llmSummary: parsed.kb_summary,
+          tablesHtml: spreadsheetTablesHtml,
+        })
+      : isMemoInternal
       ? generated.sections_assembled_server_side === true
         ? kbContentBody
         : ensureMemoKbStandardContent(
@@ -7981,6 +8104,7 @@ export function DocumentKnowledgeManagementPage() {
     resolve: (action: 'cancel' | 'upload_new' | 'new_version') => void
   }
   const [repositoryDuplicatePrompt, setRepositoryDuplicatePrompt] = useState<RepositoryDuplicatePrompt | null>(null)
+  const onedriveDuplicateStrategyRef = useRef<'copy' | 'version' | null>(null)
   type SampleKindConflictPrompt = {
     fileName: string
     conflict: Extract<OrgSampleKindReconcile, { outcome: 'conflict' }>
@@ -8085,7 +8209,7 @@ export function DocumentKnowledgeManagementPage() {
     extractText: string,
     fingerprint: string,
     pendingFile: File,
-  ): Promise<{ proceed: boolean; revisionTargetId: string | null }> => {
+  ): Promise<{ proceed: boolean; revisionTargetId: string | null; copyFileName?: string }> => {
     let fetchedDocs: ExistingBrdDoc[] = []
     let summaryById = new Map<string, string>()
     let kbContents = kbApiItems.map((entry) => entry.content ?? '')
@@ -8122,6 +8246,17 @@ export function DocumentKnowledgeManagementPage() {
         : doc)
     }
     const docs = [...docsById.values()]
+    const copyFileName = (() => {
+      const dot = fileName.lastIndexOf('.')
+      const stem = dot > 0 ? fileName.slice(0, dot) : fileName
+      const extension = dot > 0 ? fileName.slice(dot) : ''
+      const occupied = new Set(docs.map((doc) => (doc.fileName || doc.title).trim().toLocaleLowerCase()))
+      for (let index = 1; index < 10000; index += 1) {
+        const candidate = `${stem} (${index === 1 ? 'copy' : `copy ${index}`})${extension}`
+        if (!occupied.has(candidate.toLocaleLowerCase())) return candidate
+      }
+      return `${stem} (copy ${Date.now()})${extension}`
+    })()
     const uploadFolderId = repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId
     const folderListsByWorkspace = new Map<string, DocumentFolder[]>()
     folderListsByWorkspace.set(activeWorkspaceApiId ?? '', repositoryFolders)
@@ -8176,13 +8311,19 @@ export function DocumentKnowledgeManagementPage() {
       const kbGenerated = findKbGeneratedDocIds([exact.id], kbContents).has(exact.id)
       const sameFolder = isExactDuplicateInSameFolder(exact, uploadFolderId)
       const revisionTargetId = sameFolder ? exact.id : null
+      if (onedriveDuplicateStrategyRef.current === 'copy') {
+        return { proceed: true, revisionTargetId: null, copyFileName }
+      }
+      if (onedriveDuplicateStrategyRef.current === 'version' && revisionTargetId) {
+        return { proceed: true, revisionTargetId }
+      }
       const exactMatch = await toDuplicateMatch(exact, {
         kbGenerated,
         reason: sameFolder
           ? 'Identical file content already exists in this folder.'
           : 'Identical file content already exists in another workspace or folder. Upload as new document to keep a copy here.',
       })
-      return new Promise<{ proceed: boolean; revisionTargetId: string | null }>((resolve) => {
+      return new Promise<{ proceed: boolean; revisionTargetId: string | null; copyFileName?: string }>((resolve) => {
         setRepositoryDuplicatePrompt({
           fileName,
           pendingFile,
@@ -8195,6 +8336,7 @@ export function DocumentKnowledgeManagementPage() {
             resolve({
               proceed: action !== 'cancel',
               revisionTargetId: action === 'new_version' ? revisionTargetId : null,
+              copyFileName: action === 'upload_new' ? copyFileName : undefined,
             })
           },
         })
@@ -8205,7 +8347,11 @@ export function DocumentKnowledgeManagementPage() {
       id: '__new__', title: fileName, fileName, projectName: '', contentSha256: fingerprint,
       structured: parseBrdStructuredName(fileName),
     }
-    const nameMatches = findNameMatches(subject, docs)
+    const sameFolderNameMatches = docs.filter((doc) =>
+      (doc.folderId ?? null) === (uploadFolderId ?? null)
+      && (doc.fileName || doc.title).trim().toLocaleLowerCase() === fileName.trim().toLocaleLowerCase(),
+    )
+    const nameMatches = [...new Map([...sameFolderNameMatches, ...findNameMatches(subject, docs)].map((doc) => [doc.id, doc])).values()]
     const excludeIds = new Set(nameMatches.map((d) => d.id))
     const HIGH_OVERLAP_THRESHOLD = 0.5
     const highOverlapIds = new Set(
@@ -8366,7 +8512,15 @@ export function DocumentKnowledgeManagementPage() {
       [...nameMatches.map((d) => d.id), ...samePurpose.map((s) => s.doc.id)],
       kbContents,
     )
-    const revisionTargetId = pickTemplateRevisionTargetId(nameMatches, samePurpose)
+    const revisionTargetId = sameFolderNameMatches.length === 1
+      ? sameFolderNameMatches[0].id
+      : pickTemplateRevisionTargetId(nameMatches.filter((doc) => (doc.folderId ?? null) === (uploadFolderId ?? null)), samePurpose.filter(({ doc }) => (doc.folderId ?? null) === (uploadFolderId ?? null)))
+    if (onedriveDuplicateStrategyRef.current === 'copy') {
+      return { proceed: true, revisionTargetId: null, copyFileName }
+    }
+    if (onedriveDuplicateStrategyRef.current === 'version' && revisionTargetId) {
+      return { proceed: true, revisionTargetId }
+    }
     const mappedNameMatches = await Promise.all(nameMatches.map((doc) => toDuplicateMatch(doc, {
       kbGenerated: kbGen.has(doc.id),
       reason: agentReasonById.get(doc.id),
@@ -8375,7 +8529,7 @@ export function DocumentKnowledgeManagementPage() {
       kbGenerated: kbGen.has(entry.doc.id),
       reason: entry.reason,
     })))
-    return new Promise<{ proceed: boolean; revisionTargetId: string | null }>((resolve) => {
+    return new Promise<{ proceed: boolean; revisionTargetId: string | null; copyFileName?: string }>((resolve) => {
       setRepositoryDuplicatePrompt({
         fileName,
         pendingFile,
@@ -8385,7 +8539,11 @@ export function DocumentKnowledgeManagementPage() {
         samePurpose: mappedSamePurpose,
         resolve: (action) => {
           setRepositoryDuplicatePrompt(null)
-          resolve({ proceed: action !== 'cancel', revisionTargetId: action === 'new_version' ? revisionTargetId : null })
+          resolve({
+            proceed: action !== 'cancel',
+            revisionTargetId: action === 'new_version' ? revisionTargetId : null,
+            copyFileName: action === 'upload_new' ? copyFileName : undefined,
+          })
         },
       })
     })
@@ -8658,14 +8816,14 @@ export function DocumentKnowledgeManagementPage() {
       && namingRule.ruleSource !== 'kb'
       && namingRule.namingConventionId !== 'kb-fallback',
     )
-    const uploadFile =
+    let uploadFile =
       uploadAutoRenamed
         ? new File([file], effectiveFileName, { type: file.type, lastModified: file.lastModified })
         : file
 
     const fileProperties = await extractOfficeFileMetadata(uploadFile)
 
-    const inferredTitle = effectiveFileName.replace(/\.[^/.]+$/, '').trim() || effectiveFileName
+    let inferredTitle = effectiveFileName.replace(/\.[^/.]+$/, '').trim() || effectiveFileName
 
     // Duplicate detection: prompt on identical content and on same-family / same-purpose.
     const contentFingerprint = await computeContentFingerprint(extract.text)
@@ -8673,6 +8831,11 @@ export function DocumentKnowledgeManagementPage() {
     if (!duplicateVerdict.proceed) {
       if (!skipBusy) repositoryUploadTargetFolderIdRef.current = null
       return false
+    }
+    if (duplicateVerdict.copyFileName) {
+      effectiveFileName = duplicateVerdict.copyFileName
+      uploadFile = new File([file], effectiveFileName, { type: file.type, lastModified: file.lastModified })
+      inferredTitle = effectiveFileName.replace(/\.[^/.]+$/, '').trim() || effectiveFileName
     }
 
     if (duplicateVerdict.revisionTargetId) {
@@ -9265,11 +9428,14 @@ export function DocumentKnowledgeManagementPage() {
     if (list.length === 0) return
     const folderId = repositoryUploadTargetFolderIdRef.current
     const skipSuccessToast = list.length > 1
+    uploadCancelled.current = false
+    setUploadResults(list.map((file) => ({ file, folderId, workspaceId, status: 'pending' })))
     setRepositoryUploadBusy(true)
     let succeeded = 0
     let failed = 0
     try {
       for (let index = 0; index < list.length; index += 1) {
+        if (uploadCancelled.current) break
         const file = list[index]
         repositoryUploadTargetFolderIdRef.current = folderId
         setRepositoryUploadProgress({
@@ -9281,9 +9447,11 @@ export function DocumentKnowledgeManagementPage() {
         })
         try {
           const ok = await processRepositoryUploadFile(file, workspaceId, { skipBusy: true, skipSuccessToast })
+          setUploadResults((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, status: ok ? 'done' : 'failed', error: ok ? undefined : 'Skipped or upload unsuccessful' } : row))
           if (ok) succeeded += 1
           else failed += 1
-        } catch {
+        } catch (error) {
+          setUploadResults((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, status: 'failed', error: error instanceof Error ? error.message : 'Upload failed' } : row))
           failed += 1
         }
         setRepositoryUploadProgress({
@@ -9315,13 +9483,14 @@ export function DocumentKnowledgeManagementPage() {
     parentFolderId: string | null | undefined,
     workspaceId?: string | null,
   ) => {
-    if (items.length === 0) return
+    if (items.length === 0) return { succeeded: 0, failed: 0, cancelled: false }
     const targetParent = parentFolderId !== undefined
       ? parentFolderId
       : (repositoryUploadTargetFolderIdRef.current ?? repositoryCurrentFolderId)
     const session = getSession()
     const ownerId = session?.user.id || session?.user.email || null
     const filesToUpload = items.filter((item): item is DroppedUploadItem & { file: File } => Boolean(item.file))
+    uploadCancelled.current = false
     setRepositoryUploadBusy(true)
     try {
       const folderByKey = await ensureDroppedFolderTree({
@@ -9337,19 +9506,22 @@ export function DocumentKnowledgeManagementPage() {
       })
       await loadRepositoryFolders()
 
+      setUploadResults(filesToUpload.map((item) => ({ file: item.file, folderId: folderByKey.get(folderKeyFromRelativeDirectory(item.relativeDirectory)) ?? targetParent ?? null, workspaceId, status: 'pending' })))
+
       if (filesToUpload.length === 0) {
         addToast({
           title: 'Folder created',
           description: 'The dropped folder structure was added to the repository.',
           variant: 'success',
         })
-        return
+        return { succeeded: 0, failed: 0, cancelled: false }
       }
 
       const skipSuccessToast = filesToUpload.length > 1
       let succeeded = 0
       let failed = 0
       for (let index = 0; index < filesToUpload.length; index += 1) {
+        if (uploadCancelled.current) break
         const item = filesToUpload[index]
         const key = folderKeyFromRelativeDirectory(item.relativeDirectory)
         repositoryUploadTargetFolderIdRef.current = folderByKey.get(key) ?? targetParent
@@ -9362,9 +9534,11 @@ export function DocumentKnowledgeManagementPage() {
         })
         try {
           const ok = await processRepositoryUploadFile(item.file, workspaceId, { skipBusy: true, skipSuccessToast })
+          setUploadResults((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, status: ok ? 'done' : 'failed', error: ok ? undefined : 'Skipped or upload unsuccessful' } : row))
           if (ok) succeeded += 1
           else failed += 1
-        } catch {
+        } catch (error) {
+          setUploadResults((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, status: 'failed', error: error instanceof Error ? error.message : 'Upload failed' } : row))
           failed += 1
         }
         setRepositoryUploadProgress({
@@ -9384,12 +9558,14 @@ export function DocumentKnowledgeManagementPage() {
           variant: failed > 0 ? 'error' : 'success',
         })
       }
+      return { succeeded, failed, cancelled: uploadCancelled.current }
     } catch (error) {
       addToast({
         title: 'Failed to upload dropped folder',
         description: error instanceof Error ? error.message : '',
         variant: 'error',
       })
+      return { succeeded: 0, failed: filesToUpload.length, cancelled: uploadCancelled.current }
     } finally {
       repositoryUploadTargetFolderIdRef.current = null
       setRepositoryUploadBusy(false)
@@ -9544,19 +9720,21 @@ export function DocumentKnowledgeManagementPage() {
    * Auto-generate KB all apply without a second import path.
    */
   const copyOneDriveItemsIntoRepository = useCallback(
-    async (dragged: ReturnType<typeof decodeOneDriveDragPayload>, folderId: string | null) => {
+    async (
+      dragged: ReturnType<typeof decodeOneDriveDragPayload>,
+      folderId: string | null,
+      deleteSources = false,
+      duplicateStrategy: 'copy' | 'version' | null = null,
+    ) => {
       if (dragged.length === 0 || onedriveCopyBusy) return
       setOnedriveCopyBusy(true)
+      onedriveDuplicateStrategyRef.current = duplicateStrategy
       try {
         const result = await collectOneDriveUploadItems({
           items: dragged,
           listChildren: fetchMicrosoftDriveChildren,
           fetchContent: fetchMicrosoftDriveItemContent,
         })
-
-        if (result.items.length > 0) {
-          queueRepositoryUploadTree(result.items, folderId)
-        }
 
         if (result.failures.length > 0) {
           addToast({
@@ -9582,6 +9760,34 @@ export function DocumentKnowledgeManagementPage() {
           return
         }
 
+        const upload = await runRepositoryUploadTree(result.items, folderId, activeWorkspaceApiId)
+        const expectedUploads = result.items.filter((item) => item.file).length
+        if (upload.failed > 0 || upload.cancelled || upload.succeeded !== expectedUploads) {
+          addToast({
+            title: deleteSources ? 'Move stopped before deleting the source' : 'Copy incomplete',
+            description: 'One or more destination uploads were not verified as successful. OneDrive source items were kept.',
+            variant: 'warning',
+          })
+          return
+        }
+        if (deleteSources) {
+          const failedDeletes: string[] = []
+          for (const source of dragged) {
+            try {
+              await mutateMicrosoftDriveItem(source, 'delete')
+            } catch (error) {
+              failedDeletes.push(`${source.name}: ${error instanceof Error ? error.message : 'Delete failed'}`)
+            }
+          }
+          setOnedriveRefreshToken((value) => value + 1)
+          addToast({
+            title: failedDeletes.length > 0 ? 'Copied, but some sources were not removed' : 'Moved to Tectona repository',
+            description: failedDeletes.slice(0, 3).join(' · ') || `${dragged.length} OneDrive item(s) moved after destination upload verification.`,
+            variant: failedDeletes.length > 0 ? 'warning' : 'success',
+          })
+          return
+        }
+
         addToast({
           title: `Copying ${result.items.length} file(s) from OneDrive`,
           description: result.truncated
@@ -9596,11 +9802,75 @@ export function DocumentKnowledgeManagementPage() {
           variant: 'error',
         })
       } finally {
+        onedriveDuplicateStrategyRef.current = null
         setOnedriveCopyBusy(false)
       }
     },
-    [addToast, onedriveCopyBusy, queueRepositoryUploadTree],
+    [activeWorkspaceApiId, addToast, onedriveCopyBusy, runRepositoryUploadTree],
   )
+
+  const handleOneDriveContextCopy = useCallback((item: MicrosoftDriveItem) => {
+    setOnedriveContextMenu(null)
+    setOnedriveCopyOperation('copy')
+    setOnedriveCopyDestinationFolderId(repositoryCurrentFolderId)
+    setOnedriveCopyDestinationItems(
+      onedriveSelectedItems.some((selected) => selected.id === item.id)
+        ? onedriveSelectedItems
+        : [item],
+    )
+  }, [onedriveSelectedItems, repositoryCurrentFolderId])
+
+  const handleOneDriveCopyToFolder = useCallback((folderId: string | null, duplicateStrategy: 'copy' | 'version' | null = null) => {
+    const items = onedriveCopyDestinationItems
+    setOnedriveCopyDestinationItems(null)
+    if (!items || items.length === 0) return
+    void copyOneDriveItemsIntoRepository(
+      items.map((item) => ({ id: item.id, name: item.name, kind: item.kind, etag: item.etag })),
+      folderId,
+      onedriveCopyOperation === 'move',
+      duplicateStrategy,
+    )
+  }, [copyOneDriveItemsIntoRepository, onedriveCopyDestinationItems, onedriveCopyOperation])
+
+  const handleOneDriveContextDownload = useCallback(async (item: MicrosoftDriveItem) => {
+    if (item.kind === 'folder' || onedriveDownloadBusyId) return
+    setOnedriveContextMenu(null)
+    setOnedriveDownloadBusyId(item.id)
+    try {
+      const blob = await fetchMicrosoftDriveItemContent(item.id)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = item.name
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+      addToast({ title: 'Download started', description: item.name, variant: 'success' })
+    } catch (error) {
+      addToast({
+        title: 'OneDrive download failed',
+        description: error instanceof Error ? error.message : 'Unable to download this item.',
+        variant: 'error',
+      })
+    } finally {
+      setOnedriveDownloadBusyId(null)
+    }
+  }, [addToast, onedriveDownloadBusyId])
+
+  const handleOneDriveContextCopyLink = useCallback(async (item: MicrosoftDriveItem) => {
+    setOnedriveContextMenu(null)
+    if (!item.web_url) {
+      addToast({ title: 'Link unavailable', description: 'OneDrive did not provide a web link for this item.', variant: 'info' })
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(item.web_url)
+      addToast({ title: 'Link copied', description: item.name, variant: 'success' })
+    } catch {
+      addToast({ title: 'Could not copy link', description: 'Clipboard access was not available.', variant: 'error' })
+    }
+  }, [addToast])
 
   const handleRepositoryDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -9687,7 +9957,10 @@ export function DocumentKnowledgeManagementPage() {
       for (let page = 1; page <= maxPages; page += 1) {
         const res = await listKbRelations({
           direction: 'any',
-          workspace_id: kbFederatedScope === 'all' ? undefined : kbFederatedScope,
+          // The KB relations API filters by the real workspace API id (relations are stored with it,
+          // e.g. "00000000-…"), NOT the display label kbFederatedScope holds — passing the label
+          // returned 0 and left the graph unlinked. Follow the top bar: its workspace id, or all.
+          workspace_id: dkmWorkspaceScope.mode === 'all' ? undefined : (activeWorkspaceApiId ?? undefined),
           page,
           page_size: pageSize,
         })
@@ -9717,7 +9990,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setKbOverviewRelationsLoading(false)
     }
-  }, [kbFederatedPageCap, kbFederatedScope, kbLive])
+  }, [kbFederatedPageCap, kbFederatedScope, kbLive, activeWorkspaceApiId, dkmWorkspaceScope])
 
   const loadKbVersions = useCallback(
     async (entryId: string) => {
@@ -10913,6 +11186,20 @@ export function DocumentKnowledgeManagementPage() {
     setRepositoryFolderContextMenu({ folderId: folder.id, x: Math.max(gap, x), y: Math.max(gap, y) })
   }, [])
 
+  const openOneDriveContextMenu = useCallback((event: React.MouseEvent, item: MicrosoftDriveItem) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setRepositoryRowContextMenu(null)
+    setRepositoryFolderContextMenu(null)
+    setTemplateRowContextMenu(null)
+    const menuWidth = 292
+    const menuHeight = item.kind === 'folder' ? 310 : 380
+    const gap = 8
+    const x = Math.min(event.clientX, window.innerWidth - menuWidth - gap)
+    const y = Math.min(event.clientY, window.innerHeight - menuHeight - gap)
+    setOnedriveContextMenu({ item, x: Math.max(gap, x), y: Math.max(gap, y) })
+  }, [])
+
   const displayedKbEntries = useMemo(() => {
     const source = kbLive
       ? kbApiItems.map((row) => ({
@@ -10965,9 +11252,70 @@ export function DocumentKnowledgeManagementPage() {
       .sort((a, b) => a.localeCompare(b))
   }, [displayedKbEntries])
 
-  const kbFederatedWorkspaceOptions = useMemo(() => {
-    return workspaceColumnOptions.filter((workspace) => workspace !== 'Global')
-  }, [workspaceColumnOptions])
+  // The KB graph follows the workspace chosen in the top bar (no separate selector). Scope to the
+  // active workspace when the top bar is on a single workspace; otherwise show the full federated
+  // graph ('all'). The label must match entry.linkedWorkspace (formatKbWorkspaceLabel) so the
+  // graph's workspace filter lines up.
+  useEffect(() => {
+    if (dkmWorkspaceScope.mode === 'single' && dkmWorkspaceScope.workspaceId) {
+      setKbFederatedScope(formatKbWorkspaceLabel(dkmWorkspaceScope.workspaceId, kbWorkspaceOptions))
+    } else {
+      setKbFederatedScope('all')
+    }
+  }, [dkmWorkspaceScope, kbWorkspaceOptions])
+
+  // Load the deterministic structural graph (Neo4j) when the Structure layer is on. Scoped to the
+  // top-bar workspace (its real api id), or 'all' when the top bar spans workspaces.
+  useEffect(() => {
+    if (!kbGraphLayers.structure) return
+    let cancelled = false
+    setStructuralLoading(true)
+    const wsParam = dkmWorkspaceScope.mode === 'all' ? 'all' : (activeWorkspaceApiId ?? 'all')
+    void fetchGraphOverview({ workspaceId: wsParam, limit: 800, kind: 'structural' })
+      .then((res) => {
+        if (cancelled) return
+        setStructuralGraph({
+          nodes: res.nodes.map((n) => ({ id: n.id, label: n.label, category: n.category, workspace: n.workspace })),
+          links: res.links.map((l) => ({ source: l.source, target: l.target, predicate: l.predicate, provenance: l.provenance })),
+          enabled: res.enabled,
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setStructuralGraph({ nodes: [], links: [], enabled: false })
+      })
+      .finally(() => {
+        if (!cancelled) setStructuralLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [kbGraphLayers.structure, dkmWorkspaceScope, activeWorkspaceApiId])
+
+  // Load the LLM-extracted impact/dependency graph (Neo4j) when the Impact layer is on.
+  useEffect(() => {
+    if (!kbGraphLayers.impact) return
+    let cancelled = false
+    setImpactLoading(true)
+    const wsParam = dkmWorkspaceScope.mode === 'all' ? 'all' : (activeWorkspaceApiId ?? 'all')
+    void fetchGraphOverview({ workspaceId: wsParam, limit: 400, kind: 'impact' })
+      .then((res) => {
+        if (cancelled) return
+        setImpactGraph({
+          nodes: res.nodes.map((n) => ({ id: n.id, label: n.label, category: n.category, workspace: n.workspace })),
+          links: res.links.map((l) => ({ source: l.source, target: l.target, predicate: l.predicate, provenance: l.provenance })),
+          enabled: res.enabled,
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setImpactGraph({ nodes: [], links: [], enabled: false })
+      })
+      .finally(() => {
+        if (!cancelled) setImpactLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [kbGraphLayers.impact, dkmWorkspaceScope, activeWorkspaceApiId])
 
   const relevanceColumnOptions = useMemo(() => {
     const values = new Set(displayedKbEntries.map((entry) => entry.relevance))
@@ -12270,25 +12618,72 @@ export function DocumentKnowledgeManagementPage() {
   useTectonaPageContextReporter('/document-knowledge-management', kbPageContext)
 
   const kbOverviewGraph = useMemo(() => {
+    // Opsi A: merge every enabled layer onto ONE canvas, deduped by node id and by undirected
+    // (source,target,predicate) link key. Layers use different id namespaces (KB entry ids vs Neo4j
+    // document/template/user ids), so id-dedup only collapses genuine repeats.
+    const mergedNodes: KbGraphNode[] = []
+    const mergedLinks: KbGraphLink[] = []
+    const nodeIds = new Set<string>()
+    const linkKeys = new Set<string>()
+    const pushNode = (n: KbGraphNode) => {
+      if (nodeIds.has(n.id)) return
+      nodeIds.add(n.id)
+      mergedNodes.push(n)
+    }
+    const pushLink = (l: KbGraphLink) => {
+      const key = `${l.source}|${l.target}|${l.predicate}`
+      const reverse = `${l.target}|${l.source}|${l.predicate}`
+      if (linkKeys.has(key) || linkKeys.has(reverse)) return
+      linkKeys.add(key)
+      mergedLinks.push(l)
+    }
+
+    // --- Layer: Structure (deterministic Neo4j document-centric graph) ---
+    if (kbGraphLayers.structure) {
+      structuralGraph.nodes.forEach(pushNode)
+      structuralGraph.links.forEach(pushLink)
+    }
+    // --- Layer: Impact/dependency (LLM-extracted Neo4j graph) ---
+    if (kbGraphLayers.impact) {
+      impactGraph.nodes.forEach(pushNode)
+      impactGraph.links.forEach(pushLink)
+    }
+
+    // --- Layer: KB relations (built from KB entries + relations); computed only when enabled ---
+    const kbLayer = kbGraphLayers.kb ? (() => {
     const scopedEntries =
       kbGraphMode === 'federated' && kbFederatedScope !== 'all'
         ? displayedKbEntries.filter((entry) => entry.linkedWorkspace === kbFederatedScope)
         : displayedKbEntries
     const graphEntryCap = kbGraphMode === 'federated' ? Math.max(scopedEntries.length, 120) : 80
     const baseEntries = scopedEntries.slice(0, graphEntryCap)
-    const nodes: KbGraphNode[] = baseEntries.map((entry) => ({
-      id: entry.id,
-      label: entry.title,
-      category: entry.category,
-      workspace: entry.linkedWorkspace,
-    }))
+    // Collapse entries that render as the SAME node (identical title + category + workspace but
+    // different ids — e.g. an access-control role like "Organization Admin" injected several times)
+    // into one node so the graph shows no phantom duplicates. Every entry id maps to its canonical
+    // node id so relations still attach to the single node.
+    const canonicalIdByEntryId = new Map<string, string>()
+    const nodeKeyToId = new Map<string, string>()
+    const nodes: KbGraphNode[] = []
+    for (const entry of baseEntries) {
+      const dedupeKey = `${entry.title.trim().toLowerCase()}|${(entry.category || '').toLowerCase()}|${entry.linkedWorkspace}`
+      const existingId = nodeKeyToId.get(dedupeKey)
+      if (existingId) {
+        canonicalIdByEntryId.set(entry.id, existingId)
+        continue
+      }
+      nodeKeyToId.set(dedupeKey, entry.id)
+      canonicalIdByEntryId.set(entry.id, entry.id)
+      nodes.push({ id: entry.id, label: entry.title, category: entry.category, workspace: entry.linkedWorkspace })
+    }
     const nodeMap = new Map(nodes.map((n) => [n.id, n]))
-    const titleMap = new Map(baseEntries.map((entry) => [entry.title.toLowerCase(), entry.id]))
+    const titleMap = new Map(baseEntries.map((entry) => [entry.title.toLowerCase(), canonicalIdByEntryId.get(entry.id) ?? entry.id]))
     const links: KbGraphLink[] = []
     const dedupe = new Set<string>()
     const graphRelations = kbGraphMode === 'federated' ? kbOverviewRelations : kbRelations
 
-    const addLink = (source: string, target: string, predicate: string, provenance: 'global' | 'workspace-local' | 'inferred' | 'ai-suggested') => {
+    const addLink = (rawSource: string, rawTarget: string, predicate: string, provenance: 'global' | 'workspace-local' | 'inferred' | 'ai-suggested') => {
+      const source = canonicalIdByEntryId.get(rawSource) ?? rawSource
+      const target = canonicalIdByEntryId.get(rawTarget) ?? rawTarget
       if (!source || !target || source === target) return
       if (!nodeMap.has(source) || !nodeMap.has(target)) return
       const key = `${source}|${target}|${predicate}|${provenance}`
@@ -12341,7 +12736,16 @@ export function DocumentKnowledgeManagementPage() {
     }
 
     return { nodes, links }
-  }, [displayedKbEntries, kbFederatedScope, kbGraphMode, kbLive, kbOverviewRelations, kbRelations])
+    })() : { nodes: [] as KbGraphNode[], links: [] as KbGraphLink[] }
+
+    kbLayer.nodes.forEach(pushNode)
+    kbLayer.links.forEach(pushLink)
+
+    // Drop any link whose endpoints aren't both present (a layer may contribute an edge but, after
+    // scoping/dedup, not both of its nodes).
+    const finalLinks = mergedLinks.filter((l) => nodeIds.has(l.source) && nodeIds.has(l.target))
+    return { nodes: mergedNodes, links: finalLinks }
+  }, [displayedKbEntries, kbFederatedScope, kbGraphMode, kbLive, kbOverviewRelations, kbRelations, kbGraphLayers, structuralGraph, impactGraph])
 
   useEffect(() => {
     if (activePanel !== 'overview') return
@@ -12497,11 +12901,19 @@ export function DocumentKnowledgeManagementPage() {
       }
     }
 
+    // Force parameters scale with node count so dense graphs (e.g. the Neo4j impact/dependency
+    // graph with 40+ entities) pack tighter instead of over-spreading — a spread-out layout forces
+    // fit-to-viewport to zoom way out, leaving tiny dots with big gaps. Sparse graphs (KB mode,
+    // ~12 nodes) keep the original roomy spacing.
+    const nodeCount = nodes.length
+    const chargeStrength = nodeCount > 60 ? -180 : nodeCount > 30 ? -280 : nodeCount > 16 ? -440 : -620
+    const linkDistance = nodeCount > 60 ? 60 : nodeCount > 30 ? 82 : nodeCount > 16 ? 120 : 160
+    const collideBase = nodeCount > 30 ? 20 : nodeCount > 16 ? 26 : 32
     const simulation = forceSimulation<KbGraphSimNode>(nodes)
-      .force('link', forceLink<KbGraphSimNode, KbGraphSimLink>(links).id((d) => d.id).distance(160).strength(0.28))
-      .force('charge', forceManyBody().strength(-620))
+      .force('link', forceLink<KbGraphSimNode, KbGraphSimLink>(links).id((d) => d.id).distance(linkDistance).strength(0.3))
+      .force('charge', forceManyBody().strength(chargeStrength))
       .force('center', forceCenter(width / 2, height / 2))
-      .force('collide', forceCollide<KbGraphSimNode>().radius((d) => 32 + Math.min(18, (degreeMap.get(d.id) ?? 0) * 2.2)).strength(0.85))
+      .force('collide', forceCollide<KbGraphSimNode>().radius((d) => collideBase + Math.min(18, (degreeMap.get(d.id) ?? 0) * 2.2)).strength(0.9))
       .alpha(0.9)
 
     const dragBehavior = d3Drag<SVGGElement, KbGraphSimNode>()
@@ -13129,6 +13541,38 @@ export function DocumentKnowledgeManagementPage() {
     setKbRelationScanSuggestions((prev) => prev.map((s) => (s.key === key ? { ...s, accepted: !s.accepted } : s)))
   }, [])
 
+  const handleKbAutoLink = useCallback(async () => {
+    if (!kbLive) return
+    const wsId = activeWorkspaceApiId
+    if (!wsId) {
+      addToast({
+        title: 'No workspace selected',
+        description: 'Choose a workspace in the top bar first.',
+        variant: 'error',
+      })
+      return
+    }
+    setKbAutoLinkBusy(true)
+    try {
+      // Deterministic, high-precision structural relations (glossary mentions, source-doc → derived
+      // entry). Server-side, idempotent — complements the conservative AI scan.
+      const res = await autoLinkKbRelations(wsId)
+      addToast({
+        title: `Auto-link: ${res.created} relation(s) created`,
+        description: `Glossary ${res.by_rule?.glossary_mention ?? 0}, source-doc ${res.by_rule?.source_doc ?? 0} · ${res.skipped} skipped`,
+      })
+      await loadKbOverviewRelations()
+    } catch (error) {
+      addToast({
+        title: 'Auto-link failed',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'error',
+      })
+    } finally {
+      setKbAutoLinkBusy(false)
+    }
+  }, [kbLive, activeWorkspaceApiId, addToast, loadKbOverviewRelations])
+
   const handleKbRelationScan = useCallback(async () => {
     const nodes = kbOverviewGraph.nodes
     if (nodes.length < 2) {
@@ -13464,6 +13908,10 @@ export function DocumentKnowledgeManagementPage() {
   useEffect(() => {
     if (!showRepositoryTableSelection && repositoryTableSelectedIds.length > 0) setRepositoryTableSelectedIds([])
   }, [showRepositoryTableSelection, repositoryTableSelectedIds.length])
+
+  useEffect(() => {
+    if (!showRepositoryTableSelection && repositoryFolderSelectedIds.length > 0) setRepositoryFolderSelectedIds([])
+  }, [showRepositoryTableSelection, repositoryFolderSelectedIds.length])
 
   const renderRepositoryTableColumnCell = (item: RepositoryItem, key: RepositoryTableColumnKey) => {
     switch (key) {
@@ -16846,6 +17294,33 @@ export function DocumentKnowledgeManagementPage() {
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-2">
+                          {/* Opsi A — layered toggles on ONE canvas (combine freely; ≥1 always on) */}
+                          <div className="inline-flex items-center gap-0.5 rounded-xl border border-slate-200 bg-white p-0.5">
+                            {([
+                              { key: 'structure' as const, label: 'Structure', dot: 'bg-emerald-500', title: 'Deterministic document-centric facts: template · workspace · user · project. 100% metadata, no AI.' },
+                              { key: 'kb' as const, label: 'KB relations', dot: 'bg-sky-500', title: 'Concept relations between KB entries (glossary, memos) from the KB service.' },
+                              { key: 'impact' as const, label: 'Impact', dot: 'bg-purple-500', title: 'AI-inferred impact/dependency edges extracted from document text. Useful for multi-hop, may contain noise.' },
+                            ]).map((layer) => {
+                              const active = kbGraphLayers[layer.key]
+                              return (
+                                <button
+                                  key={layer.key}
+                                  type="button"
+                                  title={layer.title}
+                                  aria-pressed={active}
+                                  className={cn(
+                                    'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors',
+                                    active ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
+                                  )}
+                                  onClick={() => toggleKbGraphLayer(layer.key)}
+                                >
+                                  <span className={cn('h-2 w-2 rounded-full transition-opacity', layer.dot, active ? 'opacity-100' : 'opacity-40')} />
+                                  {layer.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          {kbGraphLayers.kb ? (
                           <div className="inline-flex items-center rounded-xl border border-slate-200 bg-white p-0.5">
                             <button
                               type="button"
@@ -16872,25 +17347,15 @@ export function DocumentKnowledgeManagementPage() {
                               Focused
                             </button>
                           </div>
-                          {kbGraphMode === 'federated' ? (
-                            <>
-                              <UiTooltip content="Filter graph nodes to a specific workspace. Select 'All workspaces' to see the full federated graph.">
-                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-[11px] font-semibold text-slate-600">
-                                  ?
-                                </span>
-                              </UiTooltip>
-                              <Select
-                                value={kbFederatedScope}
-                                onChange={(e) => setKbFederatedScope(e.target.value)}
-                                className="h-8 w-[170px] text-[11px]"
-                              >
-                                <option value="all">All workspaces</option>
-                                {kbFederatedWorkspaceOptions.map((workspace) => (
-                                  <option key={workspace} value={workspace}>{workspace}</option>
-                                ))}
-                              </Select>
-                
-                            </>
+                          ) : null}
+                          {(kbGraphLayers.structure || kbGraphLayers.impact) ? (
+                            <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2 py-1 text-[10px] font-semibold text-purple-700">
+                              {structuralLoading || impactLoading
+                                ? 'loading graph…'
+                                : ((kbGraphLayers.structure && !structuralGraph.enabled) || (kbGraphLayers.impact && !impactGraph.enabled))
+                                  ? 'graph unavailable'
+                                  : `Neo4j${kbGraphLayers.structure ? ' · structure' : ''}${kbGraphLayers.impact ? ' · impact' : ''}`}
+                            </span>
                           ) : null}
                           <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600">
                             nodes: {kbOverviewGraph.nodes.length}
@@ -16914,11 +17379,14 @@ export function DocumentKnowledgeManagementPage() {
                           <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600">
                             {kbOverviewRelationsLoading && kbGraphMode === 'federated' ? 'syncing federated links...' : 'shared visibility active'}
                           </span>
-                          {kbGraphMode === 'federated' ? (
+                          {kbGraphLayers.kb && kbGraphMode === 'federated' ? (
                             <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600">
                               rel: {kbOverviewRelationTelemetry.loadedRelations} · pages: {kbOverviewRelationTelemetry.pagesLoaded}/{kbOverviewRelationTelemetry.pageCap}{kbOverviewRelationTelemetry.truncated ? ' · capped' : ''}
                             </span>
                           ) : null}
+                          {/* AI Scan + Auto-link mutate KB-entry relations — only relevant to the KB layer. */}
+                          {kbGraphLayers.kb ? (
+                          <>
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-[11px] font-medium text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
@@ -16932,6 +17400,18 @@ export function DocumentKnowledgeManagementPage() {
                             )}
                             AI Scan for relations
                           </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => void handleKbAutoLink()}
+                            disabled={!kbLive || kbAutoLinkBusy}
+                            title="Create high-precision structural relations (glossary mentions, source-doc → derived entry). Deterministic — no AI."
+                          >
+                            {kbAutoLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                            Auto-link
+                          </button>
+                          </>
+                          ) : null}
                           <button
                             type="button"
                             className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-white"
@@ -16977,7 +17457,7 @@ export function DocumentKnowledgeManagementPage() {
                         </span>
                       </div>
 
-                      {kbGraphMode === 'federated' && kbOverviewRelationTelemetry.truncated ? (
+                      {kbGraphLayers.kb && kbGraphMode === 'federated' && kbOverviewRelationTelemetry.truncated ? (
                         <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700">
                           Federated relation load is capped ({kbOverviewRelationTelemetry.pageCap} pages). Graph may not show all links. Increase page cap to expand coverage.
                         </div>
@@ -17010,8 +17490,10 @@ export function DocumentKnowledgeManagementPage() {
                         {kbOverviewGraph.nodes.length === 0 && (
                           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400">
                             <span className="text-3xl">🔍</span>
-                            <p className="text-sm font-medium">No entries found for this workspace</p>
-                            <p className="text-xs">Try selecting a different workspace or switch to All workspaces</p>
+                            <p className="text-sm font-medium">
+                              {structuralLoading || impactLoading ? 'Loading graph…' : 'Nothing to show for the active layers'}
+                            </p>
+                            <p className="text-xs">Enable another layer (Structure · KB relations · Impact), pick a different workspace, or switch to All workspaces</p>
                           </div>
                         )}
                       </div>
@@ -17653,7 +18135,9 @@ export function DocumentKnowledgeManagementPage() {
                       }
                     }}
                   />
-                  {repositoryLibrary === 'onedrive' ? null : (
+                  {repositoryLibrary === 'onedrive' && repositoryViewMode === 'folders' ? (
+                    <EnterpriseSelectionToggle checked={showOneDriveFolderSelection} onChange={setShowOneDriveFolderSelection} />
+                  ) : repositoryLibrary === 'onedrive' ? null : (
                   <EnterpriseSelectionToggle checked={showRepositoryTableSelection} onChange={setShowRepositoryTableSelection} />
                   )}
                   {repositoryViewMode === 'explorer' || repositoryLibrary === 'onedrive' ? null : (
@@ -17769,6 +18253,11 @@ export function DocumentKnowledgeManagementPage() {
                   pageSize={repositoryPageSize}
                   onStatsChange={handleOnedriveStatsChange}
                   onFolderNavigate={handleOnedriveFolderNavigate}
+                  onItemContextMenu={openOneDriveContextMenu}
+                  contextMenuItemId={onedriveContextMenu?.item.id ?? null}
+                  refreshToken={onedriveRefreshToken}
+                  onSelectionChange={setOnedriveSelectedItems}
+                  showFolderCardSelection={showOneDriveFolderSelection}
                 />
               ) : null}
               <div
@@ -18006,6 +18495,13 @@ export function DocumentKnowledgeManagementPage() {
                               onDragOver={(event) => handleFolderDragOver(event, folder.id)}
                               onDragLeave={() => setRepositoryDropTarget((prev) => (prev === folder.id ? null : prev))}
                               onDrop={(event) => handleFolderDrop(event, folder.id)}
+                              showSelection={showRepositoryTableSelection}
+                              selected={repositoryFolderSelectedIds.includes(folder.id)}
+                              onToggleSelection={() => setRepositoryFolderSelectedIds((current) => (
+                                current.includes(folder.id)
+                                  ? current.filter((id) => id !== folder.id)
+                                  : [...current, folder.id]
+                              ))}
                             />
                           ))}
                         </div>
@@ -21666,7 +22162,7 @@ export function DocumentKnowledgeManagementPage() {
                     onClick={() => setTemplateGenerateOpen(false)}
                   >
                     <X className="h-4 w-4 shrink-0" aria-hidden />
-                    Cancel
+                    Skip this item
                   </Button>
                   <Button
                     type="button"
@@ -22322,7 +22818,7 @@ export function DocumentKnowledgeManagementPage() {
                     className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
                     onClick={() => repositoryDuplicatePrompt.resolve('upload_new')}
                   >
-                    Upload as new document
+                    Save as a copy
                   </Button>
                   {repositoryDuplicatePrompt.revisionTargetId ? (
                     <Button
@@ -24738,6 +25234,414 @@ export function DocumentKnowledgeManagementPage() {
           )
         : null}
 
+      {uploadResults.length > 0 ? createPortal((() => {
+        const completedCount = uploadResults.filter((row) => row.status === 'done').length
+        const failedCount = uploadResults.filter((row) => row.status === 'failed').length
+        const pendingCount = uploadResults.length - completedCount - failedCount
+        const progressPercent = Math.round((completedCount / uploadResults.length) * 100)
+        const hasIncompleteItems = uploadResults.some((row) => row.status !== 'done')
+
+        return (
+          <aside
+            aria-label="Repository transfer results"
+            className="fixed bottom-5 right-5 z-[1200] w-[min(460px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_24px_70px_-28px_rgba(15,23,42,0.6)]"
+          >
+            <header className="border-b border-border/70 bg-muted/25 px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className={cn(
+                  'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1',
+                  repositoryUploadBusy ? 'bg-primary/10 text-primary ring-primary/20' : failedCount > 0 ? 'bg-amber-500/10 text-amber-700 ring-amber-500/25' : 'bg-emerald-500/10 text-emerald-700 ring-emerald-500/25',
+                )}>
+                  {repositoryUploadBusy ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> : failedCount > 0 ? <Info className="h-5 w-5" aria-hidden /> : <CheckCircle2 className="h-5 w-5" aria-hidden />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-sm font-semibold text-foreground">Repository transfer</h2>
+                  <p role="status" className="mt-0.5 text-xs text-muted-foreground">
+                    {repositoryUploadBusy ? 'Transferring selected items to the repository.' : failedCount > 0 ? 'Transfer completed with items requiring attention.' : 'All selected items have been processed.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={repositoryUploadBusy}
+                  title="Close transfer results"
+                  aria-label="Close transfer results"
+                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                  onClick={() => setUploadResults([])}
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                </button>
+              </div>
+            </header>
+
+            <div className="space-y-4 px-5 py-4">
+              <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-border/70 bg-muted/15">
+                <div className="border-r border-border/70 px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Completed</p>
+                  <p className="mt-1 text-lg font-semibold tabular-nums text-foreground">{completedCount}<span className="text-xs font-medium text-muted-foreground"> / {uploadResults.length}</span></p>
+                </div>
+                <div className="border-r border-border/70 px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Pending</p>
+                  <p className="mt-1 text-lg font-semibold tabular-nums text-foreground">{pendingCount}</p>
+                </div>
+                <div className="px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Failed</p>
+                  <p className={cn('mt-1 text-lg font-semibold tabular-nums', failedCount > 0 ? 'text-destructive' : 'text-foreground')}>{failedCount}</p>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground"><span>Transfer progress</span><span className="font-medium tabular-nums text-foreground">{progressPercent}%</span></div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className={cn('h-full rounded-full transition-[width] duration-300', failedCount > 0 ? 'bg-amber-500' : 'bg-primary')} style={{ width: `${progressPercent}%` }} /></div>
+              </div>
+
+              <ul className="max-h-52 overflow-y-auto rounded-xl border border-border/70 bg-background/60 scrollbar-hide">
+                {uploadResults.map((row, index) => {
+                  const state = row.status === 'done' ? 'Completed' : row.status === 'failed' ? 'Failed' : 'Pending'
+                  return (
+                    <li key={`${row.file.name}-${index}`} className="flex items-start gap-3 border-b border-border/60 px-3 py-2.5 last:border-b-0">
+                      <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', row.status === 'done' ? 'bg-emerald-500' : row.status === 'failed' ? 'bg-destructive' : 'bg-amber-400')} aria-hidden />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium text-foreground" title={row.file.name}>{row.file.name}</p>
+                        {row.error ? <p className="mt-0.5 truncate text-[11px] text-destructive" title={row.error}>{row.error}</p> : null}
+                      </div>
+                      <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium', row.status === 'done' ? 'bg-emerald-500/10 text-emerald-700' : row.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-amber-500/10 text-amber-800')}>{state}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+
+            <footer className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-5 py-3.5">
+              {repositoryUploadBusy ? (
+                <Button type="button" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'w-full justify-center gap-2')} onClick={() => { uploadCancelled.current = true }}>
+                  <X className="h-4 w-4" aria-hidden />
+                  Cancel after current item
+                </Button>
+              ) : hasIncompleteItems ? (
+                <Button type="button" className={cn(registerServicePrimaryButtonClass(), 'w-full justify-center gap-2')} onClick={() => {
+                  uploadCancelled.current = false
+                  setRepositoryUploadBusy(true)
+                  void (async () => {
+                    try {
+                      for (let index = 0; index < uploadResults.length; index += 1) {
+                        const row = uploadResults[index]
+                        if (row.status === 'done') continue
+                        if (uploadCancelled.current) break
+                        repositoryUploadTargetFolderIdRef.current = row.folderId
+                        try {
+                          const ok = await processRepositoryUploadFile(row.file, row.workspaceId, { skipBusy: true, skipSuccessToast: true })
+                          setUploadResults((rows) => rows.map((entry, i) => i === index ? { ...entry, status: ok ? 'done' : 'failed', error: ok ? undefined : 'Skipped or upload unsuccessful' } : entry))
+                        } catch (error) {
+                          setUploadResults((rows) => rows.map((entry, i) => i === index ? { ...entry, status: 'failed', error: error instanceof Error ? error.message : 'Upload failed' } : entry))
+                        }
+                      }
+                    } finally { repositoryUploadTargetFolderIdRef.current = null; setRepositoryUploadBusy(false) }
+                  })()
+                }}>
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                  Retry failed and pending items
+                </Button>
+              ) : (
+                <Button type="button" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'w-full justify-center')} onClick={() => setUploadResults([])}>Close</Button>
+              )}
+            </footer>
+          </aside>
+        )
+      })(), document.body) : null}
+      {onedriveZipItems ? createPortal(<OneDriveZipDownload items={onedriveZipItems} onClose={() => setOnedriveZipItems(null)} />, document.body) : null}
+      {onedriveMutation ? createPortal(
+        <OneDriveMutationDialog
+          items={onedriveMutation.items}
+          operation={onedriveMutation.operation}
+          onClose={() => setOnedriveMutation(null)}
+          onComplete={() => setOnedriveRefreshToken((value) => value + 1)}
+        />,
+        document.body,
+      ) : null}
+      {repositoryMoveDialog && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close move folder picker"
+                onClick={() => setRepositoryMoveDialog(null)}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="repository-move-destination-title"
+                className="relative z-[1401] flex max-h-[min(620px,calc(100vh-2rem))] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/12 text-sky-700 ring-1 ring-sky-500/25">
+                      <FolderInput className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <h2 id="repository-move-destination-title" className="text-base font-semibold tracking-tight text-foreground">Move to folder</h2>
+                      <p className="text-sm text-muted-foreground">Choose where to move {repositoryMoveDialog.kind === 'document' ? repositoryMoveDialog.item.name : repositoryMoveDialog.folder.name}.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="absolute right-5 top-5 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Close move folder picker"
+                    onClick={() => setRepositoryMoveDialog(null)}
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 scrollbar-hide">
+                  <RepositoryMoveFolderPicker
+                    folders={repositoryFolders}
+                    initialParentId={repositoryMoveDialog.kind === 'document' ? repositoryMoveDialog.item.folderId ?? null : repositoryMoveDialog.folder.parent_id ?? null}
+                    excludeFolderId={repositoryMoveDialog.kind === 'folder' ? repositoryMoveDialog.folder.id : null}
+                    currentParentId={repositoryMoveDialog.kind === 'document' ? repositoryMoveDialog.item.folderId ?? null : repositoryMoveDialog.folder.parent_id ?? null}
+                    showRootDestination={false}
+                    hideAction
+                    onBrowseChange={setRepositoryMoveDestinationFolderId}
+                    onSelect={() => undefined}
+                  />
+                </div>
+                <div className="border-t border-border/70 bg-muted/20 px-6 py-4">
+                  <Button
+                    type="button"
+                    className={cn(registerServicePrimaryButtonClass(), 'w-full justify-center gap-2')}
+                    disabled={repositoryMoveBusy}
+                    onClick={() => {
+                      const target = repositoryMoveDialog
+                      setRepositoryMoveBusy(true)
+                      void (async () => {
+                        try {
+                          if (target.kind === 'document') await handleMoveDocumentToFolder(target.item, repositoryMoveDestinationFolderId)
+                          else await handleMoveFolderToParent(target.folder, repositoryMoveDestinationFolderId)
+                          setRepositoryMoveDialog(null)
+                        } finally {
+                          setRepositoryMoveBusy(false)
+                        }
+                      })()
+                    }}
+                  >
+                    <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
+                    {repositoryMoveBusy ? 'Moving...' : 'Move here'}
+                  </Button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {onedriveCopyDestinationItems && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) setOnedriveCopyDestinationItems(null)
+              }}
+            >
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close copy destination picker"
+                onClick={() => setOnedriveCopyDestinationItems(null)}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="onedrive-copy-destination-title"
+                className="relative z-[1401] flex max-h-[min(620px,calc(100vh-2rem))] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/12 text-sky-700 ring-1 ring-sky-500/25">
+                      <FolderInput className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <h2 id="onedrive-copy-destination-title" className="text-base font-semibold tracking-tight text-foreground">
+                        {onedriveCopyOperation === 'move' ? 'Move to Tectona folder' : 'Copy to folder'}
+                      </h2>
+                      <p className="text-sm text-muted-foreground">
+                        Choose where to {onedriveCopyOperation} {onedriveCopyDestinationItems.length} OneDrive item{onedriveCopyDestinationItems.length === 1 ? '' : 's'} in Tectona.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="absolute right-5 top-5 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Close copy destination picker"
+                    onClick={() => setOnedriveCopyDestinationItems(null)}
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 scrollbar-hide">
+                  <RepositoryMoveFolderPicker
+                    folders={repositoryFolders}
+                    initialParentId={repositoryCurrentFolderId}
+                    currentParentId="__copy_destination__"
+                    actionLabel={onedriveCopyOperation === 'move' ? 'Move here' : 'Copy here'}
+                    rootDestinationLabel={onedriveCopyOperation === 'move' ? 'Move to repository root' : 'Copy to repository root'}
+                    showRootDestination={false}
+                    hideAction
+                    onBrowseChange={setOnedriveCopyDestinationFolderId}
+                    onSelect={() => undefined}
+                  />
+                  {onedriveCopyPotentialDuplicates.length > 0 ? (
+                    <div className="mt-4 rounded-xl border border-amber-300/70 bg-amber-50/70 p-4 text-sm text-amber-950">
+                      <p className="font-semibold">Potential duplicate in this folder</p>
+                      <p className="mt-1 text-xs text-amber-800">
+                        {onedriveCopyPotentialDuplicates.map((item) => item.name).slice(0, 3).join(', ')} already exists here. Folder contents will be verified again before transfer.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                  {onedriveCopyPotentialDuplicates.length > 0 ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2 text-xs')}
+                        disabled={onedriveCopyBusy}
+                        onClick={() => handleOneDriveCopyToFolder(onedriveCopyDestinationFolderId, 'copy')}
+                      >
+                        {onedriveCopyOperation === 'move' ? 'Move as copy' : 'Copy as duplicate'}
+                      </Button>
+                      <Button
+                        type="button"
+                        className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2 text-xs')}
+                        disabled={onedriveCopyBusy}
+                        onClick={() => handleOneDriveCopyToFolder(onedriveCopyDestinationFolderId, 'version')}
+                      >
+                        <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
+                        {onedriveCopyOperation === 'move' ? 'Move as new version' : 'Copy as new version'}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      type="button"
+                      className={cn(registerServicePrimaryButtonClass(), 'w-full justify-center gap-2')}
+                      disabled={onedriveCopyBusy}
+                      onClick={() => handleOneDriveCopyToFolder(onedriveCopyDestinationFolderId)}
+                    >
+                      <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
+                      {onedriveCopyBusy
+                        ? onedriveCopyOperation === 'move' ? 'Moving...' : 'Copying...'
+                        : onedriveCopyOperation === 'move' ? 'Move here' : 'Copy here'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      <ContextMenu
+        open={!!onedriveContextMenu}
+        x={onedriveContextMenu?.x ?? 0}
+        y={onedriveContextMenu?.y ?? 0}
+        onClose={() => setOnedriveContextMenu(null)}
+        zIndex={1190}
+        className="w-72"
+      >
+        {onedriveContextMenu ? (
+          <>
+            <div className="truncate px-4 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              OneDrive · {onedriveContextMenu.item.kind === 'folder' ? 'Folder' : 'File'}
+            </div>
+            <ContextMenuItem
+              onClick={() => {
+                const target = onedriveContextMenu.item
+                setOnedriveContextMenu(null)
+                if (target.web_url) window.open(target.web_url, '_blank', 'noopener,noreferrer')
+              }}
+            >
+              {onedriveContextMenu.item.kind === 'folder' ? (
+                <FolderOpen className="h-4 w-4 shrink-0" aria-hidden />
+              ) : (
+                <Eye className="h-4 w-4 shrink-0" aria-hidden />
+              )}
+              <span className="min-w-0 truncate">
+                {onedriveContextMenu.item.kind === 'folder' ? 'Open in OneDrive' : 'Preview in OneDrive'}
+              </span>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => handleOneDriveContextCopy(onedriveContextMenu.item)}>
+              <Copy className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">Copy to Tectona repository</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              disabled
+              title="Temporarily unavailable while OneDrive source-folder removal is being verified."
+              className="items-start"
+            >
+              <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="min-w-0">
+                <span className="block truncate">Move to Tectona repository</span>
+                <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">Temporarily unavailable</span>
+              </span>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => {
+              const item = onedriveContextMenu.item
+              setOnedriveZipItems(onedriveSelectedItems.some((selected) => selected.id === item.id) ? onedriveSelectedItems : [item])
+              setOnedriveContextMenu(null)
+            }}>
+              <Download className="h-4 w-4 shrink-0" aria-hidden />
+              Download selection as ZIP
+            </ContextMenuItem>
+            {onedriveContextMenu.item.kind !== 'folder' ? (
+              <ContextMenuItem
+                className={cn(onedriveDownloadBusyId === onedriveContextMenu.item.id && 'pointer-events-none opacity-50')}
+                onClick={() => void handleOneDriveContextDownload(onedriveContextMenu.item)}
+              >
+                <Download className="h-4 w-4 shrink-0" aria-hidden />
+                <span className="min-w-0 truncate">
+                  {onedriveDownloadBusyId === onedriveContextMenu.item.id ? 'Downloading…' : 'Download'}
+                </span>
+              </ContextMenuItem>
+            ) : null}
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={() => void handleOneDriveContextCopyLink(onedriveContextMenu.item)}>
+              <Link2 className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">Copy link</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              disabled
+              title="Temporarily unavailable while OneDrive move verification is being completed."
+              className="items-start"
+            >
+              <FolderInput className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="min-w-0">
+                <span className="block truncate">Move within OneDrive</span>
+                <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">Temporarily unavailable</span>
+              </span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setOnedriveContextMenu(null)
+                setOnedriveRefreshToken((value) => value + 1)
+              }}
+            >
+              <RefreshCw className="h-4 w-4 shrink-0" aria-hidden />
+              Refresh OneDrive
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem className="text-destructive" onClick={() => {
+              const item = onedriveContextMenu.item
+              setOnedriveMutation({
+                operation: 'delete',
+                items: onedriveSelectedItems.some((selected) => selected.id === item.id) ? onedriveSelectedItems : [item],
+              })
+              setOnedriveContextMenu(null)
+            }}>
+              <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">Delete from OneDrive</span>
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenu>
+
       <ContextMenu
         open={!!meetingNoteContextMenu}
         x={meetingNoteContextMenu?.x ?? 0}
@@ -25362,15 +26266,6 @@ export function DocumentKnowledgeManagementPage() {
             <ContextMenuItem
               onClick={() => {
                 setRepositoryRowContextMenu(null)
-                openKbAddDrawer()
-              }}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Add knowledge entry
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={() => {
-                setRepositoryRowContextMenu(null)
                 openRepositoryUploadPicker()
               }}
             >
@@ -25387,7 +26282,7 @@ export function DocumentKnowledgeManagementPage() {
               <Eye className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">View {repositoryContextMenuItem.name}</span>
             </ContextMenuItem>
-            {repositoryContextMenuItem.fileName?.toLowerCase().endsWith('.docx') ? (
+            {isOnlyOfficeViewableFile(repositoryContextMenuItem.fileName ?? repositoryContextMenuItem.name) ? (
               <ContextMenuItem
                 onClick={() => {
                   const target = repositoryContextMenuItem
@@ -25401,12 +26296,23 @@ export function DocumentKnowledgeManagementPage() {
             ) : null}
             <ContextMenuItem
               onClick={() => {
+                const target = repositoryContextMenuItem
                 setRepositoryRowContextMenu(null)
-                openDetail(repositoryContextMenuItem.detailId)
+                setVersionLineageSelectedId(target.id)
+                setActivePanel('versioning')
               }}
             >
-              <FileText className="w-4 h-4 mr-2 shrink-0" />
-              <span className="min-w-0 truncate">Open {repositoryContextMenuItem.name}</span>
+              <History className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">View version history</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setRepositoryRowContextMenu(null)
+                setActivePanel('artifacts')
+              }}
+            >
+              <Link2 className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">View linked artifacts</span>
             </ContextMenuItem>
             <ContextMenuItem
               className={cn(repositoryDownloadBusyId === repositoryContextMenuItem.id && 'pointer-events-none opacity-50')}
@@ -25432,58 +26338,18 @@ export function DocumentKnowledgeManagementPage() {
               <Sparkles className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">Generate KB from {repositoryContextMenuItem.name}</span>
             </ContextMenuItem>
-            {isFolderInSamplesTree(repositoryContextMenuItem.folderId, repositoryFolders) ? (
-              <ContextMenuItem
-                onClick={() => {
-                  const target = repositoryContextMenuItem
-                  setRepositoryRowContextMenu(null)
-                  void (async () => {
-                    try {
-                      const latest = await getDocument(target.id)
-                      const shared = Array.isArray(latest.metadata?.shared_with_workspace_ids)
-                        ? (latest.metadata!.shared_with_workspace_ids as string[])
-                        : []
-                      setSamplesShareDialog({
-                        kind: 'document',
-                        id: target.id,
-                        name: target.name,
-                        selectedIds: new Set(shared.filter((id) => typeof id === 'string')),
-                      })
-                    } catch (error) {
-                      addToast({
-                        title: 'Share unavailable',
-                        description: error instanceof Error ? error.message : 'Unable to load document sharing.',
-                        variant: 'error',
-                      })
-                    }
-                  })()
-                }}
-              >
-                <Globe className="w-4 h-4 mr-2 shrink-0" />
-                Share with workspaces…
-              </ContextMenuItem>
-            ) : null}
             <ContextMenuSeparator />
-            <ContextMenuSubmenu
-              trigger={
-                <>
-                  <Folder className="w-4 h-4 mr-2" />
-                  Move to folder
-                  <ChevronRight className="w-4 h-4 ml-auto" />
-                </>
-              }
+            <ContextMenuItem
+              onClick={() => {
+                const target = repositoryContextMenuItem
+                setRepositoryRowContextMenu(null)
+                setRepositoryMoveDestinationFolderId(target.folderId ?? null)
+                setRepositoryMoveDialog({ kind: 'document', item: target })
+              }}
             >
-              <RepositoryMoveFolderPicker
-                folders={repositoryFolders}
-                initialParentId={repositoryContextMenuItem.folderId}
-                currentParentId={repositoryContextMenuItem.folderId}
-                onSelect={(folderId) => {
-                  const target = repositoryContextMenuItem
-                  setRepositoryRowContextMenu(null)
-                  void handleMoveDocumentToFolder(target, folderId)
-                }}
-              />
-            </ContextMenuSubmenu>
+              <FolderInput className="w-4 h-4 mr-2" />
+              Move to folder
+            </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem
               className={cn(
@@ -25515,15 +26381,6 @@ export function DocumentKnowledgeManagementPage() {
             <ContextMenuItem
               onClick={() => {
                 setRepositoryFolderContextMenu(null)
-                openKbAddDrawer()
-              }}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Add knowledge entry
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={() => {
-                setRepositoryFolderContextMenu(null)
                 openRepositoryUploadPicker(repositoryFolderContextMenuItem.id)
               }}
             >
@@ -25540,47 +26397,20 @@ export function DocumentKnowledgeManagementPage() {
               <FolderOpen className="w-4 h-4 mr-2 shrink-0" />
               <span className="min-w-0 truncate">Open {repositoryFolderContextMenuItem.name}</span>
             </ContextMenuItem>
-            {isFolderInSamplesTree(repositoryFolderContextMenuItem.id, repositoryFolders) ? (
-              <ContextMenuItem
-                onClick={() => {
-                  const target = repositoryFolderContextMenuItem
-                  setRepositoryFolderContextMenu(null)
-                  setSamplesShareDialog({
-                    kind: 'folder',
-                    id: target.id,
-                    name: target.name,
-                    selectedIds: new Set(parseSamplesShareWorkspaceIds(target.description)),
-                  })
-                }}
-              >
-                <Globe className="w-4 h-4 mr-2 shrink-0" />
-                Share with workspaces…
-              </ContextMenuItem>
-            ) : null}
             {isSamplesSystemFolder(repositoryFolderContextMenuItem) ? null : (
               <>
             <ContextMenuSeparator />
-            <ContextMenuSubmenu
-              trigger={
-                <>
-                  <Folder className="w-4 h-4 mr-2" />
-                  Move to folder
-                  <ChevronRight className="w-4 h-4 ml-auto" />
-                </>
-              }
+            <ContextMenuItem
+              onClick={() => {
+                const target = repositoryFolderContextMenuItem
+                setRepositoryFolderContextMenu(null)
+                setRepositoryMoveDestinationFolderId(target.parent_id ?? null)
+                setRepositoryMoveDialog({ kind: 'folder', folder: target })
+              }}
             >
-              <RepositoryMoveFolderPicker
-                folders={repositoryFolders}
-                initialParentId={repositoryFolderContextMenuItem.parent_id ?? null}
-                excludeFolderId={repositoryFolderContextMenuItem.id}
-                currentParentId={repositoryFolderContextMenuItem.parent_id ?? null}
-                onSelect={(folderId) => {
-                  const target = repositoryFolderContextMenuItem
-                  setRepositoryFolderContextMenu(null)
-                  void handleMoveFolderToParent(target, folderId)
-                }}
-              />
-            </ContextMenuSubmenu>
+              <FolderInput className="w-4 h-4 mr-2" />
+              Move to folder
+            </ContextMenuItem>
               </>
             )}
             <ContextMenuSeparator />

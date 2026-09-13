@@ -3858,26 +3858,19 @@ export function IdeaBacklogManagementPage() {
 
   useEffect(() => {
     if (!ideaDraftJob) return
-    // 'completed' is kept on purpose: a generated draft no longer ends the
-    // session, so the entry must stay resumable for a follow-up re-analysis.
-    // Only failed/cancelled/queued drop it.
-    if (ideaDraftJob.status === 'awaiting_input' || ideaDraftJob.status === 'completed') {
-      useIdeaDraftBrainstormPointerStore.getState().setPointer({
-        jobId: ideaDraftJob.job_id,
-        title: createIdeaForm.title.trim() || 'Untitled idea',
-        updatedAt: Date.now(),
-        // Recovery snapshot — see the store's comment. Without it, reopening a
-        // session whose job the runtime has evicted can only fail.
-        tags: effectiveCreateIdeaTags,
-        workspaceId: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
-        sessionId: ideaDraftJob.correlation_id || null,
-        messages: brainstormMessages.map(({ role, text }) => ({ role, text })),
-        remainingGaps: brainstormRemainingGaps,
-        readyToContinue: brainstormReady,
-      })
-      return
-    }
-    useIdeaDraftBrainstormPointerStore.getState().clearPointer(ideaDraftJob.job_id)
+    // Keep the recovery snapshot while generation is running or fails.
+    useIdeaDraftBrainstormPointerStore.getState().retainPointer(ideaDraftJob.status, {
+      jobId: ideaDraftJob.job_id,
+      title: createIdeaForm.title.trim() || 'Untitled idea',
+      updatedAt: Date.now(),
+      // Recovery snapshot survives jobs being evicted from the runtime.
+      tags: effectiveCreateIdeaTags,
+      workspaceId: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+      sessionId: ideaDraftJob.correlation_id || null,
+      messages: brainstormMessages.map(({ role, text }) => ({ role, text })),
+      remainingGaps: brainstormRemainingGaps,
+      readyToContinue: brainstormReady,
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- brainstormPointerSignature stands in for the unstable values read here
   }, [ideaDraftJob, brainstormPointerSignature])
 
@@ -3895,36 +3888,42 @@ export function IdeaBacklogManagementPage() {
     let cancelled = false
     void (async () => {
       const pointer = useIdeaDraftBrainstormPointerStore.getState().pointer
+      const snapshot = pointer?.jobId === jobId ? pointer : null
+      const restoreSnapshot = () => restoreIdeaDraftBrainstormSession({
+        title: snapshot?.title || 'Untitled idea',
+        tags: snapshot?.tags ?? [],
+        context: {
+          workspace_id: snapshot?.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+          user_id: currentUserId || null,
+          user_name: currentUserDisplayName || null,
+          session_id: snapshot?.sessionId ?? null,
+        },
+        messages: snapshot?.messages ?? [],
+        remaining_gaps: snapshot?.remainingGaps ?? [],
+        ready_to_continue: Boolean(snapshot?.readyToContinue),
+      })
       try {
         let status: IdeaDraftJobStatusResponse
         try {
           status = await getIdeaDraftJob(jobId)
         } catch (lookupError) {
           const rawLookup = lookupError instanceof Error ? lookupError.message : String(lookupError)
-          const snapshot = pointer?.jobId === jobId ? pointer : null
           // Rebuild an evicted job from the snapshot — the same recovery the
           // composer performs on send. Anything other than a lost job (offline,
           // 5xx, timeout) is transient and must not cost the user the session.
           if (!isIdeaDraftJobLostError(rawLookup) || !snapshot?.messages?.length) throw lookupError
-          status = await restoreIdeaDraftBrainstormSession({
-            title: snapshot.title || 'Untitled idea',
-            tags: snapshot.tags ?? [],
-            context: {
-              workspace_id: snapshot.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
-              user_id: currentUserId || null,
-              user_name: currentUserDisplayName || null,
-              session_id: snapshot.sessionId ?? null,
-            },
-            messages: snapshot.messages,
-            remaining_gaps: snapshot.remainingGaps ?? [],
-            ready_to_continue: Boolean(snapshot.readyToContinue),
-          })
+          status = await restoreSnapshot()
         }
+        if (status.status === 'failed' && snapshot?.messages?.length) status = await restoreSnapshot()
         if (cancelled) return
         setIsCreateIdeaDrawerOpen(true)
-        const pointerTitle = pointer?.title
+        const pointerTitle = snapshot?.title
         if (pointerTitle) {
-          setCreateIdeaForm((prev) => (prev.title.trim() ? prev : { ...prev, title: pointerTitle }))
+          setCreateIdeaForm((prev) => ({
+            ...prev,
+            title: pointerTitle,
+            workspaceId: snapshot?.workspaceId || prev.workspaceId,
+          }))
         }
         if (status.status === 'awaiting_input' || status.status === 'completed') {
           applyIdeaDraftBrainstormState(status)
@@ -3937,13 +3936,11 @@ export function IdeaBacklogManagementPage() {
         if (cancelled) return
         const raw = error instanceof Error ? error.message : String(error)
         const unrecoverable = isIdeaDraftJobLostError(raw)
-        // Only forget the session when it is genuinely gone. Clearing on every
-        // failure is what made the entry vanish the moment it was clicked.
-        if (unrecoverable) useIdeaDraftBrainstormPointerStore.getState().clearPointer(jobId)
+        // A failed lookup/restore does not prove that the local snapshot is lost.
         setIsCreateIdeaDrawerOpen(true)
         setAiAssistanceError(
           unrecoverable
-            ? 'That brainstorm session has expired on the server and cannot be resumed. Start Generate Draft again for a new one.'
+            ? 'The brainstorm session could not be recovered from the server. Its saved entry has been kept; please try again later.'
             : `Could not reopen the brainstorm session (${raw}). It is still listed in the chat panel — try again.`,
         )
       } finally {

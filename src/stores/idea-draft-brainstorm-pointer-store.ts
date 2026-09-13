@@ -47,6 +47,7 @@ function trimPointer(pointer: IdeaDraftBrainstormPointer): IdeaDraftBrainstormPo
 type IdeaDraftBrainstormPointerState = {
   pointer: IdeaDraftBrainstormPointer | null
   setPointer: (pointer: IdeaDraftBrainstormPointer) => void
+  retainPointer: (status: string, pointer: IdeaDraftBrainstormPointer) => void
   clearPointer: (jobId?: string) => void
 }
 
@@ -55,6 +56,20 @@ export const useIdeaDraftBrainstormPointerStore = create<IdeaDraftBrainstormPoin
     (set, get) => ({
       pointer: null,
       setPointer: (pointer) => set({ pointer: trimPointer(pointer) }),
+      retainPointer: (status, pointer) => {
+        const current = get().pointer
+        if (status === 'cancelled') {
+          if (current?.jobId === pointer.jobId) set({ pointer: null })
+          return
+        }
+        // Generation and failed requests must not discard the recovery snapshot.
+        const previous = current?.jobId === pointer.jobId ? current : null
+        if (!pointer.messages?.length && !previous && status !== 'awaiting_input' && status !== 'completed') return
+        set({ pointer: trimPointer({
+          ...pointer,
+          messages: pointer.messages?.length ? pointer.messages : previous?.messages,
+        }) })
+      },
       clearPointer: (jobId) => {
         const current = get().pointer
         if (jobId && current?.jobId !== jobId) return

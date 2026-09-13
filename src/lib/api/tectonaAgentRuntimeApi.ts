@@ -2006,20 +2006,96 @@ export async function chatWithTectonaAgentRuntime(
   return data
 }
 
+async function readAgentChatSse(
+  res: Response,
+  onDelta?: (chunk: string) => void,
+): Promise<RuntimeChatResponse> {
+  if (!res.body) {
+    throw new Error('Chat stream had no body')
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let donePayload: RuntimeChatResponse | null = null
+  let errorDetail: string | null = null
+
+  const consumeEvent = (rawEvent: string) => {
+    let eventName = 'message'
+    const dataLines: string[] = []
+    for (const line of rawEvent.split('\n')) {
+      if (!line || line.startsWith(':')) continue
+      if (line.startsWith('event:')) eventName = line.slice(6).trim()
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    }
+    if (dataLines.length === 0) return
+    let data: unknown
+    try {
+      data = JSON.parse(dataLines.join('\n')) as unknown
+    } catch {
+      return
+    }
+    if (eventName === 'delta' && data && typeof data === 'object' && typeof (data as { text?: unknown }).text === 'string') {
+      onDelta?.((data as { text: string }).text)
+    }
+    if (eventName === 'done' && data && typeof data === 'object') {
+      donePayload = data as RuntimeChatResponse
+    }
+    if (eventName === 'error' && data && typeof data === 'object') {
+      const detail = (data as { detail?: unknown }).detail
+      errorDetail = typeof detail === 'string' && detail.trim() ? detail : 'CHAT_STREAM_FAILED'
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+    let sep = buffer.indexOf('\n\n')
+    while (sep >= 0) {
+      consumeEvent(buffer.slice(0, sep))
+      buffer = buffer.slice(sep + 2)
+      sep = buffer.indexOf('\n\n')
+    }
+  }
+  if (buffer.trim()) consumeEvent(buffer.trim())
+  if (errorDetail) throw new Error(errorDetail)
+  if (!donePayload) throw new Error('Chat stream ended without a final answer')
+  return donePayload
+}
+
 /** Sidebar chat — uses apiFetch for auth headers and gateway dev routing. */
 export async function sendTectonaAgentRuntimeMessage(
   payload: RuntimeChatRequest,
+  options?: { onDelta?: (chunk: string) => void },
 ): Promise<RuntimeChatResponse> {
   const merged: RuntimeChatRequest = {
     ...payload,
     context: chatContext(payload.context),
+  }
+  const body = JSON.stringify(merged)
+
+  const streamRes = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/chat/stream`,
+    {
+      method: 'POST',
+      headers: { Accept: 'text/event-stream' },
+      body,
+    },
+    SIDEBAR_CHAT_TIMEOUT_MS,
+  )
+  const streamType = streamRes.headers.get('content-type') || ''
+  if (streamRes.ok && streamType.includes('text/event-stream')) {
+    return readAgentChatSse(streamRes, options?.onDelta)
+  }
+  if (streamRes.ok && streamType.includes('application/json')) {
+    return (await streamRes.json()) as RuntimeChatResponse
   }
 
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/chat`,
     {
       method: 'POST',
-      body: JSON.stringify(merged),
+      body,
     },
     SIDEBAR_CHAT_TIMEOUT_MS,
   )

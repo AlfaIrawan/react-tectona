@@ -423,6 +423,25 @@ export async function listKbRelations(params?: {
   return handleJson<KbRelationListResponse>(res)
 }
 
+export interface KbAutoLinkResponse {
+  created: number
+  skipped: number
+  considered_entries: number
+  by_rule: Record<string, number>
+}
+
+/** Create high-precision DETERMINISTIC KB relations (glossary mentions, source-doc → derived entry).
+ * Non-LLM, idempotent. Complements the AI relation scan. */
+export async function autoLinkKbRelations(workspaceId: string): Promise<KbAutoLinkResponse> {
+  const base = getV1Base()
+  const res = await apiFetch(`${base}/relations/auto-link`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders(),
+    body: JSON.stringify({ workspace_id: workspaceId }),
+  })
+  return handleJson<KbAutoLinkResponse>(res)
+}
+
 export async function createKbRelation(body: KbRelationCreateBody): Promise<KbRelationResponse> {
   const base = getV1Base()
   const res = await apiFetch(`${base}/relations`, {

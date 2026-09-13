@@ -16,6 +16,7 @@ export type MicrosoftDriveItem = {
   child_count?: number | null
   last_modified?: string | null
   web_url?: string | null
+  etag?: string | null
 }
 
 export type MicrosoftDriveListing = {
@@ -116,10 +117,11 @@ function onedriveBase(): string {
   return `${serviceApiBase('/api/document-knowledge', import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL)}/v1/onedrive`
 }
 
-export async function fetchMicrosoftDriveChildren(itemId?: string | null): Promise<MicrosoftDriveListing> {
+export async function fetchMicrosoftDriveChildren(itemId?: string | null, signal?: AbortSignal): Promise<MicrosoftDriveListing> {
   const base = onedriveBase()
   const path = itemId ? `/items/${encodeURIComponent(itemId)}/children` : '/drive'
   const res = await apiFetch(`${base}${path}`, {
+    signal,
     headers: tectonaServiceHeaders({ Accept: 'application/json' }),
   })
   return handleJson<MicrosoftDriveListing>(res)
@@ -130,8 +132,9 @@ export async function fetchMicrosoftDriveChildren(itemId?: string | null): Promi
  * upload path. The service proxies the bytes rather than exposing Graph's
  * pre-authenticated download URL to the page.
  */
-export async function fetchMicrosoftDriveItemContent(itemId: string): Promise<Blob> {
+export async function fetchMicrosoftDriveItemContent(itemId: string, signal?: AbortSignal): Promise<Blob> {
   const res = await apiFetch(`${onedriveBase()}/items/${encodeURIComponent(itemId)}/content`, {
+    signal,
     headers: tectonaServiceHeaders({ Accept: '*/*' }),
   })
   if (!res.ok) {
@@ -145,4 +148,14 @@ export async function fetchMicrosoftDriveItemContent(itemId: string): Promise<Bl
     throw new Error(detail)
   }
   return res.blob()
+}
+
+export async function mutateMicrosoftDriveItem(item: Pick<MicrosoftDriveItem, 'id' | 'etag'>, operation: 'delete' | 'move', parentId?: string): Promise<void> {
+  if (!item.etag) throw new Error('Refresh OneDrive before changing this item')
+  const res = await apiFetch(`${onedriveBase()}/items/${encodeURIComponent(item.id)}/${operation}`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ etag: item.etag, parent_id: parentId }),
+  })
+  await handleJson(res)
 }

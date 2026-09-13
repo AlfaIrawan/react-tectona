@@ -20,7 +20,22 @@ import {
   sanitizeDetectedStakeholdersForRuntimeApi,
   scrubKbGeneratedContent,
   buildNonBrdRepositoryKbHtml,
+  buildSpreadsheetRepositoryKbHtml,
 } from './repositoryKbFromDocument'
+
+describe('repository spreadsheet KB rendering', () => {
+  it('keeps the generated table and omits flattened LLM body text', () => {
+    const html = buildSpreadsheetRepositoryKbHtml({
+      documentTitle: 'Technology Architecture',
+      llmSummary: 'Architecture capability overview.',
+      tablesHtml: '<h3>Sheet 1</h3><table><tbody><tr><td>Existing</td></tr></tbody></table>',
+    })
+
+    expect(html).toContain('<h2>Data spreadsheet</h2>')
+    expect(html).toContain('<table>')
+    expect(html).toContain('Architecture capability overview.')
+  })
+})
 
 describe('repository BRD metadata extraction', () => {
   it('parses structured BRD file names', () => {

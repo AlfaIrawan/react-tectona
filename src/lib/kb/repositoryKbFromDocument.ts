@@ -1294,6 +1294,21 @@ export function buildNonBrdRepositoryKbHtml(input: {
   ].join('')
 }
 
+/** KB body for spreadsheets: use a concise AI summary plus deterministic source tables. */
+export function buildSpreadsheetRepositoryKbHtml(input: {
+  documentTitle: string
+  llmSummary?: string | null
+  tablesHtml: string
+}): string {
+  const summary = (input.llmSummary || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  return [
+    '<h2>Ringkasan</h2>',
+    `<p>${escapeHtml(summary || `Data spreadsheet ${input.documentTitle} disajikan per sheet dalam tabel di bawah.`)}</p>`,
+    '<h2>Data spreadsheet</h2>',
+    input.tablesHtml || '<p>Tabel sumber tidak dapat diekstrak dari spreadsheet ini.</p>',
+  ].join('')
+}
+
 /**
  * Build a CANONICAL KB body containing ONLY the standard's required sections, in order.
  * Mirrors the backend `build_required_sections_html` exactly: stray LLM-generated sections are
