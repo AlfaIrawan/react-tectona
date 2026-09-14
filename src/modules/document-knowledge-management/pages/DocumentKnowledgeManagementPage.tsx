@@ -13797,7 +13797,7 @@ export function DocumentKnowledgeManagementPage() {
 
   useEffect(() => {
     setRepositoryPage(1)
-  }, [deferredQuery, filters, repositoryItems.length])
+  }, [deferredQuery, filters, repositoryItems.length, repositoryCurrentFolderId, repositoryViewMode])
 
   const filteredActivityRows = useMemo(() => {
     if (!deferredQuery || activePanel !== 'activity') return activityFeed
@@ -13869,11 +13869,42 @@ export function DocumentKnowledgeManagementPage() {
     return sortedRepository.map((item) => ({ item, groupLabel: null as string | null }))
   }, [repositoryFolderNameById, repositoryTableGroupBy, sortedRepository])
 
-  const repositoryTotalPages = Math.max(1, Math.ceil(repositoryFlatRows.length / repositoryPageSize))
+  const repositoryListingItems = useMemo(() => {
+    if (repositoryLibrary === 'onedrive') return null
+    if (repositoryViewMode !== 'explorer' && repositoryViewMode !== 'split') return null
+    const folders = deferredQuery.length === 0 ? repositorySubfolders : []
+    return [
+      ...folders.map((folder) => ({ kind: 'folder' as const, folder })),
+      ...filteredRepository.map((item) => ({ kind: 'document' as const, item })),
+    ]
+  }, [
+    deferredQuery.length,
+    filteredRepository,
+    repositoryLibrary,
+    repositorySubfolders,
+    repositoryViewMode,
+  ])
+  const repositoryPagingCount = repositoryListingItems?.length ?? repositoryFlatRows.length
+  const repositoryTotalPages = Math.max(1, Math.ceil(repositoryPagingCount / repositoryPageSize))
   const repositoryPageSafe = Math.min(repositoryPage, repositoryTotalPages)
-  const repositoryStart = repositoryFlatRows.length === 0 ? 0 : (repositoryPageSafe - 1) * repositoryPageSize + 1
-  const repositoryEnd = Math.min(repositoryFlatRows.length, repositoryPageSafe * repositoryPageSize)
+  const repositoryStart = repositoryPagingCount === 0 ? 0 : (repositoryPageSafe - 1) * repositoryPageSize + 1
+  const repositoryEnd = Math.min(repositoryPagingCount, repositoryPageSafe * repositoryPageSize)
   const pagedRepositoryRows = repositoryFlatRows.slice(repositoryStart === 0 ? 0 : repositoryStart - 1, repositoryEnd)
+  const pagedRepositoryListingItems = repositoryListingItems
+    ? repositoryListingItems.slice(repositoryStart === 0 ? 0 : repositoryStart - 1, repositoryEnd)
+    : []
+  const pagedRepositoryListingFolders = pagedRepositoryListingItems.flatMap((entry) =>
+    entry.kind === 'folder' ? [entry.folder] : [],
+  )
+  const pagedRepositoryListingDocuments = pagedRepositoryListingItems.flatMap((entry) =>
+    entry.kind === 'document' ? [entry.item] : [],
+  )
+  const pagedRepositoryListingDocumentRows = pagedRepositoryListingDocuments.map((item) => ({
+    item,
+    groupLabel: null as string | null,
+  }))
+  const visiblePagedRepositoryRows =
+    repositoryViewMode === 'split' ? pagedRepositoryListingDocumentRows : pagedRepositoryRows
   const onedriveTotalPages = Math.max(1, Math.ceil(onedriveItemCount / repositoryPageSize))
   // Split View pages each side independently; outside it OneDrive keeps following
   // the shared pager exactly as before.
@@ -13884,7 +13915,9 @@ export function DocumentKnowledgeManagementPage() {
   const onedriveStart = onedriveItemCount === 0 ? 0 : (onedrivePageSafe - 1) * repositoryPageSize + 1
   const onedriveEnd = Math.min(onedriveItemCount, onedrivePageSafe * repositoryPageSize)
   const repositoryToolbarIsOnedrive = repositoryLibrary === 'onedrive'
-  const repositoryToolbarTotal = repositoryToolbarIsOnedrive ? onedriveItemCount : filteredRepository.length
+  const repositoryToolbarTotal = repositoryToolbarIsOnedrive
+    ? onedriveItemCount
+    : repositoryListingItems?.length ?? filteredRepository.length
   const repositoryToolbarPages = repositoryToolbarIsOnedrive ? onedriveTotalPages : repositoryTotalPages
   const repositoryToolbarPage = repositoryToolbarIsOnedrive ? onedrivePageSafe : repositoryPageSafe
   const repositoryToolbarStart = repositoryToolbarIsOnedrive ? onedriveStart : repositoryStart
@@ -18436,7 +18469,7 @@ export function DocumentKnowledgeManagementPage() {
                           <FolderOpen className="h-3.5 w-3.5" aria-hidden />
                           Folders
                         </div>
-                        {repositorySubfolders.map((folder) => (
+                        {pagedRepositoryListingFolders.map((folder) => (
                           <button
                             key={folder.id}
                             type="button"
@@ -18528,8 +18561,8 @@ export function DocumentKnowledgeManagementPage() {
                 )}>
                 {repositoryViewMode === 'explorer' ? (
                   <DocumentRepositoryExplorerView
-                    folders={deferredQuery.length === 0 ? repositorySubfolders : []}
-                    documents={filteredRepository.map((item) => ({
+                    folders={pagedRepositoryListingFolders}
+                    documents={pagedRepositoryListingDocuments.map((item) => ({
                       id: item.id,
                       name: item.name,
                       fileName: item.fileName || item.name,
@@ -18587,13 +18620,13 @@ export function DocumentKnowledgeManagementPage() {
                                   name="repository-table-select-all"
                                   checked={
                                     repositoryTableSelectedIds.length > 0
-                                    && repositoryTableSelectedIds.length === pagedRepositoryRows.length
+                                    && repositoryTableSelectedIds.length === visiblePagedRepositoryRows.length
                                   }
                                   onChange={() =>
                                     setRepositoryTableSelectedIds(
-                                      repositoryTableSelectedIds.length === pagedRepositoryRows.length
+                                      repositoryTableSelectedIds.length === visiblePagedRepositoryRows.length
                                         ? []
-                                        : pagedRepositoryRows.map(({ item }) => item.id)
+                                        : visiblePagedRepositoryRows.map(({ item }) => item.id)
                                     )
                                   }
                                   aria-label="Select all rows on this page"
@@ -18626,9 +18659,9 @@ export function DocumentKnowledgeManagementPage() {
                         </tr>
                       </thead>
                       <tbody>
-                          {pagedRepositoryRows.map(({ item, groupLabel }, rowIndex) => {
+                          {visiblePagedRepositoryRows.map(({ item, groupLabel }, rowIndex) => {
                             const activeRepositoryGroupBy = repositoryTableGroupBy
-                            const previousGroupLabel = pagedRepositoryRows[rowIndex - 1]?.groupLabel ?? null
+                            const previousGroupLabel = visiblePagedRepositoryRows[rowIndex - 1]?.groupLabel ?? null
                             const showGroupHeader = activeRepositoryGroupBy && groupLabel && groupLabel !== previousGroupLabel
                             const groupTint = activeRepositoryGroupBy && groupLabel ? getEnterpriseGroupTint(activeRepositoryGroupBy, groupLabel) : null
                             const isGroupCollapsed = activeRepositoryGroupBy === 'folder' && groupLabel
