@@ -2302,19 +2302,32 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         )
         setConversations((prev) => {
           const team = prev.filter((c) => c.mode !== 'genai')
+          const prevGenaiById = new Map(prev.filter((c) => c.mode === 'genai').map((c) => [c.id, c]))
           const apiIds = new Set(genaiRows.map((row) => row.id))
           const localOnlyGenai = prev.filter(
             (c) => c.mode === 'genai' && !apiIds.has(c.id),
           )
-          const genai = genaiRows.map((row) => ({
-            ...row,
-            mode: 'genai' as const,
-            unreadCount: 0,
-          }))
+          const genai = genaiRows.map((row) => {
+            const existing = prevGenaiById.get(row.id)
+            return {
+              ...existing,
+              ...row,
+              mode: 'genai' as const,
+              unreadCount: 0,
+              assistantId: row.assistantId ?? existing?.assistantId,
+              explainerCharacter: existing?.explainerCharacter ?? row.explainerCharacter,
+            }
+          })
           return [...localOnlyGenai, ...genai, ...team].sort((a, b) => b.updatedAt - a.updatedAt)
         })
-      } catch {
+      } catch (error) {
         if (cancelled) return
+        const message = error instanceof Error ? error.message : 'Failed to load chat history'
+        pushGlobalToast({
+          variant: 'error',
+          title: 'Chat history unavailable',
+          description: message,
+        })
       }
     })()
     return () => {

@@ -53,6 +53,52 @@ export function splitAssistantGreetingLead(content: string): AssistantGreetingLe
 }
 
 const TASK_ITEM_RE = /^\s*[-*+]\s+\[[ xX]?\s*\]\s+(.+?)\s*$/
+const DOUBLE_BULLET_TASK_RE = /(?:(?<=\s)|^)[-*+]\s+[-*+](?=\s+\[[ xX]?\s*\])/g
+const INLINE_TASK_BREAK_RE = /(?<!\n)\s*[-*+](?=\s+\[[ xX]?\s*\])/g
+const TASK_LINE_PREFIX_RE = /^(\s*[-*+]\s+\[[ xX]?\s*\])\s*(.*)$/
+const PROSE_AFTER_CHOICE_RE =
+  /\s+(?=(?:Untuk|Jika|Silakan|Kalau|Mau\s+aku|Di\s+sana|Setelah\s+itu|Please)\b)/i
+const LOOSE_PARENS_RE = /\(\s+([^)]+?)\s+\)/g
+
+function tightenLooseParens(text: string): string {
+  return text.replace(LOOSE_PARENS_RE, (_all, inner: string) => `(${inner.trim().replace(/\s+/g, ' ')})`)
+}
+
+function splitTrailingProseFromTaskLine(line: string): string[] {
+  const match = line.match(TASK_LINE_PREFIX_RE)
+  if (!match) return [line]
+  const prefix = match[1]
+  const rest = (match[2] || '').trim()
+  if (!rest) return [line]
+  const parts = rest.split(PROSE_AFTER_CHOICE_RE)
+  if (parts.length >= 2 && parts[0]?.trim() && parts.slice(1).join(' ').trim()) {
+    return [`${prefix} ${parts[0].trim()}`, parts.slice(1).join(' ').trim()]
+  }
+  const words = rest.split(/\s+/)
+  if (words.length > 10) {
+    return [`${prefix} ${words.slice(0, 8).join(' ')}`, words.slice(8).join(' ')]
+  }
+  return [`${prefix} ${rest}`]
+}
+
+function normalizeChoiceMarkupChunk(text: string): string {
+  const broken = text
+    .replace(DOUBLE_BULLET_TASK_RE, '-')
+    .replace(INLINE_TASK_BREAK_RE, '\n-')
+  const withParens = tightenLooseParens(broken)
+  const lines = withParens.split('\n').flatMap(splitTrailingProseFromTaskLine)
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** Put inline `- [ ]` on their own lines and drop `- - [ ]` artifacts. */
+export function normalizeAssistantChoiceMarkup(text: string): string {
+  const raw = text || ''
+  if (!raw.includes('```')) return normalizeChoiceMarkupChunk(raw)
+  return raw
+    .split(/(```[\s\S]*?```)/)
+    .map((part) => (part.startsWith('```') ? part : normalizeChoiceMarkupChunk(part)))
+    .join('')
+}
 const REASONING_LEAK_HEADING_RE =
   /^\s*(?:\d+\.\s*)?(?:here'?s\s+a\s+)?thinking\s+process\s*:|^\s*(?:\d+\.\s*)?mental\s+refinement|^\s*(?:\d+\.\s*)?draft\s+construction|^\s*(?:\d+\.\s*)?analyze\s+user\s+input|^\s*(?:\d+\.\s*)?structure\s+requirements|^\s*(?:\d+\.\s*)?constraints\s*:/im
 
@@ -122,20 +168,16 @@ export function choicesToConversationalQuestion(choices: string[]): string | nul
 
 /** Split trailing task-list block from the main narrative. */
 export function parseAssistantMessageContent(content: string): ParsedAssistantMessage {
-  const trimmed = stripAssistantReasoningLeak(content).trim()
+  const trimmed = normalizeAssistantChoiceMarkup(stripAssistantReasoningLeak(content)).trim()
   if (!trimmed) return { body: '', choices: [] }
 
   const lines = trimmed.split('\n')
   const choiceLines: { index: number; label: string }[] = []
-  const seenChoices = new Set<string>()
 
   lines.forEach((line, index) => {
     const match = line.match(TASK_ITEM_RE)
     const label = match?.[1]?.trim()
     if (!label) return
-    const key = label.toLowerCase()
-    if (seenChoices.has(key) || choiceLines.length >= 3) return
-    seenChoices.add(key)
     choiceLines.push({ index, label })
   })
 
@@ -143,13 +185,21 @@ export function parseAssistantMessageContent(content: string): ParsedAssistantMe
     return { body: trimmed, choices: [] }
   }
 
-  const firstChoiceIdx = choiceLines[0].index
+  const choiceIndexes = new Set(choiceLines.map((c) => c.index))
   const body = lines
-    .slice(0, firstChoiceIdx)
+    .filter((_, index) => !choiceIndexes.has(index))
     .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
 
-  const choices = choiceLines.map((c) => c.label).filter(Boolean)
+  const seenChoices = new Set<string>()
+  const choices: string[] = []
+  for (const item of choiceLines) {
+    const key = item.label.toLowerCase()
+    if (!key || seenChoices.has(key) || choices.length >= 3) continue
+    seenChoices.add(key)
+    choices.push(item.label)
+  }
 
   const question = choicesToConversationalQuestion(choices)
   if (question) {

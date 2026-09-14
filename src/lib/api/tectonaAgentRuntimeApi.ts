@@ -7,6 +7,7 @@ import { getSession } from '@/auth/authService'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 import { tectonaAgentRuntimeApiBase } from './gatewayBase'
 import type { LlmUsagePayload } from '@/lib/tokenTelemetry'
+import { readStoredTenantSelection, resolveWorkspaceApiId } from '@/lib/tenantWorkspaceScope'
 
 /** Default workspace slug for sidebar Gen AI sessions until workspace context is wired from shell. */
 export const TECTONA_CHAT_WORKSPACE_ID = 'react-tectona'
@@ -869,6 +870,8 @@ export interface GenAiChatSessionSummary {
   updated_at: string
   business_workspace_id?: string | null
   business_workspace_name?: string | null
+  /** Document explainer pack; omitted/null = default Tectona assistant (Smith). */
+  assistant_id?: string | null
 }
 
 export interface GenAiChatSessionMessage {
@@ -916,7 +919,7 @@ function chatContext(
 ): NonNullable<RuntimeChatRequest['context']> {
   const session = getSession()
   return {
-    workspace_id: context?.workspace_id ?? context?.ui?.workspace_code ?? null,
+    workspace_id: context?.workspace_id ?? TECTONA_CHAT_WORKSPACE_ID,
     user_id: context?.user_id ?? session?.user?.id,
     session_id: context?.session_id,
     carryover_from_session_id: context?.carryover_from_session_id ?? null,
@@ -2186,20 +2189,27 @@ export async function greetTectonaAgent(payload: TectonaAgentGreetRequest): Prom
   return assertLlmGreetResponse(data)
 }
 
+function genAiSessionQuery(workspaceId: string): URLSearchParams {
+  const session = getSession()
+  const query = new URLSearchParams({ workspace_id: workspaceId })
+  if (session?.user?.id) query.set('user_id', session.user.id)
+  if (session?.user?.email) query.set('user_email', session.user.email)
+  if (session?.user?.name) query.set('user_name', session.user.name)
+  const tenantWorkspaceId = resolveWorkspaceApiId(readStoredTenantSelection()?.workspaceId)
+  if (tenantWorkspaceId) query.set('business_workspace_id', tenantWorkspaceId)
+  return query
+}
+
 export async function listGenAiChatSessions(
   workspaceId: string = TECTONA_CHAT_WORKSPACE_ID,
 ): Promise<GenAiChatSessionSummary[]> {
-  const session = getSession()
-  const query = new URLSearchParams({ workspace_id: workspaceId })
-  if (session?.user?.id) {
-    query.set('user_id', session.user.id)
-  }
+  const query = genAiSessionQuery(workspaceId)
   const res = await apiFetch(`${BASE_URL}/v1/chat/sessions?${query.toString()}`, {
     method: 'GET',
     headers: tectonaServiceHeaders(),
   })
   if (!res.ok) {
-    return []
+    throw new Error(`Failed to load chat history (HTTP ${res.status})`)
   }
   const data = (await res.json()) as { sessions?: GenAiChatSessionSummary[] }
   return data.sessions ?? []
@@ -2209,11 +2219,7 @@ export async function fetchGenAiChatSessionMessages(
   sessionId: string,
   workspaceId: string = TECTONA_CHAT_WORKSPACE_ID,
 ): Promise<GenAiChatSessionMessage[]> {
-  const session = getSession()
-  const query = new URLSearchParams({ workspace_id: workspaceId })
-  if (session?.user?.id) {
-    query.set('user_id', session.user.id)
-  }
+  const query = genAiSessionQuery(workspaceId)
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/chat/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`,
     { method: 'GET' },
@@ -2273,11 +2279,7 @@ export async function deleteGenAiChatSession(
   sessionId: string,
   workspaceId: string = TECTONA_CHAT_WORKSPACE_ID,
 ): Promise<boolean> {
-  const session = getSession()
-  const query = new URLSearchParams({ workspace_id: workspaceId })
-  if (session?.user?.id) {
-    query.set('user_id', session.user.id)
-  }
+  const query = genAiSessionQuery(workspaceId)
   const res = await apiFetch(
     `${BASE_URL}/v1/chat/sessions/${encodeURIComponent(sessionId)}?${query.toString()}`,
     {

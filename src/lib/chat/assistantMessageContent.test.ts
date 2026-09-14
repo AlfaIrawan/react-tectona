@@ -89,4 +89,14 @@ describe('parseAssistantMessageContent', () => {
       choices: ['Atur timeline & jadwal', 'Cek status tugas', 'Lihat detail proyek'],
     })
   })
+
+  it('splits inline jammed checkboxes into chips and keeps surrounding prose', () => {
+    const content =
+      'beri tahu saja. - [ ] Cek status template di workspace - - [ ] Setup governance guard baru Untuk melihat log validasi, buka Document Knowledge Management ( /document-knowledge-management ).'
+
+    expect(parseAssistantMessageContent(content)).toEqual({
+      body: 'beri tahu saja.\nUntuk melihat log validasi, buka Document Knowledge Management (/document-knowledge-management).',
+      choices: ['Cek status template di workspace', 'Setup governance guard baru'],
+    })
+  })
 })
