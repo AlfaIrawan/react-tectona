@@ -629,8 +629,8 @@ export function PersonalOneDrivePanel({
           <Cloud className="mx-auto mb-2 h-8 w-8 text-muted-foreground" aria-hidden />
           <p className="text-sm font-medium text-foreground">Connect OneDrive to this personal workspace</p>
           <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
-            Sign in with Microsoft so Tectona can list items in your drive (`Files.Read`). Use
-            alfa.irawan@adira.co.id for the first check.
+            Sign in with your Microsoft 365 account so Tectona can list items in your
+            OneDrive (`Files.Read`). Each user connects their own account once.
           </p>
           <Button type="button" className="mt-3 h-9" disabled={connecting} onClick={() => void connect()}>
             {connecting ? 'Redirecting…' : 'Sign in with Microsoft'}
