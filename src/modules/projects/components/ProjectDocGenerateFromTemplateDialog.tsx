@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
 import { fillDkmTemplate } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
+  getDocumentIndexSnapshot,
   instantiateTemplateFromProject,
   listProjectDocuments,
   patchDocument,
@@ -59,6 +60,11 @@ export type ProjectDocGenerateFromTemplateDialogProps = {
   linkedIdeaDescription?: string | null
   linkedIdeaWorkspaceId?: string | null
   targetFolderId?: string | null
+  /**
+   * Existing Idea Docs (BRD/URD/…) whose text is passed to the agent as authoritative grounding,
+   * so the generated document derives its functional requirements from them instead of inventing.
+   */
+  referenceDocuments?: Array<{ id: string; title: string }>
   onGenerated?: (document: { id: string; title: string }) => void
 }
 
@@ -102,6 +108,7 @@ export function ProjectDocGenerateFromTemplateDialog({
   linkedIdeaDescription,
   linkedIdeaWorkspaceId,
   targetFolderId,
+  referenceDocuments,
   onGenerated,
 }: ProjectDocGenerateFromTemplateDialogProps) {
   const { addToast } = useToast()
@@ -250,9 +257,28 @@ export function ProjectDocGenerateFromTemplateDialog({
         targetFolderId
         ?? (await ensureProjectDocumentFolder({ id: project.id, name: project.name }))
 
+      // Gather the idea's existing documents (BRD/URD/…) as grounding. Best-effort and bounded:
+      // at most 6 documents, each truncated, and a failed fetch is simply skipped so generation
+      // still proceeds on the idea description alone.
+      const referenceDocumentPayload: Array<{ name: string; text: string }> = []
+      for (const doc of (referenceDocuments ?? []).slice(0, 6)) {
+        try {
+          const snapshot = await getDocumentIndexSnapshot(doc.id)
+          const text = [snapshot.attachment_text ?? '', extractPlainTextFromHtml(snapshot.content ?? '')]
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join('\n\n')
+            .slice(0, 20000)
+          if (text) referenceDocumentPayload.push({ name: doc.title, text })
+        } catch {
+          // best-effort — skip a document we cannot read
+        }
+      }
+
       const filled = await fillDkmTemplate({
         template_id: template.id,
         source_text: trimmedSource.slice(0, 12000),
+        reference_documents: referenceDocumentPayload,
         context: { workspace_id: linkedIdeaWorkspaceId ?? project.workspaceId ?? null },
         options: { allow_llm: true },
       })
@@ -338,6 +364,7 @@ export function ProjectDocGenerateFromTemplateDialog({
     project.id,
     project.name,
     project.workspaceId,
+    referenceDocuments,
     sourceText,
     targetFolderId,
     templateId,

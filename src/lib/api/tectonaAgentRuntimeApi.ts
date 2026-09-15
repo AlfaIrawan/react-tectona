@@ -605,6 +605,8 @@ export interface IdeaDraftBrainstormResponse {
   discovery_progress?: IdeaDraftDiscoveryProgress
   confidence_percent?: number
   offer_generate_anyway?: boolean
+  /** The user affirmed the offer to generate ("ok lanjutkan") — run generation now. */
+  should_generate_draft?: boolean
 }
 
 export interface RestoreIdeaDraftBrainstormRequest {
@@ -1379,10 +1381,17 @@ export interface FillDkmTemplatePayload {
   summary?: string
 }
 
+export interface FillDkmTemplateReferenceDocument {
+  name: string
+  text: string
+}
+
 export interface FillDkmTemplateRequest {
   template_id: string
   source_text?: string
   instructions?: string
+  /** Existing Idea Docs (BRD/URD/…) passed as authoritative grounding for the fill. */
+  reference_documents?: FillDkmTemplateReferenceDocument[]
   context?: {
     workspace_id?: string | null
     user_id?: string | null

@@ -1792,6 +1792,10 @@ export function IdeaBacklogManagementPage() {
   const [isCreateIdeaDrawerOpen, setIsCreateIdeaDrawerOpen] = useState(false)
   const [isUploadIdeaPanelOpen, setIsUploadIdeaPanelOpen] = useState(false)
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
+  const [moveIdeaTarget, setMoveIdeaTarget] = useState<Idea | null>(null)
+  const [moveIdeaWorkspaceId, setMoveIdeaWorkspaceId] = useState('')
+  const [isMovingIdea, setIsMovingIdea] = useState(false)
+  const [moveIdeaError, setMoveIdeaError] = useState('')
   const [isDeletingIdea, setIsDeletingIdea] = useState(false)
   const [deleteIdeaError, setDeleteIdeaError] = useState('')
   const [aiAssistanceLoading, setAiAssistanceLoading] = useState<IdeaAiAssistanceMode | null>(null)
@@ -3320,6 +3324,43 @@ export function IdeaBacklogManagementPage() {
     closeContextMenu()
   }
 
+  const openMoveIdeaDialog = (idea: Idea) => {
+    setMoveIdeaTarget(idea)
+    setMoveIdeaWorkspaceId('')
+    setMoveIdeaError('')
+    closeContextMenu()
+  }
+
+  const closeMoveIdeaDialog = () => {
+    if (isMovingIdea) return
+    setMoveIdeaTarget(null)
+    setMoveIdeaWorkspaceId('')
+    setMoveIdeaError('')
+  }
+
+  const submitMoveIdea = async () => {
+    if (!moveIdeaTarget || !moveIdeaWorkspaceId || isMovingIdea) return
+    const destination = userWorkspaceOptions.options.find((option) => option.workspaceId === moveIdeaWorkspaceId)
+    if (!destination || destination.workspaceId === moveIdeaTarget.workspaceId) return
+
+    setIsMovingIdea(true)
+    setMoveIdeaError('')
+    try {
+      const updated = await patchIdea(moveIdeaTarget.id, {
+        workspace_id: destination.workspaceId,
+        folder_id: null,
+        version: moveIdeaTarget.version,
+      })
+      setIdeas((prev) => prev.map((idea) => (idea.id === updated.id ? toIdea(updated) : idea)))
+      addToast({ title: 'Idea moved', description: `Moved to ${destination.workspaceName}.` })
+      closeMoveIdeaDialog()
+    } catch (error) {
+      setMoveIdeaError(error instanceof Error ? error.message : 'Could not move the idea.')
+    } finally {
+      setIsMovingIdea(false)
+    }
+  }
+
   const closeDeleteIdeaDialog = () => {
     if (isDeletingIdea) return
     setDeleteIdeaTarget(null)
@@ -3645,6 +3686,13 @@ export function IdeaBacklogManagementPage() {
             offer_generate_anyway: Boolean(response.offer_generate_anyway) && !response.ready_to_continue,
           }
         : current)
+      // The user affirmed the offer to generate ("ok lanjutkan"). The backend
+      // recorded a short confirmation instead of another question and asked us to
+      // run generation now — same as clicking Generate draft.
+      if (response.should_generate_draft) {
+        void handleContinueIdeaDraft('use_brainstorm')
+        return
+      }
     } catch (error) {
       if (!messageOverride) setBrainstormInput(message)
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
@@ -5001,6 +5049,15 @@ export function IdeaBacklogManagementPage() {
           >
             <Eye className="w-4 h-4 mr-2" />
             {isContextIdeaAnalysisLocked ? 'Analysis in progress' : 'View detail'}
+          </ContextMenuItem>
+        )}
+
+        {!isMultiSelectCardMenu && ideaCardContextMenu && (
+          <ContextMenuItem
+            onClick={() => openMoveIdeaDialog(ideaCardContextMenu.idea)}
+          >
+            <MoveRight className="w-4 h-4 mr-2" />
+            Move idea
           </ContextMenuItem>
         )}
 
@@ -6505,7 +6562,64 @@ export function IdeaBacklogManagementPage() {
                   document.body,
                 )
               : null}
-            {deleteIdeaTarget && typeof document !== 'undefined'
+            {moveIdeaTarget && typeof document !== 'undefined'
+              ? createPortal(
+                  <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-lg rounded-xl border border-border bg-background shadow-2xl">
+                      <div className="border-b border-border px-6 py-5">
+                        <div className="flex items-start gap-3">
+                          <div className="rounded-lg border border-blue-200 bg-blue-50 p-2 text-blue-600">
+                            <MoveRight className="h-5 w-5" aria-hidden />
+                          </div>
+                          <div>
+                            <h2 className="text-lg font-semibold">Move idea</h2>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              Change where this idea is stored and who can access it.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-4 px-6 py-5">
+                        <div className="rounded-lg border border-border bg-muted/30 p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Idea</p>
+                          <p className="mt-1 break-words text-sm font-semibold">{moveIdeaTarget.title}</p>
+                        </div>
+                        <div>
+                          <Label htmlFor="move-idea-workspace">Destination workspace</Label>
+                          <select
+                            id="move-idea-workspace"
+                            value={moveIdeaWorkspaceId}
+                            onChange={(event) => setMoveIdeaWorkspaceId(event.target.value)}
+                            className="mt-2 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          >
+                            <option value="">Select a destination</option>
+                            {userWorkspaceOptions.options
+                              .filter((option) => option.workspaceId !== moveIdeaTarget.workspaceId)
+                              .map((option) => (
+                                <option key={option.workspaceId} value={option.workspaceId}>
+                                  {option.workspaceName} ({option.tenantMode === 'personal' ? 'Personal' : 'Non-personal'})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-950">
+                          Moving to a Personal workspace makes the idea private to that workspace. Moving to a Non-personal workspace makes it available according to that workspace's access policy. The current folder link will be cleared.
+                        </div>
+                        {moveIdeaError && <p className="text-sm text-destructive">{moveIdeaError}</p>}
+                      </div>
+                      <div className="flex gap-3 border-t border-border px-6 py-4">
+                        <Button type="button" variant="outline" className="flex-1" onClick={closeMoveIdeaDialog} disabled={isMovingIdea}>
+                          Cancel
+                        </Button>
+                        <Button type="button" className="flex-1" onClick={() => void submitMoveIdea()} disabled={!moveIdeaWorkspaceId || isMovingIdea}>
+                          {isMovingIdea ? 'Moving…' : 'Move idea'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>,
+                  document.body,
+                )
+              : deleteIdeaTarget && typeof document !== 'undefined'
               ? createPortal(
                   <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
                     <button

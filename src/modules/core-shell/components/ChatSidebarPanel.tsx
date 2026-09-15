@@ -3,6 +3,7 @@ import type { CSSProperties, RefObject } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { getSession } from '@/auth/authService'
+import { useTenantContextOptional } from '@/auth/TenantContext'
 import { randomUuid } from '@/lib/randomId'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import {
@@ -103,6 +104,10 @@ import {
   recordChatHistoryCleared,
 } from '@/lib/chat/chatClearHistoryStorage'
 import {
+  getDeletedGenAiSessionIds,
+  rememberDeletedGenAiSessionIds,
+} from '@/lib/chat/chatDeletedGenAiSessionsStorage'
+import {
   applyDisappearingExpiryFilter,
   getChannelDisappearingDuration,
   parseDisappearingMessagesDuration,
@@ -164,11 +169,7 @@ import {
   type GenAiChatSessionSummary,
   type RuntimeChatEvidence,
 } from '@/lib/api/tectonaAgentRuntimeApi'
-import {
-  EXPLAINER_CHARACTERS,
-  EXPLAINER_CHARACTER_LABEL,
-  type ExplainerCharacter,
-} from '@/lib/api/documentKnowledgeApi'
+import { type ExplainerCharacter } from '@/lib/api/documentKnowledgeApi'
 import { AssistantEvidenceFootnotes } from './AssistantEvidenceFootnotes'
 import { useTectonaVoiceWake } from '@/hooks/useTectonaVoiceWake'
 import { speak as speakReply, stopSpeaking, isTtsSupported } from '@/lib/voice/tts'
@@ -186,6 +187,7 @@ import {
   AGENT_RUNTIME_CONTACTS,
   fetchExplainerAssistantContacts,
   genAiAssistantDisplayName,
+  conversationAssistantIdForGreet,
   mergeExplainerContacts,
   type ChatContact,
   type ChatMode,
@@ -1084,7 +1086,6 @@ type GenAiOpeningGreetingContext = {
   documentTitle?: string | null
   /** Explainer pack to greet as; omitted/null greets as the default Tectona assistant. */
   assistantId?: string | null
-  explainerCharacter?: ExplainerCharacter | null
 }
 
 const BACKEND_OPENING_GREETING_TOKEN = '__TECTONA_OPENING_GREETING__'
@@ -1111,7 +1112,6 @@ async function resolveGenAiOpeningGreeting(
       document_id: context.documentId ?? null,
       document_title: context.documentTitle ?? null,
       assistant_id: context.assistantId ?? null,
-      explainer_character: context.explainerCharacter ?? null,
     },
   })
 
@@ -1133,11 +1133,18 @@ function explainerCharacterFromValue(raw: string | null | undefined): ExplainerC
   return 'polite'
 }
 
-function buildGenAiGreetingErrorMessage(): ChatMessage {
+function buildGenAiGreetingErrorMessage(
+  assistantName = TECTONA_ASSISTANT_LABEL,
+  detail?: string,
+): ChatMessage {
+  const name = assistantName.trim() || TECTONA_ASSISTANT_LABEL
+  const extra = (detail ?? '').trim()
   return {
     id: `greet-error-${Date.now()}`,
     role: 'assistant',
-    text: 'Failed to load the Tectona Assistant greeting. Please try again.',
+    text: extra
+      ? `Failed to load ${name}'s greeting. ${extra}`
+      : `Failed to load ${name}'s greeting. Please try again.`,
     at: Date.now(),
     action: { kind: 'retry_greet', label: 'Try again' },
   }
@@ -1149,6 +1156,7 @@ async function retryGenAiGreetingInternal(
     setMessagesById: React.Dispatch<React.SetStateAction<Record<string, ChatMessage[]>>>
     setConversations: React.Dispatch<React.SetStateAction<Conversation[]>>
     openingContext: GenAiOpeningGreetingContext
+    chatContacts: ChatContact[]
   },
 ): Promise<void> {
   const loadingMsgId = `greet-loading-${conversationId}`
@@ -1175,7 +1183,7 @@ async function retryGenAiGreetingInternal(
       c.id === conversationId
         ? {
             ...c,
-            preview: greetPreviewText(genAiAssistantDisplayName(c)),
+            preview: greetPreviewText(genAiAssistantDisplayName(c, opts.chatContacts)),
             updatedAt: Date.now(),
           }
         : c,
@@ -1195,8 +1203,15 @@ async function retryGenAiGreetingInternal(
         c.id === conversationId ? { ...c, preview: truncatePreview(greeting.text || c.preview), updatedAt: Date.now() } : c,
       ),
     )
-  } catch {
-    const err = buildGenAiGreetingErrorMessage()
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : ''
+    const err = buildGenAiGreetingErrorMessage(
+      genAiAssistantDisplayName(
+        { assistantId: opts.openingContext.assistantId, title: opts.openingContext.activeConversationTitle },
+        opts.chatContacts,
+      ),
+      detail,
+    )
     opts.setMessagesById((prev) => ({
       ...prev,
       [conversationId]: (prev[conversationId] ?? []).map((m) =>
@@ -1400,6 +1415,7 @@ type ChatSidebarPanelProps = {
 export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelProps = {}) {
   const location = useLocation()
   const navigate = useNavigate()
+  const tenant = useTenantContextOptional()
   const close = () => useChatPanelStore.getState().setOpen(false)
   const setActiveChannelId = useChatNotificationTargetStore((s) => s.setActiveChannelId)
   const pendingChatOpen = useChatNavigationStore((s) => s.pendingOpen)
@@ -1538,10 +1554,13 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const retryGenAiGreeting = useCallback(
     async (conversationId: string) => {
-      const conv = conversations.find((c) => c.id === conversationId)
+      const conv =
+        conversationsRef.current.find((c) => c.id === conversationId) ??
+        conversations.find((c) => c.id === conversationId)
       await retryGenAiGreetingInternal(conversationId, {
         setMessagesById,
         setConversations,
+        chatContacts: chatContactsForDisplay,
         openingContext: {
           pathname: location.pathname,
           search: location.search,
@@ -1550,11 +1569,13 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           activeConversationMode: conv?.mode ?? null,
           documentId: documentContext?.documentId ?? null,
           documentTitle: documentContext?.documentTitle ?? null,
+          assistantId: conversationAssistantIdForGreet(conv, chatContactsForDisplay),
         },
       })
     },
     [
       conversations,
+      chatContactsForDisplay,
       location.pathname,
       location.search,
       screen,
@@ -2172,10 +2193,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   useEffect(() => {
     let cancelled = false
     const loadExplainers = () => {
-      const tenant = readStoredTenantSelection()
+      const scopeTenant = tenant ?? readStoredTenantSelection()
       const workspaceId =
-        resolveWorkspaceIdForWrite(buildWorkspaceScopeFromTenant(tenant))
-        ?? resolveWorkspaceApiId(tenant?.workspaceId)
+        resolveWorkspaceIdForWrite(buildWorkspaceScopeFromTenant(scopeTenant))
+        ?? resolveWorkspaceApiId(scopeTenant?.workspaceId)
       if (!workspaceId) return
       void (async () => {
         try {
@@ -2197,7 +2218,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       cancelled = true
       window.removeEventListener(TECTONA_TENANT_CHANGED_EVENT, loadExplainers)
     }
-  }, [])
+  }, [tenant?.workspaceId, tenant?.selectedWorkspaceIds, tenant?.tenantMode])
 
   useEffect(() => {
     const onTenantChanged = () => {
@@ -2293,9 +2314,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       try {
         const sessions = await listGenAiChatSessions(TECTONA_CHAT_WORKSPACE_ID)
         if (cancelled) return
+        const tombstoned = getDeletedGenAiSessionIds()
         const genaiRows = sortGenAiSessionsByUpdatedAt(
           sessions
-            .filter((row) => Boolean(row.session_id))
+            .filter((row) => Boolean(row.session_id) && !tombstoned.has(row.session_id))
             .map((row) =>
               apiGenAiSessionToConversation(row, aiFolderLabelByKey[row.session_id]),
             ),
@@ -2304,9 +2326,19 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           const team = prev.filter((c) => c.mode !== 'genai')
           const prevGenaiById = new Map(prev.filter((c) => c.mode === 'genai').map((c) => [c.id, c]))
           const apiIds = new Set(genaiRows.map((row) => row.id))
-          const localOnlyGenai = prev.filter(
-            (c) => c.mode === 'genai' && !apiIds.has(c.id),
-          )
+          const activeId = activeConversationIdRef.current
+          const localMessages = messagesByIdRef.current
+          const localOnlyGenai = prev.filter((c) => {
+            if (c.mode !== 'genai' || apiIds.has(c.id) || tombstoned.has(c.id)) return false
+            if (c.isBrainstormPointer || c.id === activeId) return true
+            const msgs = localMessages[c.id] ?? []
+            return msgs.some(
+              (m) =>
+                m.action?.kind === 'retry_greet' ||
+                m.role === 'user' ||
+                (m.role === 'assistant' && Boolean(m.text?.trim()) && !m.isLoading),
+            )
+          })
           const genai = genaiRows.map((row) => {
             const existing = prevGenaiById.get(row.id)
             return {
@@ -2428,7 +2460,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       setConversations((prev) =>
         prev.map((c) =>
           c.id === conv.id
-            ? { ...c, preview: greetPreviewText(genAiAssistantDisplayName(c, chatContacts)), updatedAt: Date.now() }
+            ? { ...c, preview: greetPreviewText(genAiAssistantDisplayName(c, chatContactsForDisplay)), updatedAt: Date.now() }
             : c,
         ),
       )
@@ -2443,15 +2475,20 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             activeConversationMode: conv.mode,
             documentId: documentContext?.documentId ?? null,
             documentTitle: documentContext?.documentTitle ?? null,
-            assistantId: conv.assistantId ?? null,
-            explainerCharacter: conv.explainerCharacter ?? null,
+            assistantId: conversationAssistantIdForGreet(conv, chatContactsForDisplay),
           })
           const synced = await syncThreadFromBackend({ force: true })
           if (!synced) {
             applyGreetingToThread(loadingMsgId, greeting)
           }
-        } catch {
-          applyGreetingToThread(loadingMsgId, buildGenAiGreetingErrorMessage())
+        } catch (error) {
+          applyGreetingToThread(
+            loadingMsgId,
+            buildGenAiGreetingErrorMessage(
+              genAiAssistantDisplayName(conv, chatContactsForDisplay),
+              error instanceof Error ? error.message : '',
+            ),
+          )
         }
       })()
 
@@ -2524,6 +2561,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     screen,
     documentContext?.documentId,
     documentContext?.documentTitle,
+    chatContactsForDisplay,
   ])
 
   useEffect(() => {
@@ -3123,10 +3161,11 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const deleteGenAiSessionsRemote = useCallback((ids: string[]) => {
     if (ids.length === 0) return
+    rememberDeletedGenAiSessionIds(ids)
     for (const id of ids) {
       genaiHydratedRef.current.delete(id)
       void deleteGenAiChatSession(id).catch(() => {
-        // Best-effort; UI already removed from local state.
+        // Best-effort; UI already removed from local state. Tombstone keeps it hidden.
       })
     }
   }, [])
@@ -3908,10 +3947,12 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         if (!match) {
           try {
             const sessions = await listGenAiChatSessions(TECTONA_CHAT_WORKSPACE_ID)
+            const tombstoned = getDeletedGenAiSessionIds()
             const row = sessions.find(
               (session) =>
-                session.session_id === preferredId
-                || titlesMatchIdeaSession(session.title ?? '', ideaTitle),
+                !tombstoned.has(session.session_id) &&
+                (session.session_id === preferredId
+                || titlesMatchIdeaSession(session.title ?? '', ideaTitle)),
             )
             if (row) {
               const mapped = {
@@ -4736,11 +4777,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             assistant_attachments: runtimeAssistantAttachments,
             document_id: documentContext?.documentId ?? null,
             document_title: documentContext?.documentTitle ?? null,
-            assistant_id:
-              conversationsRef.current.find((c) => c.id === conversationId)?.assistantId ?? null,
-            explainer_character:
-              conversationsRef.current.find((c) => c.id === conversationId)?.explainerCharacter
-              ?? null,
+            assistant_id: conversationAssistantIdForGreet(
+              conversationsRef.current.find((c) => c.id === conversationId),
+              chatContactsForDisplay,
+            ),
           },
           },
           {
@@ -6220,37 +6260,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                 ) : null}
               </>
             )}
-            {activeConversation?.assistantId ? (
-              <div className="flex flex-wrap gap-1 px-0.5 pb-1">
-                {EXPLAINER_CHARACTERS.map((token) => {
-                  const selected =
-                    explainerCharacterFromValue(activeConversation.explainerCharacter) === token
-                  return (
-                    <button
-                      key={token}
-                      type="button"
-                      onClick={() =>
-                        setConversations((prev) =>
-                          prev.map((conv) =>
-                            conv.id === activeConversation.id
-                              ? { ...conv, explainerCharacter: token }
-                              : conv,
-                          ),
-                        )
-                      }
-                      className={cn(
-                        'rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                        selected
-                          ? 'border-primary/40 bg-primary/10 text-foreground'
-                          : 'border-border/60 text-muted-foreground hover:text-foreground',
-                      )}
-                    >
-                      {EXPLAINER_CHARACTER_LABEL[token]}
-                    </button>
-                  )
-                })}
-              </div>
-            ) : null}
             <Textarea
               placeholder="Ask Gen AI…"
               value={draft}

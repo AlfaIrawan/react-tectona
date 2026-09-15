@@ -1292,6 +1292,16 @@ export interface ExplainerChatLimitScope {
   limit_value: number
 }
 
+export type ExplainerFallbackKind = 'none' | 'member_email' | 'member_chat' | 'group_chat' | 'custom_email'
+
+export interface ExplainerFallback {
+  message: string
+  escalate_kind: ExplainerFallbackKind
+  target_id?: string
+  target_label?: string | null
+  target_email?: string | null
+}
+
 export interface ExplainerAssistant {
   id: string
   workspace_id: string
@@ -1309,6 +1319,7 @@ export interface ExplainerAssistant {
   chat_limit_value?: number | null
   chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
+  fallback?: ExplainerFallback
   revision_no?: number
   last_publish_error?: string | null
   last_publish_failed_at?: string | null
@@ -1341,6 +1352,7 @@ export interface CreateExplainerAssistantPayload {
   chat_limit_value?: number | null
   chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
+  fallback?: ExplainerFallback
 }
 
 export interface PatchExplainerAssistantPayload {
@@ -1355,6 +1367,7 @@ export interface PatchExplainerAssistantPayload {
   chat_limit_value?: number | null
   chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
+  fallback?: ExplainerFallback
   /** Optimistic lock — send the version last read to detect concurrent edits. */
   version?: number
 }
@@ -1408,6 +1421,10 @@ export async function createExplainerAssistant(
       chat_limit_value: payload.chat_limit_value ?? null,
       chat_limit_scopes: payload.chat_limit_scopes ?? [],
       character: payload.character ?? 'polite',
+      // Declared on the payload type and collected by the drawer, but previously
+      // never serialised — so editing the fallback appeared to save and silently
+      // never left the browser.
+      fallback: payload.fallback ?? undefined,
     }),
   })
   return handleJson<ExplainerAssistant>(res)
@@ -1429,6 +1446,7 @@ export async function patchExplainerAssistant(
   if (payload.chat_limit_value !== undefined) body.chat_limit_value = payload.chat_limit_value
   if (payload.chat_limit_scopes !== undefined) body.chat_limit_scopes = payload.chat_limit_scopes
   if (payload.character !== undefined) body.character = payload.character
+  if (payload.fallback !== undefined) body.fallback = payload.fallback
   if (payload.version !== undefined) body.version = payload.version
 
   const res = await apiFetch(`${getV1Base()}/explainer-assistants/${encodeURIComponent(assistantId)}`, {

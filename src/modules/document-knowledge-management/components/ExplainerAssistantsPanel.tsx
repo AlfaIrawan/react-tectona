@@ -8,7 +8,7 @@
  */
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { Archive, AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, Shield, Users, X } from 'lucide-react'
+import { Archive, AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, Shield, Users, X } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { Badge } from '@/components/ui/badge'
@@ -43,8 +43,11 @@ import {
   type ExplainerChatLimitKind,
   type ExplainerChatLimitScope,
   type ExplainerCorpusAlert,
+  type ExplainerFallback,
+  type ExplainerFallbackKind,
 } from '@/lib/api/documentKnowledgeApi'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { listWorkspaceChannels, type CollaborationChannelApi } from '@/lib/api/collaborationContextApi'
 import { getSession } from '@/auth/authService'
 import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
 import { isUuidLike } from '@/modules/projects/lib/projectMemberIdentity'
@@ -109,10 +112,25 @@ interface DraftState {
   folderIds: string[]
   documentIds: string[]
   accessGrants: ExplainerAccessGrant[]
+  /**
+   * Which kind of cap this assistant uses. The two are kept exclusive in the UI so
+   * what is on screen is exactly what is saved: a hidden default cap that still
+   * applied to everyone outside the listed scopes would be a cap the user cannot see.
+   */
+  chatLimitMode: 'general' | 'scoped'
   chatLimitKind: 'none' | ExplainerChatLimitKind
   chatLimitValue: string
   chatLimitScopes: ExplainerChatLimitScope[]
   character: ExplainerCharacter
+  fallback: ExplainerFallback
+}
+
+const EMPTY_FALLBACK: ExplainerFallback = {
+  message: '',
+  escalate_kind: 'none',
+  target_id: '',
+  target_label: '',
+  target_email: '',
 }
 
 const EMPTY_DRAFT: DraftState = {
@@ -124,11 +142,18 @@ const EMPTY_DRAFT: DraftState = {
   folderIds: [],
   documentIds: [],
   accessGrants: [],
+  chatLimitMode: 'general',
   chatLimitKind: 'none',
   chatLimitValue: '',
   chatLimitScopes: [],
   character: 'polite',
+  fallback: EMPTY_FALLBACK,
 }
+
+const CHAT_LIMIT_MODE_OPTIONS: Array<{ mode: 'general' | 'scoped'; label: string }> = [
+  { mode: 'general', label: 'General' },
+  { mode: 'scoped', label: 'Per workspace / user' },
+]
 
 const CHAT_LIMIT_OPTIONS: Array<{
   kind: DraftState['chatLimitKind']
@@ -208,6 +233,33 @@ function characterLabel(value: string | null | undefined): string {
     return EXPLAINER_CHARACTER_LABEL[value]
   }
   return EXPLAINER_CHARACTER_LABEL.polite
+}
+
+const FALLBACK_KIND_OPTIONS: Array<{ kind: ExplainerFallbackKind; label: string; hint: string }> = [
+  { kind: 'none', label: 'No forwarding', hint: 'Only show the fallback sentence in chat.' },
+  { kind: 'member_email', label: 'Member email', hint: 'Email a Tectona member from the directory.' },
+  { kind: 'member_chat', label: 'Member chat', hint: 'Open a 1:1 Tectona chat with a member.' },
+  { kind: 'group_chat', label: 'Group chat', hint: 'Post into a Tectona group chat.' },
+  { kind: 'custom_email', label: 'Customer email', hint: 'Send to any email address.' },
+]
+
+function fallbackFromAssistant(assistant: ExplainerAssistant): ExplainerFallback {
+  const raw = assistant.fallback
+  const kind = raw?.escalate_kind
+  return {
+    message: (raw?.message || '').trim(),
+    escalate_kind:
+      kind === 'member_email' || kind === 'member_chat' || kind === 'group_chat' || kind === 'custom_email'
+        ? kind
+        : 'none',
+    target_id: raw?.target_id || '',
+    target_label: raw?.target_label || '',
+    target_email: raw?.target_email || '',
+  }
+}
+
+function fallbackKindLabel(kind: string | null | undefined): string {
+  return FALLBACK_KIND_OPTIONS.find((item) => item.kind === kind)?.label || 'No forwarding'
 }
 
 function formatWeekLabel(weekStart: string): string {
@@ -444,6 +496,8 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   const [membersByWorkspaceId, setMembersByWorkspaceId] = useState<Record<string, GrantMemberRow[]>>({})
   const [rolesByWorkspaceId, setRolesByWorkspaceId] = useState<Record<string, WacRoleDto[]>>({})
   const [identityNameById, setIdentityNameById] = useState<Map<string, string>>(new Map())
+  const [identityEmailById, setIdentityEmailById] = useState<Map<string, string>>(new Map())
+  const [groupChannels, setGroupChannels] = useState<CollaborationChannelApi[]>([])
   const [grantRosterLoading, setGrantRosterLoading] = useState(false)
   const [grantRosterError, setGrantRosterError] = useState<string | null>(null)
   const [scopeSubjectKind, setScopeSubjectKind] = useState<'workspace' | 'user'>('workspace')
@@ -521,13 +575,19 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           .catch(() => [] as IdentityUserDto[])
         if (cancelled) return
         const nameById = new Map<string, string>()
+        const emailById = new Map<string, string>()
         for (const user of identityItems) {
           const name = identityUserDisplayName(user)
           if (name) nameById.set(user.id, name)
+          if (user.email) emailById.set(user.id, user.email)
         }
         setIdentityNameById(nameById)
+        setIdentityEmailById(emailById)
       } catch {
-        if (!cancelled) setIdentityNameById(new Map())
+        if (!cancelled) {
+          setIdentityNameById(new Map())
+          setIdentityEmailById(new Map())
+        }
       }
     })()
 
@@ -553,6 +613,26 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
       cancelled = true
     }
   }, [drawerOpen, workspaceId])
+
+  useEffect(() => {
+    if (!drawerOpen) return
+    const collabWorkspaceId = (wacWorkspaceId || workspaceId || '').trim()
+    if (!collabWorkspaceId) {
+      setGroupChannels([])
+      return
+    }
+    let cancelled = false
+    void listWorkspaceChannels(collabWorkspaceId, { channelType: 'group', pageSize: 100 })
+      .then((res) => {
+        if (!cancelled) setGroupChannels(res.items ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setGroupChannels([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [drawerOpen, wacWorkspaceId, workspaceId])
 
   useEffect(() => {
     if (!drawerOpen) return
@@ -772,6 +852,11 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
       ),
       ...chatLimitDraftFromAssistant(assistant),
       chatLimitScopes: Array.isArray(assistant.chat_limit_scopes) ? assistant.chat_limit_scopes : [],
+      // An assistant that already carries per-scope caps opens in that mode.
+      chatLimitMode:
+        Array.isArray(assistant.chat_limit_scopes) && assistant.chat_limit_scopes.length > 0
+          ? 'scoped'
+          : 'general',
       character:
         assistant.character === 'cool'
         || assistant.character === 'formal'
@@ -779,6 +864,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
         || assistant.character === 'concise'
           ? assistant.character
           : 'polite',
+      fallback: fallbackFromAssistant(assistant),
     })
     setSaveError(null)
     setCorpusQuery('')
@@ -1071,9 +1157,19 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   const showEmptyRoles = !grantRosterLoading && pickerRoles.length === 0
 
   const chatLimitReady =
-    draft.chatLimitKind === 'none'
+    draft.chatLimitMode === 'scoped'
+    || draft.chatLimitKind === 'none'
     || (Number.isFinite(Number(draft.chatLimitValue)) && Number(draft.chatLimitValue) > 0)
-  const canSave = !!workspaceId && draft.displayName.trim().length > 0 && chatLimitReady
+  const fallbackEmail = (draft.fallback.target_email || '').trim()
+  const fallbackReady =
+    draft.fallback.escalate_kind === 'none'
+    || (draft.fallback.escalate_kind === 'custom_email' && fallbackEmail.includes('@'))
+    || (draft.fallback.escalate_kind === 'member_email'
+      && Boolean(draft.fallback.target_id)
+      && (fallbackEmail.includes('@') || Boolean(identityEmailById.get(draft.fallback.target_id))))
+    || ((draft.fallback.escalate_kind === 'member_chat' || draft.fallback.escalate_kind === 'group_chat')
+      && Boolean(draft.fallback.target_id))
+  const canSave = !!workspaceId && draft.displayName.trim().length > 0 && chatLimitReady && fallbackReady
 
   const addScopedChatLimit = () => {
     let parsed: { chat_limit_kind: ExplainerChatLimitKind | null; chat_limit_value: number | null }
@@ -1126,6 +1222,24 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     try {
       const corpus = { folder_ids: draft.folderIds, document_ids: draft.documentIds }
       const chatLimit = parseChatLimitDraft(draft.chatLimitKind, draft.chatLimitValue)
+      const fallbackPayload: ExplainerFallback = {
+        message: draft.fallback.message.trim(),
+        escalate_kind: draft.fallback.escalate_kind,
+        target_id: draft.fallback.escalate_kind === 'custom_email' || draft.fallback.escalate_kind === 'none'
+          ? ''
+          : (draft.fallback.target_id || ''),
+        target_label: draft.fallback.target_label || '',
+        target_email:
+          draft.fallback.escalate_kind === 'member_email'
+            ? (draft.fallback.target_email || identityEmailById.get(draft.fallback.target_id || '') || '')
+            : draft.fallback.escalate_kind === 'custom_email'
+              ? (draft.fallback.target_email || '')
+              : '',
+      }
+      // Saving only the chosen shape is what keeps the form honest: switching to
+      // per-scope caps clears the default, and switching back clears the scopes.
+      const scopedChatLimit = draft.chatLimitMode === 'scoped'
+
       if (draft.id) {
         await patchExplainerAssistant(draft.id, {
           display_name: draft.displayName.trim(),
@@ -1133,10 +1247,11 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           avatar: draft.avatar,
           corpus,
           access_grants: draft.accessGrants,
-          chat_limit_kind: chatLimit.chat_limit_kind,
-          chat_limit_value: chatLimit.chat_limit_value,
-          chat_limit_scopes: draft.chatLimitScopes,
+          chat_limit_kind: scopedChatLimit ? null : chatLimit.chat_limit_kind,
+          chat_limit_value: scopedChatLimit ? null : chatLimit.chat_limit_value,
+          chat_limit_scopes: scopedChatLimit ? draft.chatLimitScopes : [],
           character: draft.character,
+          fallback: fallbackPayload,
           version: draft.version ?? undefined,
         })
       } else {
@@ -1147,10 +1262,11 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           avatar: draft.avatar,
           corpus,
           access_grants: draft.accessGrants,
-          chat_limit_kind: chatLimit.chat_limit_kind,
-          chat_limit_value: chatLimit.chat_limit_value,
-          chat_limit_scopes: draft.chatLimitScopes,
+          chat_limit_kind: scopedChatLimit ? null : chatLimit.chat_limit_kind,
+          chat_limit_value: scopedChatLimit ? null : chatLimit.chat_limit_value,
+          chat_limit_scopes: scopedChatLimit ? draft.chatLimitScopes : [],
           character: draft.character,
+          fallback: fallbackPayload,
         })
       }
       setDrawerOpen(false)
@@ -1827,6 +1943,23 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         <dd className="text-foreground">{characterLabel(detailFor.character)}</dd>
                       </div>
                       <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Fallback</dt>
+                        <dd className="max-w-[60%] text-right text-foreground">
+                          {(detailFor.fallback?.message || '').trim() || 'Default refusal'}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Forward unanswered</dt>
+                        <dd className="max-w-[60%] text-right text-foreground">
+                          {fallbackKindLabel(detailFor.fallback?.escalate_kind)}
+                          {detailFor.fallback?.target_label
+                            ? ` · ${detailFor.fallback.target_label}`
+                            : detailFor.fallback?.target_email
+                              ? ` · ${detailFor.fallback.target_email}`
+                              : ''}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
                         <dt className="text-muted-foreground">Published revision</dt>
                         <dd className="tabular-nums text-foreground">{detailFor.revision_no ?? 0}</dd>
                       </div>
@@ -2146,7 +2279,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     <div className="space-y-2">
                       <Label className="text-xs text-muted-foreground">Character</Label>
                       <p className="text-[11px] leading-relaxed text-muted-foreground">
-                        Default speaking tone in chat. People can still pick a different tone per conversation.
+                        Speaking tone for every chat with this assistant. Change it here, not in the conversation.
                       </p>
                       <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                         {EXPLAINER_CHARACTERS.map((token) => {
@@ -2169,12 +2302,192 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     </div>
 
                     <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Fallback when unanswered</Label>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        Shown when this assistant has no matching evidence, so it will not invent an answer.
+                        Optionally forward the question to a Tectona member, a group chat, or a customer email.
+                        Leave this blank to generate a safe handoff message for the selected destination.
+                      </p>
+                      <Textarea
+                        id="explainer-fallback-message"
+                        value={draft.fallback.message}
+                        maxLength={1000}
+                        rows={4}
+                        placeholder="Optional - an automatic handoff message is used when a destination is selected."
+                        className="min-h-[88px] text-sm"
+                        onChange={(event) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            fallback: { ...prev.fallback, message: event.target.value },
+                          }))
+                        }
+                      />
+                      <p className="text-[10px] text-muted-foreground">{draft.fallback.message.length} / 1000</p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {FALLBACK_KIND_OPTIONS.map((option) => {
+                          const selected = draft.fallback.escalate_kind === option.kind
+                          return (
+                            <button
+                              key={option.kind}
+                              type="button"
+                              onClick={() =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  fallback: {
+                                    ...prev.fallback,
+                                    escalate_kind: option.kind,
+                                    target_id: option.kind === 'none' || option.kind === 'custom_email' ? '' : prev.fallback.target_id,
+                                    target_label: option.kind === 'none' ? '' : prev.fallback.target_label,
+                                    target_email: option.kind === 'custom_email' || option.kind === 'member_email'
+                                      ? prev.fallback.target_email
+                                      : '',
+                                  },
+                                }))
+                              }
+                              className={cn(
+                                'rounded-lg border px-3 py-2 text-left',
+                                selected ? 'border-primary/40 bg-primary/5' : 'border-border/60',
+                              )}
+                            >
+                              <span className="block text-xs font-medium text-foreground">{option.label}</span>
+                              <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                                {option.hint}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {draft.fallback.escalate_kind === 'member_email' || draft.fallback.escalate_kind === 'member_chat' ? (
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px] text-muted-foreground">Tectona member</Label>
+                          <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border/60 p-1.5">
+                            {scopedLimitUsers.length === 0 ? (
+                              <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                                Load members from Who can chat first, or wait for the directory.
+                              </p>
+                            ) : (
+                              scopedLimitUsers.map((user) => {
+                                const selected = draft.fallback.target_id === user.id
+                                const email = identityEmailById.get(user.id)
+                                return (
+                                  <button
+                                    key={user.id}
+                                    type="button"
+                                    onClick={() =>
+                                      setDraft((prev) => ({
+                                        ...prev,
+                                        fallback: {
+                                          ...prev.fallback,
+                                          target_id: user.id,
+                                          target_label: user.name,
+                                          target_email: email || prev.fallback.target_email || '',
+                                        },
+                                      }))
+                                    }
+                                    className={cn(
+                                      'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs',
+                                      selected ? 'bg-primary/5 text-foreground' : 'text-muted-foreground hover:bg-muted/60',
+                                    )}
+                                  >
+                                    <span className="truncate">{user.name}</span>
+                                    {email ? <span className="ml-2 truncate text-[10px]">{email}</span> : null}
+                                  </button>
+                                )
+                              })
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                      {draft.fallback.escalate_kind === 'group_chat' ? (
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px] text-muted-foreground">Group chat</Label>
+                          <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border/60 p-1.5">
+                            {groupChannels.length === 0 ? (
+                              <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                                No group chats found in this workspace.
+                              </p>
+                            ) : (
+                              groupChannels.map((channel) => {
+                                const selected = draft.fallback.target_id === channel.id
+                                const title = (channel.title || '').trim() || channel.id
+                                return (
+                                  <button
+                                    key={channel.id}
+                                    type="button"
+                                    onClick={() =>
+                                      setDraft((prev) => ({
+                                        ...prev,
+                                        fallback: {
+                                          ...prev.fallback,
+                                          target_id: channel.id,
+                                          target_label: title,
+                                        },
+                                      }))
+                                    }
+                                    className={cn(
+                                      'flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs',
+                                      selected ? 'bg-primary/5 text-foreground' : 'text-muted-foreground hover:bg-muted/60',
+                                    )}
+                                  >
+                                    {title}
+                                  </button>
+                                )
+                              })
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                      {draft.fallback.escalate_kind === 'custom_email' || draft.fallback.escalate_kind === 'member_email' ? (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="explainer-fallback-email" className="text-[11px] text-muted-foreground">
+                            {draft.fallback.escalate_kind === 'custom_email' ? 'Customer email' : 'Email'}
+                          </Label>
+                          <div className="relative">
+                            <Mail className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                            <Input
+                              id="explainer-fallback-email"
+                              type="email"
+                              value={draft.fallback.target_email || ''}
+                              placeholder="name@example.com"
+                              className="h-9 pl-8 text-sm"
+                              onChange={(event) =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  fallback: { ...prev.fallback, target_email: event.target.value },
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="space-y-2">
                       <Label className="text-xs text-muted-foreground">Chat limit</Label>
                       <p className="text-[11px] leading-relaxed text-muted-foreground">
-                        Default cap for everyone who chats with this assistant. You can also add a tighter
-                        budget for a selected workspace or a specific user. The most specific match is
-                        enforced: user, then workspace, then this default.
+                        {draft.chatLimitMode === 'general'
+                          ? 'One cap that applies to everyone who chats with this assistant.'
+                          : 'A cap per workspace or per user. The most specific match is enforced: user, then workspace. Anyone not listed chats without a cap.'}
                       </p>
+                      <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/30 p-0.5">
+                        {CHAT_LIMIT_MODE_OPTIONS.map((option) => (
+                          <button
+                            key={option.mode}
+                            type="button"
+                            onClick={() => setDraft((prev) => ({ ...prev, chatLimitMode: option.mode }))}
+                            className={cn(
+                              'rounded-md px-2 py-1.5 text-xs font-medium',
+                              draft.chatLimitMode === option.mode
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      {draft.chatLimitMode === 'general' ? (
+                      <>
                       <div className="grid grid-cols-2 gap-1.5">
                         {CHAT_LIMIT_OPTIONS.map((option) => {
                           const selected = draft.chatLimitKind === option.kind
@@ -2220,10 +2533,12 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                           />
                         </div>
                       ) : null}
+                      </>
+                      ) : (
                       <div className="space-y-2 rounded-lg border border-border/60 p-3">
                         <p className="text-xs font-medium text-foreground">Workspace or user caps</p>
                         <p className="text-[11px] leading-relaxed text-muted-foreground">
-                          Optional. These override the default above for that workspace or person only.
+                          Add one cap per workspace or per person. A user cap wins over a workspace cap.
                         </p>
                         {draft.chatLimitScopes.length > 0 ? (
                           <ul className="space-y-1.5">
@@ -2342,6 +2657,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                           </Button>
                         </div>
                       </div>
+                      )}
                     </div>
 
                     <div className="space-y-2">

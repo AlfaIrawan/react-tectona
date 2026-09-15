@@ -153,13 +153,30 @@ export function mergeExplainerContacts(base: ChatContact[], explainers: ChatCont
 
 const GENERIC_GENAI_TITLES = new Set(['new conversation', 'percakapan baru'])
 
+/** Explainer pack id for a Gen AI thread, including title fallback when assistantId was dropped. */
+export function conversationAssistantIdForGreet(
+  conversation: { assistantId?: string | null; title?: string | null; mode?: string | null } | null | undefined,
+  contacts: Array<{ id: string; name: string; assistantId?: string | null }> = [],
+): string | null {
+  const fromConv = conversation?.assistantId?.trim()
+  if (fromConv) return fromConv
+  if (conversation?.mode && conversation.mode !== 'genai') return null
+  const title = conversation?.title?.trim().toLowerCase()
+  if (!title || GENERIC_GENAI_TITLES.has(title)) return null
+  const match = contacts.find((contact) => {
+    const packId = contact.assistantId?.trim()
+    return Boolean(packId) && contact.name.trim().toLowerCase() === title
+  })
+  return match?.assistantId?.trim() || null
+}
+
 /** Name shown on typing/greeting status for the active Gen AI thread. */
 export function genAiAssistantDisplayName(
   conversation: { assistantId?: string | null; title?: string | null } | null | undefined,
   contacts: Array<{ id: string; name: string; assistantId?: string | null }> = [],
   fallback = TECTONA_ASSISTANT_CONTACT.name,
 ): string {
-  const assistantId = conversation?.assistantId?.trim()
+  const assistantId = conversationAssistantIdForGreet(conversation, contacts)
   if (assistantId) {
     const match = contacts.find(
       (contact) => contact.assistantId === assistantId || contact.id === explainerContactId(assistantId),

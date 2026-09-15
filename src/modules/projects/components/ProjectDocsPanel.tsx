@@ -782,6 +782,7 @@ export function ProjectDocsPanel({
       linkedIdeaDescription={linkedIdeaDescription}
       linkedIdeaWorkspaceId={linkedIdeaWorkspaceId}
       targetFolderId={currentFolder?.id ?? null}
+      referenceDocuments={repositoryItems.map((item) => ({ id: item.id, title: item.name }))}
       onGenerated={(created) => {
         bumpDocsRefresh()
         if (created) {

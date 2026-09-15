@@ -4,6 +4,7 @@ import {
   AGENT_RUNTIME_CONTACTS,
   buildChatContactsFromWorkspaceMembers,
   explainerContactId,
+  conversationAssistantIdForGreet,
   genAiAssistantDisplayName,
   mergeExplainerContacts,
   isPlaceholderChatContactName,
@@ -256,5 +257,24 @@ describe('genAiAssistantDisplayName', () => {
 
   it('falls back to the conversation title when contacts are not loaded yet', () => {
     expect(genAiAssistantDisplayName({ assistantId: 'pack-1', title: 'Niko Explainer' }, [])).toBe('Niko Explainer')
+  })
+})
+
+describe('conversationAssistantIdForGreet', () => {
+  it('keeps the pack id stored on the conversation', () => {
+    expect(conversationAssistantIdForGreet({ assistantId: 'pack-vero', title: 'Vero' }, [])).toBe('pack-vero')
+  })
+
+  it('recovers the pack id from the explainer contact name when assistantId is missing', () => {
+    const contact = {
+      id: explainerContactId('pack-vero'),
+      name: 'Vero',
+      assistantId: 'pack-vero',
+    }
+    expect(conversationAssistantIdForGreet({ title: 'Vero', mode: 'genai' }, [contact])).toBe('pack-vero')
+  })
+
+  it('does not treat the default Smith thread as an explainer pack', () => {
+    expect(conversationAssistantIdForGreet({ title: 'Smith', mode: 'genai' }, [])).toBeNull()
   })
 })

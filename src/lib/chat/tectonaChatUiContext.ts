@@ -9,6 +9,12 @@ import {
   useTectonaPageContextStore,
   type TectonaPageContextSnapshot,
 } from '@/stores/tectona-page-context-store'
+import {
+  buildWorkspaceScopeFromTenant,
+  readStoredTenantSelection,
+  resolveWorkspaceApiId,
+  resolveWorkspaceIdForWrite,
+} from '@/lib/tenantWorkspaceScope'
 
 export type TectonaUiContextPayload = {
   pathname: string
@@ -45,6 +51,8 @@ export type TectonaUiContextPayload = {
   active_tenant_workspace_id?: string | null
   active_tenant_workspace_name?: string | null
   accessible_workspaces_summary?: string | null
+  /** Workspace id used to load explainer packs in the chat picker. */
+  catalog_workspace_id?: string | null
 }
 
 type RouteEntry = {
@@ -241,5 +249,17 @@ export function buildTectonaUiContextForChat(options: {
     base.search = options.search.trim()
   }
 
-  return mergeRoleFieldsIntoUiContext(base)
+  return mergeRoleFieldsIntoUiContext({
+    ...base,
+    catalog_workspace_id: resolveExplainerCatalogWorkspaceId(),
+  })
+}
+
+function resolveExplainerCatalogWorkspaceId(): string | null {
+  const tenant = readStoredTenantSelection()
+  return (
+    resolveWorkspaceIdForWrite(buildWorkspaceScopeFromTenant(tenant))
+    ?? resolveWorkspaceApiId(tenant?.workspaceId)
+    ?? null
+  )
 }
