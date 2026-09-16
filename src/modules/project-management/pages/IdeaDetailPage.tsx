@@ -163,6 +163,7 @@ import {
   type RepositoryItem,
 } from '@/modules/document-knowledge-management/lib/documentRepositoryPresentation'
 import { generateIdeaDocKb } from '@/modules/project-management/lib/ideaDocKbGeneration'
+import { extractRepositoryDocumentText } from '@/lib/kb/repositoryKbFromDocument'
 import {
   measureProjectPanelHeight,
   PROJECT_PANEL_MIN_HEIGHT_PX,
@@ -6005,6 +6006,51 @@ export function IdeaDetailPage() {
       return
     }
     if (ideaDocGenerateBusy) return
+    if (ideaDocsLoading) {
+      addToast({
+        title: 'Preparing evidence documents',
+        description: 'Please wait until the Idea Docs list has finished loading.',
+        variant: 'info',
+      })
+      return
+    }
+    const documentAuthor = (currentUserDisplayName || submittedByDisplayName).trim()
+    const generatedOn = new Date().toISOString().slice(0, 10)
+    const sourceWithProvenance = [
+      documentAuthor && documentAuthor !== 'Root'
+        ? [
+            '--- Verified document provenance ---',
+            `Document author: ${documentAuthor}`,
+            'Revision history: version 1.0',
+            `Revision date: ${generatedOn}`,
+            'Revision description: Initial AI-generated draft.',
+          ].join('\n')
+        : '',
+      sourceText,
+    ].filter(Boolean).join('\n\n')
+
+    // The template-fill service cannot infer BRD/URD requirements from the short idea summary.
+    // Send every document visible in this Idea Docs section as named evidence, with the latest
+    // attachment text when it can be extracted. Failed extraction still preserves the document
+    // name so the generated FSD can list it under Reference Documents.
+    const referenceDocuments = await Promise.all(
+      ideaGeneratedDocs.map(async (document_) => {
+        const fallbackName = document_.title || `Idea document ${document_.id}`
+        try {
+          const { blob, fileName, contentType } = await resolveLatestDocumentAttachmentBlob(document_.id, {
+            projectId: document_.project_id,
+            fileNameHint: fallbackName,
+          })
+          const file = new File([blob], fileName || fallbackName, {
+            type: contentType || blob.type || 'application/octet-stream',
+          })
+          const extracted = await extractRepositoryDocumentText(file, 8_000)
+          return { name: file.name || fallbackName, text: extracted.text.trim() }
+        } catch {
+          return { name: fallbackName, text: '' }
+        }
+      }),
+    )
     setIdeaDocGenerateBusy(true)
     setIdeaDocGenerateStepIndex(0)
     let stepIdx = 0
@@ -6021,8 +6067,9 @@ export function IdeaDetailPage() {
 
       const filled = await fillDkmTemplate({
         template_id: template.id,
-        source_text: sourceText.slice(0, 12000),
-        context: { workspace_id: idea.workspace ?? null },
+        source_text: sourceWithProvenance.slice(0, 12000),
+        reference_documents: referenceDocuments,
+        context: { workspace_id: idea.workspace ?? null, user_id: currentUserId || null },
         options: { allow_llm: true },
       })
 
@@ -6078,6 +6125,8 @@ export function IdeaDetailPage() {
     }
   }, [
     addToast,
+    currentUserDisplayName,
+    currentUserId,
     idea.description,
     idea.id,
     idea.title,
@@ -6087,7 +6136,10 @@ export function IdeaDetailPage() {
     ideaDocGenerateSource,
     ideaDocGenerateTemplateId,
     ideaDocTemplates,
+    ideaDocsLoading,
+    ideaGeneratedDocs,
     resolveIdeaTargetProject,
+    submittedByDisplayName,
   ])
 
   useEffect(() => {
