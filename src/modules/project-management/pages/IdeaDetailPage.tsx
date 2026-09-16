@@ -5738,7 +5738,7 @@ export function IdeaDetailPage() {
     return ideaRepositoryItems.slice(start, start + ideaDocsPageSize)
   }, [ideaRepositoryItems, ideaDocsPage, ideaDocsPageSize])
 
-  const resolveIdeaTargetProject = useCallback(async () => {
+  const resolveIdeaTargetProject = useCallback(async (createIfMissing = true) => {
     const projectList = await fetchProjects({
       page: 1,
       page_size: 100,
@@ -5757,6 +5757,8 @@ export function IdeaDetailPage() {
     // Ideas can be documented before they are converted into a user-created
     // project. Create a workspace-scoped document container so Docs remains
     // usable without requiring a separate conversion step first.
+    if (!createIfMissing) return null
+
     return createProject({
       name: idea.title.trim().slice(0, 255) || 'Idea workspace project',
       description: `Document container for idea: ${idea.title.trim() || idea.id}`,
@@ -5771,7 +5773,14 @@ export function IdeaDetailPage() {
     setIdeaDocFolderInitBusy(true)
     void (async () => {
       try {
-        const targetProject = await resolveIdeaTargetProject()
+        const targetProject = await resolveIdeaTargetProject(false)
+        if (!targetProject) {
+          if (!cancelled) {
+            setIdeaDocFolderStack([])
+            setIdeaDocSubfolders([])
+          }
+          return
+        }
         const folderId = await ensureProjectDocumentFolder({
           id: targetProject.id,
           name: targetProject.name,
@@ -6059,7 +6068,7 @@ export function IdeaDetailPage() {
       setIdeaDocGenerateStepIndex(stepIdx)
     }, IDEA_DOC_GENERATE_STEP_INTERVAL_MS)
     try {
-      const targetProject = await resolveIdeaTargetProject()
+      const targetProject = await resolveIdeaTargetProject(true)
       const targetFolderId = ideaDocCurrentFolder?.id ?? await ensureProjectDocumentFolder({
         id: targetProject.id,
         name: targetProject.name,
