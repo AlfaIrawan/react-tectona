@@ -1,5 +1,17 @@
+import type { Edge, Node } from 'reactflow'
 import type { AnalyzeIdeaProcessResponse, ProcessSubTask } from '@/lib/api/tectonaAgentRuntimeApi'
 import type { IdeaProcessDiagramPersistent } from '@/lib/api/ideaBacklogApi'
+import { isCanvasViewport, readOptionalBoolean, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
+import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
+
+export type ProcessCanvasGraph = {
+  nodes: Node<ArchimateNodeData>[]
+  edges: Edge[]
+  viewport?: CanvasViewport
+  userCustomized?: boolean
+  source?: string
+  snapToGrid?: boolean
+}
 
 export type RuntimeProcessDiagramAnalysis = {
   status: 'ok' | 'insufficient_data'
@@ -12,6 +24,7 @@ export type RuntimeProcessDiagramAnalysis = {
   warnings: string[]
   confidenceScore: number
   correlationId: string
+  canvasGraph?: ProcessCanvasGraph
 }
 
 export function emptyRuntimeProcessDiagramAnalysis(): RuntimeProcessDiagramAnalysis {
@@ -46,15 +59,30 @@ export function runtimeProcessDiagramFromAgentResponse(
   }
 }
 
+function canvasGraphFromJson(json: Record<string, unknown>, source: string): ProcessCanvasGraph | undefined {
+  const nodes = Array.isArray(json.nodes) ? (json.nodes as Node<ArchimateNodeData>[]) : []
+  if (!nodes.length) return undefined
+  return {
+    nodes,
+    edges: Array.isArray(json.edges) ? (json.edges as Edge[]) : [],
+    viewport: isCanvasViewport(json.viewport) ? json.viewport : undefined,
+    userCustomized: Boolean(json.user_customized),
+    snapToGrid: readOptionalBoolean(json.snap_to_grid),
+    source: typeof json.plantuml_source === 'string' && json.plantuml_source.trim() ? json.plantuml_source : source,
+  }
+}
+
 export function runtimeProcessDiagramFromPersistent(
   persistent: IdeaProcessDiagramPersistent,
 ): RuntimeProcessDiagramAnalysis {
   const json = persistent.process_json
+  const bpmnXml = typeof json.bpmn_xml === 'string' ? json.bpmn_xml : ''
+  const plantumlSource = typeof json.plantuml_source === 'string' ? json.plantuml_source : ''
   return {
     status: persistent.status === 'ok' || json.status === 'ok' ? 'ok' : 'insufficient_data',
     summaryTitle: typeof json.summary_title === 'string' ? json.summary_title : '',
     executiveBrief: typeof json.executive_brief === 'string' ? json.executive_brief : '',
-    bpmnXml: typeof json.bpmn_xml === 'string' ? json.bpmn_xml : '',
+    bpmnXml,
     renderedPngBase64: typeof json.rendered_png_base64 === 'string' ? json.rendered_png_base64 : null,
     subProcesses: Array.isArray(json.sub_processes) ? (json.sub_processes as ProcessSubTask[]) : [],
     missingEvidence: Array.isArray(json.missing_evidence)
@@ -65,6 +93,7 @@ export function runtimeProcessDiagramFromPersistent(
       : [],
     confidenceScore: persistent.confidence_score ?? 0,
     correlationId: persistent.source_correlation_id ?? '',
+    canvasGraph: canvasGraphFromJson(json, plantumlSource || bpmnXml),
   }
 }
 
@@ -78,16 +107,23 @@ export function buildPersistentProcessDiagramPayload(
   generated_by: string
   source_correlation_id?: string | null
 } {
+  const graph = analysis.canvasGraph
   return {
     process_json: {
       status: analysis.status,
       summary_title: analysis.summaryTitle,
       executive_brief: analysis.executiveBrief,
       bpmn_xml: analysis.bpmnXml,
+      plantuml_source: graph?.source || '',
       rendered_png_base64: analysis.renderedPngBase64,
       sub_processes: analysis.subProcesses,
       missing_evidence: analysis.missingEvidence,
       warnings: analysis.warnings,
+      nodes: graph?.nodes ?? [],
+      edges: graph?.edges ?? [],
+      viewport: graph?.viewport,
+      user_customized: Boolean(graph?.userCustomized),
+      snap_to_grid: graph?.snapToGrid ?? true,
     },
     status: analysis.status,
     confidence_score: analysis.confidenceScore,

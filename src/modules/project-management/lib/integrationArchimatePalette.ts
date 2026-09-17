@@ -71,7 +71,7 @@ export function createNodeFromPaletteItem(
   existingNodeIds: Iterable<string>,
 ): Node<ArchimateNodeData> {
   const used = new Set(existingNodeIds)
-  let base = slugifyId(item.defaultTitle)
+  const base = slugifyId(item.defaultTitle)
   let candidate = base
   let index = 2
   while (used.has(candidate)) {
@@ -84,7 +84,7 @@ export function createNodeFromPaletteItem(
       id: candidate,
       type: 'archimateBoundary',
       position,
-      data: { kind: 'boundary', title: item.defaultTitle },
+      data: { kind: 'boundary', title: item.defaultTitle, visual: { fillEnabled: false, shadow: false } },
       style: { width: item.defaultWidth ?? 360, height: item.defaultHeight ?? 280 },
       zIndex: 0,
     }

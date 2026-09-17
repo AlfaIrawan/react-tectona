@@ -93,7 +93,7 @@ export const useUiLayoutStore = create<UiLayoutState>()(
       },
 
       getValue: (scope, key, fallback) => {
-        const stored = get().document[scope]?.[key]
+        const stored = get().document?.[scope]?.[key]
         return (stored === undefined ? fallback : stored) as typeof fallback
       },
 
@@ -109,7 +109,7 @@ export const useUiLayoutStore = create<UiLayoutState>()(
           hydratedFromServer: true,
           // Server wins per scope, but locally-known scopes the server has never seen
           // are kept so a first sync does not discard what this device just learned.
-          document: { ...state.document, ...response.preferences },
+          document: { ...(state.document ?? {}), ...(response.preferences ?? {}) },
         }))
       },
 
@@ -125,6 +125,16 @@ export const useUiLayoutStore = create<UiLayoutState>()(
     {
       name: 'tectona:ui-layout',
       partialize: (state) => ({ document: state.document, identityRef: state.identityRef }),
+      merge: (persisted, current) => {
+        const incoming = persisted as Partial<UiLayoutState> | undefined
+        const document =
+          incoming?.document && typeof incoming.document === 'object' ? incoming.document : current.document
+        return {
+          ...current,
+          ...incoming,
+          document,
+        }
+      },
     },
   ),
 )
@@ -137,7 +147,7 @@ export const useUiLayoutStore = create<UiLayoutState>()(
  */
 export function useUiLayoutValue<T>(scope: string, key: string, fallback: T): T {
   return useUiLayoutStore((state) => {
-    const stored = state.document[scope]?.[key]
+    const stored = state.document?.[scope]?.[key]
     return (stored === undefined ? fallback : stored) as T
   })
 }

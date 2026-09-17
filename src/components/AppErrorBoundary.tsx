@@ -28,9 +28,10 @@ class AppErrorBoundaryHost extends Component<Props, State> {
     if (!this.state.error) return this.props.children
 
     const stale = isStaleChunkError(this.state.error)
+    const detail = this.state.error.message?.trim()
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-background px-6">
-        <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card p-6 text-center shadow-sm">
+      <div className="flex h-[var(--app-vh,100dvh)] min-h-[var(--app-vh,100dvh)] w-full items-center justify-center bg-transparent px-6">
+        <div className="w-full max-w-md rounded-2xl border border-white/55 bg-white/55 p-6 text-center shadow-[0_24px_60px_-32px_rgba(15,23,42,0.45)] backdrop-blur-xl">
           <h1 className="text-base font-semibold text-foreground">
             {stale ? 'This page needs a refresh' : 'This page could not be shown'}
           </h1>
@@ -39,6 +40,11 @@ class AppErrorBoundaryHost extends Component<Props, State> {
               ? 'A newer version of Tectona was deployed, so this tab still pointed at files that no longer exist. Reload to load the current build.'
               : 'An unexpected error stopped this screen. Reload and try again. If it keeps happening, stay on this page and tell support.'}
           </p>
+          {!stale && detail ? (
+            <p className="mt-3 break-words rounded-lg bg-white/50 px-3 py-2 text-left font-mono text-[11px] leading-5 text-slate-700">
+              {detail}
+            </p>
+          ) : null}
           <Button
             type="button"
             className="mt-4"

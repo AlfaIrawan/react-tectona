@@ -258,6 +258,31 @@ describe('genAiAssistantDisplayName', () => {
   it('falls back to the conversation title when contacts are not loaded yet', () => {
     expect(genAiAssistantDisplayName({ assistantId: 'pack-1', title: 'Niko Explainer' }, [])).toBe('Niko Explainer')
   })
+
+  it('does not use the user question as the typing persona', () => {
+    expect(
+      genAiAssistantDisplayName(
+        {
+          assistantId: 'pack-1',
+          title: 'Saat ini aturan di collection ada apa aja ya?',
+        },
+        [],
+      ),
+    ).toBe(TECTONA_ASSISTANT_CONTACT.name)
+  })
+
+  it('prefers a stored assistantName over session title', () => {
+    expect(
+      genAiAssistantDisplayName(
+        {
+          assistantId: 'pack-1',
+          assistantName: 'Ask Hari',
+          title: 'Saat ini aturan di collection ada apa aja ya?',
+        },
+        [],
+      ),
+    ).toBe('Ask Hari')
+  })
 })
 
 describe('conversationAssistantIdForGreet', () => {

@@ -32,6 +32,10 @@ export type IntegrationNodeTextStyle = {
   spacingLeft?: number
   spacingGlobal?: number
   angle?: number
+  offsetX?: number
+  offsetY?: number
+  boxWidth?: number
+  boxHeight?: number
 }
 
 export type IntegrationNodeArrangeOptions = {
@@ -39,6 +43,80 @@ export type IntegrationNodeArrangeOptions = {
   recursiveResize?: boolean
   containable?: boolean
   frame?: boolean
+}
+
+export type IntegrationEdgeLinePattern = 'solid' | 'dashed' | 'dotted' | 'dashdot'
+export type IntegrationEdgeWaypoints = 'sharp' | 'rounded' | 'curved'
+export type IntegrationEdgeArrow = 'none' | 'classic' | 'block' | 'open' | 'oval' | 'diamond' | 'dash'
+export type IntegrationEdgeJumpStyle = 'none' | 'arc' | 'gap' | 'sharp'
+
+export type IntegrationEdgeVisualStyle = {
+  lineEnabled?: boolean
+  lineColor?: string
+  lineWidth?: number
+  lineStyle?: IntegrationEdgeLinePattern
+  waypoints?: IntegrationEdgeWaypoints
+  startArrow?: IntegrationEdgeArrow
+  endArrow?: IntegrationEdgeArrow
+  startFill?: boolean
+  endFill?: boolean
+  startSize?: number
+  endSize?: number
+  startSpacing?: number
+  endSpacing?: number
+  lineJumps?: IntegrationEdgeJumpStyle
+  jumpSize?: number
+  opacity?: number
+  shadow?: boolean
+  sketch?: boolean
+}
+
+export type IntegrationEdgeTextStyle = IntegrationNodeTextStyle & {
+  position?: 'center' | 'source' | 'target'
+  writingDirection?: 'automatic' | 'ltr' | 'rtl'
+  formattedText?: boolean
+  backgroundColorEnabled?: boolean
+  backgroundColor?: string
+  borderColorEnabled?: boolean
+  borderColor?: string
+  lineHeight?: number
+  offsetX?: number
+  offsetY?: number
+  boxWidth?: number
+  boxHeight?: number
+}
+
+export type IntegrationEdgeArrangeOptions = {
+  movable?: boolean
+  bendable?: boolean
+  cloneable?: boolean
+  deletable?: boolean
+  editable?: boolean
+  editDialog?: boolean
+  noJumps?: boolean
+  loopRouting?: boolean
+  ignoreEdge?: boolean
+  comic?: boolean
+  snapToPoint?: boolean
+  fixedDash?: boolean
+  backgroundOutline?: boolean
+  anchorDirection?: boolean
+  sourceConstraint?: string
+  targetConstraint?: string
+  arcSize?: number
+  terminalSpacing?: number
+  fillOpacity?: number
+  strokeOpacity?: number
+  orthogonal?: boolean
+  flowAnimation?: boolean
+}
+
+export type IntegrationEdgeData = {
+  visual?: IntegrationEdgeVisualStyle
+  textStyle?: IntegrationEdgeTextStyle
+  arrange?: IntegrationEdgeArrangeOptions
+  technology?: string
+  link?: string
 }
 
 export type ArchimateElementNodeData = {

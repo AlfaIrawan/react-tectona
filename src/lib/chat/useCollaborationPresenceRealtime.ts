@@ -34,7 +34,7 @@ type MessageSentPayload = ChatMessageRealtimePayload & {
 /** Poll inbox for new messages (fallback when WebSocket is down). */
 const INBOX_POLL_MS = 5_000
 
-function collaborationRealtimeWorkspaceIds(): string[] {
+export function collaborationRealtimeWorkspaceIds(): string[] {
   const ids: string[] = []
   const seen = new Set<string>()
   const add = (raw?: string | null) => {

@@ -2,6 +2,7 @@ import type { AnalyzeIdeaIntegrationResponse } from '@/lib/api/tectonaAgentRunti
 import type { IdeaIntegrationPersistent } from '@/lib/api/ideaBacklogApi'
 import { normalizeIntegrationNodesForCanvas } from '@/modules/project-management/lib/integrationArchitectureDefaults'
 import type { IntegrationGraphRecord } from '@/modules/project-management/lib/integrationGraphStorage'
+import { isCanvasViewport, readOptionalBoolean } from '@/modules/project-management/lib/integrationGraphStorage'
 import { parsePlantUmlToIntegrationGraph } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import type { Edge, Node } from 'reactflow'
 import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
@@ -99,6 +100,8 @@ export function graphRecordFromPersistentIntegration(
       plantumlSource,
       userCustomized,
       savedAt: persistent.generated_at,
+      viewport: isCanvasViewport(json.viewport) ? json.viewport : undefined,
+      snapToGrid: readOptionalBoolean(json.snap_to_grid),
     }
   }
 
@@ -111,6 +114,8 @@ export function graphRecordFromPersistentIntegration(
         plantumlSource,
         userCustomized,
         savedAt: persistent.generated_at,
+        viewport: isCanvasViewport(json.viewport) ? json.viewport : undefined,
+        snapToGrid: readOptionalBoolean(json.snap_to_grid),
       }
     } catch {
       // Falls through to the empty record below — an unparseable source is still a genuine
@@ -128,6 +133,7 @@ export function graphRecordFromPersistentIntegration(
     plantumlSource,
     userCustomized,
     savedAt: persistent.generated_at,
+    snapToGrid: readOptionalBoolean(json.snap_to_grid),
   }
 }
 
@@ -155,6 +161,8 @@ export function buildPersistentIntegrationPayload(
       nodes: graph.nodes,
       edges: graph.edges,
       user_customized: graph.userCustomized,
+      viewport: graph.viewport,
+      snap_to_grid: graph.snapToGrid ?? true,
     },
     status: analysis.status,
     confidence_score: analysis.confidenceScore,

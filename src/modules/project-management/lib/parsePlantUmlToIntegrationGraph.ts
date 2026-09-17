@@ -245,7 +245,81 @@ function computeFlowOrder(
 // this and colGap/rowGap matters for picking a side, not pixel accuracy.
 const DEFAULT_ELEMENT_HEIGHT = 90
 
-type NodeGeometry = { x: number; y: number; width: number; height: number }
+export type NodeGeometry = { x: number; y: number; width: number; height: number }
+
+/** Fallback evenly spaced dots along each side, including center. */
+export const CONNECTION_HANDLE_POSITIONS = [17, 33, 50, 67, 83] as const
+export const CONNECTION_HANDLE_OFFSETS = CONNECTION_HANDLE_POSITIONS.filter((offset) => offset !== 50)
+
+const MIN_HANDLE_GAP_PX = 28
+const MAX_HANDLES_PER_SIDE = 9
+
+export function connectionHandlePercentsForLength(length: number): number[] {
+  if (!Number.isFinite(length) || length < 64) return [50]
+  let count = Math.floor(length / MIN_HANDLE_GAP_PX)
+  if (count % 2 === 0) count -= 1
+  count = Math.max(1, Math.min(MAX_HANDLES_PER_SIDE, count))
+  if (count <= 1) return [50]
+  const inset = length < 96 ? 20 : 12
+  const span = 100 - inset * 2
+  return Array.from({ length: count }, (_, index) => {
+    if (index === Math.floor(count / 2)) return 50
+    return Math.round(inset + (span * index) / (count - 1))
+  })
+}
+
+function clampHandleRatio(value: number): number {
+  if (Number.isNaN(value)) return 0.5
+  return Math.min(1, Math.max(0, value))
+}
+
+function nearestHandleOffset(ratio: number, percents: number[]): string {
+  const list = percents.length ? percents : [50]
+  const percent = clampHandleRatio(ratio) * 100
+  const closest = list.reduce((best, candidate) =>
+    Math.abs(candidate - percent) < Math.abs(best - percent) ? candidate : best,
+  )
+  return closest === 50 ? '' : `-${closest}`
+}
+
+function handlesFromSides(
+  from: NodeGeometry,
+  to: NodeGeometry,
+  sides: { sourceHandle: string; targetHandle: string },
+): { sourceHandle: string; targetHandle: string } {
+  const fromCx = from.x + from.width / 2
+  const fromCy = from.y + from.height / 2
+  const toCx = to.x + to.width / 2
+  const toCy = to.y + to.height / 2
+  const horizontal = sides.sourceHandle === 'source-left' || sides.sourceHandle === 'source-right'
+  const sourceLength = horizontal ? from.height : from.width
+  const targetLength = horizontal ? to.height : to.width
+  const sourceOffset = nearestHandleOffset(horizontal ? (toCy - from.y) / from.height : (toCx - from.x) / from.width, connectionHandlePercentsForLength(sourceLength))
+  const targetOffset = nearestHandleOffset(horizontal ? (fromCy - to.y) / to.height : (fromCx - to.x) / to.width, connectionHandlePercentsForLength(targetLength))
+  return {
+    sourceHandle: `${sides.sourceHandle}${sourceOffset}`,
+    targetHandle: `${sides.targetHandle}${targetOffset}`,
+  }
+}
+
+/** Facing sides + the perimeter dots closest to a straight line between node centers. */
+export function pickAnchoredHandles(from: NodeGeometry, to: NodeGeometry): { sourceHandle: string; targetHandle: string } {
+  return handlesFromSides(from, to, pickHandleSides(from, to))
+}
+
+/** Prefer the dominant axis between centers so side-by-side boxes do not U-turn via top/bottom. */
+export function pickCenteredAnchoredHandles(from: NodeGeometry, to: NodeGeometry): { sourceHandle: string; targetHandle: string } {
+  const dx = to.x + to.width / 2 - (from.x + from.width / 2)
+  const dy = to.y + to.height / 2 - (from.y + from.height / 2)
+  const sides = Math.abs(dx) >= Math.abs(dy)
+    ? dx >= 0
+      ? { sourceHandle: 'source-right', targetHandle: 'target-left' }
+      : { sourceHandle: 'source-left', targetHandle: 'target-right' }
+    : dy >= 0
+      ? { sourceHandle: 'source-bottom', targetHandle: 'target-top' }
+      : { sourceHandle: 'source-top', targetHandle: 'target-bottom' }
+  return handlesFromSides(from, to, sides)
+}
 
 // Each node exposes a full ring of named handles (source-left/top/right/bottom and their target
 // counterparts, see `integrationArchimateNodeTypes.tsx`), but an edge with no explicit
@@ -386,7 +460,7 @@ function layoutIntegrationGraph(
     const sourceGeometry = nodeGeometry.get(edge.source)
     const targetGeometry = nodeGeometry.get(edge.target)
     const handles =
-      sourceGeometry && targetGeometry ? pickHandleSides(sourceGeometry, targetGeometry) : undefined
+      sourceGeometry && targetGeometry ? pickAnchoredHandles(sourceGeometry, targetGeometry) : undefined
     flowEdges.push({
       id: `plantuml-edge-${edge.source}-${edge.target}-${index}`,
       source: edge.source,

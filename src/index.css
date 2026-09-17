@@ -266,12 +266,13 @@
     display: none;
   }
 
-  /* Viewport < 1920: html zoom (set in uiScale.ts) scales the whole page uniformly. */
+  /* Viewport < 1920: html zoom (set in uiScale.ts) scales the whole page uniformly.
+     Keep the canvas transparent so the ambient video is not covered by a solid page fill. */
   html.ui-scale-lock {
     width: 100%;
     height: 100%;
     overflow-x: hidden;
-    background-color: hsl(var(--background));
+    background-color: transparent;
   }
   html.ui-scale-lock body,
   html.ui-scale-lock #root {
@@ -279,6 +280,8 @@
     max-width: none;
     min-width: 0;
     min-height: var(--app-vh, 100dvh);
+    height: var(--app-vh, 100dvh);
+    background-color: transparent;
   }
   /* Native (non-scaled) layout must span the full layout viewport. */
   html:not(.ui-scale-lock),
@@ -295,6 +298,7 @@
     min-height: var(--app-vh, 100vh);
     overflow-x: hidden;
     scrollbar-width: none;
+    background-color: transparent;
   }
   body::-webkit-scrollbar {
     display: none;
@@ -327,30 +331,9 @@
     will-change: opacity;
   }
 
-  body::after {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: 
-      linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
-      linear-gradient(225deg, rgba(255, 255, 255, 0.05) 0%, transparent 50%);
-    pointer-events: none;
-    z-index: -1;
-  }
-  html.ui-scale-lock body::after {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .app-background-video-layer,
-    .app-background-video,
-    body::after {
+    .app-background-video {
       animation: none;
     }
 
@@ -359,7 +342,7 @@
     }
   }
 
-  body > * {
+  body > *:not(.app-background-video-layer) {
     position: relative;
     z-index: 1;
   }
@@ -1536,4 +1519,94 @@
 /* Tema Indigo: saat hover swatch yang tidak dipilih, teks lebih cerah (background hover gelap) */
 [data-accent="indigo-command"] .theme-swatch-grid button:not(.bg-accent):hover .theme-swatch-label {
   color: #e2e8f0 !important;
+}
+/* High-contrast canvas cursors remain visible over the white diagram grid. */
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__pane {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='25' viewBox='0 0 26 32'%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%230ea5e9' stroke='%23fff' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%230ea5e9' stroke='%230f172a' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") 2 1, crosshair !important;
+}
+
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__node {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='25' viewBox='0 0 26 32'%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%230ea5e9' stroke='%23fff' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%230ea5e9' stroke='%230f172a' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") 2 1, grab !important;
+}
+
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__node.dragging {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='25' viewBox='0 0 26 32'%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%23038bdb' stroke='%23fff' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%23038bdb' stroke='%230f172a' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") 2 1, grabbing !important;
+}
+
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle {
+  width: 8px !important;
+  height: 8px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  transform: none !important;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'%3E%3Cpath d='M11 1v20M1 11h20' stroke='%23fff' stroke-width='4'/%3E%3Cpath d='M11 1v20M1 11h20' stroke='%230f172a' stroke-width='2.5'/%3E%3Ccircle cx='11' cy='11' r='4' fill='%230ea5e9' stroke='%23fff' stroke-width='2'/%3E%3Ccircle cx='11' cy='11' r='4' fill='none' stroke='%230f172a' stroke-width='1'/%3E%3C/svg%3E") 11 11, crosshair !important;
+}
+
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle-top,
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle-right,
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle-bottom,
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle-left {
+  transform: none !important;
+}
+
+.integration-flow-canvas .react-flow__edge {
+  pointer-events: none;
+  cursor: pointer;
+}
+
+.integration-flow-canvas .react-flow__edge-path,
+.integration-flow-canvas .react-flow__edge-interaction {
+  pointer-events: stroke !important;
+  cursor: pointer;
+}
+
+.integration-flow-canvas .react-flow__edge.updating {
+  opacity: 1 !important;
+}
+
+.integration-flow-canvas.edge-endpoint-edit .react-flow__handle {
+  pointer-events: none !important;
+}
+
+.integration-flow-canvas .react-flow__edgeupdater {
+  pointer-events: all !important;
+  cursor: grab;
+  fill: transparent !important;
+  stroke: transparent !important;
+}
+
+.integration-flow-canvas .react-flow__edge.selected .react-flow__edgeupdater {
+  fill: #ffffff !important;
+  stroke: #0284c7 !important;
+  stroke-width: 2px !important;
+}
+
+.integration-flow-canvas .react-flow__edgeupdater:active {
+  cursor: grabbing;
+}
+
+.integration-flow-canvas .react-flow__edgelabel-renderer {
+  z-index: 6;
+  pointer-events: none;
+}
+
+@keyframes diagram-edge-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.integration-flow-canvas .react-flow__node-archimateBoundary {
+  pointer-events: none !important;
+}
+
+.integration-flow-canvas .react-flow__node-archimateBoundary .react-flow__handle,
+.integration-flow-canvas .react-flow__node-archimateBoundary .react-flow__resize-control,
+.integration-flow-canvas .react-flow__node-archimateBoundary .boundary-chrome {
+  pointer-events: auto !important;
+}
+
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__panel.canvas-ruler-panel {
+  pointer-events: none !important;
 }

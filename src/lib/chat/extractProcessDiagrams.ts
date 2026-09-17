@@ -33,7 +33,7 @@ function labelFor(kind: ProcessDiagramKind, index: number, counts: Record<Proces
   return counts[kind] > 1 ? `${base} #${index}` : base
 }
 
-/** Extract Mermaid process diagrams from idea description / brainstorm draft text. */
+/** Extract canonical PlantUML and legacy Mermaid diagrams from idea text. */
 export function extractProcessDiagramsFromText(text: string): ExtractedProcessDiagram[] {
   const input = (text || '').replace(/\r\n?/g, '\n')
   if (!input.trim()) return []
@@ -64,7 +64,7 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
       if (cursor >= 0) cursor += segment.text.length
       continue
     }
-    if (segment.type !== 'mermaid') continue
+    if (segment.type !== 'mermaid' && segment.type !== 'plantuml') continue
 
     const source = segment.source.trim()
     if (!source) continue
@@ -72,7 +72,11 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
     if (seen.has(key)) continue
     seen.add(key)
 
-    const fenceIdx = input.toLowerCase().indexOf('```mermaid', Math.max(0, cursor - 200))
+    const lowerInput = input.toLowerCase()
+    const searchFrom = Math.max(0, cursor - 200)
+    const mermaidIdx = lowerInput.indexOf('```mermaid', searchFrom)
+    const plantUmlIdx = lowerInput.indexOf('```plantuml', searchFrom)
+    const fenceIdx = [mermaidIdx, plantUmlIdx].filter((index) => index >= 0).sort((a, b) => a - b)[0] ?? -1
     const prefix = fenceIdx >= 0 ? input.slice(Math.max(0, fenceIdx - 500), fenceIdx) : input.slice(0, cursor)
     const kind = classifyPrefix(prefix)
     results.push({ kind, label: '', source })

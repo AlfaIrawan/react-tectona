@@ -227,6 +227,7 @@ import {
   sendChannelMessage,
   type CollaborationChannelApi,
 } from '@/lib/api/collaborationContextApi'
+import { collaborationRealtimeWorkspaceIds } from '@/lib/chat/useCollaborationPresenceRealtime'
 import { useChatPanelStore } from '@/stores/chat-panel-store'
 import { useChatNotificationTargetStore } from '@/stores/chat-notification-target-store'
 import { findGenAiConversationForIdea, titlesMatchIdeaSession } from '@/lib/chat/ideaDiscussSession'
@@ -624,6 +625,8 @@ interface Conversation {
    * assistant, which is what every pre-existing conversation stays as.
    */
   assistantId?: string | null
+  /** Stable persona label for typing status; not replaced by session_title (user question). */
+  assistantName?: string | null
   /** Explainer speaking tone for this thread; pack default until the user picks another. */
   explainerCharacter?: ExplainerCharacter
   /** Local-only pointer row for a resumable "Generate Draft" brainstorm (idea-draft-job). */
@@ -741,6 +744,20 @@ function mergeLocalDisappearingNotices(
 
 function channelConversationId(channelId: string): string {
   return `conv-channel-${channelId}`
+}
+
+async function listInboxChannelsAcrossWorkspaces(): Promise<CollaborationChannelApi[]> {
+  const lists = await Promise.all(
+    collaborationRealtimeWorkspaceIds().map((workspaceId) =>
+      listWorkspaceChannels(workspaceId, { pageSize: 100 }).catch(() => null),
+    ),
+  )
+  const byId = new Map<string, CollaborationChannelApi>()
+  for (const res of lists) {
+    if (!res) continue
+    for (const ch of res.items) byId.set(ch.id, ch)
+  }
+  return [...byId.values()]
 }
 
 function resolveConversationDisappearingDuration(
@@ -1853,9 +1870,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     if (inboxRefreshInFlightRef.current) return
     inboxRefreshInFlightRef.current = true
     try {
-      const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
+      const items = await listInboxChannelsAcrossWorkspaces()
       const displayNameByUserId: Record<string, string> = {}
-      const peerIds = res.items
+      const peerIds = items
         .map((ch) => {
           const peerId = ch.peer_user_id?.trim()
           if (!peerId) return null
@@ -1878,7 +1895,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         chatContactsRef.current = merged
         if (changed) setChatContacts(merged)
       }
-      const apiConversations = res.items
+      const apiConversations = items
         .map((ch) => collaborationChannelToConversation(ch, contacts))
         .filter((c): c is Conversation => c != null)
         .filter((c) => !isHiddenPeopleConversation(c))
@@ -2347,6 +2364,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               mode: 'genai' as const,
               unreadCount: 0,
               assistantId: row.assistantId ?? existing?.assistantId,
+              assistantName: existing?.assistantName,
               explainerCharacter: existing?.explainerCharacter ?? row.explainerCharacter,
             }
           })
@@ -3875,6 +3893,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       // same-session title drift after close/reopen hydration.
       title: isAi ? (contact.assistantId ? contact.name : 'New conversation') : contact.name,
       assistantId: isAi ? contact.assistantId ?? undefined : undefined,
+      assistantName: isAi ? contact.name : undefined,
       explainerCharacter: isAi && contact.assistantId
         ? explainerCharacterFromValue(contact.defaultCharacter)
         : undefined,
@@ -3916,8 +3935,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const findConversationForOpenRequest = useCallback(
     (list: Conversation[], request: OpenChatThreadRequest): Conversation | undefined => {
-      const byChannel = list.find((c) => c.channelId === request.channelId && !c.archived)
-      if (byChannel) return byChannel
+      if (request.channelId) {
+        const byChannel = list.find((c) => c.channelId === request.channelId && !c.archived)
+        if (byChannel) return byChannel
+        // Do not fall back to a same-contact thread: that row is often a newly
+        // created empty DM on react-tectona, while the notification belongs to
+        // the original channel (possibly another workspace id).
+        return undefined
+      }
       if (request.channelType === 'group' && request.channelTitle) {
         const byGroupTitle = list.find(
           (c) => c.mode === 'group' && c.title === request.channelTitle && !c.archived,
@@ -4041,9 +4066,17 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       }
 
       try {
-        const res = await listWorkspaceChannels(TECTONA_CHAT_WORKSPACE_ID, { pageSize: 100 })
+        let items = await listInboxChannelsAcrossWorkspaces()
+        if (request.channelId && !items.some((ch) => ch.id === request.channelId)) {
+          try {
+            const fetched = await fetchCollaborationChannel(request.channelId)
+            items = [fetched, ...items.filter((ch) => ch.id !== fetched.id)]
+          } catch {
+            // Channel may still appear in the workspace lists below.
+          }
+        }
         const displayNameByUserId: Record<string, string> = {}
-        const peerIds = res.items
+        const peerIds = items
           .map((ch) => {
             const peerId = ch.peer_user_id?.trim()
             if (!peerId) return null
@@ -4060,8 +4093,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           chatContactsRef.current = contacts
           setChatContacts(contacts)
         }
-        const channel = res.items.find((ch) => ch.id === request.channelId)
-        const apiConversations = res.items
+        const channel = request.channelId
+          ? items.find((ch) => ch.id === request.channelId)
+          : undefined
+        const apiConversations = items
           .map((ch) => collaborationChannelToConversation(ch, contacts))
           .filter((c): c is Conversation => c != null)
           .filter((c) => !isHiddenPeopleConversation(c))
@@ -4082,40 +4117,38 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           return true
         }
 
-        if (channel?.channel_type === 'direct' && channel.peer_user_id) {
-          const peerContact = buildTeamChatContactForUserId(channel.peer_user_id, contacts)
-          const byChannelConv: Conversation = {
-            id: channelConversationId(channel.id),
-            mode: 'team',
-            title: peerContact.name,
-            contactId: channel.peer_user_id,
-            contactName: peerContact.name,
-            contactAvatarSrc: peerContact.avatarSrc,
-            channelId: channel.id,
-            ...safePeerReceiptFromChannel(channel),
-            preview: truncatePreview(peopleChatPreview(channel.last_message_preview) || 'No messages yet'),
-            updatedAt: parseCollaborationTimestamp(channel.last_message_at),
-            unreadCount: channel.unread_count ?? 0,
-          }
-          setConversations((prev) => {
-            const genai = prev.filter((c) => c.mode === 'genai')
-            const teamGroup = mergeCollaborationInbox(
-              prev.filter((c) => c.mode === 'team' || c.mode === 'group'),
-              [byChannelConv],
+        if (channel) {
+          const byChannelConv = collaborationChannelToConversation(channel, contacts)
+          if (byChannelConv) {
+            setConversations((prev) => {
+              const genai = prev.filter((c) => c.mode === 'genai')
+              const teamGroup = mergeCollaborationInbox(
+                prev.filter((c) => c.mode === 'team' || c.mode === 'group'),
+                [byChannelConv],
+              )
+              const sorted = [...genai, ...teamGroup].sort((a, b) => b.updatedAt - a.updatedAt)
+              conversationsRef.current = sorted
+              return sorted
+            })
+            teamChannelHydratedRef.current.delete(byChannelConv.id)
+            if (channel.id) teamChannelHydratedRef.current.delete(channel.id)
+            openConversation(
+              conversationsRef.current.find((c) => c.channelId === channel.id)?.id ?? byChannelConv.id,
             )
-            const sorted = [...genai, ...teamGroup].sort((a, b) => b.updatedAt - a.updatedAt)
-            conversationsRef.current = sorted
-            return sorted
-          })
-          teamChannelHydratedRef.current.delete(byChannelConv.id)
-          teamChannelHydratedRef.current.delete(channel.id)
-          openConversation(
-            conversationsRef.current.find((c) => c.channelId === channel.id)?.id ?? byChannelConv.id,
-          )
-          return true
+            return true
+          }
         }
       } catch {
-        // fall through to contact lookup
+        // fall through to contact lookup only when the notification has no channel id
+      }
+
+      if (request.channelId) {
+        pushGlobalToast({
+          variant: 'error',
+          title: 'Chat thread unavailable',
+          description: 'The original conversation could not be loaded from this notification.',
+        })
+        return true
       }
 
       if (request.senderUserId) {

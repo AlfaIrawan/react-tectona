@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
+import { renderProcessDiagramAsPlantUmlPng } from '@/lib/api/tectonaAgentRuntimeApi'
 import { buildFlowchartFallbackSvg, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
 import {
   AssistantFlowchartCanvas,
@@ -76,7 +77,7 @@ function sanitizeMermaidSource(source: string): string {
   // Common LLM typo: `-->|label|> Next` instead of `-->|label| Next`
   text = text.replace(/(\|[^\n|]+)\|>(\s*[A-Za-z])/g, '$1|$2')
 
-  text = text.replace(/([A-Za-z][\w-]*)\[(?!["\[])([^\]]+)\]/g, (_m, id: string, label: string) => {
+  text = text.replace(/([A-Za-z][\w-]*)\[(?!["[])([^\]]+)\]/g, (_m, id: string, label: string) => {
     return `${id}["${label.replace(/"/g, "'")}"]`
   })
   text = text.replace(/([A-Za-z][\w-]*)\{(?!")([^}]+)\}/g, (_m, id: string, label: string) => {
@@ -89,6 +90,24 @@ function sanitizeMermaidSource(source: string): string {
     return `${left}"${label.replace(/"/g, "'")}"${right}`
   })
   return rewriteBareMermaidSource(text)
+}
+
+function isBoundaryLabel(value: string): boolean {
+  return /^(?:mulai|start|selesai|end|finish)$/i.test(value.trim())
+}
+
+/** Avoid rendering a misleading start → end placeholder as a real process. */
+function isEmptyProcessPlaceholder(source: string): boolean {
+  const text = cleanMermaidFence(source)
+  const labels = [
+    ...Array.from(text.matchAll(/:\s*([^;\n]+);/g), (match) => match[1]),
+    ...Array.from(text.matchAll(/\[\s*["']?([^\]"']+)/g), (match) => match[1]),
+    ...Array.from(text.matchAll(/\{\s*["']?([^}"']+)/g), (match) => match[1]),
+    ...Array.from(text.matchAll(/\(\(\s*["']?([^)"']+)/g), (match) => match[1]),
+  ]
+    .map((label) => label?.replace(/["')\]}]+$/g, '').trim() ?? '')
+    .filter(Boolean)
+  return labels.length > 0 && labels.every(isBoundaryLabel)
 }
 
 function removeStaleMermaidDom(renderId: string) {
@@ -224,7 +243,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
     const ok = await copyTextToClipboard(source)
     pushGlobalToast({
       title: ok ? 'Diagram copied' : 'Copy failed',
-      description: ok ? 'Mermaid code is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
+      description: ok ? 'PlantUML diagram source is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
       variant: ok ? 'success' : 'error',
     })
   }
@@ -363,37 +382,59 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
       : cleanedSource
   const showFlowchart = canRenderAssistantFlowchart(flowchartSource)
   const flowHeight = showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
+  const isEmptyPlaceholder = useMemo(() => isEmptyProcessPlaceholder(source), [source])
 
   useEffect(() => {
-    if (showFlowchart) {
+    if (isEmptyPlaceholder) {
       setIsRendering(false)
-      setHardError(null)
-      setSvgHtml(null)
       setBpmnUrl(null)
+      setSvgHtml(null)
+      setHardError(null)
       return
     }
     let cancelled = false
-    let objectUrl: string | null = null
     const timer = window.setTimeout(() => {
       void (async () => {
         setIsRendering(true)
         setBpmnUrl(null)
+        setSvgHtml(null)
         try {
-          const result = await renderMermaidSvg(source, reactId)
-          if (cancelled) return
-          setSvgHtml(result.svg)
-          setViaFallback(result.viaFallback)
+          const imageUrl = await renderProcessDiagramAsPlantUmlPng(source)
+          if (cancelled) {
+            URL.revokeObjectURL(imageUrl)
+            return
+          }
+          setBpmnUrl(imageUrl)
+          setViaFallback(false)
           setHardError(null)
         } catch (err) {
-          if (!cancelled) {
-            const fallback = buildFlowchartFallbackSvg(source)
-            if (fallback) {
-              setSvgHtml(fallback)
-              setViaFallback(true)
+          // Keep a local preview only when PlantUML is temporarily unavailable.
+          // This preserves access to existing in-progress brainstorms without
+          // creating a second source of truth on successful renders.
+          if (showFlowchart) {
+            if (!cancelled) {
               setHardError(null)
-            } else {
-              setSvgHtml(null)
-              setHardError(err instanceof Error ? err.message : 'Diagram could not be rendered')
+              setViaFallback(true)
+            }
+            return
+          }
+          try {
+            const result = await renderMermaidSvg(source, reactId)
+            if (cancelled) return
+            setSvgHtml(result.svg)
+            setViaFallback(result.viaFallback)
+            setHardError(null)
+          } catch {
+            if (!cancelled) {
+              const fallback = buildFlowchartFallbackSvg(source)
+              if (fallback) {
+                setSvgHtml(fallback)
+                setViaFallback(true)
+                setHardError(null)
+              } else {
+                setSvgHtml(null)
+                setHardError(err instanceof Error ? err.message : 'Diagram could not be rendered')
+              }
             }
           }
         } finally {
@@ -405,9 +446,8 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
     return () => {
       cancelled = true
       window.clearTimeout(timer)
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [reactId, source, retryTick, showFlowchart])
+  }, [isEmptyPlaceholder, reactId, source, retryTick, showFlowchart])
 
   useEffect(() => {
     return () => {
@@ -432,12 +472,20 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
     const ok = await copyTextToClipboard(source.trim())
     pushGlobalToast({
       title: ok ? 'Diagram copied' : 'Copy failed',
-      description: ok ? 'Mermaid code is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
+      description: ok ? 'PlantUML diagram source is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
       variant: ok ? 'success' : 'error',
     })
   }, [source])
 
   const hasPreview = showFlowchart || Boolean(svgHtml || bpmnUrl)
+
+  if (isEmptyPlaceholder) {
+    return (
+      <div className={cn('my-2 rounded-md border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500', className)}>
+        Langkah proses belum cukup detail untuk dibuatkan diagram.
+      </div>
+    )
+  }
 
   if (hardError && !svgHtml && !bpmnUrl && !showFlowchart) {
     return (
@@ -481,14 +529,13 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
         {hasPreview ? (
           <MermaidToolbar onCopy={() => void handleCopy()} onFullscreen={() => setFullscreenOpen(true)} />
         ) : null}
-        {showFlowchart ? (
+        {bpmnUrl ? (
+          <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
+            PlantUML process flow
+          </p>
+        ) : showFlowchart ? (
           <p className="absolute left-2 top-2 z-20 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
             Process flow
-          </p>
-        ) : null}
-        {bpmnUrl && !showFlowchart ? (
-          <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
-            BPMN 2.0
           </p>
         ) : null}
         {viaFallback && svgHtml && !bpmnUrl && !showFlowchart ? (
@@ -496,13 +543,11 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
             Preview diagram
           </p>
         ) : null}
-        {showFlowchart ? (
-          <AssistantFlowchartCanvas source={flowchartSource} height={flowHeight} className="rounded-md" />
-        ) : bpmnUrl ? (
+        {bpmnUrl ? (
           <div className="flex w-full justify-center overflow-x-auto p-3">
             <img
               src={bpmnUrl}
-              alt="Diagram proses bisnis BPMN"
+              alt="Diagram proses bisnis PlantUML"
               className="mx-auto max-h-[min(70vh,640px)] w-auto max-w-full object-contain"
               onLoad={(event) => {
                 const height = event.currentTarget.naturalHeight
@@ -513,6 +558,8 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
               }}
             />
           </div>
+        ) : showFlowchart ? (
+          <AssistantFlowchartCanvas source={flowchartSource} height={flowHeight} className="rounded-md" />
         ) : (
           <div
             ref={containerRef}
@@ -527,17 +574,13 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           />
         )}
       </div>
-      {fullscreenOpen && showFlowchart ? (
+      {fullscreenOpen && bpmnUrl ? (
+        <MermaidFullscreenModal imageUrl={bpmnUrl} source={source} onClose={() => setFullscreenOpen(false)} />
+      ) : null}
+      {fullscreenOpen && showFlowchart && !bpmnUrl ? (
         <MermaidFullscreenModal source={source} onClose={() => setFullscreenOpen(false)}>
           <AssistantFlowchartCanvas source={flowchartSource} className="h-[min(78vh,760px)]" />
         </MermaidFullscreenModal>
-      ) : null}
-      {fullscreenOpen && bpmnUrl && !showFlowchart ? (
-        <MermaidFullscreenModal
-          imageUrl={bpmnUrl}
-          source={source}
-          onClose={() => setFullscreenOpen(false)}
-        />
       ) : null}
       {fullscreenOpen && svgHtml && !bpmnUrl && !showFlowchart ? (
         <MermaidFullscreenModal svgHtml={svgHtml} source={source} onClose={() => setFullscreenOpen(false)} />

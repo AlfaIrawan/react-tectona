@@ -4,12 +4,38 @@ import type { ArchimateNodeData } from '@/modules/project-management/lib/integra
 export const IDEA_INTEGRATION_GRAPH_STORAGE_KEY_V1 = 'tectona-idea-integration-graph-v1'
 export const IDEA_INTEGRATION_GRAPH_STORAGE_KEY = 'tectona-idea-integration-graph-v2'
 
+export type CanvasViewport = {
+  x: number
+  y: number
+  zoom: number
+}
+
 export type IntegrationGraphRecord = {
   nodes: Node<ArchimateNodeData>[]
   edges: Edge[]
   plantumlSource?: string
   userCustomized: boolean
   savedAt: string
+  viewport?: CanvasViewport
+  snapToGrid?: boolean
+}
+
+export function readOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+export function isCanvasViewport(value: unknown): value is CanvasViewport {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.x === 'number'
+    && Number.isFinite(candidate.x)
+    && typeof candidate.y === 'number'
+    && Number.isFinite(candidate.y)
+    && typeof candidate.zoom === 'number'
+    && Number.isFinite(candidate.zoom)
+    && candidate.zoom > 0
+  )
 }
 
 type IntegrationGraphStore = Record<string, IntegrationGraphRecord>
@@ -41,6 +67,7 @@ export function loadIntegrationGraph(ideaId: string): IntegrationGraphRecord | n
     edges: legacy.edges,
     userCustomized: legacy.userCustomized,
     savedAt: legacy.savedAt,
+    viewport: isCanvasViewport(legacy.viewport) ? legacy.viewport : undefined,
   }
 }
 

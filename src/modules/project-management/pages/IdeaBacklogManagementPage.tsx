@@ -53,6 +53,7 @@ import {
   Upload,
   FolderPlus,
   Folder as FolderIcon,
+  RefreshCw,
 } from 'lucide-react'
 import {
   Bar,
@@ -445,7 +446,7 @@ function userTextApprovesDiagram(text: string): boolean {
 
 function brainstormMessageHasDiagram(text: string): boolean {
   const lowered = (text || '').toLowerCase()
-  return lowered.includes('```mermaid') || /\bflowchart\s+(td|lr|tb|rl)\b/i.test(lowered)
+  return lowered.includes('```mermaid') || lowered.includes('```plantuml') || /\bflowchart\s+(td|lr|tb|rl)\b/i.test(lowered)
 }
 
 function isBrainstormIntakeComplete(progress: IdeaDraftEvidenceProgress | null | undefined): boolean {
@@ -989,11 +990,11 @@ function BrainstormEvidenceRail({
 function BrainstormProseSegments({ text }: { text: string }) {
   const segments = splitMermaidContent(text)
   if (segments.length === 0) return null
-  if (segments.some((s) => s.type === 'mermaid' || s.type === 'tecchart')) {
+  if (segments.some((s) => s.type === 'mermaid' || s.type === 'plantuml' || s.type === 'tecchart')) {
     return (
       <>
         {segments.map((segment, index) => {
-          if (segment.type === 'mermaid') {
+          if (segment.type === 'mermaid' || segment.type === 'plantuml') {
             return <AssistantMermaidBlock key={`m-${index}`} source={segment.source} />
           }
           if (segment.type === 'tecchart') {
@@ -1024,7 +1025,7 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
   const parts = splitBrainstormDisplayParts(text)
   if (parts.length === 0) return null
 
-  const hasVisual = parts.some((part) => part.type === 'png' || part.type === 'mermaid')
+  const hasVisual = parts.some((part) => part.type === 'png' || part.type === 'mermaid' || part.type === 'plantuml')
   if (!hasVisual) {
     return <BrainstormProseSegments text={text} />
   }
@@ -1042,7 +1043,7 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
             />
           )
         }
-        if (part.type === 'mermaid') {
+        if (part.type === 'mermaid' || part.type === 'plantuml') {
           return <AssistantMermaidBlock key={`m-${index}`} source={part.source} />
         }
         const prose = part.text.trim()
@@ -1252,6 +1253,30 @@ type IdeaAnalysisProgress = {
   status: 'running' | 'done' | 'failed'
   errorMessage?: string | null
   currentStepLabel?: string | null
+}
+
+const IDEA_ANALYSIS_PROGRESS_STORAGE_KEY = 'tectona.idea-analysis-progress.v1'
+
+function readStoredIdeaAnalysisProgress(): Record<string, IdeaAnalysisProgress> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.sessionStorage.getItem(IDEA_ANALYSIS_PROGRESS_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, IdeaAnalysisProgress>
+    const next: Record<string, IdeaAnalysisProgress> = {}
+    for (const [ideaId, state] of Object.entries(parsed)) {
+      if (!state || (state.status !== 'done' && state.status !== 'failed')) continue
+      next[ideaId] = {
+        progress: 100,
+        status: state.status,
+        errorMessage: String(state.errorMessage ?? '').replace(/<[^>]+>/g, ' ').slice(0, 280) || null,
+        currentStepLabel: state.currentStepLabel ?? null,
+      }
+    }
+    return next
+  } catch {
+    return {}
+  }
 }
 
 type IdeaReviewerOption = {
@@ -1856,8 +1881,29 @@ export function IdeaBacklogManagementPage() {
   const createIdeaDescriptionEditorRef = useRef<HTMLDivElement | null>(null)
   const createIdeaTagInputRef = useRef<HTMLInputElement | null>(null)
   const [createIdeaError, setCreateIdeaError] = useState('')
-  const [ideaAnalysisProgressById, setIdeaAnalysisProgressById] = useState<Record<string, IdeaAnalysisProgress>>({})
+  const [ideaAnalysisProgressById, setIdeaAnalysisProgressById] = useState<Record<string, IdeaAnalysisProgress>>(
+    readStoredIdeaAnalysisProgress,
+  )
   const ideaAnalysisInFlightRef = useRef<Record<string, boolean>>({})
+
+  useEffect(() => {
+    const persisted: Record<string, IdeaAnalysisProgress> = {}
+    for (const [ideaId, state] of Object.entries(ideaAnalysisProgressById)) {
+      if (state.status === 'done' || state.status === 'failed') {
+        persisted[ideaId] = {
+          progress: 100,
+          status: state.status,
+          errorMessage: String(state.errorMessage ?? '').replace(/<[^>]+>/g, ' ').slice(0, 280) || null,
+          currentStepLabel: state.currentStepLabel ?? null,
+        }
+      }
+    }
+    try {
+      window.sessionStorage.setItem(IDEA_ANALYSIS_PROGRESS_STORAGE_KEY, JSON.stringify(persisted))
+    } catch {
+      // Ignore quota / private-mode failures.
+    }
+  }, [ideaAnalysisProgressById])
   const navigate = useNavigate()
   const location = useLocation()
   const currentSession = getSession()
@@ -3087,7 +3133,7 @@ export function IdeaBacklogManagementPage() {
     return state?.status === 'failed' && state.progress >= 100
   }
 
-  const runAgentAnalysisForIdea = async (idea: Idea) => {
+  const runAgentAnalysisForIdea = async (idea: Idea, options?: { forceRefresh?: boolean }) => {
     if (isIdeaAnalysisLocked(idea.id) || ideaAnalysisInFlightRef.current[idea.id]) {
       return
     }
@@ -3129,7 +3175,7 @@ export function IdeaBacklogManagementPage() {
           mode: 'llm_first',
           allow_llm: true,
           max_evidence: 10,
-          force_refresh: false,
+          force_refresh: options?.forceRefresh === true,
         },
       })
 
@@ -3173,6 +3219,11 @@ export function IdeaBacklogManagementPage() {
               currentStepLabel: null,
             },
           }))
+          addToast({
+            title: 'Analysis failed',
+            description: String(terminalError).replace(/<[^>]+>/g, ' ').slice(0, 180),
+            variant: 'error',
+          })
           break
         }
 
@@ -3243,15 +3294,21 @@ export function IdeaBacklogManagementPage() {
         })
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Idea summary failed.'
       setIdeaAnalysisProgressById((prev) => ({
         ...prev,
         [idea.id]: {
           progress: 100,
           status: 'failed',
-          errorMessage: error instanceof Error ? error.message : null,
+          errorMessage: message,
           currentStepLabel: null,
         },
       }))
+      addToast({
+        title: 'Retry analysis failed',
+        description: String(message).replace(/<[^>]+>/g, ' ').slice(0, 180),
+        variant: 'error',
+      })
     } finally {
       delete ideaAnalysisInFlightRef.current[idea.id]
     }
@@ -4921,6 +4978,9 @@ export function IdeaBacklogManagementPage() {
                     draggedIdeaIds={draggedIdeaIds}
                     onSelect={(event) => handleIdeaCardSelect(event, idea.id)}
                     onOpenDetail={openIdeaDetail}
+                    onRetryAnalysis={(currentIdea) => {
+                      void runAgentAnalysisForIdea(currentIdea, { forceRefresh: true })
+                    }}
                     onOpenContextMenu={(event, currentIdea) => {
                       event.preventDefault()
                       event.stopPropagation()
@@ -5061,15 +5121,19 @@ export function IdeaBacklogManagementPage() {
           </ContextMenuItem>
         )}
 
-        {!isMultiSelectCardMenu && isContextIdeaAnalysisFailed && ideaCardContextMenu && (
+        {!isMultiSelectCardMenu && ideaCardContextMenu && (
           <ContextMenuItem
+            disabled={isContextIdeaAnalysisLocked}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => {
-              void runAgentAnalysisForIdea(ideaCardContextMenu.idea)
+              const idea = ideaCardContextMenu.idea
               closeContextMenu()
+              if (isIdeaAnalysisLocked(idea.id)) return
+              void runAgentAnalysisForIdea(idea, { forceRefresh: isContextIdeaAnalysisFailed })
             }}
           >
-            <Undo2 className="w-4 h-4 mr-2" />
-            Retry analysis
+            <RefreshCw className="w-4 h-4 mr-2" />
+            {isContextIdeaAnalysisFailed ? 'Retry analysis' : 'Run analysis'}
           </ContextMenuItem>
         )}
 
@@ -6714,6 +6778,7 @@ function SortableIdeaCard({
   draggedIdeaIds,
   onSelect,
   onOpenDetail,
+  onRetryAnalysis,
   onOpenContextMenu,
 }: {
   idea: Idea
@@ -6729,6 +6794,7 @@ function SortableIdeaCard({
   draggedIdeaIds: Set<string>
   onSelect: (event: ReactMouseEvent<HTMLDivElement>) => void
   onOpenDetail: (idea: Idea) => void
+  onRetryAnalysis: (idea: Idea) => void
   onOpenContextMenu: (event: ReactMouseEvent<HTMLDivElement>, idea: Idea) => void
 }) {
   const submittedByInitials = toInitials(submittedByDisplayName)
@@ -6855,10 +6921,10 @@ function SortableIdeaCard({
         )}
 
         {!isAnalysisRunning && analysisStatus === 'failed' && (
-          <div className="mt-2 rounded-md border border-rose-200/80 bg-rose-50/70 px-2 py-1.5">
-            <p className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-700">
-              <X className="h-3.5 w-3.5" />
-              Analysis failed. Use Retry analysis from context menu.
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-rose-200/80 bg-rose-50/70 px-2 py-1.5">
+            <p className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-rose-700">
+              <X className="h-3.5 w-3.5 shrink-0" />
+              <span>Analysis failed</span>
               {analysisErrorMessage ? (
                 <Tooltip
                   content={analysisErrorMessage}
@@ -6872,6 +6938,22 @@ function SortableIdeaCard({
                 </Tooltip>
               ) : null}
             </p>
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-rose-300/80 bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-rose-800 hover:bg-white"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onRetryAnalysis(idea)
+              }}
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </button>
           </div>
         )}
 

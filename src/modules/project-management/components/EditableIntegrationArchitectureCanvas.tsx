@@ -9,11 +9,12 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { ChevronsLeft, ChevronsRight, GripVertical, Layers, PencilLine, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsLeft, ChevronsRight, Circle, Copy, Crosshair, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Settings2, Sparkles, Trash2, Waypoints } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
   MarkerType,
+  updateEdge,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -21,6 +22,7 @@ import {
   type Edge,
   type Node,
   type OnSelectionChangeFunc,
+  type Viewport,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Button } from '@/components/ui/button'
@@ -28,7 +30,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { enterpriseIndigoGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
 import { IntegrationArchitectureFlow } from '@/modules/project-management/components/IntegrationArchitectureFlow'
+import { PlantUmlSourceEditor } from '@/modules/project-management/components/PlantUmlSourceEditor'
 import { ArchimateNotationPalette } from '@/modules/project-management/components/ArchimateNotationPalette'
+import { DiagramEdgePropertiesPanel } from '@/modules/project-management/components/DiagramEdgePropertiesPanel'
 import { IntegrationNodePropertiesPanel } from '@/modules/project-management/components/IntegrationNodePropertiesPanel'
 import {
   cloneDefaultIntegrationArchitecture,
@@ -36,15 +40,17 @@ import {
   normalizeIntegrationNodesForCanvas,
 } from '@/modules/project-management/lib/integrationArchitectureDefaults'
 import {
+  isCanvasViewport,
   loadIntegrationGraph,
   saveIntegrationGraph,
+  type CanvasViewport,
   type IntegrationGraphRecord,
 } from '@/modules/project-management/lib/integrationGraphStorage'
 import { DEFAULT_INTEGRATION_PLANTUML } from '@/modules/project-management/lib/integrationPlantUmlDefaults'
 import {
   integrationGraphToPlantUml,
   parsePlantUmlToIntegrationGraph,
-  pickHandleSides,
+  pickAnchoredHandles,
 } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import {
   ARCHIMATE_GENERAL_PALETTE_ITEMS,
@@ -56,6 +62,13 @@ import type { ArchimateNodeData } from '@/modules/project-management/lib/integra
 
 type IntegrationViewMode = 'canvas' | 'source' | 'notations'
 type StudioSidebarPanel = 'source' | 'notations'
+type CanvasMenuSubmenu = 'options' | 'layout' | null
+type CanvasContextMenuState = {
+  x: number
+  y: number
+  flowPosition: { x: number; y: number }
+  submenu: CanvasMenuSubmenu
+}
 
 const STUDIO_PANEL_MARGIN_PX = 12
 const STUDIO_PANEL_DEFAULT_POSITION = { x: STUDIO_PANEL_MARGIN_PX, y: STUDIO_PANEL_MARGIN_PX }
@@ -82,6 +95,8 @@ type EditableIntegrationArchitectureCanvasProps = {
   studioTitle?: string
   /** When true, outer page shell owns the panel title (Project List style header). */
   hideStudioHeader?: boolean
+  /** Persists user edits to the idea record after the local canvas cache is updated. */
+  onPersistGraph?: (graph: IntegrationGraphRecord) => void
 }
 
 function EditableIntegrationArchitectureCanvasInner({
@@ -94,6 +109,7 @@ function EditableIntegrationArchitectureCanvasInner({
   studioOverlay = null,
   studioTitle = 'Integration diagram',
   hideStudioHeader = false,
+  onPersistGraph,
 }: EditableIntegrationArchitectureCanvasProps) {
   const defaultGraph = useMemo(() => cloneDefaultIntegrationArchitecture(), [])
   const saveTimerRef = useRef<number | null>(null)
@@ -129,6 +145,8 @@ function EditableIntegrationArchitectureCanvasInner({
         edges: stored.edges,
         plantumlSource: stored.plantumlSource ?? DEFAULT_INTEGRATION_PLANTUML,
         userCustomized: stored.userCustomized,
+        viewport: isCanvasViewport(stored.viewport) ? stored.viewport : undefined,
+        snapToGrid: stored.snapToGrid,
       }
     }
     return {
@@ -136,16 +154,30 @@ function EditableIntegrationArchitectureCanvasInner({
       edges: defaultGraph.edges,
       plantumlSource: DEFAULT_INTEGRATION_PLANTUML,
       userCustomized: false,
+      viewport: undefined as CanvasViewport | undefined,
+      snapToGrid: undefined as boolean | undefined,
     }
   }, [ideaId, defaultGraph])
 
   const [nodes, setNodes, onNodesChange] = useNodesState<ArchimateNodeData>(initialState.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialState.edges)
   const [plantumlSource, setPlantumlSource] = useState(initialState.plantumlSource)
-  plantumlSourceRef.current = plantumlSource
+  useEffect(() => {
+    plantumlSourceRef.current = plantumlSource
+  }, [plantumlSource])
   const [userCustomized, setUserCustomized] = useState(initialState.userCustomized)
+  const [savedViewport, setSavedViewport] = useState<CanvasViewport | undefined>(initialState.viewport)
+  const viewportRef = useRef<CanvasViewport | undefined>(initialState.viewport)
+  const viewportPersistTimerRef = useRef<number | null>(null)
   const [viewMode, setViewMode] = useState<IntegrationViewMode>('canvas')
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>('source')
+  const [canvasMenu, setCanvasMenu] = useState<CanvasContextMenuState | null>(null)
+  const [showGrid, setShowGrid] = useState(true)
+  const [showGuides, setShowGuides] = useState(true)
+  const [snapToGrid, setSnapToGrid] = useState(initialState.snapToGrid ?? true)
+  const [showRuler, setShowRuler] = useState(true)
+  const [showConnectionArrows, setShowConnectionArrows] = useState(true)
+  const [showConnectionPoints, setShowConnectionPoints] = useState(true)
   const [studioPanelPosition, setStudioPanelPosition] = useState(STUDIO_PANEL_DEFAULT_POSITION)
   const [isStudioPanelDragging, setIsStudioPanelDragging] = useState(false)
   const [isStudioPanelCollapsed, setIsStudioPanelCollapsed] = useState(false)
@@ -162,16 +194,44 @@ function EditableIntegrationArchitectureCanvasInner({
       nextEdges: Edge[],
       nextPlantumlSource: string,
       customized: boolean,
+      nextViewport: CanvasViewport | undefined = viewportRef.current,
     ) => {
-      saveIntegrationGraph(ideaId, {
+      const graph = {
         nodes: nextNodes,
         edges: nextEdges,
         plantumlSource: nextPlantumlSource,
         userCustomized: customized,
         savedAt: new Date().toISOString(),
-      })
+        viewport: nextViewport,
+        snapToGrid,
+      }
+      saveIntegrationGraph(ideaId, graph)
+      onPersistGraph?.(graph)
     },
-    [ideaId],
+    [ideaId, onPersistGraph, snapToGrid],
+  )
+
+  const persistViewport = useCallback(
+    (viewport: Viewport) => {
+      const nextViewport: CanvasViewport = { x: viewport.x, y: viewport.y, zoom: viewport.zoom }
+      viewportRef.current = nextViewport
+      const stored = loadIntegrationGraph(ideaId)
+      const graph: IntegrationGraphRecord = {
+        nodes: stored?.nodes ?? nodes,
+        edges: stored?.edges ?? edges,
+        plantumlSource: stored?.plantumlSource ?? plantumlSourceRef.current,
+        userCustomized: stored?.userCustomized ?? userCustomized,
+        savedAt: new Date().toISOString(),
+        viewport: nextViewport,
+        snapToGrid: stored?.snapToGrid ?? snapToGrid,
+      }
+      saveIntegrationGraph(ideaId, graph)
+      if (viewportPersistTimerRef.current) window.clearTimeout(viewportPersistTimerRef.current)
+      viewportPersistTimerRef.current = window.setTimeout(() => {
+        onPersistGraph?.(graph)
+      }, 500)
+    },
+    [edges, ideaId, nodes, onPersistGraph, snapToGrid, userCustomized],
   )
 
   useEffect(() => {
@@ -183,11 +243,17 @@ function EditableIntegrationArchitectureCanvasInner({
       setEdges(stored.edges)
       setPlantumlSource(stored.plantumlSource ?? DEFAULT_INTEGRATION_PLANTUML)
       setUserCustomized(stored.userCustomized)
+      viewportRef.current = isCanvasViewport(stored.viewport) ? stored.viewport : undefined
+      setSavedViewport(viewportRef.current)
+      setSnapToGrid(stored.snapToGrid ?? true)
     } else {
       setNodes(defaultGraph.nodes)
       setEdges(defaultGraph.edges)
       setPlantumlSource(DEFAULT_INTEGRATION_PLANTUML)
       setUserCustomized(false)
+      viewportRef.current = undefined
+      setSavedViewport(undefined)
+      setSnapToGrid(true)
     }
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
@@ -201,6 +267,24 @@ function EditableIntegrationArchitectureCanvasInner({
 
   useEffect(() => {
     if (!bootstrapRecord) return
+    const localGraph = loadIntegrationGraph(ideaId)
+    const localSavedAt = localGraph?.savedAt ? Date.parse(localGraph.savedAt) : Number.NEGATIVE_INFINITY
+    const remoteSavedAt = bootstrapRecord.savedAt ? Date.parse(bootstrapRecord.savedAt) : Number.NEGATIVE_INFINITY
+    // Preserve a newer, manually edited browser layout while upgrading it to the
+    // server-backed record. Generated or stale cached graphs never win this check.
+    if (localGraph?.userCustomized && localSavedAt > remoteSavedAt) {
+      skipNextSaveRef.current = true
+      skipSourceApplyRef.current = true
+      setNodes(normalizeIntegrationNodesForCanvas(localGraph.nodes))
+      setEdges(localGraph.edges)
+      setPlantumlSource(localGraph.plantumlSource ?? DEFAULT_INTEGRATION_PLANTUML)
+      setUserCustomized(true)
+      viewportRef.current = isCanvasViewport(localGraph.viewport) ? localGraph.viewport : viewportRef.current
+      setSavedViewport(viewportRef.current)
+      setSnapToGrid(localGraph.snapToGrid ?? true)
+      onPersistGraph?.(localGraph)
+      return
+    }
     skipNextSaveRef.current = true
     skipSourceApplyRef.current = true
     // Always sync from the backend-confirmed record, even when it's genuinely empty (e.g. AI
@@ -211,11 +295,17 @@ function EditableIntegrationArchitectureCanvasInner({
     setEdges(bootstrapRecord.edges)
     setPlantumlSource(bootstrapRecord.plantumlSource ?? DEFAULT_INTEGRATION_PLANTUML)
     setUserCustomized(bootstrapRecord.userCustomized)
+    const nextViewport = loadIntegrationGraph(ideaId)?.viewport ?? bootstrapRecord.viewport
+    if (isCanvasViewport(nextViewport)) {
+      viewportRef.current = nextViewport
+      setSavedViewport(nextViewport)
+    }
+    setSnapToGrid(bootstrapRecord.snapToGrid ?? true)
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
     setApplyError(null)
     setApplyWarnings([])
-  }, [bootstrapKey, bootstrapRecord, setEdges, setNodes])
+  }, [bootstrapKey, bootstrapRecord, ideaId, onPersistGraph, setEdges, setNodes])
 
   useEffect(() => {
     if (skipNextSaveRef.current) {
@@ -232,7 +322,20 @@ function EditableIntegrationArchitectureCanvasInner({
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
     }
-  }, [nodes, edges, userCustomized, persistGraph])
+  }, [nodes, edges, snapToGrid, userCustomized, persistGraph])
+
+  useEffect(() => {
+    return () => {
+      if (viewportPersistTimerRef.current) window.clearTimeout(viewportPersistTimerRef.current)
+      const stored = loadIntegrationGraph(ideaId)
+      if (!stored || !viewportRef.current) return
+      saveIntegrationGraph(ideaId, {
+        ...stored,
+        viewport: viewportRef.current,
+        savedAt: new Date().toISOString(),
+      })
+    }
+  }, [ideaId])
 
   const markCustomized = useCallback(() => setUserCustomized(true), [])
 
@@ -254,6 +357,18 @@ function EditableIntegrationArchitectureCanvasInner({
     [markCustomized, setEdges],
   )
 
+  const onEdgeUpdate = useCallback(
+    (oldEdge: Edge, connection: Connection) => {
+      markCustomized()
+      setEdges((current) =>
+        updateEdge(oldEdge, connection, current).map((edge) => (
+          edge.id === oldEdge.id ? { ...edge, selected: true } : edge
+        )),
+      )
+    },
+    [markCustomized, setEdges],
+  )
+
   const handleNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) => {
       const moved = changes.some((change) => change.type === 'position' && change.dragging === false)
@@ -267,6 +382,59 @@ function EditableIntegrationArchitectureCanvasInner({
     () => (selectedNodeId ? nodes.find((node) => node.id === selectedNodeId) ?? null : null),
     [nodes, selectedNodeId],
   )
+  const selectedEdge = useMemo(
+    () => (selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) ?? null : null),
+    [edges, selectedEdgeId],
+  )
+
+  const updateSelectedEdge = useCallback((patch: Partial<Edge>) => {
+    if (!selectedEdgeId) return
+    markCustomized()
+    setEdges((current) => current.map((edge) => {
+      if (edge.id !== selectedEdgeId) return edge
+      return {
+        ...edge,
+        ...patch,
+        style: { ...edge.style, ...patch.style },
+        data: patch.data ? { ...edge.data, ...patch.data } : edge.data,
+      }
+    }))
+  }, [markCustomized, selectedEdgeId, setEdges])
+
+  const clearSelectedEdgeWaypoints = useCallback(() => {
+    if (!selectedEdgeId) return
+    markCustomized()
+    setEdges((current) => {
+      const nodeById = new Map(nodes.map((node) => [node.id, node]))
+      const absolutePosition = (node: Node<ArchimateNodeData>): { x: number; y: number } => {
+        if (!node.parentNode) return node.position
+        const parent = nodeById.get(node.parentNode)
+        if (!parent) return node.position
+        const parentPosition = absolutePosition(parent)
+        return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
+      }
+      const geometry = (nodeId: string) => {
+        const node = nodeById.get(nodeId)
+        if (!node) return null
+        const position = absolutePosition(node)
+        const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? 0)
+        const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? 0)
+        if (!width || !height) return null
+        return { x: position.x, y: position.y, width, height }
+      }
+      return current.map((edge) => {
+        if (edge.id !== selectedEdgeId) return edge
+        const sourceGeometry = geometry(edge.source)
+        const targetGeometry = geometry(edge.target)
+        const handles = sourceGeometry && targetGeometry ? pickAnchoredHandles(sourceGeometry, targetGeometry) : undefined
+        return {
+          ...edge,
+          sourceHandle: handles?.sourceHandle,
+          targetHandle: handles?.targetHandle,
+        }
+      })
+    })
+  }, [markCustomized, nodes, selectedEdgeId, setEdges])
 
   const updateSelectedNodeData = useCallback(
     (patch: Record<string, unknown>) => {
@@ -646,7 +814,7 @@ function EditableIntegrationArchitectureCanvasInner({
           const sourceGeometry = geometry(edge.source)
           const targetGeometry = geometry(edge.target)
           if (!sourceGeometry || !targetGeometry) return edge
-          const handles = pickHandleSides(sourceGeometry, targetGeometry)
+          const handles = pickAnchoredHandles(sourceGeometry, targetGeometry)
           return { ...edge, sourceHandle: handles.sourceHandle, targetHandle: handles.targetHandle }
         })
       })
@@ -805,13 +973,195 @@ function EditableIntegrationArchitectureCanvasInner({
     [fillHeight, markCustomized, nodes, screenToFlowPosition, setNodes],
   )
 
+  const handlePaneContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault()
+      const wrapper = reactFlowWrapperRef.current
+      if (!wrapper) return
+      const bounds = wrapper.getBoundingClientRect()
+      setCanvasMenu({
+        x: Math.min(event.clientX - bounds.left, bounds.width - 280),
+        y: Math.min(event.clientY - bounds.top, bounds.height - 280),
+        flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+        submenu: null,
+      })
+    },
+    [screenToFlowPosition],
+  )
+
+  const selectCanvasElements = useCallback(
+    (kind: 'nodes' | 'edges' | 'all') => {
+      const selectNodes = kind === 'nodes' || kind === 'all'
+      const selectEdges = kind === 'edges' || kind === 'all'
+      setNodes((current) => current.map((node) => ({ ...node, selected: selectNodes })))
+      setEdges((current) => current.map((edge) => ({ ...edge, selected: selectEdges })))
+      setSelectedNodeId(selectNodes ? nodes[0]?.id ?? null : null)
+      setSelectedEdgeId(selectEdges ? edges[0]?.id ?? null : null)
+      setCanvasMenu(null)
+    },
+    [edges, nodes, setEdges, setNodes],
+  )
+
+  const clearDefaultStyle = useCallback(() => {
+    const selectedIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id))
+    markCustomized()
+    setNodes((current) => current.map((node) => {
+      if (selectedIds.size > 0 && !selectedIds.has(node.id)) return node
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          visual: { ...node.data.visual, fillEnabled: false, shadow: false },
+        } as ArchimateNodeData,
+      }
+    }))
+    setCanvasMenu(null)
+  }, [markCustomized, nodes, setNodes])
+
+  const pastePlantUmlAtCursor = useCallback(async () => {
+    if (!canvasMenu || !navigator.clipboard?.readText) return
+    try {
+      const source = await navigator.clipboard.readText()
+      const parsed = parsePlantUmlToIntegrationGraph(source)
+      if (parsed.nodes.length === 0) return
+      const minX = Math.min(...parsed.nodes.map((node) => node.position.x))
+      const minY = Math.min(...parsed.nodes.map((node) => node.position.y))
+      const idSuffix = crypto.randomUUID()
+      const idMap = new Map(parsed.nodes.map((node) => [node.id, `${node.id}-paste-${idSuffix}`]))
+      const pastedNodes = parsed.nodes.map((node) => ({
+        ...node,
+        id: idMap.get(node.id) ?? node.id,
+        parentNode: undefined,
+        extent: undefined,
+        selected: true,
+        position: {
+          x: canvasMenu.flowPosition.x + node.position.x - minX,
+          y: canvasMenu.flowPosition.y + node.position.y - minY,
+        },
+      }))
+      const pastedEdges = parsed.edges.map((edge) => ({
+        ...edge,
+        id: `${edge.id}-paste-${idSuffix}`,
+        source: idMap.get(edge.source) ?? edge.source,
+        target: idMap.get(edge.target) ?? edge.target,
+      }))
+      markCustomized()
+      setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...pastedNodes])
+      setEdges((current) => [...current.map((edge) => ({ ...edge, selected: false })), ...pastedEdges])
+      setSelectedNodeId(pastedNodes[0]?.id ?? null)
+      setSelectedEdgeId(null)
+    } catch {
+      setApplyError('Clipboard tidak berisi source PlantUML yang valid.')
+    } finally {
+      setCanvasMenu(null)
+    }
+  }, [canvasMenu, markCustomized, setEdges, setNodes])
+
+  const copyCanvasAsImage = useCallback(async () => {
+    const drawableNodes = nodes.filter((node) => node.type !== 'archimateLegend')
+    if (drawableNodes.length === 0) return
+    const dimensions = (node: Node<ArchimateNodeData>) => ({
+      width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 180),
+      height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 72),
+    })
+    const minX = Math.min(...drawableNodes.map((node) => node.position.x)) - 40
+    const minY = Math.min(...drawableNodes.map((node) => node.position.y)) - 40
+    const maxX = Math.max(...drawableNodes.map((node) => node.position.x + dimensions(node).width)) + 40
+    const maxY = Math.max(...drawableNodes.map((node) => node.position.y + dimensions(node).height)) + 40
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.min(2400, Math.max(640, Math.ceil(maxX - minX)))
+    canvas.height = Math.min(1800, Math.max(420, Math.ceil(maxY - minY)))
+    const context = canvas.getContext('2d')
+    if (!context) return
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.strokeStyle = '#475569'
+    context.lineWidth = 2
+    edges.forEach((edge) => {
+      const source = drawableNodes.find((node) => node.id === edge.source)
+      const target = drawableNodes.find((node) => node.id === edge.target)
+      if (!source || !target) return
+      const sourceSize = dimensions(source)
+      const targetSize = dimensions(target)
+      context.beginPath()
+      context.moveTo(source.position.x - minX + sourceSize.width / 2, source.position.y - minY + sourceSize.height / 2)
+      context.lineTo(target.position.x - minX + targetSize.width / 2, target.position.y - minY + targetSize.height / 2)
+      context.stroke()
+    })
+    drawableNodes.forEach((node) => {
+      const { width, height } = dimensions(node)
+      const x = node.position.x - minX
+      const y = node.position.y - minY
+      context.fillStyle = '#e0f2fe'
+      context.strokeStyle = '#334155'
+      context.lineWidth = 1.5
+      context.fillRect(x, y, width, height)
+      context.strokeRect(x, y, width, height)
+      context.fillStyle = '#0f172a'
+      context.font = '14px Arial'
+      context.textAlign = 'center'
+      context.textBaseline = 'middle'
+      context.fillText(node.data.label ?? node.id, x + width / 2, y + height / 2, Math.max(40, width - 14))
+    })
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (!blob) return
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+    } catch {
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = 'integration-diagram.png'
+      link.click()
+      URL.revokeObjectURL(link.href)
+    } finally {
+      setCanvasMenu(null)
+    }
+  }, [edges, nodes])
+
+  const applyCanvasLayout = useCallback((layout: 'horizontal' | 'vertical' | 'circle') => {
+    const selected = nodes.filter((node) => node.selected && !node.parentNode)
+    const targets = (selected.length > 0 ? selected : nodes.filter((node) => !node.parentNode && node.type !== 'archimateLegend'))
+    if (targets.length === 0) return
+    const center = { x: 500, y: 360 }
+    markCustomized()
+    setNodes((current) => current.map((node) => {
+      const index = targets.findIndex((target) => target.id === node.id)
+      if (index < 0) return node
+      if (layout === 'horizontal') return { ...node, position: { x: 120 + index * 260, y: center.y } }
+      if (layout === 'vertical') return { ...node, position: { x: center.x, y: 100 + index * 150 } }
+      const angle = (Math.PI * 2 * index) / targets.length - Math.PI / 2
+      return { ...node, position: { x: center.x + Math.cos(angle) * 300, y: center.y + Math.sin(angle) * 220 } }
+    }))
+    setCanvasMenu(null)
+  }, [markCustomized, nodes, setNodes])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Delete' && event.key !== 'Backspace') return
       const onCanvas = fillHeight || viewMode === 'canvas'
       if (!onCanvas) return
       const target = event.target as HTMLElement | null
       if (target?.closest('input, textarea, [contenteditable="true"]')) return
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        selectCanvasElements('all')
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'i') {
+        event.preventDefault()
+        selectCanvasElements('nodes')
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'e') {
+        event.preventDefault()
+        selectCanvasElements('edges')
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'r') {
+        event.preventDefault()
+        clearDefaultStyle()
+        return
+      }
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return
       if (selectedEdgeId) {
         event.preventDefault()
         deleteSelectedEdge()
@@ -819,7 +1169,7 @@ function EditableIntegrationArchitectureCanvasInner({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [deleteSelectedEdge, fillHeight, selectedEdgeId, viewMode])
+  }, [clearDefaultStyle, deleteSelectedEdge, fillHeight, selectCanvasElements, selectedEdgeId, viewMode])
 
   const viewTabs: Array<{ id: IntegrationViewMode; label: string; icon: typeof Layers }> = [
     { id: 'canvas', label: 'Canvas', icon: Layers },
@@ -864,47 +1214,113 @@ function EditableIntegrationArchitectureCanvasInner({
         onRotate90={handleRotateSelectedNode90}
         dragHandleProps={propertiesPanelDragHandleProps}
       />
-    ) : selectedEdgeId ? (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-center border-b border-white/35 bg-white/15">
-          <div
-            role="button"
-            tabIndex={0}
-            aria-label="Geser panel Properties"
-            className={cn(
-              'flex shrink-0 touch-none cursor-grab select-none items-center border-r border-white/25 px-2 active:cursor-grabbing',
-              isPropertiesPanelDragging && 'cursor-grabbing',
-            )}
-            onPointerDown={propertiesPanelDragHandleProps.onPointerDown}
-            onPointerMove={propertiesPanelDragHandleProps.onPointerMove}
-            onPointerUp={propertiesPanelDragHandleProps.onPointerUp}
-            onPointerCancel={propertiesPanelDragHandleProps.onPointerCancel}
-          >
-            <GripVertical className="h-4 w-4 text-slate-500" />
-          </div>
-          <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Edge</p>
-        </div>
-        <div className="flex flex-col gap-2 p-3">
-          <p className="text-xs text-slate-600">Koneksi dipilih — tekan Delete atau hapus manual.</p>
-          <Button type="button" variant="outline" size="sm" className="h-8 w-fit" onClick={deleteSelectedEdge}>
-            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-            Hapus koneksi
-          </Button>
-        </div>
-      </div>
+    ) : selectedEdge ? (
+      <DiagramEdgePropertiesPanel
+        edge={selectedEdge}
+        onChange={updateSelectedEdge}
+        onDelete={deleteSelectedEdge}
+        onClearWaypoints={clearSelectedEdgeWaypoints}
+        dragHandleProps={propertiesPanelDragHandleProps}
+      />
     ) : null
 
   const flowCanvas = (
     <IntegrationArchitectureFlow
+      key={ideaId}
       nodes={nodes}
       edges={edges}
       onNodesChange={handleNodesChange}
       onNodeDragStop={handleNodeDragStop}
       onEdgesChange={handleEdgesChange}
       onConnect={onConnect}
+      onEdgeUpdate={onEdgeUpdate}
       onSelectionChange={handleSelectionChange}
+      onPaneClick={() => setCanvasMenu(null)}
+      onPaneContextMenu={handlePaneContextMenu}
+      showGrid={showGrid}
+      showGuides={showGuides}
+      snapToGrid={snapToGrid}
+      showRuler={showRuler}
+      showConnectionArrows={showConnectionArrows}
+      showConnectionPoints={showConnectionPoints}
+      defaultViewport={savedViewport}
+      onMoveEnd={(_event, viewport) => persistViewport(viewport)}
     />
   )
+
+  const canvasContextMenu = canvasMenu ? (
+    <div
+      className="absolute z-50 w-64 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+      style={{ left: Math.max(8, canvasMenu.x), top: Math.max(8, canvasMenu.y) }}
+      onContextMenu={(event) => event.preventDefault()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={pastePlantUmlAtCursor}>
+        <Copy className="h-4 w-4" /> Paste here
+      </button>
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={copyCanvasAsImage}>
+        <ImageDown className="h-4 w-4" /> Copy as image
+      </button>
+      <div className="my-1 border-t border-slate-200" />
+      <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={clearDefaultStyle}>
+        <span className="flex items-center gap-2"><Paintbrush className="h-4 w-4" /> Clear default style</span><span className="text-xs text-slate-400">Ctrl+Shift+R</span>
+      </button>
+      <div className="my-1 border-t border-slate-200" />
+      <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => selectCanvasElements('nodes')}>
+        <span className="flex items-center gap-2"><MousePointer2 className="h-4 w-4" /> Select vertices</span><span className="text-xs text-slate-400">Ctrl+Shift+I</span>
+      </button>
+      <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => selectCanvasElements('edges')}>
+        <span className="flex items-center gap-2"><Waypoints className="h-4 w-4" /> Select edges</span><span className="text-xs text-slate-400">Ctrl+Shift+E</span>
+      </button>
+      <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => selectCanvasElements('all')}>
+        <span className="flex items-center gap-2"><ListChecks className="h-4 w-4" /> Select all</span><span className="text-xs text-slate-400">Ctrl+A</span>
+      </button>
+      <div className="my-1 border-t border-slate-200" />
+      <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setSnapToGrid((current) => !current)}>
+        <span className="flex items-center gap-2"><Magnet className="h-4 w-4" /> Snap to grid</span>
+        <span className="w-4 text-sky-500">{snapToGrid ? <Check className="h-4 w-4" /> : null}</span>
+      </button>
+      <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'options' } : current)}>
+        <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
+          <span className="flex items-center gap-2"><Settings2 className="h-4 w-4" /> Options</span><ChevronRight className="h-4 w-4" />
+        </button>
+        {canvasMenu.submenu === 'options' ? (
+          <div className="absolute left-full top-0 w-64 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+            {[
+              ['Grid', showGrid, setShowGrid, Grid3X3],
+              ['Snap to grid', snapToGrid, setSnapToGrid, Magnet],
+              ['Guides', showGuides, setShowGuides, MousePointer2],
+              ['Ruler', showRuler, setShowRuler, Ruler],
+              ['Connection arrows', showConnectionArrows, setShowConnectionArrows, ArrowRight],
+              ['Connection points', showConnectionPoints, setShowConnectionPoints, Crosshair],
+            ].map(([label, enabled, setter, Icon]) => (
+              <button
+                type="button"
+                key={label as string}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
+                onClick={() => (setter as (value: boolean) => void)(!(enabled as boolean))}
+              >
+                <span className="w-4 text-sky-500">{enabled ? <Check className="h-4 w-4" /> : null}</span>
+                {Icon ? <Icon className="h-4 w-4 text-slate-500" /> : null}{label as string}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'layout' } : current)}>
+        <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
+          <span className="flex items-center gap-2"><LayoutTemplate className="h-4 w-4" /> Layout</span><ChevronRight className="h-4 w-4" />
+        </button>
+        {canvasMenu.submenu === 'layout' ? (
+          <div className="absolute bottom-0 left-full w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+            <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('horizontal')}><ArrowRightLeft className="h-4 w-4" />Horizontal flow</button>
+            <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('vertical')}><ArrowDown className="h-4 w-4" />Vertical flow</button>
+            <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('circle')}><Circle className="h-4 w-4" />Circle</button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  ) : null
 
   const notationPanelBody = (
     <ArchimateNotationPalette
@@ -966,7 +1382,7 @@ function EditableIntegrationArchitectureCanvasInner({
   )
 
   const studioPropertiesShellClass =
-    'pointer-events-none absolute z-20 w-[min(320px,34%)] max-w-[360px]'
+    'pointer-events-none absolute z-20 w-[min(280px,38%)] max-w-[300px]'
 
   const studioPropertiesPanelClass = cn(
     'pointer-events-auto flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden rounded-2xl border liquid-glass-enterprise-panel',
@@ -1031,6 +1447,7 @@ function EditableIntegrationArchitectureCanvasInner({
               onDrop={handleCanvasDrop}
             >
               {flowCanvas}
+              {canvasContextMenu}
             </div>
 
             {studioOverlay ? (
@@ -1109,15 +1526,10 @@ function EditableIntegrationArchitectureCanvasInner({
                 {!isStudioPanelCollapsed ? <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   {sidebarPanel === 'source' ? (
                     <>
-                      <Textarea
+                      <PlantUmlSourceEditor
                         value={plantumlSource}
-                        onChange={(event) => handlePlantumlSourceChange(event.target.value)}
-                        onBlur={(event) => flushPlantumlSourceApply(event.target.value)}
-                        spellCheck={false}
-                        className={cn(
-                          'min-h-0 flex-1 resize-none rounded-none border-0 bg-white/20 px-3 py-2 font-mono text-xs leading-5 text-slate-900 shadow-none focus-visible:bg-white/30 focus-visible:ring-0',
-                          STUDIO_PANEL_SCROLL_CLASS,
-                        )}
+                        onChange={handlePlantumlSourceChange}
+                        onBlur={flushPlantumlSourceApply}
                       />
                       {applyError || applyWarnings.length > 0 ? (
                         <div className={cn('max-h-28 shrink-0', STUDIO_PANEL_SCROLL_CLASS)}>{sourceEditorFeedback}</div>
@@ -1213,6 +1625,7 @@ function EditableIntegrationArchitectureCanvasInner({
             onDrop={handleCanvasDrop}
           >
             {flowCanvas}
+            {canvasContextMenu}
           </div>
         </div>
       )}

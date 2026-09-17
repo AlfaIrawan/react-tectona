@@ -28,6 +28,7 @@ import { useRequestJoinWorkspaceStore } from '@/stores/request-join-workspace-st
 import { useToast } from '@/components/ui/toast'
 import { X, ListTodo, Palette, GripHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { AppErrorBoundary } from '@/components/AppErrorBoundary'
 
 export type { SettingsPanelType } from '@/stores/settings-panel-store'
 
@@ -380,7 +381,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         >
           <main className="relative flex min-h-full w-full min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-full min-w-0 w-full max-w-none flex-1 flex-col self-stretch px-10 py-3">
-              {children || <Outlet />}
+              <AppErrorBoundary>{children || <Outlet />}</AppErrorBoundary>
             </div>
           </main>
         </div>
@@ -539,17 +540,15 @@ export function AppLayout({ children }: AppLayoutProps) {
 
       {import.meta.env.DEV ? <LayoutDebugIndicator metrics={layoutDebugMetrics} /> : null}
 
-      {/* Overlay when any settings panel is open */}
-      <div
-        className={cn(
-          'fixed inset-0 bg-black/20 backdrop-blur-sm z-[1050] transition-opacity',
-          settingsPanel ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        )}
-        onClick={closePanel}
-        aria-hidden="true"
-        role="button"
-        tabIndex={-1}
-      />
+      {settingsPanel ? (
+        <div
+          className="fixed inset-0 z-[1050] bg-black/20 backdrop-blur-sm"
+          onClick={closePanel}
+          aria-hidden="true"
+          role="button"
+          tabIndex={-1}
+        />
+      ) : null}
 
       {/* Right panel: Theme Settings or Todo List (same drawer) */}
       <div

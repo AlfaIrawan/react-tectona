@@ -250,6 +250,11 @@ export default defineConfig({
         target: 'http://localhost:8433',
         changeOrigin: true,
       },
+      '/api/work/health': {
+        target: 'http://localhost:8432',
+        changeOrigin: true,
+        rewrite: () => '/health',
+      },
       '/api/work': {
         target: 'http://localhost:8432',
         changeOrigin: true,
@@ -279,6 +284,11 @@ export default defineConfig({
       },
       '/api/tectona-activity': {
         target: 'http://localhost:8435',
+        changeOrigin: true,
+      },
+      // user-preferences-service (Docker/WSL :8436) — keep prefix; FastAPI mounts at /api/user-preferences/v1/...
+      '/api/user-preferences': {
+        target: 'http://127.0.0.1:8436',
         changeOrigin: true,
       },
       '/api/plantuml': {

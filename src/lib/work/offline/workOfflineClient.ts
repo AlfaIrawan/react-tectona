@@ -10,7 +10,7 @@ import {
   type WorkItemCreateBody,
   type WorkItemPatchBody,
 } from '@/lib/api/workApi'
-import { apiFetch, tectonaServiceHeaders } from '@/lib/api/httpClient'
+import { tectonaServiceHeaders } from '@/lib/api/httpClient'
 import {
   countPendingOutbox,
   countStoredConflicts,
@@ -92,11 +92,22 @@ function applyProbeReachability(ok: boolean): void {
 async function probeWorkApiHealth(): Promise<boolean> {
   if (!isBrowserOnline()) return false
   try {
-    // Must use a path under Vite's `/api/work` proxy — root `/health` is not forwarded.
-    const response = await apiFetch(`${WORK_API_BASE}/api/work/v1/work-items?limit=1`, {
-      headers: tectonaServiceHeaders(),
+    // Prefer a public health path so JWT/session refresh cannot fake "work is down".
+    const health = await fetch(`${WORK_API_BASE}/api/work/health`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
     })
-    return response.ok
+    if (health.ok) return true
+
+    // Older nginx/Vite builds may 404 /api/work/health. A 4xx from the list API still
+    // means the process is up (auth); only 5xx / network means offline.
+    const response = await fetch(`${WORK_API_BASE}/api/work/v1/work-items?limit=1`, {
+      method: 'GET',
+      headers: tectonaServiceHeaders(),
+      cache: 'no-store',
+    })
+    return response.status > 0 && response.status < 500
   } catch {
     return false
   }

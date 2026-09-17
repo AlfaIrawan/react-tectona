@@ -170,9 +170,25 @@ export function conversationAssistantIdForGreet(
   return match?.assistantId?.trim() || null
 }
 
+export function titleLooksLikeAssistantPersona(
+  title: string | null | undefined,
+  fallback = TECTONA_ASSISTANT_CONTACT.name,
+): boolean {
+  const t = (title ?? '').trim()
+  if (!t || GENERIC_GENAI_TITLES.has(t.toLowerCase()) || t === fallback) return false
+  if (t.includes('?')) return false
+  if (t.length > 48) return false
+  if (t.split(/\s+/).length > 6) return false
+  return true
+}
+
 /** Name shown on typing/greeting status for the active Gen AI thread. */
 export function genAiAssistantDisplayName(
-  conversation: { assistantId?: string | null; title?: string | null } | null | undefined,
+  conversation: {
+    assistantId?: string | null
+    assistantName?: string | null
+    title?: string | null
+  } | null | undefined,
   contacts: Array<{ id: string; name: string; assistantId?: string | null }> = [],
   fallback = TECTONA_ASSISTANT_CONTACT.name,
 ): string {
@@ -182,10 +198,12 @@ export function genAiAssistantDisplayName(
       (contact) => contact.assistantId === assistantId || contact.id === explainerContactId(assistantId),
     )
     if (match?.name?.trim()) return match.name.trim()
-    const title = conversation?.title?.trim()
-    if (title && !GENERIC_GENAI_TITLES.has(title.toLowerCase()) && title !== fallback) {
-      return title
-    }
+  }
+  const storedName = conversation?.assistantName?.trim()
+  if (storedName) return storedName
+  const title = conversation?.title?.trim()
+  if (title && titleLooksLikeAssistantPersona(title, fallback)) {
+    return title
   }
   return fallback
 }

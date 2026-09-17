@@ -4947,7 +4947,7 @@ function WorkspaceHealthExecutiveDonut({
   }
 
   if (total === 0) {
-    return (
+  return (
       <div className="flex h-60 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
         No workspace health data in the current scope yet.
       </div>
@@ -5031,14 +5031,14 @@ function WorkspaceHealthExecutiveDonut({
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
           <div className="text-4xl font-bold leading-none tracking-tight text-slate-900">{total}</div>
           <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">Workspaces</div>
+          </div>
         </div>
-      </div>
         <div className="flex flex-wrap items-center justify-center gap-1.5">
           <div className="rounded-full border border-slate-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm">
             Executive Index {healthIndex}
           </div>
           <div className="rounded-full border border-slate-200/80 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
-            Stability Score {stabilityScore}
+          Stability Score {stabilityScore}
           </div>
         </div>
       </div>
@@ -8893,7 +8893,7 @@ export function WorkspaceManagementPage() {
       return
     }
     if (!silent) {
-      setWorkspacePendingAccessLoading(true)
+    setWorkspacePendingAccessLoading(true)
       if (!hasLoadedPendingAccess) setWorkspacePendingAccessError(null)
     }
     try {
@@ -8912,7 +8912,7 @@ export function WorkspaceManagementPage() {
       )
     } finally {
       if (requestGen === workspacePendingAccessRequestGenRef.current) {
-        setWorkspacePendingAccessLoading(false)
+      setWorkspacePendingAccessLoading(false)
       }
     }
   }, [])
@@ -11628,9 +11628,9 @@ export function WorkspaceManagementPage() {
         const name = newWorkspaceForm.name.trim()
         if (name && !newWorkspaceForm.code.trim()) {
           const taken = new Set(directoryWorkspaces.map((w) => w.code.toLowerCase()).filter(Boolean))
-          const code = generateWorkspaceCode(name, taken)
+        const code = generateWorkspaceCode(name, taken)
           lastAutoCodeNameRef.current = name
-          setNewWorkspaceForm((prev) => ({ ...prev, code }))
+        setNewWorkspaceForm((prev) => ({ ...prev, code }))
         }
       }
       if (newWorkspaceWizardStep === 5) {
@@ -12312,16 +12312,16 @@ export function WorkspaceManagementPage() {
         description: 'Assign Governance Policy — Add Members — Link Projects — Configure Workflow — Open Workspace',
       })
       try {
-        notifyEvent({
-          type_code: 'project',
-          title: 'Workspace created',
-          body: `${name} (${workspaceCodeDisplay}) is registered in the workspace directory.`,
-          metadata: {
-            workspace_id: workspaceId,
-            workspace_code: workspaceCodeDisplay,
-            event: 'workspace_created',
-          },
-        })
+      notifyEvent({
+        type_code: 'project',
+        title: 'Workspace created',
+        body: `${name} (${workspaceCodeDisplay}) is registered in the workspace directory.`,
+        metadata: {
+          workspace_id: workspaceId,
+          workspace_code: workspaceCodeDisplay,
+          event: 'workspace_created',
+        },
+      })
       } catch {
         // Notification fan-out must not surface as a create-workspace failure.
       }
@@ -12431,16 +12431,16 @@ export function WorkspaceManagementPage() {
           const idempotencyKey = createClientUuid()
           try {
             created = await createWorkspaceOrgWorkspace(
-              {
-                organization_id: newWorkspaceForm.primaryOrganizationId.trim(),
-                workspace_key: codeKey,
-                name,
-                description: newWorkspaceForm.description.trim() || null,
-                status_code: lifecycleStageToWorkspaceOrgStatusCode(newWorkspaceForm.lifecycleStage),
-                metadata,
-              },
-              { actorId: session?.user?.id, idempotencyKey }
-            )
+          {
+            organization_id: newWorkspaceForm.primaryOrganizationId.trim(),
+            workspace_key: codeKey,
+            name,
+            description: newWorkspaceForm.description.trim() || null,
+            status_code: lifecycleStageToWorkspaceOrgStatusCode(newWorkspaceForm.lifecycleStage),
+            metadata,
+          },
+          { actorId: session?.user?.id, idempotencyKey }
+        )
             break
           } catch (createErr) {
             const isDuplicateCode =
@@ -12457,9 +12457,9 @@ export function WorkspaceManagementPage() {
         // ownership/membership provisioning below and leave the new workspace
         // ownerless.
         const domainPayload = domainRows.map((d) => ({
-          value: d.value.trim().toLowerCase(),
-          category: d.category,
-          verified: d.verified !== false,
+              value: d.value.trim().toLowerCase(),
+              category: d.category,
+              verified: d.verified !== false,
         }))
         const primaryOrg = organizationNodes.find((n) => n.id === orgId)
         const domainsUnchanged =
@@ -12470,8 +12470,8 @@ export function WorkspaceManagementPage() {
           try {
             await patchWorkspaceOrgOrganization(orgId, {
               verified_domains: domainPayload,
-              version: primaryOrg.version ?? 1,
-            })
+            version: primaryOrg.version ?? 1,
+          })
           } catch (domainSyncError) {
             let synced = false
             try {
@@ -12577,7 +12577,7 @@ export function WorkspaceManagementPage() {
             description: 'Change the workspace name (or its code) in Basic Info and try again.',
           })
         } else {
-          addToast({ variant: 'error', title: 'Create workspace failed', description: msg })
+        addToast({ variant: 'error', title: 'Create workspace failed', description: msg })
         }
         setIsSubmittingNewWorkspace(false)
       }
@@ -14144,18 +14144,18 @@ export function WorkspaceManagementPage() {
                 <PanelLeft className="h-[18px] w-[18px]" strokeWidth={1.8} />
               </button>
               {supportsSearchAndFilter ? (
-                <button
-                  type="button"
-                  className={cn(
+                  <button
+                    type="button"
+                    className={cn(
                     'flex items-center justify-center rounded-lg p-2.5 text-muted-foreground transition-all duration-200 hover:bg-background hover:text-foreground hover:shadow-sm',
                     showFiltersPanel && 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
-                  )}
-                  onClick={() => setShowFiltersPanel((value) => !value)}
-                  aria-label={showFiltersPanel ? 'Hide workspace filters' : 'Show workspace filters'}
-                  title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
-                >
-                  <Filter className="h-[18px] w-[18px]" strokeWidth={1.8} />
-                </button>
+                    )}
+                    onClick={() => setShowFiltersPanel((value) => !value)}
+                    aria-label={showFiltersPanel ? 'Hide workspace filters' : 'Show workspace filters'}
+                    title={showFiltersPanel ? 'Hide filters' : 'Show filters'}
+                  >
+                    <Filter className="h-[18px] w-[18px]" strokeWidth={1.8} />
+                  </button>
               ) : null}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -15937,7 +15937,7 @@ export function WorkspaceManagementPage() {
                                 const cellBackgroundClass = resolveDirectoryBodyCellBackground(isFirstDirectoryColumn)
                                 if (key === 'name') {
                                   return (
-                                  <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
+                                    <td key={key} className={cn(directoryTableCellClass, cellBackgroundClass)} style={cellStyle}>
                                 {inlineRenameId === workspace.id ? (
                                   <div
                                     className="min-w-0 flex flex-col gap-0.5"
@@ -17326,7 +17326,7 @@ export function WorkspaceManagementPage() {
                               className={cn(
                                 'group cursor-pointer transition-colors',
                                 governanceSelectedIds.includes(workspace.id) ||
-                                  governanceMatrixDetailWorkspace?.id === workspace.id ||
+                                governanceMatrixDetailWorkspace?.id === workspace.id ||
                                   Boolean(
                                     rowContextMenu
                                     && rowContextMenu.variant !== 'members'
@@ -17647,17 +17647,17 @@ export function WorkspaceManagementPage() {
                         )}
                       >
                         <EnterpriseInfoCallout title="Separation of concerns">
-                          This panel tracks workspace membership and participation. Platform authorization (roles, permissions,
-                          policy) is managed in{' '}
-                          <a href="/security-access-control" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
-                            Security &amp; Access Control
-                          </a>
-                          ; identity and authorization model configuration live in{' '}
-                          <a href="/platform-settings-administration" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
-                            Platform Settings &amp; Administration
-                          </a>
-                          .
-                        </EnterpriseInfoCallout>
+                      This panel tracks workspace membership and participation. Platform authorization (roles, permissions,
+                      policy) is managed in{' '}
+                      <a href="/security-access-control" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
+                        Security &amp; Access Control
+                      </a>
+                      ; identity and authorization model configuration live in{' '}
+                      <a href="/platform-settings-administration" className="font-medium text-sky-800 underline-offset-2 hover:underline dark:text-sky-200">
+                        Platform Settings &amp; Administration
+                      </a>
+                      .
+                    </EnterpriseInfoCallout>
                       </div>
                     ) : null}
 
@@ -17706,9 +17706,9 @@ export function WorkspaceManagementPage() {
                               const workspaceCount = member.memberships.length
                               const expanded = !membersTreeCollapsedIds.has(member.subjectId)
                               const isMemberRowSelected =
-                                memberDetailTarget?.subjectId === member.subjectId ||
-                                (rowContextMenu?.variant === 'members' &&
-                                  rowContextMenu.member.subjectId === member.subjectId)
+                                  memberDetailTarget?.subjectId === member.subjectId ||
+                                    (rowContextMenu?.variant === 'members' &&
+                                      rowContextMenu.member.subjectId === member.subjectId)
                               const memberCellClass = cn(
                                 'border-b border-slate-200/20 px-3 py-3 align-top transition-colors dark:border-slate-700/20',
                                 isMemberRowSelected ? 'bg-primary/10' : 'group-hover:bg-accent/20'
@@ -17772,17 +17772,17 @@ export function WorkspaceManagementPage() {
                                               <ChevronRight className="h-4 w-4" aria-hidden />
                                             )}
                                           </button>
-                                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/10 text-xs font-bold text-indigo-700 ring-1 ring-indigo-500/20 dark:text-indigo-300">
-                                            {member.name.split(' ').map((n) => n[0] ?? '').slice(0, 2).join('')}
-                                          </div>
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/10 text-xs font-bold text-indigo-700 ring-1 ring-indigo-500/20 dark:text-indigo-300">
+                                      {member.name.split(' ').map((n) => n[0] ?? '').slice(0, 2).join('')}
+                                    </div>
                                           <div className="min-w-0">
                                             <p className="font-semibold text-foreground">{member.name}</p>
                                             <p className="text-[10px] text-muted-foreground tabular-nums">
                                               {workspaceCount} workspace{workspaceCount === 1 ? '' : 's'}
                                             </p>
                                           </div>
-                                        </div>
-                                      </td>
+                                  </div>
+                                </td>
                                     )
                                   }
                                   if (columnKey === 'workspace') {
@@ -17790,7 +17790,7 @@ export function WorkspaceManagementPage() {
                                       <td key={columnKey} className={memberCellClass}>
                                         <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
                                           {workspaceCount} workspace{workspaceCount === 1 ? '' : 's'}
-                                        </span>
+                                    </span>
                                       </td>
                                     )
                                   }
@@ -17885,7 +17885,7 @@ export function WorkspaceManagementPage() {
                                                       Membership
                                                     </span>
                                                   </div>
-                                                </td>
+                                </td>
                                               )
                                             }
                                             if (columnKey === 'workspace') {
@@ -17899,14 +17899,14 @@ export function WorkspaceManagementPage() {
                                               return (
                                                 <td key={columnKey} className={membershipCellClass}>
                                                   <div className="flex flex-wrap items-center gap-1.5">
-                                                    <Badge
+                                  <Badge
                                                       className={cn(
                                                         'rounded-full border px-2.5 py-1 text-xs',
                                                         roleStyles[ref.role]
                                                       )}
                                                     >
                                                       {ref.role}
-                                                    </Badge>
+                                  </Badge>
                                                     {(() => {
                                                       const workspace = allWorkspacesForList.find((w) => w.id === ref.workspaceId)
                                                       const badges = workspace
@@ -17932,21 +17932,21 @@ export function WorkspaceManagementPage() {
                                                       ))
                                                     })()}
                                                   </div>
-                                                </td>
+                                </td>
                                               )
                                             }
                                             if (columnKey === 'team') {
                                               return (
                                                 <td key={columnKey} className={cn(membershipCellClass, 'text-muted-foreground')}>
                                                   {ref.team || '—'}
-                                                </td>
+                                </td>
                                               )
                                             }
                                             if (columnKey === 'scope') {
                                               return (
                                                 <td key={columnKey} className={cn(membershipCellClass, 'text-muted-foreground')}>
                                                   {ref.scope || '—'}
-                                                </td>
+                                </td>
                                               )
                                             }
                                             return (
@@ -17955,7 +17955,7 @@ export function WorkspaceManagementPage() {
                                               </td>
                                             )
                                           })}
-                                        </tr>
+                              </tr>
                                         )
                                       })
                                     : null}
@@ -21004,13 +21004,13 @@ export function WorkspaceManagementPage() {
                             Primary organization <span className="text-red-500">*</span>
                           </Label>
                           {!isPlainWacMemberForNewWorkspaceOrgScope ? (
-                            <button
-                              type="button"
-                              className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                              onClick={openPrimaryOrgManage}
-                            >
-                              Manage
-                            </button>
+                          <button
+                            type="button"
+                            className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                            onClick={openPrimaryOrgManage}
+                          >
+                            Manage
+                          </button>
                           ) : null}
                         </div>
                         <Select

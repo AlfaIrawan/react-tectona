@@ -200,11 +200,10 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
-import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
-import { integrationArchimateNodeTypes } from '@/modules/project-management/components/integrationArchimateNodeTypes'
+import { EditableDiagramCanvas } from '@/modules/project-management/components/EditableDiagramCanvas'
+import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
 import { loadIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
-import { ReactFlow } from 'reactflow'
 import { IdeaSectionReviewWorkspace } from '@/modules/project-management/components/IdeaSectionReviewWorkspace'
 import {
   formatConversionReviewContent,
@@ -226,9 +225,11 @@ import {
   emptyRuntimeC4Analysis,
   runtimeC4FromAgentResponse,
   runtimeC4FromPersistent,
+  type C4CanvasGraph,
   type RuntimeC4Analysis,
 } from '@/modules/project-management/lib/c4ArchitectureService'
 import { usePlantUmlPngPreview } from '@/modules/project-management/lib/usePlantUmlPngPreview'
+import { normalizeC4PlantUml } from '@/modules/project-management/lib/c4PlantUml'
 import {
   buildPersistentProcessDiagramPayload,
   emptyRuntimeProcessDiagramAnalysis,
@@ -2073,7 +2074,33 @@ function ScoringDraftReadinessCard({
   )
 }
 
+type DiagramStudioSession = {
+  ideaId: string
+  diagramKey: string
+  diagramSource?: string
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4'
+  savedGraph?: C4CanvasGraph
+  onPersistGraph?: (graph: C4CanvasGraph) => void
+  title: string
+  description: string
+  icon: LucideIcon
+  imageSrc: string | null
+  imageLoading?: boolean
+  imageError?: string | null
+  missing: boolean
+  generationError: string | null
+  confidence: number | null
+  isRegenerating: boolean
+  onRegenerate: () => void
+}
+
 function DiagramGalleryCard({
+  ideaId,
+  diagramKey,
+  diagramSource,
+  diagramFormat = 'plantuml',
+  savedGraph,
+  onPersistGraph,
   title,
   icon: Icon,
   description,
@@ -2085,7 +2112,14 @@ function DiagramGalleryCard({
   confidence,
   isRegenerating,
   onRegenerate,
+  onOpenStudio,
 }: {
+  ideaId: string
+  diagramKey: string
+  diagramSource?: string
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4'
+  savedGraph?: C4CanvasGraph
+  onPersistGraph?: (graph: C4CanvasGraph) => void
   title: string
   icon: LucideIcon
   description: string
@@ -2097,19 +2131,30 @@ function DiagramGalleryCard({
   confidence: number | null
   isRegenerating: boolean
   onRegenerate: () => void
+  onOpenStudio: (session: DiagramStudioSession) => void
 }) {
-  const [isFullscreen, setIsFullscreen] = useState(false)
-
-  useEffect(() => {
-    if (!isFullscreen) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsFullscreen(false)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullscreen])
-
-  const hasDiagram = Boolean(imageSrc)
+  const hasDiagram = Boolean(imageSrc || diagramSource)
+  const openStudio = () => {
+    onOpenStudio({
+      ideaId,
+      diagramKey,
+      diagramSource,
+      diagramFormat,
+      savedGraph,
+      onPersistGraph,
+      title,
+      description,
+      icon: Icon,
+      imageSrc,
+      imageLoading,
+      imageError,
+      missing,
+      generationError,
+      confidence,
+      isRegenerating,
+      onRegenerate,
+    })
+  }
 
   return (
     <div className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
@@ -2124,8 +2169,18 @@ function DiagramGalleryCard({
           </Badge>
         ) : null}
       </div>
-      <div className="relative mt-2 h-32 overflow-hidden rounded-xl border border-border/30 bg-slate-50">
-        {hasDiagram ? (
+      <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
+      <div className="relative mt-2 aspect-[16/10] overflow-hidden rounded-lg border border-border/30 bg-slate-50">
+        {diagramSource ? (
+          <EditableDiagramCanvas
+            ideaId={ideaId}
+            diagramKey={diagramKey}
+            source={diagramSource}
+            format={diagramFormat}
+            savedGraph={savedGraph}
+            className="h-full w-full border-0 rounded-none"
+          />
+        ) : hasDiagram ? (
           <img
             src={imageSrc ?? undefined}
             alt={title}
@@ -2150,70 +2205,10 @@ function DiagramGalleryCard({
         <button
           type="button"
           aria-label={`Open ${title}`}
-          onClick={() => setIsFullscreen(true)}
+          onClick={openStudio}
           className="absolute inset-0 z-10"
         />
       </div>
-      <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
-
-      {isFullscreen && (
-        <div className="fixed inset-x-0 top-12 bottom-0 z-50">
-          <div className="liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-background shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2">
-              <div className="flex shrink-0 items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Icon className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                  <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {typeof confidence === 'number' && confidence > 0 ? (
-                    <Badge variant="outline" className={cn('text-[10px] font-semibold', confidenceClass(confidence))}>
-                      Confidence {confidence}%
-                    </Badge>
-                  ) : null}
-                  <Button size="sm" variant="outline" onClick={onRegenerate} disabled={isRegenerating}>
-                    <RefreshCcw className={cn('mr-1.5 h-3.5 w-3.5', isRegenerating && 'animate-spin')} aria-hidden />
-                    Regenerate
-                  </Button>
-                  <button
-                    type="button"
-                    aria-label={`Exit ${title} fullscreen`}
-                    title="Exit fullscreen (Esc)"
-                    onClick={() => setIsFullscreen(false)}
-                    className={cn(
-                      'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
-                      enterpriseControlFocusClass,
-                      'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
-                    )}
-                  >
-                    <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-                </div>
-              </div>
-              <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border/30 bg-slate-50 p-4">
-                {imageSrc ? (
-                  <img src={imageSrc} alt={title} className="mx-auto max-w-full" />
-                ) : (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-center text-sm text-muted-foreground">
-                    {isRegenerating || imageLoading ? (
-                      <>
-                        <RefreshCcw className="h-4 w-4 animate-spin" aria-hidden />
-                        Building diagram…
-                      </>
-                    ) : imageError || generationError ? (
-                      <span className="text-rose-600">{imageError || generationError}</span>
-                    ) : missing ? (
-                      "AI couldn't produce a diagram — not enough evidence in this idea yet"
-                    ) : (
-                      'No diagram yet'
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -3428,6 +3423,7 @@ export function IdeaDetailPage() {
   const [ideaImpactPanelHeightPx, setIdeaImpactPanelHeightPx] = useState<number | null>(null)
   const [isImpactPanelFullscreen, setIsImpactPanelFullscreen] = useState(false)
   const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
+  const [diagramStudio, setDiagramStudio] = useState<DiagramStudioSession | null>(null)
   const ideaCostBenefitPanelRef = useRef<HTMLDivElement>(null)
   const [ideaCostBenefitPanelHeightPx, setIdeaCostBenefitPanelHeightPx] = useState<number | null>(null)
   const [isCostBenefitPanelFullscreen, setIsCostBenefitPanelFullscreen] = useState(false)
@@ -3842,6 +3838,23 @@ export function IdeaDetailPage() {
   const [integrationBootstrapRecord, setIntegrationBootstrapRecord] = useState<IntegrationGraphRecord | null>(null)
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
   const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
+  const persistIntegrationGraph = useCallback(
+    (graph: IntegrationGraphRecord) => {
+      void upsertPersistentIdeaIntegration(idea.id, {
+        ...buildPersistentIntegrationPayload(
+          runtimeIntegrationAnalysis,
+          graph,
+          runtimeUserId || 'tectona-agent',
+        ),
+        version: idea.version,
+      }).catch((error) => {
+        setIntegrationGenerationError(
+          error instanceof Error ? error.message : 'INTEGRATION_GRAPH_PERSIST_FAILED',
+        )
+      })
+    },
+    [idea.id, idea.version, runtimeIntegrationAnalysis, runtimeUserId],
+  )
   const [c4Level1Analysis, setC4Level1Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L1'))
   const [c4Level1Loaded, setC4Level1Loaded] = useState(false)
   const [c4Level1Missing, setC4Level1Missing] = useState(false)
@@ -3850,8 +3863,37 @@ export function IdeaDetailPage() {
   const [c4Level2Loaded, setC4Level2Loaded] = useState(false)
   const [c4Level2Missing, setC4Level2Missing] = useState(false)
   const [c4Level2GenerationError, setC4Level2GenerationError] = useState<string | null>(null)
-  const c4Level1Preview = usePlantUmlPngPreview(c4Level1Analysis.plantumlSource)
-  const c4Level2Preview = usePlantUmlPngPreview(c4Level2Analysis.plantumlSource)
+  const c4Level1AnalysisRef = useRef(c4Level1Analysis)
+  const c4Level2AnalysisRef = useRef(c4Level2Analysis)
+  c4Level1AnalysisRef.current = c4Level1Analysis
+  c4Level2AnalysisRef.current = c4Level2Analysis
+  const persistC4Canvas = useCallback(
+    (level: C4ArchitectureLevel, graph: C4CanvasGraph) => {
+      const current = level === 'L1' ? c4Level1AnalysisRef.current : c4Level2AnalysisRef.current
+      const nextAnalysis: RuntimeC4Analysis = {
+        ...current,
+        plantumlSource: graph.source || current.plantumlSource,
+        canvasGraph: { ...graph, userCustomized: true },
+      }
+      if (level === 'L1') setC4Level1Analysis(nextAnalysis)
+      else setC4Level2Analysis(nextAnalysis)
+      void upsertPersistentIdeaC4Architecture(idea.id, level, {
+        ...buildPersistentC4Payload(nextAnalysis, runtimeUserId || 'tectona-agent'),
+        version: idea.version,
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : 'C4_ARCHITECTURE_PERSIST_FAILED'
+        if (level === 'L1') setC4Level1GenerationError(message)
+        else setC4Level2GenerationError(message)
+      })
+    },
+    [idea.id, idea.version, runtimeUserId],
+  )
+  const c4Level1Preview = usePlantUmlPngPreview(
+    c4Level1Analysis.plantumlSource ? normalizeC4PlantUml(c4Level1Analysis.plantumlSource, 'L1') : null,
+  )
+  const c4Level2Preview = usePlantUmlPngPreview(
+    c4Level2Analysis.plantumlSource ? normalizeC4PlantUml(c4Level2Analysis.plantumlSource, 'L2') : null,
+  )
   const [bpmnHighAnalysis, setBpmnHighAnalysis] = useState<RuntimeProcessDiagramAnalysis>(
     emptyRuntimeProcessDiagramAnalysis(),
   )
@@ -3866,6 +3908,10 @@ export function IdeaDetailPage() {
     isRegenerating: boolean
   }
   const [processDetailsByKey, setProcessDetailsByKey] = useState<Record<string, ProcessDetailState>>({})
+  const bpmnHighAnalysisRef = useRef(bpmnHighAnalysis)
+  const processDetailsByKeyRef = useRef(processDetailsByKey)
+  bpmnHighAnalysisRef.current = bpmnHighAnalysis
+  processDetailsByKeyRef.current = processDetailsByKey
   const [isFreshIdea, setIsFreshIdea] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -4837,6 +4883,48 @@ export function IdeaDetailPage() {
     setProcessDetailsByKey((prev) => ({ ...prev, [taskKey]: state }))
   }, [])
 
+  const persistBpmnCanvas = useCallback(
+    (processKey: string, graph: C4CanvasGraph) => {
+      const applyCanvas = (current: RuntimeProcessDiagramAnalysis): RuntimeProcessDiagramAnalysis => ({
+        ...current,
+        canvasGraph: { ...graph, userCustomized: true },
+      })
+      if (processKey === 'high') {
+        const next = applyCanvas(bpmnHighAnalysisRef.current)
+        setBpmnHighAnalysis(next)
+        void upsertPersistentIdeaProcessDiagram(idea.id, 'high', {
+          ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'),
+          version: idea.version,
+        }).catch((error) => {
+          setBpmnHighGenerationError(error instanceof Error ? error.message : 'PROCESS_DIAGRAM_PERSIST_FAILED')
+        })
+        return
+      }
+      const current = processDetailsByKeyRef.current[processKey]
+      const nextAnalysis = applyCanvas(current?.analysis ?? emptyRuntimeProcessDiagramAnalysis())
+      setProcessDetailState(processKey, {
+        analysis: nextAnalysis,
+        loaded: current?.loaded ?? true,
+        missing: current?.missing ?? false,
+        generationError: current?.generationError ?? null,
+        isRegenerating: false,
+      })
+      void upsertPersistentIdeaProcessDiagram(idea.id, processKey, {
+        ...buildPersistentProcessDiagramPayload(nextAnalysis, runtimeUserId || 'tectona-agent'),
+        version: idea.version,
+      }).catch((error) => {
+        setProcessDetailState(processKey, {
+          analysis: nextAnalysis,
+          loaded: true,
+          missing: false,
+          generationError: error instanceof Error ? error.message : 'PROCESS_DETAIL_PERSIST_FAILED',
+          isRegenerating: false,
+        })
+      })
+    },
+    [idea.id, idea.version, runtimeUserId, setProcessDetailState],
+  )
+
   const loadRuntimeProcessDetail = useCallback(
     async (
       taskKey: string,
@@ -5600,12 +5688,18 @@ export function IdeaDetailPage() {
     if (activePanel !== 'diagrams' && isIntegrationPanelFullscreen) {
       setIsIntegrationPanelFullscreen(false)
     }
-  }, [activePanel, isIntegrationPanelFullscreen])
+    if (activePanel !== 'diagrams' && diagramStudio) {
+      setDiagramStudio(null)
+    }
+  }, [activePanel, diagramStudio, isIntegrationPanelFullscreen])
 
   useEffect(() => {
-    if (!isIntegrationPanelFullscreen) return
+    if (!isIntegrationPanelFullscreen && !diagramStudio) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsIntegrationPanelFullscreen(false)
+      if (event.key === 'Escape') {
+        setIsIntegrationPanelFullscreen(false)
+        setDiagramStudio(null)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     const previousOverflow = document.body.style.overflow
@@ -5614,7 +5708,7 @@ export function IdeaDetailPage() {
       window.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = previousOverflow
     }
-  }, [isIntegrationPanelFullscreen])
+  }, [diagramStudio, isIntegrationPanelFullscreen])
 
   useLayoutEffect(() => {
     if (activePanel !== 'document') return
@@ -11790,7 +11884,7 @@ export function IdeaDetailPage() {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
               <div className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -11803,7 +11897,10 @@ export function IdeaDetailPage() {
                     </Badge>
                   ) : null}
                 </div>
-                <div className="relative mt-2 h-32 overflow-hidden rounded-xl border border-border/30 bg-slate-50">
+                <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                  Integration architecture recommendation with ArchiMate canvas and PlantUML source.
+                </p>
+                <div className="relative mt-2 aspect-[16/10] overflow-hidden rounded-lg border border-border/30 bg-slate-50">
                   {(() => {
                     // The canvas itself falls back to its own localStorage cache
                     // (`loadIntegrationGraph`) when the backend-synced `integrationBootstrapRecord`
@@ -11816,23 +11913,7 @@ export function IdeaDetailPage() {
                     // exactly the "still showing a mockup" confusion this was causing.
                     const graph = integrationBootstrapRecord ?? (integrationLoaded ? null : loadIntegrationGraph(idea.id))
                     if (graph && graph.nodes.length > 0) {
-                      return (
-                        <ReactFlow
-                          nodes={graph.nodes}
-                          edges={graph.edges}
-                          nodeTypes={integrationArchimateNodeTypes}
-                          fitView
-                          fitViewOptions={{ padding: 0.15 }}
-                          nodesDraggable={false}
-                          nodesConnectable={false}
-                          elementsSelectable={false}
-                          panOnDrag={false}
-                          zoomOnScroll={false}
-                          zoomOnPinch={false}
-                          zoomOnDoubleClick={false}
-                          proOptions={{ hideAttribution: true }}
-                        />
-                      )
+                      return <IntegrationArchitecturePreview nodes={graph.nodes} edges={graph.edges} />
                     }
                     return (
                       <div className="flex h-full w-full items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
@@ -11856,25 +11937,26 @@ export function IdeaDetailPage() {
                     className="absolute inset-0 z-10"
                   />
                 </div>
-                <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-                  Integration architecture recommendation with ArchiMate canvas and PlantUML source.
-                </p>
               </div>
 
               {brainstormProcessDiagrams.length > 0 ? (
                 brainstormProcessDiagrams.map((diagram) => (
-                  <div
+                  <DiagramGalleryCard
                     key={`${diagram.label}-${diagram.source.slice(0, 48)}`}
-                    className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm"
-                  >
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{diagram.label}</p>
-                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-                      Process diagram from brainstorming during Create Idea.
-                    </p>
-                    <div className="mt-2">
-                      <AssistantMermaidBlock source={diagram.source} />
-                    </div>
-                  </div>
+                    ideaId={idea.id}
+                    diagramKey={`brainstorm-${diagram.label}`}
+                    diagramSource={diagram.source}
+                    title={diagram.label}
+                    icon={Workflow}
+                    description="Process diagram from brainstorming during Create Idea."
+                    imageSrc={null}
+                    missing={false}
+                    generationError={null}
+                    confidence={null}
+                    isRegenerating={false}
+                    onRegenerate={() => undefined}
+                    onOpenStudio={setDiagramStudio}
+                  />
                 ))
               ) : (
                 <div className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-border/50 bg-white/60 p-6 text-center">
@@ -11887,6 +11969,12 @@ export function IdeaDetailPage() {
               )}
 
               <DiagramGalleryCard
+                ideaId={idea.id}
+                diagramKey="c4-level-1"
+                diagramSource={c4Level1Analysis.plantumlSource}
+                diagramFormat="c4"
+                savedGraph={c4Level1Analysis.canvasGraph}
+                onPersistGraph={(graph) => persistC4Canvas('L1', graph)}
                 title="C4 Level 1"
                 icon={Layers}
                 description="System context diagram (C4)."
@@ -11898,8 +11986,15 @@ export function IdeaDetailPage() {
                 confidence={c4Level1Loaded ? confidence.c4Level1 : null}
                 isRegenerating={regenerating.c4Level1}
                 onRegenerate={() => regeneratePanel('c4Level1')}
+                onOpenStudio={setDiagramStudio}
               />
               <DiagramGalleryCard
+                ideaId={idea.id}
+                diagramKey="c4-level-2"
+                diagramSource={c4Level2Analysis.plantumlSource}
+                diagramFormat="c4"
+                savedGraph={c4Level2Analysis.canvasGraph}
+                onPersistGraph={(graph) => persistC4Canvas('L2', graph)}
                 title="C4 Level 2"
                 icon={Cpu}
                 description="Container diagram (C4)."
@@ -11911,8 +12006,15 @@ export function IdeaDetailPage() {
                 confidence={c4Level2Loaded ? confidence.c4Level2 : null}
                 isRegenerating={regenerating.c4Level2}
                 onRegenerate={() => regeneratePanel('c4Level2')}
+                onOpenStudio={setDiagramStudio}
               />
               <DiagramGalleryCard
+                ideaId={idea.id}
+                diagramKey="bpmn-high-level"
+                diagramSource={bpmnHighAnalysis.canvasGraph?.source || bpmnHighAnalysis.bpmnXml}
+                diagramFormat="bpmn"
+                savedGraph={bpmnHighAnalysis.canvasGraph}
+                onPersistGraph={(graph) => persistBpmnCanvas('high', graph)}
                 title="BPMN High-Level"
                 icon={Workflow}
                 description="BPMN 2.0 business process diagram."
@@ -11922,6 +12024,7 @@ export function IdeaDetailPage() {
                 confidence={bpmnHighLoaded ? confidence.bpmnHigh : null}
                 isRegenerating={regenerating.bpmnHigh}
                 onRegenerate={() => regeneratePanel('bpmnHigh')}
+                onOpenStudio={setDiagramStudio}
               />
 
               {bpmnHighAnalysis.subProcesses.length === 0 ? (
@@ -11940,6 +12043,12 @@ export function IdeaDetailPage() {
                   return (
                     <DiagramGalleryCard
                       key={task.key}
+                      ideaId={idea.id}
+                      diagramKey={`bpmn-detail-${task.key}`}
+                      diagramSource={detail?.analysis.canvasGraph?.source || detail?.analysis.bpmnXml}
+                      diagramFormat="bpmn"
+                      savedGraph={detail?.analysis.canvasGraph}
+                      onPersistGraph={(graph) => persistBpmnCanvas(task.key, graph)}
                       title={`Detail: ${task.label}`}
                       icon={ListTree}
                       description="Per-step process detail (BPMN)."
@@ -11953,6 +12062,7 @@ export function IdeaDetailPage() {
                       confidence={detail?.loaded ? Math.round(Math.max(0, Math.min(1, detail.analysis.confidenceScore)) * 100) : null}
                       isRegenerating={detail?.isRegenerating ?? false}
                       onRegenerate={() => void loadRuntimeProcessDetail(task.key, task.label, idea, { forceRefresh: true })}
+                      onOpenStudio={setDiagramStudio}
                     />
                   )
                 })
@@ -11989,6 +12099,96 @@ export function IdeaDetailPage() {
           </div>
           ),
         )}
+
+          {diagramStudio && (
+            <div className="fixed inset-x-0 top-12 bottom-0 z-50">
+              <div className="liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-background shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2">
+                  <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        {(() => {
+                          const StudioIcon = diagramStudio.icon
+                          return <StudioIcon className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+                        })()}
+                        <h2 className="text-lg font-semibold text-foreground">{diagramStudio.title}</h2>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {typeof diagramStudio.confidence === 'number' && diagramStudio.confidence > 0 ? (
+                          <Badge
+                            variant="outline"
+                            className={cn('text-[10px] font-semibold', confidenceClass(diagramStudio.confidence))}
+                          >
+                            Confidence {diagramStudio.confidence}%
+                          </Badge>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={diagramStudio.onRegenerate}
+                          disabled={diagramStudio.isRegenerating}
+                        >
+                          <RefreshCcw className={cn('mr-1.5 h-3.5 w-3.5', diagramStudio.isRegenerating && 'animate-spin')} aria-hidden />
+                          Regenerate
+                        </Button>
+                        <button
+                          type="button"
+                          aria-label={`Exit ${diagramStudio.title} fullscreen`}
+                          title="Exit fullscreen (Esc)"
+                          onClick={() => setDiagramStudio(null)}
+                          className={cn(
+                            'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                            enterpriseControlFocusClass,
+                            'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
+                          )}
+                        >
+                          <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
+                      {diagramStudio.description}
+                    </p>
+                  </div>
+
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    {diagramStudio.diagramSource ? (
+                      <EditableDiagramCanvas
+                        ideaId={diagramStudio.ideaId}
+                        diagramKey={diagramStudio.diagramKey}
+                        source={diagramStudio.diagramSource}
+                        format={diagramStudio.diagramFormat ?? 'plantuml'}
+                        savedGraph={diagramStudio.savedGraph}
+                        onPersistGraph={diagramStudio.onPersistGraph}
+                        editable
+                        fillHeight
+                        hideStudioHeader
+                      />
+                    ) : diagramStudio.imageSrc ? (
+                      <div className="flex h-full items-center justify-center overflow-auto rounded-2xl border border-white/60 bg-white/75">
+                        <img src={diagramStudio.imageSrc} alt={diagramStudio.title} className="max-h-full max-w-full object-contain" />
+                      </div>
+                    ) : (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-center text-sm text-muted-foreground">
+                        {diagramStudio.isRegenerating || diagramStudio.imageLoading ? (
+                          <>
+                            <RefreshCcw className="h-4 w-4 animate-spin" aria-hidden />
+                            Building diagram…
+                          </>
+                        ) : diagramStudio.imageError || diagramStudio.generationError ? (
+                          <span className="text-rose-600">{diagramStudio.imageError || diagramStudio.generationError}</span>
+                        ) : diagramStudio.missing ? (
+                          "AI couldn't produce a diagram — not enough evidence in this idea yet"
+                        ) : (
+                          'No diagram yet'
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {isIntegrationPanelFullscreen && (
             <div className="fixed inset-x-0 top-12 bottom-0 z-50">
@@ -12044,6 +12244,7 @@ export function IdeaDetailPage() {
                       ideaId={idea.id}
                       bootstrapKey={integrationBootstrapKey}
                       bootstrapRecord={integrationBootstrapRecord}
+                      onPersistGraph={persistIntegrationGraph}
                       isGenerating={isIntegrationRefreshing}
                       fillHeight
                       hideStudioHeader

@@ -938,6 +938,28 @@ function chatContext(
   }
 }
 
+function flattenRuntimeErrorMessage(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) => flattenRuntimeErrorMessage(item))
+      .filter((item): item is string => Boolean(item))
+    return parts.length ? parts.join('; ') : null
+  }
+  if (!value || typeof value !== 'object') return null
+  const rec = value as { msg?: unknown; message?: unknown; loc?: unknown; detail?: unknown }
+  if (typeof rec.msg === 'string' && rec.msg.trim()) {
+    const loc = Array.isArray(rec.loc)
+      ? rec.loc.filter((part) => part !== 'body').map(String).join('.')
+      : ''
+    return loc ? `${loc}: ${rec.msg.trim()}` : rec.msg.trim()
+  }
+  return (
+    flattenRuntimeErrorMessage(rec.message)
+    ?? flattenRuntimeErrorMessage(rec.detail)
+  )
+}
+
 function parseRuntimeErrorBody(text: string, status: number): string {
   const trimmed = text.trim()
   if (!trimmed) return `HTTP ${status}`
@@ -960,16 +982,15 @@ function parseRuntimeErrorBody(text: string, status: number): string {
     }
     const candidates = [body?.error?.message, body?.detail, body?.message]
     for (const candidate of candidates) {
-      if (typeof candidate === 'string' && candidate.trim()) {
-        const message = candidate.trim()
-        if (message === 'IDEA_DRAFT_INVALID_RESPONSE') {
-          return 'AI draft response was not usable. Please try Generate Draft again.'
-        }
-        if (message === 'LLM_DISABLED') {
-          return 'AI Assist is temporarily disabled on the agent runtime.'
-        }
-        return message
+      const message = flattenRuntimeErrorMessage(candidate)
+      if (!message) continue
+      if (message === 'IDEA_DRAFT_INVALID_RESPONSE') {
+        return 'AI draft response was not usable. Please try Generate Draft again.'
       }
+      if (message === 'LLM_DISABLED') {
+        return 'AI Assist is temporarily disabled on the agent runtime.'
+      }
+      return message
     }
   } catch {
     // plain text from proxy or legacy handlers
@@ -1848,6 +1869,29 @@ export async function renderMermaidFlowchartAsBpmnPng(
   const blob = await res.blob()
   if (!blob.size || !/^image\//i.test(blob.type || 'image/png')) {
     throw new Error('BPMN render returned an empty image')
+  }
+  return URL.createObjectURL(blob)
+}
+
+/** Render legacy Mermaid or canonical PlantUML through the shared process renderer. */
+export async function renderProcessDiagramAsPlantUmlPng(
+  source: string,
+  language: 'id' | 'en' = 'id',
+): Promise<string> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/render-process-plantuml`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ source, language }),
+    },
+    50_000,
+  )
+  if (!res.ok) {
+    throw new Error(`PlantUML process render failed (HTTP ${res.status})`)
+  }
+  const blob = await res.blob()
+  if (!blob.size || !/^image\//i.test(blob.type || 'image/png')) {
+    throw new Error('PlantUML process render returned an empty image')
   }
   return URL.createObjectURL(blob)
 }

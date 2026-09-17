@@ -6,9 +6,10 @@
 export type MermaidContentSegment =
   | { type: 'prose'; text: string }
   | { type: 'mermaid'; source: string }
+  | { type: 'plantuml'; source: string }
   | { type: 'tecchart'; source: string }
 
-const OPEN_FENCE_RE = /```[ \t]*(mermaid|tecchart)\b[ \t]*/gi
+const OPEN_FENCE_RE = /```[ \t]*(mermaid|plantuml|tecchart)\b[ \t]*/gi
 const TRAILING_QUESTION_RE =
   /(?:\n\n|\s{2,})((?:apakah|does|is this|sudah|cek|please|tolong|can you).{0,200}\?)\s*$/i
 const BARE_FLOWCHART_RE = /\b(flowchart\s+(?:TD|LR|TB|RL)\b[\s\S]*)$/i
@@ -55,6 +56,7 @@ export function normalizeMermaidFences(text: string): string {
     .map((segment) => {
       if (segment.type === 'prose') return segment.text
       if (segment.type === 'mermaid') return `\n\n\`\`\`mermaid\n${segment.source}\n\`\`\`\n\n`
+      if (segment.type === 'plantuml') return `\n\n\`\`\`plantuml\n${segment.source}\n\`\`\`\n\n`
       return `\n\n\`\`\`tecchart\n${segment.source}\n\`\`\`\n\n`
     })
     .join('')
@@ -112,6 +114,7 @@ export function splitMermaidContent(text: string): MermaidContentSegment[] {
 
     if (body) {
       if (lang === 'tecchart') result.push({ type: 'tecchart', source: body })
+      else if (lang === 'plantuml') result.push({ type: 'plantuml', source: body })
       else result.push({ type: 'mermaid', source: body })
     }
     if (trailingParts.length > 0) {

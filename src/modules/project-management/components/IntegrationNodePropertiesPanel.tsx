@@ -455,7 +455,13 @@ export function IntegrationNodePropertiesPanel({
           color={textStyle.fontColor}
           onColorChange={(fontColor) => patchTextStyle({ fontColor, fontColorEnabled: true })}
         />
-        <CheckboxRow label="Word Wrap" checked={textStyle.wordWrap} onChange={(wordWrap) => patchTextStyle({ wordWrap })} />
+        <CheckboxRow label="Word Wrap" checked={textStyle.wordWrap || textStyle.boxWidth > 0 || textStyle.boxHeight > 0} onChange={(wordWrap) => patchTextStyle({ wordWrap })} />
+        <div className="grid grid-cols-2 gap-2">
+          <NumberStepper label="Offset X" suffix="px" value={Math.round(textStyle.offsetX)} onChange={(offsetX) => patchTextStyle({ offsetX })} />
+          <NumberStepper label="Offset Y" suffix="px" value={Math.round(textStyle.offsetY)} onChange={(offsetY) => patchTextStyle({ offsetY })} />
+          <NumberStepper label="Box Width" suffix="px" value={Math.round(textStyle.boxWidth)} onChange={(boxWidth) => patchTextStyle({ boxWidth: Math.max(0, boxWidth), wordWrap: boxWidth > 0 || textStyle.wordWrap })} />
+          <NumberStepper label="Box Height" suffix="px" value={Math.round(textStyle.boxHeight)} onChange={(boxHeight) => patchTextStyle({ boxHeight: Math.max(0, boxHeight), wordWrap: boxHeight > 0 || textStyle.wordWrap })} />
+        </div>
         <div className="flex items-center justify-between gap-2">
           <span className={PANEL_LABEL_CLASS}>Opacity</span>
           <div className="w-28">

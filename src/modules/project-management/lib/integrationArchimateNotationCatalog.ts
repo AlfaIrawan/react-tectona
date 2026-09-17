@@ -17,13 +17,6 @@ export const ARCHIMATE_NOTATION_LAYER_COLORS: Record<
   technology: { bg: '#C8F0C8', border: '#455A64', accent: '#455A64', text: '#0f172a' },
 }
 
-const ARCHIMATE_LAYER_FILL_GRADIENTS: Record<ArchimateLayer, string> = {
-  business: 'linear-gradient(180deg, #FFFEF8 0%, #FFF3B0 52%, #FFE998 100%)',
-  application: 'linear-gradient(180deg, #F5FCFF 0%, #C8EEF9 52%, #A8E2F4 100%)',
-  data: 'linear-gradient(180deg, #F5FCFF 0%, #C8EEF9 52%, #A8E2F4 100%)',
-  technology: 'linear-gradient(180deg, #F4FFF6 0%, #C8F0C8 52%, #B0E8B0 100%)',
-}
-
 export function getArchimateLayerFillBackground(
   layer: ArchimateLayer,
   fillColor?: string,
@@ -34,7 +27,7 @@ export function getArchimateLayerFillBackground(
   }
   const layerBg = ARCHIMATE_NOTATION_LAYER_COLORS[layer].bg
   if (!fillColor || fillColor.toLowerCase() === layerBg.toLowerCase()) {
-    return { background: ARCHIMATE_LAYER_FILL_GRADIENTS[layer] }
+    return { backgroundColor: layerBg }
   }
   return { backgroundColor: fillColor }
 }

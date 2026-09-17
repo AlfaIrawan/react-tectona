@@ -118,7 +118,7 @@ const MARKDOWN_COMPONENTS: Components = {
   },
   code({ className, children, ...props }) {
     const value = String(children ?? '').replace(/\n$/, '')
-    if (/language-mermaid/i.test(className ?? '')) {
+    if (/language-(mermaid|plantuml)/i.test(className ?? '')) {
       return <AssistantMermaidBlock source={value} />
     }
     if (/language-tecchart/i.test(className ?? '')) {
@@ -137,7 +137,7 @@ const MARKDOWN_COMPONENTS: Components = {
     if (el && typeof el.type !== 'string' && el.type != null) {
       return <>{children}</>
     }
-    if (el?.props?.className && /language-(mermaid|tecchart)/i.test(el.props.className)) {
+    if (el?.props?.className && /language-(mermaid|plantuml|tecchart)/i.test(el.props.className)) {
       return <>{children}</>
     }
     return <pre>{children}</pre>
@@ -159,7 +159,7 @@ function NarrativeMarkdown({ content }: { content: string }) {
   if (segments.length === 0) return null
 
   // Prefer direct Mermaid/Chart mounts — do not depend on react-markdown code fences.
-  const hasDiagram = segments.some((s) => s.type === 'mermaid' || s.type === 'tecchart')
+  const hasDiagram = segments.some((s) => s.type === 'mermaid' || s.type === 'plantuml' || s.type === 'tecchart')
   if (!hasDiagram) {
     const prose = segments.map((s) => (s.type === 'prose' ? s.text : '')).join('\n\n').trim()
     if (!prose) return null
@@ -177,7 +177,7 @@ function NarrativeMarkdown({ content }: { content: string }) {
   return (
     <>
       {segments.map((segment, index) => {
-        if (segment.type === 'mermaid') {
+        if (segment.type === 'mermaid' || segment.type === 'plantuml') {
           return <AssistantMermaidBlock key={`mermaid-${index}`} source={segment.source} />
         }
         if (segment.type === 'tecchart') {

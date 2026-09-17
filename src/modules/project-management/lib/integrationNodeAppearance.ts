@@ -49,7 +49,7 @@ export function defaultIntegrationNodeVisual(layer?: ArchimateLayer): Integratio
     lineStyle: 'solid',
     opacity: 100,
     rounded: true,
-    shadow: true,
+    shadow: false,
     glass: false,
     sketch: false,
   }
@@ -74,6 +74,10 @@ export function defaultIntegrationNodeTextStyle(): IntegrationNodeTextStyle {
     spacingLeft: 0,
     spacingGlobal: 2,
     angle: 0,
+    offsetX: 0,
+    offsetY: 0,
+    boxWidth: 0,
+    boxHeight: 0,
   }
 }
 
