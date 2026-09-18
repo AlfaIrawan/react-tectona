@@ -342,7 +342,10 @@
     }
   }
 
-  body > *:not(.app-background-video-layer) {
+  /* Only the application root participates in the page stacking context. Portals
+     are direct children of body too; applying this to every child breaks fixed
+     dialogs and full-screen editors by anchoring them below the current page. */
+  body > #root {
     position: relative;
     z-index: 1;
   }

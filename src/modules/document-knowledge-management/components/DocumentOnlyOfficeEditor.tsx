@@ -337,7 +337,10 @@ export function DocumentOnlyOfficeEditor({
   if (typeof document === 'undefined' || !open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[1200] flex flex-col bg-background">
+    <div
+      className="z-[1200] flex flex-col bg-background"
+      style={{ position: 'fixed', inset: 0, zIndex: 1200 }}
+    >
       <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
         <div className="min-w-0 pr-3">
           <h2 className="truncate text-lg font-semibold text-foreground">

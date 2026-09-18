@@ -13077,7 +13077,10 @@ export function IdeaDetailPage() {
 
           {ideaDocGenerateOpen && typeof document !== 'undefined'
             ? createPortal(
-                <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+                <div
+                  className="z-[1400] flex items-center justify-center p-4 sm:p-6"
+                  style={{ position: 'fixed', inset: 0, zIndex: 1400 }}
+                >
                   <button
                     type="button"
                     className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
