@@ -145,14 +145,17 @@ function isAlias(value: string): boolean {
   return /^[A-Za-z_][\w.-]*$/.test(value)
 }
 
-function renderCall(call: MacroCall, _level: C4Level): string {
+function renderCall(call: MacroCall): string {
   const { name, args } = call
   if (name.startsWith('Rel') || name === 'BiRel') {
     if (args.length < 2) return ''
     const src = alias(args[0], 'from_el')
     const dst = alias(args[1], 'to_el')
     const label = quote(args[2] || 'uses')
-    return args[3] ? `${name}(${src}, ${dst}, ${label}, ${quote(args[3])})` : `${name}(${src}, ${dst}, ${label})`
+    const relationMacro = name === 'BiRel' ? 'Rel' : name
+    return args[3]
+      ? `${relationMacro}(${src}, ${dst}, ${label}, ${quote(args[3])})`
+      : `${relationMacro}(${src}, ${dst}, ${label})`
   }
   if (name.endsWith('Boundary') || name === 'Boundary') {
     if (!args.length) return ''
@@ -250,6 +253,10 @@ export function parseC4Graph(source: string): C4ParsedGraph {
       if (call.args.length < 2) continue
       const sourceId = alias(call.args[0], 'from_el')
       const targetId = alias(call.args[1], 'to_el')
+      if (relations.some((relation) => (
+        (relation.source === sourceId && relation.target === targetId)
+        || (relation.source === targetId && relation.target === sourceId)
+      ))) continue
       relations.push({
         id: `rel-${sourceId}-${targetId}-${relations.length}`,
         source: sourceId,
@@ -360,7 +367,7 @@ export function normalizeC4PlantUml(source: string, level: C4Level = 'L2'): stri
   const include = level === 'L1' ? INCLUDE_L1 : INCLUDE_L2
   const titleMatch = body.split('\n').map((line) => line.trim()).find((line) => /^title\s+/i.test(line))
   const title = titleMatch ? cleanArg(titleMatch.replace(/^title\s+/i, '')) : ''
-  const statements = collectCalls(body).map((call) => renderCall(call, level)).filter(Boolean)
+  const statements = collectCalls(body).map(renderCall).filter(Boolean)
   const lines = ['@startuml', include]
   if (title) lines.push(`title ${title}`)
   lines.push(...nestBoundary(statements))

@@ -1,13 +1,16 @@
-import { memo, useCallback, useRef, type MouseEvent } from 'react'
+import { memo, useCallback, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { Hand, ImagePlus, Type } from 'lucide-react'
 import {
   ConnectionLineType,
   ConnectionMode,
+  ControlButton,
   Controls,
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useStoreApi,
   type Connection,
+  type ConnectionLineComponentProps,
   type Edge,
   type EdgeTypes,
   type Node,
@@ -31,6 +34,33 @@ const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
 const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
 const EDGE_UPDATE_DRAG_THRESHOLD_PX = 8
 
+function DiagramConnectionLine({ fromX, fromY, toX, toY }: ConnectionLineComponentProps) {
+  const horizontal = Math.abs(toX - fromX) >= Math.abs(toY - fromY)
+  const bendX = fromX + (toX - fromX) / 2
+  const bendY = fromY + (toY - fromY) / 2
+  const path = horizontal
+    ? `M ${fromX},${fromY} L ${bendX},${fromY} L ${bendX},${toY} L ${toX},${toY}`
+    : `M ${fromX},${fromY} L ${fromX},${bendY} L ${toX},${bendY} L ${toX},${toY}`
+
+  return (
+    <g>
+      <defs>
+        <marker id="tectona-connection-preview-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+          <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#64748b" />
+        </marker>
+      </defs>
+      <path
+        d={path}
+        fill="none"
+        stroke="#64748b"
+        strokeWidth={1.5}
+        strokeDasharray="4 4"
+        markerEnd="url(#tectona-connection-preview-arrow)"
+      />
+    </g>
+  )
+}
+
 function handleReactFlowError(messageId: string, message: string) {
   if (messageId === '002') return
   console.warn(`[React Flow]: ${message}`)
@@ -52,7 +82,7 @@ function integrationMinimapNodeColor(node: Node): string {
     if (isArchimateElementData(data) && /external/i.test(data.stereotype)) return '#999999'
     return '#438DD5'
   }
-  if (node.id === 'legend' || node.id === 'canvas-notes') return '#f8fafc'
+  if (node.type === 'archimateImage' || node.id === 'legend' || node.id === 'canvas-notes') return '#f8fafc'
   const data = node.data
   if (isArchimateElementData(data)) {
     if (data.layer === 'business') return '#FFF3B0'
@@ -74,7 +104,7 @@ type IntegrationArchitectureFlowProps = {
   onEdgeClick?: (event: MouseEvent, edge: Edge) => void
   onPaneClick?: () => void
   onPaneContextMenu?: (event: MouseEvent) => void
-  onNodeContextMenu?: (event: MouseEvent) => void
+  onNodeContextMenu?: (event: MouseEvent, node: Node<ArchimateNodeData>) => void
   onEdgeContextMenu?: (event: MouseEvent) => void
   showGrid?: boolean
   showGuides?: boolean
@@ -84,6 +114,9 @@ type IntegrationArchitectureFlowProps = {
   showConnectionPoints?: boolean
   preview?: boolean
   defaultViewport?: Viewport
+  controlsStyle?: CSSProperties
+  onAddText?: () => void
+  onInsertImage?: () => void
   onMoveEnd?: (event: MouseEvent | TouchEvent, viewport: Viewport) => void
 }
 
@@ -102,13 +135,14 @@ function IntegrationArchitectureFlowInner({
   onNodeContextMenu,
   onEdgeContextMenu,
   showGrid = true,
-  showGuides = true,
   snapToGrid = true,
   showRuler = true,
-  showConnectionArrows = true,
   showConnectionPoints = true,
   preview = false,
   defaultViewport,
+  controlsStyle,
+  onAddText,
+  onInsertImage,
   onMoveEnd,
 }: IntegrationArchitectureFlowProps) {
   const pendingEdgeUpdateRef = useRef<{
@@ -119,6 +153,7 @@ function IntegrationArchitectureFlowInner({
     connection?: Connection
   } | null>(null)
   const reconnectingEdgeRef = useRef(false)
+  const [panMode, setPanMode] = useState(false)
   const hasSelectedEdge = !preview && edges.some((edge) => edge.selected)
 
   const finishEdgeReconnect = useCallback(() => {
@@ -179,7 +214,7 @@ function IntegrationArchitectureFlowInner({
     <>
       <PatchReactFlowOnError />
       <ReactFlow
-        className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}`}
+        className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}${panMode ? ' pan-mode' : ''}`}
         nodes={nodes}
         edges={edges}
         nodeTypes={INTEGRATION_NODE_TYPES}
@@ -202,6 +237,7 @@ function IntegrationArchitectureFlowInner({
         onInit={handleInit}
         connectionMode={ConnectionMode.Loose}
         connectionLineType={ConnectionLineType.SmoothStep}
+        connectionLineComponent={DiagramConnectionLine}
         fitView={preview || !defaultViewport}
         fitViewOptions={preview ? INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS : INTEGRATION_FLOW_FIT_VIEW_OPTIONS}
         defaultViewport={defaultViewport}
@@ -212,7 +248,8 @@ function IntegrationArchitectureFlowInner({
         edgesFocusable={!preview}
         edgesUpdatable={!preview ? 'selected' : false}
         edgeUpdaterRadius={14}
-        panOnDrag={!preview}
+        panOnDrag={preview ? false : panMode ? [0, 1, 2] : [1, 2]}
+        selectionOnDrag={!preview && !panMode}
         snapToGrid={!preview && snapToGrid}
         snapGrid={INTEGRATION_SNAP_GRID}
         zoomOnScroll={!preview}
@@ -232,8 +269,21 @@ function IntegrationArchitectureFlowInner({
           className="!bg-white/95 !border !border-slate-200"
         />
       ) : null}
-      {!preview ? <Controls showInteractive /> : null}
-        {showGrid ? <CanvasViewportGrid /> : null}
+      {!preview ? (
+        <Controls showInteractive className="canvas-flow-controls" position="bottom-left" style={controlsStyle}>
+          <ControlButton
+            onClick={() => setPanMode((current) => !current)}
+            className={panMode ? 'is-active' : undefined}
+            title={panMode ? 'Exit pan mode' : 'Pan canvas'}
+            aria-label={panMode ? 'Exit pan mode' : 'Pan canvas'}
+          >
+            <Hand />
+          </ControlButton>
+          {onAddText ? <ControlButton onClick={onAddText} title="Add text" aria-label="Add text"><Type /></ControlButton> : null}
+          {onInsertImage ? <ControlButton onClick={onInsertImage} title="Insert image" aria-label="Insert image"><ImagePlus /></ControlButton> : null}
+        </Controls>
+      ) : null}
+        {showGrid && !preview ? <CanvasViewportGrid /> : null}
         {showRuler && !preview ? <CanvasViewportRulers /> : null}
       </ReactFlow>
     </>

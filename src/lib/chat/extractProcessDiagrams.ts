@@ -33,6 +33,11 @@ function labelFor(kind: ProcessDiagramKind, index: number, counts: Record<Proces
   return counts[kind] > 1 ? `${base} #${index}` : base
 }
 
+export function brainstormProcessPersistKey(label: string, index: number): string {
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return `brainstorm-${slug || `diagram-${index + 1}`}`
+}
+
 /** Extract canonical PlantUML and legacy Mermaid diagrams from idea text. */
 export function extractProcessDiagramsFromText(text: string): ExtractedProcessDiagram[] {
   const input = (text || '').replace(/\r\n?/g, '\n')

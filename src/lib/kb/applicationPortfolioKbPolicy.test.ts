@@ -37,14 +37,14 @@ describe('applicationPortfolioKbPolicy', () => {
     expect([...parseApmConnectedWorkspaceIds(' ws-1,ws-2, ')]).toEqual(['ws-1', 'ws-2'])
   })
 
-  it('treats the Adira catalog as a stronger application source', () => {
+  it('allows the default catalog alongside the Adira portfolio catalog', () => {
     const items = [
       entry({ id: 'generic', title: 'Application Catalog (Default)' }),
       entry({ id: 'adira', title: ADIRA_APPLICATION_CATALOG_TITLE, category: 'domain_glossary' }),
     ]
-    expect(workspaceHasStrongerApplicationSource(items, ADIRA_FINANCE_WORKSPACE_KEY)).toBe(true)
+    expect(workspaceHasStrongerApplicationSource(items, ADIRA_FINANCE_WORKSPACE_KEY)).toBe(false)
     expect(isManagedApplicationPortfolioCatalogTitle(ADIRA_APPLICATION_CATALOG_TITLE)).toBe(true)
-    expect(applicationCatalogEntriesToDisable(items).map((item) => item.id)).toEqual(['generic'])
+    expect(applicationCatalogEntriesToDisable(items)).toEqual([])
   })
 
   it('does not disable the default catalog when no stronger source exists', () => {
@@ -72,13 +72,13 @@ describe('applicationPortfolioKbPolicy', () => {
     expect(applicationCatalogEntriesToDisable(items, new Set([ADIRA_FINANCE_WORKSPACE_KEY]))).toEqual([])
   })
 
-  it('explains the portfolio source on the managed catalog and archived default catalog', () => {
+  it('keeps the Adira portfolio catalog and default catalog available together', () => {
     const items = [
       entry({ id: 'generic', title: 'Application Catalog (Default)' }),
       entry({ id: 'adira', title: ADIRA_APPLICATION_CATALOG_TITLE }),
     ]
     expect(applicationSourceNotice(items[1], items)).toContain('Official application list')
-    expect(applicationSourceNotice(items[0], items)).toContain('Application source: portfolio')
-    expect(shouldSkipDefaultApplicationCatalog(ADIRA_FINANCE_WORKSPACE_KEY, items)).toBe(true)
+    expect(applicationSourceNotice(items[0], items)).toBeNull()
+    expect(shouldSkipDefaultApplicationCatalog(ADIRA_FINANCE_WORKSPACE_KEY, items)).toBe(false)
   })
 })

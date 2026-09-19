@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
 const TOKEN_SPLIT =
-  /("(?:[^"\\]|\\.)*")|(@\w+|!\w[\w/<>.-]*)|\b(Person_Ext|Person|System_Boundary|System_Ext|SystemDb|System|Container_Boundary|Container_Ext|ContainerDb|Container|Component_Ext|ComponentDb|Component|Enterprise_Boundary|Boundary|BiRel|Rel_U|Rel_D|Rel_L|Rel_R|Rel|package|component|rectangle|database|cloud|node|actor|interface|queue|folder|frame|title|caption|legend|skinparam|left|right|up|down|as|endif|else|if|then|start|stop|end)\b|([\[\]{}()])|(<?[-.]+>?)|('.*$)/g
+  /("(?:[^"\\]|\\.)*")|(@\w+|!\w[\w/<>.-]*)|\b(Person_Ext|Person|System_Boundary|System_Ext|SystemDb|System|Container_Boundary|Container_Ext|ContainerDb|Container|Component_Ext|ComponentDb|Component|Enterprise_Boundary|Boundary|BiRel|Rel_U|Rel_D|Rel_L|Rel_R|Rel|package|component|rectangle|database|cloud|node|actor|interface|queue|folder|frame|title|caption|legend|skinparam|left|right|up|down|as|endif|else|if|then|start|stop|end)\b|([()[\]{}])|(<?[-.]+>?)|('.*$)/g
 
 const KEYWORD_CLASS = new Set([
   'Person',
@@ -130,13 +130,13 @@ export function PlantUmlSourceEditor({
   const sourceLines = useMemo(() => (value.length ? value.split('\n') : ['']), [value])
   const boxStyle = editorBoxStyle(wordWrap, showLineNumbers)
 
-  const syncHighlightScroll = (source: HTMLTextAreaElement) => {
+  const syncHighlightScroll = useCallback((source: HTMLTextAreaElement) => {
     const highlight = highlightRef.current
     if (!highlight) return
     highlight.scrollTop = source.scrollTop
     highlight.scrollLeft = wordWrap ? 0 : source.scrollLeft
     setScrollTop(source.scrollTop)
-  }
+  }, [wordWrap])
 
   const syncSelection = (target: HTMLTextAreaElement) => {
     const start = target.selectionStart
@@ -153,7 +153,19 @@ export function PlantUmlSourceEditor({
     if (!source) return
     source.scrollLeft = 0
     syncHighlightScroll(source)
-  }, [wordWrap])
+  }, [syncHighlightScroll, wordWrap])
+
+  useLayoutEffect(() => {
+    const source = textareaRef.current
+    if (!source) return
+    source.scrollLeft = 0
+    source.scrollTop = 0
+    const highlight = highlightRef.current
+    if (highlight) {
+      highlight.scrollLeft = 0
+      highlight.scrollTop = 0
+    }
+  }, [])
 
   const wrapClass = wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'
   const selected = value.slice(selection.start, selection.end)
@@ -175,7 +187,7 @@ export function PlantUmlSourceEditor({
       </div>
       <div className={cn('relative min-h-0 flex-1 overflow-hidden bg-white', EDITOR_TEXT)}>
         {showLineNumbers ? (
-          <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 overflow-hidden border-r border-slate-200 bg-slate-50 pt-2 text-right text-sky-700">
+          <div className="pointer-events-none absolute inset-y-0 left-0 z-30 w-10 overflow-hidden border-r border-slate-200 bg-slate-50 pt-2 text-right text-sky-700">
             <div style={{ transform: `translateY(-${scrollTop}px)` }}>
               {sourceLines.map((_, index) => (
                 <div key={index} className="h-5 pr-2 leading-5">
@@ -225,7 +237,7 @@ export function PlantUmlSourceEditor({
           wrap={wordWrap ? 'soft' : 'off'}
           spellCheck={false}
           className={cn(
-            'absolute inset-0 z-20 h-full min-h-0 w-full resize-none overflow-auto rounded-none bg-transparent',
+            'source-editor-scroll absolute inset-0 z-20 h-full min-h-0 w-full resize-none overflow-auto rounded-none bg-transparent',
             EDITOR_TEXT,
             'text-transparent caret-slate-900 shadow-none outline-none ring-0 focus:outline-none focus-visible:ring-0',
             'selection:bg-transparent selection:text-transparent',

@@ -1,6 +1,7 @@
 import type { Node } from 'reactflow'
 import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import { bpmnDefaultLineColor, bpmnNodeSizeForType } from '@/modules/project-management/lib/bpmnNotationSpec'
+import { defaultIntegrationNodeTextStyle } from '@/modules/project-management/lib/integrationNodeAppearance'
 
 export const BPMN_PALETTE_MIME = 'application/bpmn-palette'
 
@@ -192,6 +193,10 @@ export function createBpmnNodeFromPaletteItem(
         lineWidth: 2,
         lineStyle: isDashed ? 'dashed' : 'solid',
         rounded: !['textAnnotation', 'horizontalPool', 'verticalPool', 'lane'].includes(item.bpmnType),
+      },
+      textStyle: {
+        ...defaultIntegrationNodeTextStyle(),
+        wordWrap: true,
       },
     },
   }

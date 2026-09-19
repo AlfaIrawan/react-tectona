@@ -3,6 +3,14 @@ import { c4Stereotype, isC4External, type C4ElementKind } from '@/modules/projec
 import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
 export const C4_PALETTE_MIME = 'application/c4-palette'
+export const C4_APPLICATION_CATALOG_MIME = 'application/c4-application-catalog'
+
+export type C4ApplicationCatalogItem = {
+  name: string
+  type: string
+  description: string
+  classification: 'System' | 'External System'
+}
 
 export type C4PaletteItem = {
   id: string
@@ -75,6 +83,40 @@ export function createC4NodeFromPaletteItem(
       visual: {
         fillEnabled: true,
         fillColor: item.fill,
+        lineEnabled: true,
+        lineColor: external ? '#8A8A8A' : '#3C7FC0',
+        lineWidth: 1.5,
+        lineStyle: 'solid',
+        rounded: true,
+        shadow: true,
+      },
+    },
+  }
+}
+
+export function createC4NodeFromApplicationCatalog(
+  application: C4ApplicationCatalogItem,
+  position: { x: number; y: number },
+  existingNodeIds: Iterable<string>,
+): Node<ArchimateNodeData> {
+  const kind: C4ElementKind = application.classification === 'External System' ? 'System_Ext' : 'System'
+  const external = isC4External(kind)
+  return {
+    id: uniqueNodeId(application.name, existingNodeIds),
+    type: 'c4Element',
+    position,
+    zIndex: 1,
+    style: { width: 240, height: 120 },
+    data: {
+      kind: 'element',
+      layer: 'application',
+      stereotype: c4Stereotype(kind),
+      title: application.name,
+      description: [application.description || 'Application Catalog entry'],
+      notationId: kind,
+      visual: {
+        fillEnabled: true,
+        fillColor: external ? '#999999' : '#1168BD',
         lineEnabled: true,
         lineColor: external ? '#8A8A8A' : '#3C7FC0',
         lineWidth: 1.5,

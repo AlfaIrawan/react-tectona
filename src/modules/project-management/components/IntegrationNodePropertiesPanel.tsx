@@ -280,10 +280,11 @@ export function IntegrationNodePropertiesPanel({
         <div className={PANEL_SECTION_CLASS}>
           <div className="space-y-1.5">
             <label className={PANEL_LABEL_CLASS}>Judul</label>
-            <Input
+            <Textarea
               value={elementData.title}
               onChange={(event) => patchElementField('title', event.target.value)}
-              className="h-8"
+              className="min-h-[72px] resize-y text-sm leading-5"
+              rows={3}
             />
           </div>
           <div className="space-y-1.5">

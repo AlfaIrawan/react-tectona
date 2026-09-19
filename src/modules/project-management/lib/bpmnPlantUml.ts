@@ -72,6 +72,68 @@ export function parseBpmnXml(source: string): BpmnParsedGraph {
   return { nodes, edges }
 }
 
+function decodeMermaidLabel(raw: string): string {
+  return (raw || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .trim()
+}
+
+function parseMermaidFlowToBpmn(source: string): BpmnParsedGraph {
+  const nodes: BpmnParsedNode[] = []
+  const aliases = new Set<string>()
+  const add = (id: string, label: string, kind: BpmnParsedKind, bpmnType: string) => {
+    if (aliases.has(id)) return
+    aliases.add(id)
+    nodes.push({ id, label: decodeMermaidLabel(label), kind, bpmnType })
+  }
+
+  const declaration =
+    /\b([A-Za-z][\w-]*)\s*(?:\[\s*(?:"([^"]*)"|([^\]]+))\s*\]|\{\s*(?:"([^"]*)"|([^}]+))\s*\}|\(\(\s*(?:"([^"]*)"|([^)]+))\s*\)\)|\(\[\s*(?:"([^"]*)"|([^)\]]+))\s*\]\)|\(\s*(?:"([^"]*)"|([^)]+))\s*\))/g
+  let match: RegExpExecArray | null
+  while ((match = declaration.exec(source))) {
+    const id = match[1]
+    const box = match[2] || match[3]
+    const diamond = match[4] || match[5]
+    const circle = match[6] || match[7]
+    const stadium = match[8] || match[9]
+    const round = match[10] || match[11]
+    const label = (box || diamond || circle || stadium || round || id).trim()
+    if (diamond) {
+      add(id, label, 'decision', 'exclusiveGateway')
+      continue
+    }
+    if (circle || stadium || round) {
+      const kind: BpmnParsedKind = /end|selesai|stop|finish/i.test(label) ? 'end' : 'start'
+      add(id, label, kind, bpmnTypeFromKind(kind))
+      continue
+    }
+    add(id, label, 'activity', 'task')
+  }
+
+  const edges: BpmnParsedGraph['edges'] = []
+  const relation = /\b([A-Za-z][\w-]*)\s*-->(?:\|([^|]*)\|)?\s*([A-Za-z][\w-]*)/g
+  while ((match = relation.exec(source))) {
+    if (aliases.has(match[1]) && aliases.has(match[3])) {
+      edges.push({
+        id: `edge-${match[1]}-${match[3]}-${edges.length}`,
+        source: match[1],
+        target: match[3],
+        label: match[2]?.trim() || undefined,
+      })
+    }
+  }
+  if (!edges.length && nodes.length > 1) {
+    nodes.slice(1).forEach((current, index) => {
+      edges.push({ id: `edge-${index}`, source: nodes[index].id, target: current.id })
+    })
+  }
+  return { nodes, edges }
+}
+
 export function parseBpmnPlantUml(source: string): BpmnParsedGraph {
   const nodes: BpmnParsedNode[] = []
   const aliases = new Set<string>()
@@ -154,7 +216,9 @@ export function parseBpmnPlantUml(source: string): BpmnParsedGraph {
 }
 
 export function parseBpmnSource(source: string): BpmnParsedGraph {
-  return isBpmnXml(source) ? parseBpmnXml(source) : parseBpmnPlantUml(source)
+  if (isBpmnXml(source)) return parseBpmnXml(source)
+  if (/^\s*(?:flowchart|graph)\s+(?:TD|LR|TB|RL)\b/im.test(source)) return parseMermaidFlowToBpmn(source)
+  return parseBpmnPlantUml(source)
 }
 
 export function bpmnGraphToPlantUml(graph: BpmnParsedGraph): string {

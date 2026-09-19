@@ -126,6 +126,8 @@ export type ArchimateElementNodeData = {
   title: string
   description: string[]
   notationId: string
+  diagramLink?: string
+  diagramLinkCleared?: boolean
   visual?: IntegrationNodeVisualStyle
   textStyle?: IntegrationNodeTextStyle
   arrange?: IntegrationNodeArrangeOptions
@@ -148,6 +150,15 @@ export type ArchimateNoteNodeData = {
   arrange?: IntegrationNodeArrangeOptions
 }
 
+export type ArchimateImageNodeData = {
+  kind: 'image'
+  src: string
+  alt: string
+  visual?: IntegrationNodeVisualStyle
+  textStyle?: IntegrationNodeTextStyle
+  arrange?: IntegrationNodeArrangeOptions
+}
+
 export type ArchimateLegendNodeData = {
   kind: 'legend'
 }
@@ -156,6 +167,7 @@ export type ArchimateNodeData =
   | ArchimateElementNodeData
   | ArchimateBoundaryNodeData
   | ArchimateNoteNodeData
+  | ArchimateImageNodeData
   | ArchimateLegendNodeData
 
 export function isArchimateElementData(data: unknown): data is ArchimateElementNodeData {
@@ -168,4 +180,8 @@ export function isArchimateBoundaryData(data: unknown): data is ArchimateBoundar
 
 export function isArchimateNoteData(data: unknown): data is ArchimateNoteNodeData {
   return typeof data === 'object' && data !== null && (data as ArchimateNoteNodeData).kind === 'note'
+}
+
+export function isArchimateImageData(data: unknown): data is ArchimateImageNodeData {
+  return typeof data === 'object' && data !== null && (data as ArchimateImageNodeData).kind === 'image'
 }

@@ -440,7 +440,7 @@ function AIProviderModelsCard({ onViewPerformance, onViewUsage }: { onViewPerfor
   </>
 }
 
-const usageCapabilities = ['AI Assistant', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation']
+const usageCapabilities = ['AI Assistant', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation', 'Application Catalog Scan']
 
 function interactionName(event: TokenTelemetryEvent): string {
   if (event.interactionType) return event.interactionType

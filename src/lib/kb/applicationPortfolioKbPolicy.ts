@@ -1,29 +1,20 @@
 import { patchKbEntry, type KbEntryResponse } from '@/lib/api/tectonaKbApi'
-import { ADIRA_APPLICATION_CATALOG_TITLE, isAdiraFinanceWorkspaceId } from '@/lib/kb/adiraApplicationGlossary'
+import { ADIRA_APPLICATION_CATALOG_TITLE } from '@/lib/kb/adiraApplicationGlossary'
 import { parseApmConnectedWorkspaceIds, readConfiguredApmWorkspaceIds } from '@/lib/kb/apmWorkspaceConfig'
 import { isApplicationCatalogDefaultTitle } from '@/lib/kb/systemKbEntry'
 
 export { parseApmConnectedWorkspaceIds, readConfiguredApmWorkspaceIds }
-
-function sameWorkspaceId(left: string | null | undefined, right: string | null | undefined): boolean {
-  return (left ?? '').trim() === (right ?? '').trim()
-}
 
 export function isManagedApplicationPortfolioCatalogTitle(title: string): boolean {
   return title.trim().toLowerCase() === ADIRA_APPLICATION_CATALOG_TITLE.toLowerCase()
 }
 
 export function workspaceHasStrongerApplicationSource(
-  entries: KbEntryResponse[],
+  _entries: KbEntryResponse[],
   workspaceId: string,
   apmWorkspaceIds: ReadonlySet<string> = new Set(),
 ): boolean {
-  if (apmWorkspaceIds.has(workspaceId)) return true
-  if (!isAdiraFinanceWorkspaceId(workspaceId)) return false
-  return entries.some((entry) => (
-    isManagedApplicationPortfolioCatalogTitle(entry.title)
-    && sameWorkspaceId(entry.workspace_id, workspaceId)
-  ))
+  return apmWorkspaceIds.has(workspaceId)
 }
 
 export function shouldSkipDefaultApplicationCatalog(
@@ -34,7 +25,7 @@ export function shouldSkipDefaultApplicationCatalog(
   return workspaceHasStrongerApplicationSource(entries, workspaceId, apmWorkspaceIds)
 }
 
-/** KB application-catalog templates to turn off for AI when a stronger SoR exists. Never re-enables. */
+/** KB application-catalog templates to turn off for AI only when APM is the source of record. Never re-enables. */
 export function applicationCatalogEntriesToDisable(
   entries: KbEntryResponse[],
   apmWorkspaceIds: ReadonlySet<string> = new Set(),
@@ -55,14 +46,14 @@ export function applicationSourceNotice(
 ): string | null {
   const workspaceId = (entry.workspace_id ?? '').trim()
   if (isManagedApplicationPortfolioCatalogTitle(entry.title)) {
-    return 'Official application list for this workspace. Keep the KB Application Catalog off for AI.'
+    return 'Official application list for this workspace. It complements the editable KB Application Catalog.'
   }
   if (!isApplicationCatalogDefaultTitle(entry.title) || !workspaceId) return null
-  if (!workspaceHasStrongerApplicationSource(entries, workspaceId, apmWorkspaceIds)) return null
+  if (!apmWorkspaceIds.has(workspaceId)) return null
   if (apmWorkspaceIds.has(workspaceId)) {
     return 'Application source: APM. This catalog stays in KB as an archive and is not used for AI.'
   }
-  return 'Application source: portfolio. This catalog stays in KB as an archive and is not used for AI.'
+  return null
 }
 
 export async function disableSupersededApplicationCatalogs(

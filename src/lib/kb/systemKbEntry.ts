@@ -1,5 +1,4 @@
 import { createKbEntry, deleteKbEntry, patchKbEntry, type KbEntryResponse } from '@/lib/api/tectonaKbApi'
-import { isAdiraFinanceWorkspaceId } from '@/lib/kb/adiraApplicationGlossary'
 import { readConfiguredApmWorkspaceIds } from '@/lib/kb/apmWorkspaceConfig'
 import { defaultSystemKbTableHtml } from '@/lib/kb/systemKbTableEditor'
 
@@ -283,14 +282,6 @@ export async function dedupeWorkspaceSystemKbTemplates(entries: KbEntryResponse[
   )
 }
 
-function workspaceHasAdiraApplicationCatalog(entries: KbEntryResponse[], workspaceId: string): boolean {
-  if (!isAdiraFinanceWorkspaceId(workspaceId)) return false
-  return entries.some((entry) => (
-    entry.title.trim().toLowerCase() === 'katalog aplikasi adira finance'
-    && sameWorkspaceId(entry.workspace_id, workspaceId)
-  ))
-}
-
 export function mergeEnsuredKbEntries(
   items: KbEntryResponse[],
   ensured: Array<KbEntryResponse | null | undefined>,
@@ -346,7 +337,7 @@ export async function ensureIdeaIntakeChecklistDefaultEntry(
 
 /**
  * Create missing per-workspace starter templates. Never overwrites content or re-enables `is_active`.
- * Skip generic application catalog when a stronger portfolio/APM source already exists.
+ * Skip the generic application catalog only when Application Portfolio Monitoring owns it.
  */
 export async function ensureWorkspaceSystemKbTemplates(
   entries: KbEntryResponse[],
@@ -368,10 +359,7 @@ export async function ensureWorkspaceSystemKbTemplates(
     for (const spec of WORKSPACE_SYSTEM_KB_SPECS) {
       if (
         spec.kind === 'application_catalog'
-        && (
-          readConfiguredApmWorkspaceIds().has(workspaceId)
-          || workspaceHasAdiraApplicationCatalog(entries, workspaceId)
-        )
+        && readConfiguredApmWorkspaceIds().has(workspaceId)
       ) {
         continue
       }

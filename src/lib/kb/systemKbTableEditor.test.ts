@@ -75,4 +75,23 @@ describe('systemKbTableEditor', () => {
     const parsed = parseSystemKbTableContent('Catatan Aplikasi (Default)', defaultSystemKbTableHtml('app_notes'))
     expect(parsed?.intro).toContain('not a master catalog')
   })
+
+  it('adds Description to the application catalog without shifting legacy rows', () => {
+    const legacyHtml = [
+      '<p>Application catalog.</p>',
+      '<table><thead><tr><th>Name</th><th>Type</th><th>Owner</th><th>Status</th><th>Notes</th></tr></thead>',
+      '<tbody><tr><td>adira.co.id</td><td>Website</td><td>Digital Team</td><td>Active</td><td>Public site</td></tr></tbody></table>',
+    ].join('')
+    const parsed = parseSystemKbTableContent('Application Catalog (Default)', legacyHtml)
+
+    expect(parsed?.rows[0]).toEqual({
+      name: 'adira.co.id',
+      type: 'Website',
+      description: '',
+      tags: '',
+      owner: 'Digital Team',
+      status: 'Active',
+      notes: 'Public site',
+    })
+  })
 })

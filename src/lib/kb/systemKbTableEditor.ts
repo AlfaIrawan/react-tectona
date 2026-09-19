@@ -61,7 +61,9 @@ export const SYSTEM_KB_TABLE_SPECS: SystemKbTableSpec[] = [
     columns: [
       { key: 'name', label: 'Name', aliases: ['Nama'] },
       { key: 'type', label: 'Type', aliases: ['Tipe'] },
-      { key: 'owner', label: 'Owner' },
+      { key: 'description', label: 'Description', aliases: ['Deskripsi'] },
+      { key: 'tags', label: 'Tags', aliases: ['Tag'] },
+      { key: 'owner', label: 'Business Owner', aliases: ['Owner'] },
       { key: 'status', label: 'Status' },
       { key: 'notes', label: 'Notes', aliases: ['Catatan'] },
     ],
@@ -215,18 +217,20 @@ export function parseSystemKbTableContent(title: string, content: string): Syste
   const intro = looksLikeDefaultIndonesianIntro(parsedIntro) ? spec.intro : parsedIntro
   const rows: Array<Record<string, string>> = []
   const rowMatches = content.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)
+  let tableColumns: Array<SystemKbTableColumn | null> | null = null
 
   for (const match of rowMatches) {
     const cells = [...match[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((cell) => stripHtmlCell(cell[1]))
     if (cells.length === 0) continue
-    const isHeader = cells.every((cell, index) => {
-      const column = spec.columns[index]
-      return column ? columnHeaderMatches(column, cell) : false
-    })
-    if (isHeader) continue
+    const headerColumns = cells.map((cell) => spec.columns.find((column) => columnHeaderMatches(column, cell)) ?? null)
+    if (headerColumns.every(Boolean)) {
+      tableColumns = headerColumns
+      continue
+    }
     const row = emptyRow(spec)
-    spec.columns.forEach((column, index) => {
-      row[column.key] = cells[index] ?? ''
+    const columns = tableColumns ?? spec.columns
+    columns.forEach((column, index) => {
+      if (column) row[column.key] = cells[index] ?? ''
     })
     rows.push(row)
   }

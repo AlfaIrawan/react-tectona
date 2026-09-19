@@ -389,6 +389,32 @@
     background: transparent;
   }
 
+  /* Source editors retain wheel and trackpad scrolling, but only expose native scrollbars while
+     the pointer is within the editor. */
+  .source-editor-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .source-editor-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+  .source-editor-scroll:hover {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(100, 116, 139, 0.55) transparent;
+  }
+  .source-editor-scroll:hover::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .source-editor-scroll:hover::-webkit-scrollbar-thumb {
+    background-color: rgba(100, 116, 139, 0.45);
+    border-radius: 9999px;
+  }
+  .source-editor-scroll:hover::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
   /* KB rich tables: horizontal scroll bar only while pointer is over the table */
   .kb-table-scroll-hover {
     overflow-x: auto;
@@ -1532,8 +1558,59 @@
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='25' viewBox='0 0 26 32'%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%230ea5e9' stroke='%23fff' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%230ea5e9' stroke='%230f172a' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") 2 1, grab !important;
 }
 
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__node-bpmnElement,
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__node-archimateElement {
+  overflow: visible;
+}
+
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__node-bpmnElement p,
+:is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__node-archimateElement p {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  line-clamp: unset;
+  -webkit-line-clamp: unset;
+}
+
 :is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__node.dragging {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='25' viewBox='0 0 26 32'%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%23038bdb' stroke='%23fff' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M3 2 3 25l6-6 4 10 5-2-4-10h9L3 2Z' fill='%23038bdb' stroke='%230f172a' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") 2 1, grabbing !important;
+}
+
+.integration-flow-canvas .canvas-flow-controls {
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+.integration-flow-canvas .canvas-flow-controls .react-flow__controls-button {
+  border-bottom: 0;
+  border-right: 1px solid #eeeeee;
+}
+
+.integration-flow-canvas .canvas-flow-controls .react-flow__controls-button:last-child {
+  border-right: 0;
+}
+
+.integration-flow-canvas .canvas-flow-controls .react-flow__controls-button.is-active {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.integration-flow-canvas.pan-mode .react-flow__pane,
+.integration-flow-canvas.pan-mode .react-flow__node {
+  cursor: grab !important;
+}
+
+.integration-flow-canvas.pan-mode .react-flow__pane:active,
+.integration-flow-canvas.pan-mode .react-flow__node:active {
+  cursor: grabbing !important;
+}
+
+/* Retain individual multi-selection state without showing a combined selection frame. */
+.integration-flow-canvas .react-flow__nodesselection-rect {
+  display: none;
 }
 
 :is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle {

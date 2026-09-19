@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsLeft, ChevronsRight, Circle, Copy, Crosshair, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Settings2, Sparkles, Trash2, Waypoints } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsLeft, ChevronsRight, Circle, Copy, Crosshair, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Settings2, Sparkles, Waypoints } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
@@ -385,6 +385,10 @@ function EditableIntegrationArchitectureCanvasInner({
   const selectedEdge = useMemo(
     () => (selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) ?? null : null),
     [edges, selectedEdgeId],
+  )
+  const selectedElementCount = useMemo(
+    () => nodes.filter((node) => node.selected).length + edges.filter((edge) => edge.selected).length,
+    [edges, nodes],
   )
 
   const updateSelectedEdge = useCallback((patch: Partial<Edge>) => {
@@ -1178,7 +1182,8 @@ function EditableIntegrationArchitectureCanvasInner({
   ]
 
   const studioMode = fillHeight
-  const hasSelectionInspector = Boolean(selectedNode && selectedNode.type !== 'archimateLegend') || selectedEdgeId
+  const hasSelectionInspector = selectedElementCount === 1
+    && (Boolean(selectedNode && selectedNode.type !== 'archimateLegend') || Boolean(selectedEdgeId))
 
   useEffect(() => {
     if (!hasSelectionInspector) {
@@ -1204,7 +1209,7 @@ function EditableIntegrationArchitectureCanvasInner({
   }, [clampPropertiesPanelPosition, hasSelectionInspector, selectedEdgeId, selectedNodeId, studioMode])
 
   const selectionInspector =
-    selectedNode && selectedNode.type !== 'archimateLegend' ? (
+    hasSelectionInspector && selectedNode && selectedNode.type !== 'archimateLegend' ? (
       <IntegrationNodePropertiesPanel
         selectedNode={selectedNode}
         onUpdateData={updateSelectedNodeData}
@@ -1214,7 +1219,7 @@ function EditableIntegrationArchitectureCanvasInner({
         onRotate90={handleRotateSelectedNode90}
         dragHandleProps={propertiesPanelDragHandleProps}
       />
-    ) : selectedEdge ? (
+    ) : hasSelectionInspector && selectedEdge ? (
       <DiagramEdgePropertiesPanel
         edge={selectedEdge}
         onChange={updateSelectedEdge}

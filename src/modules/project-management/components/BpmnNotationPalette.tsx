@@ -102,7 +102,7 @@ export function BpmnNotationPalette({
   onSelectFlow?: (item: BpmnPaletteItem) => void
 }) {
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+    <div className="enterprise-popover-scroll min-h-0 flex-1 overflow-y-auto p-1.5">
       <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">BPMN notation</p>
       <p className="mb-1.5 text-[9px] leading-3 text-slate-500">
         Seret shape ke canvas. Pilih jenis flow, lalu sambungkan handle antar node.

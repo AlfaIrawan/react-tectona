@@ -55,7 +55,7 @@ const Dialog = ({ open: controlledOpen, onOpenChange, children }: DialogProps) =
 
   const overlayTree = (
     <DialogContext.Provider value={{ open: isOpen, setOpen }}>
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 z-[1500] flex items-center justify-center">
         {/* Backdrop */}
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm"
@@ -63,7 +63,7 @@ const Dialog = ({ open: controlledOpen, onOpenChange, children }: DialogProps) =
         />
         {/* Dialog Content — wrapper shrinks to child width so DialogContent's
             own max-width determines size and the flex parent centers it. */}
-        <div className="relative z-50 mx-4 flex max-w-[calc(100vw-2rem)] items-center justify-center">
+        <div className="relative z-[1501] mx-4 flex max-w-[calc(100vw-2rem)] items-center justify-center">
           {children}
         </div>
       </div>
@@ -108,8 +108,8 @@ DialogTrigger.displayName = 'DialogTrigger'
 
 const DialogContent = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, children, ...props }, ref) => {
+  React.HTMLAttributes<HTMLDivElement> & { surface?: 'glass' | 'solid' }
+>(({ className, children, surface = 'glass', ...props }, ref) => {
   const context = React.useContext(DialogContext)
 
   if (!context?.open) return null
@@ -118,7 +118,8 @@ const DialogContent = React.forwardRef<
     <div
       ref={ref}
       className={cn(
-        'liquid-glass-enterprise-panel rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto',
+        surface === 'glass' ? 'liquid-glass-enterprise-panel' : 'bg-card',
+        'rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto',
         className
       )}
       onClick={(e) => e.stopPropagation()}

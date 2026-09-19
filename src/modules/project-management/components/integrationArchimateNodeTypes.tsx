@@ -1,7 +1,9 @@
 import { Handle, NodeResizer, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { Link2 } from 'lucide-react'
 import {
   buildIntegrationNodeBoxStyle,
+  buildIntegrationNodeTextStyle,
   resolveNodeTextStyle,
 } from '@/modules/project-management/lib/integrationNodeAppearance'
 import { getArchimateLayerFillBackground, getArchimateNotationImageUrl } from '@/modules/project-management/lib/integrationArchimateNotationCatalog'
@@ -11,6 +13,7 @@ import { BpmnEventMarkerIcon, BpmnGatewayMarkerIcon, BpmnTaskMarkerIcon } from '
 import type {
   ArchimateBoundaryNodeData,
   ArchimateElementNodeData,
+  ArchimateImageNodeData,
   ArchimateNoteNodeData,
 } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
@@ -165,8 +168,13 @@ export function ArchimateElementNode({ id, data, selected, width, height }: Node
             className="pointer-events-none absolute right-2 top-2 z-[1] h-8 w-8 object-contain"
           />
         ) : null}
-        <div className="flex min-h-[78px] h-full w-full flex-col items-center justify-center px-4 py-4 pr-11 text-center">
-          <p className="text-[13px] font-semibold leading-tight">{data.title}</p>
+        <div className="flex min-h-[78px] h-full w-full min-w-0 flex-col items-center justify-center px-4 py-4 pr-11 text-center">
+          <p
+            className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words text-[13px] font-semibold leading-tight [line-clamp:unset] [-webkit-line-clamp:unset]"
+            style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: data.textStyle?.wordWrap !== false })}
+          >
+            {data.title}
+          </p>
           {data.description.map((line) => (
             <p key={line} className="mt-1 text-[11px] leading-4 text-slate-600">
               {line}
@@ -224,6 +232,15 @@ export function ArchimateNoteNode({ id, data, selected, width, height }: NodePro
   )
 }
 
+export function ArchimateImageNode({ data, selected }: NodeProps<ArchimateImageNodeData>) {
+  return (
+    <div className="group relative h-full w-full rounded-md bg-white shadow-sm">
+      <SelectionResizer selected={selected} minWidth={96} minHeight={72} keepAspectRatio />
+      <img src={data.src} alt={data.alt} draggable={false} className="pointer-events-none h-full w-full rounded-md border border-slate-200 object-contain" />
+    </div>
+  )
+}
+
 const C4_INTERNAL_FILL = '#438DD5'
 const C4_INTERNAL_LINE = '#3C7FC0'
 const C4_EXTERNAL_FILL = '#999999'
@@ -241,6 +258,14 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
     <div className="group relative h-full w-full overflow-visible">
       <SelectionResizer selected={selected} minWidth={140} minHeight={72} />
       <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      {data.diagramLink ? (
+        <span
+          title="Linked diagram"
+          className="pointer-events-none absolute right-2 top-2 z-10 inline-flex h-4 w-4 items-center justify-center rounded-sm bg-white/90 text-slate-700 shadow-sm"
+        >
+          <Link2 className="h-2.5 w-2.5" aria-hidden />
+        </span>
+      ) : null}
       {isPerson ? (
         <svg viewBox="0 0 48 28" className="pointer-events-none absolute left-1/2 top-0 h-7 w-12 -translate-x-1/2 -translate-y-1/2 text-white" aria-hidden>
           <circle cx="24" cy="8" r="6" fill={fill} stroke={line} strokeWidth="1.5" />
@@ -418,7 +443,9 @@ function ExternalNodeLabel({
           opacity: Math.max(0, Math.min(100, resolved.opacity)) / 100,
           whiteSpace: wrapLabel ? 'pre-wrap' : 'nowrap',
           overflowWrap: wrapLabel ? 'break-word' : 'normal',
-          overflow: 'hidden',
+          wordBreak: wrapLabel ? 'break-word' : 'normal',
+          overflow: wrapLabel ? 'visible' : 'hidden',
+          textOverflow: wrapLabel ? 'clip' : 'ellipsis',
           cursor: 'move',
           lineHeight: 1.25,
         }}
@@ -516,7 +543,12 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
       ) : isAnnotation ? (
         <div className="relative h-full w-full bg-white/80 py-1 pl-2 pr-1">
           <span className="absolute bottom-0 left-0 top-0 w-[10px] border-y-2 border-l-2 border-slate-900" />
-          <p className="pl-2 text-[12px] leading-4 text-slate-800">{data.title}</p>
+          <p
+            className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words pl-2 text-[12px] leading-4 text-slate-800 [line-clamp:unset] [-webkit-line-clamp:unset]"
+            style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
+          >
+            {data.title}
+          </p>
         </div>
       ) : kind.family === 'pool' || kind.family === 'lane' ? (
         <div className="flex h-full w-full overflow-hidden border-2 bg-white/70" style={{ borderColor: stroke }}>
@@ -528,11 +560,16 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         </div>
       ) : kind.family === 'group' ? (
         <div className="h-full w-full rounded-md border-2 border-dashed border-slate-500 bg-transparent px-2 py-1">
-          <p className="text-[11px] font-medium text-slate-600">{data.title}</p>
+          <p
+            className="min-w-0 w-full overflow-visible whitespace-pre-wrap break-words text-[11px] font-medium text-slate-600"
+            style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
+          >
+            {data.title}
+          </p>
         </div>
       ) : (
         <div
-          className="relative flex h-full w-full flex-col justify-center rounded-[10px] border-2 px-3 py-2 text-center"
+          className="relative flex h-full min-h-0 w-full min-w-0 flex-col justify-center overflow-visible rounded-[10px] border-2 px-3 py-2 text-center"
           style={{
             borderColor: stroke,
             background: fill,
@@ -548,7 +585,12 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
           {kind.family === 'subprocess' || kind.family === 'choreography' ? (
             <span className="absolute bottom-1.5 left-1/2 flex h-3.5 w-3.5 -translate-x-1/2 items-center justify-center border border-slate-800 text-[10px] leading-none">+</span>
           ) : null}
-          <p className="text-[12px] font-medium leading-4 text-slate-900">{data.title}</p>
+          <p
+            className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words text-[12px] font-medium leading-4 text-slate-900 [line-clamp:unset] [-webkit-line-clamp:unset]"
+            style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
+          >
+            {data.title}
+          </p>
         </div>
       )}
     </div>
@@ -587,6 +629,7 @@ export const integrationArchimateNodeTypes: NodeTypes = {
   archimateElement: ArchimateElementNode,
   archimateBoundary: ArchimateBoundaryNode,
   archimateNote: ArchimateNoteNode,
+  archimateImage: ArchimateImageNode,
   archimateLegend: ArchimateLegendNode,
   c4Element: C4ElementNode,
   bpmnElement: BpmnElementNode,

@@ -37,4 +37,27 @@ describe('bpmnPlantUml', () => {
     expect(graph.nodes.find((node) => node.id === 'Gw_1')?.kind).toBe('decision')
     expect(graph.edges.some((edge) => edge.source === 'Gw_1' && edge.target === 'End_1' && edge.label === 'Ya')).toBe(true)
   })
+
+  it('parses mermaid flowcharts as BPMN start, task, gateway, and end', () => {
+    const graph = parseBpmnSource(`flowchart TD
+      Start((Mulai)) --> Task[Lapor tiket]
+      Task --> Gw{Butuh eskalasi?}
+      Gw -->|Ya| End((Selesai))
+    `)
+    expect(graph.nodes.find((node) => node.id === 'Start')?.bpmnType).toBe('startEvent')
+    expect(graph.nodes.find((node) => node.id === 'Task')?.bpmnType).toBe('task')
+    expect(graph.nodes.find((node) => node.id === 'Gw')?.kind).toBe('decision')
+    expect(graph.nodes.find((node) => node.id === 'End')?.bpmnType).toBe('endEvent')
+    expect(graph.edges.some((edge) => edge.source === 'Gw' && edge.target === 'End' && edge.label === 'Ya')).toBe(true)
+  })
+
+  it('keeps the full mermaid task label, including quoted text and line breaks', () => {
+    const graph = parseBpmnSource(`flowchart TD
+      Start((Mulai)) --> Task["Saat ini ketika ada isu di nasabah dan cabang tidak tahu<br/>apa yang harus dilakukan"]
+      Task --> End((Selesai))
+    `)
+    expect(graph.nodes.find((node) => node.id === 'Task')?.label).toBe(
+      'Saat ini ketika ada isu di nasabah dan cabang tidak tahu\napa yang harus dilakukan',
+    )
+  })
 })

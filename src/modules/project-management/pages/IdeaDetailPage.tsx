@@ -25,12 +25,14 @@ import {
   DollarSign,
   Download,
   Eraser,
+  ExternalLink,
   FileText,
   Files,
   Gauge,
   GitBranch,
   IndentDecrease,
   IndentIncrease,
+  ImageDown,
   Layers,
   List,
   PaintBucket,
@@ -199,9 +201,9 @@ import {
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
-import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
+import { brainstormProcessPersistKey, extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
 import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
-import { EditableDiagramCanvas } from '@/modules/project-management/components/EditableDiagramCanvas'
+import { EditableDiagramCanvas, type C4DiagramDrilldownTarget } from '@/modules/project-management/components/EditableDiagramCanvas'
 import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
 import { loadIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
 import { IdeaSectionReviewWorkspace } from '@/modules/project-management/components/IdeaSectionReviewWorkspace'
@@ -229,7 +231,7 @@ import {
   type RuntimeC4Analysis,
 } from '@/modules/project-management/lib/c4ArchitectureService'
 import { usePlantUmlPngPreview } from '@/modules/project-management/lib/usePlantUmlPngPreview'
-import { normalizeC4PlantUml } from '@/modules/project-management/lib/c4PlantUml'
+import { normalizeC4PlantUml, parseC4Graph } from '@/modules/project-management/lib/c4PlantUml'
 import {
   buildPersistentProcessDiagramPayload,
   emptyRuntimeProcessDiagramAnalysis,
@@ -2091,7 +2093,10 @@ type DiagramStudioSession = {
   generationError: string | null
   confidence: number | null
   isRegenerating: boolean
-  onRegenerate: () => void
+  onGenerateDraft?: () => void
+  onGenerateAlternative?: () => void
+  c4DrilldownTargets?: C4DiagramDrilldownTarget[]
+  onOpenC4Drilldown?: (diagramKey: string) => void
 }
 
 function DiagramGalleryCard({
@@ -2111,8 +2116,11 @@ function DiagramGalleryCard({
   generationError,
   confidence,
   isRegenerating,
-  onRegenerate,
+  onGenerateDraft,
+  onGenerateAlternative,
   onOpenStudio,
+  c4DrilldownTargets,
+  onOpenC4Drilldown,
 }: {
   ideaId: string
   diagramKey: string
@@ -2130,8 +2138,11 @@ function DiagramGalleryCard({
   generationError: string | null
   confidence: number | null
   isRegenerating: boolean
-  onRegenerate: () => void
+  onGenerateDraft?: () => void
+  onGenerateAlternative?: () => void
   onOpenStudio: (session: DiagramStudioSession) => void
+  c4DrilldownTargets?: C4DiagramDrilldownTarget[]
+  onOpenC4Drilldown?: (diagramKey: string) => void
 }) {
   const hasDiagram = Boolean(imageSrc || diagramSource)
   const openStudio = () => {
@@ -2152,7 +2163,10 @@ function DiagramGalleryCard({
       generationError,
       confidence,
       isRegenerating,
-      onRegenerate,
+      onGenerateDraft,
+      onGenerateAlternative,
+      c4DrilldownTargets,
+      onOpenC4Drilldown,
     })
   }
 
@@ -3424,6 +3438,14 @@ export function IdeaDetailPage() {
   const [isImpactPanelFullscreen, setIsImpactPanelFullscreen] = useState(false)
   const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
   const [diagramStudio, setDiagramStudio] = useState<DiagramStudioSession | null>(null)
+  const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
+  const [isEmbeddedExportMenuOpen, setIsEmbeddedExportMenuOpen] = useState(false)
+  const [c4AlternativePreview, setC4AlternativePreview] = useState<{
+    level: C4ArchitectureLevel
+    analysis: RuntimeC4Analysis
+  } | null>(null)
+  const [isC4AlternativeGenerating, setIsC4AlternativeGenerating] = useState(false)
+  const [isC4AlternativeReplacing, setIsC4AlternativeReplacing] = useState(false)
   const ideaCostBenefitPanelRef = useRef<HTMLDivElement>(null)
   const [ideaCostBenefitPanelHeightPx, setIdeaCostBenefitPanelHeightPx] = useState<number | null>(null)
   const [isCostBenefitPanelFullscreen, setIsCostBenefitPanelFullscreen] = useState(false)
@@ -3894,6 +3916,40 @@ export function IdeaDetailPage() {
   const c4Level2Preview = usePlantUmlPngPreview(
     c4Level2Analysis.plantumlSource ? normalizeC4PlantUml(c4Level2Analysis.plantumlSource, 'L2') : null,
   )
+  const c4Level1DrilldownTargets = useMemo<C4DiagramDrilldownTarget[]>(() => {
+    if (!c4Level2Analysis.plantumlSource) return []
+    const boundaryTitle = parseC4Graph(c4Level2Analysis.plantumlSource).boundaries[0]?.title
+    if (!boundaryTitle) return []
+    return [{
+      diagramKey: 'c4-level-2',
+      title: 'C4 Level 2',
+      description: 'Container detail for this software system.',
+      matchNodeTitle: boundaryTitle,
+    }]
+  }, [c4Level2Analysis.plantumlSource])
+  const openC4Drilldown = (diagramKey: string) => {
+    if (diagramKey !== 'c4-level-2') return
+    setDiagramStudio({
+      ideaId: idea.id,
+      diagramKey: 'c4-level-2',
+      diagramSource: c4Level2Analysis.plantumlSource,
+      diagramFormat: 'c4',
+      savedGraph: c4Level2Analysis.canvasGraph,
+      onPersistGraph: (graph) => persistC4Canvas('L2', graph),
+      title: 'C4 Level 2',
+      description: 'Container diagram (C4).',
+      icon: Cpu,
+      imageSrc: c4Level2Preview.objectUrl,
+      imageLoading: c4Level2Preview.isLoading,
+      imageError: c4Level2Preview.error,
+      missing: c4Level2Missing,
+      generationError: c4Level2GenerationError,
+      confidence: c4Level2Loaded ? confidence.c4Level2 : null,
+      isRegenerating: regenerating.c4Level2,
+      onGenerateDraft: () => void loadRuntimeC4Architecture('L2', idea, { forceRefresh: true }),
+      onGenerateAlternative: () => void generateC4Alternative('L2'),
+    })
+  }
   const [bpmnHighAnalysis, setBpmnHighAnalysis] = useState<RuntimeProcessDiagramAnalysis>(
     emptyRuntimeProcessDiagramAnalysis(),
   )
@@ -3908,6 +3964,7 @@ export function IdeaDetailPage() {
     isRegenerating: boolean
   }
   const [processDetailsByKey, setProcessDetailsByKey] = useState<Record<string, ProcessDetailState>>({})
+  const [brainstormCanvasByKey, setBrainstormCanvasByKey] = useState<Record<string, C4CanvasGraph>>({})
   const bpmnHighAnalysisRef = useRef(bpmnHighAnalysis)
   const processDetailsByKeyRef = useRef(processDetailsByKey)
   bpmnHighAnalysisRef.current = bpmnHighAnalysis
@@ -3971,7 +4028,6 @@ export function IdeaDetailPage() {
   }
 
   const [brdSections, setBrdSections] = useState<BrdSection[]>(INITIAL_BRD_SECTIONS)
-  const [showMermaidCode, setShowMermaidCode] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const stored = localStorage.getItem(IDEA_DETAIL_SIDEBAR_STORAGE_KEY)
     return stored ? JSON.parse(stored) : false
@@ -4712,7 +4768,7 @@ export function IdeaDetailPage() {
     async (
       level: C4ArchitectureLevel,
       sourceIdea: Idea = idea,
-      options: { forceRefresh?: boolean; autoGenerateIfMissing?: boolean } = {},
+      options: { forceRefresh?: boolean; autoGenerateIfMissing?: boolean; previewOnly?: boolean } = {},
     ) => {
       const setGenerationError = level === 'L1' ? setC4Level1GenerationError : setC4Level2GenerationError
       const setLoaded = level === 'L1' ? setC4Level1Loaded : setC4Level2Loaded
@@ -4725,8 +4781,22 @@ export function IdeaDetailPage() {
         try {
           const persistent = await getPersistentIdeaC4Architecture(sourceIdea.id, level)
           if (persistent) {
-            applyC4ArchitectureState(level, runtimeC4FromPersistent(persistent))
-            return
+            const storedAnalysis = runtimeC4FromPersistent(persistent)
+            const hasRenderableDiagram = Boolean(
+              storedAnalysis.plantumlSource.trim()
+              || storedAnalysis.canvasGraph?.nodes.length,
+            )
+            // Legacy/failed L1 records can remain marked insufficient even after the
+            // idea has enough evidence. Do not let that empty record permanently
+            // suppress the first automatic generation while L2 can still succeed.
+            if (storedAnalysis.status === 'ok' && hasRenderableDiagram) {
+              applyC4ArchitectureState(level, storedAnalysis)
+              return
+            }
+            if (!options.autoGenerateIfMissing) {
+              applyC4ArchitectureState(level, storedAnalysis)
+              return
+            }
           }
         } catch (error) {
           setGenerationError(error instanceof Error ? error.message : `Failed to load stored C4 ${level} architecture.`)
@@ -4734,8 +4804,12 @@ export function IdeaDetailPage() {
 
       }
 
-      // Nothing persisted (and not a forced regenerate) — generate now rather than showing a
-      // manual "Generate" button.
+      if (!options.forceRefresh && !options.autoGenerateIfMissing) {
+        setMissing(true)
+        setLoaded(true)
+        return
+      }
+
       setMissing(false)
       const regeneratingKey = level === 'L1' ? 'c4Level1' : 'c4Level2'
       setRegenerating((prev) => ({ ...prev, [regeneratingKey]: true }))
@@ -4765,6 +4839,8 @@ export function IdeaDetailPage() {
 
         const analysis = runtimeC4FromAgentResponse(response)
 
+        if (options.previewOnly) return analysis
+
         try {
           await upsertPersistentIdeaC4Architecture(sourceIdea.id, level, {
             ...buildPersistentC4Payload(analysis, runtimeUserId || 'tectona-agent'),
@@ -4779,6 +4855,7 @@ export function IdeaDetailPage() {
 
         applyC4ArchitectureState(level, analysis)
       } catch (error) {
+        if (options.previewOnly) throw error
         setAnalysis(emptyRuntimeC4Analysis(level))
         setLoaded(false)
         setMissing(false)
@@ -4790,6 +4867,102 @@ export function IdeaDetailPage() {
     },
     [applyC4ArchitectureState, idea, runtimeUserId],
   )
+
+  const generateC4Alternative = useCallback(
+    async (level: C4ArchitectureLevel) => {
+      setIsC4AlternativeGenerating(true)
+      try {
+        const analysis = await loadRuntimeC4Architecture(level, idea, {
+          forceRefresh: true,
+          previewOnly: true,
+        })
+        if (!analysis) return
+        setC4AlternativePreview({ level, analysis })
+      } catch (error) {
+        addToast({
+          variant: 'error',
+          title: 'Alternative diagram unavailable',
+          description: error instanceof Error ? error.message : 'AI could not generate an alternative diagram.',
+        })
+      } finally {
+        setIsC4AlternativeGenerating(false)
+      }
+    },
+    [addToast, idea, loadRuntimeC4Architecture],
+  )
+
+  const replaceC4WithAlternative = useCallback(async () => {
+    if (!c4AlternativePreview) return
+    setIsC4AlternativeReplacing(true)
+    const { analysis, level } = c4AlternativePreview
+    try {
+      await upsertPersistentIdeaC4Architecture(idea.id, level, {
+        ...buildPersistentC4Payload(analysis, runtimeUserId || 'tectona-agent'),
+        version: idea.version,
+      })
+      applyC4ArchitectureState(level, analysis)
+      setDiagramStudio((current) => {
+        if (!current || current.diagramKey !== `c4-level-${level === 'L1' ? '1' : '2'}`) return current
+        return {
+          ...current,
+          diagramSource: analysis.plantumlSource,
+          savedGraph: analysis.canvasGraph,
+          missing: analysis.status === 'insufficient_data',
+          generationError: null,
+          confidence: Math.round(Math.max(0, Math.min(1, analysis.confidenceScore ?? 0)) * 100),
+        }
+      })
+      setC4AlternativePreview(null)
+      addToast({
+        variant: 'success',
+        title: 'Diagram replaced',
+        description: 'The active C4 diagram has been replaced with the selected AI alternative.',
+      })
+    } catch (error) {
+      addToast({
+        variant: 'error',
+        title: 'Diagram was not replaced',
+        description: error instanceof Error ? error.message : 'Unable to save the selected alternative diagram.',
+      })
+    } finally {
+      setIsC4AlternativeReplacing(false)
+    }
+  }, [addToast, applyC4ArchitectureState, c4AlternativePreview, idea.id, idea.version, runtimeUserId])
+
+  const runDiagramExport = useCallback((action: 'jpeg' | 'png' | 'svg' | 'pdf' | 'copy-image' | 'print') => {
+    if (!diagramStudio) return
+    window.dispatchEvent(new CustomEvent('tectona-diagram-export', {
+      detail: { diagramKey: diagramStudio.diagramKey, action },
+    }))
+    setIsDiagramExportMenuOpen(false)
+    setIsEmbeddedExportMenuOpen(false)
+  }, [diagramStudio])
+
+  const copyEmbeddedDiagramCode = useCallback(async (format: 'image' | 'svg' | 'html' | 'iframe' | 'notion') => {
+    if (!diagramStudio) return
+    const filename = `${diagramStudio.diagramKey}.${format === 'svg' ? 'svg' : 'png'}`
+    const title = diagramStudio.title.replace(/[<>]/g, '')
+    const codeByFormat = {
+      image: `![${title}](${filename})`,
+      svg: `<img src="${diagramStudio.diagramKey}.svg" alt="${title}" />`,
+      html: `<figure><img src="${filename}" alt="${title}" /></figure>`,
+      iframe: `<iframe src="${diagramStudio.diagramKey}.svg" title="${title}" width="100%" height="560"></iframe>`,
+      notion: `![${title}](${filename})`,
+    }
+    try {
+      await navigator.clipboard.writeText(codeByFormat[format])
+      addToast({ variant: 'success', title: 'Embedded code copied', description: `Paste the ${format.toUpperCase()} snippet where needed.` })
+    } catch (error) {
+      addToast({
+        variant: 'error',
+        title: 'Copy failed',
+        description: error instanceof Error ? error.message : 'Clipboard access is unavailable.',
+      })
+    } finally {
+      setIsDiagramExportMenuOpen(false)
+      setIsEmbeddedExportMenuOpen(false)
+    }
+  }, [addToast, diagramStudio])
 
   const applyProcessDiagramState = useCallback((analysis: RuntimeProcessDiagramAnalysis) => {
     setBpmnHighAnalysis(analysis)
@@ -4898,6 +5071,19 @@ export function IdeaDetailPage() {
         }).catch((error) => {
           setBpmnHighGenerationError(error instanceof Error ? error.message : 'PROCESS_DIAGRAM_PERSIST_FAILED')
         })
+        return
+      }
+      if (processKey.startsWith('brainstorm-')) {
+        const next = applyCanvas({
+          ...emptyRuntimeProcessDiagramAnalysis(),
+          status: 'ok',
+          bpmnXml: graph.source || '',
+        })
+        setBrainstormCanvasByKey((current) => ({ ...current, [processKey]: next.canvasGraph ?? graph }))
+        void upsertPersistentIdeaProcessDiagram(idea.id, processKey, {
+          ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'),
+          version: idea.version,
+        }).catch(() => undefined)
         return
       }
       const current = processDetailsByKeyRef.current[processKey]
@@ -5344,6 +5530,36 @@ export function IdeaDetailPage() {
     () => extractProcessDiagramsFromText(idea.description || ''),
     [idea.description],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    const keys = brainstormProcessDiagrams.map((diagram, index) => brainstormProcessPersistKey(diagram.label, index))
+    if (!keys.length) {
+      setBrainstormCanvasByKey({})
+      return
+    }
+    void Promise.all(
+      keys.map(async (key) => {
+        try {
+          const persistent = await getPersistentIdeaProcessDiagram(idea.id, key)
+          const graph = persistent ? runtimeProcessDiagramFromPersistent(persistent).canvasGraph : undefined
+          return [key, graph] as const
+        } catch {
+          return [key, undefined] as const
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return
+      const next: Record<string, C4CanvasGraph> = {}
+      for (const [key, graph] of entries) {
+        if (graph?.nodes?.length) next[key] = graph
+      }
+      setBrainstormCanvasByKey(next)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [brainstormProcessDiagrams, idea.id])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -11853,10 +12069,6 @@ export function IdeaDetailPage() {
                       <h2 className="text-lg font-semibold text-foreground">Diagrams</h2>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {/* No single confidence badge here — each diagram family below (ArchiMate,
-                          C4 L1/L2, BPMN) is generated independently and shows its own confidence
-                          on its own card, so one number at this level would misrepresent the rest. */}
-                      {renderSectionReviewWorkspace('integration', 'Integration')}
                       <button
                         type="button"
                         aria-pressed={isDiagramsPanelFullscreen}
@@ -11940,24 +12152,30 @@ export function IdeaDetailPage() {
               </div>
 
               {brainstormProcessDiagrams.length > 0 ? (
-                brainstormProcessDiagrams.map((diagram) => (
+                brainstormProcessDiagrams.map((diagram, index) => {
+                  const processKey = brainstormProcessPersistKey(diagram.label, index)
+                  const savedGraph = brainstormCanvasByKey[processKey]
+                  return (
                   <DiagramGalleryCard
-                    key={`${diagram.label}-${diagram.source.slice(0, 48)}`}
+                    key={processKey}
                     ideaId={idea.id}
-                    diagramKey={`brainstorm-${diagram.label}`}
-                    diagramSource={diagram.source}
+                    diagramKey={processKey}
+                    diagramSource={savedGraph?.source || diagram.source}
+                    diagramFormat="bpmn"
+                    savedGraph={savedGraph}
+                    onPersistGraph={(graph) => persistBpmnCanvas(processKey, graph)}
                     title={diagram.label}
                     icon={Workflow}
-                    description="Process diagram from brainstorming during Create Idea."
+                    description="BPMN process diagram from brainstorming during Create Idea."
                     imageSrc={null}
                     missing={false}
                     generationError={null}
                     confidence={null}
                     isRegenerating={false}
-                    onRegenerate={() => undefined}
                     onOpenStudio={setDiagramStudio}
                   />
-                ))
+                  )
+                })
               ) : (
                 <div className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-border/50 bg-white/60 p-6 text-center">
                   <Workflow className="h-5 w-5 text-muted-foreground" aria-hidden />
@@ -11985,8 +12203,11 @@ export function IdeaDetailPage() {
                 generationError={c4Level1GenerationError}
                 confidence={c4Level1Loaded ? confidence.c4Level1 : null}
                 isRegenerating={regenerating.c4Level1}
-                onRegenerate={() => regeneratePanel('c4Level1')}
+                onGenerateDraft={() => void loadRuntimeC4Architecture('L1', idea, { forceRefresh: true })}
+                onGenerateAlternative={() => void generateC4Alternative('L1')}
                 onOpenStudio={setDiagramStudio}
+                c4DrilldownTargets={c4Level1DrilldownTargets}
+                onOpenC4Drilldown={openC4Drilldown}
               />
               <DiagramGalleryCard
                 ideaId={idea.id}
@@ -12005,7 +12226,8 @@ export function IdeaDetailPage() {
                 generationError={c4Level2GenerationError}
                 confidence={c4Level2Loaded ? confidence.c4Level2 : null}
                 isRegenerating={regenerating.c4Level2}
-                onRegenerate={() => regeneratePanel('c4Level2')}
+                onGenerateDraft={() => void loadRuntimeC4Architecture('L2', idea, { forceRefresh: true })}
+                onGenerateAlternative={() => void generateC4Alternative('L2')}
                 onOpenStudio={setDiagramStudio}
               />
               <DiagramGalleryCard
@@ -12023,7 +12245,6 @@ export function IdeaDetailPage() {
                 generationError={bpmnHighGenerationError}
                 confidence={bpmnHighLoaded ? confidence.bpmnHigh : null}
                 isRegenerating={regenerating.bpmnHigh}
-                onRegenerate={() => regeneratePanel('bpmnHigh')}
                 onOpenStudio={setDiagramStudio}
               />
 
@@ -12061,7 +12282,6 @@ export function IdeaDetailPage() {
                       generationError={detail?.generationError ?? null}
                       confidence={detail?.loaded ? Math.round(Math.max(0, Math.min(1, detail.analysis.confidenceScore)) * 100) : null}
                       isRegenerating={detail?.isRegenerating ?? false}
-                      onRegenerate={() => void loadRuntimeProcessDetail(task.key, task.label, idea, { forceRefresh: true })}
                       onOpenStudio={setDiagramStudio}
                     />
                   )
@@ -12069,30 +12289,6 @@ export function IdeaDetailPage() {
               )}
             </div>
 
-            {brainstormProcessDiagrams.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowMermaidCode((v) => !v)}>
-                  {showMermaidCode ? 'Hide diagram source' : 'Show diagram source'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                      void navigator.clipboard.writeText(mermaidCode)
-                    }
-                  }}
-                >
-                  <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy diagram
-                </Button>
-              </div>
-            )}
-
-            {showMermaidCode && brainstormProcessDiagrams.length > 0 && (
-              <pre className="mt-3 rounded-xl border border-border/40 bg-slate-950 p-3 text-xs text-slate-100 overflow-auto">
-                {mermaidCode}
-              </pre>
-            )}
                 </div>
               </div>
             </div>
@@ -12103,7 +12299,7 @@ export function IdeaDetailPage() {
           {diagramStudio && (
             <div className="fixed inset-x-0 top-12 bottom-0 z-50">
               <div className="liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-background shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-2 lg:px-5 lg:pb-4 lg:pt-2">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-3 lg:px-5 lg:pb-4 lg:pt-3">
                   <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2">
@@ -12122,15 +12318,97 @@ export function IdeaDetailPage() {
                             Confidence {diagramStudio.confidence}%
                           </Badge>
                         ) : null}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={diagramStudio.onRegenerate}
-                          disabled={diagramStudio.isRegenerating}
-                        >
-                          <RefreshCcw className={cn('mr-1.5 h-3.5 w-3.5', diagramStudio.isRegenerating && 'animate-spin')} aria-hidden />
-                          Regenerate
-                        </Button>
+                        {diagramStudio.diagramSource ? (
+                          <div className="relative">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className={cn(enterpriseSecondaryButtonClass(), 'h-10 gap-2')}
+                              aria-expanded={isDiagramExportMenuOpen}
+                              onClick={() => {
+                                setIsDiagramExportMenuOpen((open) => !open)
+                                setIsEmbeddedExportMenuOpen(false)
+                              }}
+                            >
+                              <Download className="h-4 w-4" aria-hidden />
+                              Export
+                              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                            </Button>
+                            {isDiagramExportMenuOpen ? (
+                              <div className="absolute right-0 top-full z-[70] mt-2 w-60 overflow-visible rounded-lg border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl">
+                                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('jpeg')}>
+                                  <ImageDown className="h-4 w-4" /> Save as JPEG
+                                </button>
+                                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('png')}>
+                                  <ImageDown className="h-4 w-4" /> Save as PNG
+                                </button>
+                                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('svg')}>
+                                  <FileText className="h-4 w-4" /> Save as SVG
+                                </button>
+                                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('pdf')}>
+                                  <FileText className="h-4 w-4" /> Save as PDF
+                                </button>
+                                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('copy-image')}>
+                                  <Copy className="h-4 w-4" /> Copy to MS Office as image
+                                </button>
+                                <div className="my-1 border-t border-slate-200" />
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100"
+                                    onClick={() => setIsEmbeddedExportMenuOpen((open) => !open)}
+                                  >
+                                    <span className="flex items-center gap-2"><ExternalLink className="h-4 w-4" /> Embedded code</span>
+                                    <ChevronRight className="h-4 w-4" />
+                                  </button>
+                                  {isEmbeddedExportMenuOpen ? (
+                                    <div className="absolute right-full top-0 mr-1 w-52 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl">
+                                      <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('image')}>Image</button>
+                                      <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('svg')}>SVG</button>
+                                      <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('html')}>HTML</button>
+                                      <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('iframe')}>IFrame</button>
+                                      <div className="my-1 border-t border-slate-200" />
+                                      <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('notion')}>Notion</button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <div className="my-1 border-t border-slate-200" />
+                                <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('print')}>
+                                  <span className="flex items-center gap-2"><FileText className="h-4 w-4" /> Print</span>
+                                  <span className="text-xs text-slate-400">Ctrl+P</span>
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {diagramStudio.missing && diagramStudio.onGenerateDraft ? (
+                          <Button
+                            type="button"
+                            className={enterpriseCyanGradientActionButtonClass()}
+                            disabled={diagramStudio.isRegenerating}
+                            onClick={() => {
+                              setDiagramStudio(null)
+                              diagramStudio.onGenerateDraft?.()
+                            }}
+                          >
+                            <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                            Generate draft
+                          </Button>
+                        ) : diagramStudio.onGenerateAlternative ? (
+                          <Button
+                            type="button"
+                            className={enterpriseCyanGradientActionButtonClass()}
+                            disabled={isC4AlternativeGenerating}
+                            onClick={diagramStudio.onGenerateAlternative}
+                          >
+                            {isC4AlternativeGenerating ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                            ) : (
+                              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                            )}
+                            Generate alternative
+                          </Button>
+                        ) : null}
                         <button
                           type="button"
                           aria-label={`Exit ${diagramStudio.title} fullscreen`}
@@ -12160,6 +12438,8 @@ export function IdeaDetailPage() {
                         format={diagramStudio.diagramFormat ?? 'plantuml'}
                         savedGraph={diagramStudio.savedGraph}
                         onPersistGraph={diagramStudio.onPersistGraph}
+                        c4DrilldownTargets={diagramStudio.c4DrilldownTargets}
+                        onOpenC4Drilldown={diagramStudio.onOpenC4Drilldown}
                         editable
                         fillHeight
                         hideStudioHeader
@@ -12190,6 +12470,91 @@ export function IdeaDetailPage() {
             </div>
           )}
 
+          <Dialog
+            open={Boolean(c4AlternativePreview)}
+            onOpenChange={(open) => {
+              if (!open && !isC4AlternativeReplacing) setC4AlternativePreview(null)
+            }}
+          >
+            <DialogContent
+              surface="solid"
+              className="w-[min(1000px,calc(100vw-2rem))] max-w-none overflow-hidden rounded-2xl border border-border/70 bg-card p-0 shadow-2xl"
+            >
+              <DialogHeader className="mb-0 border-b border-border/70 bg-muted/25 px-6 py-5">
+                <div className="flex items-start gap-4 text-left">
+                  <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/12 text-sky-700 ring-1 ring-sky-500/25">
+                    <Sparkles className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="space-y-1">
+                    <DialogTitle className="text-base font-semibold tracking-tight">Compare AI alternative</DialogTitle>
+                    <DialogDescription className="text-xs leading-relaxed">
+                      The current diagram remains unchanged. Review the AI alternative before replacing it.
+                    </DialogDescription>
+                  </div>
+                </div>
+              </DialogHeader>
+              {c4AlternativePreview ? (
+                <div className="grid min-h-0 gap-4 overflow-y-auto bg-background p-6 lg:grid-cols-2">
+                  <section className="min-w-0">
+                    <h3 className="mb-2 text-sm font-semibold text-foreground">Current diagram</h3>
+                    <div className="h-[42vh] min-h-[280px] overflow-hidden rounded-lg border border-border/70 bg-slate-50">
+                      <EditableDiagramCanvas
+                        ideaId={idea.id}
+                        diagramKey={`c4-level-${c4AlternativePreview.level === 'L1' ? '1' : '2'}-current-preview`}
+                        source={
+                          c4AlternativePreview.level === 'L1'
+                            ? c4Level1Analysis.plantumlSource
+                            : c4Level2Analysis.plantumlSource
+                        }
+                        format="c4"
+                        savedGraph={
+                          c4AlternativePreview.level === 'L1'
+                            ? c4Level1Analysis.canvasGraph
+                            : c4Level2Analysis.canvasGraph
+                        }
+                        className="h-full w-full rounded-none border-0"
+                      />
+                    </div>
+                  </section>
+                  <section className="min-w-0">
+                    <h3 className="mb-2 text-sm font-semibold text-foreground">AI alternative</h3>
+                    <div className="h-[42vh] min-h-[280px] overflow-hidden rounded-lg border border-sky-200 bg-sky-50/30">
+                      <EditableDiagramCanvas
+                        ideaId={idea.id}
+                        diagramKey={`c4-level-${c4AlternativePreview.level === 'L1' ? '1' : '2'}-alternative-preview`}
+                        source={c4AlternativePreview.analysis.plantumlSource}
+                        format="c4"
+                        savedGraph={c4AlternativePreview.analysis.canvasGraph}
+                        className="h-full w-full rounded-none border-0"
+                      />
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+              <DialogFooter className="gap-3 border-t border-border/70 bg-muted/20 px-6 py-4 pt-4 sm:justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={enterpriseSecondaryButtonClass()}
+                  disabled={isC4AlternativeReplacing}
+                  onClick={() => setC4AlternativePreview(null)}
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                  Keep current diagram
+                </Button>
+                <Button
+                  type="button"
+                  className={enterpriseCyanGradientActionButtonClass()}
+                  disabled={isC4AlternativeReplacing}
+                  onClick={() => void replaceC4WithAlternative()}
+                >
+                  {isC4AlternativeReplacing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Replace diagram
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           {isIntegrationPanelFullscreen && (
             <div className="fixed inset-x-0 top-12 bottom-0 z-50">
               <div className="liquid-glass-enterprise-filter-bar flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-background shadow-[0_18px_44px_rgba(15,23,42,0.12)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
@@ -12210,15 +12575,6 @@ export function IdeaDetailPage() {
                           </Badge>
                         ) : null}
                         {renderSectionReviewWorkspace('integration', 'Integration')}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => regeneratePanel('integration')}
-                          disabled={isIntegrationRefreshing}
-                        >
-                          <RefreshCcw className={cn('mr-1.5 h-3.5 w-3.5', isIntegrationRefreshing && 'animate-spin')} aria-hidden />
-                          Regenerate
-                        </Button>
                         <button
                           type="button"
                           aria-label="Exit integration fullscreen"

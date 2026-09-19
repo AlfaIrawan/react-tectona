@@ -66,7 +66,7 @@ export function defaultIntegrationNodeTextStyle(): IntegrationNodeTextStyle {
     verticalAlign: 'middle',
     fontColor: '#0f172a',
     fontColorEnabled: true,
-    wordWrap: false,
+    wordWrap: true,
     opacity: 100,
     spacingTop: 0,
     spacingRight: 0,
@@ -147,7 +147,10 @@ export function buildIntegrationNodeTextStyle(
     paddingBottom: resolved.spacingBottom + global,
     paddingLeft: resolved.spacingLeft + global,
     transform: resolved.angle ? `rotate(${resolved.angle}deg)` : undefined,
-    whiteSpace: resolved.wordWrap ? 'normal' : 'nowrap',
-    overflowWrap: resolved.wordWrap ? 'anywhere' : undefined,
+    whiteSpace: resolved.wordWrap ? 'pre-wrap' : 'nowrap',
+    overflowWrap: resolved.wordWrap ? 'break-word' : undefined,
+    wordBreak: resolved.wordWrap ? 'break-word' : undefined,
+    overflow: resolved.wordWrap ? 'visible' : 'hidden',
+    textOverflow: resolved.wordWrap ? 'clip' : 'ellipsis',
   }
 }
