@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  X,
   Clock3,
   Download,
   Filter,
@@ -92,6 +93,8 @@ import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/Enter
 import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
 import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
 import { WorkflowBuilderCanvas } from '@/modules/workflow-automation-engine/components/WorkflowBuilderCanvas'
+import { AgentWorkflowStudio } from '@/modules/workflow-automation-engine/components/AgentWorkflowStudio'
+import { listAgentCatalog, type AgentCatalogEntryDto } from '@/lib/api/agentWorkflowApi'
 import { useToast } from '@/components/ui/toast'
 import {
   createWorkflow as apiCreateWorkflow,
@@ -114,7 +117,7 @@ import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import { UI_SCOPE_WORKFLOW_AUTOMATION, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused' | 'Needs Approval'
-type PanelId = 'overview' | 'catalog' | 'automation' | 'monitoring'
+type PanelId = 'overview' | 'catalog' | 'agentCatalog' | 'automation' | 'monitoring'
 
 type WorkflowRecord = {
   id: string
@@ -279,13 +282,14 @@ const AI_INSIGHTS: Array<{ text: string; level: InsightLevel }> = [
 const PANELS: Array<{ id: PanelId; label: string; icon: React.ComponentType<{ className?: string }>; badge: string; desc: string }> = [
   { id: 'overview', label: 'Execution Overview', icon: Sparkles, badge: 'Command', desc: 'Health, throughput, and KPI summary for workflows.' },
   { id: 'catalog', label: 'Workflow Catalog', icon: Workflow, badge: 'Core', desc: 'Workflow directory with filters and quick actions.' },
+  { id: 'agentCatalog', label: 'Agent Catalog', icon: Bot, badge: 'AI', desc: 'Directory of available agents and their governed workflows.' },
   { id: 'automation', label: 'Automation Rules', icon: Bot, badge: 'Rules', desc: 'Trigger, condition, action, and status control.' },
   { id: 'monitoring', label: 'Runtime Monitoring', icon: Activity, badge: 'Runtime', desc: 'Execution, queues, and operational incidents.' },
 ]
 
 const PANEL_GROUPS: Array<{ group: string; items: typeof PANELS }> = [
   { group: 'Command Center', items: PANELS.filter((panel) => panel.id === 'overview') },
-  { group: 'Control Library', items: PANELS.filter((panel) => ['catalog'].includes(panel.id)) },
+  { group: 'Control Library', items: PANELS.filter((panel) => ['catalog', 'agentCatalog'].includes(panel.id)) },
   { group: 'Assurance & Traceability', items: PANELS.filter((panel) => ['automation', 'monitoring'].includes(panel.id)) },
 ]
 
@@ -706,6 +710,9 @@ export function WorkflowAutomationEnginePage() {
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
 
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
+  const [agentStudioOpen, setAgentStudioOpen] = useState(false)
+  const [agentCatalog, setAgentCatalog] = useState<AgentCatalogEntryDto[]>([])
+  const [agentCatalogState, setAgentCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
     UI_SCOPE_WORKFLOW_AUTOMATION,
     'isWorkspaceCollapsed',
@@ -732,6 +739,21 @@ export function WorkflowAutomationEnginePage() {
     linkedWorkflowId: string
     ownerId: string
   } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setAgentCatalogState('loading')
+    void listAgentCatalog(isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined)
+      .then((items) => {
+        if (cancelled) return
+        setAgentCatalog(items)
+        setAgentCatalogState('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setAgentCatalogState('error')
+      })
+    return () => { cancelled = true }
+  }, [workspaceId])
 
   // Owners come from active Identity Lite users, narrowed to the active workspace
   // memberships when a workspace scope is selected. No synthetic owner names.
@@ -860,6 +882,7 @@ export function WorkflowAutomationEnginePage() {
   const isHeightManagedSectionActive =
     activePanel === 'overview'
     || activePanel === 'catalog'
+    || activePanel === 'agentCatalog'
     || activePanel === 'automation'
     || activePanel === 'monitoring'
 
@@ -1616,7 +1639,7 @@ export function WorkflowAutomationEnginePage() {
         >
           {/* Outer wrapper already applies workspaceDockedContentInsetClass — pass docked=false
               to avoid double left padding that narrows the panel when Fixed Sidebar is off. */}
-          {showFiltersPanel && activePanel !== 'overview' ? (
+          {showFiltersPanel && activePanel !== 'overview' && activePanel !== 'agentCatalog' ? (
           <Card ref={filterCardRef} className="liquid-glass-enterprise-panel rounded-2xl p-4 space-y-3">
             <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -2450,6 +2473,27 @@ export function WorkflowAutomationEnginePage() {
             </Panel>
           ) : null}
 
+          {activePanel === 'agentCatalog' ? (
+            <Panel
+              title="Agent Catalog"
+              description="Available Tectona agents, their capability boundaries, and governed workflow entry points."
+              headerIcon={<Bot className="h-5 w-5" />}
+              right={<Button size="sm" onClick={() => setAgentStudioOpen(true)}><Workflow className="mr-1.5 h-3.5 w-3.5" /> Agent Workflow</Button>}
+              panelRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              bodyClassName="min-h-0 flex-1 overflow-y-auto"
+            >
+              {agentCatalogState === 'loading' ? <div className="p-6 text-sm text-slate-500">Loading agent catalog...</div> : null}
+              {agentCatalogState === 'error' ? <div className="p-6 text-sm text-rose-600">Agent catalog is unavailable. Check the workflow automation service.</div> : null}
+              {agentCatalogState === 'ready' ? <div className="overflow-x-auto border border-slate-200">
+                <table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Agent</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Runtime</th><th className="px-4 py-3">Capabilities</th><th className="px-4 py-3">Scope</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr></thead>
+                  <tbody>{agentCatalog.map((agent) => <tr key={agent.agent_ref} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70"><td className="px-4 py-3"><div className="font-semibold text-slate-900">{agent.display_name}</div><div className="mt-0.5 font-mono text-[10px] text-slate-500">{agent.agent_ref}</div></td><td className="px-4 py-3"><Badge variant="outline">{agent.agent_type}</Badge></td><td className="px-4 py-3 text-slate-600">{agent.runtime}</td><td className="max-w-72 px-4 py-3"><div className="flex flex-wrap gap-1">{agent.capabilities.slice(0, 3).map((capability) => <span key={capability} className="border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">{capability.replaceAll('_', ' ')}</span>)}</div></td><td className="px-4 py-3 text-slate-600">{agent.workspace_id ?? 'Global'}</td><td className="px-4 py-3"><Badge variant="outline" className={agent.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-600'}>{agent.enabled ? 'Available' : 'Disabled'}</Badge></td><td className="px-4 py-3 text-right"><Button size="sm" variant="outline" onClick={() => setAgentStudioOpen(true)}><Workflow className="mr-1.5 h-3.5 w-3.5" /> Agent Workflow</Button></td></tr>)}</tbody>
+                </table>
+              </div> : null}
+            </Panel>
+          ) : null}
+
           {activePanel === 'automation' ? (
             <Panel
               title="Automation Control Room"
@@ -2669,6 +2713,17 @@ export function WorkflowAutomationEnginePage() {
         }}
         onClose={() => setBuilder({ open: false, workflowId: null })}
       />
+      {agentStudioOpen ? (
+        <div className="fixed inset-0 z-[100] flex bg-slate-950/35 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Agent Workflow Studio">
+          <section className="flex min-h-0 w-full flex-1 flex-col overflow-hidden border border-slate-200 bg-white shadow-2xl">
+            <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-3">
+              <div><h2 className="text-base font-semibold text-slate-950">Agent Workflow</h2><p className="mt-0.5 text-xs text-slate-500">Compose, review, publish, and test governed multi-agent workflows.</p></div>
+              <Button size="icon" variant="ghost" title="Close Agent Workflow Studio" aria-label="Close Agent Workflow Studio" onClick={() => setAgentStudioOpen(false)}><X className="h-4 w-4" /></Button>
+            </header>
+            <div className="min-h-0 flex-1 p-4"><AgentWorkflowStudio workspaceId={isAllWorkspacesSelection(workspaceId) ? null : workspaceId} /></div>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }
