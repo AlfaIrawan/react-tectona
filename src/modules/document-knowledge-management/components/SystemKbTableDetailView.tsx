@@ -11,7 +11,7 @@ export function SystemKbTableDetailView({ model }: { model: SystemKbTableEditMod
           No rows yet. Open Edit to add data without changing the columns.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border/70">
+        <div className="overflow-x-auto rounded-lg border border-border/70 [scrollbar-width:none] [-ms-overflow-style:none] hover:[scrollbar-width:thin] hover:[&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent hover:[&::-webkit-scrollbar-thumb]:bg-slate-400 hover:[&::-webkit-scrollbar-track]:bg-slate-100">
           <table className="min-w-full border-collapse text-left text-[12px]">
             <thead className="bg-slate-50">
               <tr>

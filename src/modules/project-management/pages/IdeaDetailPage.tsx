@@ -1,5 +1,6 @@
 
 import { getSession } from '@/auth/authService'
+import { createNotification, TECTONA_APP_ID } from '@/lib/api/notificationApi'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -65,6 +66,8 @@ import {
   Info,
   GripVertical,
   Workflow,
+  ShieldCheck,
+  Undo2,
 } from 'lucide-react'
 import {
   DndContext,
@@ -182,6 +185,8 @@ import {
   upsertPersistentIdeaC4Architecture,
   getPersistentIdeaProcessDiagram,
   upsertPersistentIdeaProcessDiagram,
+  submitDiagramArchitectureReview,
+  decideDiagramArchitectureReview,
   type ScoringResponseApi,
   upsertPersistentIdeaSummary,
   toBackendStatus,
@@ -227,6 +232,9 @@ import {
   emptyRuntimeC4Analysis,
   runtimeC4FromAgentResponse,
   runtimeC4FromPersistent,
+  type C4ArchitectureReview,
+  type C4ArchitectureReviewAuditEntry,
+  type C4ArchitectureReviewStatus,
   type C4CanvasGraph,
   type RuntimeC4Analysis,
 } from '@/modules/project-management/lib/c4ArchitectureService'
@@ -305,6 +313,87 @@ type BrdSection = {
 
 const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request', 'Transformation', 'Issue']
 const WORKSPACE_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+type C4ReviewAction = 'submit' | 'approve' | 'revision_requested' | 'reject' | 'cancel'
+type ArchitectureReviewTarget = 'c4-l1' | 'c4-l2' | 'integration' | 'bpmn-high'
+
+function c4ReviewStatusMeta(status: C4ArchitectureReviewStatus | undefined) {
+  switch (status) {
+    case 'pending':
+      return { label: 'Pending architecture review', className: 'border-amber-200 bg-amber-50 text-amber-700' }
+    case 'approved':
+      return { label: 'Architecture approved', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+    case 'revision_requested':
+      return { label: 'Revision requested', className: 'border-sky-200 bg-sky-50 text-sky-700' }
+    case 'rejected':
+      return { label: 'Architecture rejected', className: 'border-rose-200 bg-rose-50 text-rose-700' }
+    case 'cancelled':
+      return { label: 'Review cancelled', className: 'border-slate-200 bg-slate-50 text-slate-600' }
+    case 'superseded':
+      return { label: 'Resubmission required', className: 'border-violet-200 bg-violet-50 text-violet-700' }
+    default:
+      return { label: 'Draft', className: 'border-slate-200 bg-slate-50 text-slate-600' }
+  }
+}
+
+function createC4ReviewAuditEntry(
+  action: C4ArchitectureReviewAuditEntry['action'],
+  version: number,
+  actor: { id: string; name: string; team: string | null },
+  comment?: string,
+  snapshot?: C4ArchitectureReviewAuditEntry['snapshot'],
+): C4ArchitectureReviewAuditEntry {
+  return {
+    id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    action,
+    version,
+    actorId: actor.id,
+    actorName: actor.name,
+    actorTeam: actor.team,
+    at: new Date().toISOString(),
+    ...(comment?.trim() ? { comment: comment.trim() } : {}),
+    ...(snapshot ? { snapshot } : {}),
+  }
+}
+
+function buildArchitectureReview(
+  existing: C4ArchitectureReview | undefined,
+  action: C4ReviewAction,
+  actor: { id: string; name: string; team: string | null },
+  comment: string,
+  snapshot?: C4ArchitectureReviewAuditEntry['snapshot'],
+): C4ArchitectureReview {
+  const version = action === 'submit' ? (existing?.version ?? 0) + 1 : existing!.version
+  const history = [...(existing?.history ?? [])]
+  if (action === 'submit') {
+    return {
+      status: 'pending',
+      version,
+      submittedBy: actor.id,
+      submittedByName: actor.name,
+      submittedAt: new Date().toISOString(),
+      history: [...history, createC4ReviewAuditEntry('submitted', version, actor, comment, snapshot)],
+    }
+  }
+  const statusByAction: Record<Exclude<C4ReviewAction, 'submit'>, C4ArchitectureReviewStatus> = {
+    approve: 'approved',
+    revision_requested: 'revision_requested',
+    reject: 'rejected',
+    cancel: 'cancelled',
+  }
+  return {
+    ...existing!,
+    status: statusByAction[action],
+    reviewerId: action === 'cancel' ? existing!.reviewerId : actor.id,
+    reviewerName: action === 'cancel' ? existing!.reviewerName : actor.name,
+    reviewerTeam: action === 'cancel' ? existing!.reviewerTeam : actor.team,
+    decidedAt: new Date().toISOString(),
+    comment: comment || existing!.comment,
+    history: [...history, createC4ReviewAuditEntry(action === 'revision_requested' ? 'revision_requested' : action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'cancelled', version, actor, comment)],
+  }
+}
 
 
 function isWorkspaceUuid(value: string | null | undefined): value is string {
@@ -2121,6 +2210,7 @@ function DiagramGalleryCard({
   onOpenStudio,
   c4DrilldownTargets,
   onOpenC4Drilldown,
+  className,
 }: {
   ideaId: string
   diagramKey: string
@@ -2143,6 +2233,7 @@ function DiagramGalleryCard({
   onOpenStudio: (session: DiagramStudioSession) => void
   c4DrilldownTargets?: C4DiagramDrilldownTarget[]
   onOpenC4Drilldown?: (diagramKey: string) => void
+  className?: string
 }) {
   const hasDiagram = Boolean(imageSrc || diagramSource)
   const openStudio = () => {
@@ -2171,7 +2262,7 @@ function DiagramGalleryCard({
   }
 
   return (
-    <div className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
+    <div className={cn('flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm', className)}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Icon className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
@@ -3446,6 +3537,9 @@ export function IdeaDetailPage() {
   } | null>(null)
   const [isC4AlternativeGenerating, setIsC4AlternativeGenerating] = useState(false)
   const [isC4AlternativeReplacing, setIsC4AlternativeReplacing] = useState(false)
+  const [c4ReviewDialog, setC4ReviewDialog] = useState<{ target: ArchitectureReviewTarget; action: C4ReviewAction } | null>(null)
+  const [c4ReviewComment, setC4ReviewComment] = useState('')
+  const [isC4ReviewSaving, setIsC4ReviewSaving] = useState(false)
   const ideaCostBenefitPanelRef = useRef<HTMLDivElement>(null)
   const [ideaCostBenefitPanelHeightPx, setIdeaCostBenefitPanelHeightPx] = useState<number | null>(null)
   const [isCostBenefitPanelFullscreen, setIsCostBenefitPanelFullscreen] = useState(false)
@@ -3690,6 +3784,38 @@ export function IdeaDetailPage() {
     return !currentUserId
   }, [idea.submittedBy, currentUserId, currentUserDisplayName, resolveIdentityDisplayName])
 
+  const currentArchitectureMembership = useMemo(() => {
+    if (!currentUserId) return null
+    return reviewerMemberships.find((membership) => {
+      if (membership.subject_id !== currentUserId) return false
+      const teamLabels = [
+        membership.operational_team_code,
+        membership.operational_team_display_name,
+        ...(membership.operational_teams ?? []).flatMap((team) => [team.team_code, team.display_name]),
+      ]
+      return teamLabels.some((team) => /architecture|arsitektur/i.test(team ?? ''))
+    }) ?? null
+  }, [currentUserId, reviewerMemberships])
+
+  const currentArchitectureTeamName = currentArchitectureMembership?.operational_team_display_name
+    || currentArchitectureMembership?.operational_team_code
+    || currentArchitectureMembership?.operational_teams?.[0]?.display_name
+    || null
+  const architectureReviewerIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const membership of reviewerMemberships) {
+      const teamLabels = [
+        membership.operational_team_code,
+        membership.operational_team_display_name,
+        ...(membership.operational_teams ?? []).flatMap((team) => [team.team_code, team.display_name]),
+      ]
+      if (teamLabels.some((team) => /architecture|arsitektur/i.test(team ?? ''))) {
+        ids.add(membership.subject_id)
+      }
+    }
+    return [...ids]
+  }, [reviewerMemberships])
+
   const reviewerDisplayName = useMemo(
     () => resolveIdentityDisplayName(idea.reviewer),
     [idea.reviewer, resolveIdentityDisplayName]
@@ -3853,6 +3979,8 @@ export function IdeaDetailPage() {
   const [runtimeIntegrationAnalysis, setRuntimeIntegrationAnalysis] = useState<RuntimeIntegrationAnalysis>(
     EMPTY_RUNTIME_INTEGRATION_ANALYSIS,
   )
+  const runtimeIntegrationAnalysisRef = useRef(runtimeIntegrationAnalysis)
+  runtimeIntegrationAnalysisRef.current = runtimeIntegrationAnalysis
   const [integrationLoaded, setIntegrationLoaded] = useState(false)
   const [integrationMissing, setIntegrationMissing] = useState(false)
   const [integrationWarnings, setIntegrationWarnings] = useState<string[]>([])
@@ -3862,9 +3990,27 @@ export function IdeaDetailPage() {
   const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
   const persistIntegrationGraph = useCallback(
     (graph: IntegrationGraphRecord) => {
+      const current = runtimeIntegrationAnalysisRef.current
+      const currentReview = current.architectureReview
+      const actor = {
+        id: currentUserId || runtimeUserId || 'unknown',
+        name: currentUserDisplayName || 'Unknown user',
+        team: currentArchitectureTeamName,
+      }
+      const architectureReview = currentReview && (currentReview.status === 'pending' || currentReview.status === 'approved')
+        ? {
+            ...currentReview,
+            status: 'superseded' as const,
+            version: currentReview.version + 1,
+            history: [...currentReview.history, createC4ReviewAuditEntry('diagram_changed', currentReview.version + 1, actor)],
+          }
+        : currentReview
+      const nextAnalysis = { ...current, architectureReview }
+      setRuntimeIntegrationAnalysis(nextAnalysis)
+      setIntegrationBootstrapRecord(graph)
       void upsertPersistentIdeaIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(
-          runtimeIntegrationAnalysis,
+          nextAnalysis,
           graph,
           runtimeUserId || 'tectona-agent',
         ),
@@ -3875,7 +4021,7 @@ export function IdeaDetailPage() {
         )
       })
     },
-    [idea.id, idea.version, runtimeIntegrationAnalysis, runtimeUserId],
+    [idea.id, idea.version, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId],
   )
   const [c4Level1Analysis, setC4Level1Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L1'))
   const [c4Level1Loaded, setC4Level1Loaded] = useState(false)
@@ -3892,10 +4038,28 @@ export function IdeaDetailPage() {
   const persistC4Canvas = useCallback(
     (level: C4ArchitectureLevel, graph: C4CanvasGraph) => {
       const current = level === 'L1' ? c4Level1AnalysisRef.current : c4Level2AnalysisRef.current
+      const currentReview = current.architectureReview
+      const actor = {
+        id: currentUserId || runtimeUserId || 'unknown',
+        name: currentUserDisplayName || 'Unknown user',
+        team: currentArchitectureTeamName,
+      }
+      const architectureReview = currentReview && (currentReview.status === 'pending' || currentReview.status === 'approved')
+        ? {
+            ...currentReview,
+            status: 'superseded' as const,
+            version: currentReview.version + 1,
+            history: [
+              ...currentReview.history,
+              createC4ReviewAuditEntry('diagram_changed', currentReview.version + 1, actor),
+            ],
+          }
+        : currentReview
       const nextAnalysis: RuntimeC4Analysis = {
         ...current,
         plantumlSource: graph.source || current.plantumlSource,
         canvasGraph: { ...graph, userCustomized: true },
+        architectureReview,
       }
       if (level === 'L1') setC4Level1Analysis(nextAnalysis)
       else setC4Level2Analysis(nextAnalysis)
@@ -3908,8 +4072,199 @@ export function IdeaDetailPage() {
         else setC4Level2GenerationError(message)
       })
     },
-    [idea.id, idea.version, runtimeUserId],
+    [idea.id, idea.version, runtimeUserId, currentUserId, currentUserDisplayName, currentArchitectureTeamName],
   )
+  const saveC4ArchitectureReview = useCallback(async (level: C4ArchitectureLevel, action: C4ReviewAction, comment: string) => {
+    const current = level === 'L1' ? c4Level1AnalysisRef.current : c4Level2AnalysisRef.current
+    const actor = {
+      id: currentUserId || runtimeUserId || 'unknown',
+      name: currentUserDisplayName || 'Unknown user',
+      team: currentArchitectureTeamName,
+    }
+    const existing = current.architectureReview
+    const trimmedComment = comment.trim()
+
+    if ((action === 'approve' || action === 'revision_requested' || action === 'reject') && !currentArchitectureMembership) {
+      throw new Error('Only an Architecture Team member can make this review decision.')
+    }
+    if ((action === 'approve' || action === 'revision_requested' || action === 'reject') && existing?.submittedBy === actor.id) {
+      throw new Error('Self-approval is not allowed. Assign another Architecture Team member to review this version.')
+    }
+    if ((action === 'revision_requested' || action === 'reject') && !trimmedComment) {
+      throw new Error('A review comment is required for revision requests and rejections.')
+    }
+    if (action !== 'submit' && existing?.status !== 'pending') {
+      throw new Error('Only a pending architecture review can be decided or cancelled.')
+    }
+    if (action === 'cancel' && existing?.submittedBy !== actor.id) {
+      throw new Error('Only the person who submitted this version can cancel its review.')
+    }
+
+    const version = action === 'submit' ? (existing?.version ?? 0) + 1 : existing!.version
+    const history = [...(existing?.history ?? [])]
+    let review: C4ArchitectureReview
+
+    if (action === 'submit') {
+      review = {
+        status: 'pending',
+        version,
+        submittedBy: actor.id,
+        submittedByName: actor.name,
+        submittedAt: new Date().toISOString(),
+        history: [
+          ...history,
+          createC4ReviewAuditEntry('submitted', version, actor, trimmedComment, {
+            source: current.canvasGraph?.source || current.plantumlSource,
+            graph: current.canvasGraph,
+          }),
+        ],
+      }
+    } else {
+      const statusByAction: Record<Exclude<C4ReviewAction, 'submit'>, C4ArchitectureReviewStatus> = {
+        approve: 'approved',
+        revision_requested: 'revision_requested',
+        reject: 'rejected',
+        cancel: 'cancelled',
+      }
+      const auditActionByAction: Record<Exclude<C4ReviewAction, 'submit'>, C4ArchitectureReviewAuditEntry['action']> = {
+        approve: 'approved',
+        revision_requested: 'revision_requested',
+        reject: 'rejected',
+        cancel: 'cancelled',
+      }
+      review = {
+        ...existing!,
+        status: statusByAction[action],
+        reviewerId: action === 'cancel' ? existing!.reviewerId : actor.id,
+        reviewerName: action === 'cancel' ? existing!.reviewerName : actor.name,
+        reviewerTeam: action === 'cancel' ? existing!.reviewerTeam : actor.team,
+        decidedAt: new Date().toISOString(),
+        comment: trimmedComment || existing!.comment,
+        history: [
+          ...history,
+          createC4ReviewAuditEntry(auditActionByAction[action], version, actor, trimmedComment),
+        ],
+      }
+    }
+
+    const nextAnalysis: RuntimeC4Analysis = { ...current, architectureReview: review }
+    if (level === 'L1') setC4Level1Analysis(nextAnalysis)
+    else setC4Level2Analysis(nextAnalysis)
+    await upsertPersistentIdeaC4Architecture(idea.id, level, {
+      ...buildPersistentC4Payload(nextAnalysis, actor.id),
+      version: idea.version,
+    })
+    const diagramKey = `c4-level-${level === 'L1' ? '1' : '2'}`
+    if (action === 'submit') {
+      await submitDiagramArchitectureReview(idea.id, diagramKey, {
+        diagram_version: review.version,
+        comment: trimmedComment || undefined,
+        snapshot_json: { source: current.canvasGraph?.source || current.plantumlSource },
+      })
+    } else {
+      await decideDiagramArchitectureReview(idea.id, diagramKey, review.version, {
+        action,
+        comment: trimmedComment || undefined,
+      })
+    }
+    const decisionLabel: Record<C4ReviewAction, string> = {
+      submit: 'submitted for Architecture review',
+      approve: 'approved',
+      revision_requested: 'sent back for revision',
+      reject: 'rejected',
+      cancel: 'review cancelled',
+    }
+    const recipients = action === 'submit'
+      ? architectureReviewerIds.filter((id) => id !== actor.id)
+      : existing?.submittedBy && existing.submittedBy !== actor.id
+        ? [existing.submittedBy]
+        : []
+    const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+    void Promise.allSettled(recipients.map((userId) => createNotification({
+      app_id: TECTONA_APP_ID,
+      user_id: userId,
+      type_code: 'todo',
+      title: `C4 ${level}: ${decisionLabel[action]}`,
+      body: `${idea.title} — ${actor.name}${trimmedComment ? `: ${trimmedComment}` : ''}`,
+      link_url: linkUrl,
+      metadata: {
+        idea_id: idea.id,
+        diagram_key: diagramKey,
+        review_action: action,
+        review_version: review.version,
+      },
+      created_by: actor.id,
+      created_from: 'tectona-architecture-review',
+    })))
+    setDiagramStudio((studio) => studio?.diagramKey === `c4-level-${level === 'L1' ? '1' : '2'}` ? { ...studio, savedGraph: nextAnalysis.canvasGraph, diagramSource: nextAnalysis.plantumlSource } : studio)
+  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
+  const saveNonC4ArchitectureReview = useCallback(async (
+    target: 'integration' | 'bpmn-high',
+    action: C4ReviewAction,
+    comment: string,
+  ) => {
+    const current = target === 'integration' ? runtimeIntegrationAnalysisRef.current : bpmnHighAnalysisRef.current
+    const actor = {
+      id: currentUserId || runtimeUserId || 'unknown',
+      name: currentUserDisplayName || 'Unknown user',
+      team: currentArchitectureTeamName,
+    }
+    const existing = current.architectureReview
+    const trimmedComment = comment.trim()
+    if ((action === 'approve' || action === 'revision_requested' || action === 'reject') && !currentArchitectureMembership) {
+      throw new Error('Only an Architecture Team member can make this review decision.')
+    }
+    if ((action === 'approve' || action === 'revision_requested' || action === 'reject') && existing?.submittedBy === actor.id) {
+      throw new Error('Self-approval is not allowed. Assign another Architecture Team member to review this version.')
+    }
+    if ((action === 'revision_requested' || action === 'reject') && !trimmedComment) {
+      throw new Error('A review comment is required for revision requests and rejections.')
+    }
+    if (action !== 'submit' && existing?.status !== 'pending') {
+      throw new Error('Only a pending architecture review can be decided or cancelled.')
+    }
+    if (action === 'cancel' && existing?.submittedBy !== actor.id) {
+      throw new Error('Only the person who submitted this version can cancel its review.')
+    }
+    const source = target === 'integration'
+      ? current.plantumlSource
+      : current.canvasGraph?.source || current.bpmnXml
+    const review = buildArchitectureReview(existing, action, actor, trimmedComment, { source })
+    if (target === 'integration') {
+      const next = { ...runtimeIntegrationAnalysisRef.current, architectureReview: review }
+      setRuntimeIntegrationAnalysis(next)
+      await upsertPersistentIdeaIntegration(idea.id, {
+        ...buildPersistentIntegrationPayload(next, integrationBootstrapRecord ?? graphRecordFromIntegrationAnalysis(next), actor.id),
+        version: idea.version,
+      })
+    } else {
+      const next = { ...bpmnHighAnalysisRef.current, architectureReview: review }
+      setBpmnHighAnalysis(next)
+      await upsertPersistentIdeaProcessDiagram(idea.id, 'high', {
+        ...buildPersistentProcessDiagramPayload(next, actor.id),
+        version: idea.version,
+      })
+    }
+    const targetLabel = target === 'integration' ? 'ArchiMate Integration' : 'BPMN High-Level'
+    const decisionLabel: Record<C4ReviewAction, string> = {
+      submit: 'submitted for Architecture review', approve: 'approved', revision_requested: 'sent back for revision', reject: 'rejected', cancel: 'review cancelled',
+    }
+    const recipients = action === 'submit'
+      ? architectureReviewerIds.filter((id) => id !== actor.id)
+      : existing?.submittedBy && existing.submittedBy !== actor.id ? [existing.submittedBy] : []
+    const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+    void Promise.allSettled(recipients.map((userId) => createNotification({
+      app_id: TECTONA_APP_ID,
+      user_id: userId,
+      type_code: 'todo',
+      title: `${targetLabel}: ${decisionLabel[action]}`,
+      body: `${idea.title} — ${actor.name}${trimmedComment ? `: ${trimmedComment}` : ''}`,
+      link_url: linkUrl,
+      metadata: { idea_id: idea.id, diagram_key: target, review_action: action, review_version: review.version },
+      created_by: actor.id,
+      created_from: 'tectona-architecture-review',
+    })))
+  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, integrationBootstrapRecord, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
   const c4Level1Preview = usePlantUmlPngPreview(
     c4Level1Analysis.plantumlSource ? normalizeC4PlantUml(c4Level1Analysis.plantumlSource, 'L1') : null,
   )
@@ -5058,10 +5413,27 @@ export function IdeaDetailPage() {
 
   const persistBpmnCanvas = useCallback(
     (processKey: string, graph: C4CanvasGraph) => {
-      const applyCanvas = (current: RuntimeProcessDiagramAnalysis): RuntimeProcessDiagramAnalysis => ({
-        ...current,
-        canvasGraph: { ...graph, userCustomized: true },
-      })
+      const applyCanvas = (current: RuntimeProcessDiagramAnalysis): RuntimeProcessDiagramAnalysis => {
+        const currentReview = current.architectureReview
+        const actor = {
+          id: currentUserId || runtimeUserId || 'unknown',
+          name: currentUserDisplayName || 'Unknown user',
+          team: currentArchitectureTeamName,
+        }
+        const architectureReview = currentReview && (currentReview.status === 'pending' || currentReview.status === 'approved')
+          ? {
+              ...currentReview,
+              status: 'superseded' as const,
+              version: currentReview.version + 1,
+              history: [...currentReview.history, createC4ReviewAuditEntry('diagram_changed', currentReview.version + 1, actor)],
+            }
+          : currentReview
+        return {
+          ...current,
+          canvasGraph: { ...graph, userCustomized: true },
+          architectureReview,
+        }
+      }
       if (processKey === 'high') {
         const next = applyCanvas(bpmnHighAnalysisRef.current)
         setBpmnHighAnalysis(next)
@@ -5209,7 +5581,7 @@ export function IdeaDetailPage() {
         })
       }
     },
-    [idea, runtimeUserId, bpmnHighAnalysis.bpmnXml, processDetailsByKey, setProcessDetailState],
+    [idea, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId, bpmnHighAnalysis.bpmnXml, processDetailsByKey, setProcessDetailState],
   )
 
   const loadRuntimeSummaryRef = useRef(loadRuntimeSummary)
@@ -5310,17 +5682,19 @@ export function IdeaDetailPage() {
         setRegenerating((prev) => ({ ...prev, summary: true }))
       }
       try {
-        await loadRuntimeSummaryRef.current('llm_first', {
-          forceRefresh: wasFreshIdea,
-          autoGenerateIfMissing: wasFreshIdea,
-        })
-        await loadRuntimeScoringRef.current(hydratedIdea, { forceRefresh: wasFreshIdea })
-        await loadRuntimeBenefitRef.current(hydratedIdea)
-        await loadRuntimeConversionRef.current(hydratedIdea)
-        await loadRuntimeIntegrationRef.current(hydratedIdea)
-        await loadRuntimeC4ArchitectureRef.current('L1', hydratedIdea)
-        await loadRuntimeC4ArchitectureRef.current('L2', hydratedIdea)
-        await loadRuntimeProcessDiagramRef.current(hydratedIdea)
+        await Promise.all([
+          loadRuntimeSummaryRef.current('llm_first', {
+            forceRefresh: wasFreshIdea,
+            autoGenerateIfMissing: wasFreshIdea,
+          }),
+          loadRuntimeScoringRef.current(hydratedIdea, { forceRefresh: wasFreshIdea }),
+          loadRuntimeBenefitRef.current(hydratedIdea),
+          loadRuntimeConversionRef.current(hydratedIdea),
+          loadRuntimeIntegrationRef.current(hydratedIdea),
+          loadRuntimeC4ArchitectureRef.current('L1', hydratedIdea),
+          loadRuntimeC4ArchitectureRef.current('L2', hydratedIdea),
+          loadRuntimeProcessDiagramRef.current(hydratedIdea),
+        ])
       } finally {
         if (wasFreshIdea) {
           setRegenerating((prev) => ({ ...prev, summary: false }))
@@ -10652,6 +11026,39 @@ export function IdeaDetailPage() {
     />
   )
 
+  const diagramStudioC4Level: C4ArchitectureLevel | null = diagramStudio?.diagramKey === 'c4-level-1'
+    ? 'L1'
+    : diagramStudio?.diagramKey === 'c4-level-2'
+      ? 'L2'
+      : null
+  const diagramStudioC4Review = diagramStudioC4Level === 'L1'
+    ? c4Level1Analysis.architectureReview
+    : diagramStudioC4Level === 'L2'
+      ? c4Level2Analysis.architectureReview
+      : undefined
+  const diagramStudioReviewTarget: ArchitectureReviewTarget | null = diagramStudioC4Level === 'L1'
+    ? 'c4-l1'
+    : diagramStudioC4Level === 'L2'
+      ? 'c4-l2'
+      : diagramStudio?.diagramKey === 'integration-architecture'
+        ? 'integration'
+        : diagramStudio?.diagramKey === 'bpmn-high-level'
+          ? 'bpmn-high'
+          : null
+  const diagramStudioReview = diagramStudioReviewTarget === 'integration'
+    ? runtimeIntegrationAnalysis.architectureReview
+    : diagramStudioReviewTarget === 'bpmn-high'
+      ? bpmnHighAnalysis.architectureReview
+      : diagramStudioC4Review
+  const diagramStudioC4ReviewMeta = c4ReviewStatusMeta(diagramStudioReview?.status)
+  const diagramStudioReviewLabel = diagramStudioReviewTarget === 'integration'
+    ? 'ArchiMate Integration'
+    : diagramStudioReviewTarget === 'bpmn-high'
+      ? 'BPMN High-Level'
+      : diagramStudioC4Level
+        ? `C4 ${diagramStudioC4Level}`
+        : 'Diagram'
+
   return (
     <>
       {brdBulletMenu}
@@ -12097,7 +12504,7 @@ export function IdeaDetailPage() {
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
-              <div className="flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
+              <div className="order-5 flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <GitBranch className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
@@ -12173,6 +12580,7 @@ export function IdeaDetailPage() {
                     confidence={null}
                     isRegenerating={false}
                     onOpenStudio={setDiagramStudio}
+                    className="order-6"
                   />
                   )
                 })
@@ -12208,6 +12616,7 @@ export function IdeaDetailPage() {
                 onOpenStudio={setDiagramStudio}
                 c4DrilldownTargets={c4Level1DrilldownTargets}
                 onOpenC4Drilldown={openC4Drilldown}
+                className="order-1"
               />
               <DiagramGalleryCard
                 ideaId={idea.id}
@@ -12229,6 +12638,7 @@ export function IdeaDetailPage() {
                 onGenerateDraft={() => void loadRuntimeC4Architecture('L2', idea, { forceRefresh: true })}
                 onGenerateAlternative={() => void generateC4Alternative('L2')}
                 onOpenStudio={setDiagramStudio}
+                className="order-2"
               />
               <DiagramGalleryCard
                 ideaId={idea.id}
@@ -12246,10 +12656,11 @@ export function IdeaDetailPage() {
                 confidence={bpmnHighLoaded ? confidence.bpmnHigh : null}
                 isRegenerating={regenerating.bpmnHigh}
                 onOpenStudio={setDiagramStudio}
+                className="order-3"
               />
 
               {bpmnHighAnalysis.subProcesses.length === 0 ? (
-                <div className="flex flex-col justify-between rounded-2xl border border-dashed border-border/40 bg-muted/10 p-4 opacity-60">
+                <div className="order-4 flex flex-col justify-between rounded-2xl border border-dashed border-border/40 bg-muted/10 p-4 opacity-60">
                   <div className="flex items-center gap-2">
                     <ListTree className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="text-sm font-semibold text-muted-foreground">BPMN Detail</span>
@@ -12283,6 +12694,7 @@ export function IdeaDetailPage() {
                       confidence={detail?.loaded ? Math.round(Math.max(0, Math.min(1, detail.analysis.confidenceScore)) * 100) : null}
                       isRegenerating={detail?.isRegenerating ?? false}
                       onOpenStudio={setDiagramStudio}
+                      className="order-4"
                     />
                   )
                 })
@@ -12309,21 +12721,73 @@ export function IdeaDetailPage() {
                         })()}
                         <h2 className="text-lg font-semibold text-foreground">{diagramStudio.title}</h2>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                         {typeof diagramStudio.confidence === 'number' && diagramStudio.confidence > 0 ? (
                           <Badge
                             variant="outline"
-                            className={cn('text-[10px] font-semibold', confidenceClass(diagramStudio.confidence))}
+                            className={cn('h-7 rounded-md px-2 text-[10px] font-medium shadow-none', confidenceClass(diagramStudio.confidence))}
                           >
                             Confidence {diagramStudio.confidence}%
                           </Badge>
                         ) : null}
+                        {diagramStudioReviewTarget ? (
+                          <Badge
+                            variant="outline"
+                            className={cn('h-7 max-w-48 truncate rounded-md px-2 text-[10px] font-medium shadow-none', diagramStudioC4ReviewMeta.className)}
+                            title={diagramStudioReview?.history.length
+                              ? `Review v${diagramStudioReview.version}: ${diagramStudioReview.history.map((entry) => `${entry.action} by ${entry.actorName}`).join(' | ')}`
+                              : 'No architecture review has been submitted.'}
+                          >
+                            <ShieldCheck className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+                            {diagramStudioC4ReviewMeta.label}
+                          </Badge>
+                        ) : null}
+                        {diagramStudioReviewTarget && (!diagramStudioReview || ['draft', 'revision_requested', 'rejected', 'cancelled', 'superseded'].includes(diagramStudioReview.status)) ? (
+                          <Button
+                            type="button"
+                            className="h-9 rounded-md bg-[#0b5fd7] px-3 text-xs font-semibold shadow-none hover:bg-[#094fad] focus-visible:ring-2 focus-visible:ring-[#0b5fd7]/35"
+                            onClick={() => {
+                              setC4ReviewComment('')
+                              setC4ReviewDialog({ target: diagramStudioReviewTarget, action: 'submit' })
+                            }}
+                          >
+                            <ShieldCheck className="h-4 w-4" aria-hidden />
+                            Submit for review
+                          </Button>
+                        ) : null}
+                        {diagramStudioReviewTarget && diagramStudioReview?.status === 'pending' && diagramStudioReview.submittedBy === currentUserId ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-9 rounded-md border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 shadow-none hover:bg-slate-50"
+                            onClick={() => {
+                              setC4ReviewComment('')
+                              setC4ReviewDialog({ target: diagramStudioReviewTarget, action: 'cancel' })
+                            }}
+                          >
+                            <Undo2 className="h-4 w-4" aria-hidden />
+                            Cancel review
+                          </Button>
+                        ) : null}
+                        {diagramStudioReviewTarget && diagramStudioReview?.status === 'pending' && currentArchitectureMembership && diagramStudioReview.submittedBy !== currentUserId ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button type="button" size="sm" className="h-9 gap-1.5" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: diagramStudioReviewTarget, action: 'approve' }) }}>
+                              <Check className="h-3.5 w-3.5" aria-hidden /> Approve
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'h-9 gap-1.5')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: diagramStudioReviewTarget, action: 'revision_requested' }) }}>
+                              <Undo2 className="h-3.5 w-3.5" aria-hidden /> Revision
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" className="h-9 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: diagramStudioReviewTarget, action: 'reject' }) }}>
+                              <X className="h-3.5 w-3.5" aria-hidden /> Reject
+                            </Button>
+                          </div>
+                        ) : null}
                         {diagramStudio.diagramSource ? (
-                          <div className="relative">
+                          <div className="relative order-[20]">
                             <Button
                               type="button"
                               variant="outline"
-                              className={cn(enterpriseSecondaryButtonClass(), 'h-10 gap-2')}
+                              className="h-9 rounded-md border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 shadow-none hover:bg-slate-50"
                               aria-expanded={isDiagramExportMenuOpen}
                               onClick={() => {
                                 setIsDiagramExportMenuOpen((open) => !open)
@@ -12384,7 +12848,7 @@ export function IdeaDetailPage() {
                         {diagramStudio.missing && diagramStudio.onGenerateDraft ? (
                           <Button
                             type="button"
-                            className={enterpriseCyanGradientActionButtonClass()}
+                            className="h-9 rounded-md bg-[#0b5fd7] px-3 text-xs font-semibold shadow-none hover:bg-[#094fad]"
                             disabled={diagramStudio.isRegenerating}
                             onClick={() => {
                               setDiagramStudio(null)
@@ -12397,7 +12861,8 @@ export function IdeaDetailPage() {
                         ) : diagramStudio.onGenerateAlternative ? (
                           <Button
                             type="button"
-                            className={enterpriseCyanGradientActionButtonClass()}
+                            variant="outline"
+                            className="h-9 rounded-md border-cyan-300 bg-cyan-50 px-3 text-xs font-medium text-cyan-900 shadow-none hover:border-cyan-400 hover:bg-cyan-100"
                             disabled={isC4AlternativeGenerating}
                             onClick={diagramStudio.onGenerateAlternative}
                           >
@@ -12416,6 +12881,7 @@ export function IdeaDetailPage() {
                           onClick={() => setDiagramStudio(null)}
                           className={cn(
                             'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                            'order-[30]',
                             enterpriseControlFocusClass,
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
                           )}
@@ -12469,6 +12935,128 @@ export function IdeaDetailPage() {
               </div>
             </div>
           )}
+
+          <Dialog
+            open={Boolean(c4ReviewDialog)}
+            onOpenChange={(open) => {
+              if (!open && !isC4ReviewSaving) setC4ReviewDialog(null)
+            }}
+          >
+            <DialogContent surface="solid" className="w-[min(560px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border/70 bg-card p-0 shadow-2xl">
+              {c4ReviewDialog ? (() => {
+                const dialogReview = c4ReviewDialog.target === 'integration'
+                  ? runtimeIntegrationAnalysis.architectureReview
+                  : c4ReviewDialog.target === 'bpmn-high'
+                    ? bpmnHighAnalysis.architectureReview
+                    : c4ReviewDialog.target === 'c4-l1'
+                      ? c4Level1Analysis.architectureReview
+                      : c4Level2Analysis.architectureReview
+                const reviewTargetLabel = c4ReviewDialog.target === 'c4-l1'
+                  ? 'C4 L1'
+                  : c4ReviewDialog.target === 'c4-l2'
+                    ? 'C4 L2'
+                    : c4ReviewDialog.target === 'integration'
+                      ? 'ArchiMate Integration'
+                      : 'BPMN High-Level'
+                const actionCopy: Record<C4ReviewAction, { title: string; description: string; submit: string; needsComment: boolean }> = {
+                  submit: {
+                    title: `Submit ${reviewTargetLabel} for architecture review`,
+                    description: 'A versioned snapshot will be sent to the Architecture Team. Subsequent edits require a new review.',
+                    submit: 'Submit review',
+                    needsComment: false,
+                  },
+                  approve: {
+                    title: `Approve ${reviewTargetLabel}`,
+                    description: 'You are approving the exact diagram version currently under review.',
+                    submit: 'Approve version',
+                    needsComment: false,
+                  },
+                  revision_requested: {
+                    title: `Request revision for ${reviewTargetLabel}`,
+                    description: 'Explain the required changes. The submitter must revise and submit a new version.',
+                    submit: 'Request revision',
+                    needsComment: true,
+                  },
+                  reject: {
+                    title: `Reject ${reviewTargetLabel}`,
+                    description: 'State the reason for rejection so the decision remains auditable.',
+                    submit: 'Reject version',
+                    needsComment: true,
+                  },
+                  cancel: {
+                    title: `Cancel ${reviewTargetLabel} review`,
+                    description: 'The diagram remains saved as a draft. This does not delete the review audit trail.',
+                    submit: 'Cancel review',
+                    needsComment: false,
+                  },
+                }
+                const copy = actionCopy[c4ReviewDialog.action]
+                return <>
+                  <DialogHeader className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                    <div className="flex items-start gap-4 text-left">
+                      <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/12 text-sky-700 ring-1 ring-sky-500/25">
+                        <ShieldCheck className="h-5 w-5" aria-hidden />
+                      </div>
+                      <div className="space-y-1">
+                        <DialogTitle className="text-base font-semibold tracking-tight">{copy.title}</DialogTitle>
+                        <DialogDescription className="text-xs leading-relaxed">{copy.description}</DialogDescription>
+                      </div>
+                    </div>
+                  </DialogHeader>
+                  <div className="space-y-3 px-6 py-5">
+                    <Label htmlFor="c4-review-comment" className="text-xs text-muted-foreground">
+                      Review comment {copy.needsComment ? <span className="text-rose-600">*</span> : <span className="text-muted-foreground/70">(optional)</span>}
+                    </Label>
+                    <Textarea
+                      id="c4-review-comment"
+                      value={c4ReviewComment}
+                      onChange={(event) => setC4ReviewComment(event.target.value)}
+                      placeholder={copy.needsComment ? 'Explain the decision and required follow-up.' : 'Add context for the audit trail.'}
+                      className="min-h-28 resize-y"
+                      disabled={isC4ReviewSaving}
+                    />
+                    {dialogReview?.history.length ? (
+                      <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Review history</p>
+                        <ol className="mt-2 space-y-1.5 text-xs text-slate-600">
+                          {dialogReview.history.slice().reverse().slice(0, 5).map((entry) => (
+                            <li key={entry.id}><span className="font-medium text-slate-800">v{entry.version} {entry.action}</span> by {entry.actorName}{entry.actorTeam ? ` (${entry.actorTeam})` : ''}{entry.comment ? `: ${entry.comment}` : ''}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    ) : null}
+                  </div>
+                  <DialogFooter className="border-t border-border/70 bg-muted/20 px-6 py-4">
+                    <Button type="button" variant="outline" className="h-10 flex-1" disabled={isC4ReviewSaving} onClick={() => setC4ReviewDialog(null)}>Cancel</Button>
+                    <Button
+                      type="button"
+                      className={cn(registerServicePrimaryButtonClass(), 'h-10 flex-1 gap-2')}
+                      disabled={isC4ReviewSaving || (copy.needsComment && !c4ReviewComment.trim())}
+                      onClick={() => void (async () => {
+                        setIsC4ReviewSaving(true)
+                        try {
+                          if (c4ReviewDialog.target === 'c4-l1' || c4ReviewDialog.target === 'c4-l2') {
+                            await saveC4ArchitectureReview(c4ReviewDialog.target === 'c4-l1' ? 'L1' : 'L2', c4ReviewDialog.action, c4ReviewComment)
+                          } else {
+                            await saveNonC4ArchitectureReview(c4ReviewDialog.target, c4ReviewDialog.action, c4ReviewComment)
+                          }
+                          addToast({ title: copy.submit, description: `${reviewTargetLabel} review history has been updated.`, variant: 'success' })
+                          setC4ReviewDialog(null)
+                        } catch (error) {
+                          addToast({ title: 'Review action failed', description: error instanceof Error ? error.message : 'The C4 review could not be updated.', variant: 'error' })
+                        } finally {
+                          setIsC4ReviewSaving(false)
+                        }
+                      })()}
+                    >
+                      {isC4ReviewSaving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <ShieldCheck className="h-4 w-4" aria-hidden />}
+                      {copy.submit}
+                    </Button>
+                  </DialogFooter>
+                </>
+              })() : null}
+            </DialogContent>
+          </Dialog>
 
           <Dialog
             open={Boolean(c4AlternativePreview)}
@@ -12573,6 +13161,33 @@ export function IdeaDetailPage() {
                           >
                             Confidence {confidence.integration}%
                           </Badge>
+                        ) : null}
+                        <Badge
+                          variant="outline"
+                          className={cn('h-8 max-w-48 truncate px-2 text-[10px] font-semibold', c4ReviewStatusMeta(runtimeIntegrationAnalysis.architectureReview?.status).className)}
+                          title={runtimeIntegrationAnalysis.architectureReview?.history.length
+                            ? `Review v${runtimeIntegrationAnalysis.architectureReview.version}: ${runtimeIntegrationAnalysis.architectureReview.history.map((entry) => `${entry.action} by ${entry.actorName}`).join(' | ')}`
+                            : 'No architecture review has been submitted.'}
+                        >
+                          <ShieldCheck className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+                          {c4ReviewStatusMeta(runtimeIntegrationAnalysis.architectureReview?.status).label}
+                        </Badge>
+                        {(!runtimeIntegrationAnalysis.architectureReview || ['draft', 'revision_requested', 'rejected', 'cancelled', 'superseded'].includes(runtimeIntegrationAnalysis.architectureReview.status)) ? (
+                          <Button type="button" className={cn(enterpriseCyanGradientActionButtonClass(), 'h-10 gap-2')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'submit' }) }}>
+                            <ShieldCheck className="h-4 w-4" aria-hidden /> Submit for review
+                          </Button>
+                        ) : null}
+                        {runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && runtimeIntegrationAnalysis.architectureReview.submittedBy === currentUserId ? (
+                          <Button type="button" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'h-10 gap-2')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'cancel' }) }}>
+                            <Undo2 className="h-4 w-4" aria-hidden /> Cancel review
+                          </Button>
+                        ) : null}
+                        {runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && currentArchitectureMembership && runtimeIntegrationAnalysis.architectureReview.submittedBy !== currentUserId ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button type="button" size="sm" className="h-9 gap-1.5" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'approve' }) }}><Check className="h-3.5 w-3.5" aria-hidden /> Approve</Button>
+                            <Button type="button" size="sm" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'h-9 gap-1.5')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'revision_requested' }) }}><Undo2 className="h-3.5 w-3.5" aria-hidden /> Revision</Button>
+                            <Button type="button" size="sm" variant="outline" className="h-9 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'reject' }) }}><X className="h-3.5 w-3.5" aria-hidden /> Reject</Button>
+                          </div>
                         ) : null}
                         {renderSectionReviewWorkspace('integration', 'Integration')}
                         <button

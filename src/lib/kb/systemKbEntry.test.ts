@@ -127,4 +127,30 @@ describe('systemKbEntry', () => {
     expect(plan.map((item) => item.keeper.id).sort()).toEqual(['as-is-old', 'naming-old'])
     expect(withoutDuplicateWorkspaceSystemKbEntries(rows).map((item) => item.id).sort()).toEqual(['as-is-old', 'naming-old'])
   })
+
+  it('treats the legacy Adira workspace alias and WAC UUID as the same workspace', () => {
+    const rows = [
+      entry({
+        id: 'catalog-empty',
+        title: 'Application Catalog (Default)',
+        workspace_id: '00000000-0000-0000-0001-000000000100',
+        content: '<p>Application catalog</p><table><tbody></tbody></table>',
+        updated_at: '2026-09-20T04:15:45Z',
+      }),
+      entry({
+        id: 'catalog-with-data',
+        title: 'Application Catalog (Default)',
+        workspace_id: 'ADIRA-FINANCE-WS',
+        content: '<p>Application catalog</p><table><tbody><tr><td>ACCTION</td><td>Web</td></tr></tbody></table>',
+        updated_at: '2026-09-19T16:34:33Z',
+      }),
+    ]
+
+    const plan = planWorkspaceSystemKbDedupe(rows)
+
+    expect(plan).toHaveLength(1)
+    expect(plan[0].keeper.id).toBe('catalog-with-data')
+    expect(plan[0].extras.map((item) => item.id)).toEqual(['catalog-empty'])
+    expect(plan[0].canonicalWorkspaceId).toBe('00000000-0000-0000-0001-000000000100')
+  })
 })

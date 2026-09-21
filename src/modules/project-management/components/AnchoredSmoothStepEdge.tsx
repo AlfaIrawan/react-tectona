@@ -9,7 +9,7 @@ import {
   useStore,
   type EdgeProps,
 } from 'reactflow'
-import { useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { IntegrationEdgeArrow } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import {
   readEdgeData,
@@ -173,6 +173,7 @@ export function AnchoredSmoothStepEdge({
   const { setEdges, setNodes } = useReactFlow()
   const zoom = useStore((state) => state.transform[2]) || 1
   const labelBoxRef = useRef<HTMLDivElement | null>(null)
+  const labelEditorRef = useRef<HTMLInputElement | null>(null)
   const labelInteractRef = useRef<{
     pointerId: number
     kind: 'move' | 'e' | 's' | 'se'
@@ -184,6 +185,8 @@ export function AnchoredSmoothStepEdge({
     originH: number
   } | null>(null)
   const [liveLabel, setLiveLabel] = useState<{ offsetX: number; offsetY: number; boxWidth: number; boxHeight: number } | null>(null)
+  const [isEditingLabel, setIsEditingLabel] = useState(false)
+  const [labelDraft, setLabelDraft] = useState('')
   const visual = resolveEdgeVisual({ id, style, data })
   const textStyle = resolveEdgeTextStyle({ data })
   const arrange = resolveEdgeArrange({ data })
@@ -256,6 +259,33 @@ export function AnchoredSmoothStepEdge({
   const boxWidth = liveLabel?.boxWidth ?? textStyle.boxWidth
   const boxHeight = liveLabel?.boxHeight ?? textStyle.boxHeight
   const wrapLabel = textStyle.wordWrap || boxWidth > 0 || boxHeight > 0
+
+  useEffect(() => {
+    if (!isEditingLabel) return
+    labelEditorRef.current?.focus()
+    labelEditorRef.current?.select()
+  }, [isEditingLabel])
+
+  const finishLabelEditing = (commit: boolean) => {
+    setIsEditingLabel(false)
+    if (!commit) return
+    const nextLabel = labelDraft.trim()
+    if (!nextLabel || nextLabel === labelText) return
+    setEdges((edges) => edges.map((edge) => (edge.id === id ? { ...edge, label: nextLabel, selected: true } : edge)))
+  }
+
+  const handleLabelEditorKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      finishLabelEditing(false)
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      finishLabelEditing(true)
+    }
+  }
 
   const commitLabelBox = (next: { offsetX: number; offsetY: number; boxWidth: number; boxHeight: number }) => {
     setEdges((edges) => edges.map((edge) => {
@@ -449,16 +479,33 @@ export function AnchoredSmoothStepEdge({
                 whiteSpace: wrapLabel ? 'pre-wrap' : 'nowrap',
                 overflowWrap: wrapLabel ? 'break-word' : 'normal',
                 overflow: 'hidden',
-                cursor: 'move',
+                cursor: isEditingLabel ? 'text' : 'move',
                 boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
               }}
               onClick={selectEdge}
-              onPointerDown={beginLabelInteract('move')}
-              onPointerMove={moveLabelInteract}
-              onPointerUp={endLabelInteract}
-              onPointerCancel={endLabelInteract}
+              onDoubleClick={(event) => {
+                event.stopPropagation()
+                setLabelDraft(labelText)
+                setIsEditingLabel(true)
+              }}
+              onPointerDown={isEditingLabel ? undefined : beginLabelInteract('move')}
+              onPointerMove={isEditingLabel ? undefined : moveLabelInteract}
+              onPointerUp={isEditingLabel ? undefined : endLabelInteract}
+              onPointerCancel={isEditingLabel ? undefined : endLabelInteract}
             >
-              {labelText}
+              {isEditingLabel ? (
+                <input
+                  ref={labelEditorRef}
+                  value={labelDraft}
+                  onChange={(event) => setLabelDraft(event.target.value)}
+                  onBlur={() => finishLabelEditing(true)}
+                  onKeyDown={handleLabelEditorKeyDown}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  className="nodrag nopan min-w-0 flex-1 bg-transparent p-0 text-inherit outline-none"
+                  style={{ font: 'inherit', letterSpacing: 'inherit', textAlign: 'inherit' }}
+                  aria-label="Edit arrow label"
+                />
+              ) : labelText}
             </div>
             {selected ? (
               <>

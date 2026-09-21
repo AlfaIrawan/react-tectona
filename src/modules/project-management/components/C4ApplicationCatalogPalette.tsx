@@ -20,7 +20,7 @@ export function C4ApplicationCatalogPalette({
   onFocusExisting: (application: C4ApplicationCatalogItem) => void
 }) {
   const [query, setQuery] = useState('')
-  const [externalApplications, setExternalApplications] = useState<Set<string>>(() => new Set())
+  const [internalApplications, setInternalApplications] = useState<Set<string>>(() => new Set())
   const filtered = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return applications.filter((application) => {
@@ -32,7 +32,7 @@ export function C4ApplicationCatalogPalette({
 
   const withPlacementClassification = (application: C4ApplicationCatalogItem): C4ApplicationCatalogItem => ({
     ...application,
-    classification: externalApplications.has(application.name.trim().toLowerCase()) ? 'External System' : 'System',
+    classification: internalApplications.has(application.name.trim().toLowerCase()) ? 'System' : 'External System',
   })
 
   const handleDragStart = (event: DragEvent<HTMLButtonElement>, application: C4ApplicationCatalogItem) => {
@@ -61,9 +61,16 @@ export function C4ApplicationCatalogPalette({
         {filtered.map((application) => {
           const exists = existingNames.has(application.name.trim().toLowerCase())
           const applicationKey = application.name.trim().toLowerCase()
-          const asExternalSystem = externalApplications.has(applicationKey)
+          const asExternalSystem = !internalApplications.has(applicationKey)
           return (
-            <div key={application.name} className="flex items-center gap-2 rounded-md px-1 py-1.5 transition-colors hover:bg-sky-50">
+            <div
+              key={application.name}
+              className={cn(
+                'flex items-center gap-2 rounded-md px-1 py-1.5 transition-colors hover:bg-sky-50',
+                application.isInactive && 'opacity-40',
+              )}
+              title={application.isInactive ? 'Inactive application' : undefined}
+            >
               <button
                 type="button"
                 draggable={!exists}
@@ -82,7 +89,7 @@ export function C4ApplicationCatalogPalette({
                 aria-checked={asExternalSystem}
                 aria-label={`${application.name}: ${asExternalSystem ? 'External System' : 'Internal System'}`}
                 title={asExternalSystem ? 'External System' : 'Internal System'}
-                onClick={() => setExternalApplications((current) => {
+                onClick={() => setInternalApplications((current) => {
                   const next = new Set(current)
                   if (next.has(applicationKey)) next.delete(applicationKey)
                   else next.add(applicationKey)

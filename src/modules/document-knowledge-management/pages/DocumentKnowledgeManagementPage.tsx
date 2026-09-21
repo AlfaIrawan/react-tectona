@@ -270,9 +270,11 @@ import { EnterpriseSelectionToggle } from '@/components/enterprise/EnterpriseSel
 import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/EnterpriseColumnVisibilityControl'
 import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
 import { cn } from '@/lib/utils'
+import { publishApplicationCatalogChanged } from '@/lib/kb/applicationCatalogRealtime'
 import {
   enterpriseCyanGradientActionButtonClass,
   enterpriseIndigoGradientActionButtonClass,
+  enterpriseRoseGradientActionButtonClass,
   enterpriseSecondaryButtonClass,
   registerServicePrimaryButtonClass,
 } from '@/lib/enterpriseButtonClasses'
@@ -11132,7 +11134,7 @@ export function DocumentKnowledgeManagementPage() {
     setKbAddOpen(true)
   }, [addToast, kbLive, kbCategoryOptions])
 
-  const openKbEditDrawer = useCallback((entry: KnowledgeEntry) => {
+  const openKbEditDrawer = useCallback((entry: Pick<KnowledgeEntry, 'id'>) => {
     if (!kbLive) {
       addToast({
         title: 'Edit unavailable',
@@ -11401,6 +11403,7 @@ export function DocumentKnowledgeManagementPage() {
     if (kbSystemTableEdit) return systemKbTablePlainLength(kbSystemTableEdit)
     return kbExtractPlainText(kbFormContent).length
   }, [kbFormContent, kbStructuredEdit, kbSystemTableEdit])
+  const kbContentMaxLength = kbSystemTableEdit?.specId === 'aplikasi' ? 20_000 : 8_000
 
   const runKbAiAction = useCallback((action: KbAiActionKey, task: () => void | Promise<void>) => {
     if (kbAiActionLoading) return
@@ -12162,7 +12165,7 @@ export function DocumentKnowledgeManagementPage() {
     if (!kbFormCategory) localIssues.push('Category is required')
     if (!normalizedTitle || !isKbTitleValid(normalizedTitle)) localIssues.push('Title is invalid')
     if (!plainContent) localIssues.push('Content is required')
-    if (plainContent.length > 8000) localIssues.push('Content exceeds 8000 characters')
+    if (plainContent.length > kbContentMaxLength) localIssues.push(`Content exceeds ${kbContentMaxLength.toLocaleString()} characters`)
     if (!isKbPriorityValid(kbFormPriority)) localIssues.push('Priority must be between 0 and 100')
 
     if (normalizedWorkspaceId) {
@@ -12209,7 +12212,7 @@ export function DocumentKnowledgeManagementPage() {
       description: recommendation || 'The form is ready to be saved to the Knowledge Base.',
       variant: 'success',
     })
-  }, [addToast, isKbAiAuthWarning, isKbAiPolicyBlocked, kbFormCategory, kbFormContent, kbFormPriority, kbFormTitle, kbFormWorkspace, requestKbAiBackend])
+  }, [addToast, isKbAiAuthWarning, isKbAiPolicyBlocked, kbContentMaxLength, kbFormCategory, kbFormContent, kbFormPriority, kbFormTitle, kbFormWorkspace, requestKbAiBackend])
 
   const syncKbEditorHtml = useCallback(() => {
     const editor = kbContentEditorRef.current
@@ -13444,10 +13447,10 @@ export function DocumentKnowledgeManagementPage() {
       })
       return
     }
-    if (plainContent.length > 8000) {
+    if (plainContent.length > kbContentMaxLength) {
       addToast({
         title: 'Content is too long',
-        description: 'Maximum 8000 characters (plain text).',
+        description: `Maximum ${kbContentMaxLength.toLocaleString()} characters (plain text).`,
         variant: 'error',
       })
       return
@@ -13570,6 +13573,9 @@ export function DocumentKnowledgeManagementPage() {
       const viewEntry: KbEntryResponse = { ...saved, content: contentToSave }
       setKbApiItems((prev) => prev.map((item) => (item.id === saved.id ? viewEntry : item)))
       setKbViewEntry(viewEntry)
+      if (isApplicationCatalogEntry) {
+        publishApplicationCatalogChanged({ workspaceId: saved.workspace_id })
+      }
       if (openRelationAfterSave) {
         setKbViewEntry(viewEntry)
         setKbRelationCreateOpen(true)
@@ -13636,6 +13642,9 @@ export function DocumentKnowledgeManagementPage() {
     setKbDeleteBusy(true)
     try {
       await deleteKbEntry(kbDeleteTarget.id)
+      if (confirmTarget?.category === 'application_catalog') {
+        publishApplicationCatalogChanged({ workspaceId: confirmTarget.workspace_id })
+      }
       // Seeded glossary entries are re-created by ensureAdiraApplicationGlossaryEntries on every KB
       // load; tombstone this title so an explicit delete stays deleted.
       if (isAdiraGlossaryManagedTitle(deletedTitle)) {
@@ -17034,27 +17043,33 @@ export function DocumentKnowledgeManagementPage() {
                       <>
                       <button
                         type="button"
-                        className={enterpriseCyanGradientActionButtonClass()}
+                        className={cn(
+                          registerServicePrimaryButtonClass(),
+                          'group inline-flex shrink-0 items-center justify-center whitespace-nowrap bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-700 active:bg-blue-800 disabled:pointer-events-none disabled:opacity-50',
+                        )}
                         onClick={openRepositoryUploadPicker}
                         disabled={repositoryUploadBusy}
                       >
                         {repositoryUploadBusy ? (
                           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
                         ) : (
-                          <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                          <Upload className="h-4 w-4" strokeWidth={2.25} />
                         )}
-                        {repositoryUploadBusy ? 'Uploading…' : 'Upload document repository'}
+                        {repositoryUploadBusy ? 'Uploading…' : 'Upload documents'}
                       </button>
                       <button
                         type="button"
-                        className={enterpriseIndigoGradientActionButtonClass()}
+                        className={cn(
+                          enterpriseSecondaryButtonClass(),
+                          'group shadow-none hover:translate-y-0 hover:shadow-sm',
+                        )}
                         onClick={() => void handleCreateRepositoryFolder()}
                         disabled={repositoryFolderBusy}
                       >
                         {repositoryFolderBusy ? (
                           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
                         ) : (
-                          <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                          <FolderPlus className="h-4 w-4" strokeWidth={2.25} />
                         )}
                         New folder
                       </button>
@@ -23517,7 +23532,7 @@ export function DocumentKnowledgeManagementPage() {
                     </div>
                     <div className="space-y-1.5">
                       <Label id="kb-content-label" className="text-xs text-muted-foreground">
-                        Content (max 8000 characters) <span className="text-red-500">*</span>
+                        Content (max {kbContentMaxLength.toLocaleString()} characters) <span className="text-red-500">*</span>
                       </Label>
                       <div ref={kbAiStickySentinelRef} className="h-px w-full" aria-hidden="true" />
                       <div className="sticky top-1 z-20 space-y-2">
@@ -23665,11 +23680,18 @@ export function DocumentKnowledgeManagementPage() {
                         </div>
                       ) : null}
                       {kbSystemTableEdit ? (
-                        <SystemKbTableEditorForm
-                          model={kbSystemTableEdit}
-                          onChange={setKbSystemTableEdit}
-                          onScanApplications={kbSystemTableEdit.specId === 'aplikasi' ? handleApplicationCatalogScan : undefined}
-                        />
+                        <div className="space-y-1.5">
+                          <SystemKbTableEditorForm
+                            model={kbSystemTableEdit}
+                            onChange={setKbSystemTableEdit}
+                            onScanApplications={kbSystemTableEdit.specId === 'aplikasi' ? handleApplicationCatalogScan : undefined}
+                          />
+                          <div className="flex justify-end px-1">
+                            <p className="text-[11px] tabular-nums text-muted-foreground">
+                              {kbContentTextLength.toLocaleString()} / {kbContentMaxLength.toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
                       ) : null}
                       <div
                         hidden={Boolean(kbStructuredEdit) || Boolean(kbSystemTableEdit)}
@@ -24180,15 +24202,15 @@ export function DocumentKnowledgeManagementPage() {
                             onInput={(event) => {
                               const editorHtml = event.currentTarget.innerHTML
                               const plain = kbExtractPlainText(editorHtml).replace(/\s+/g, ' ').trim()
-                              if (plain.length > 8000) {
+                              if (plain.length > kbContentMaxLength) {
                                 const raw = captureKbEditorHtml(event.currentTarget, editorHtml)
-                                const truncatedStructuredPlain = restoreKbSoftLineBreaks(kbExtractPlainTextPreserveStructure(raw).slice(0, 8000))
+                                const truncatedStructuredPlain = restoreKbSoftLineBreaks(kbExtractPlainTextPreserveStructure(raw).slice(0, kbContentMaxLength))
                                 const fallbackHtml = renderKbPlainTextAsDeterministicStructuredHtml(truncatedStructuredPlain)
                                 if (fallbackHtml) {
                                   event.currentTarget.innerHTML = fallbackHtml
                                   setKbFormContent(fallbackHtml)
                                 } else {
-                                  event.currentTarget.textContent = plain.slice(0, 8000)
+                                  event.currentTarget.textContent = plain.slice(0, kbContentMaxLength)
                                   setKbFormContent(event.currentTarget.innerHTML)
                                 }
                                 return
@@ -24211,7 +24233,13 @@ export function DocumentKnowledgeManagementPage() {
                           />
                         </div>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">{kbContentTextLength} / 8000</p>
+                      {!kbSystemTableEdit ? (
+                        <div className="flex justify-end px-1">
+                          <p className="text-[11px] tabular-nums text-muted-foreground">
+                            {kbContentTextLength.toLocaleString()} / {kbContentMaxLength.toLocaleString()}
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="space-y-1.5">
@@ -25033,14 +25061,24 @@ export function DocumentKnowledgeManagementPage() {
               <div className="flex w-full items-stretch gap-3">
                 <Button
                   type="button"
+                  className={cn(enterpriseCyanGradientActionButtonClass(), 'h-10 flex-1 justify-center gap-2 rounded-2xl')}
+                  onClick={() => openKbEditDrawer(kbViewEntry)}
+                  disabled={!kbLive}
+                  title={!kbLive ? 'Editing is available when the Knowledge Base service is connected.' : undefined}
+                >
+                  <PencilLine className="h-4 w-4 shrink-0" aria-hidden />
+                  Edit
+                </Button>
+                <Button
+                  type="button"
                   variant="destructive"
-                  className="h-10 rounded-xl w-full justify-center gap-2"
+                  className={cn(enterpriseRoseGradientActionButtonClass(), 'h-10 flex-1 justify-center gap-2 rounded-2xl')}
                   onClick={() => void handleKbDelete(kbViewEntry.id)}
                   disabled={isSystemKbEntry(kbViewEntry)}
                   title={isSystemKbEntry(kbViewEntry) ? 'System entries cannot be deleted.' : undefined}
                 >
                   <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
-                  {isSystemKbEntry(kbViewEntry) ? 'System Entry' : 'Delete Entry'}
+                  Delete
                 </Button>
               </div>
             </div>

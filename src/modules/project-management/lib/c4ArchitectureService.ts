@@ -17,6 +17,44 @@ export type C4CanvasGraph = {
   snapToGrid?: boolean
 }
 
+export type C4ArchitectureReviewStatus =
+  | 'draft'
+  | 'pending'
+  | 'approved'
+  | 'revision_requested'
+  | 'rejected'
+  | 'cancelled'
+  | 'superseded'
+
+export type C4ArchitectureReviewAuditEntry = {
+  id: string
+  action: 'submitted' | 'approved' | 'revision_requested' | 'rejected' | 'cancelled' | 'diagram_changed'
+  version: number
+  actorId: string
+  actorName: string
+  actorTeam: string | null
+  at: string
+  comment?: string
+  snapshot?: {
+    source: string
+    graph?: C4CanvasGraph
+  }
+}
+
+export type C4ArchitectureReview = {
+  status: C4ArchitectureReviewStatus
+  version: number
+  submittedBy?: string
+  submittedByName?: string
+  submittedAt?: string
+  reviewerId?: string
+  reviewerName?: string
+  reviewerTeam?: string | null
+  decidedAt?: string
+  comment?: string
+  history: C4ArchitectureReviewAuditEntry[]
+}
+
 export type RuntimeC4Analysis = {
   status: 'ok' | 'insufficient_data'
   level: C4ArchitectureLevel
@@ -29,6 +67,7 @@ export type RuntimeC4Analysis = {
   confidenceScore: number
   correlationId: string
   canvasGraph?: C4CanvasGraph
+  architectureReview?: C4ArchitectureReview
 }
 
 export function emptyRuntimeC4Analysis(level: C4ArchitectureLevel): RuntimeC4Analysis {
@@ -74,6 +113,13 @@ function canvasGraphFromJson(json: Record<string, unknown>, plantumlSource: stri
   }
 }
 
+function architectureReviewFromJson(value: unknown): C4ArchitectureReview | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const review = value as Partial<C4ArchitectureReview>
+  if (typeof review.status !== 'string' || typeof review.version !== 'number' || !Array.isArray(review.history)) return undefined
+  return review as C4ArchitectureReview
+}
+
 export function runtimeC4FromPersistent(persistent: IdeaC4ArchitecturePersistent): RuntimeC4Analysis {
   const json = persistent.c4_json
   const plantumlSource = typeof json.plantuml_source === 'string' ? json.plantuml_source : ''
@@ -93,6 +139,7 @@ export function runtimeC4FromPersistent(persistent: IdeaC4ArchitecturePersistent
     confidenceScore: persistent.confidence_score ?? 0,
     correlationId: persistent.source_correlation_id ?? '',
     canvasGraph: canvasGraphFromJson(json, plantumlSource),
+    architectureReview: architectureReviewFromJson(json.architecture_review),
   }
 }
 
@@ -121,6 +168,7 @@ export function buildPersistentC4Payload(
       viewport: graph?.viewport,
       user_customized: Boolean(graph?.userCustomized),
       snap_to_grid: graph?.snapToGrid ?? true,
+      architecture_review: analysis.architectureReview,
     },
     status: analysis.status,
     confidence_score: analysis.confidenceScore,

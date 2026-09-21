@@ -126,6 +126,7 @@ export type ArchimateElementNodeData = {
   title: string
   description: string[]
   notationId: string
+  applicationCatalogName?: string
   diagramLink?: string
   diagramLinkCleared?: boolean
   visual?: IntegrationNodeVisualStyle

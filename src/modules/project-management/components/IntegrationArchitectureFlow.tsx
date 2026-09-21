@@ -105,7 +105,8 @@ type IntegrationArchitectureFlowProps = {
   onPaneClick?: () => void
   onPaneContextMenu?: (event: MouseEvent) => void
   onNodeContextMenu?: (event: MouseEvent, node: Node<ArchimateNodeData>) => void
-  onEdgeContextMenu?: (event: MouseEvent) => void
+  onNodeDoubleClick?: (event: MouseEvent, node: Node<ArchimateNodeData>) => void
+  onEdgeContextMenu?: (event: MouseEvent, edge: Edge) => void
   showGrid?: boolean
   showGuides?: boolean
   snapToGrid?: boolean
@@ -133,6 +134,7 @@ function IntegrationArchitectureFlowInner({
   onPaneClick,
   onPaneContextMenu,
   onNodeContextMenu,
+  onNodeDoubleClick,
   onEdgeContextMenu,
   showGrid = true,
   snapToGrid = true,
@@ -231,6 +233,7 @@ function IntegrationArchitectureFlowInner({
         onPaneClick={onPaneClick}
         onPaneContextMenu={onPaneContextMenu}
         onNodeContextMenu={onNodeContextMenu}
+        onNodeDoubleClick={onNodeDoubleClick}
         onEdgeContextMenu={onEdgeContextMenu}
         onMoveEnd={preview ? undefined : onMoveEnd}
         onError={handleReactFlowError}

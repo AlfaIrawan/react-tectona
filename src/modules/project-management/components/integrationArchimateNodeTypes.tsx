@@ -1,6 +1,6 @@
 import { Handle, NodeResizer, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { Link2 } from 'lucide-react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { Library, Link2 } from 'lucide-react'
 import {
   buildIntegrationNodeBoxStyle,
   buildIntegrationNodeTextStyle,
@@ -247,6 +247,10 @@ const C4_EXTERNAL_FILL = '#999999'
 const C4_EXTERNAL_LINE = '#8A8A8A'
 
 export function C4ElementNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+  const { setNodes } = useReactFlow()
+  const [editingField, setEditingField] = useState<'title' | 'description' | null>(null)
+  const [draft, setDraft] = useState('')
+  const editorRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
   const external = /external/i.test(data.stereotype)
   const fill = data.visual?.fillColor || (external ? C4_EXTERNAL_FILL : C4_INTERNAL_FILL)
   const line = data.visual?.lineColor || (external ? C4_EXTERNAL_LINE : C4_INTERNAL_LINE)
@@ -254,10 +258,64 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
   const isDatabase = data.notationId === 'ContainerDb' || data.notationId === 'SystemDb'
   const layoutKey = `${width ?? 0}x${height ?? 0}`
 
+  useEffect(() => {
+    if (!editingField) return
+    editorRef.current?.focus()
+    editorRef.current?.select()
+  }, [editingField])
+
+  const startEditing = (field: 'title' | 'description') => {
+    setDraft(field === 'title' ? data.title : data.description.join('\n'))
+    setEditingField(field)
+  }
+
+  const finishEditing = (commit: boolean) => {
+    const field = editingField
+    setEditingField(null)
+    if (!commit || !field) return
+
+    const value = field === 'title'
+      ? draft.trim()
+      : draft.split('\n').map((lineText) => lineText.trim()).filter(Boolean)
+    if ((field === 'title' && !value) || (field === 'description' && value.length === 0)) return
+
+    setNodes((nodes) => nodes.map((node) => {
+      if (node.id !== id || node.data.kind !== 'element') return node
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          [field]: value,
+        },
+      }
+    }))
+  }
+
+  const handleEditorKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      finishEditing(false)
+      return
+    }
+    if (event.key === 'Enter' && (editingField === 'title' || !event.shiftKey)) {
+      event.preventDefault()
+      finishEditing(true)
+    }
+  }
+
   return (
     <div className="group relative h-full w-full overflow-visible">
       <SelectionResizer selected={selected} minWidth={140} minHeight={72} />
       <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      {data.applicationCatalogName ? (
+        <span
+          title={`Application Catalog: ${data.applicationCatalogName}`}
+          className="pointer-events-none absolute left-2 top-2 z-10 inline-flex h-5 items-center gap-1 rounded border border-white/60 bg-white/95 px-1.5 text-[9px] font-semibold leading-none text-slate-700 shadow-sm"
+        >
+          <Library className="h-2.5 w-2.5" aria-hidden />
+          Catalog
+        </span>
+      ) : null}
       {data.diagramLink ? (
         <span
           title="Linked diagram"
@@ -279,15 +337,59 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
           border: `1.5px solid ${line}`,
           borderRadius: isDatabase ? '50% / 18%' : 8,
           boxShadow: '0 1px 4px rgba(15,23,42,0.18)',
+          fontFamily: 'Arial, sans-serif',
         }}
       >
         <p className="text-[10px] italic leading-none opacity-90">{`<<${data.stereotype}>>`}</p>
-        <p className="mt-1 text-[13px] font-semibold leading-tight">{data.title}</p>
-        {data.description.map((lineText) => (
-          <p key={lineText} className="mt-0.5 text-[10px] leading-4 opacity-95">
-            {lineText}
+        {editingField === 'title' ? (
+          <input
+            ref={editorRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => finishEditing(true)}
+            onKeyDown={handleEditorKeyDown}
+            className="nodrag nowheel mt-1 w-full rounded border border-white/70 bg-white/15 px-1 text-center text-[13px] font-semibold leading-tight text-white outline-none"
+            aria-label="Edit title"
+          />
+        ) : (
+          <p
+            className="mt-1 cursor-text text-[13px] font-semibold leading-tight"
+            title={data.diagramLink ? 'Double-click to open linked diagram' : 'Double-click to edit title'}
+            onDoubleClick={(event) => {
+              if (data.diagramLink) return
+              event.stopPropagation()
+              startEditing('title')
+            }}
+          >
+            {data.title}
           </p>
-        ))}
+        )}
+        {editingField === 'description' ? (
+          <textarea
+            ref={editorRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => finishEditing(true)}
+            onKeyDown={handleEditorKeyDown}
+            rows={Math.max(2, data.description.length)}
+            className="nodrag nowheel mt-1 w-full resize-none rounded border border-white/70 bg-white/15 px-1 text-center text-[10px] leading-4 text-white outline-none"
+            aria-label="Edit description"
+          />
+        ) : (
+          <div
+            className="mt-0.5 cursor-text text-[10px] leading-4 opacity-95"
+            title={data.diagramLink ? 'Double-click to open linked diagram' : 'Double-click to edit description'}
+            onDoubleClick={(event) => {
+              if (data.diagramLink) return
+              event.stopPropagation()
+              startEditing('description')
+            }}
+          >
+            {data.description.map((lineText, index) => (
+              <p key={`${lineText}-${index}`}>{lineText}</p>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

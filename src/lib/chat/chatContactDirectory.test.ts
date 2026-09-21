@@ -283,6 +283,15 @@ describe('genAiAssistantDisplayName', () => {
       ),
     ).toBe('Ask Hari')
   })
+
+  it('uses Smith when an idea session title is only the discussion label', () => {
+    expect(
+      genAiAssistantDisplayName(
+        { assistantName: 'Smith', title: 'Analisis Diagram & Alur' },
+        [],
+      ),
+    ).toBe('Smith')
+  })
 })
 
 describe('conversationAssistantIdForGreet', () => {

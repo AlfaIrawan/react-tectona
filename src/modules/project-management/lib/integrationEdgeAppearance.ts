@@ -34,6 +34,9 @@ export function defaultIntegrationEdgeVisual(): Required<IntegrationEdgeVisualSt
 export function defaultIntegrationEdgeTextStyle(): Required<IntegrationEdgeTextStyle> {
   return {
     ...defaultIntegrationNodeTextStyle(),
+    // C4 notation uses the canvas sans-serif face; edge labels should not inherit the generic node tracking.
+    fontFamily: 'Arial',
+    spacingGlobal: 0,
     position: 'center',
     writingDirection: 'automatic',
     formattedText: true,

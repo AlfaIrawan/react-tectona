@@ -219,6 +219,28 @@ function getV1Base(): string {
   return `${base}/api/tectona-kb/v1`
 }
 
+/**
+ * WebSocket endpoint for Knowledge Base change events.
+ * The Knowledge Base service does not expose a standard event endpoint yet, so this is opt-in
+ * instead of probing a guessed URL and producing repeated 403 handshake errors.
+ */
+export function createTectonaKbEventsWebSocketUrl(options?: { token?: string }): string | null {
+  const rawBase = (import.meta.env.VITE_TECTONA_KB_EVENTS_WS_URL as string | undefined)?.trim()
+  if (!rawBase) return null
+  const url = rawBase.startsWith('ws://') || rawBase.startsWith('wss://')
+    ? new URL(rawBase)
+    : rawBase.startsWith('http://') || rawBase.startsWith('https://')
+      ? new URL(rawBase)
+      : new URL(rawBase, window.location.origin)
+
+  url.protocol = url.protocol === 'https:' ? 'wss:' : url.protocol === 'http:' ? 'ws:' : url.protocol
+  if (!/\/ws\/events\/?$/.test(url.pathname)) {
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/ws/events`
+  }
+  if (options?.token) url.searchParams.set('token', options.token)
+  return url.toString()
+}
+
 async function handleJson<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T
   const text = await res.text()
@@ -267,6 +289,7 @@ export async function listKbEntries(params?: {
   const q = sp.toString()
   const res = await apiFetch(`${base}/entries${q ? `?${q}` : ''}`, {
     headers: tectonaServiceHeaders(),
+    cache: 'no-store',
   })
   return handleJson<KbEntryListResponse>(res)
 }

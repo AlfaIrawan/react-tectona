@@ -6,6 +6,7 @@ import { isCanvasViewport, readOptionalBoolean } from '@/modules/project-managem
 import { parsePlantUmlToIntegrationGraph } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import type { Edge, Node } from 'reactflow'
 import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
+import type { C4ArchitectureReview } from '@/modules/project-management/lib/c4ArchitectureService'
 
 export type RuntimeIntegrationAnalysis = {
   status: 'ok' | 'insufficient_data'
@@ -18,6 +19,7 @@ export type RuntimeIntegrationAnalysis = {
   warnings: string[]
   confidenceScore: number
   correlationId: string
+  architectureReview?: C4ArchitectureReview
 }
 
 export const EMPTY_RUNTIME_INTEGRATION_ANALYSIS: RuntimeIntegrationAnalysis = {
@@ -137,6 +139,14 @@ export function graphRecordFromPersistentIntegration(
   }
 }
 
+function readArchitectureReview(value: unknown): C4ArchitectureReview | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const review = value as Partial<C4ArchitectureReview>
+  return typeof review.status === 'string' && typeof review.version === 'number' && Array.isArray(review.history)
+    ? review as C4ArchitectureReview
+    : undefined
+}
+
 export function buildPersistentIntegrationPayload(
   analysis: RuntimeIntegrationAnalysis,
   graph: IntegrationGraphRecord,
@@ -163,6 +173,7 @@ export function buildPersistentIntegrationPayload(
       user_customized: graph.userCustomized,
       viewport: graph.viewport,
       snap_to_grid: graph.snapToGrid ?? true,
+      architecture_review: analysis.architectureReview,
     },
     status: analysis.status,
     confidence_score: analysis.confidenceScore,
@@ -198,5 +209,6 @@ export function runtimeIntegrationFromPersistent(
       : [],
     confidenceScore: persistent.confidence_score ?? 0,
     correlationId: persistent.source_correlation_id ?? '',
+    architectureReview: readArchitectureReview(json.architecture_review),
   }
 }

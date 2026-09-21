@@ -5,11 +5,14 @@ import type { ArchimateNodeData } from '@/modules/project-management/lib/integra
 export const C4_PALETTE_MIME = 'application/c4-palette'
 export const C4_APPLICATION_CATALOG_MIME = 'application/c4-application-catalog'
 
+const C4_APPLICATION_NAME_PREFIX = /^(?:aplikasi|application|sistem|system|software)\s+/
+
 export type C4ApplicationCatalogItem = {
   name: string
   type: string
   description: string
   classification: 'System' | 'External System'
+  isInactive?: boolean
 }
 
 export type C4PaletteItem = {
@@ -94,6 +97,29 @@ export function createC4NodeFromPaletteItem(
   }
 }
 
+export function normalizeC4ApplicationName(value: string): string {
+  let normalized = value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+  while (C4_APPLICATION_NAME_PREFIX.test(normalized)) {
+    normalized = normalized.replace(C4_APPLICATION_NAME_PREFIX, '').trim()
+  }
+  return normalized
+}
+
+export function findC4ApplicationCatalogMatch(
+  nodeTitle: string,
+  applications: C4ApplicationCatalogItem[],
+): C4ApplicationCatalogItem | undefined {
+  const normalizedTitle = normalizeC4ApplicationName(nodeTitle)
+  if (!normalizedTitle) return undefined
+  return applications.find((application) => normalizeC4ApplicationName(application.name) === normalizedTitle)
+}
+
 export function createC4NodeFromApplicationCatalog(
   application: C4ApplicationCatalogItem,
   position: { x: number; y: number },
@@ -112,6 +138,7 @@ export function createC4NodeFromApplicationCatalog(
       layer: 'application',
       stereotype: c4Stereotype(kind),
       title: application.name,
+      applicationCatalogName: application.name,
       description: [application.description || 'Application Catalog entry'],
       notationId: kind,
       visual: {

@@ -33,6 +33,8 @@ import type {
   IntegrationNodeVisualStyle,
 } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import { isArchimateElementData } from '@/modules/project-management/lib/integrationArchitectureTypes'
+import { C4_PALETTE_ITEMS } from '@/modules/project-management/lib/c4NotationPalette'
+import { c4Stereotype, isC4External, type C4ElementKind } from '@/modules/project-management/lib/c4PlantUml'
 
 type PropertiesTab = 'style' | 'text' | 'arrange'
 
@@ -52,6 +54,7 @@ type IntegrationNodePropertiesPanelProps = {
   onLayerAction: (action: 'front' | 'back' | 'forward' | 'backward') => void
   onRotate90: () => void
   dragHandleProps?: IntegrationPropertiesPanelDragHandleProps
+  c4Mode?: boolean
 }
 
 const PANEL_TAB_CLASS = (active: boolean) =>
@@ -159,6 +162,7 @@ export function IntegrationNodePropertiesPanel({
   onLayerAction,
   onRotate90,
   dragHandleProps,
+  c4Mode = false,
 }: IntegrationNodePropertiesPanelProps) {
   const [tab, setTab] = useState<PropertiesTab>('style')
   const elementData = isArchimateElementData(selectedNode.data) ? selectedNode.data : null
@@ -182,6 +186,28 @@ export function IntegrationNodePropertiesPanel({
 
   const patchElementField = (field: keyof ArchimateElementNodeData, value: string | string[]) => {
     onUpdateData({ [field]: value })
+  }
+
+  const applyC4Notation = (kind: C4ElementKind) => {
+    const item = C4_PALETTE_ITEMS.find((candidate) => candidate.kind === kind)
+    if (!item || !elementData) return
+    const external = isC4External(kind)
+    onUpdateData({
+      stereotype: c4Stereotype(kind),
+      notationId: kind,
+      visual: {
+        ...selectedNode.data.visual,
+        fillEnabled: true,
+        fillColor: item.fill,
+        lineEnabled: true,
+        lineColor: external ? '#8A8A8A' : '#3C7FC0',
+        lineWidth: 1.5,
+        lineStyle: 'solid',
+        rounded: true,
+        shadow: true,
+      },
+    })
+    onUpdateSize(240, kind === 'Person' ? 128 : 120)
   }
 
   const applyPresetColor = (color: string) => {
@@ -278,6 +304,16 @@ export function IntegrationNodePropertiesPanel({
     <div className="space-y-3">
       {elementData ? (
         <div className={PANEL_SECTION_CLASS}>
+          {c4Mode ? (
+            <div className="space-y-1.5">
+              <label className={PANEL_LABEL_CLASS}>Stereotype</label>
+              <Select value={elementData.notationId || ''} onChange={(event) => applyC4Notation(event.target.value as C4ElementKind)} className="h-8 text-sm">
+                {C4_PALETTE_ITEMS.filter((item) => item.kind !== 'boundary').map((item) => (
+                  <option key={item.kind} value={item.kind}>{item.label}</option>
+                ))}
+              </Select>
+            </div>
+          ) : null}
           <div className="space-y-1.5">
             <label className={PANEL_LABEL_CLASS}>Judul</label>
             <Textarea
@@ -287,14 +323,14 @@ export function IntegrationNodePropertiesPanel({
               rows={3}
             />
           </div>
-          <div className="space-y-1.5">
+          {!c4Mode ? <div className="space-y-1.5">
             <label className={PANEL_LABEL_CLASS}>Stereotype</label>
             <Input
               value={elementData.stereotype}
               onChange={(event) => patchElementField('stereotype', event.target.value)}
               className="h-8"
             />
-          </div>
+          </div> : null}
           <div className="space-y-1.5">
             <label className={PANEL_LABEL_CLASS}>Deskripsi</label>
             <Textarea

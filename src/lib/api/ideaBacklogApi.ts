@@ -19,6 +19,85 @@ import { serviceApiBase, tectonaAgentRuntimeApiBase } from './gatewayBase'
 
 const BASE_URL = serviceApiBase('/api/idea-backlog', import.meta.env.VITE_IDEA_BACKLOG_API_URL)
 
+export type DiagramArchitectureReviewApi = {
+  id: string
+  idea_id: string
+  diagram_key: string
+  diagram_version: number
+  status: 'pending' | 'approved' | 'revision_requested' | 'rejected' | 'cancelled' | 'superseded'
+  submitted_by: string
+  reviewer_id?: string | null
+  comment?: string | null
+  snapshot_json: Record<string, unknown>
+  created_at: string
+  decided_at?: string | null
+}
+
+export async function submitDiagramArchitectureReview(
+  ideaId: string,
+  diagramKey: string,
+  payload: { diagram_version: number; comment?: string; snapshot_json?: Record<string, unknown> },
+): Promise<DiagramArchitectureReviewApi> {
+  const response = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/diagrams/${encodeURIComponent(diagramKey)}/reviews`, {
+    method: 'POST', headers: tectonaServiceHeaders(), body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`)
+  return response.json() as Promise<DiagramArchitectureReviewApi>
+}
+
+export async function decideDiagramArchitectureReview(
+  ideaId: string,
+  diagramKey: string,
+  diagramVersion: number,
+  payload: { action: 'approve' | 'revision_requested' | 'reject' | 'cancel'; comment?: string },
+): Promise<DiagramArchitectureReviewApi> {
+  const response = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/diagrams/${encodeURIComponent(diagramKey)}/reviews/${diagramVersion}/decision`, {
+    method: 'POST', headers: tectonaServiceHeaders(), body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`)
+  return response.json() as Promise<DiagramArchitectureReviewApi>
+}
+
+export type DiagramAiDraftAuditApi = {
+  id: string
+  idea_id: string
+  diagram_key: string
+  action: 'requested' | 'applied' | 'discarded' | 'undone'
+  draft_json: Record<string, unknown>
+  before_graph_json?: Record<string, unknown> | null
+  after_graph_json?: Record<string, unknown> | null
+  actor_id: string
+  created_at: string
+}
+
+export async function createDiagramAiDraftAudit(
+  ideaId: string,
+  diagramKey: string,
+  payload: {
+    action: DiagramAiDraftAuditApi['action']
+    draft_json?: Record<string, unknown>
+    before_graph_json?: Record<string, unknown>
+    after_graph_json?: Record<string, unknown>
+  },
+): Promise<DiagramAiDraftAuditApi> {
+  const response = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/diagrams/${encodeURIComponent(diagramKey)}/ai-drafts/audit`, {
+    method: 'POST', headers: tectonaServiceHeaders(), body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`)
+  return response.json() as Promise<DiagramAiDraftAuditApi>
+}
+
+export async function listDiagramAiDraftAudit(
+  ideaId: string,
+  diagramKey: string,
+): Promise<DiagramAiDraftAuditApi[]> {
+  const response = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/diagrams/${encodeURIComponent(diagramKey)}/ai-drafts/audit`, {
+    headers: tectonaServiceHeaders(),
+  })
+  if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`)
+  return response.json() as Promise<DiagramAiDraftAuditApi[]>
+}
+
 // ── Backend status codes ──────────────────────────────────────────────────────
 export type BackendIdeaStatus =
   | 'draft'

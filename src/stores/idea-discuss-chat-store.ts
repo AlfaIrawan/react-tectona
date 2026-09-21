@@ -42,6 +42,11 @@ export function buildIdeaDiscussExtraNotes(binding: IdeaDiscussChatBinding): str
       'Business Value, Effort, Risk, and ROI are official read-only scoring outputs. Do not propose or rewrite those score fields.',
     )
   }
+  if (binding.sectionKey.startsWith('diagram:')) {
+    notes.push(
+      'For a requested C4 diagram change, include exactly one fenced `tectona-diagram-draft` JSON block. Its shape is {"diagramKey":"...","summary":"...","actions":[...]}. Allowed actions are add_node ({"type":"add_node","id":"unique_id","notation":"Person|System|System_Ext|SystemDb|Container|Container_Ext|ContainerDb|Component","title":"...","description":"..."}), update_node ({"type":"update_node","nodeId":"...", optional notation/title/description}), delete_node ({"type":"delete_node","nodeId":"..."}), add_edge ({"type":"add_edge","id":"unique_id","source":"...","target":"...","label":"..."}), and delete_edge ({"type":"delete_edge","edgeId":"..."}). Use only node and edge IDs present in the supplied diagram, except new unique IDs in add actions. The user must explicitly apply the draft before the canvas changes.',
+    )
+  }
   const description = binding.ideaDescription.trim()
   if (description) notes.push(`Idea description: ${description.slice(0, 4000)}`)
   const section = binding.currentSectionContent.trim() || 'No section analysis is available yet.'

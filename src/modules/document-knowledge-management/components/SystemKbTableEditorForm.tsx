@@ -43,10 +43,10 @@ type SystemKbTableEditorFormProps = {
 }
 
 const APPLICATION_TYPE_OPTIONS = ['Mobile', 'Web', 'Desktop'] as const
-const APPLICATION_REQUIRED_FIELDS = new Set(['name', 'type', 'description', 'owner'])
+const APPLICATION_REQUIRED_FIELDS = new Set(['name', 'type', 'description'])
 
 function createApplicationDraft(columns: Array<{ key: string }>) {
-  return { ...Object.fromEntries(columns.map((column) => [column.key, ''])), status: 'Inactive' }
+  return { ...Object.fromEntries(columns.map((column) => [column.key, ''])), status: 'Active' }
 }
 
 function parseApplicationTypes(value: string | undefined): Set<string> {
@@ -421,7 +421,7 @@ export function SystemKbTableEditorForm({ model, onChange, onScanApplications }:
                   <Save className="mr-2 h-4 w-4" aria-hidden />
                   Save & add more
                 </Button>
-                <Button type="button" className="h-10 min-w-0 basis-0 flex-1 justify-center" onClick={saveApplication}>
+                <Button type="button" className="h-10 min-w-0 basis-0 flex-1 justify-center" onClick={() => saveApplication()}>
                   <Save className="mr-2 h-4 w-4" aria-hidden />
                   Save & close
                 </Button>

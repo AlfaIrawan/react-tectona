@@ -211,6 +211,7 @@ export default defineConfig({
       '/api/tectona-kb': {
         target: 'http://localhost:8415',
         changeOrigin: true,
+        ws: true,
       },
       '/api/tectona-knowledge-index': {
         target: 'http://localhost:8417',

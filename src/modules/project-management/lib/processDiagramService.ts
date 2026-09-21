@@ -3,6 +3,7 @@ import type { AnalyzeIdeaProcessResponse, ProcessSubTask } from '@/lib/api/tecto
 import type { IdeaProcessDiagramPersistent } from '@/lib/api/ideaBacklogApi'
 import { isCanvasViewport, readOptionalBoolean, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
 import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
+import type { C4ArchitectureReview } from '@/modules/project-management/lib/c4ArchitectureService'
 
 export type ProcessCanvasGraph = {
   nodes: Node<ArchimateNodeData>[]
@@ -25,6 +26,7 @@ export type RuntimeProcessDiagramAnalysis = {
   confidenceScore: number
   correlationId: string
   canvasGraph?: ProcessCanvasGraph
+  architectureReview?: C4ArchitectureReview
 }
 
 export function emptyRuntimeProcessDiagramAnalysis(): RuntimeProcessDiagramAnalysis {
@@ -72,6 +74,14 @@ function canvasGraphFromJson(json: Record<string, unknown>, source: string): Pro
   }
 }
 
+function readArchitectureReview(value: unknown): C4ArchitectureReview | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const review = value as Partial<C4ArchitectureReview>
+  return typeof review.status === 'string' && typeof review.version === 'number' && Array.isArray(review.history)
+    ? review as C4ArchitectureReview
+    : undefined
+}
+
 export function runtimeProcessDiagramFromPersistent(
   persistent: IdeaProcessDiagramPersistent,
 ): RuntimeProcessDiagramAnalysis {
@@ -94,6 +104,7 @@ export function runtimeProcessDiagramFromPersistent(
     confidenceScore: persistent.confidence_score ?? 0,
     correlationId: persistent.source_correlation_id ?? '',
     canvasGraph: canvasGraphFromJson(json, plantumlSource || bpmnXml),
+    architectureReview: readArchitectureReview(json.architecture_review),
   }
 }
 
@@ -124,6 +135,7 @@ export function buildPersistentProcessDiagramPayload(
       viewport: graph?.viewport,
       user_customized: Boolean(graph?.userCustomized),
       snap_to_grid: graph?.snapToGrid ?? true,
+      architecture_review: analysis.architectureReview,
     },
     status: analysis.status,
     confidence_score: analysis.confidenceScore,

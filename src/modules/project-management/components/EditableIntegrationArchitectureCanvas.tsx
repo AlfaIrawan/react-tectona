@@ -172,6 +172,7 @@ function EditableIntegrationArchitectureCanvasInner({
   const [viewMode, setViewMode] = useState<IntegrationViewMode>('canvas')
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>('source')
   const [canvasMenu, setCanvasMenu] = useState<CanvasContextMenuState | null>(null)
+  const [hasPasteableContent, setHasPasteableContent] = useState(false)
   const [showGrid, setShowGrid] = useState(true)
   const [showGuides, setShowGuides] = useState(true)
   const [snapToGrid, setSnapToGrid] = useState(initialState.snapToGrid ?? true)
@@ -182,6 +183,7 @@ function EditableIntegrationArchitectureCanvasInner({
   const [isStudioPanelDragging, setIsStudioPanelDragging] = useState(false)
   const [isStudioPanelCollapsed, setIsStudioPanelCollapsed] = useState(false)
   const [propertiesPanelPosition, setPropertiesPanelPosition] = useState<{ x: number; y: number } | null>(null)
+  const [isPropertiesPanelOpen, setIsPropertiesPanelOpen] = useState(false)
   const [isPropertiesPanelDragging, setIsPropertiesPanelDragging] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
@@ -571,6 +573,7 @@ function EditableIntegrationArchitectureCanvasInner({
     ({ nodes: selectedNodes, edges: selectedEdges }) => {
       setSelectedNodeId(selectedNodes[0]?.id ?? null)
       setSelectedEdgeId(selectedEdges[0]?.id ?? null)
+      setIsPropertiesPanelOpen(false)
     },
     [],
   )
@@ -977,9 +980,23 @@ function EditableIntegrationArchitectureCanvasInner({
     [fillHeight, markCustomized, nodes, screenToFlowPosition, setNodes],
   )
 
+  const refreshPasteAvailability = useCallback(async () => {
+    if (!navigator.clipboard?.readText) {
+      setHasPasteableContent(false)
+      return
+    }
+    try {
+      const source = await navigator.clipboard.readText()
+      setHasPasteableContent(parsePlantUmlToIntegrationGraph(source).nodes.length > 0)
+    } catch {
+      setHasPasteableContent(false)
+    }
+  }, [])
+
   const handlePaneContextMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault()
+      void refreshPasteAvailability()
       const wrapper = reactFlowWrapperRef.current
       if (!wrapper) return
       const bounds = wrapper.getBoundingClientRect()
@@ -990,8 +1007,20 @@ function EditableIntegrationArchitectureCanvasInner({
         submenu: null,
       })
     },
-    [screenToFlowPosition],
+    [refreshPasteAvailability, screenToFlowPosition],
   )
+
+  const handleNodeContextMenu = useCallback((event: React.MouseEvent, node: Node<ArchimateNodeData>) => {
+    event.preventDefault()
+    const wrapper = reactFlowWrapperRef.current
+    if (!wrapper) return
+    const bounds = wrapper.getBoundingClientRect()
+    setNodes((current) => current.map((item) => ({ ...item, selected: item.id === node.id })))
+    setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
+    setSelectedNodeId(node.id)
+    setSelectedEdgeId(null)
+    setCanvasMenu({ x: Math.min(event.clientX - bounds.left, bounds.width - 280), y: Math.min(event.clientY - bounds.top, bounds.height - 280), flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }), submenu: null })
+  }, [screenToFlowPosition, setEdges, setNodes])
 
   const selectCanvasElements = useCallback(
     (kind: 'nodes' | 'edges' | 'all') => {
@@ -1061,8 +1090,9 @@ function EditableIntegrationArchitectureCanvasInner({
     }
   }, [canvasMenu, markCustomized, setEdges, setNodes])
 
-  const copyCanvasAsImage = useCallback(async () => {
-    const drawableNodes = nodes.filter((node) => node.type !== 'archimateLegend')
+  const copyCanvasAsImage = useCallback(async (nodeIds: string[]) => {
+    const selectedIds = new Set(nodeIds)
+    const drawableNodes = nodes.filter((node) => selectedIds.has(node.id) && node.type !== 'archimateLegend')
     if (drawableNodes.length === 0) return
     const dimensions = (node: Node<ArchimateNodeData>) => ({
       width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 180),
@@ -1182,7 +1212,7 @@ function EditableIntegrationArchitectureCanvasInner({
   ]
 
   const studioMode = fillHeight
-  const hasSelectionInspector = selectedElementCount === 1
+  const hasSelectionInspector = isPropertiesPanelOpen && selectedElementCount === 1
     && (Boolean(selectedNode && selectedNode.type !== 'archimateLegend') || Boolean(selectedEdgeId))
 
   useEffect(() => {
@@ -1229,6 +1259,11 @@ function EditableIntegrationArchitectureCanvasInner({
       />
     ) : null
 
+  const selectedImageNodeIds = nodes
+    .filter((node) => node.selected && node.type !== 'archimateLegend')
+    .map((node) => node.id)
+  const canCopySelectedNodesAsImage = selectedImageNodeIds.length > 0
+
   const flowCanvas = (
     <IntegrationArchitectureFlow
       key={ideaId}
@@ -1242,6 +1277,7 @@ function EditableIntegrationArchitectureCanvasInner({
       onSelectionChange={handleSelectionChange}
       onPaneClick={() => setCanvasMenu(null)}
       onPaneContextMenu={handlePaneContextMenu}
+      onNodeContextMenu={handleNodeContextMenu}
       showGrid={showGrid}
       showGuides={showGuides}
       snapToGrid={snapToGrid}
@@ -1260,10 +1296,11 @@ function EditableIntegrationArchitectureCanvasInner({
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={pastePlantUmlAtCursor}>
+      {selectedNodeId ? <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setCanvasMenu(null) }}><Paintbrush className="h-4 w-4" /> Styles &amp; formatting</button> : null}
+      <button type="button" disabled={!hasPasteableContent} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', hasPasteableContent ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={pastePlantUmlAtCursor}>
         <Copy className="h-4 w-4" /> Paste here
       </button>
-      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={copyCanvasAsImage}>
+      <button type="button" disabled={!canCopySelectedNodesAsImage} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', canCopySelectedNodesAsImage ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={() => void copyCanvasAsImage(selectedImageNodeIds)}>
         <ImageDown className="h-4 w-4" /> Copy as image
       </button>
       <div className="my-1 border-t border-slate-200" />
@@ -1281,10 +1318,6 @@ function EditableIntegrationArchitectureCanvasInner({
         <span className="flex items-center gap-2"><ListChecks className="h-4 w-4" /> Select all</span><span className="text-xs text-slate-400">Ctrl+A</span>
       </button>
       <div className="my-1 border-t border-slate-200" />
-      <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setSnapToGrid((current) => !current)}>
-        <span className="flex items-center gap-2"><Magnet className="h-4 w-4" /> Snap to grid</span>
-        <span className="w-4 text-sky-500">{snapToGrid ? <Check className="h-4 w-4" /> : null}</span>
-      </button>
       <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'options' } : current)}>
         <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
           <span className="flex items-center gap-2"><Settings2 className="h-4 w-4" /> Options</span><ChevronRight className="h-4 w-4" />

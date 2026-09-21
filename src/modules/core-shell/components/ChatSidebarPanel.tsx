@@ -240,6 +240,7 @@ import {
   buildIdeaDiscussExtraNotes,
   type IdeaDiscussChatBinding,
 } from '@/stores/idea-discuss-chat-store'
+import { parseDiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
 import { useChatNavigationStore, type OpenChatThreadRequest } from '@/stores/chat-navigation-store'
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
 import { pushGlobalToast } from '@/components/ui/toast'
@@ -4002,6 +4003,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               ...match,
               mode: 'genai',
               title: ideaTitle,
+              // Idea/diagram titles are session labels, never assistant personas.
+              assistantName: TECTONA_ASSISTANT_LABEL,
               unreadCount: 0,
               archived: false,
             }
@@ -4009,6 +4012,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               id: conversationId,
               mode: 'genai',
               title: ideaTitle,
+              assistantName: TECTONA_ASSISTANT_LABEL,
               preview: 'No messages yet',
               updatedAt: Date.now(),
               unreadCount: 0,
@@ -4757,16 +4761,23 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         ],
       }))
       try {
+        const contextIdeaBinding = useIdeaDiscussChatStore.getState().binding
         const runtimeUiContext = extendUiContextWithAttachmentNotes(
-          uiContext ??
-            buildTectonaUiContextForChat({
-              pathname: location.pathname,
-              search: location.search,
-              chatPanelOpen: true,
-              chatScreen: screen,
-              activeConversationTitle: conv?.title ?? null,
-              activeConversationMode: conv?.mode ?? null,
-            }),
+          {
+            ...(uiContext ??
+              buildTectonaUiContextForChat({
+                pathname: location.pathname,
+                search: location.search,
+                chatPanelOpen: true,
+                chatScreen: screen,
+                activeConversationTitle: conv?.title ?? null,
+                activeConversationMode: conv?.mode ?? null,
+              })),
+            extra_notes: [
+              ...(uiContext?.extra_notes ?? []),
+              ...(contextIdeaBinding?.conversationId === conversationId ? buildIdeaDiscussExtraNotes(contextIdeaBinding) : []),
+            ],
+          },
           {
             manualAttachmentCount,
             hasAutoEvidence: Boolean(autoEvidenceAttachment),
@@ -4852,6 +4863,11 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
         if (runtime.context_usage) {
           setLastGenAiContextUsage(runtime.context_usage)
+        }
+
+        const diagramDraft = parseDiagramChatDraft(runtime.answer)
+        if (diagramDraft && contextIdeaBinding?.conversationId === conversationId) {
+          window.dispatchEvent(new CustomEvent('tectona:diagram-chat-draft', { detail: diagramDraft }))
         }
 
         const proposedActions = runtime.proposed_actions ?? []

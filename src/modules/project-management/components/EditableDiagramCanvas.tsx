@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { AppWindow, ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, ExternalLink, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, Link2, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Scissors, Settings2, Trash2, Unlink, Waypoints } from 'lucide-react'
+import { AppWindow, ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, ExternalLink, Grid3X3, GripVertical, History, ImageDown, Layers, LayoutTemplate, Link2, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, RotateCcw, Ruler, Scissors, Settings2, Trash2, Unlink, Waypoints } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
@@ -26,18 +26,24 @@ import { IntegrationArchitectureFlow } from '@/modules/project-management/compon
 import { IntegrationNodePropertiesPanel } from '@/modules/project-management/components/IntegrationNodePropertiesPanel'
 import { PlantUmlSourceEditor } from '@/modules/project-management/components/PlantUmlSourceEditor'
 import { BPMN_PALETTE_MIME, createBpmnNodeFromPaletteItem, type BpmnPaletteItem } from '@/modules/project-management/lib/bpmnNotationPalette'
-import { C4_APPLICATION_CATALOG_MIME, C4_PALETTE_MIME, createC4NodeFromApplicationCatalog, createC4NodeFromPaletteItem, type C4ApplicationCatalogItem, type C4PaletteItem } from '@/modules/project-management/lib/c4NotationPalette'
+import { C4_APPLICATION_CATALOG_MIME, C4_PALETTE_MIME, C4_PALETTE_ITEMS, createC4NodeFromApplicationCatalog, createC4NodeFromPaletteItem, findC4ApplicationCatalogMatch, type C4ApplicationCatalogItem, type C4PaletteItem } from '@/modules/project-management/lib/c4NotationPalette'
+import { type DiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
 import { isArchimateElementData, type ArchimateElementNodeData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, parseC4Graph, serializeC4Graph, type C4ElementKind, type C4ParsedGraph } from '@/modules/project-management/lib/c4PlantUml'
 import { isCanvasViewport, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
+import { resolveEdgeTextStyle } from '@/modules/project-management/lib/integrationEdgeAppearance'
 import { defaultIntegrationNodeTextStyle, defaultIntegrationNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
 import { pickCenteredAnchoredHandles, type NodeGeometry } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import { parseBpmnSource, serializeBpmnCanvasToPlantUml, toBpmnEditorSource } from '@/modules/project-management/lib/bpmnPlantUml'
 import { bpmnDefaultLineColor, bpmnNodeSizeForType, isBpmnSquareShape } from '@/modules/project-management/lib/bpmnNotationSpec'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
+import { subscribeToApplicationCatalogChanges } from '@/lib/kb/applicationCatalogRealtime'
 import { parseSystemKbTableContent } from '@/lib/kb/systemKbTableEditor'
 import { belongsToActiveWorkspaceScope, buildWorkspaceScopeFromTenant } from '@/lib/tenantWorkspaceScope'
+import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
+import { requestOpenIdeaDiscussChat } from '@/stores/chat-navigation-store'
+import { createDiagramAiDraftAudit, listDiagramAiDraftAudit, type DiagramAiDraftAuditApi } from '@/lib/api/ideaBacklogApi'
 import { jsPDF } from 'jspdf'
 
 type DiagramFormat = 'plantuml' | 'bpmn' | 'c4'
@@ -60,6 +66,23 @@ type StudioPanelResizeEdge = 'e' | 's' | 'se'
 type PropertiesPanelResizeEdge = 'e' | 's' | 'se' | 'w' | 'sw'
 const NODE_WIDTH = 210
 const NODE_HEIGHT = 78
+
+function chatAuditLabel(action: DiagramAiDraftAuditApi['action']): string {
+  return { requested: 'Draft requested', applied: 'Draft applied', discarded: 'Draft discarded', undone: 'Batch undone' }[action]
+}
+
+function chatAuditSnapshotSummary(snapshot: Record<string, unknown> | null | undefined): string | null {
+  if (!snapshot) return null
+  const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes.length : null
+  const edges = Array.isArray(snapshot.edges) ? snapshot.edges.length : null
+  return nodes !== null && edges !== null ? `${nodes} notation, ${edges} connection` : null
+}
+
+function chatAuditDraftSummary(draft: Record<string, unknown>): string | null {
+  if (typeof draft.summary === 'string' && draft.summary.trim()) return draft.summary.trim()
+  const actions = Array.isArray(draft.actions) ? draft.actions.length : 0
+  return actions ? `${actions} proposed change${actions === 1 ? '' : 's'}` : null
+}
 
 function bpmnStereotype(type: string): string {
   if (type === 'startEvent') return 'Start Event'
@@ -594,6 +617,12 @@ type C4NodeContextMenuState = {
   submenu?: 'order'
 }
 
+type EdgeContextMenuState = {
+  edgeId: string
+  x: number
+  y: number
+}
+
 type EditableDiagramCanvasProps = {
   ideaId: string
   diagramKey: string
@@ -676,6 +705,7 @@ function EditableDiagramCanvasInner({
   const applicationCatalogScope = useMemo(() => tenant ? buildWorkspaceScopeFromTenant(tenant) : null, [tenant])
   const [applicationCatalog, setApplicationCatalog] = useState<C4ApplicationCatalogItem[]>([])
   const [applicationCatalogLoading, setApplicationCatalogLoading] = useState(false)
+  const [applicationCatalogLoaded, setApplicationCatalogLoaded] = useState(false)
   const viewportRef = useRef<CanvasViewport | undefined>(initial.viewport)
   const [savedViewport, setSavedViewport] = useState<CanvasViewport | undefined>(initial.viewport)
   const [isStudioPanelCollapsed, setIsStudioPanelCollapsed] = useState(false)
@@ -683,12 +713,22 @@ function EditableDiagramCanvasInner({
   const [studioPanelSize, setStudioPanelSize] = useState({ width: STUDIO_PANEL_DEFAULT_WIDTH_PX, height: 0 })
   const [propertiesPanelPosition, setPropertiesPanelPosition] = useState<{ x: number; y: number } | null>(null)
   const [propertiesPanelSize, setPropertiesPanelSize] = useState({ width: STUDIO_PANEL_DEFAULT_WIDTH_PX, height: 0 })
+  const [isPropertiesPanelOpen, setIsPropertiesPanelOpen] = useState(false)
   const [isStudioPanelDragging, setIsStudioPanelDragging] = useState(false)
   const [isStudioPanelResizing, setIsStudioPanelResizing] = useState(false)
   const [isPropertiesPanelDragging, setIsPropertiesPanelDragging] = useState(false)
   const [isPropertiesPanelResizing, setIsPropertiesPanelResizing] = useState(false)
   const [canvasMenu, setCanvasMenu] = useState<CanvasContextMenuState | null>(null)
+  const [hasPasteableContent, setHasPasteableContent] = useState(false)
+  const [edgeContextMenu, setEdgeContextMenu] = useState<EdgeContextMenuState | null>(null)
   const [c4NodeMenu, setC4NodeMenu] = useState<C4NodeContextMenuState | null>(null)
+  const [pendingChatDraft, setPendingChatDraft] = useState<DiagramChatDraft | null>(null)
+  const [lastAppliedChatDraft, setLastAppliedChatDraft] = useState<{ draft: DiagramChatDraft; before: { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source: string } } | null>(null)
+  const [isChatAuditOpen, setIsChatAuditOpen] = useState(false)
+  const [chatAudit, setChatAudit] = useState<DiagramAiDraftAuditApi[]>([])
+  const [chatAuditLoading, setChatAuditLoading] = useState(false)
+  const [pendingAuditWrite, setPendingAuditWrite] = useState<Parameters<typeof createDiagramAiDraftAudit>[2] | null>(null)
+  const [chatAuditWriteError, setChatAuditWriteError] = useState<string | null>(null)
   const [c4LinkPickerNodeId, setC4LinkPickerNodeId] = useState<string | null>(null)
   const [selectedC4DrilldownKey, setSelectedC4DrilldownKey] = useState<string | null>(null)
   const [defaultElementStyle, setDefaultElementStyle] = useState<Pick<ArchimateElementNodeData, 'visual' | 'textStyle'> | null>(null)
@@ -728,40 +768,89 @@ function EditableDiagramCanvasInner({
   const appliedStorageKeyRef = useRef<string | null>(null)
   const nodeClipboardRef = useRef<Node<ArchimateNodeData> | null>(null)
   const appliedSavedGraphRef = useRef(false)
+  const applicationCatalogRequestRef = useRef(0)
 
-  useEffect(() => {
+  const loadApplicationCatalog = useCallback(async () => {
     if (format !== 'c4' || c4Level !== 'L1') return
-    let active = true
+    const requestId = ++applicationCatalogRequestRef.current
     setApplicationCatalogLoading(true)
-    void listAllKbEntries()
-      .then(({ items }) => {
-        if (!active) return
-        const seen = new Set<string>()
-        const applications: C4ApplicationCatalogItem[] = []
-        items
-          .filter((entry) => entry.is_active && entry.category === 'application_catalog')
-          .filter((entry) => !applicationCatalogScope || belongsToActiveWorkspaceScope(entry.workspace_id, applicationCatalogScope))
-          .forEach((entry) => {
-            const catalog = parseSystemKbTableContent(entry.title, entry.content)
-            if (catalog?.specId !== 'aplikasi') return
-            catalog.rows.forEach((row) => {
-              const name = row.name?.trim()
-              if (!name || row.status === 'Inactive' || seen.has(name.toLowerCase())) return
-              seen.add(name.toLowerCase())
-              applications.push({
-                name,
-                type: row.type?.trim() || 'Application',
-                description: row.description?.trim() || '',
-                classification: 'System',
-              })
+    setApplicationCatalogLoaded(false)
+    try {
+      const [{ items }, workspaces] = await Promise.all([
+        listAllKbEntries(),
+        fetchAllWorkspaceOrgWorkspacesCached().catch(() => []),
+      ])
+      const workspaceIdByKey = new Map(
+        workspaces.map((workspace) => [workspace.workspace_key.trim().toLowerCase(), workspace.id]),
+      )
+      const seen = new Set<string>()
+      const applications: C4ApplicationCatalogItem[] = []
+      items
+        .filter((entry) => entry.is_active && entry.category === 'application_catalog')
+        .filter((entry) => {
+          if (!applicationCatalogScope || !entry.workspace_id) {
+            return !applicationCatalogScope || belongsToActiveWorkspaceScope(entry.workspace_id, applicationCatalogScope)
+          }
+          const workspaceId = workspaceIdByKey.get(entry.workspace_id.trim().toLowerCase()) ?? entry.workspace_id
+          return belongsToActiveWorkspaceScope(workspaceId, applicationCatalogScope)
+        })
+        .forEach((entry) => {
+          const catalog = parseSystemKbTableContent(entry.title, entry.content)
+          if (catalog?.specId !== 'aplikasi') return
+          catalog.rows.forEach((row) => {
+            const name = row.name?.trim()
+            if (!name || seen.has(name.toLowerCase())) return
+            seen.add(name.toLowerCase())
+            applications.push({
+              name,
+              type: row.type?.trim() || 'Application',
+              description: row.description?.trim() || '',
+              classification: 'External System',
+              isInactive: row.status === 'Inactive',
             })
           })
+        })
+      if (requestId === applicationCatalogRequestRef.current) {
         setApplicationCatalog(applications.sort((left, right) => left.name.localeCompare(right.name)))
-      })
-      .catch(() => { if (active) setApplicationCatalog([]) })
-      .finally(() => { if (active) setApplicationCatalogLoading(false) })
-    return () => { active = false }
+        setApplicationCatalogLoaded(true)
+      }
+    } catch {
+      // Keep the last successful catalog visible while an API request is temporarily unavailable.
+    } finally {
+      if (requestId === applicationCatalogRequestRef.current) setApplicationCatalogLoading(false)
+    }
   }, [applicationCatalogScope, c4Level, format])
+
+  useEffect(() => {
+    void loadApplicationCatalog()
+    return () => {
+      applicationCatalogRequestRef.current += 1
+    }
+  }, [loadApplicationCatalog])
+
+  useEffect(() => subscribeToApplicationCatalogChanges(() => {
+    void loadApplicationCatalog()
+  }), [loadApplicationCatalog])
+
+  useEffect(() => {
+    if (format !== 'c4' || c4Level !== 'L1' || applicationCatalogLoading || !applicationCatalogLoaded) return
+    setNodes((current) => {
+      let changed = false
+      const next = current.map((node) => {
+        if (node.type !== 'c4Element' || node.data.kind !== 'element') return node
+        const isSystem = node.data.notationId === 'System' || node.data.notationId === 'System_Ext'
+        const match = isSystem ? findC4ApplicationCatalogMatch(node.data.title, applicationCatalog) : undefined
+        const applicationCatalogName = match?.name
+        if (node.data.applicationCatalogName === applicationCatalogName) return node
+        changed = true
+        const data = { ...node.data }
+        if (applicationCatalogName) data.applicationCatalogName = applicationCatalogName
+        else delete data.applicationCatalogName
+        return { ...node, data }
+      })
+      return changed ? next : current
+    })
+  }, [applicationCatalog, applicationCatalogLoaded, applicationCatalogLoading, c4Level, format, nodes, setNodes])
 
   const applyDefaultElementStyle = useCallback((node: Node<ArchimateNodeData>): Node<ArchimateNodeData> => {
     if (!defaultElementStyle || node.data.kind !== 'element') return node
@@ -908,13 +997,16 @@ function EditableDiagramCanvasInner({
   const handleSelectionChange = useCallback<OnSelectionChangeFunc>(({ nodes: selectedNodes, edges: selectedEdges }) => {
     setSelectedNodeId(selectedNodes[0]?.id ?? null)
     setSelectedEdgeId(selectedEdges[0]?.id ?? null)
+    setIsPropertiesPanelOpen(false)
   }, [])
 
   const clearCanvasSelection = useCallback(() => {
     setCanvasMenu(null)
     setC4NodeMenu(null)
+    setEdgeContextMenu(null)
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
+    setIsPropertiesPanelOpen(false)
     setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
     setEdges((current) => current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)))
   }, [setEdges, setNodes])
@@ -922,8 +1014,27 @@ function EditableDiagramCanvasInner({
   const handleEdgeClick = useCallback((_event: MouseEvent, edge: Edge) => {
     setSelectedEdgeId(edge.id)
     setSelectedNodeId(null)
+    setIsPropertiesPanelOpen(false)
     setNodes((current) => current.map((node) => ({ ...node, selected: false })))
     setEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
+  }, [setEdges, setNodes])
+
+  const handleEdgeContextMenu = useCallback((event: ReactMouseEvent | MouseEvent, edge: Edge) => {
+    event.preventDefault()
+    const wrapper = reactFlowWrapperRef.current
+    if (!wrapper) return
+    const bounds = wrapper.getBoundingClientRect()
+    setCanvasMenu(null)
+    setC4NodeMenu(null)
+    setNodes((current) => current.map((node) => ({ ...node, selected: false })))
+    setEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
+    setSelectedNodeId(null)
+    setSelectedEdgeId(edge.id)
+    setEdgeContextMenu({
+      edgeId: edge.id,
+      x: Math.min(event.clientX - bounds.left, bounds.width - 260),
+      y: Math.min(event.clientY - bounds.top, bounds.height - 300),
+    })
   }, [setEdges, setNodes])
 
   const handlePaletteDragStart = useCallback((event: DragEvent<HTMLButtonElement>, item: C4PaletteItem) => {
@@ -1146,6 +1257,21 @@ function EditableDiagramCanvasInner({
     ))))
   }, [nodes, selectedEdgeId, setEdges])
 
+  const reverseSelectedEdge = useCallback(() => {
+    if (!selectedEdgeId) return
+    setEdges((current) => withFacingHandles(nodes, current.map((edge) => (
+      edge.id === selectedEdgeId
+        ? { ...edge, source: edge.target, target: edge.source, sourceHandle: edge.targetHandle, targetHandle: edge.sourceHandle }
+        : edge
+    ))))
+    setEdgeContextMenu(null)
+  }, [nodes, selectedEdgeId, setEdges])
+
+  const openSelectedEdgeProperties = useCallback(() => {
+    setIsPropertiesPanelOpen(true)
+    setEdgeContextMenu(null)
+  }, [])
+
   const applySource = useCallback((next: string) => {
     const normalized = format === 'c4'
       ? normalizeC4PlantUml(next, c4LevelFromDiagramKey(diagramKey))
@@ -1222,6 +1348,7 @@ function EditableDiagramCanvasInner({
     const node = nodes.find((item) => item.id === nodeId)
     if (!node) return
     nodeClipboardRef.current = structuredClone(node)
+    setHasPasteableContent(true)
     setC4NodeMenu(null)
   }, [nodes])
 
@@ -1274,9 +1401,28 @@ function EditableDiagramCanvasInner({
     setC4NodeMenu(null)
   }, [nodes])
 
+  const refreshPasteAvailability = useCallback(async () => {
+    if (nodeClipboardRef.current) {
+      setHasPasteableContent(true)
+      return
+    }
+    if (!navigator.clipboard?.readText) {
+      setHasPasteableContent(false)
+      return
+    }
+    try {
+      const source = await navigator.clipboard.readText()
+      const parsed = parseSource(format === 'c4' ? normalizeC4PlantUml(source, c4Level) : source, format)
+      setHasPasteableContent(parsed.nodes.length > 0)
+    } catch {
+      setHasPasteableContent(false)
+    }
+  }, [c4Level, format])
+
   const handlePaneContextMenu = useCallback((event: ReactMouseEvent | MouseEvent) => {
     event.preventDefault()
     setC4NodeMenu(null)
+    void refreshPasteAvailability()
     const wrapper = reactFlowWrapperRef.current
     if (!wrapper) return
     const bounds = wrapper.getBoundingClientRect()
@@ -1286,7 +1432,7 @@ function EditableDiagramCanvasInner({
       flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
       submenu: null,
     })
-  }, [screenToFlowPosition])
+  }, [refreshPasteAvailability, screenToFlowPosition])
 
   const handleNodeContextMenu = useCallback((event: ReactMouseEvent | MouseEvent, node: Node<ArchimateNodeData>) => {
     event.preventDefault()
@@ -1294,6 +1440,7 @@ function EditableDiagramCanvasInner({
     if (!wrapper) return
     const bounds = wrapper.getBoundingClientRect()
     setCanvasMenu(null)
+    setEdgeContextMenu(null)
     setNodes((current) => current.map((item) => ({ ...item, selected: item.id === node.id })))
     setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
     setSelectedNodeId(node.id)
@@ -1304,6 +1451,192 @@ function EditableDiagramCanvasInner({
       y: Math.min(event.clientY - bounds.top, bounds.height - 360),
     })
   }, [setEdges, setNodes])
+
+  const handleNodeDoubleClick = useCallback((event: ReactMouseEvent | MouseEvent, node: Node<ArchimateNodeData>) => {
+    if (format !== 'c4' || !isArchimateElementData(node.data) || !node.data.diagramLink) return
+    event.preventDefault()
+    onOpenC4Drilldown?.(node.data.diagramLink)
+  }, [format, onOpenC4Drilldown])
+
+  const openNodeProperties = useCallback(() => {
+    setIsPropertiesPanelOpen(true)
+    setC4NodeMenu(null)
+  }, [])
+
+  const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>) => {
+    const selected = node ?? nodes.find((item) => item.selected && item.data.kind === 'element')
+    const selectedSummary = selected && selected.data.kind === 'element'
+      ? `Selected notation: ${selected.data.title} (<<${selected.data.stereotype}>>). Description: ${selected.data.description.join(' ') || 'none'}.`
+      : 'No notation is selected.'
+    const selectedEdge = edges.find((item) => item.selected)
+    const selectionContext = [
+      selected ? `Selected notation ID: ${selected.id}.` : null,
+      selectedEdge ? `Selected connection ID: ${selectedEdge.id}; source: ${selectedEdge.source}; target: ${selectedEdge.target}; label: ${String(selectedEdge.label ?? '')}.` : null,
+    ].filter(Boolean).join('\n')
+    requestOpenIdeaDiscussChat({
+      ideaId,
+      ideaTitle: `${diagramKey} diagram`,
+      sectionKey: `diagram:${diagramKey}`,
+      sectionLabel: `C4 diagram ${diagramKey}`,
+      ideaDescription: 'Architecture diagram editing session.',
+      currentSectionContent: `Target diagram key: ${diagramKey}\n${selectedSummary}\n${selectionContext}\n\nCurrent C4 source:\n${sourceDraft.slice(0, 12000)}`,
+    })
+    setCanvasMenu(null)
+    setC4NodeMenu(null)
+  }, [diagramKey, edges, ideaId, nodes, sourceDraft])
+
+  const recordChatAudit = useCallback(async (payload: Parameters<typeof createDiagramAiDraftAudit>[2]) => {
+    try {
+      await createDiagramAiDraftAudit(ideaId, diagramKey, payload)
+      setChatAuditWriteError(null)
+      setPendingAuditWrite(null)
+    } catch {
+      setPendingAuditWrite(payload)
+      setChatAuditWriteError('AI activity could not be saved to the audit trail.')
+    }
+  }, [diagramKey, ideaId])
+
+  useEffect(() => {
+    const receiveDraft = (event: Event) => {
+      const draft = (event as CustomEvent<DiagramChatDraft>).detail
+      if (format === 'c4' && draft?.diagramKey === diagramKey) {
+        setPendingChatDraft(draft)
+        void recordChatAudit({ action: 'requested', draft_json: { ...draft } })
+      }
+    }
+    window.addEventListener('tectona:diagram-chat-draft', receiveDraft)
+    return () => window.removeEventListener('tectona:diagram-chat-draft', receiveDraft)
+  }, [diagramKey, format, recordChatAudit])
+
+  const applyChatDraft = useCallback(() => {
+    if (!pendingChatDraft) return
+    let nextNodes = [...nodes]
+    let nextEdges = [...edges]
+    const usedNodeIds = new Set(nextNodes.map((node) => node.id))
+    const usedEdgeIds = new Set(nextEdges.map((edge) => edge.id))
+    const origin = canvasCenterPosition()
+    const actionPosition = (index: number) => ({ x: origin.x + (index % 3) * 280, y: origin.y + Math.floor(index / 3) * 160 })
+    pendingChatDraft.actions.forEach((action, index) => {
+      if (action.type === 'add_node') {
+        if (usedNodeIds.has(action.id)) return
+        const item = C4_PALETTE_ITEMS.find((candidate) => candidate.kind === action.notation)
+        if (!item) return
+        const node = applyDefaultElementStyle(createC4NodeFromPaletteItem(item, actionPosition(index), usedNodeIds))
+        nextNodes.push({ ...node, id: action.id, data: { ...node.data, title: action.title, ...(action.description ? { description: [action.description] } : {}) } })
+        usedNodeIds.add(action.id)
+      } else if (action.type === 'update_node') {
+        nextNodes = nextNodes.map((node) => {
+          if (node.id !== action.nodeId || node.data.kind !== 'element') return node
+          const item = action.notation ? C4_PALETTE_ITEMS.find((candidate) => candidate.kind === action.notation) : undefined
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              ...(action.title ? { title: action.title } : {}),
+              ...(action.description ? { description: [action.description] } : {}),
+              ...(item ? { notationId: item.kind, stereotype: c4Stereotype(item.kind), visual: { ...node.data.visual, fillColor: item.fill, lineColor: isC4External(item.kind) ? '#8A8A8A' : '#3C7FC0' } } : {}),
+            },
+          }
+        })
+      } else if (action.type === 'delete_node') {
+        nextNodes = nextNodes.filter((node) => node.id !== action.nodeId)
+        nextEdges = nextEdges.filter((edge) => edge.source !== action.nodeId && edge.target !== action.nodeId)
+      } else if (action.type === 'add_edge') {
+        if (!usedEdgeIds.has(action.id) && usedNodeIds.has(action.source) && usedNodeIds.has(action.target)) {
+          nextEdges.push({ id: action.id, source: action.source, target: action.target, type: 'smoothstep', ...(c4RelationEdgeStyle()), ...(action.label ? { label: action.label } : {}) })
+          usedEdgeIds.add(action.id)
+        }
+      } else if (action.type === 'delete_edge') {
+        nextEdges = nextEdges.filter((edge) => edge.id !== action.edgeId)
+      }
+    })
+    const before = { nodes, edges, source: sourceDraft }
+    const appliedNodes = nextNodes.map((node) => ({ ...node, selected: false }))
+    const appliedEdges = withFacingHandles(nextNodes, nextEdges.map((edge) => ({ ...edge, selected: false })))
+    setNodes(appliedNodes)
+    setEdges(appliedEdges)
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setLastAppliedChatDraft({ draft: pendingChatDraft, before })
+    void recordChatAudit({
+      action: 'applied',
+      draft_json: { ...pendingChatDraft },
+      before_graph_json: before,
+      after_graph_json: { nodes: appliedNodes, edges: appliedEdges },
+    })
+    setPendingChatDraft(null)
+  }, [applyDefaultElementStyle, canvasCenterPosition, edges, nodes, pendingChatDraft, recordChatAudit, setEdges, setNodes, sourceDraft])
+
+  const discardChatDraft = useCallback(() => {
+    if (pendingChatDraft) void recordChatAudit({ action: 'discarded', draft_json: { ...pendingChatDraft } })
+    setPendingChatDraft(null)
+  }, [pendingChatDraft, recordChatAudit])
+
+  const undoLastChatDraft = useCallback(() => {
+    if (!lastAppliedChatDraft) return
+    setNodes(lastAppliedChatDraft.before.nodes)
+    setEdges(lastAppliedChatDraft.before.edges)
+    setSourceDraft(lastAppliedChatDraft.before.source)
+    void recordChatAudit({
+      action: 'undone',
+      draft_json: { ...lastAppliedChatDraft.draft },
+      after_graph_json: lastAppliedChatDraft.before,
+    })
+    setLastAppliedChatDraft(null)
+  }, [lastAppliedChatDraft, recordChatAudit, setEdges, setNodes])
+
+  const previewNodes = useMemo(() => {
+    if (!pendingChatDraft) return nodes
+    const existing = new Set(nodes.map((node) => node.id))
+    const anchor = nodes.find((node) => node.selected) ?? nodes[0]
+    const start = anchor ? { x: anchor.position.x + 280, y: anchor.position.y } : { x: 280, y: 220 }
+    let next = nodes.map((node) => ({ ...node }))
+    pendingChatDraft.actions.forEach((action, index) => {
+      if (action.type === 'add_node' && !existing.has(action.id)) {
+        const item = C4_PALETTE_ITEMS.find((candidate) => candidate.kind === action.notation)
+        if (!item) return
+        const node = createC4NodeFromPaletteItem(item, { x: start.x + (index % 2) * 270, y: start.y + Math.floor(index / 2) * 150 }, existing)
+        next.push({ ...node, id: action.id, className: 'ai-draft-preview-add', style: { ...node.style, outline: '2px solid #16a34a', boxShadow: '0 0 0 4px rgba(22,163,74,.15)' }, data: { ...node.data, title: action.title, ...(action.description ? { description: [action.description] } : {}) } })
+        existing.add(action.id)
+      } else if (action.type === 'update_node' || action.type === 'delete_node') {
+        next = next.map((node) => node.id !== action.nodeId ? node : {
+          ...node,
+          className: action.type === 'delete_node' ? 'ai-draft-preview-delete' : 'ai-draft-preview-update',
+          style: { ...node.style, outline: action.type === 'delete_node' ? '2px solid #dc2626' : '2px solid #2563eb', opacity: action.type === 'delete_node' ? 0.48 : 1, boxShadow: action.type === 'delete_node' ? '0 0 0 4px rgba(220,38,38,.14)' : '0 0 0 4px rgba(37,99,235,.14)' },
+        })
+      }
+    })
+    return next
+  }, [nodes, pendingChatDraft])
+
+  const previewEdges = useMemo(() => {
+    if (!pendingChatDraft) return edges
+    const next = edges.map((edge) => ({ ...edge }))
+    pendingChatDraft.actions.forEach((action) => {
+      if (action.type === 'delete_edge') {
+        const index = next.findIndex((edge) => edge.id === action.edgeId)
+        if (index >= 0) next[index] = { ...next[index], style: { ...next[index].style, stroke: '#dc2626', strokeWidth: 2, strokeDasharray: '6 4' }, animated: true }
+      }
+      if (action.type === 'add_edge' && !next.some((edge) => edge.id === action.id)) next.push({ id: action.id, source: action.source, target: action.target, type: 'smoothstep', label: action.label, ...c4RelationEdgeStyle(), style: { stroke: '#16a34a', strokeWidth: 2, strokeDasharray: '6 4' }, animated: true })
+    })
+    return withFacingHandles(previewNodes, next)
+  }, [edges, pendingChatDraft, previewNodes])
+
+  const loadChatAudit = useCallback(async () => {
+    if (format !== 'c4') return
+    setChatAuditLoading(true)
+    try {
+      setChatAudit(await listDiagramAiDraftAudit(ideaId, diagramKey))
+    } catch {
+      setChatAudit([])
+    } finally {
+      setChatAuditLoading(false)
+    }
+  }, [diagramKey, format, ideaId])
+
+  useEffect(() => {
+    if (isChatAuditOpen) void loadChatAudit()
+  }, [isChatAuditOpen, loadChatAudit])
 
   const setC4NodeDrilldown = useCallback((nodeId: string, diagramKey: string | null) => {
     setNodes((current) => current.map((node) => {
@@ -1497,7 +1830,8 @@ function EditableDiagramCanvasInner({
       context.fill()
       if (edge.label) {
         const label = String(edge.label)
-        context.font = '12px "Courier New", monospace'
+        const textStyle = resolveEdgeTextStyle(edge)
+        context.font = `${textStyle.italic ? 'italic ' : ''}${textStyle.bold ? 700 : 400} ${textStyle.fontSize}px ${textStyle.fontFamily}`
         const labelWidth = Math.min(Math.max(88, context.measureText(label).width + 18), 420)
         const labelX = (start.x + end.x) / 2 - labelWidth / 2
         const labelY = (start.y + end.y) / 2 + 12
@@ -1934,7 +2268,7 @@ function EditableDiagramCanvasInner({
 
   const studioMode = Boolean(editable && fillHeight)
   const isC4 = format === 'c4'
-  const hasSelectionInspector = selectedElementCount === 1
+  const hasSelectionInspector = isPropertiesPanelOpen && selectedElementCount === 1
     && (Boolean(selectedNode && selectedNode.type !== 'archimateLegend') || Boolean(selectedEdgeId))
 
   useLayoutEffect(() => {
@@ -1956,8 +2290,8 @@ function EditableDiagramCanvasInner({
 
   const flowCanvas = (
     <IntegrationArchitectureFlow
-      nodes={nodes}
-      edges={edges}
+      nodes={previewNodes}
+      edges={previewEdges}
       onNodesChange={editable ? handleNodesChange : () => undefined}
       onEdgesChange={editable ? onEdgesChange : () => undefined}
       onConnect={editable ? onConnect : () => undefined}
@@ -1967,7 +2301,8 @@ function EditableDiagramCanvasInner({
       onPaneClick={editable ? clearCanvasSelection : undefined}
       onPaneContextMenu={editable ? handlePaneContextMenu : undefined}
       onNodeContextMenu={editable ? handleNodeContextMenu : undefined}
-      onEdgeContextMenu={editable ? handlePaneContextMenu : undefined}
+      onNodeDoubleClick={format === 'c4' ? handleNodeDoubleClick : undefined}
+      onEdgeContextMenu={editable ? handleEdgeContextMenu : undefined}
       showGrid={studioMode && showGrid}
       showGuides={studioMode && showGuides}
       snapToGrid={studioMode && snapToGrid}
@@ -2010,6 +2345,10 @@ function EditableDiagramCanvasInner({
     { id: 'diagram' as const, label: 'Diagram', icon: Layers },
     ...(isC4 && c4Level === 'L1' ? [{ id: 'catalog' as const, label: 'Catalog', icon: AppWindow }] : []),
   ]
+  const selectedImageNodeIds = nodes
+    .filter((node) => node.selected && node.type !== 'archimateLegend')
+    .map((node) => node.id)
+  const canCopySelectedNodesAsImage = selectedImageNodeIds.length > 0
   const studioPanelTabClass = (active: boolean) =>
     cn(
       'flex flex-1 items-center justify-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors',
@@ -2025,6 +2364,7 @@ function EditableDiagramCanvasInner({
         onUpdatePosition={updateSelectedNodePosition}
         onLayerAction={handleLayerAction}
         onRotate90={handleRotateSelectedNode90}
+        c4Mode={isC4}
         dragHandleProps={{
           isDragging: isPropertiesPanelDragging,
           onPointerDown: handlePropertiesPanelDragStart,
@@ -2055,6 +2395,10 @@ function EditableDiagramCanvasInner({
       {!hideStudioHeader ? (
         <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3">
           <p className="text-xs font-medium text-slate-700">Process diagram</p>
+          <div className="flex items-center gap-2">
+            {isC4 ? <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setIsChatAuditOpen(true)}><History className="h-3.5 w-3.5" /> AI history</Button> : null}
+            {lastAppliedChatDraft ? <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={undoLastChatDraft}><RotateCcw className="h-3.5 w-3.5" /> Undo AI batch</Button> : null}
+          </div>
         </div>
       ) : null}
       <div ref={canvasZoneRef} className="relative min-h-0 flex-1 overflow-hidden">
@@ -2072,12 +2416,13 @@ function EditableDiagramCanvasInner({
               onContextMenu={(event) => event.preventDefault()}
               onPointerDown={(event) => event.stopPropagation()}
             >
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => void pasteSourceAtCursor()}>
+              <button type="button" disabled={!hasPasteableContent} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', hasPasteableContent ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={() => void pasteSourceAtCursor()}>
                 <Copy className="h-4 w-4" /> Paste here
               </button>
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyCanvasAsImage()}>
+              <button type="button" disabled={!canCopySelectedNodesAsImage} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', canCopySelectedNodesAsImage ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={() => void copyCanvasAsImage(selectedImageNodeIds)}>
                 <ImageDown className="h-4 w-4" /> Copy as image
               </button>
+              {isC4 ? <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => openDiagramChat()}><Sparkles className="h-4 w-4" /> Ask Gen AI</button> : null}
               <div className="my-1 border-t border-slate-200" />
               <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={clearDefaultStyle}>
                 <span className="flex items-center gap-2"><Paintbrush className="h-4 w-4" /> Clear default style</span><span className="text-xs text-slate-400">Ctrl+Shift+R</span>
@@ -2093,10 +2438,6 @@ function EditableDiagramCanvasInner({
                 <span className="flex items-center gap-2"><ListChecks className="h-4 w-4" /> Select all</span><span className="text-xs text-slate-400">Ctrl+A</span>
               </button>
               <div className="my-1 border-t border-slate-200" />
-              <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setSnapToGrid((current) => !current)}>
-                <span className="flex items-center gap-2"><Magnet className="h-4 w-4" /> Snap to grid</span>
-                <span className="w-4 text-sky-500">{snapToGrid ? <Check className="h-4 w-4" /> : null}</span>
-              </button>
               <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'options' } : current)}>
                 <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
                   <span className="flex items-center gap-2"><Settings2 className="h-4 w-4" /> Options</span><ChevronRight className="h-4 w-4" />
@@ -2138,6 +2479,33 @@ function EditableDiagramCanvasInner({
               </div>
             </div>
           ) : null}
+          {edgeContextMenu ? (
+            <div
+              className="absolute z-50 w-60 overflow-hidden rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+              style={{ left: Math.max(8, edgeContextMenu.x), top: Math.max(8, edgeContextMenu.y) }}
+              onContextMenu={(event) => event.preventDefault()}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className="px-3 py-2 text-xs font-semibold text-slate-500">Line</div>
+              <div className="my-1 border-t border-slate-200" />
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={openSelectedEdgeProperties}>
+                <Settings2 className="h-4 w-4" /> Format...
+              </button>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={reverseSelectedEdge}>
+                <ArrowRightLeft className="h-4 w-4" /> Reverse
+              </button>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeContextMenu(null) }}>
+                <Waypoints className="h-4 w-4" /> Clear Waypoints
+              </button>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeContextMenu(null) }}>
+                <Unlink className="h-4 w-4" /> Unpin Connector Ends
+              </button>
+              <div className="my-1 border-t border-slate-200" />
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50" onClick={() => { deleteSelected(); setEdgeContextMenu(null) }}>
+                <Trash2 className="h-4 w-4" /> Delete
+              </button>
+            </div>
+          ) : null}
           {c4NodeMenu && c4MenuNode && c4MenuNode.data.kind !== 'legend' ? (
             <div
               className="absolute z-50 w-60 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
@@ -2158,6 +2526,9 @@ function EditableDiagramCanvasInner({
               >
                 <ImageDown className="h-4 w-4" /> Copy as image
               </button>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => openDiagramChat(c4MenuNode)}>
+                <Sparkles className="h-4 w-4" /> Ask Gen AI about this notation
+              </button>
               <button
                 type="button"
                 className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100"
@@ -2175,6 +2546,10 @@ function EditableDiagramCanvasInner({
               <div className="my-1 border-t border-slate-200" />
               <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => deleteNode(c4MenuNode.id)}>
                 <span className="flex items-center gap-2"><Trash2 className="h-4 w-4" /> Delete</span><span className="text-xs text-slate-400">Delete</span>
+              </button>
+              <div className="my-1 border-t border-slate-200" />
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={openNodeProperties}>
+                <Paintbrush className="h-4 w-4" /> Styles &amp; formatting
               </button>
               {c4MenuNode.data.kind === 'element' ? (
                 <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setNodeAsDefaultStyle(c4MenuNode.id)}>
@@ -2451,6 +2826,93 @@ function EditableDiagramCanvasInner({
           </div>
         ) : null}
       </div>
+      {isC4 && hideStudioHeader ? (
+        <div className="pointer-events-none absolute right-3 top-3 z-30 flex gap-2">
+          <Button type="button" size="icon" variant="outline" className="pointer-events-auto h-8 w-8 bg-white/95 shadow-sm" title="AI history" onClick={() => setIsChatAuditOpen(true)}><History className="h-4 w-4" /></Button>
+          {lastAppliedChatDraft ? <Button type="button" size="icon" variant="outline" className="pointer-events-auto h-8 w-8 bg-white/95 shadow-sm" title="Undo AI batch" onClick={undoLastChatDraft}><RotateCcw className="h-4 w-4" /></Button> : null}
+        </div>
+      ) : null}
+      {chatAuditWriteError ? (
+        <div className="absolute bottom-3 right-3 z-30 flex max-w-sm items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
+          <span>{chatAuditWriteError}</span>
+          {pendingAuditWrite ? <Button type="button" size="sm" variant="outline" className="h-7 border-amber-300 bg-white text-xs" onClick={() => void recordChatAudit(pendingAuditWrite)}>Retry</Button> : null}
+        </div>
+      ) : null}
+      <Dialog
+        open={Boolean(pendingChatDraft)}
+        onOpenChange={(open) => {
+          if (!open) setPendingChatDraft(null)
+        }}
+      >
+        <DialogContent className="w-[min(36rem,calc(100vw-2rem))] p-0">
+          <DialogHeader className="border-b border-slate-200 px-5 py-4">
+            <DialogTitle className="text-base">Apply AI diagram draft</DialogTitle>
+            <DialogDescription>
+              Review the proposed C4 changes before they are applied to this canvas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[52vh] space-y-3 overflow-y-auto p-5">
+            {pendingChatDraft?.summary ? <p className="text-sm leading-6 text-slate-600">{pendingChatDraft.summary}</p> : null}
+            <div className="overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-3">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Visual preview</p>
+              <div className="grid grid-cols-2 gap-2">
+                {pendingChatDraft?.actions.filter((action) => action.type === 'add_node' || action.type === 'update_node' || action.type === 'delete_node').map((action, index) => (
+                  <div key={`preview-${index}`} className={cn('min-h-14 rounded border px-2 py-2 text-xs', action.type === 'delete_node' ? 'border-rose-200 bg-rose-50 text-rose-800 line-through' : action.type === 'add_node' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-sky-200 bg-sky-50 text-sky-800')}>
+                    <span className="block font-semibold">{action.type === 'add_node' ? action.title : action.nodeId}</span>
+                    <span className="mt-1 block opacity-80">{action.type === 'add_node' ? action.notation : action.type === 'delete_node' ? 'Removed from canvas' : 'Updated on canvas'}</span>
+                  </div>
+                ))}
+              </div>
+              {pendingChatDraft?.actions.some((action) => action.type === 'add_edge' || action.type === 'delete_edge') ? <div className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-xs text-slate-600">{pendingChatDraft.actions.filter((action) => action.type === 'add_edge' || action.type === 'delete_edge').map((action, index) => <p key={`edge-preview-${index}`}>{action.type === 'add_edge' ? `${action.source} -> ${action.target}` : `Remove connection ${action.edgeId}`}</p>)}</div> : null}
+            </div>
+            <ol className="space-y-2 text-sm text-slate-700">
+              {pendingChatDraft?.actions.map((action, index) => (
+                <li key={`${action.type}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  {action.type === 'add_node' ? `Add ${action.notation}: ${action.title}` : null}
+                  {action.type === 'update_node' ? `Update notation: ${action.nodeId}` : null}
+                  {action.type === 'delete_node' ? `Delete notation: ${action.nodeId}` : null}
+                  {action.type === 'add_edge' ? `Connect ${action.source} to ${action.target}${action.label ? `: ${action.label}` : ''}` : null}
+                  {action.type === 'delete_edge' ? `Delete connection: ${action.edgeId}` : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <DialogFooter className="border-t border-slate-200 px-5 py-4">
+            <Button type="button" variant="outline" onClick={discardChatDraft}>Discard</Button>
+            <Button type="button" onClick={applyChatDraft}>Apply draft</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isChatAuditOpen} onOpenChange={setIsChatAuditOpen}>
+        <DialogContent className="w-[min(40rem,calc(100vw-2rem))] p-0">
+          <DialogHeader className="border-b border-slate-200 px-5 py-4">
+            <DialogTitle className="text-base">AI diagram history</DialogTitle>
+            <DialogDescription>Draft activity recorded for this diagram.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto p-5">
+            {chatAuditLoading ? <p className="text-sm text-slate-500">Loading history...</p> : null}
+            {!chatAuditLoading && chatAudit.length === 0 ? <p className="text-sm text-slate-500">No AI draft activity has been recorded.</p> : null}
+            <ol className="space-y-3">
+              {chatAudit.map((entry) => (
+                <li key={entry.id} className="rounded-md border border-slate-200 bg-white p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800">{chatAuditLabel(entry.action)}</p>
+                    <time className="shrink-0 text-xs text-slate-500">{new Date(entry.created_at).toLocaleString()}</time>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">{entry.actor_id}</p>
+                  {chatAuditDraftSummary(entry.draft_json) ? <p className="mt-2 text-sm text-slate-700">{chatAuditDraftSummary(entry.draft_json)}</p> : null}
+                  {chatAuditSnapshotSummary(entry.before_graph_json) ? <p className="mt-2 text-xs text-slate-500">Before: {chatAuditSnapshotSummary(entry.before_graph_json)}</p> : null}
+                  {chatAuditSnapshotSummary(entry.after_graph_json) ? <p className="mt-1 text-xs text-slate-500">After: {chatAuditSnapshotSummary(entry.after_graph_json)}</p> : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <DialogFooter className="border-t border-slate-200 px-5 py-4">
+            <Button type="button" variant="outline" onClick={() => void loadChatAudit()}>Refresh</Button>
+            <Button type="button" onClick={() => setIsChatAuditOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={Boolean(c4LinkPickerNodeId)}
         onOpenChange={(open) => {

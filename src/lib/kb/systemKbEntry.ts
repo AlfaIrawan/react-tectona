@@ -1,5 +1,6 @@
 import { createKbEntry, deleteKbEntry, patchKbEntry, type KbEntryResponse } from '@/lib/api/tectonaKbApi'
 import { readConfiguredApmWorkspaceIds } from '@/lib/kb/apmWorkspaceConfig'
+import { ADIRA_FINANCE_WORKSPACE_KEY, isAdiraFinanceWorkspaceId } from '@/lib/kb/adiraApplicationGlossary'
 import { defaultSystemKbTableHtml } from '@/lib/kb/systemKbTableEditor'
 
 /** Canonical title shown in Document & Knowledge Management. */
@@ -183,8 +184,14 @@ export function findIdeaIntakeChecklistDefaultEntry(entries: KbEntryResponse[]):
   return entries.find((entry) => isIdeaIntakeChecklistTitle(entry.title)) ?? null
 }
 
+function canonicalWorkspaceId(workspaceId: string | null | undefined): string {
+  const normalized = (workspaceId ?? '').trim()
+  if (isAdiraFinanceWorkspaceId(normalized)) return ADIRA_FINANCE_WORKSPACE_KEY
+  return normalized
+}
+
 function sameWorkspaceId(left: string | null | undefined, right: string): boolean {
-  return (left ?? '').trim().toLowerCase() === right.trim().toLowerCase()
+  return canonicalWorkspaceId(left).toLowerCase() === canonicalWorkspaceId(right).toLowerCase()
 }
 
 function findWorkspaceSystemEntries(
@@ -219,12 +226,13 @@ export type WorkspaceSystemKbDedupePlan = {
   keeper: KbEntryResponse
   extras: KbEntryResponse[]
   canonicalTitle: string
+  canonicalWorkspaceId: string
 }
 
 /** Duplicate System templates for the same workspace (old Indonesian title + new English title, or double-create). */
 export function planWorkspaceSystemKbDedupe(entries: KbEntryResponse[]): WorkspaceSystemKbDedupePlan[] {
   const workspaceIds = [...new Set(
-    entries.map((entry) => (entry.workspace_id ?? '').trim()).filter(Boolean),
+    entries.map((entry) => canonicalWorkspaceId(entry.workspace_id)).filter(Boolean),
   )]
   const plans: WorkspaceSystemKbDedupePlan[] = []
   const seenWorkspaceKeys = new Set<string>()
@@ -241,6 +249,7 @@ export function planWorkspaceSystemKbDedupe(entries: KbEntryResponse[]): Workspa
         keeper,
         extras: matches.filter((entry) => entry.id !== keeper.id),
         canonicalTitle: spec.title,
+        canonicalWorkspaceId: workspaceId,
       })
     }
   }
@@ -267,9 +276,15 @@ export async function dedupeWorkspaceSystemKbTemplates(entries: KbEntryResponse[
         removed.add(extra.id)
       }
     }
-    if (plan.keeper.title !== plan.canonicalTitle) {
+    if (
+      plan.keeper.title !== plan.canonicalTitle
+      || plan.keeper.workspace_id !== plan.canonicalWorkspaceId
+    ) {
       try {
-        patched.push(await patchKbEntry(plan.keeper.id, { title: plan.canonicalTitle }))
+        patched.push(await patchKbEntry(plan.keeper.id, {
+          title: plan.canonicalTitle,
+          workspace_id: plan.canonicalWorkspaceId,
+        }))
       } catch {
         // Display mapping still shows the English title.
       }
@@ -366,9 +381,12 @@ export async function ensureWorkspaceSystemKbTemplates(
       const existing = findWorkspaceSystemEntry(entries, spec, workspaceId)
         ?? findWorkspaceSystemEntry(created, spec, workspaceId)
       if (existing) {
-        if (existing.title !== spec.title) {
+        if (existing.title !== spec.title || existing.workspace_id !== workspaceId) {
           try {
-            created.push(await patchKbEntry(existing.id, { title: spec.title }))
+            created.push(await patchKbEntry(existing.id, {
+              title: spec.title,
+              workspace_id: workspaceId,
+            }))
           } catch {
             // Keep the stored title; UI still maps it to English.
           }
