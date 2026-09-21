@@ -66,6 +66,7 @@ import {
   ListPlus,
   XCircle,
   Radio,
+  LoaderCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { EnterpriseTimePicker } from '@/components/ui/enterprise-time-picker'
@@ -168,6 +169,7 @@ import {
   type ContextUsageReport,
   type GenAiChatSessionSummary,
   type RuntimeChatEvidence,
+  type RuntimeChatProgress,
 } from '@/lib/api/tectonaAgentRuntimeApi'
 import { type ExplainerCharacter } from '@/lib/api/documentKnowledgeApi'
 import { AssistantEvidenceFootnotes } from './AssistantEvidenceFootnotes'
@@ -582,6 +584,8 @@ interface ChatMessage {
   evidence?: RuntimeChatEvidence[]
   /** True when tokens arrived via SSE — skip typewriter replay. */
   streamedLive?: boolean
+  /** Latest privacy-safe runtime status, displayed as a single changing line. */
+  agentProgress?: RuntimeChatProgress
 }
 
 interface Conversation {
@@ -4817,6 +4821,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           },
           },
           {
+            onProgress: (progress) => {
+              setMessagesById((prev) => ({
+                ...prev,
+                [conversationId]: (prev[conversationId] ?? []).map((m) =>
+                  m.id === loadingMsgId ? { ...m, agentProgress: progress } : m,
+                ),
+              }))
+            },
             onDelta: (chunk) => {
               setMessagesById((prev) => ({
                 ...prev,
@@ -8391,6 +8403,19 @@ function AssistantTypingDots({
   )
 }
 
+function AssistantAgentProgress({ progress }: { progress: RuntimeChatProgress }) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 py-0.5 text-[11px] leading-none text-[#667781] dark:text-[#8696a0]"
+      role="status"
+      aria-live="polite"
+    >
+      <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+      <span className="truncate">{progress.label}</span>
+    </div>
+  )
+}
+
 function AssistantTypewriterText({
   text,
   messageId,
@@ -8647,10 +8672,14 @@ function WhatsAppChatBubble({
         {showTyping ? (
           <div className="flex items-end gap-2">
             <div className="min-w-0 flex-1">
-              <AssistantTypingDots
-                variant={m.id.startsWith('greet-loading-') ? 'greeting' : 'reply'}
-                assistantName={genAiAssistantDisplayName(conversation, chatContacts)}
-              />
+              {m.agentProgress ? (
+                <AssistantAgentProgress progress={m.agentProgress} />
+              ) : (
+                <AssistantTypingDots
+                  variant={m.id.startsWith('greet-loading-') ? 'greeting' : 'reply'}
+                  assistantName={genAiAssistantDisplayName(conversation, chatContacts)}
+                />
+              )}
             </div>
             <WhatsAppMetaRow time={time} isUser={isUser} deliveryStatus={deliveryStatus} />
           </div>

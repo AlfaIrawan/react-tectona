@@ -516,7 +516,7 @@ export function AssistantActionCard({
                     Running…
                   </>
                 ) : (
-                  'Run'
+                  'Confirm & run'
                 )}
               </Button>
             </div>
@@ -614,7 +614,7 @@ export function AssistantActionCard({
                     Running…
                   </>
                 ) : (
-                  'Run'
+                  'Confirm & run'
                 )}
               </Button>
             </div>
@@ -678,7 +678,7 @@ export function AssistantActionCard({
                       Running…
                     </>
                   ) : (
-                    'Run'
+                    'Confirm & run'
                   )}
                 </Button>
               ) : (
@@ -830,7 +830,7 @@ export function AssistantActionCard({
                 ) : isHighRisk ? (
                   'Yes, delete'
                 ) : (
-                  'Run'
+                  'Confirm & run'
                 )}
               </Button>
             </div>

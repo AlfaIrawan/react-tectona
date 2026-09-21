@@ -1,6 +1,4 @@
-/**
- * Tectona Assistant — proposed workspace & idea actions (client-side executor).
- */
+/** Tectona Assistant action cards and backend confirmation coordinator. */
 
 import { getSession } from '@/auth/authService'
 import { randomUuid } from '@/lib/randomId'
@@ -31,6 +29,10 @@ import { deleteWorkspaceOrgKbMirror, syncWorkspaceOrgEntryToKb } from '@/lib/kb/
 import { applyDocumentChatEdit } from '@/lib/api/documentKnowledgeApi'
 import { getKbEntry, patchKbEntry } from '@/lib/api/tectonaKbApi'
 import { applyIdeaSectionRevisionFromChat } from '@/lib/chat/ideaSectionRevisionFromChat'
+import {
+  confirmTectonaAgentAction,
+  prepareTectonaAgentAction,
+} from '@/lib/api/tectonaAgentRuntimeApi'
 
 export type TectonaAgentActionCode =
   | 'workspace.create'
@@ -44,6 +46,7 @@ export type TectonaAgentActionCode =
   | 'document.apply_chat_edit'
   | 'document.transform'
   | 'knowledge.person_alias.add'
+  | 'memory.upsert'
 
 export type TectonaIdeaContentUpdate = {
   target: string
@@ -58,6 +61,10 @@ export type TectonaProposedAction = {
   payload: Record<string, unknown>
   risk_level?: 'low' | 'medium' | 'high'
   requires_confirmation?: boolean
+  confirmation_token?: string | null
+  confirmation_expires_at?: string | null
+  run_id?: string | null
+  step_id?: string | null
 }
 
 export type TectonaAgentActionExecutionStatus = 'pending' | 'executing' | 'succeeded' | 'failed' | 'cancelled'
@@ -366,6 +373,52 @@ export async function buildWorkspaceDetailMarkdown(label: string): Promise<strin
 }
 
 export async function executeTectonaAgentAction(action: TectonaProposedAction): Promise<string> {
+  const backendWriteActions = new Set<TectonaAgentActionCode>([
+    'workspace.create',
+    'workspace.update',
+    'workspace.delete',
+    'workspace.governance.apply',
+    'workspace.member.add',
+    'idea.content.inject',
+    'idea.section.revision',
+    'document.apply_chat_edit',
+    'knowledge.person_alias.add',
+    'memory.upsert',
+  ])
+  if (backendWriteActions.has(action.action_code)) {
+    // Seal the final form values at the moment the user confirms the write.
+    const sealed = await prepareTectonaAgentAction(action)
+    const prepared = {
+      ...sealed,
+      run_id: action.run_id,
+      step_id: action.step_id,
+    }
+    const execution = await confirmTectonaAgentAction(prepared)
+    for (const effect of execution.effects) {
+      const type = String(effect.type ?? '')
+      if (type === 'workspace.created') {
+        window.dispatchEvent(new CustomEvent('tectona:workspace-created', { detail: { id: effect.workspace_id } }))
+      } else if (type === 'workspace.updated') {
+        window.dispatchEvent(new CustomEvent('tectona:workspace-updated', { detail: { id: effect.workspace_id } }))
+      } else if (type === 'governance.updated') {
+        window.dispatchEvent(new CustomEvent('tectona:governance-updated', { detail: { workspaceId: effect.workspace_id } }))
+      } else if (type === 'idea.updated') {
+        dispatchIdeaUpdated(String(effect.idea_id ?? ''))
+      } else if (type === 'idea.section_revision') {
+        window.dispatchEvent(new CustomEvent('tectona:idea-section-revision-updated', {
+          detail: { ideaId: effect.idea_id, sectionKey: effect.section_key },
+        }))
+      } else if (type === 'document.edited') {
+        dispatchDocumentEdited(String(effect.document_id ?? ''), String(effect.attachment_id ?? ''))
+      } else if (type === 'knowledge.updated') {
+        window.dispatchEvent(new CustomEvent('tectona:kb-updated', { detail: { entryId: effect.entry_id } }))
+      } else if (type === 'memory.updated') {
+        window.dispatchEvent(new CustomEvent('tectona:agent-memory-updated', { detail: { memoryId: effect.memory_id } }))
+      }
+    }
+    return execution.result_summary
+  }
+
   const session = getSession()
   const actorId = session?.user?.id
   const payload = action.payload ?? {}
@@ -564,6 +617,7 @@ export function actionCategoryLabel(actionCode: string): string {
   if (actionCode.startsWith('idea.')) return 'Idea action'
   if (actionCode.startsWith('document.')) return 'Document action'
   if (actionCode.startsWith('knowledge.')) return 'Knowledge action'
+  if (actionCode.startsWith('memory.')) return 'Memory action'
   return 'Workspace action'
 }
 
@@ -632,6 +686,11 @@ export function formatActionPayloadPreview(action: TectonaProposedAction): Array
     case 'knowledge.person_alias.add':
       push('Profil', 'canonical_name')
       push('Alias baru', 'alias')
+      break
+    case 'memory.upsert':
+      push('Type', 'kind')
+      push('Memory', 'value')
+      push('Scope', 'workspace_id')
       break
     default:
       break

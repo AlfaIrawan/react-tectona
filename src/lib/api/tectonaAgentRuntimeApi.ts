@@ -826,6 +826,31 @@ export interface RuntimeChatResponse {
   usage?: LlmUsagePayload | null
   llm_usage?: LlmUsagePayload | null
   pending_document_edit?: RuntimePendingDocumentEdit | null
+  agent_run?: {
+    run_id: string
+    status: string
+    mode: 'text' | 'tool_calling' | 'fallback' | string
+    rounds: number
+    fallback_reason?: string | null
+    steps: Array<{
+      step_id: string
+      kind: string
+      status: string
+      round: number
+      tool_name: string
+      read_only: boolean
+      duration_ms: number
+      error_code?: string | null
+    }>
+  } | null
+}
+
+export interface RuntimeChatProgress {
+  stage: 'planning' | 'tool_started' | 'tool_completed' | 'synthesizing'
+  label: string
+  round?: number
+  tool_name?: string
+  status?: string
 }
 
 export type TectonaProposedAction = {
@@ -846,6 +871,165 @@ export type TectonaProposedAction = {
   payload: Record<string, unknown>
   risk_level?: 'low' | 'medium' | 'high'
   requires_confirmation?: boolean
+  confirmation_token?: string | null
+  confirmation_expires_at?: string | null
+  run_id?: string | null
+  step_id?: string | null
+}
+
+export interface AgentMemoryItem {
+  id: string
+  key: string
+  value: string
+  kind: 'preference' | 'fact' | 'decision' | 'goal'
+  workspace_id?: string | null
+  sensitivity: 'internal' | 'restricted'
+  source_session_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DurableAgentRunStep {
+  step_id: string
+  position: number
+  action_id: string
+  action_code: string
+  summary: string
+  payload: Record<string, unknown>
+  risk_level: 'low' | 'medium' | 'high'
+  status: string
+  attempt: number
+  result_summary?: string | null
+  error_code?: string | null
+}
+
+export interface DurableAgentRun {
+  run_id: string
+  title: string
+  user_id: string
+  session_id?: string | null
+  workspace_id?: string | null
+  status: string
+  current_step: number
+  version: number
+  steps: DurableAgentRunStep[]
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeAgentActionResult {
+  action_id: string
+  action_code: string
+  status: string
+  result_summary: string
+  effects: Array<Record<string, unknown>>
+  correlation_id: string
+  run_status?: string | null
+  next_step_position?: number | null
+}
+
+export async function prepareTectonaAgentAction(
+  action: TectonaProposedAction,
+): Promise<TectonaProposedAction> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/actions/prepare`,
+    { method: 'POST', body: JSON.stringify(action) },
+    30_000,
+  )
+  return handleResponse<TectonaProposedAction>(res)
+}
+
+export async function confirmTectonaAgentAction(
+  action: TectonaProposedAction,
+): Promise<RuntimeAgentActionResult> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/actions/confirm`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        action_id: action.action_id,
+        action_code: action.action_code,
+        payload: action.payload,
+        confirmation_token: action.confirmation_token,
+        confirmed: true,
+        run_id: action.run_id,
+        step_id: action.step_id,
+      }),
+    },
+    90_000,
+  )
+  return handleResponse<RuntimeAgentActionResult>(res)
+}
+
+export async function listAgentMemory(workspaceId?: string): Promise<AgentMemoryItem[]> {
+  const query = new URLSearchParams({ include_global: 'true' })
+  if (workspaceId) query.set('workspace_id', workspaceId)
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/memory?${query}`, {}, 30_000)
+  return (await handleResponse<{ items: AgentMemoryItem[] }>(res)).items
+}
+
+export async function putAgentMemory(
+  key: string,
+  payload: Pick<AgentMemoryItem, 'value' | 'kind'> & Partial<Pick<AgentMemoryItem, 'workspace_id' | 'sensitivity' | 'source_session_id'>>,
+): Promise<AgentMemoryItem> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/memory/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  }, 30_000)
+  return handleResponse<AgentMemoryItem>(res)
+}
+
+export async function deleteAgentMemory(memoryId: string): Promise<void> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/memory/${encodeURIComponent(memoryId)}`, { method: 'DELETE' }, 30_000)
+  if (!res.ok) await handleResponse(res)
+}
+
+export async function createDurableAgentRun(payload: {
+  title: string
+  session_id?: string | null
+  workspace_id?: string | null
+  steps: Array<Pick<TectonaProposedAction, 'action_code' | 'summary' | 'payload' | 'risk_level'>>
+}): Promise<DurableAgentRun> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/runs`, { method: 'POST', body: JSON.stringify(payload) }, 30_000)
+  return handleResponse<DurableAgentRun>(res)
+}
+
+export async function listDurableAgentRuns(): Promise<DurableAgentRun[]> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/runs`, {}, 30_000)
+  return (await handleResponse<{ runs: DurableAgentRun[] }>(res)).runs
+}
+
+export async function prepareDurableAgentRunNext(runId: string): Promise<{ run: DurableAgentRun; action: TectonaProposedAction }> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/runs/${encodeURIComponent(runId)}/prepare-next`, { method: 'POST' }, 30_000)
+  const prepared = await handleResponse<{ run: DurableAgentRun; action: TectonaProposedAction }>(res)
+  const step = prepared.run.steps[prepared.run.current_step]
+  prepared.action.run_id = prepared.run.run_id
+  prepared.action.step_id = step?.step_id ?? null
+  return prepared
+}
+
+export async function getDurableAgentRun(runId: string): Promise<DurableAgentRun> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/runs/${encodeURIComponent(runId)}`, {}, 30_000)
+  return handleResponse<DurableAgentRun>(res)
+}
+
+export async function cancelDurableAgentRun(runId: string): Promise<DurableAgentRun> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }, 30_000)
+  return handleResponse<DurableAgentRun>(res)
+}
+
+export async function resolveDurableAgentRunStep(
+  runId: string,
+  stepId: string,
+  decision: 'mark_succeeded' | 'retry' | 'cancel',
+  note?: string,
+): Promise<DurableAgentRun> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/resolve`,
+    { method: 'POST', body: JSON.stringify({ decision, note }) },
+    30_000,
+  )
+  return handleResponse<DurableAgentRun>(res)
 }
 
 export interface TectonaAgentGreetRequest {
@@ -2065,6 +2249,7 @@ export async function chatWithTectonaAgentRuntime(
 async function readAgentChatSse(
   res: Response,
   onDelta?: (chunk: string) => void,
+  onProgress?: (progress: RuntimeChatProgress) => void,
 ): Promise<RuntimeChatResponse> {
   if (!res.body) {
     throw new Error('Chat stream had no body')
@@ -2092,6 +2277,12 @@ async function readAgentChatSse(
     }
     if (eventName === 'delta' && data && typeof data === 'object' && typeof (data as { text?: unknown }).text === 'string') {
       onDelta?.((data as { text: string }).text)
+    }
+    if (eventName === 'progress' && data && typeof data === 'object') {
+      const progress = data as Partial<RuntimeChatProgress>
+      if (typeof progress.stage === 'string' && typeof progress.label === 'string') {
+        onProgress?.(progress as RuntimeChatProgress)
+      }
     }
     if (eventName === 'done' && data && typeof data === 'object') {
       donePayload = data as RuntimeChatResponse
@@ -2122,7 +2313,10 @@ async function readAgentChatSse(
 /** Sidebar chat — uses apiFetch for auth headers and gateway dev routing. */
 export async function sendTectonaAgentRuntimeMessage(
   payload: RuntimeChatRequest,
-  options?: { onDelta?: (chunk: string) => void },
+  options?: {
+    onDelta?: (chunk: string) => void
+    onProgress?: (progress: RuntimeChatProgress) => void
+  },
 ): Promise<RuntimeChatResponse> {
   const merged: RuntimeChatRequest = {
     ...payload,
@@ -2141,7 +2335,7 @@ export async function sendTectonaAgentRuntimeMessage(
   )
   const streamType = streamRes.headers.get('content-type') || ''
   if (streamRes.ok && streamType.includes('text/event-stream')) {
-    return readAgentChatSse(streamRes, options?.onDelta)
+    return readAgentChatSse(streamRes, options?.onDelta, options?.onProgress)
   }
   if (streamRes.ok && streamType.includes('application/json')) {
     return (await streamRes.json()) as RuntimeChatResponse
@@ -2433,4 +2627,49 @@ export async function fetchExplainerAssistantInsights(
     15_000,
   )
   return handleResponse<ExplainerAssistantInsights>(res)
+}
+
+// --- Agentic governance -----------------------------------------------------
+
+export type AgenticRolloutMode = 'off' | 'shadow' | 'pilot' | 'on'
+
+export interface AgenticRolloutStatus {
+  mode: AgenticRolloutMode
+  enabled: boolean
+  shadow: boolean
+  reason: string
+  allowed_tools: string[]
+}
+
+export interface AgentSecurityEvaluationCheck {
+  name: string
+  passed: boolean
+  detail: string
+}
+
+export interface AgentSecurityEvaluation {
+  status: 'passed' | 'failed'
+  score: number
+  passed: number
+  total: number
+  checks: AgentSecurityEvaluationCheck[]
+}
+
+export async function fetchAgenticRolloutStatus(
+  workspaceId?: string | null,
+): Promise<AgenticRolloutStatus> {
+  const query = new URLSearchParams()
+  if (workspaceId) query.set('workspace_id', workspaceId)
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/rollout${suffix}`, { method: 'GET' }, 10_000)
+  return handleResponse<AgenticRolloutStatus>(res)
+}
+
+export async function runAgentSecurityEvaluation(): Promise<AgentSecurityEvaluation> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/security-evaluations`,
+    { method: 'POST' },
+    15_000,
+  )
+  return handleResponse<AgentSecurityEvaluation>(res)
 }
