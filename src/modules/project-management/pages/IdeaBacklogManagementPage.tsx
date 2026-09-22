@@ -1171,7 +1171,12 @@ import {
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { brainstormTypingCutoff, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
-import { extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
+import {
+  appendProcessDiagramsToText,
+  extractProcessDiagramsFromText,
+  stripProcessDiagramsFromText,
+  type ExtractedProcessDiagram,
+} from '@/lib/chat/extractProcessDiagrams'
 import { normalizeMermaidFences, splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
 import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
@@ -1926,6 +1931,7 @@ export function IdeaBacklogManagementPage() {
   const [reviewerOptionsError, setReviewerOptionsError] = useState('')
   const [identityUserNameById, setIdentityUserNameById] = useState<Record<string, string>>({})
   const [createIdeaDescriptionHtml, setCreateIdeaDescriptionHtml] = useState('')
+  const [createIdeaProcessDiagrams, setCreateIdeaProcessDiagrams] = useState<ExtractedProcessDiagram[]>([])
   const createIdeaDescriptionEditorRef = useRef<HTMLDivElement | null>(null)
   const createIdeaTagInputRef = useRef<HTMLInputElement | null>(null)
   const [createIdeaError, setCreateIdeaError] = useState('')
@@ -1966,11 +1972,6 @@ export function IdeaBacklogManagementPage() {
     [createIdeaDescriptionHtml]
   )
 
-  const createIdeaProcessDiagrams = useMemo(
-    () => extractProcessDiagramsFromText(createIdeaForm.description),
-    [createIdeaForm.description],
-  )
-
   const syncBrainstormEvidenceState = (status: Pick<
     IdeaDraftJobStatusResponse,
     'intake_checklist' | 'evidence_progress' | 'discovery_progress' | 'confidence_percent' | 'brainstorm_ready'
@@ -1996,7 +1997,9 @@ export function IdeaBacklogManagementPage() {
   }
 
   const setCreateIdeaDescriptionFromPlainText = (nextText: string) => {
-    const plain = nextText.trim()
+    const diagrams = extractProcessDiagramsFromText(nextText)
+    const plain = stripProcessDiagramsFromText(nextText)
+    setCreateIdeaProcessDiagrams(diagrams)
     const html = plainTextToIdeaRichHtml(plain)
     setCreateIdeaDescriptionHtml(html)
     setCreateIdeaForm((prev) => ({ ...prev, description: plain }))
@@ -3406,6 +3409,7 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaTagDraft('')
     setCreateIdeaTagFeedback('')
     setCreateIdeaDescriptionHtml('')
+    setCreateIdeaProcessDiagrams([])
     setCreateIdeaError('')
     setIdeaDraftJob(null)
     setIsEvidenceDialogOpen(false)
@@ -3540,7 +3544,10 @@ export function IdeaBacklogManagementPage() {
     try {
       const created = await apiCreateIdea({
         title: createIdeaForm.title.trim(),
-        description: createIdeaForm.description.trim() || 'Define business problem, expected value, and target outcomes for governance review.',
+        description: appendProcessDiagramsToText(
+          createIdeaForm.description.trim() || 'Define business problem, expected value, and target outcomes for governance review.',
+          createIdeaProcessDiagrams,
+        ),
         category: createIdeaForm.type,
         tags: tags.length > 0 ? tags : ['New', 'Intake'],
         workspace_id: createIdeaForm.workspaceId,
@@ -3572,6 +3579,7 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaTagDraft('')
     setCreateIdeaTagFeedback('')
     setCreateIdeaDescriptionHtml('')
+    setCreateIdeaProcessDiagrams([])
     setCreateIdeaError('')
   }
 

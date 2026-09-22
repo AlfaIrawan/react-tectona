@@ -8,6 +8,10 @@ export type ExtractedProcessDiagram = {
   source: string
 }
 
+const DIAGRAM_FENCE_RE = /```[ \t]*(?:mermaid|plantuml|tecchart|bpmn)\b[ \t]*\r?\n?[\s\S]*?```/gi
+const TECTONA_DIAGRAM_COMMENT_RE = /<!--tectona-mermaid\b[\s\S]*?-->/gi
+const TECTONA_ENCODED_DIAGRAM_COMMENT_RE = /<!--tectona-process-diagram:([^>]+)-->/gi
+
 const AS_IS_RE = /\b(as[\s-]?is|proses\s+saat\s+ini|kondisi\s+saat\s+ini)\b/i
 const TO_BE_RE = /\b(to[\s-]?be|proses\s+target|kondisi\s+target|expected|diharapkan)\b/i
 
@@ -44,6 +48,16 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
   if (!input.trim()) return []
 
   const commentSources: string[] = []
+  let encodedCommentMatch: RegExpExecArray | null
+  while ((encodedCommentMatch = TECTONA_ENCODED_DIAGRAM_COMMENT_RE.exec(input)) !== null) {
+    try {
+      const source = decodeURIComponent(encodedCommentMatch[1] || '').trim()
+      if (source) commentSources.push(source)
+    } catch {
+      // Ignore malformed hidden diagram metadata.
+    }
+  }
+
   const commentRe = /<!--tectona-mermaid\s*\r?\n([\s\S]*?)-->/gi
   let commentMatch: RegExpExecArray | null
   while ((commentMatch = commentRe.exec(input)) !== null) {
@@ -98,4 +112,34 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
       label: labelFor(item.kind, counters[item.kind], counts),
     }
   })
+}
+
+/** Remove diagram implementation text from prose that is shown in a rich-text editor. */
+export function stripProcessDiagramsFromText(text: string): string {
+  return (text || '')
+    .replace(TECTONA_ENCODED_DIAGRAM_COMMENT_RE, '')
+    .replace(TECTONA_DIAGRAM_COMMENT_RE, '')
+    .replace(DIAGRAM_FENCE_RE, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** Keep diagrams in the persisted draft without exposing their source to the editor. */
+export function appendProcessDiagramsToText(
+  prose: string,
+  diagrams: Pick<ExtractedProcessDiagram, 'source'>[],
+): string {
+  const seen = new Set<string>()
+  const sources = diagrams
+    .map((diagram) => diagram.source.trim())
+    .filter((source) => {
+      if (!source) return false
+      const key = source.replace(/\s+/g, ' ').toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((source) => `<!--tectona-process-diagram:${encodeURIComponent(source)}-->`)
+
+  return [stripProcessDiagramsFromText(prose), ...sources].filter(Boolean).join('\n\n').trim()
 }
