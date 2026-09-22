@@ -285,7 +285,7 @@ function formatBrainstormLatencyMs(sentAt?: string, respondedAt?: string): strin
   const ms = new Date(respondedAt).getTime() - new Date(sentAt).getTime()
   if (!Number.isFinite(ms) || ms < 0) return ''
   if (ms < 1000) return `${ms} ms`
-  return `${(ms / 1000).toFixed(1)} dtk`
+  return `${(ms / 1000).toFixed(1)} s`
 }
 
 function mergeBrainstormUiMessages(
@@ -301,24 +301,14 @@ function mergeBrainstormUiMessages(
       assistantRespondedAtByText.set(message.text, message.respondedAt)
     }
   }
-  let lastAssistantIndex = -1
-  for (let index = incoming.length - 1; index >= 0; index -= 1) {
-    if (incoming[index]?.role === 'assistant') {
-      lastAssistantIndex = index
-      break
+  return incoming.map((message) => {
+    if (message.role === 'user') {
+      const sentAt = userSentAtByText.get(message.text)
+      return sentAt ? { ...message, sentAt } : message
     }
-  }
-  return incoming.map((message, index) => ({
-    ...message,
-    ...(message.role === 'user' && userSentAtByText.has(message.text)
-      ? { sentAt: userSentAtByText.get(message.text) }
-      : {}),
-    ...(message.role === 'assistant' && assistantRespondedAtByText.has(message.text)
-      ? { respondedAt: assistantRespondedAtByText.get(message.text) }
-      : message.role === 'assistant' && index === lastAssistantIndex
-        ? { respondedAt: responseReceivedAt }
-        : {}),
-  }))
+    const respondedAt = assistantRespondedAtByText.get(message.text) ?? responseReceivedAt
+    return { ...message, respondedAt }
+  })
 }
 
 function isIdeaDraftJobLostError(message: string): boolean {
@@ -1035,6 +1025,24 @@ function BrainstormEvidenceRail({
   )
 }
 
+const BRAINSTORM_MARKDOWN_CLASS = cn(
+  'text-[15px] leading-7 text-foreground sm:text-[16px]',
+  '[&_p]:my-3 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0',
+  '[&_strong]:font-semibold [&_strong]:text-foreground',
+  '[&_em]:text-muted-foreground',
+  '[&_h1]:mt-7 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:text-foreground',
+  '[&_h2]:mt-6 [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:text-foreground',
+  '[&_h3]:mt-5 [&_h3]:mb-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-foreground',
+  '[&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-primary/30 [&_blockquote]:bg-primary/[0.035] [&_blockquote]:py-1 [&_blockquote]:pl-5 [&_blockquote]:pr-4 [&_blockquote]:text-[1.02em] [&_blockquote]:font-medium [&_blockquote]:leading-7 [&_blockquote]:text-foreground',
+  '[&_ul]:my-3 [&_ul]:space-y-1 [&_ul]:pl-6 [&_ol]:my-3 [&_ol]:space-y-1 [&_ol]:pl-6',
+  '[&_li]:pl-1 [&_li]:leading-7',
+  '[&_table]:my-5 [&_table]:text-[0.9em] [&_table]:leading-6',
+  '[&_thead]:border-b-2 [&_thead]:border-border [&_thead]:bg-transparent',
+  '[&_th]:border-0 [&_th]:px-0 [&_th]:py-2 [&_th]:pr-6 [&_th]:font-semibold [&_th]:text-foreground',
+  '[&_td]:border-0 [&_td]:border-b [&_td]:border-border/70 [&_td]:px-0 [&_td]:py-2.5 [&_td]:pr-6 [&_td]:text-foreground',
+  '[&_tr:last-child_td]:border-b-0',
+)
+
 function BrainstormProseSegments({ text }: { text: string }) {
   const segments = splitMermaidContent(text)
   if (segments.length === 0) return null
@@ -1054,7 +1062,7 @@ function BrainstormProseSegments({ text }: { text: string }) {
             <AssistantChatMarkdown
               key={`p-${index}`}
               content={prose}
-              className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
+              className={BRAINSTORM_MARKDOWN_CLASS}
             />
           )
         })}
@@ -1064,7 +1072,7 @@ function BrainstormProseSegments({ text }: { text: string }) {
   return (
     <AssistantChatMarkdown
       content={formatBrainstormProse(normalizeMermaidFences(text))}
-      className="text-[15px] leading-7 text-foreground [&_ol]:my-2 [&_p]:my-2"
+      className={BRAINSTORM_MARKDOWN_CLASS}
     />
   )
 }
@@ -3608,7 +3616,11 @@ export function IdeaBacklogManagementPage() {
 
   const applyIdeaDraftBrainstormState = (status: IdeaDraftJobStatusResponse) => {
     setIdeaDraftJob(status)
-    setBrainstormMessages(status.brainstorm_messages ?? [])
+    setBrainstormMessages((current) => mergeBrainstormUiMessages(
+      current,
+      status.brainstorm_messages ?? [],
+      new Date().toISOString(),
+    ))
     setBrainstormReady(Boolean(status.brainstorm_ready))
     setBrainstormRemainingGaps(status.brainstorm_remaining_gaps ?? status.evidence_summary.gaps ?? [])
     setBrainstormOfferGenerateAnyway(Boolean(status.offer_generate_anyway))
@@ -3677,6 +3689,9 @@ export function IdeaBacklogManagementPage() {
           tags: effectiveCreateIdeaTags,
           context: {
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+            workspace_name: createIdeaWorkspaceOptions.find(
+              (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
+            )?.name ?? null,
             user_id: currentUserId || null,
             user_name: currentUserDisplayName || null,
             session_id: null,
@@ -3749,6 +3764,9 @@ export function IdeaBacklogManagementPage() {
           tags: effectiveCreateIdeaTags,
           context: {
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+            workspace_name: createIdeaWorkspaceOptions.find(
+              (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
+            )?.name ?? null,
             user_id: currentUserId || null,
             user_name: currentUserDisplayName || null,
             session_id: ideaDraftJob.correlation_id || null,
@@ -3758,7 +3776,11 @@ export function IdeaBacklogManagementPage() {
           ready_to_continue: brainstormReady,
         })
         setIdeaDraftJob(restored)
-        setBrainstormMessages(restored.brainstorm_messages ?? historyBeforeSend)
+        setBrainstormMessages((current) => mergeBrainstormUiMessages(
+          current.length > 0 ? current : historyBeforeSend,
+          restored.brainstorm_messages ?? [],
+          new Date().toISOString(),
+        ))
         setBrainstormReady(Boolean(restored.brainstorm_ready))
         setBrainstormRemainingGaps(
           restored.brainstorm_remaining_gaps ?? restored.evidence_summary.gaps ?? brainstormRemainingGaps,
@@ -3769,7 +3791,7 @@ export function IdeaBacklogManagementPage() {
       }
       const responseReceivedAt = new Date().toISOString()
       const mergedMessages = mergeBrainstormUiMessages(
-        historyBeforeSend,
+        [...historyBeforeSend, { role: 'user', text: message, sentAt: requestSentAt }],
         response.messages,
         responseReceivedAt,
       )
@@ -3845,6 +3867,9 @@ export function IdeaBacklogManagementPage() {
           tags: effectiveCreateIdeaTags,
           context: {
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+            workspace_name: createIdeaWorkspaceOptions.find(
+              (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
+            )?.name ?? null,
             user_id: currentUserId || null,
             user_name: currentUserDisplayName || null,
             session_id: ideaDraftJob.correlation_id || null,
@@ -4031,6 +4056,9 @@ export function IdeaBacklogManagementPage() {
       // Recovery snapshot survives jobs being evicted from the runtime.
       tags: effectiveCreateIdeaTags,
       workspaceId: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+      workspaceName: createIdeaWorkspaceOptions.find(
+        (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
+      )?.name ?? null,
       sessionId: ideaDraftJob.correlation_id || null,
       messages: brainstormMessages.map(({ role, text }) => ({ role, text })),
       remainingGaps: brainstormRemainingGaps,
@@ -4059,6 +4087,7 @@ export function IdeaBacklogManagementPage() {
         tags: snapshot?.tags ?? [],
         context: {
           workspace_id: snapshot?.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+          workspace_name: snapshot?.workspaceName ?? null,
           user_id: currentUserId || null,
           user_name: currentUserDisplayName || null,
           session_id: snapshot?.sessionId ?? null,
@@ -6192,7 +6221,7 @@ export function IdeaBacklogManagementPage() {
                             className="min-h-0 flex-1 overflow-y-auto"
                           >
                             <div
-                              className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6"
+                              className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-8 lg:px-10"
                             >
                           {brainstormMessages.length === 0 ? (
                             <div
@@ -6221,10 +6250,10 @@ export function IdeaBacklogManagementPage() {
                             const previousUser = [...brainstormMessages.slice(0, index)]
                               .reverse()
                               .find((item) => item.role === 'user')
-                            const requestTimeLabel = message.role === 'user'
+                            const sentLabel = message.role === 'user'
                               ? formatBrainstormTimestamp(message.sentAt)
-                              : formatBrainstormTimestamp(previousUser?.sentAt)
-                            const responseTimeLabel = message.role === 'assistant'
+                              : ''
+                            const receivedLabel = message.role === 'assistant'
                               ? formatBrainstormTimestamp(message.respondedAt)
                               : ''
                             const latencyLabel = message.role === 'assistant'
@@ -6234,53 +6263,42 @@ export function IdeaBacklogManagementPage() {
                             return (
                             <div
                               key={`${message.role}-${index}-${message.text.slice(0, 24)}`}
-                              className={cn(
-                                'flex w-full',
-                                message.role === 'user' ? 'justify-end' : 'justify-start',
-                              )}
+                              className={cn('flex w-full', message.role === 'user' ? 'justify-end' : 'justify-start')}
                             >
                               {message.role === 'assistant' ? (
-                                <div className="flex max-w-full gap-3">
-                                  <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                                    <Sparkles className="h-4 w-4" aria-hidden />
+                                <div className="flex w-full items-start gap-3">
+                                  <div className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
+                                    <Sparkles className="h-3.5 w-3.5" aria-hidden />
                                   </div>
-                                  <div className="min-w-0 space-y-1">
-                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                                      <p className="text-xs font-medium text-muted-foreground">Tectona Assistant</p>
-                                      {requestTimeLabel ? (
-                                        <p className="text-[10px] text-muted-foreground/80">
-                                          Permintaan {requestTimeLabel}
-                                        </p>
-                                      ) : null}
-                                      {responseTimeLabel ? (
-                                        <p className="text-[10px] text-muted-foreground/80">
-                                          · Respons {responseTimeLabel}
-                                          {latencyLabel ? ` (${latencyLabel})` : ''}
-                                        </p>
-                                      ) : null}
+                                  <div className="min-w-0 flex-1 pt-0.5">
+                                    <div className="text-[15px] leading-7 text-foreground">
+                                      {index === brainstormAnimatingAssistantIndex ? (
+                                        <BrainstormAssistantTypingMessage
+                                          text={message.text}
+                                          animate
+                                          onComplete={() => setBrainstormAnimatingAssistantIndex(null)}
+                                          onProgress={scrollBrainstormToBottom}
+                                        />
+                                      ) : (
+                                        <BrainstormAssistantMessageBody text={message.text} />
+                                      )}
                                     </div>
-                                    {index === brainstormAnimatingAssistantIndex ? (
-                                      <BrainstormAssistantTypingMessage
-                                        text={message.text}
-                                        animate
-                                        onComplete={() => setBrainstormAnimatingAssistantIndex(null)}
-                                        onProgress={scrollBrainstormToBottom}
-                                      />
-                                    ) : (
-                                      <BrainstormAssistantMessageBody text={message.text} />
-                                    )}
+                                    {receivedLabel ? (
+                                      <p className="mt-1 text-[11px] text-muted-foreground">
+                                        Received {receivedLabel}
+                                        {latencyLabel ? ` · ${latencyLabel}` : ''}
+                                      </p>
+                                    ) : null}
                                   </div>
                                 </div>
                               ) : (
-                                <div className="max-w-[85%] space-y-1 sm:max-w-[75%]">
-                                  {requestTimeLabel ? (
-                                    <p className="pr-1 text-right text-[10px] text-muted-foreground/80">
-                                      Dikirim {requestTimeLabel}
-                                    </p>
-                                  ) : null}
-                                  <div className="whitespace-pre-wrap rounded-[1.35rem] bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
+                                <div className="flex max-w-[85%] flex-col items-end gap-1">
+                                  <div className="whitespace-pre-wrap rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
                                     {message.text}
                                   </div>
+                                  {sentLabel ? (
+                                    <p className="pr-1 text-[11px] text-muted-foreground">Sent {sentLabel}</p>
+                                  ) : null}
                                 </div>
                               )}
                             </div>
@@ -6288,18 +6306,11 @@ export function IdeaBacklogManagementPage() {
                           })}
 
                           {isBrainstormSending && (
-                            <div className="flex gap-3">
-                              <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                                <Sparkles className="h-4 w-4" aria-hidden />
+                            <div className="flex items-center gap-3 text-sm text-muted-foreground" aria-live="polite">
+                              <div className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
+                                <Sparkles className="h-3.5 w-3.5" aria-hidden />
                               </div>
-                              <div className="inline-flex items-center gap-2 py-1 text-sm text-muted-foreground">
-                                <span className="inline-flex gap-1" aria-hidden>
-                                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:0ms]" />
-                                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:120ms]" />
-                                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:240ms]" />
-                                </span>
-                                Tectona Assistant sedang mengetik…
-                              </div>
+                              <span>Writing a reply…</span>
                             </div>
                           )}
 
@@ -6348,9 +6359,9 @@ export function IdeaBacklogManagementPage() {
                               </div>
                             </div>
                           )}
-                          {!brainstormReady && !brainstormOfferGenerateAnyway && brainstormNextHint && brainstormMessages.length > 0 && (
-                            <p className="text-xs leading-5 text-muted-foreground">
-                              {brainstormThreadIndonesian ? 'Selanjutnya: ' : 'Next: '}
+                          {!isBrainstormSending && !brainstormReady && !brainstormOfferGenerateAnyway && brainstormNextHint && brainstormMessages.length > 0 && !brainstormMessages.some((message) => message.role === 'assistant' && message.text.toLowerCase().includes(brainstormNextHint.toLowerCase())) && (
+                            <p className="px-10 text-xs leading-5 text-muted-foreground">
+                              <span className="mr-1 font-medium text-foreground">{brainstormThreadIndonesian ? 'Berikutnya:' : 'Next:'}</span>
                               {brainstormNextHint}
                             </p>
                           )}
@@ -6462,8 +6473,8 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           </div>
 
-                      <div className="shrink-0 bg-gradient-to-t from-background via-background to-background/80 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
-                        <div className="mx-auto w-full max-w-3xl space-y-2">
+                      <div className="shrink-0 border-t border-border/60 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
+                        <div className="mx-auto w-full max-w-4xl space-y-2">
                           {brainstormError && <p className="px-3 text-xs text-destructive">{brainstormError}</p>}
                           {brainstormReady ? (
                             <button
@@ -6484,7 +6495,7 @@ export function IdeaBacklogManagementPage() {
                               "Enough context" is permission to generate, not the end of the
                               conversation — the assistant usually still has an open question,
                               and unmounting this left the user staring at a dead chat. */}
-                          <div className="rounded-[28px] border border-black/[0.08] bg-white px-2.5 pb-2 pt-2.5 shadow-[0_2px_12px_rgba(15,23,42,0.06)] focus-within:shadow-[0_4px_18px_rgba(15,23,42,0.1)] dark:bg-background">
+                          <div className="rounded-2xl border border-border bg-background px-3 pb-2.5 pt-3 shadow-[0_4px_18px_rgba(15,23,42,0.08)] transition-shadow focus-within:border-primary/40 focus-within:shadow-[0_6px_24px_rgba(15,23,42,0.12)]">
                             <textarea
                               ref={brainstormComposerRef}
                               value={brainstormInput}

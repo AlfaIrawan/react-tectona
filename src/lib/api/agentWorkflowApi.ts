@@ -100,6 +100,15 @@ export async function requestAgentWorkflowReview(id: string): Promise<AgentWorkf
   return readJson(await apiFetch(endpoint(`/${encodeURIComponent(id)}/reviews`), { method: 'POST', headers: headers() }))
 }
 
+export async function approveAgentWorkflowReview(id: string): Promise<AgentWorkflowReviewDto> {
+  return readJson(await apiFetch(endpoint(`/reviews/${encodeURIComponent(id)}/approve`), { method: 'POST', headers: headers() }))
+}
+
+export async function rejectAgentWorkflowReview(id: string, note?: string): Promise<AgentWorkflowReviewDto> {
+  const query = note ? `?note=${encodeURIComponent(note)}` : ''
+  return readJson(await apiFetch(endpoint(`/reviews/${encodeURIComponent(id)}/reject${query}`), { method: 'POST', headers: headers() }))
+}
+
 export async function deleteAgentWorkflow(id: string): Promise<void> {
   const response = await apiFetch(endpoint(`/${encodeURIComponent(id)}`), { method: 'DELETE', headers: headers() })
   if (!response.ok && response.status !== 404) throw new Error((await response.text()) || `HTTP ${response.status}`)

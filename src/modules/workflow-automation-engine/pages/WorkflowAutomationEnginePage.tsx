@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Activity,
   AlertTriangle,
@@ -10,11 +11,12 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  X,
   Clock3,
   Download,
   Filter,
   Gauge,
+  Globe,
+  Hash,
   Info,
   LayoutGrid,
   PanelLeft,
@@ -94,7 +96,8 @@ import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseCo
 import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
 import { WorkflowBuilderCanvas } from '@/modules/workflow-automation-engine/components/WorkflowBuilderCanvas'
 import { AgentWorkflowStudio } from '@/modules/workflow-automation-engine/components/AgentWorkflowStudio'
-import { listAgentCatalog, type AgentCatalogEntryDto } from '@/lib/api/agentWorkflowApi'
+import { createAgentWorkflow, deleteAgentWorkflow, listAgentWorkflows, type AgentWorkflowSummaryDto } from '@/lib/api/agentWorkflowApi'
+import { listExplainerAssistants } from '@/lib/api/documentKnowledgeApi'
 import { useToast } from '@/components/ui/toast'
 import {
   createWorkflow as apiCreateWorkflow,
@@ -282,7 +285,7 @@ const AI_INSIGHTS: Array<{ text: string; level: InsightLevel }> = [
 const PANELS: Array<{ id: PanelId; label: string; icon: React.ComponentType<{ className?: string }>; badge: string; desc: string }> = [
   { id: 'overview', label: 'Execution Overview', icon: Sparkles, badge: 'Command', desc: 'Health, throughput, and KPI summary for workflows.' },
   { id: 'catalog', label: 'Workflow Catalog', icon: Workflow, badge: 'Core', desc: 'Workflow directory with filters and quick actions.' },
-  { id: 'agentCatalog', label: 'Agent Catalog', icon: Bot, badge: 'AI', desc: 'Directory of available agents and their governed workflows.' },
+  { id: 'agentCatalog', label: 'Agent Catalog', icon: Bot, badge: 'AI', desc: 'Directory of governed agent workflows with status and publish state.' },
   { id: 'automation', label: 'Automation Rules', icon: Bot, badge: 'Rules', desc: 'Trigger, condition, action, and status control.' },
   { id: 'monitoring', label: 'Runtime Monitoring', icon: Activity, badge: 'Runtime', desc: 'Execution, queues, and operational incidents.' },
 ]
@@ -431,6 +434,94 @@ function ownerTone(name: string): (typeof OWNER_TONES)[number] {
 // Slug code shown under the workflow name (e.g. "AI backlog approval" → "AI-BACKLOG-APPROVAL").
 function workflowCode(record: WorkflowRecord): string {
   return record.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+// ---------------------------------------------------------------------------
+// Agent Workflow directory enterprise data-table (same chrome as Workflow).
+// ---------------------------------------------------------------------------
+type AgentTableColumnKey = 'name' | 'status' | 'published' | 'version' | 'scope' | 'updated'
+
+const AGENT_TABLE_PINNED_FIRST_COLUMN: AgentTableColumnKey = 'name'
+const AGENT_TABLE_DEFAULT_COLUMN_ORDER: AgentTableColumnKey[] = [
+  'name',
+  'status',
+  'published',
+  'version',
+  'scope',
+  'updated',
+]
+
+function veroDocumentEvidenceGapDefinition(assistantId: string) {
+  return {
+    nodes: [
+      { id: 'start', type: 'agentWorkflow', position: { x: 360, y: 80 }, data: { kind: 'start', label: 'No matching document evidence', config: { trigger_type: 'assistant_unanswered', assistant_id: assistantId } } },
+      { id: 'vero-context', type: 'agentWorkflow', position: { x: 360, y: 240 }, data: { kind: 'agent', label: 'Vero', config: { agent_ref: `assistant:${assistantId}`, summary: 'Knowledge-base document explainer. Read-only.' } } },
+      { id: 'approval', type: 'agentWorkflow', position: { x: 360, y: 400 }, data: { kind: 'approval', label: 'Approve email escalation', config: {} } },
+      { id: 'action', type: 'agentWorkflow', position: { x: 360, y: 560 }, data: { kind: 'action', label: 'Send document evidence gap by email', config: { agent_ref: 'runtime:workflow-escalation', action_code: 'send_customer_email', target: '' } } },
+    ],
+    edges: [
+      { id: 'start-vero-context', source: 'start', target: 'vero-context' },
+      { id: 'vero-context-approval', source: 'vero-context', target: 'approval' },
+      { id: 'approval-action', source: 'approval', target: 'action' },
+    ],
+  }
+}
+
+function agentTableColumnLabel(key: AgentTableColumnKey): string {
+  switch (key) {
+    case 'name': return 'Agent Workflow'
+    case 'status': return 'Status'
+    case 'published': return 'Published'
+    case 'version': return 'Version'
+    case 'scope': return 'Scope'
+    case 'updated': return 'Updated'
+  }
+}
+
+function agentTableColumnHeaderIcon(key: AgentTableColumnKey): LucideIcon {
+  switch (key) {
+    case 'name': return Workflow
+    case 'status': return ShieldCheck
+    case 'published': return CheckCircle2
+    case 'version': return Hash
+    case 'scope': return Globe
+    case 'updated': return Clock3
+  }
+}
+
+const AGENT_TABLE_COLUMN_VISIBILITY_OPTIONS: readonly { key: AgentTableColumnKey; label: string }[] =
+  AGENT_TABLE_DEFAULT_COLUMN_ORDER.map((key) => ({ key, label: agentTableColumnLabel(key) }))
+
+type AgentTableGroupByKey = 'status' | 'published' | 'scope'
+const AGENT_TABLE_GROUP_BY_OPTIONS: readonly { key: AgentTableGroupByKey; label: string }[] = [
+  { key: 'status', label: 'Status' },
+  { key: 'published', label: 'Published' },
+  { key: 'scope', label: 'Scope' },
+]
+
+function agentWorkflowScopeLabel(item: AgentWorkflowSummaryDto): string {
+  return item.workspace_id?.trim() || 'Global'
+}
+
+function agentWorkflowPublishedLabel(item: AgentWorkflowSummaryDto): string {
+  return item.is_published ? 'Published' : 'Draft'
+}
+
+function agentTableGroupLabel(item: AgentWorkflowSummaryDto, groupBy: AgentTableGroupByKey): string {
+  if (groupBy === 'status') return item.status
+  if (groupBy === 'published') return agentWorkflowPublishedLabel(item)
+  return agentWorkflowScopeLabel(item)
+}
+
+function agentWorkflowCode(item: AgentWorkflowSummaryDto): string {
+  return item.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function formatAgentWorkflowUpdated(value?: string | null): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
 }
 
 function Panel({
@@ -711,8 +802,20 @@ export function WorkflowAutomationEnginePage() {
 
   const [activePanel, setActivePanel] = useState<PanelId>('overview')
   const [agentStudioOpen, setAgentStudioOpen] = useState(false)
-  const [agentCatalog, setAgentCatalog] = useState<AgentCatalogEntryDto[]>([])
+  const [agentStudioWorkflowId, setAgentStudioWorkflowId] = useState<string | null>(null)
+  const [agentWorkflows, setAgentWorkflows] = useState<AgentWorkflowSummaryDto[]>([])
   const [agentCatalogState, setAgentCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [agentSearch, setAgentSearch] = useState('')
+  const [agentRowMenu, setAgentRowMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [agentTableSort, setAgentTableSort] = useState<{ key: AgentTableColumnKey; dir: 'asc' | 'desc' } | null>(null)
+  const [agentTableGroupBy, setAgentTableGroupBy] = useState<AgentTableGroupByKey | null>(null)
+  const [showAgentTableSelection, setShowAgentTableSelection] = useState(false)
+  const [agentTableSelectedIds, setAgentTableSelectedIds] = useState<string[]>([])
+  const [agentPage, setAgentPage] = useState(1)
+  const [agentPageSize, setAgentPageSize] = useState(10)
+  const [agentFilterPublished, setAgentFilterPublished] = useState<Set<string>>(new Set())
+  const [agentFilterScope, setAgentFilterScope] = useState<Set<string>>(new Set())
+  const [agentFilterStatus, setAgentFilterStatus] = useState<Set<string>>(new Set())
   const [isWorkspaceCollapsed, setIsWorkspaceCollapsed] = useUiLayoutBoolean(
     UI_SCOPE_WORKFLOW_AUTOMATION,
     'isWorkspaceCollapsed',
@@ -740,20 +843,45 @@ export function WorkflowAutomationEnginePage() {
     ownerId: string
   } | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
+  const loadAgentWorkflows = useCallback(() => {
     setAgentCatalogState('loading')
-    void listAgentCatalog(isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined)
-      .then((items) => {
-        if (cancelled) return
-        setAgentCatalog(items)
+    const scopedWorkspaceId = isAllWorkspacesSelection(workspaceId) ? null : workspaceId
+    return listAgentWorkflows(scopedWorkspaceId ?? undefined)
+      .then(async (items) => {
+        if (items.length === 0 && scopedWorkspaceId) {
+          const assistantResponse = await listExplainerAssistants({ workspaceId: scopedWorkspaceId, status: 'published', pageSize: 200 })
+          const vero = assistantResponse.assistants.find((assistant) => assistant.display_name.trim().toLowerCase() === 'vero')
+          if (!vero) {
+            setAgentWorkflows([])
+            setAgentCatalogState('ready')
+            return
+          }
+          const created = await createAgentWorkflow({
+            name: 'Vero - document evidence email escalation',
+            description: 'Draft template for Vero questions with no matching document evidence. Set an email recipient before requesting review and publishing.',
+            workspace_id: scopedWorkspaceId,
+            definition: veroDocumentEvidenceGapDefinition(vero.id),
+          })
+          setAgentWorkflows([created])
+          setAgentCatalogState('ready')
+          return
+        }
+        setAgentWorkflows(items)
         setAgentCatalogState('ready')
       })
       .catch(() => {
-        if (!cancelled) setAgentCatalogState('error')
+        setAgentWorkflows([])
+        setAgentCatalogState('error')
       })
-    return () => { cancelled = true }
   }, [workspaceId])
+
+  useEffect(() => {
+    if (activePanel !== 'agentCatalog') return undefined
+    const frameId = window.requestAnimationFrame(() => {
+      void loadAgentWorkflows()
+    })
+    return () => window.cancelAnimationFrame(frameId)
+  }, [activePanel, loadAgentWorkflows])
 
   // Owners come from active Identity Lite users, narrowed to the active workspace
   // memberships when a workspace scope is selected. No synthetic owner names.
@@ -1397,6 +1525,205 @@ export function WorkflowAutomationEnginePage() {
     }
   }
 
+  const filteredAgents = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase()
+    if (!q) return agentWorkflows
+    return agentWorkflows.filter((item) =>
+      [
+        item.name,
+        item.id,
+        item.description,
+        item.status,
+        agentWorkflowPublishedLabel(item),
+        agentWorkflowScopeLabel(item),
+        `v${item.version}`,
+      ].join(' ').toLowerCase().includes(q),
+    )
+  }, [agentWorkflows, agentSearch])
+
+  const buildAgentFilterOptions = useCallback(
+    (accessor: (item: AgentWorkflowSummaryDto) => string) => {
+      const counts = new Map<string, number>()
+      filteredAgents.forEach((item) => {
+        const value = accessor(item)
+        counts.set(value, (counts.get(value) ?? 0) + 1)
+      })
+      return Array.from(counts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([value, count]) => ({ value, count }))
+    },
+    [filteredAgents],
+  )
+
+  const agentStatusFilterOptions = useMemo(() => buildAgentFilterOptions((item) => item.status), [buildAgentFilterOptions])
+  const agentPublishedFilterOptions = useMemo(() => buildAgentFilterOptions((item) => agentWorkflowPublishedLabel(item)), [buildAgentFilterOptions])
+  const agentScopeFilterOptions = useMemo(() => buildAgentFilterOptions((item) => agentWorkflowScopeLabel(item)), [buildAgentFilterOptions])
+
+  const columnFilteredAgents = useMemo(() => {
+    return filteredAgents.filter((item) => {
+      if (agentFilterStatus.size > 0 && !agentFilterStatus.has(item.status)) return false
+      if (agentFilterPublished.size > 0 && !agentFilterPublished.has(agentWorkflowPublishedLabel(item))) return false
+      if (agentFilterScope.size > 0 && !agentFilterScope.has(agentWorkflowScopeLabel(item))) return false
+      return true
+    })
+  }, [filteredAgents, agentFilterStatus, agentFilterPublished, agentFilterScope])
+
+  const toggleAgentTableSort = useCallback((key: AgentTableColumnKey) => {
+    setAgentTableSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }, [])
+
+  const sortedAgents = useMemo(() => {
+    if (!agentTableSort) return columnFilteredAgents
+    const { key, dir } = agentTableSort
+    const mul = dir === 'asc' ? 1 : -1
+    const valueByKey = (item: AgentWorkflowSummaryDto): string | number => {
+      switch (key) {
+        case 'name': return item.name
+        case 'status': return item.status
+        case 'published': return agentWorkflowPublishedLabel(item)
+        case 'version': return item.version
+        case 'scope': return agentWorkflowScopeLabel(item)
+        case 'updated': return item.updated_date ?? ''
+      }
+    }
+    return [...columnFilteredAgents].sort((a, b) => {
+      const left = valueByKey(a)
+      const right = valueByKey(b)
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * mul
+      return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' }) * mul
+    })
+  }, [columnFilteredAgents, agentTableSort])
+
+  const agentFlatRows = useMemo(() => {
+    if (agentTableGroupBy) {
+      const grouped = [...sortedAgents].sort((a, b) =>
+        agentTableGroupLabel(a, agentTableGroupBy).localeCompare(
+          agentTableGroupLabel(b, agentTableGroupBy),
+          undefined,
+          { sensitivity: 'base' },
+        ),
+      )
+      return grouped.map((item) => ({ item, groupLabel: agentTableGroupLabel(item, agentTableGroupBy) }))
+    }
+    return sortedAgents.map((item) => ({ item, groupLabel: null as string | null }))
+  }, [sortedAgents, agentTableGroupBy])
+
+  const agentTotalPages = Math.max(1, Math.ceil(agentFlatRows.length / agentPageSize))
+  const agentPageSafe = Math.min(agentPage, agentTotalPages)
+  const agentStart = agentFlatRows.length === 0 ? 0 : (agentPageSafe - 1) * agentPageSize + 1
+  const agentEnd = Math.min(agentFlatRows.length, agentPageSafe * agentPageSize)
+  const pagedAgentRows = agentFlatRows.slice(agentStart === 0 ? 0 : agentStart - 1, agentEnd)
+
+  const { tableRef: agentTableRef, ...agentTableColumns } = useEnterpriseSortableColumns<AgentTableColumnKey>({
+    initialOrder: AGENT_TABLE_DEFAULT_COLUMN_ORDER,
+    pinnedFirstKey: AGENT_TABLE_PINNED_FIRST_COLUMN,
+    hasSelectionColumn: showAgentTableSelection,
+    onColumnHidden: (key) => {
+      if (agentTableGroupBy && (key as string) === agentTableGroupBy) setAgentTableGroupBy(null)
+    },
+  })
+
+  const toggleAgentTableRowSelection = useCallback((id: string) => {
+    setAgentTableSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }, [])
+
+  const setShowAgentTableSelectionSafe = useCallback((checked: boolean) => {
+    setShowAgentTableSelection(checked)
+    if (!checked) setAgentTableSelectedIds([])
+  }, [])
+
+  const openAgentStudio = useCallback((workflowId: string | null = null) => {
+    setAgentStudioWorkflowId(workflowId)
+    setAgentStudioOpen(true)
+  }, [])
+
+  const closeAgentStudio = useCallback(() => {
+    setAgentStudioOpen(false)
+    setAgentStudioWorkflowId(null)
+    void loadAgentWorkflows()
+  }, [loadAgentWorkflows])
+
+  const deleteListedAgentWorkflow = useCallback((id: string) => {
+    const previous = agentWorkflows
+    setAgentWorkflows((current) => current.filter((item) => item.id !== id))
+    setAgentTableSelectedIds((current) => current.filter((sid) => sid !== id))
+    void deleteAgentWorkflow(id).catch(() => {
+      setAgentWorkflows(previous)
+      addToast({ variant: 'error', title: 'Agent workflow deletion failed', description: 'The backend did not delete this workflow.' })
+    })
+  }, [addToast, agentWorkflows])
+
+  const renderAgentTableCell = (item: AgentWorkflowSummaryDto, key: AgentTableColumnKey) => {
+    switch (key) {
+      case 'name':
+        return (
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-slate-900">{item.name}</div>
+            <div className="mt-0.5 truncate text-[10px] text-slate-500">{item.description || 'No description'}</div>
+            <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{agentWorkflowCode(item)}</div>
+          </div>
+        )
+      case 'status':
+        return <Badge className={cn('rounded-full border', statusTone(item.status))}>{item.status}</Badge>
+      case 'published':
+        return (
+          <Badge className={cn('rounded-full border', item.is_published ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-600')}>
+            {agentWorkflowPublishedLabel(item)}
+          </Badge>
+        )
+      case 'version':
+        return <span className="tabular-nums text-slate-700">v{item.version}</span>
+      case 'scope':
+        return <span className="text-slate-600">{agentWorkflowScopeLabel(item)}</span>
+      case 'updated':
+        return <span className="text-slate-500">{formatAgentWorkflowUpdated(item.updated_date)}</span>
+    }
+  }
+
+  const renderAgentFilterSlot = (key: AgentTableColumnKey) => {
+    switch (key) {
+      case 'status':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Status"
+            ariaLabel="Filter by status"
+            options={agentStatusFilterOptions}
+            selected={agentFilterStatus}
+            onToggleOption={(value) => toggleWorkflowFilterValue(setAgentFilterStatus, value)}
+            onShowAll={() => setAgentFilterStatus(new Set())}
+          />
+        )
+      case 'published':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Published"
+            ariaLabel="Filter by published state"
+            options={agentPublishedFilterOptions}
+            selected={agentFilterPublished}
+            onToggleOption={(value) => toggleWorkflowFilterValue(setAgentFilterPublished, value)}
+            onShowAll={() => setAgentFilterPublished(new Set())}
+          />
+        )
+      case 'scope':
+        return (
+          <EnterpriseColumnFilterDropdown
+            label="Scope"
+            ariaLabel="Filter by scope"
+            options={agentScopeFilterOptions}
+            selected={agentFilterScope}
+            onToggleOption={(value) => toggleWorkflowFilterValue(setAgentFilterScope, value)}
+            onShowAll={() => setAgentFilterScope(new Set())}
+          />
+        )
+      default:
+        return undefined
+    }
+  }
+
   return (
     <div className="min-h-0 space-y-6 pb-0">
       <div className={cn('space-y-6', workspaceDockedContentInsetClass(navDocked, isWorkspaceCollapsed, enterpriseNavLayoutVariant))}>
@@ -1639,21 +1966,36 @@ export function WorkflowAutomationEnginePage() {
         >
           {/* Outer wrapper already applies workspaceDockedContentInsetClass — pass docked=false
               to avoid double left padding that narrows the panel when Fixed Sidebar is off. */}
-          {showFiltersPanel && activePanel !== 'overview' && activePanel !== 'agentCatalog' ? (
+          {showFiltersPanel && activePanel !== 'overview' ? (
           <Card ref={filterCardRef} className="liquid-glass-enterprise-panel rounded-2xl p-4 space-y-3">
             <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
-                value={activePanel === 'automation' ? ruleSearch : search}
-                onChange={(event) => (activePanel === 'automation' ? setRuleSearch(event.target.value) : setSearch(event.target.value))}
+                value={activePanel === 'automation' ? ruleSearch : activePanel === 'agentCatalog' ? agentSearch : search}
+                onChange={(event) => {
+                  if (activePanel === 'automation') setRuleSearch(event.target.value)
+                  else if (activePanel === 'agentCatalog') setAgentSearch(event.target.value)
+                  else setSearch(event.target.value)
+                }}
                 className="h-11 w-full rounded-2xl border-slate-200 bg-white pl-9 text-sm"
-                placeholder={activePanel === 'automation' ? 'Search rule name, trigger, condition, action' : 'Search workflow name, ID, owner, type, trigger'}
+                placeholder={
+                  activePanel === 'automation'
+                    ? 'Search rule name, trigger, condition, action'
+                    : activePanel === 'agentCatalog'
+                      ? 'Search agent workflow name, ID, status, scope'
+                      : 'Search workflow name, ID, owner, type, trigger'
+                }
               />
             </div>
             {activePanel === 'catalog' ? (
               <button type="button" onClick={createWorkflow} className={enterpriseCyanGradientActionButtonClass()}>
                 <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
                 New Workflow
+              </button>
+            ) : activePanel === 'agentCatalog' ? (
+              <button type="button" onClick={() => openAgentStudio(null)} className={enterpriseCyanGradientActionButtonClass()}>
+                <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                Add Agent Workflow
               </button>
             ) : activePanel === 'automation' ? (
               <button type="button" onClick={createAutomationRule} className={enterpriseCyanGradientActionButtonClass()}>
@@ -2475,22 +2817,396 @@ export function WorkflowAutomationEnginePage() {
 
           {activePanel === 'agentCatalog' ? (
             <Panel
-              title="Agent Catalog"
-              description="Available Tectona agents, their capability boundaries, and governed workflow entry points."
-              headerIcon={<Bot className="h-5 w-5" />}
-              right={<Button size="sm" onClick={() => setAgentStudioOpen(true)}><Workflow className="mr-1.5 h-3.5 w-3.5" /> Agent Workflow</Button>}
+              title="Agent Workflow Directory Panel"
+              description="List of governed agent workflows with status, publication, version, and quick operational actions."
+              headerIcon={<Workflow className="h-5 w-5" />}
               panelRef={activeMainPanelRef}
               style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
               className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
-              bodyClassName="min-h-0 flex-1 overflow-y-auto"
+              bodyClassName="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              right={
+                    <div className="flex flex-wrap items-center justify-end gap-3 py-1 text-xs text-muted-foreground">
+                      <Badge variant="outline" className={cn('mr-1 text-[10px] font-semibold', agentCatalogState === 'ready' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : agentCatalogState === 'loading' ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-rose-200 bg-rose-50 text-rose-700')}>
+                        {agentCatalogState === 'ready' ? 'Backend data' : agentCatalogState === 'loading' ? 'Loading backend' : 'Backend unavailable'}
+                      </Badge>
+                      <EnterpriseGroupByControl
+                        options={AGENT_TABLE_GROUP_BY_OPTIONS}
+                        value={agentTableGroupBy}
+                        onChange={(key) => setAgentTableGroupBy(key)}
+                      />
+                      <EnterpriseSelectionToggle checked={showAgentTableSelection} onChange={setShowAgentTableSelectionSafe} />
+                      <EnterpriseColumnVisibilityControl
+                        columns={AGENT_TABLE_COLUMN_VISIBILITY_OPTIONS}
+                        hidden={agentTableColumns.hiddenColumns}
+                        visibleCount={agentTableColumns.visibleColumnOrder.length}
+                        onToggle={agentTableColumns.toggleColumnVisibility}
+                        onShowAll={agentTableColumns.showAllColumns}
+                        canEnable={agentTableColumns.canShowColumn}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Showing <span className="font-semibold text-foreground">{agentStart}</span>-<span className="font-semibold text-foreground">{agentEnd}</span> of <span className="font-semibold text-foreground">{agentFlatRows.length}</span>
+                      </p>
+                      <span className="text-xs text-muted-foreground">Rows:</span>
+                      <Select
+                        value={String(agentPageSize)}
+                        onChange={(e) => {
+                          setAgentPageSize(parseInt(e.target.value, 10))
+                          setAgentPage(1)
+                        }}
+                        className="h-10 w-[84px] text-sm"
+                      >
+                        <SelectItem value="5">5</SelectItem>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="15">15</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                      </Select>
+                      <div className="flex h-10 items-stretch gap-0.5 rounded-lg border border-border bg-background/80 p-0.5 shadow-sm">
+                        <button
+                          type="button"
+                          className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                          onClick={() => setAgentPage((prev) => Math.max(1, prev - 1))}
+                          disabled={agentPageSafe <= 1}
+                        >
+                          Previous
+                        </button>
+                        <div className="flex items-center justify-center px-2 text-xs text-muted-foreground tabular-nums">{agentPageSafe} / {agentTotalPages}</div>
+                        <button
+                          type="button"
+                          className="flex items-center justify-center rounded-md px-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+                          onClick={() => setAgentPage((prev) => Math.min(agentTotalPages, prev + 1))}
+                          disabled={agentPageSafe >= agentTotalPages}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+              }
             >
-              {agentCatalogState === 'loading' ? <div className="p-6 text-sm text-slate-500">Loading agent catalog...</div> : null}
-              {agentCatalogState === 'error' ? <div className="p-6 text-sm text-rose-600">Agent catalog is unavailable. Check the workflow automation service.</div> : null}
-              {agentCatalogState === 'ready' ? <div className="overflow-x-auto border border-slate-200">
-                <table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Agent</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Runtime</th><th className="px-4 py-3">Capabilities</th><th className="px-4 py-3">Scope</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr></thead>
-                  <tbody>{agentCatalog.map((agent) => <tr key={agent.agent_ref} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70"><td className="px-4 py-3"><div className="font-semibold text-slate-900">{agent.display_name}</div><div className="mt-0.5 font-mono text-[10px] text-slate-500">{agent.agent_ref}</div></td><td className="px-4 py-3"><Badge variant="outline">{agent.agent_type}</Badge></td><td className="px-4 py-3 text-slate-600">{agent.runtime}</td><td className="max-w-72 px-4 py-3"><div className="flex flex-wrap gap-1">{agent.capabilities.slice(0, 3).map((capability) => <span key={capability} className="border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">{capability.replaceAll('_', ' ')}</span>)}</div></td><td className="px-4 py-3 text-slate-600">{agent.workspace_id ?? 'Global'}</td><td className="px-4 py-3"><Badge variant="outline" className={agent.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-600'}>{agent.enabled ? 'Available' : 'Disabled'}</Badge></td><td className="px-4 py-3 text-right"><Button size="sm" variant="outline" onClick={() => setAgentStudioOpen(true)}><Workflow className="mr-1.5 h-3.5 w-3.5" /> Agent Workflow</Button></td></tr>)}</tbody>
-                </table>
-              </div> : null}
+                  {agentFlatRows.length > 0 ? (
+                    <div className="min-h-0 w-full flex-1 overflow-auto rounded-xl">
+                      <DndContext sensors={agentTableColumns.dndSensors} onDragEnd={agentTableColumns.handleColumnDragEnd}>
+                        <table
+                          ref={agentTableRef}
+                          className={cn(
+                            'border-collapse text-xs select-none',
+                            agentTableColumns.hasAnyCustomWidth || agentTableColumns.resizingKey ? 'table-fixed w-full' : 'w-full',
+                          )}
+                        >
+                          <colgroup>
+                            {showAgentTableSelection ? <col className="w-10" /> : null}
+                            {agentTableColumns.visibleColumnOrder.map((key) => (
+                              <col key={key} style={agentTableColumns.columnWidthStyle(key)} />
+                            ))}
+                            <col className="w-12" />
+                          </colgroup>
+                          <thead className="sticky top-0 z-10">
+                            <tr className="text-left text-muted-foreground">
+                              {showAgentTableSelection ? (
+                                <th className="w-10 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                  <input
+                                    type="checkbox"
+                                    id="agent-table-select-all"
+                                    name="agent-table-select-all"
+                                    checked={
+                                      agentTableSelectedIds.length > 0
+                                      && agentTableSelectedIds.length === pagedAgentRows.length
+                                    }
+                                    onChange={() =>
+                                      setAgentTableSelectedIds(
+                                        agentTableSelectedIds.length === pagedAgentRows.length
+                                          ? []
+                                          : pagedAgentRows.map(({ item }) => item.id),
+                                      )
+                                    }
+                                    aria-label="Select all rows on this page"
+                                  />
+                                </th>
+                              ) : null}
+                              <SortableContext items={agentTableColumns.visibleColumnOrder} strategy={rectSortingStrategy}>
+                                {agentTableColumns.visibleColumnOrder.map((key) => (
+                                  <EnterpriseSortableHeaderCell
+                                    key={key}
+                                    columnKey={key}
+                                    label={agentTableColumnLabel(key)}
+                                    icon={agentTableColumnHeaderIcon(key)}
+                                    isPinned={agentTableColumns.isPinnedColumn(key)}
+                                    isFirstColumn={agentTableColumns.isFirstColumn(key)}
+                                    isLastColumn={agentTableColumns.isLastColumn(key)}
+                                    widthStyle={agentTableColumns.columnWidthStyle(key)}
+                                    sortDir={agentTableSort?.key === key ? agentTableSort.dir : null}
+                                    onToggleSort={toggleAgentTableSort}
+                                    filterSlot={renderAgentFilterSlot(key)}
+                                    frozenColumnClass={agentTableColumns.frozenColumnHeaderClass}
+                                    firstColumnTintClass={agentTableColumns.firstColumnTintHeaderClass}
+                                    isResizing={agentTableColumns.resizingKey === key}
+                                    onBeginResize={agentTableColumns.beginColumnResize}
+                                    onContextMenu={(event, columnKey) =>
+                                      agentTableColumns.setHeaderContextMenu({ x: event.clientX, y: event.clientY, columnKey })
+                                    }
+                                  />
+                                ))}
+                              </SortableContext>
+                              <th className="w-12 select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90">
+                                <span className="sr-only">Actions</span>
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedAgentRows.map(({ item, groupLabel }, rowIndex) => {
+                              const previousGroupLabel = pagedAgentRows[rowIndex - 1]?.groupLabel ?? null
+                              const showGroupHeader = agentTableGroupBy && groupLabel && groupLabel !== previousGroupLabel
+                              const groupTint = agentTableGroupBy && groupLabel ? getEnterpriseGroupTint(agentTableGroupBy, groupLabel) : null
+                              const isSelected = showAgentTableSelection && agentTableSelectedIds.includes(item.id)
+                              const resolveBodyCellBackground = (isFirstColumn: boolean) => {
+                                if (isSelected) return ''
+                                const stickyFirstClass =
+                                  agentTableColumns.freezeFirstColumn && isFirstColumn
+                                    ? 'sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(15,23,42,0.08)] dark:shadow-[4px_0_8px_-4px_rgba(0,0,0,0.35)]'
+                                    : ''
+                                if (groupTint) {
+                                  return cn(isFirstColumn ? groupTint.first : groupTint.row, stickyFirstClass)
+                                }
+                                if (agentTableColumns.freezeFirstColumn && isFirstColumn) return agentTableColumns.frozenColumnBodyClass
+                                if (isFirstColumn) return agentTableColumns.firstColumnTintBodyClass
+                                return ''
+                              }
+                              const cellClass = cn(
+                                'border-b border-slate-200/60 px-3 py-3.5 align-middle transition-colors dark:border-slate-700/20',
+                                isSelected
+                                  ? 'bg-primary/10'
+                                  : groupTint
+                                    ? 'group-hover:brightness-[0.98] dark:group-hover:brightness-110'
+                                    : 'group-hover:bg-sky-50/40',
+                              )
+                              return (
+                                <Fragment key={item.id}>
+                                  {showGroupHeader ? (
+                                    <tr>
+                                      <td
+                                        colSpan={agentTableColumns.visibleColumnOrder.length + (showAgentTableSelection ? 1 : 0) + 1}
+                                        className={cn(
+                                          'px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground',
+                                          groupTint?.first,
+                                        )}
+                                      >
+                                        {AGENT_TABLE_GROUP_BY_OPTIONS.find((opt) => opt.key === agentTableGroupBy)?.label}: {groupLabel}
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                  <tr
+                                    onClick={() => openAgentStudio(item.id)}
+                                    className="group cursor-pointer transition-colors"
+                                  >
+                                    {showAgentTableSelection ? (
+                                      <td
+                                        className={cn(cellClass, 'w-10', resolveBodyCellBackground(false))}
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          id={`agent-table-select-${item.id}`}
+                                          name={`agent-table-select-${item.id}`}
+                                          checked={agentTableSelectedIds.includes(item.id)}
+                                          onChange={() => toggleAgentTableRowSelection(item.id)}
+                                          aria-label={`Select ${item.name}`}
+                                        />
+                                      </td>
+                                    ) : null}
+                                    {agentTableColumns.visibleColumnOrder.map((key) => {
+                                      const isFirstCol = agentTableColumns.visibleColumnOrder[0] === key
+                                      return (
+                                        <td
+                                          key={key}
+                                          className={cn(cellClass, resolveBodyCellBackground(isFirstCol))}
+                                          style={{
+                                            ...(agentTableColumns.columnWidthStyle(key) ?? {}),
+                                            ...(key === 'name' ? { boxShadow: `inset 3px 0 0 ${statusAccentColor(item.status)}` } : {}),
+                                          }}
+                                        >
+                                          {renderAgentTableCell(item, key)}
+                                        </td>
+                                      )
+                                    })}
+                                    <td
+                                      className={cn(cellClass, 'w-12 text-right')}
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 data-[open=true]:opacity-100"
+                                        data-open={agentRowMenu?.id === item.id}
+                                        aria-label={`Actions for ${item.name}`}
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          setAgentRowMenu(
+                                            agentRowMenu?.id === item.id
+                                              ? null
+                                              : { id: item.id, x: event.clientX, y: event.clientY },
+                                          )
+                                        }}
+                                      >
+                                        <MoreVertical className="h-4 w-4" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                </Fragment>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </DndContext>
+
+                      <ContextMenu
+                        open={agentTableColumns.headerContextMenu !== null}
+                        x={agentTableColumns.headerContextMenu?.x ?? 0}
+                        y={agentTableColumns.headerContextMenu?.y ?? 0}
+                        onClose={() => agentTableColumns.setHeaderContextMenu(null)}
+                      >
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = agentTableColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            agentTableColumns.autoResizeColumn(key)
+                            agentTableColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <UnfoldHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Auto Resize Column
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            const key = agentTableColumns.headerContextMenu?.columnKey
+                            if (!key) return
+                            agentTableColumns.setColumnWidthDialog({ open: true, columnKey: key, valuePx: '' })
+                            agentTableColumns.setHeaderContextMenu(null)
+                          }}
+                        >
+                          <Ruler className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Column Width...
+                        </ContextMenuItem>
+                        {agentTableColumns.hasAnyCustomWidth ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                agentTableColumns.resetAllColumnWidths()
+                                agentTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <RotateCcw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Reset Column Width
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                        {agentTableColumns.headerContextMenu?.columnKey
+                        && agentTableColumns.isFirstColumn(agentTableColumns.headerContextMenu.columnKey) ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                agentTableColumns.setFreezeFirstColumn((v) => !v)
+                                agentTableColumns.setHeaderContextMenu(null)
+                              }}
+                            >
+                              <Pin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Freeze Column
+                              <span className="ml-auto text-xs text-muted-foreground">
+                                {agentTableColumns.freezeFirstColumn ? 'On' : 'Off'}
+                              </span>
+                            </ContextMenuItem>
+                          </>
+                        ) : null}
+                      </ContextMenu>
+
+                      <ContextMenu
+                        open={agentRowMenu !== null}
+                        x={agentRowMenu?.x ?? 0}
+                        y={agentRowMenu?.y ?? 0}
+                        onClose={() => setAgentRowMenu(null)}
+                      >
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (agentRowMenu) openAgentStudio(agentRowMenu.id)
+                            setAgentRowMenu(null)
+                          }}
+                        >
+                          <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Open in Studio
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (agentRowMenu) {
+                              void navigator.clipboard?.writeText(agentRowMenu.id)
+                              addToast({ variant: 'success', title: 'Workflow ID copied', description: agentRowMenu.id })
+                            }
+                            setAgentRowMenu(null)
+                          }}
+                        >
+                          <Copy className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Copy Workflow ID
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (agentRowMenu) deleteListedAgentWorkflow(agentRowMenu.id)
+                            setAgentRowMenu(null)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+                          <span className="text-rose-600">Delete</span>
+                        </ContextMenuItem>
+                      </ContextMenu>
+
+                      <EnterpriseColumnWidthModal
+                        open={agentTableColumns.columnWidthDialog?.open ?? false}
+                        onClose={() => agentTableColumns.setColumnWidthDialog(null)}
+                        columnLabel={
+                          agentTableColumns.columnWidthDialog
+                            ? agentTableColumnLabel(agentTableColumns.columnWidthDialog.columnKey)
+                            : '—'
+                        }
+                        valuePx={agentTableColumns.columnWidthDialog?.valuePx ?? ''}
+                        onValuePxChange={(value) =>
+                          agentTableColumns.setColumnWidthDialog((prev) => (prev ? { ...prev, valuePx: value } : prev))
+                        }
+                        onApply={(widthPx) => {
+                          if (!agentTableColumns.columnWidthDialog) return
+                          const key = agentTableColumns.columnWidthDialog.columnKey
+                          agentTableColumns.setColumnWidthsWithSnapshot((prev) => {
+                            if (widthPx == null) {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            }
+                            return { ...prev, [key]: widthPx }
+                          }, agentTableRef.current)
+                          agentTableColumns.setColumnWidthDialog(null)
+                        }}
+                        dialogTitleId="agent-table-column-width-dialog-title"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center">
+                      <Workflow className="mb-3 h-8 w-8 text-slate-300" strokeWidth={1.75} />
+                      <p className="text-sm font-medium text-slate-500">
+                        {agentCatalogState === 'loading'
+                          ? 'Loading agent workflows...'
+                          : agentWorkflows.length === 0
+                            ? 'No agent workflows yet'
+                            : 'No agent workflows match the current filters'}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {agentCatalogState === 'error'
+                          ? 'Agent workflow service is unavailable. Check the workflow automation service.'
+                          : agentCatalogState === 'loading'
+                            ? 'Fetching agent workflows from the backend.'
+                            : agentWorkflows.length === 0
+                              ? 'Use Add Agent Workflow to compose a governed multi-agent workflow.'
+                              : 'Adjust the search or column filters to see agent workflows.'}
+                      </p>
+                    </div>
+                  )}
             </Panel>
           ) : null}
 
@@ -2713,17 +3429,25 @@ export function WorkflowAutomationEnginePage() {
         }}
         onClose={() => setBuilder({ open: false, workflowId: null })}
       />
-      {agentStudioOpen ? (
-        <div className="fixed inset-0 z-[100] flex bg-slate-950/35 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Agent Workflow Studio">
-          <section className="flex min-h-0 w-full flex-1 flex-col overflow-hidden border border-slate-200 bg-white shadow-2xl">
-            <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-3">
-              <div><h2 className="text-base font-semibold text-slate-950">Agent Workflow</h2><p className="mt-0.5 text-xs text-slate-500">Compose, review, publish, and test governed multi-agent workflows.</p></div>
-              <Button size="icon" variant="ghost" title="Close Agent Workflow Studio" aria-label="Close Agent Workflow Studio" onClick={() => setAgentStudioOpen(false)}><X className="h-4 w-4" /></Button>
-            </header>
-            <div className="min-h-0 flex-1 p-4"><AgentWorkflowStudio workspaceId={isAllWorkspacesSelection(workspaceId) ? null : workspaceId} /></div>
-          </section>
-        </div>
-      ) : null}
+      {agentStudioOpen
+        ? createPortal(
+            <div
+              className="fixed inset-x-0 bottom-0 z-[200] bg-background"
+              style={{ top: '3rem' }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Agent Workflow Studio"
+            >
+              <AgentWorkflowStudio
+                key={agentStudioWorkflowId ?? 'new'}
+                workspaceId={isAllWorkspacesSelection(workspaceId) ? null : workspaceId}
+                initialWorkflowId={agentStudioWorkflowId}
+                onClose={closeAgentStudio}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

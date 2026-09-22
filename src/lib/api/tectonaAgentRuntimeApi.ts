@@ -517,6 +517,8 @@ export interface GenerateIdeaDraftRequest {
   tags?: string[]
   context?: {
     workspace_id?: string | null
+    workspace_name?: string | null
+    organization_name?: string | null
     user_id?: string | null
     user_name?: string | null
     session_id?: string | null
@@ -614,6 +616,8 @@ export interface RestoreIdeaDraftBrainstormRequest {
   tags?: string[]
   context?: {
     workspace_id?: string | null
+    workspace_name?: string | null
+    organization_name?: string | null
     user_id?: string | null
     user_name?: string | null
     session_id?: string | null
@@ -956,7 +960,9 @@ export async function confirmTectonaAgentAction(
         step_id: action.step_id,
       }),
     },
-    90_000,
+    // Confirmed writes are bounded API calls. Fail visibly rather than leaving the
+    // action card in Running while an unavailable proxy/upstream never responds.
+    30_000,
   )
   return handleResponse<RuntimeAgentActionResult>(res)
 }

@@ -26,6 +26,7 @@ export type IdeaDraftBrainstormPointer = {
   /** Recovery snapshot — everything restoreIdeaDraftBrainstormSession needs. */
   tags?: string[]
   workspaceId?: string | null
+  workspaceName?: string | null
   sessionId?: string | null
   messages?: IdeaDraftBrainstormMessage[]
   remainingGaps?: string[]

@@ -258,10 +258,6 @@ function fallbackFromAssistant(assistant: ExplainerAssistant): ExplainerFallback
   }
 }
 
-function fallbackKindLabel(kind: string | null | undefined): string {
-  return FALLBACK_KIND_OPTIONS.find((item) => item.kind === kind)?.label || 'No forwarding'
-}
-
 function formatWeekLabel(weekStart: string): string {
   const parsed = Date.parse(`${weekStart}T00:00:00Z`)
   if (!Number.isFinite(parsed)) return weekStart
@@ -1160,16 +1156,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     draft.chatLimitMode === 'scoped'
     || draft.chatLimitKind === 'none'
     || (Number.isFinite(Number(draft.chatLimitValue)) && Number(draft.chatLimitValue) > 0)
-  const fallbackEmail = (draft.fallback.target_email || '').trim()
-  const fallbackReady =
-    draft.fallback.escalate_kind === 'none'
-    || (draft.fallback.escalate_kind === 'custom_email' && fallbackEmail.includes('@'))
-    || (draft.fallback.escalate_kind === 'member_email'
-      && Boolean(draft.fallback.target_id)
-      && (fallbackEmail.includes('@') || Boolean(identityEmailById.get(draft.fallback.target_id))))
-    || ((draft.fallback.escalate_kind === 'member_chat' || draft.fallback.escalate_kind === 'group_chat')
-      && Boolean(draft.fallback.target_id))
-  const canSave = !!workspaceId && draft.displayName.trim().length > 0 && chatLimitReady && fallbackReady
+  const canSave = !!workspaceId && draft.displayName.trim().length > 0 && chatLimitReady
 
   const addScopedChatLimit = () => {
     let parsed: { chat_limit_kind: ExplainerChatLimitKind | null; chat_limit_value: number | null }
@@ -1222,20 +1209,9 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
     try {
       const corpus = { folder_ids: draft.folderIds, document_ids: draft.documentIds }
       const chatLimit = parseChatLimitDraft(draft.chatLimitKind, draft.chatLimitValue)
-      const fallbackPayload: ExplainerFallback = {
-        message: draft.fallback.message.trim(),
-        escalate_kind: draft.fallback.escalate_kind,
-        target_id: draft.fallback.escalate_kind === 'custom_email' || draft.fallback.escalate_kind === 'none'
-          ? ''
-          : (draft.fallback.target_id || ''),
-        target_label: draft.fallback.target_label || '',
-        target_email:
-          draft.fallback.escalate_kind === 'member_email'
-            ? (draft.fallback.target_email || identityEmailById.get(draft.fallback.target_id || '') || '')
-            : draft.fallback.escalate_kind === 'custom_email'
-              ? (draft.fallback.target_email || '')
-              : '',
-      }
+      // Assistant packs are knowledge-only. Escalation targets live in Agent Workflow;
+      // the persisted assistant fallback is always the platform's safe no-forwarding default.
+      const fallbackPayload: ExplainerFallback = EMPTY_FALLBACK
       // Saving only the chosen shape is what keeps the form honest: switching to
       // per-scope caps clears the default, and switching back clears the scopes.
       const scopedChatLimit = draft.chatLimitMode === 'scoped'
@@ -1949,15 +1925,8 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                         </dd>
                       </div>
                       <div className="flex justify-between gap-3">
-                        <dt className="text-muted-foreground">Forward unanswered</dt>
-                        <dd className="max-w-[60%] text-right text-foreground">
-                          {fallbackKindLabel(detailFor.fallback?.escalate_kind)}
-                          {detailFor.fallback?.target_label
-                            ? ` · ${detailFor.fallback.target_label}`
-                            : detailFor.fallback?.target_email
-                              ? ` · ${detailFor.fallback.target_email}`
-                              : ''}
-                        </dd>
+                        <dt className="text-muted-foreground">Fallback</dt>
+                        <dd className="max-w-[60%] text-right text-foreground">No forwarding</dd>
                       </div>
                       <div className="flex justify-between gap-3">
                         <dt className="text-muted-foreground">Published revision</dt>
@@ -2302,6 +2271,14 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                     </div>
 
                     <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Fallback policy</Label>
+                      <div className="rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">No forwarding</span>
+                        <span className="ml-2">Unanswered questions receive the platform fallback. Configure any escalation in Agent Workflow.</span>
+                      </div>
+                    </div>
+
+                    <div className="hidden" aria-hidden="true">
                       <Label className="text-xs text-muted-foreground">Fallback when unanswered</Label>
                       <p className="text-[11px] leading-relaxed text-muted-foreground">
                         Shown when this assistant has no matching evidence, so it will not invent an answer.
