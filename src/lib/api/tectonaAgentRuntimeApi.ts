@@ -1482,11 +1482,11 @@ export interface ExtractRepositoryPdfResponse {
 }
 
 /**
- * Extract text from PDF uploads server-side (pypdf).
+ * Extract text from PDF uploads server-side, including vision OCR for scanned pages.
  */
 export async function extractRepositoryPdfText(
   file: File,
-  timeoutMs: number = 120_000,
+  timeoutMs: number = 240_000,
 ): Promise<ExtractRepositoryPdfResponse> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeoutMs)
