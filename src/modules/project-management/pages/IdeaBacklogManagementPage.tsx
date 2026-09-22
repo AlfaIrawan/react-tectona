@@ -161,12 +161,12 @@ type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
   respondedAt?: string
 }
 
-const BRAINSTORM_GAP_LABELS: Record<string, string> = {
-  as_is_actors: 'People involved in the current process',
-  as_is_steps: 'Current AS-IS process steps from start to finish',
-  as_is_systems: 'Systems or applications used today',
-  pain_points: 'Main pain points or bottlenecks',
-  to_be_process: 'Expected TO-BE process overview',
+const BRAINSTORM_GAP_LABELS_EN: Record<string, string> = {
+  as_is_actors: 'Who is involved in the current (AS-IS) process?',
+  as_is_steps: 'What are the main AS-IS steps from start to finish?',
+  as_is_systems: 'Which systems or applications are used today?',
+  pain_points: 'What are the biggest pain points or bottlenecks?',
+  to_be_process: 'What should the expected (TO-BE) process look like?',
   diagram_validation: 'Business process diagram validation',
   'diagram validation': 'Business process diagram validation',
   to_be: 'Expected TO-BE process',
@@ -177,17 +177,59 @@ const BRAINSTORM_GAP_LABELS: Record<string, string> = {
   discovery_risk: 'Risk scoring evidence',
 }
 
+const BRAINSTORM_GAP_LABELS_ID: Record<string, string> = {
+  as_is_actors: 'Siapa saja pihak yang terlibat dalam proses AS-IS saat ini?',
+  as_is_steps: 'Apa saja langkah-langkah utama proses AS-IS dari awal sampai akhir?',
+  as_is_systems: 'Sistem atau aplikasi apa saja yang digunakan saat ini?',
+  pain_points: 'Apa saja pain point atau kendala terbesar dalam proses ini?',
+  to_be_process: 'Seperti apa proses yang diharapkan (TO-BE) nantinya?',
+  diagram_validation: 'Validasi diagram proses bisnis',
+  'diagram validation': 'Validasi diagram proses bisnis',
+  to_be: 'Proses TO-BE yang diharapkan',
+  as_is: 'Proses bisnis AS-IS saat ini',
+  discovery_business_value: 'Evidence scoring Business Value',
+  discovery_roi: 'Evidence scoring ROI',
+  discovery_effort: 'Evidence scoring Effort',
+  discovery_risk: 'Evidence scoring Risk',
+}
+
+const BRAINSTORM_ENGLISH_PROMPT_TO_ID: Record<string, string> = {
+  'who is involved in the current (as-is) process?': BRAINSTORM_GAP_LABELS_ID.as_is_actors,
+  'what are the main as-is steps from start to finish?': BRAINSTORM_GAP_LABELS_ID.as_is_steps,
+  'which systems or applications are used today?': BRAINSTORM_GAP_LABELS_ID.as_is_systems,
+  'which systems or applications are used today, and how do they integrate with other existing/surrounding systems?':
+    BRAINSTORM_GAP_LABELS_ID.as_is_systems,
+  'what is the biggest pain point or bottleneck?': BRAINSTORM_GAP_LABELS_ID.pain_points,
+  'what are the biggest pain points or bottlenecks?': BRAINSTORM_GAP_LABELS_ID.pain_points,
+  'what should the expected (to-be) process look like?': BRAINSTORM_GAP_LABELS_ID.to_be_process,
+}
+
+function brainstormGapLabels(indonesian: boolean): Record<string, string> {
+  return indonesian ? BRAINSTORM_GAP_LABELS_ID : BRAINSTORM_GAP_LABELS_EN
+}
+
 function normalizeBrainstormGapKey(gap: string): string {
   return gap.trim().toLowerCase().replace(/\s+/g, '_')
 }
 
-function formatBrainstormGapLabel(gap: string): string {
+function formatBrainstormGapLabel(gap: string, indonesian = false): string {
   const trimmed = gap.trim()
   if (!trimmed) return trimmed
+  const labels = brainstormGapLabels(indonesian)
   const normalized = normalizeBrainstormGapKey(trimmed)
-  if (BRAINSTORM_GAP_LABELS[normalized]) return BRAINSTORM_GAP_LABELS[normalized]
-  if (BRAINSTORM_GAP_LABELS[trimmed.toLowerCase()]) return BRAINSTORM_GAP_LABELS[trimmed.toLowerCase()]
-  if (!trimmed.includes('_') && /\s/.test(trimmed) && trimmed.length > 24) return trimmed
+  if (labels[normalized]) return labels[normalized]
+  if (labels[trimmed.toLowerCase()]) return labels[trimmed.toLowerCase()]
+  if (indonesian) {
+    const mapped = BRAINSTORM_ENGLISH_PROMPT_TO_ID[trimmed.toLowerCase()]
+    if (mapped) return mapped
+  }
+  if (!trimmed.includes('_') && /\s/.test(trimmed) && trimmed.length > 24) {
+    if (indonesian) {
+      const mapped = BRAINSTORM_ENGLISH_PROMPT_TO_ID[trimmed.toLowerCase()]
+      if (mapped) return mapped
+    }
+    return trimmed
+  }
   return trimmed
     .replace(/_/g, ' ')
     .replace(/\bas is\b/gi, 'AS-IS')
@@ -196,21 +238,23 @@ function formatBrainstormGapLabel(gap: string): string {
     .replace(/^\w/, (char) => char.toUpperCase())
 }
 
-function formatBrainstormChecklistPrompt(prompt: string): string {
+function formatBrainstormChecklistPrompt(prompt: string, indonesian = false, itemId?: string): string {
   const trimmed = prompt.trim()
   if (!trimmed) return trimmed
+  const labels = brainstormGapLabels(indonesian)
+  if (itemId && labels[itemId]) return labels[itemId]
   const normalized = normalizeBrainstormGapKey(trimmed)
-  if (BRAINSTORM_GAP_LABELS[normalized]) return BRAINSTORM_GAP_LABELS[normalized]
-  if (/^proses manajemen proyek/i.test(trimmed)) return 'Current project management process'
-  if (/^pain point/i.test(trimmed)) return 'Pain points to address'
-  if (/^sistem atau peran/i.test(trimmed)) return 'Related systems or roles'
-  if (/^kriteria keberhasilan/i.test(trimmed)) return 'Measurable success criteria'
+  if (labels[normalized]) return labels[normalized]
+  if (indonesian) {
+    const mapped = BRAINSTORM_ENGLISH_PROMPT_TO_ID[trimmed.toLowerCase()]
+    if (mapped) return mapped
+  }
   return trimmed
 }
 
-function formatBrainstormExploringNext(gaps: string[]): string {
+function formatBrainstormExploringNext(gaps: string[], indonesian = false): string {
   const current = gaps[0]?.trim()
-  return current ? formatBrainstormGapLabel(current) : ''
+  return current ? formatBrainstormGapLabel(current, indonesian) : ''
 }
 
 function isBrainstormThreadIndonesian(messages: Array<{ role: string; text: string }>): boolean {
@@ -719,6 +763,7 @@ function BrainstormEvidenceRail({
   ready,
   collapsed,
   onToggleCollapsed,
+  indonesian = false,
 }: {
   confidencePercent: number
   progress: IdeaDraftEvidenceProgress | null
@@ -729,6 +774,7 @@ function BrainstormEvidenceRail({
   ready: boolean
   collapsed: boolean
   onToggleCollapsed: () => void
+  indonesian?: boolean
 }) {
   const resolvedConfidence = resolveBrainstormConfidencePercent(confidencePercent, progress, ready)
   const readinessLabel = confidenceReadinessLabel(resolvedConfidence, ready)
@@ -921,19 +967,21 @@ function BrainstormEvidenceRail({
                             )}
                             aria-hidden
                           />
-                          <span className="min-w-0">{formatBrainstormChecklistPrompt(item.prompt)}</span>
+                          <span className="min-w-0">{formatBrainstormChecklistPrompt(item.prompt, indonesian, item.id)}</span>
                         </div>
                       )
                     })
                   ) : gaps.length > 0 ? (
                     gaps.map((gap) => (
                       <div key={gap} className="rounded-lg px-2 py-1.5 text-xs leading-5 text-muted-foreground">
-                        {formatBrainstormGapLabel(gap)}
+                        {formatBrainstormGapLabel(gap, indonesian)}
                       </div>
                     ))
                   ) : (
                     <p className="px-2 py-1 text-xs text-muted-foreground">
-                      The evidence checklist will appear after the assistant asks the first question.
+                      {indonesian
+                        ? 'Checklist evidence akan muncul setelah asisten menanyakan pertanyaan pertama.'
+                        : 'The evidence checklist will appear after the assistant asks the first question.'}
                     </p>
                   )}
                 </div>
@@ -2068,17 +2116,21 @@ export function IdeaBacklogManagementPage() {
     return items.find((item) => item.status === 'asked') ?? null
   }, [brainstormChecklist, brainstormEvidenceProgress])
 
-  const brainstormNextHint = useMemo(() => {
-    if (brainstormAskedItem?.prompt) {
-      return formatBrainstormChecklistPrompt(brainstormAskedItem.prompt)
-    }
-    return formatBrainstormExploringNext(brainstormRemainingGaps)
-  }, [brainstormAskedItem, brainstormRemainingGaps])
-
   const brainstormThreadIndonesian = useMemo(
     () => isBrainstormThreadIndonesian(brainstormMessages),
     [brainstormMessages],
   )
+
+  const brainstormNextHint = useMemo(() => {
+    if (brainstormAskedItem?.prompt) {
+      return formatBrainstormChecklistPrompt(
+        brainstormAskedItem.prompt,
+        brainstormThreadIndonesian,
+        brainstormAskedItem.id,
+      )
+    }
+    return formatBrainstormExploringNext(brainstormRemainingGaps, brainstormThreadIndonesian)
+  }, [brainstormAskedItem, brainstormRemainingGaps, brainstormThreadIndonesian])
 
   const quickCreateIdeaTagSuggestions = useMemo(() => {
     const used = new Set(createIdeaTags.map((tag) => tag.toLocaleLowerCase()))
@@ -6109,6 +6161,7 @@ export function IdeaBacklogManagementPage() {
                             ready={brainstormReady}
                             collapsed={brainstormEvidenceRailCollapsed}
                             onToggleCollapsed={() => setBrainstormEvidenceRailCollapsed((current) => !current)}
+                            indonesian={brainstormThreadIndonesian}
                           />
                         </div>
                         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
@@ -6123,6 +6176,7 @@ export function IdeaBacklogManagementPage() {
                               ready={brainstormReady}
                               collapsed={brainstormEvidenceRailCollapsed}
                               onToggleCollapsed={() => setBrainstormEvidenceRailCollapsed((current) => !current)}
+                              indonesian={brainstormThreadIndonesian}
                             />
                           </div>
                           <div
@@ -6243,7 +6297,9 @@ export function IdeaBacklogManagementPage() {
 
                           {brainstormReady && (
                             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-950">
-                              Enough context gathered. You can generate the draft now.
+                              {brainstormThreadIndonesian
+                                ? 'Konteks sudah cukup. Draft bisa di-generate sekarang.'
+                                : 'Enough context gathered. You can generate the draft now.'}
                             </div>
                           )}
                           {!brainstormReady && brainstormOfferGenerateAnyway && (
