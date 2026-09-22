@@ -3,6 +3,7 @@ import {
   displaySystemKbEntryTitle,
   findIdeaIntakeChecklistDefaultEntry,
   isIdeaIntakeChecklistTitle,
+  isLockedSystemKbEntry,
   isPlatformWideSystemKbEntry,
   isSystemKbEntry,
   isSystemKbEntryTitle,
@@ -54,10 +55,13 @@ describe('systemKbEntry', () => {
     expect(isSystemKbEntryTitle('Konteks Org (Default)')).toBe(true)
     expect(isSystemKbEntryTitle('Application Notes (Default)')).toBe(true)
     expect(isSystemKbEntryTitle('Catatan Aplikasi (Default)')).toBe(true)
+    expect(isSystemKbEntryTitle('KB Naming Standard')).toBe(true)
+    expect(isSystemKbEntryTitle('Make Structured AI Capability')).toBe(true)
+    expect(isSystemKbEntryTitle('Make Structured AI Prompt Template')).toBe(true)
     expect(isSystemKbEntryTitle('Katalog Aplikasi Adira Finance')).toBe(false)
   })
 
-  it('keeps the intake checklist as the only platform-wide system row', () => {
+  it('keeps the intake checklist and naming standard as platform-wide system rows', () => {
     expect(isIdeaIntakeChecklistTitle('Idea Intake Checklist (Default)')).toBe(true)
     expect(isPlatformWideSystemKbEntry({ title: 'List Istilah (Default)', workspace_id: 'ws-1' })).toBe(false)
     expect(displaySystemKbEntryTitle('List Istilah (Default)')).toBe('Glossary (Default)')
@@ -65,6 +69,12 @@ describe('systemKbEntry', () => {
     expect(displaySystemKbEntryTitle('Konteks Org (Default)')).toBe('Org Context (Default)')
     expect(displaySystemKbEntryTitle('Catatan Aplikasi (Default)')).toBe('Application Notes (Default)')
     expect(isPlatformWideSystemKbEntry({ title: 'Idea Intake Checklist (Default)', workspace_id: null })).toBe(true)
+    expect(isPlatformWideSystemKbEntry({ title: 'KB Naming Standard', workspace_id: null })).toBe(true)
+    expect(isPlatformWideSystemKbEntry({ title: 'Make Structured AI Capability', workspace_id: null })).toBe(true)
+    expect(isLockedSystemKbEntry({ title: 'KB Naming Standard' })).toBe(true)
+    expect(isLockedSystemKbEntry({ title: 'Make Structured AI Capability' })).toBe(true)
+    expect(isLockedSystemKbEntry({ title: 'Make Structured AI Prompt Template' })).toBe(true)
+    expect(isLockedSystemKbEntry({ title: 'Application Catalog (Default)' })).toBe(false)
   })
 
   it('treats the seeded default as a system entry even when tagged to one workspace', () => {

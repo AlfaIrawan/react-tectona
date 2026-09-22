@@ -13,6 +13,8 @@ export const DAFTAR_PROSES_AS_IS_DEFAULT_TITLE = 'AS-IS Process List (Default)'
 export const ATURAN_PENYEBUTAN_DEFAULT_TITLE = 'Naming Rules (Default)'
 export const ORG_CONTEXT_DEFAULT_TITLE = 'Org Context (Default)'
 export const APPLICATION_NOTES_DEFAULT_TITLE = 'Application Notes (Default)'
+export const KB_NAMING_STANDARD_TITLE = 'KB Naming Standard'
+export const MAKE_STRUCTURED_AI_TITLE = 'Make Structured AI Capability'
 
 const CHECKLIST_TITLE_PATTERN = /^idea intake checklist(?: \(default\))?$/i
 const LIST_ISTILAH_TITLE_PATTERN = /^(?:list istilah|glossary|list of terms)(?: \(default\))?$/i
@@ -23,6 +25,8 @@ const DAFTAR_PROSES_AS_IS_TITLE_PATTERN = /^(?:daftar proses as-is|as-is process
 const ATURAN_PENYEBUTAN_TITLE_PATTERN = /^(?:aturan penyebutan|naming rules)(?: \(default\))?$/i
 const ORG_CONTEXT_TITLE_PATTERN = /^(?:org context|konteks org)(?: \(default\))?$/i
 const APPLICATION_NOTES_TITLE_PATTERN = /^(?:application notes|catatan aplikasi)(?: \(default\))?$/i
+const KB_NAMING_STANDARD_TITLE_PATTERN = /^kb naming standard$/i
+const MAKE_STRUCTURED_AI_TITLE_PATTERN = /^make structured ai(?: prompt template| capability)?$/i
 
 const SYSTEM_KB_TITLE_PATTERNS = [
   CHECKLIST_TITLE_PATTERN,
@@ -34,6 +38,8 @@ const SYSTEM_KB_TITLE_PATTERNS = [
   ATURAN_PENYEBUTAN_TITLE_PATTERN,
   ORG_CONTEXT_TITLE_PATTERN,
   APPLICATION_NOTES_TITLE_PATTERN,
+  KB_NAMING_STANDARD_TITLE_PATTERN,
+  MAKE_STRUCTURED_AI_TITLE_PATTERN,
 ]
 
 const SYSTEM_KB_TITLE_DISPLAY: Array<{ pattern: RegExp; display: string }> = [
@@ -46,17 +52,19 @@ const SYSTEM_KB_TITLE_DISPLAY: Array<{ pattern: RegExp; display: string }> = [
   { pattern: ATURAN_PENYEBUTAN_TITLE_PATTERN, display: ATURAN_PENYEBUTAN_DEFAULT_TITLE },
   { pattern: ORG_CONTEXT_TITLE_PATTERN, display: ORG_CONTEXT_DEFAULT_TITLE },
   { pattern: APPLICATION_NOTES_TITLE_PATTERN, display: APPLICATION_NOTES_DEFAULT_TITLE },
+  { pattern: KB_NAMING_STANDARD_TITLE_PATTERN, display: KB_NAMING_STANDARD_TITLE },
+  { pattern: MAKE_STRUCTURED_AI_TITLE_PATTERN, display: MAKE_STRUCTURED_AI_TITLE },
 ]
 
 export const DEFAULT_IDEA_INTAKE_CHECKLIST_CONTENT = JSON.stringify(
   {
     version: 1,
     questions: [
-      { id: 'as_is_actors', prompt: 'Who is involved in the current (AS-IS) process?', required: true },
-      { id: 'as_is_steps', prompt: 'What are the main AS-IS steps from start to finish?', required: true },
-      { id: 'as_is_systems', prompt: 'Which systems or applications are used today?', required: false },
-      { id: 'pain_points', prompt: 'What is the biggest pain point or bottleneck?', required: true },
-      { id: 'to_be_process', prompt: 'What should the expected (TO-BE) process look like?', required: true },
+      { id: 'as_is_actors', prompt: 'Siapa saja pihak yang terlibat dalam proses AS-IS saat ini?', required: true },
+      { id: 'as_is_steps', prompt: 'Apa saja langkah-langkah utama proses AS-IS dari awal sampai akhir?', required: true },
+      { id: 'as_is_systems', prompt: 'Sistem atau aplikasi apa saja yang digunakan saat ini?', required: false },
+      { id: 'pain_points', prompt: 'Apa saja pain point atau kendala terbesar dalam proses ini?', required: true },
+      { id: 'to_be_process', prompt: 'Seperti apa proses yang diharapkan (TO-BE) nantinya?', required: true },
     ],
   },
   null,
@@ -170,9 +178,24 @@ export function isIdeaIntakeChecklistTitle(title: string): boolean {
   return CHECKLIST_TITLE_PATTERN.test(title.trim())
 }
 
-/** Global system rows (checklist) that must appear in every workspace catalog. */
+export function isKbNamingStandardTitle(title: string): boolean {
+  return KB_NAMING_STANDARD_TITLE_PATTERN.test(title.trim())
+}
+
+export function isMakeStructuredAiTitle(title: string): boolean {
+  return MAKE_STRUCTURED_AI_TITLE_PATTERN.test(title.trim())
+}
+
+/** Global system rows that must appear in every workspace catalog. */
 export function isPlatformWideSystemKbEntry(entry: { title?: string | null; workspace_id?: string | null }): boolean {
-  return isIdeaIntakeChecklistTitle(entry.title ?? '')
+  const title = entry.title ?? ''
+  return isIdeaIntakeChecklistTitle(title) || isKbNamingStandardTitle(title) || isMakeStructuredAiTitle(title)
+}
+
+/** Platform policy rows: System badge, and users cannot edit or delete them. */
+export function isLockedSystemKbEntry(entry: { title?: string | null }): boolean {
+  const title = entry.title ?? ''
+  return isKbNamingStandardTitle(title) || isMakeStructuredAiTitle(title)
 }
 
 /** Platform + per-workspace starter templates: badge System, tidak boleh dihapus. */
@@ -313,6 +336,28 @@ export function mergeEnsuredKbEntries(
     }
   }
   return next
+}
+
+/**
+ * Keep KB Naming Standard as global Tectona system governance.
+ * Never overwrites content and never patches `is_active`.
+ */
+export async function ensureKbNamingStandardEntry(
+  entries: KbEntryResponse[],
+): Promise<KbEntryResponse | null> {
+  const existing = entries.find((entry) => isKbNamingStandardTitle(entry.title)) ?? null
+  if (!existing) return null
+
+  const updates: { workspace_id?: null; category?: string } = {}
+  if (existing.workspace_id) updates.workspace_id = null
+  if (existing.category !== 'governance') updates.category = 'governance'
+  if (Object.keys(updates).length === 0) return existing
+
+  try {
+    return await patchKbEntry(existing.id, updates)
+  } catch {
+    return existing
+  }
 }
 
 /**

@@ -273,7 +273,9 @@ import { cn } from '@/lib/utils'
 import { publishApplicationCatalogChanged } from '@/lib/kb/applicationCatalogRealtime'
 import {
   enterpriseCyanGradientActionButtonClass,
+  enterpriseDestructiveOutlineButtonClass,
   enterpriseIndigoGradientActionButtonClass,
+  enterprisePrimarySolidButtonClass,
   enterpriseRoseGradientActionButtonClass,
   enterpriseSecondaryButtonClass,
   registerServicePrimaryButtonClass,
@@ -330,7 +332,7 @@ import {
   parseMemoInternalToKbContentStandard,
 } from '@/lib/kb/memoInternalToKbContentStandard'
 import { ADIRA_FINANCE_WORKSPACE_KEY, ensureAdiraApplicationGlossaryEntries, isAdiraFinanceWorkspaceRef, isAdiraGlossaryManagedTitle, suppressAdiraGlossaryTitle } from '@/lib/kb/adiraApplicationGlossary'
-import { ensureIdeaIntakeChecklistDefaultEntry, ensureWorkspaceSystemKbTemplates, dedupeWorkspaceSystemKbTemplates, displaySystemKbEntryTitle, isPlatformWideSystemKbEntry, isSystemKbEntry, isSystemKbEntryTitle, mergeEnsuredKbEntries, withoutDuplicateWorkspaceSystemKbEntries } from '@/lib/kb/systemKbEntry'
+import { ensureIdeaIntakeChecklistDefaultEntry, ensureKbNamingStandardEntry, ensureWorkspaceSystemKbTemplates, dedupeWorkspaceSystemKbTemplates, displaySystemKbEntryTitle, isLockedSystemKbEntry, isPlatformWideSystemKbEntry, isSystemKbEntry, isSystemKbEntryTitle, mergeEnsuredKbEntries, withoutDuplicateWorkspaceSystemKbEntries } from '@/lib/kb/systemKbEntry'
 import { stripGuidsFromKbDisplayText, stripGuidsFromKbHtml } from '@/lib/kb/kbDisplayText'
 import { disableSupersededApplicationCatalogs, applicationSourceNotice, isManagedApplicationPortfolioCatalogTitle } from '@/lib/kb/applicationPortfolioKbPolicy'
 import { parseSystemKbTableContent, serializeSystemKbTable, systemKbTablePlainLength, type SystemKbTableEditModel } from '@/lib/kb/systemKbTableEditor'
@@ -6364,7 +6366,8 @@ export function DocumentKnowledgeManagementPage() {
       }
 
       const ensuredChecklist = await ensureIdeaIntakeChecklistDefaultEntry(items)
-      items = mergeEnsuredKbEntries(items, [ensuredChecklist])
+      const ensuredNamingStandard = await ensureKbNamingStandardEntry(items)
+      items = mergeEnsuredKbEntries(items, [ensuredChecklist, ensuredNamingStandard])
       items = await dedupeWorkspaceSystemKbTemplates(items)
 
       const templateWorkspaceIds = dkmWorkspaceScope.mode === 'single' && dkmWorkspaceScope.workspaceId
@@ -11028,9 +11031,17 @@ export function DocumentKnowledgeManagementPage() {
   }, [kbApiItems, kbLive])
 
   const startKbInlineRename = useCallback((entry: KnowledgeEntry) => {
+    if (isLockedSystemKbEntry(entry)) {
+      addToast({
+        title: 'System entry cannot be renamed',
+        description: 'This Knowledge Base entry is managed by Tectona and cannot be changed.',
+        variant: 'warning',
+      })
+      return
+    }
     const currentTitle = kbTitleOverrides[entry.id] ?? entry.title
     setKbInlineRename({ entryId: entry.id, value: currentTitle })
-  }, [kbTitleOverrides])
+  }, [addToast, kbTitleOverrides])
 
   const cancelKbInlineRename = useCallback(() => {
     setKbInlineRename(null)
@@ -11134,7 +11145,16 @@ export function DocumentKnowledgeManagementPage() {
     setKbAddOpen(true)
   }, [addToast, kbLive, kbCategoryOptions])
 
-  const openKbEditDrawer = useCallback((entry: Pick<KnowledgeEntry, 'id'>) => {
+  const openKbEditDrawer = useCallback((entry: Pick<KnowledgeEntry, 'id'> & { title?: string }) => {
+    const known = kbApiItems.find((item) => item.id === entry.id)
+    if (isLockedSystemKbEntry(known ?? { title: entry.title ?? '' })) {
+      addToast({
+        title: 'System entry cannot be edited',
+        description: 'This Knowledge Base entry is managed by Tectona and cannot be changed.',
+        variant: 'warning',
+      })
+      return
+    }
     if (!kbLive) {
       addToast({
         title: 'Edit unavailable',
@@ -13592,6 +13612,15 @@ export function DocumentKnowledgeManagementPage() {
   }
 
   async function handleKbAiContextToggle(entryId: string, nextActive: boolean) {
+    const known = kbApiItems.find((item) => item.id === entryId)
+    if (known && isLockedSystemKbEntry(known)) {
+      addToast({
+        title: 'System entry cannot be edited',
+        description: 'This Knowledge Base entry is managed by Tectona and cannot be changed.',
+        variant: 'warning',
+      })
+      return
+    }
     if (kbAiToggleBusyId) return
     setKbAiToggleBusyId(entryId)
     try {
@@ -17351,10 +17380,10 @@ export function DocumentKnowledgeManagementPage() {
                   {activePanel === 'knowledge' ? (
                     <button
                       type="button"
-                      className={enterpriseCyanGradientActionButtonClass()}
+                      className={enterprisePrimarySolidButtonClass()}
                       onClick={openKbAddDrawer}
                     >
-                      <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
+                      <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2} />
                       Add knowledge entry
                     </button>
                   ) : null}
@@ -20125,7 +20154,7 @@ export function DocumentKnowledgeManagementPage() {
                                       </div>
                                       <Switch
                                         checked={entry.isActive}
-                                        disabled={kbAiToggleBusyId === entry.id}
+                                        disabled={kbAiToggleBusyId === entry.id || isLockedSystemKbEntry(entry)}
                                         onCheckedChange={(checked) => {
                                           void handleKbAiContextToggle(entry.id, checked)
                                         }}
@@ -24621,7 +24650,7 @@ export function DocumentKnowledgeManagementPage() {
                     <p className="text-xs font-semibold text-foreground">Use for AI</p>
                     <Switch
                       checked={kbViewEntry.is_active}
-                      disabled={kbAiToggleBusyId === kbViewEntry.id}
+                      disabled={kbAiToggleBusyId === kbViewEntry.id || isLockedSystemKbEntry(kbViewEntry)}
                       onCheckedChange={(checked) => {
                         void handleKbAiContextToggle(kbViewEntry.id, checked)
                       }}
@@ -25057,30 +25086,33 @@ export function DocumentKnowledgeManagementPage() {
 
           {/* Sticky Footer with Actions */}
           {kbViewEntry ? (
-            <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
-              <div className="flex w-full items-stretch gap-3">
-                <Button
+            <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-border/70 bg-background p-2">
+                <button
                   type="button"
-                  className={cn(enterpriseCyanGradientActionButtonClass(), 'h-10 flex-1 justify-center gap-2 rounded-2xl')}
+                  className={cn(enterprisePrimarySolidButtonClass(), 'h-11 w-full min-w-0')}
                   onClick={() => openKbEditDrawer(kbViewEntry)}
-                  disabled={!kbLive}
-                  title={!kbLive ? 'Editing is available when the Knowledge Base service is connected.' : undefined}
+                  disabled={!kbLive || isLockedSystemKbEntry(kbViewEntry)}
+                  title={
+                    isLockedSystemKbEntry(kbViewEntry)
+                      ? 'System entries cannot be edited.'
+                      : !kbLive
+                        ? 'Editing is available when the Knowledge Base service is connected.'
+                        : undefined
+                  }
                 >
                   <PencilLine className="h-4 w-4 shrink-0" aria-hidden />
                   Edit
-                </Button>
-                <Button
+                </button>
+                <button
                   type="button"
-                  variant="destructive"
-                  className={cn(enterpriseRoseGradientActionButtonClass(), 'h-10 flex-1 justify-center gap-2 rounded-2xl')}
+                  className={cn(enterpriseDestructiveOutlineButtonClass(), 'h-11 w-full min-w-0')}
                   onClick={() => void handleKbDelete(kbViewEntry.id)}
                   disabled={isSystemKbEntry(kbViewEntry)}
                   title={isSystemKbEntry(kbViewEntry) ? 'System entries cannot be deleted.' : undefined}
                 >
                   <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
                   Delete
-                </Button>
-              </div>
+                </button>
             </div>
           ) : null}
         </div>
@@ -26105,22 +26137,30 @@ export function DocumentKnowledgeManagementPage() {
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem
+              className={isLockedSystemKbEntry(kbContextMenuEntry) ? 'cursor-not-allowed text-muted-foreground opacity-70' : undefined}
               onClick={() => {
                 setKbRowContextMenu(null)
+                if (isLockedSystemKbEntry(kbContextMenuEntry)) return
                 openKbEditDrawer(kbContextMenuEntry)
               }}
             >
               <PencilLine className="w-4 h-4 mr-2 shrink-0" />
-              <span className="min-w-0 truncate">Edit {kbContextMenuEntry.title}</span>
+              <span className="min-w-0 truncate">
+                {isLockedSystemKbEntry(kbContextMenuEntry) ? 'System entry' : `Edit ${kbContextMenuEntry.title}`}
+              </span>
             </ContextMenuItem>
             <ContextMenuItem
+              className={isLockedSystemKbEntry(kbContextMenuEntry) ? 'cursor-not-allowed text-muted-foreground opacity-70' : undefined}
               onClick={() => {
                 setKbRowContextMenu(null)
+                if (isLockedSystemKbEntry(kbContextMenuEntry)) return
                 startKbInlineRename(kbContextMenuEntry)
               }}
             >
               <Type className="w-4 h-4 mr-2 shrink-0" />
-              <span className="min-w-0 truncate">Rename {kbContextMenuEntry.title}</span>
+              <span className="min-w-0 truncate">
+                {isLockedSystemKbEntry(kbContextMenuEntry) ? 'Cannot rename' : `Rename ${kbContextMenuEntry.title}`}
+              </span>
             </ContextMenuItem>
             <ContextMenuSeparator />
             {isSystemKbEntryTitle(kbContextMenuEntry.title) ? (

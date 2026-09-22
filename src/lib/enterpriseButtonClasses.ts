@@ -74,6 +74,30 @@ export function enterpriseEmeraldGradientActionButtonClass(): string {
   )
 }
 
+/** Theme-aware primary CTA (`--primary`). Use for create/edit; follows data-accent. */
+export function enterprisePrimarySolidButtonClass(): string {
+  return cn(
+    'group relative inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
+    'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
+    'transition-colors duration-150',
+    'disabled:pointer-events-none disabled:opacity-50',
+    enterpriseControlFocusClass(),
+  )
+}
+
+/** Destructive outline — danger without a marketing-gradient pill. */
+export function enterpriseDestructiveOutlineButtonClass(): string {
+  return cn(
+    'inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
+    'border border-rose-200/90 bg-background text-rose-700 shadow-sm',
+    'hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800',
+    'dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/40 dark:hover:text-rose-200',
+    'transition-colors duration-150',
+    'disabled:pointer-events-none disabled:opacity-50',
+    enterpriseControlFocusClass(),
+  )
+}
+
 /** Secondary / cancel — selaras Tilia `enterpriseSecondaryButtonClass`. */
 export function enterpriseSecondaryButtonClass(): string {
   return cn(
