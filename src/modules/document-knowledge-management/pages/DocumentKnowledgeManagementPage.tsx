@@ -449,7 +449,6 @@ import {
 } from '@/lib/documents/extractOfficeFileMetadata'
 import {
   DUPLICATE_EMBED_NEAR_DUP_SCORE,
-  DUPLICATE_LEXICAL_NEAR_DUP_SCORE,
   buildComparePurposeWindows,
   chunkDocumentForDuplicateCompare,
   computeContentFingerprint,
@@ -8421,19 +8420,19 @@ export function DocumentKnowledgeManagementPage() {
     )
     const nameMatches = [...new Map([...sameFolderNameMatches, ...findNameMatches(subject, docs)].map((doc) => [doc.id, doc])).values()]
     const excludeIds = new Set(nameMatches.map((d) => d.id))
-    const HIGH_OVERLAP_THRESHOLD = 0.5
-    const highOverlapIds = new Set(
-      shortlistByKeywordOverlap(fileName, docs, { excludeIds, threshold: HIGH_OVERLAP_THRESHOLD }).map((d) => d.id),
+    // Shared document codes (for example CAB.OPR.BOS.047) make section files look alike by title.
+    // That shortlist only chooses who gets a content compare. It is not itself a duplicate.
+    const filenameOverlapIds = new Set(
+      shortlistByKeywordOverlap(fileName, docs, { excludeIds, threshold: 0.5 }).map((d) => d.id),
     )
-    let samePurpose: { doc: ExistingBrdDoc; reason: string }[] = docs
-      .filter((d) => highOverlapIds.has(d.id))
-      .map((d) => ({ doc: d, reason: 'Very similar file name' }))
+    let samePurpose: { doc: ExistingBrdDoc; reason: string }[] = []
 
-    const preferredIds = new Set(
-      repositoryItems
+    const preferredIds = new Set([
+      ...repositoryItems
         .filter((item) => (item.folderId ?? null) === (uploadFolderId ?? null))
         .map((item) => item.id),
-    )
+      ...filenameOverlapIds,
+    ])
     const llmCandidates = pickContentCompareCandidates(docs, {
       preferredIds,
       limit: 8,
@@ -8503,15 +8502,13 @@ export function DocumentKnowledgeManagementPage() {
             usedEmbedding: embeddingPairs.length > 0,
           }
         })
-        const lexicalHits = retrieved.filter((row) => (
-          row.topScore >= (row.usedEmbedding ? DUPLICATE_EMBED_NEAR_DUP_SCORE : DUPLICATE_LEXICAL_NEAR_DUP_SCORE)
-        ))
         const toRerank = retrieved
           .filter((row) => row.pairs.length > 0)
           .sort((left, right) => right.topScore - left.topScore)
           .slice(0, 5)
 
-        const llmMatches: { doc: ExistingBrdDoc; reason: string }[] = []
+        const confirmedByAgent = new Map<string, { doc: ExistingBrdDoc; reason: string }>()
+        const rejectedByAgent = new Set<string>()
         if (toRerank.length > 0) {
           const subjectFallback = buildComparePurposeWindows(extractText)
           const rerankResults = await Promise.all(
@@ -8538,10 +8535,14 @@ export function DocumentKnowledgeManagementPage() {
             }),
           )
           for (const { row, match } of rerankResults) {
+            if (match && match.same_purpose === false) {
+              rejectedByAgent.add(row.doc.id)
+              continue
+            }
             if (match?.same_purpose && (match.confidence ?? 0) >= 0.55) {
-              llmMatches.push({
+              confirmedByAgent.set(row.doc.id, {
                 doc: row.doc,
-                reason: match.reason?.trim() || 'Agent reranked matching document sections as the same requirements.',
+                reason: match.reason?.trim() || 'Agent compared the document content and found the same requirements.',
               })
             }
           }
@@ -8549,22 +8550,29 @@ export function DocumentKnowledgeManagementPage() {
 
         const seenPurpose = new Set<string>()
         const mergedPurpose: { doc: ExistingBrdDoc; reason: string }[] = []
-        for (const hit of [
-          ...lexicalHits.map((row) => ({
+        for (const row of retrieved) {
+          if (rejectedByAgent.has(row.doc.id) || seenPurpose.has(row.doc.id)) continue
+          const confirmed = confirmedByAgent.get(row.doc.id)
+          if (confirmed) {
+            seenPurpose.add(row.doc.id)
+            mergedPurpose.push(confirmed)
+            continue
+          }
+          // A shared title or cover page is not enough. Without an agent verdict, only a near-copy of the body counts.
+          const nearCopy = row.topScore >= (row.usedEmbedding ? DUPLICATE_EMBED_NEAR_DUP_SCORE : 0.72)
+          const agentReviewed = toRerank.some((candidate) => candidate.doc.id === row.doc.id)
+          if (!nearCopy || agentReviewed) continue
+          seenPurpose.add(row.doc.id)
+          mergedPurpose.push({
             doc: row.doc,
-            reason: `Matching section in the document body (${row.usedEmbedding ? 'embedding' : 'chunk'} similarity ${row.topScore.toFixed(2)}).`,
-          })),
-          ...llmMatches,
-        ]) {
-          if (seenPurpose.has(hit.doc.id)) continue
-          seenPurpose.add(hit.doc.id)
-          mergedPurpose.push(hit)
+            reason: `Near-copy of the document body (${row.usedEmbedding ? 'embedding' : 'chunk'} similarity ${row.topScore.toFixed(2)}).`,
+          })
         }
-        samePurpose = [...samePurpose, ...mergedPurpose]
+        samePurpose = mergedPurpose
       } catch {
         addToast({
           title: 'Content duplicate check incomplete',
-          description: 'The agent could not compare requirements. File-name matching still applied.',
+          description: 'The agent could not compare document content. This file uploads as a new document unless the file name matches an existing one.',
           variant: 'error',
         })
       }
