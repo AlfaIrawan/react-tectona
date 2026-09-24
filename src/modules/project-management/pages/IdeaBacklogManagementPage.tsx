@@ -3687,6 +3687,7 @@ export function IdeaBacklogManagementPage() {
         const started = await startIdeaDraftJob({
           title: createIdeaForm.title.trim(),
           tags: effectiveCreateIdeaTags,
+          source_text: createIdeaForm.description.trim().slice(0, 12000),
           context: {
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
             workspace_name: createIdeaWorkspaceOptions.find(

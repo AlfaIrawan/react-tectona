@@ -515,6 +515,7 @@ export interface GenerateIdeaConversionResponse {
 export interface GenerateIdeaDraftRequest {
   title: string
   tags?: string[]
+  source_text?: string
   context?: {
     workspace_id?: string | null
     workspace_name?: string | null
