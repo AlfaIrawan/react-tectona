@@ -285,11 +285,33 @@ export function ProjectDocGenerateFromTemplateDialog({
         targetFolderId
         ?? (await ensureProjectDocumentFolder({ id: project.id, name: project.name }))
 
-      // Gather the idea's existing documents (BRD/URD/…) as grounding. Best-effort and bounded:
-      // at most 6 documents, each truncated, and a failed fetch is simply skipped so generation
-      // still proceeds on the idea description alone.
+      // Gather documents from the full project, not only the folder currently open in Project Docs.
+      // Every existing project document is a related-document candidate; text extraction remains
+      // bounded, while names are sent for all candidates so the template's Related Documents
+      // section can cite them even if their attachment cannot be read.
+      const relatedDocumentsById = new Map<string, { id: string; title: string }>()
+      for (const document of referenceDocuments ?? []) {
+        if (document.id && document.id !== existingDocument?.id) {
+          relatedDocumentsById.set(document.id, document)
+        }
+      }
+      try {
+        const projectDocuments = await listProjectDocuments(project.id, { page: 1, page_size: 100 })
+        for (const document of projectDocuments.items) {
+          if (document.id === existingDocument?.id) continue
+          relatedDocumentsById.set(document.id, { id: document.id, title: document.title })
+        }
+      } catch {
+        // The visible document list remains a usable best-effort fallback.
+      }
+
       const referenceDocumentPayload: Array<{ name: string; text: string }> = []
-      for (const doc of (referenceDocuments ?? []).slice(0, 6)) {
+      for (const [index, doc] of Array.from(relatedDocumentsById.values()).slice(0, 30).entries()) {
+        const name = doc.title.trim() || `Project document ${doc.id}`
+        if (index >= 6) {
+          referenceDocumentPayload.push({ name, text: '' })
+          continue
+        }
         try {
           const snapshot = await getDocumentIndexSnapshot(doc.id)
           const text = [snapshot.attachment_text ?? '', extractPlainTextFromHtml(snapshot.content ?? '')]
@@ -297,9 +319,9 @@ export function ProjectDocGenerateFromTemplateDialog({
             .filter(Boolean)
             .join('\n\n')
             .slice(0, 20000)
-          if (text) referenceDocumentPayload.push({ name: doc.title, text })
+          referenceDocumentPayload.push({ name, text })
         } catch {
-          // best-effort — skip a document we cannot read
+          referenceDocumentPayload.push({ name, text: '' })
         }
       }
 
