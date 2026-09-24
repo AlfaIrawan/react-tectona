@@ -2252,6 +2252,25 @@ export async function chatWithTectonaAgentRuntime(
   return data
 }
 
+export async function translateTextToIndonesian(
+  text: string,
+  workspaceId?: string | null,
+): Promise<string> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/translate-to-indonesian`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        context: { workspace_id: workspaceId ?? null },
+      }),
+    },
+    90_000,
+  )
+  const data = await handleResponse<{ text: string }>(res)
+  return data.text.trim()
+}
+
 async function readAgentChatSse(
   res: Response,
   onDelta?: (chunk: string) => void,

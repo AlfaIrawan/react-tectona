@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
-import { fillDkmTemplate } from '@/lib/api/tectonaAgentRuntimeApi'
+import { fillDkmTemplate, translateTextToIndonesian } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
   getDocumentIndexSnapshot,
   instantiateTemplateFromProject,
@@ -39,6 +39,8 @@ const GENERATE_STEPS = [
 ] as const
 
 const GENERATE_STEP_INTERVAL_MS = 2200
+const ENGLISH_SOURCE_CONTEXT_MARKERS = /\b(?:the|and|with|from|this|that|current|process|objective|problem|solution|risk|business|data)\b/i
+const INDONESIAN_SOURCE_CONTEXT_MARKERS = /\b(?:yang|dan|untuk|dengan|adalah|dari|pada|proses|tujuan|permasalahan|risiko|solusi)\b/i
 
 type DuplicateDocumentPrompt = {
   title: string
@@ -99,6 +101,10 @@ export function resolveProjectDocGenerateSourceContext(input: {
   return (projectDescription || input.projectName?.trim() || '').trim()
 }
 
+function shouldTranslateSourceContextToIndonesian(source: string): boolean {
+  return ENGLISH_SOURCE_CONTEXT_MARKERS.test(source) && !INDONESIAN_SOURCE_CONTEXT_MARKERS.test(source)
+}
+
 export function ProjectDocGenerateFromTemplateDialog({
   open,
   onOpenChange,
@@ -116,10 +122,12 @@ export function ProjectDocGenerateFromTemplateDialog({
   const [templatesLoading, setTemplatesLoading] = useState(false)
   const [templateId, setTemplateId] = useState('')
   const [sourceText, setSourceText] = useState('')
+  const [isSourceTranslating, setIsSourceTranslating] = useState(false)
   const [busy, setBusy] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
   const [duplicatePrompt, setDuplicatePrompt] = useState<DuplicateDocumentPrompt | null>(null)
   const stepTimerRef = useRef<number | null>(null)
+  const sourceTranslationRequestRef = useRef(0)
 
   const selectedTemplate = templates.find((item) => item.id === templateId) ?? null
   const sourceChars = sourceText.trim().length
@@ -138,7 +146,9 @@ export function ProjectDocGenerateFromTemplateDialog({
 
   useEffect(() => {
     if (!open) {
+      sourceTranslationRequestRef.current += 1
       setSourceText('')
+      setIsSourceTranslating(false)
       setTemplateId('')
       return
     }
@@ -149,11 +159,28 @@ export function ProjectDocGenerateFromTemplateDialog({
       projectDescription: project.description,
       projectName: project.name,
     })
+    let cancelled = false
 
     setSourceText(defaultSource)
+    const translationRequest = ++sourceTranslationRequestRef.current
+    if (defaultSource && shouldTranslateSourceContextToIndonesian(defaultSource)) {
+      setIsSourceTranslating(true)
+      void translateTextToIndonesian(defaultSource, linkedIdeaWorkspaceId ?? project.workspaceId)
+        .then((translated) => {
+          if (!cancelled || sourceTranslationRequestRef.current !== translationRequest || !translated) return
+          setSourceText(translated)
+        })
+        .catch(() => {
+          // Keep the original context editable if translation is temporarily unavailable.
+        })
+        .finally(() => {
+          if (!cancelled && sourceTranslationRequestRef.current === translationRequest) setIsSourceTranslating(false)
+        })
+    } else {
+      setIsSourceTranslating(false)
+    }
     setTemplatesLoading(true)
 
-    let cancelled = false
     void listTemplates({ status: 'active' })
       .then((items) => {
         if (cancelled) return
@@ -173,6 +200,7 @@ export function ProjectDocGenerateFromTemplateDialog({
 
     return () => {
       cancelled = true
+      sourceTranslationRequestRef.current += 1
     }
   }, [
     linkedIdeaDescription,
@@ -202,8 +230,8 @@ export function ProjectDocGenerateFromTemplateDialog({
     const trimmedSource = sourceText.trim()
     if (!trimmedSource) {
       addToast({
-        title: 'Source context required',
-        description: 'Provide project notes or requirements for the agent to fill the template.',
+        title: 'Konteks sumber diperlukan',
+        description: 'Tambahkan catatan proyek atau kebutuhan agar agen dapat mengisi template.',
         variant: 'error',
       })
       return
@@ -456,10 +484,10 @@ export function ProjectDocGenerateFromTemplateDialog({
                 htmlFor="project-doc-source"
                 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
               >
-                Source context
+                Konteks sumber
               </Label>
               <span className="text-[11px] tabular-nums text-muted-foreground">
-                {sourceChars.toLocaleString('en-US')} chars
+                {sourceChars.toLocaleString('id-ID')} karakter
               </span>
             </div>
             <Textarea
@@ -468,9 +496,14 @@ export function ProjectDocGenerateFromTemplateDialog({
               className="min-h-[180px] resize-none rounded-xl border-border/80 bg-muted/20 px-3.5 py-3 text-sm leading-relaxed shadow-none"
               value={sourceText}
               disabled={busy}
-              onChange={(event) => setSourceText(event.target.value)}
-              placeholder="Project description / linked idea notes used to fill the template"
+              onChange={(event) => {
+                sourceTranslationRequestRef.current += 1
+                setIsSourceTranslating(false)
+                setSourceText(event.target.value)
+              }}
+              placeholder="Deskripsi proyek atau catatan ide terkait untuk mengisi template"
             />
+            {isSourceTranslating ? <p className="text-xs text-muted-foreground">Menerjemahkan source context ke Bahasa Indonesia…</p> : null}
           </div>
 
           {busy ? (
@@ -527,7 +560,7 @@ export function ProjectDocGenerateFromTemplateDialog({
           <Button
             type="button"
             className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
-            disabled={busy || Boolean(duplicatePrompt) || !templateId || !sourceText.trim()}
+            disabled={busy || isSourceTranslating || Boolean(duplicatePrompt) || !templateId || !sourceText.trim()}
             onClick={() => void handleGenerate()}
           >
             {busy ? (
