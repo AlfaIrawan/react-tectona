@@ -50,6 +50,8 @@ export async function attachUploadedFileToIdeaDocs(input: {
   ideaTitle: string
   ideaProjectId?: string | null
   workspaceId?: string | null
+  documentType?: 'urd' | 'brd' | 'fsd'
+  documentStatus?: 'draft' | 'in_progress' | 'final'
 }): Promise<void> {
   const targetProject = await resolveIdeaTargetProject(input)
   const folderId = await ensureProjectDocumentFolder({ id: targetProject.id, name: targetProject.name })
@@ -60,10 +62,10 @@ export async function attachUploadedFileToIdeaDocs(input: {
     folder_id: folderId,
     summary: `Source document uploaded via Upload Idea: ${input.file.name}`,
     content: `Attachment uploaded from Upload Idea: ${input.file.name}`,
-    document_type_code: 'delivery_artifact',
+    document_type_code: input.documentType ?? 'brd',
     category_code: 'knowledge_asset',
-    status_code: 'draft',
-    tags: ['uploaded', 'idea-docs', input.ideaId],
+    status_code: input.documentStatus ?? 'draft',
+    tags: ['uploaded', 'idea-docs', input.ideaId, input.documentType ?? 'brd', input.documentStatus ?? 'draft'],
     access_scope_codes: ['project_team'],
     metadata: {
       source: 'idea-upload',
@@ -72,6 +74,8 @@ export async function attachUploadedFileToIdeaDocs(input: {
       storage_project_name: targetProject.name,
       original_file_name: input.file.name,
       content_type: input.file.type || 'application/octet-stream',
+      document_type: input.documentType ?? 'brd',
+      document_status: input.documentStatus ?? 'draft',
     },
     version_notes: 'Uploaded via Upload Idea',
   })

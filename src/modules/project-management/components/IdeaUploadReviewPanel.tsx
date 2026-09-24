@@ -42,6 +42,19 @@ const IDEA_EXTRACTION_TYPES: IdeaExtractionCategory[] = [
 ]
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024 // 25 MB, matches the backend's cap
 const MAX_CANDIDATE_TAGS = 5
+const UPLOADED_DOCUMENT_TYPES = [
+  { value: 'urd', label: 'URD' },
+  { value: 'brd', label: 'BRD' },
+  { value: 'fsd', label: 'FSD' },
+] as const
+const UPLOADED_DOCUMENT_STATUSES = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'final', label: 'Final' },
+] as const
+
+type UploadedDocumentType = (typeof UPLOADED_DOCUMENT_TYPES)[number]['value']
+type UploadedDocumentStatus = (typeof UPLOADED_DOCUMENT_STATUSES)[number]['value']
 
 type UploadStage = 'idle' | 'reading' | 'extracting' | 'review' | 'creating'
 
@@ -129,6 +142,8 @@ export function IdeaUploadReviewPanel({
   const [stage, setStage] = useState<UploadStage>('idle')
   const [fileName, setFileName] = useState('')
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [uploadedDocumentType, setUploadedDocumentType] = useState<UploadedDocumentType>('brd')
+  const [uploadedDocumentStatus, setUploadedDocumentStatus] = useState<UploadedDocumentStatus>('draft')
   const [readingMethod, setReadingMethod] = useState<'docx' | 'pdf' | 'pptx' | null>(null)
   const [fileError, setFileError] = useState('')
   const [jobError, setJobError] = useState('')
@@ -144,6 +159,8 @@ export function IdeaUploadReviewPanel({
     setStage('idle')
     setFileName('')
     setUploadedFile(null)
+    setUploadedDocumentType('brd')
+    setUploadedDocumentStatus('draft')
     setReadingMethod(null)
     setFileError('')
     setJobError('')
@@ -289,6 +306,8 @@ export function IdeaUploadReviewPanel({
         ideaTitle: created.title,
         ideaProjectId: created.project_id ?? null,
         workspaceId: created.workspace_id ?? workspaceId,
+        documentType: uploadedDocumentType,
+        documentStatus: uploadedDocumentStatus,
       })
     } catch (err) {
       console.warn('Failed to attach uploaded file to Idea Docs', err)
@@ -320,7 +339,7 @@ export function IdeaUploadReviewPanel({
           title: candidate.title.trim(),
           description:
             candidate.description.trim() ||
-            'Define business problem, expected value, and target outcomes for governance review.',
+            'Jelaskan masalah bisnis, nilai yang diharapkan, dan hasil yang dituju untuk peninjauan tata kelola.',
           category: candidate.category,
           tags: candidate.tags.length > 0 ? candidate.tags : ['Uploaded'],
           workspace_id: workspaceId,
@@ -363,7 +382,7 @@ export function IdeaUploadReviewPanel({
         title: candidate.title.trim(),
         description:
           candidate.description.trim() ||
-          'Define business problem, expected value, and target outcomes for governance review.',
+          'Jelaskan masalah bisnis, nilai yang diharapkan, dan hasil yang dituju untuk peninjauan tata kelola.',
         category: candidate.category,
         tags: candidate.tags.length > 0 ? candidate.tags : ['Uploaded'],
         workspace_id: workspaceId,
@@ -526,6 +545,43 @@ export function IdeaUploadReviewPanel({
 
           {(stage === 'review' || stage === 'creating') && (
             <div className="space-y-4">
+              {uploadedFile && !lastRunSummary && (
+                <section className="rounded-xl border border-border/70 bg-muted/20 p-4">
+                  <div className="flex items-start gap-3">
+                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground">Dokumen yang diupload</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground" title={uploadedFile.name}>{uploadedFile.name}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground" htmlFor="uploaded-document-type">Jenis dokumen</Label>
+                      <select
+                        id="uploaded-document-type"
+                        value={uploadedDocumentType}
+                        disabled={stage === 'creating'}
+                        onChange={(event) => setUploadedDocumentType(event.target.value as UploadedDocumentType)}
+                        className="h-9 w-full rounded-lg border border-input/80 bg-background px-2.5 text-sm shadow-sm transition focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      >
+                        {UPLOADED_DOCUMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground" htmlFor="uploaded-document-status">Status dokumen</Label>
+                      <select
+                        id="uploaded-document-status"
+                        value={uploadedDocumentStatus}
+                        disabled={stage === 'creating'}
+                        onChange={(event) => setUploadedDocumentStatus(event.target.value as UploadedDocumentStatus)}
+                        className="h-9 w-full rounded-lg border border-input/80 bg-background px-2.5 text-sm shadow-sm transition focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      >
+                        {UPLOADED_DOCUMENT_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </section>
+              )}
               {lastRunSummary && (
                 <div
                   className={cn(
