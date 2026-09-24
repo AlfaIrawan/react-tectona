@@ -1525,15 +1525,15 @@ function buildScoringEvidenceChecklist(idea: Idea): ScoringEvidenceItem[] {
   return [
     {
       id: 'title',
-      label: 'Idea title',
-      detail: 'Clear naming for board prioritization.',
+      label: 'Judul ide',
+      detail: 'Nama yang jelas untuk membantu penentuan prioritas.',
       complete: Boolean(idea.title.trim()),
       ctaPanel: 'summary',
     },
     {
       id: 'description',
-      label: 'Problem & solution narrative',
-      detail: 'Description that explains the business need.',
+      label: 'Narasi masalah dan solusi',
+      detail: 'Deskripsi yang menjelaskan kebutuhan bisnis.',
       complete: Boolean(idea.description.trim()),
       ctaPanel: 'summary',
     },
@@ -1546,8 +1546,8 @@ function buildScoringEvidenceChecklist(idea: Idea): ScoringEvidenceItem[] {
     },
     {
       id: 'scope',
-      label: 'Scope summary',
-      detail: 'In/out boundaries for feasibility scoring.',
+      label: 'Ringkasan ruang lingkup',
+      detail: 'Batasan cakupan untuk penilaian kelayakan.',
       complete: Boolean((idea.scopeSummary ?? '').trim()),
       ctaPanel: 'summary',
     },
@@ -1560,8 +1560,8 @@ function buildScoringEvidenceChecklist(idea: Idea): ScoringEvidenceItem[] {
     },
     {
       id: 'dimensions',
-      label: 'Backlog score dimensions',
-      detail: 'Value, effort, risk, and ROI from Idea & Backlog.',
+      label: 'Dimensi penilaian backlog',
+      detail: 'Nilai, upaya, risiko, dan ROI dari Idea & Backlog.',
       complete: ideaHasNumericScoring(idea),
       ctaBacklog: true,
     },
@@ -2076,6 +2076,13 @@ function ScoringDraftReadinessCard({
   onOpenBacklog: () => void
 }) {
   const completedCount = evidenceItems.filter((item) => item.complete).length
+  const missingFieldLabels: Record<string, string> = {
+    business_objective: 'tujuan bisnis',
+    scope_summary: 'ringkasan ruang lingkup',
+    risk_summary: 'ringkasan risiko',
+    scoring: 'dimensi penilaian backlog',
+  }
+  const missingFieldText = missingFields.map((field) => missingFieldLabels[field] ?? field).join(', ')
 
   return (
     <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
@@ -2084,13 +2091,13 @@ function ScoringDraftReadinessCard({
           <div className="min-w-0 flex-1 space-y-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-900 backdrop-blur-md">
               <ClipboardList className="h-3.5 w-3.5" />
-              Draft readiness
+              Kesiapan draft
             </div>
             <h3 className="text-base font-semibold text-slate-950">{title}</h3>
             <p className="w-full text-sm leading-6 text-slate-600">{executiveBrief}</p>
             {!hasNumericScoring ? (
               <p className="w-full text-xs text-amber-800">
-                Backlog score dimensions are empty — the panel does not invent numbers until evidence is available.
+                Dimensi penilaian backlog belum tersedia. Nilai tidak akan dibuat sebelum ada evidence pendukung.
               </p>
             ) : null}
           </div>
@@ -2105,8 +2112,8 @@ function ScoringDraftReadinessCard({
                 <span className="text-sm font-bold tabular-nums text-slate-900">{readinessPercent}%</span>
               </div>
             </div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">AI confidence</p>
-            <p className="text-[11px] text-slate-600">{completedCount}/{evidenceItems.length} intake fields</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Kepercayaan AI</p>
+            <p className="text-[11px] text-slate-600">{completedCount}/{evidenceItems.length} informasi intake</p>
           </div>
         </div>
 
@@ -2136,7 +2143,7 @@ function ScoringDraftReadinessCard({
                     className="h-auto px-0 py-0 mt-1 text-[11px] font-semibold text-violet-700"
                     onClick={() => onNavigateToPanel(item.ctaPanel!)}
                   >
-                    Complete in Summary
+                    Lengkapi di Ringkasan
                   </Button>
                 ) : null}
                 {!item.complete && item.ctaBacklog ? (
@@ -2146,7 +2153,7 @@ function ScoringDraftReadinessCard({
                     className="h-auto px-0 py-0 mt-1 text-[11px] font-semibold text-violet-700"
                     onClick={onOpenBacklog}
                   >
-                    Open Idea &amp; Backlog
+                    Buka Idea &amp; Backlog
                   </Button>
                 ) : null}
               </div>
@@ -2156,8 +2163,8 @@ function ScoringDraftReadinessCard({
 
         {missingFields.length > 0 ? (
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Runtime missing signals</p>
-            <p className="mt-1 text-xs leading-5 text-slate-600">{missingFields.join(', ')}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Informasi yang masih diperlukan</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">{missingFieldText}</p>
           </div>
         ) : null}
       </CardContent>
