@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bpmnXmlToPlantUml, isBpmnXml, parseBpmnSource } from '@/modules/project-management/lib/bpmnPlantUml'
+import { bpmnGraphToPlantUml, bpmnXmlToPlantUml, isBpmnXml, parseBpmnSource } from '@/modules/project-management/lib/bpmnPlantUml'
 
 const SAMPLE_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
@@ -59,5 +59,26 @@ describe('bpmnPlantUml', () => {
     expect(graph.nodes.find((node) => node.id === 'Task')?.label).toBe(
       'Saat ini ketika ada isu di nasabah dan cabang tidak tahu\napa yang harus dilakukan',
     )
+  })
+
+  it('repairs a misplaced Start event and serializes BPMN vertically', () => {
+    const graph = parseBpmnSource(`@startuml
+      left to right direction
+      rectangle "Cabang temukan isu nasabah" as activity_1
+      rectangle "Tim HO proses penyelesaian" as activity_2
+      () "Start" as process_start
+      () "End" as process_end
+      activity_1 --> activity_2
+      activity_2 --> process_start
+      process_start --> process_end
+      @enduml`)
+
+    expect(graph.edges.some((edge) => edge.source === 'process_start' && edge.target === 'activity_1')).toBe(true)
+    expect(graph.edges.some((edge) => edge.source === 'activity_2' && edge.target === 'process_end')).toBe(true)
+    expect(graph.edges.some((edge) => edge.source === 'activity_2' && edge.target === 'process_start')).toBe(false)
+
+    const plantuml = bpmnGraphToPlantUml(graph)
+    expect(plantuml).toContain('top to bottom direction')
+    expect(plantuml.indexOf('() "Start" as process_start')).toBeLessThan(plantuml.indexOf('rectangle "Cabang temukan isu nasabah" as activity_1'))
   })
 })

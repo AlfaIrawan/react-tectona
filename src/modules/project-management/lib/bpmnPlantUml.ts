@@ -195,41 +195,96 @@ export function parseBpmnPlantUml(source: string): BpmnParsedGraph {
     })
   }
 
-  const incoming = new Map(nodes.map((node) => [node.id, 0]))
-  const outgoing = new Map(nodes.map((node) => [node.id, 0]))
-  for (const edge of edges) {
-    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
-    outgoing.set(edge.source, (outgoing.get(edge.source) ?? 0) + 1)
-  }
-  for (const node of nodes) {
-    if (node.kind !== 'start' && node.kind !== 'end') continue
-    if ((outgoing.get(node.id) ?? 0) === 0 && (incoming.get(node.id) ?? 0) > 0) {
-      node.kind = 'end'
-      node.bpmnType = 'endEvent'
-    } else if ((incoming.get(node.id) ?? 0) === 0 && (outgoing.get(node.id) ?? 0) > 0) {
-      node.kind = 'start'
-      node.bpmnType = 'startEvent'
-    }
-  }
-
   return { nodes, edges }
 }
 
+function isBoundaryNode(node: BpmnParsedNode, boundary: 'start' | 'end'): boolean {
+  if (boundary === 'start') {
+    return node.kind === 'start' || node.bpmnType === 'startEvent' || /^(start|mulai)$/i.test(node.label.trim())
+  }
+  return node.kind === 'end' || node.bpmnType === 'endEvent' || /^(end|selesai|stop|finish)$/i.test(node.label.trim())
+}
+
+function graphDegree(graph: BpmnParsedGraph, id: string): { incoming: number; outgoing: number } {
+  return graph.edges.reduce(
+    (degree, edge) => ({
+      incoming: degree.incoming + (edge.target === id ? 1 : 0),
+      outgoing: degree.outgoing + (edge.source === id ? 1 : 0),
+    }),
+    { incoming: 0, outgoing: 0 },
+  )
+}
+
+function uniqueEdges(edges: BpmnParsedGraph['edges']): BpmnParsedGraph['edges'] {
+  const seen = new Set<string>()
+  return edges.flatMap((edge, index) => {
+    const key = `${edge.source}\u0000${edge.target}\u0000${edge.label ?? ''}`
+    if (seen.has(key)) return []
+    seen.add(key)
+    return [{ ...edge, id: edge.id || `edge-${index}` }]
+  })
+}
+
+/**
+ * Keeps generated BPMN readable when a source accidentally places the boundary
+ * events after the activities. Only invalid boundary connections are repaired;
+ * valid process branches remain untouched.
+ */
+export function normalizeBpmnGraph(graph: BpmnParsedGraph): BpmnParsedGraph {
+  const start = graph.nodes.find((node) => /^(start|mulai)$/i.test(node.label.trim()))
+    ?? graph.nodes.find((node) => isBoundaryNode(node, 'start'))
+  const end = graph.nodes.find((node) => /^(end|selesai|stop|finish)$/i.test(node.label.trim()))
+    ?? graph.nodes.find((node) => isBoundaryNode(node, 'end'))
+
+  const malformedStart = start && graphDegree(graph, start.id).incoming > 0 ? start : undefined
+  const malformedEnd = end && graphDegree(graph, end.id).outgoing > 0 ? end : undefined
+  let edges = uniqueEdges(graph.edges)
+
+  if (malformedStart || malformedEnd) {
+    const repairedIds = new Set([malformedStart?.id, malformedEnd?.id].filter(Boolean))
+    edges = edges.filter((edge) => !repairedIds.has(edge.source) && !repairedIds.has(edge.target))
+
+    const internalNodes = graph.nodes.filter((node) => node.id !== start?.id && node.id !== end?.id)
+    if (malformedStart) {
+      const roots = internalNodes.filter((node) => !edges.some((edge) => edge.target === node.id))
+      for (const root of roots) edges.push({ id: `edge-${malformedStart.id}-${root.id}`, source: malformedStart.id, target: root.id })
+    }
+    if (end) {
+      const leaves = internalNodes.filter((node) => !edges.some((edge) => edge.source === node.id))
+      for (const leaf of leaves) edges.push({ id: `edge-${leaf.id}-${end.id}`, source: leaf.id, target: end.id })
+    }
+    edges = uniqueEdges(edges)
+  }
+
+  const normalizedNodes = graph.nodes.map((node) => {
+    if (start?.id === node.id) return { ...node, kind: 'start' as const, bpmnType: 'startEvent' }
+    if (end?.id === node.id) return { ...node, kind: 'end' as const, bpmnType: 'endEvent' }
+    return { ...node }
+  })
+  const orderedNodes = [
+    ...(start ? normalizedNodes.filter((node) => node.id === start.id) : []),
+    ...normalizedNodes.filter((node) => node.id !== start?.id && node.id !== end?.id),
+    ...(end ? normalizedNodes.filter((node) => node.id === end.id) : []),
+  ]
+  return { nodes: orderedNodes, edges }
+}
+
 export function parseBpmnSource(source: string): BpmnParsedGraph {
-  if (isBpmnXml(source)) return parseBpmnXml(source)
-  if (/^\s*(?:flowchart|graph)\s+(?:TD|LR|TB|RL)\b/im.test(source)) return parseMermaidFlowToBpmn(source)
-  return parseBpmnPlantUml(source)
+  if (isBpmnXml(source)) return normalizeBpmnGraph(parseBpmnXml(source))
+  if (/^\s*(?:flowchart|graph)\s+(?:TD|LR|TB|RL)\b/im.test(source)) return normalizeBpmnGraph(parseMermaidFlowToBpmn(source))
+  return normalizeBpmnGraph(parseBpmnPlantUml(source))
 }
 
 export function bpmnGraphToPlantUml(graph: BpmnParsedGraph): string {
+  const normalized = normalizeBpmnGraph(graph)
   const lines = [
     '@startuml',
     'skinparam shadowing false',
     'skinparam defaultFontName Arial',
     'skinparam roundcorner 8',
-    'left to right direction',
+    'top to bottom direction',
   ]
-  for (const node of graph.nodes) {
+  for (const node of normalized.nodes) {
     const id = aliasPlantUml(node.id)
     const title = quotePlantUml(node.label)
     if (node.kind === 'start' || node.kind === 'end' || node.bpmnType === 'startEvent' || node.bpmnType === 'endEvent') {
@@ -244,7 +299,7 @@ export function bpmnGraphToPlantUml(graph: BpmnParsedGraph): string {
       lines.push(`rectangle "${title}" as ${id}`)
     }
   }
-  for (const edge of graph.edges) {
+  for (const edge of normalized.edges) {
     const label = edge.label?.trim() ? ` : ${quotePlantUml(edge.label.trim())}` : ''
     lines.push(`${aliasPlantUml(edge.source)} --> ${aliasPlantUml(edge.target)}${label}`)
   }
@@ -262,11 +317,14 @@ export function toBpmnEditorSource(source: string): string {
     return [
       '@startuml',
       'skinparam shadowing false',
-      'left to right direction',
+      'top to bottom direction',
       '@enduml',
     ].join('\n')
   }
-  return isBpmnXml(text) ? bpmnXmlToPlantUml(text) : text
+  if (isBpmnXml(text) || /^\s*@startuml\b/im.test(text) || /^\s*(?:flowchart|graph)\s+/im.test(text)) {
+    return bpmnGraphToPlantUml(parseBpmnSource(text))
+  }
+  return text
 }
 
 function nodeTitle(node: Node<ArchimateNodeData>): string {

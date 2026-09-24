@@ -195,15 +195,20 @@ function layoutBpmnPositions(nodes: ParsedNode[], edges: ParsedGraph['edges']): 
     buckets.set(depth, [...(buckets.get(depth) ?? []), node.id])
   }
   const positions = new Map<string, { x: number; y: number }>()
-  const rowPitch = 140
+  const levelPitch = 148
+  const branchGap = 36
+  const centerX = 480
   for (const [depth, ids] of buckets) {
-    ids.forEach((id, index) => {
+    const totalWidth = ids.reduce((width, id) => width + bpmnNodeSize(nodes.find((node) => node.id === id)?.bpmnType ?? 'task').width, 0)
+      + Math.max(0, ids.length - 1) * branchGap
+    let nextX = centerX - totalWidth / 2
+    ids.forEach((id) => {
       const size = bpmnNodeSize(nodes.find((node) => node.id === id)?.bpmnType ?? 'task')
-      const rowCenter = 48 + index * rowPitch + rowPitch / 2
       positions.set(id, {
-        x: 48 + depth * 220,
-        y: rowCenter - size.height / 2,
+        x: nextX,
+        y: 48 + depth * levelPitch,
       })
+      nextX += size.width + branchGap
     })
   }
   return positions
@@ -660,10 +665,15 @@ function EditableDiagramCanvasInner({
     () => (format === 'c4' ? normalizeC4PlantUml(source, c4LevelFromDiagramKey(diagramKey)) : source),
     [diagramKey, format, source],
   )
-  const imported = useMemo(() => parseSource(c4Source, format), [c4Source, format])
+  const bpmnEditorSource = useMemo(
+    () => (format === 'bpmn' ? toBpmnEditorSource(c4Source) : c4Source),
+    [c4Source, format],
+  )
+  const imported = useMemo(() => parseSource(bpmnEditorSource, format), [bpmnEditorSource, format])
+  const shouldMigrateStoredBpmnGraph = format === 'bpmn' && c4Source.trim() !== bpmnEditorSource
   const initial = useMemo(() => {
     if (savedGraph?.nodes?.length) {
-      if (format === 'bpmn' && !isStoredBpmnGraph(savedGraph.nodes)) {
+      if (format === 'bpmn' && (!isStoredBpmnGraph(savedGraph.nodes) || shouldMigrateStoredBpmnGraph)) {
         return {
           ...imported,
           viewport: savedGraph.viewport,
@@ -684,7 +694,7 @@ function EditableDiagramCanvasInner({
         edges: withFacingHandles(imported.nodes, imported.edges),
       }
     }
-    if (format === 'bpmn' && !isStoredBpmnGraph(stored.nodes)) {
+    if (format === 'bpmn' && (!isStoredBpmnGraph(stored.nodes) || shouldMigrateStoredBpmnGraph)) {
       return {
         ...imported,
         viewport: stored.viewport,
@@ -694,13 +704,13 @@ function EditableDiagramCanvasInner({
     }
     const storedEdges = format === 'c4' ? normalizeC4RelationEdges(stored.edges) : stored.edges
     return { ...stored, edges: withFacingHandles(stored.nodes, storedEdges) }
-  }, [editable, format, imported, savedGraph, storageKey])
+  }, [editable, format, imported, savedGraph, shouldMigrateStoredBpmnGraph, storageKey])
   const [nodes, setNodes, onNodesChange] = useNodesState<ArchimateNodeData>(initial.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(format === 'c4' ? 'diagram' : 'source')
-  const [sourceDraft, setSourceDraft] = useState(() => (format === 'bpmn' ? toBpmnEditorSource(c4Source) : c4Source))
+  const [sourceDraft, setSourceDraft] = useState(() => bpmnEditorSource)
   const c4Level = c4LevelFromDiagramKey(diagramKey)
   const applicationCatalogScope = useMemo(() => tenant ? buildWorkspaceScopeFromTenant(tenant) : null, [tenant])
   const [applicationCatalog, setApplicationCatalog] = useState<C4ApplicationCatalogItem[]>([])
@@ -876,8 +886,8 @@ function EditableDiagramCanvasInner({
     viewportRef.current = initial.viewport
     setSavedViewport(initial.viewport)
     setSnapToGrid(initial.snapToGrid ?? true)
-    setSourceDraft(format === 'bpmn' ? toBpmnEditorSource(c4Source) : c4Source)
-  }, [c4Source, initial.edges, initial.nodes, initial.snapToGrid, initial.viewport, savedGraph, setEdges, setNodes, storageKey])
+    setSourceDraft(bpmnEditorSource)
+  }, [bpmnEditorSource, initial.edges, initial.nodes, initial.snapToGrid, initial.viewport, savedGraph, setEdges, setNodes, storageKey])
   useEffect(() => {
     if (format !== 'c4' || c4Level !== 'L1' || c4DrilldownTargets.length === 0) return
     const normalizeTitle = (value: string) => value.trim().toLocaleLowerCase()
