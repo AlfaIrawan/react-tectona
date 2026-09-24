@@ -1539,8 +1539,8 @@ function buildScoringEvidenceChecklist(idea: Idea): ScoringEvidenceItem[] {
     },
     {
       id: 'business_objective',
-      label: 'Business objective',
-      detail: 'Expected outcome and value hypothesis.',
+      label: 'Tujuan bisnis',
+      detail: 'Hasil yang diharapkan dan hipotesis nilai.',
       complete: Boolean((idea.businessObjective ?? '').trim()),
       ctaPanel: 'summary',
     },
@@ -1553,8 +1553,8 @@ function buildScoringEvidenceChecklist(idea: Idea): ScoringEvidenceItem[] {
     },
     {
       id: 'risk',
-      label: 'Risk summary',
-      detail: 'Execution and governance watchpoints.',
+      label: 'Ringkasan risiko',
+      detail: 'Hal yang perlu diperhatikan dalam pelaksanaan dan tata kelola.',
       complete: Boolean((idea.riskSummary ?? '').trim()),
       ctaPanel: 'summary',
     },
