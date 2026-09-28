@@ -170,7 +170,10 @@ import {
   type GenAiChatSessionSummary,
   type RuntimeChatEvidence,
   type RuntimeChatProgress,
+  proposeIdeaSummaryFromReply,
 } from '@/lib/api/tectonaAgentRuntimeApi'
+import { getActiveIdeaSectionRevision } from '@/lib/api/ideaBacklogApi'
+import { summaryFieldLabel } from '@/modules/project-management/lib/summaryFields'
 import { type ExplainerCharacter } from '@/lib/api/documentKnowledgeApi'
 import { AssistantEvidenceFootnotes } from './AssistantEvidenceFootnotes'
 import { useTectonaVoiceWake } from '@/hooks/useTectonaVoiceWake'
@@ -235,9 +238,11 @@ import { useChatNotificationTargetStore } from '@/stores/chat-notification-targe
 import { findGenAiConversationForIdea, titlesMatchIdeaSession } from '@/lib/chat/ideaDiscussSession'
 import {
   ideaDiscussComposerPrefill,
-  ideaDiscussSessionId,
+  isIdeaDiscussSessionFor,
+  newIdeaDiscussSessionId,
   useIdeaDiscussChatStore,
   buildIdeaDiscussExtraNotes,
+  buildIdeaDiscussUiFields,
   type IdeaDiscussChatBinding,
 } from '@/stores/idea-discuss-chat-store'
 import { parseDiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
@@ -930,6 +935,50 @@ function mergeCollaborationInbox(existing: Conversation[], apiConversations: Con
   return merged
 }
 
+/**
+ * Summary is edited card by card, so a chat reply becomes card edits (never the
+ * whole reply as one text blob). They go through the same idea-backlog rules as
+ * inline edits: locked title and figures, score-claim guard, stale-base check.
+ */
+function buildSummaryCardEditChatActions(
+  binding: IdeaDiscussChatBinding,
+  proposal: { fields: Record<string, string>; before: Record<string, string> },
+  baseRevisionId: string | null,
+): TectonaProposedAction[] {
+  const cards = Object.keys(proposal.fields)
+  if (!cards.length) return []
+  const labels = cards.map((key) => summaryFieldLabel(key)).join(', ')
+  const payload = {
+    idea_id: binding.ideaId,
+    section_key: 'summary',
+    section_label: binding.sectionLabel,
+    fields: proposal.fields,
+    field_before: proposal.before,
+    base_revision_id: baseRevisionId,
+    source_session_id: binding.conversationId,
+  }
+  // action_id is capped at 64 chars by agent-runtime; a conversation UUID plus a
+  // timestamp is longer, so use a fresh short id per card.
+  return [
+    {
+      action_id: `isr-accept-${randomUuid()}`,
+      action_code: 'idea.section.revision',
+      summary: `Save the proposed ${labels} edit${cards.length > 1 ? 's' : ''} for review`,
+      payload: { ...payload, transition: 'accept' },
+      risk_level: 'medium',
+      requires_confirmation: true,
+    },
+    {
+      action_id: `isr-reject-${randomUuid()}`,
+      action_code: 'idea.section.revision',
+      summary: `Dismiss this ${labels} proposal`,
+      payload: { ...payload, transition: 'reject' },
+      risk_level: 'low',
+      requires_confirmation: true,
+    },
+  ]
+}
+
 function buildIdeaSectionRevisionChatActions(
   binding: IdeaDiscussChatBinding,
   content: string,
@@ -946,7 +995,7 @@ function buildIdeaSectionRevisionChatActions(
   }
   return [
     {
-      action_id: `idea-section-accept-${binding.conversationId}-${Date.now()}`,
+      action_id: `isr-accept-${randomUuid()}`,
       action_code: 'idea.section.revision',
       summary: `Accept this reply as the ${binding.sectionLabel} revision`,
       payload: { ...basePayload, transition: 'accept' },
@@ -954,7 +1003,7 @@ function buildIdeaSectionRevisionChatActions(
       requires_confirmation: true,
     },
     {
-      action_id: `idea-section-reject-${binding.conversationId}-${Date.now()}`,
+      action_id: `isr-reject-${randomUuid()}`,
       action_code: 'idea.section.revision',
       summary: `Reject this ${binding.sectionLabel} proposal`,
       payload: { ...basePayload, transition: 'reject' },
@@ -1125,12 +1174,15 @@ async function resolveGenAiOpeningGreeting(
     activeConversationMode: context.activeConversationMode ?? null,
   })
 
+  // A Discuss-with-AI session greets with the section it is about (the same
+  // fields every later turn sends), so agent-runtime can open from that section.
+  const ideaBinding = useIdeaDiscussChatStore.getState().binding
   const runtime = await sendTectonaAgentRuntimeMessage({
     message: BACKEND_OPENING_GREETING_TOKEN,
     context: {
       workspace_id: TECTONA_CHAT_WORKSPACE_ID,
       session_id: convId,
-      ui: uiContext,
+      ui: ideaBinding?.conversationId === convId ? { ...uiContext, ...buildIdeaDiscussUiFields(ideaBinding) } : uiContext,
       document_id: context.documentId ?? null,
       document_title: context.documentTitle ?? null,
       assistant_id: context.assistantId ?? null,
@@ -1144,6 +1196,35 @@ async function resolveGenAiOpeningGreeting(
     text,
     at: Date.now(),
   }
+}
+
+const BACKEND_SECTION_INTRO_TOKEN = '__TECTONA_SECTION_INTRO__'
+// One intro request per session and section at a time (the open request can fire twice).
+const sectionIntroInFlight = new Set<string>()
+
+/**
+ * An idea's discussion is one session across sections. When it is reopened
+ * from another section, agent-runtime decides whether that section gets an
+ * intro (today: Scoring, from its real state) and stores it in the session;
+ * nothing comes back when there is none or the last message already is one.
+ */
+async function resolveIdeaSectionIntro(convId: string, binding: IdeaDiscussChatBinding): Promise<ChatMessage | null> {
+  const uiContext = buildTectonaUiContextForChat({
+    pathname: window.location.pathname,
+    search: window.location.search,
+    chatPanelOpen: true,
+    chatScreen: 'thread',
+  })
+  const runtime = await sendTectonaAgentRuntimeMessage({
+    message: BACKEND_SECTION_INTRO_TOKEN,
+    context: {
+      workspace_id: TECTONA_CHAT_WORKSPACE_ID,
+      session_id: convId,
+      ui: { ...uiContext, ...buildIdeaDiscussUiFields(binding) },
+    },
+  })
+  const text = runtime.answer.trim()
+  return text ? { id: `section-intro-${convId}-${Date.now()}`, role: 'assistant', text, at: Date.now() } : null
 }
 
 function greetPreviewText(assistantName = TECTONA_ASSISTANT_LABEL): string {
@@ -1615,13 +1696,17 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       actionId: string,
       patch?: Record<string, unknown>,
     ) => {
-      let actionToRun: TectonaProposedAction | undefined
+      // Read the action from the current messages, not inside the state updater:
+      // React may run that updater later (another update pending, e.g. a reply
+      // streaming in), which left the card on "Running…" without ever sending it.
+      const actionToRun: TectonaProposedAction | undefined = (messagesByIdRef.current[conversationId] ?? [])
+        .find((m) => m.id === messageId)?.agentActionState?.actions.find((a) => a.action_id === actionId)
+      if (!actionToRun) return
 
       setMessagesById((prev) => {
         const msgs = prev[conversationId] ?? []
         const msg = msgs.find((m) => m.id === messageId)
-        actionToRun = msg?.agentActionState?.actions.find((a) => a.action_id === actionId)
-        if (!actionToRun || !msg?.agentActionState) return prev
+        if (!msg?.agentActionState) return prev
         return {
           ...prev,
           [conversationId]: msgs.map((m) =>
@@ -1640,8 +1725,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           ),
         }
       })
-
-      if (!actionToRun) return
 
       // Merge user-edited form fields (e.g. workspace name/description) into the payload.
       // If the name changed, drop workspace_key so it re-slugifies from the new name.
@@ -1809,6 +1892,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   const screenRef = useRef(screen)
   screenRef.current = screen
   const conversationsRef = useRef(conversations)
+  // New idea-discussion session id per idea, so repeated open requests (the
+  // open event can fire again before state settles) reuse one conversation.
+  const pendingIdeaDiscussIdsRef = useRef(new Map<string, string>())
   conversationsRef.current = conversations
   const messagesByIdRef = useRef(messagesById)
   messagesByIdRef.current = messagesById
@@ -3972,7 +4058,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       if (request.genAi) {
         const idea = request.genAi
         const ideaTitle = idea.ideaTitle.trim() || 'Untitled idea'
-        const preferredId = ideaDiscussSessionId(idea.ideaId)
         let match = findGenAiConversationForIdea(conversationsRef.current, idea.ideaId, ideaTitle)
         if (!match) {
           try {
@@ -3981,7 +4066,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             const row = sessions.find(
               (session) =>
                 !tombstoned.has(session.session_id) &&
-                (session.session_id === preferredId
+                (isIdeaDiscussSessionFor(session.session_id, idea.ideaId)
                 || titlesMatchIdeaSession(session.title ?? '', ideaTitle)),
             )
             if (row) {
@@ -3997,7 +4082,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           }
         }
 
-        const conversationId = match?.id ?? preferredId
+        // No active discussion for this idea: start a fresh, per-user session
+        // (never the bare per-idea id, which may be deleted or someone else's).
+        const pendingId = pendingIdeaDiscussIdsRef.current.get(idea.ideaId)
+        const conversationId = match?.id
+          ?? (pendingId && !getDeletedGenAiSessionIds().has(pendingId)
+            ? pendingId
+            : newIdeaDiscussSessionId(idea.ideaId, getSession()?.user?.id))
+        pendingIdeaDiscussIdsRef.current.set(idea.ideaId, conversationId)
         const conversation: Conversation = match
           ? {
               ...match,
@@ -4036,11 +4128,11 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         setAiAccordionOpen(true)
         setActiveConversationId(conversation.id)
         setScreen('thread')
-        setDraft(ideaDiscussComposerPrefill(idea.sectionLabel))
+        setDraft(ideaDiscussComposerPrefill(idea.sectionLabel, idea.sectionKey))
         setSearchQuery('')
         setContactSearchQuery('')
         clearSelection()
-        useIdeaDiscussChatStore.getState().setBinding({
+        const binding: IdeaDiscussChatBinding = {
           conversationId: conversation.id,
           ideaId: idea.ideaId,
           ideaTitle,
@@ -4051,7 +4143,28 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
           workspaceId: idea.workspaceId,
           userId: idea.userId,
           isImpactSection: Boolean(idea.isImpactSection),
-        })
+        }
+        useIdeaDiscussChatStore.getState().setBinding(binding)
+        // A new session is greeted for this section already; an existing one
+        // gets the section's intro appended (stored server-side, so a reload
+        // of the thread shows it once).
+        const introKey = `${conversation.id}:${idea.sectionKey}`
+        if (match && !sectionIntroInFlight.has(introKey)) {
+          sectionIntroInFlight.add(introKey)
+          void resolveIdeaSectionIntro(conversation.id, binding)
+            .then((intro) => {
+              if (!intro) return
+              setMessagesById((prev) => {
+                const list = prev[conversation.id] ?? []
+                // The thread may have reloaded from the server with it already.
+                const last = list[list.length - 1]
+                if (last?.role === 'assistant' && last.text.trim() === intro.text) return prev
+                return { ...prev, [conversation.id]: [...list, intro] }
+              })
+            })
+            .catch(() => undefined)
+            .finally(() => sectionIntroInFlight.delete(introKey))
+        }
         return true
       }
 
@@ -4777,6 +4890,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               ...(uiContext?.extra_notes ?? []),
               ...(contextIdeaBinding?.conversationId === conversationId ? buildIdeaDiscussExtraNotes(contextIdeaBinding) : []),
             ],
+            ...(contextIdeaBinding?.conversationId === conversationId ? buildIdeaDiscussUiFields(contextIdeaBinding) : {}),
           },
           {
             manualAttachmentCount,
@@ -4911,6 +5025,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         if (
           ideaBinding
           && ideaBinding.conversationId === conversationId
+          && ideaBinding.sectionKey !== 'summary'
+          // Scoring proposals arrive from agent-runtime as field cards (intake
+          // fields, dimension rationale); the whole reply is never one revision.
+          && ideaBinding.sectionKey !== 'scoring'
           && runtime.answer.trim()
           && !cardActions.some((action) => action.action_code === 'idea.section.revision')
         ) {
@@ -4941,6 +5059,40 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               : m,
           ),
         }))
+
+        // Summary: ask agent-runtime whether this reply proposes concrete card
+        // edits; only then attach a card (a reply that just discusses gets none).
+        if (
+          ideaBinding
+          && ideaBinding.conversationId === conversationId
+          && ideaBinding.sectionKey === 'summary'
+          && runtime.answer.trim()
+        ) {
+          const answer = runtime.answer
+          const baseActions = cardActions
+          void (async () => {
+            try {
+              const [proposal, active] = await Promise.all([
+                proposeIdeaSummaryFromReply({ idea_id: ideaBinding.ideaId, reply: answer }),
+                getActiveIdeaSectionRevision(ideaBinding.ideaId, 'summary'),
+              ])
+              const summaryCards = buildSummaryCardEditChatActions(
+                ideaBinding,
+                { fields: proposal.fields as Record<string, string>, before: proposal.before as Record<string, string> },
+                active?.id ?? null,
+              )
+              if (!summaryCards.length) return
+              setMessagesById((prev) => ({
+                ...prev,
+                [conversationId]: (prev[conversationId] ?? []).map((m) =>
+                  m.id === loadingMsgId ? { ...m, agentActionState: buildAgentActionState([...baseActions, ...summaryCards]) } : m,
+                ),
+              }))
+            } catch {
+              // No card is better than a wrong one: the reply stays readable.
+            }
+          })()
+        }
 
         if (
           shouldOpenTaskWorkIntelligence({

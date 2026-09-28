@@ -161,6 +161,11 @@ export interface ScoreDimensionApi {
   score: number
   weight?: number | null
   reason?: string | null
+  /** Provenance of scores approved through "Score this idea". */
+  ai_score?: number | null
+  change_reason?: string | null
+  proposed_by?: string | null
+  approved_by?: string | null
 }
 
 export interface ScoringResponseApi {
@@ -218,6 +223,7 @@ export interface ArtifactApi {
 }
 
 export interface IdeaApi {
+  approved_sections?: Partial<Record<IdeaSectionKey, IdeaSectionRevisionApi>>
   id: string
   workspace_id?: string | null
   project_id?: string | null
@@ -241,6 +247,8 @@ export interface IdeaApi {
   gate1_decision?: GateDecisionApi | null
   gate2_decision?: GateDecisionApi | null
   latest_scoring?: ScoringResponseApi | null
+  /** The intake changed after the latest scores were approved. */
+  scoring_intake_changed?: boolean
   artifacts: ArtifactApi[]
   created_date: string
   updated_date?: string | null
@@ -366,8 +374,31 @@ export type IdeaSectionRevisionStatus =
   | 'rejected'
   | 'approved'
   | 'superseded'
+  /** Sent back to its author with a reviewer comment; must be revised before approval. */
+  | 'changes_requested'
+
+export interface IdeaSectionFieldChange {
+  field: string
+  before: string
+  after: string
+}
+
+export interface IdeaSectionRevisionComment {
+  id: string
+  action: 'request_changes' | 'reject' | 'approve'
+  body: string
+  author_id: string
+  created_at: string
+}
 
 export interface IdeaSectionRevisionApi {
+  /** Reviewer comments on this revision, oldest first. */
+  comments?: IdeaSectionRevisionComment[]
+  /** Approve responses: revision-request threads this approval closed. */
+  closed_revision_request_ids?: string[]
+  diff?: string[]
+  /** Inline summary edits: which cards changed and what they said before. */
+  field_changes?: IdeaSectionFieldChange[]
   id: string
   idea_id: string
   section_key: IdeaSectionKey
@@ -416,6 +447,9 @@ export async function createIdeaSectionRevision(
   body: {
     content_json: Record<string, unknown>
     source: 'human' | 'ai'
+    base_revision_id?: string | null
+    original_ai_text?: string
+    require_checker?: boolean
     base_idea_version?: number
     model_id?: string | null
     confidence_score?: number | null
@@ -438,13 +472,80 @@ export async function transitionIdeaSectionRevision(
   ideaId: string,
   sectionKey: IdeaSectionKey,
   revisionId: string,
-  transition: 'accept' | 'reject' | 'approve',
+  transition: 'accept' | 'reject' | 'approve' | 'request_changes',
+  comment?: string,
 ): Promise<IdeaSectionRevisionApi> {
+  const path = transition === 'request_changes' ? 'request-changes' : transition
+  const trimmed = comment?.trim()
   const res = await apiFetch(
-    `${BASE_URL}/v1/ideas/${ideaId}/sections/${sectionKey}/revisions/${revisionId}/${transition}`,
-    { method: 'POST', headers: defaultHeaders() },
+    `${BASE_URL}/v1/ideas/${ideaId}/sections/${sectionKey}/revisions/${revisionId}/${path}`,
+    {
+      method: 'POST',
+      headers: defaultHeaders(),
+      ...(trimmed ? { body: JSON.stringify({ comment: trimmed }) } : {}),
+    },
   )
   return handleResponse<IdeaSectionRevisionApi>(res)
+}
+
+export type IdeaSectionThreadKind = 'discussion' | 'revision_request'
+
+export interface IdeaSectionThreadApi {
+  id: string
+  idea_id: string
+  section_key: IdeaSectionKey
+  /** Card the thread is about; null = the whole section. */
+  field_key?: string | null
+  /** Revision under discussion, if any. */
+  revision_id?: string | null
+  kind: IdeaSectionThreadKind
+  status: 'open' | 'resolved' | 'cancelled'
+  assignee_id?: string | null
+  created_by: string
+  created_at: string
+  resolved_by?: string | null
+  resolved_at?: string | null
+  /** For revision requests: the approved revision that answered it. */
+  resolved_revision_id?: string | null
+  comments: Array<{ id: string; body: string; author_id: string; created_at: string }>
+}
+
+function threadsUrl(ideaId: string, sectionKey: IdeaSectionKey) {
+  return `${BASE_URL}/v1/ideas/${ideaId}/sections/${sectionKey}/threads`
+}
+
+export async function listIdeaSectionThreads(
+  ideaId: string, sectionKey: IdeaSectionKey, options?: { includeClosed?: boolean },
+): Promise<IdeaSectionThreadApi[]> {
+  const query = options?.includeClosed ? '?include_closed=true' : ''
+  const res = await apiFetch(`${threadsUrl(ideaId, sectionKey)}${query}`, { headers: defaultHeaders() })
+  return handleResponse<IdeaSectionThreadApi[]>(res)
+}
+
+export async function createIdeaSectionThread(
+  ideaId: string,
+  sectionKey: IdeaSectionKey,
+  body: { kind: IdeaSectionThreadKind; body: string; field_key?: string | null; revision_id?: string | null; assignee_id?: string | null },
+): Promise<IdeaSectionThreadApi> {
+  const res = await apiFetch(threadsUrl(ideaId, sectionKey), { method: 'POST', headers: defaultHeaders(), body: JSON.stringify(body) })
+  return handleResponse<IdeaSectionThreadApi>(res)
+}
+
+export async function replyToIdeaSectionThread(
+  ideaId: string, sectionKey: IdeaSectionKey, threadId: string, body: string,
+): Promise<IdeaSectionThreadApi> {
+  const res = await apiFetch(`${threadsUrl(ideaId, sectionKey)}/${threadId}/comments`, {
+    method: 'POST', headers: defaultHeaders(), body: JSON.stringify({ body }),
+  })
+  return handleResponse<IdeaSectionThreadApi>(res)
+}
+
+/** Resolve a discussion, or cancel a revision request. */
+export async function closeIdeaSectionThread(
+  ideaId: string, sectionKey: IdeaSectionKey, threadId: string,
+): Promise<IdeaSectionThreadApi> {
+  const res = await apiFetch(`${threadsUrl(ideaId, sectionKey)}/${threadId}/close`, { method: 'POST', headers: defaultHeaders() })
+  return handleResponse<IdeaSectionThreadApi>(res)
 }
 
 export interface IdeaIntegrationPersistent {

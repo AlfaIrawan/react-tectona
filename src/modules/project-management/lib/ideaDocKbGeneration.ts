@@ -105,7 +105,7 @@ export async function generateIdeaDocKb(params: {
 
     // 2. Generate KB content via the same agent-runtime LLM call Document Repository uses.
     const generated = await generateRepositoryKbFromDocument({
-      context: { workspace_id: workspaceId },
+      context: { idea_id: ideaId, workspace_id: workspaceId },
       document: {
         file_name: file.name,
         file_type: file.type,

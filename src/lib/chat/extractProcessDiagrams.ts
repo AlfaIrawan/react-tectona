@@ -1,5 +1,3 @@
-import { splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
-
 export type ProcessDiagramKind = 'as_is' | 'to_be' | 'unlabeled'
 
 export type ExtractedProcessDiagram = {
@@ -9,6 +7,7 @@ export type ExtractedProcessDiagram = {
 }
 
 const DIAGRAM_FENCE_RE = /```[ \t]*(?:mermaid|plantuml|tecchart|bpmn)\b[ \t]*\r?\n?[\s\S]*?```/gi
+const PROCESS_FENCE_RE = /```[ \t]*(?:mermaid|plantuml)\b[ \t]*\r?\n?([\s\S]*?)```/gi
 const TECTONA_DIAGRAM_COMMENT_RE = /<!--tectona-mermaid\b[\s\S]*?-->/gi
 const TECTONA_ENCODED_DIAGRAM_COMMENT_RE = /<!--tectona-process-diagram:([^>]+)-->/gi
 
@@ -65,9 +64,7 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
     if (source) commentSources.push(source)
   }
 
-  const segments = splitMermaidContent(input)
   const results: ExtractedProcessDiagram[] = []
-  let cursor = 0
   const seen = new Set<string>()
 
   for (const source of commentSources) {
@@ -77,29 +74,16 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
     results.push({ kind: 'unlabeled', label: '', source })
   }
 
-  for (const segment of segments) {
-    if (segment.type === 'prose') {
-      cursor = input.indexOf(segment.text, cursor)
-      if (cursor >= 0) cursor += segment.text.length
-      continue
-    }
-    if (segment.type !== 'mermaid' && segment.type !== 'plantuml') continue
-
-    const source = segment.source.trim()
+  let fenceMatch: RegExpExecArray | null
+  while ((fenceMatch = PROCESS_FENCE_RE.exec(input)) !== null) {
+    const source = (fenceMatch[1] || '').trim()
     if (!source) continue
     const key = source.replace(/\s+/g, ' ').toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
 
-    const lowerInput = input.toLowerCase()
-    const searchFrom = Math.max(0, cursor - 200)
-    const mermaidIdx = lowerInput.indexOf('```mermaid', searchFrom)
-    const plantUmlIdx = lowerInput.indexOf('```plantuml', searchFrom)
-    const fenceIdx = [mermaidIdx, plantUmlIdx].filter((index) => index >= 0).sort((a, b) => a - b)[0] ?? -1
-    const prefix = fenceIdx >= 0 ? input.slice(Math.max(0, fenceIdx - 500), fenceIdx) : input.slice(0, cursor)
-    const kind = classifyPrefix(prefix)
+    const kind = classifyPrefix(input.slice(Math.max(0, fenceMatch.index - 500), fenceMatch.index))
     results.push({ kind, label: '', source })
-    cursor = fenceIdx >= 0 ? fenceIdx + 10 : cursor + source.length
   }
 
   const counts: Record<ProcessDiagramKind, number> = { as_is: 0, to_be: 0, unlabeled: 0 }

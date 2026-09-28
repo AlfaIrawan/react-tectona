@@ -3924,6 +3924,9 @@ export function IdeaBacklogManagementPage() {
   // even if the last API payload left ready_to_continue=false.
   useEffect(() => {
     if (!isBrainstormMode || brainstormReady || isBrainstormSending) return
+    // Flows are now confirmed one by one during the intake (AS-IS, then TO-BE), so an approved
+    // diagram alone no longer means the mandatory questions are done.
+    if (!isBrainstormIntakeComplete(brainstormEvidenceProgress)) return
     if (!inferBrainstormReadyFromMessages(brainstormMessages)) return
     setBrainstormReady(true)
     setBrainstormRemainingGaps([])
@@ -3939,7 +3942,7 @@ export function IdeaBacklogManagementPage() {
           }
         : current,
     )
-  }, [isBrainstormMode, brainstormMessages, brainstormReady, isBrainstormSending])
+  }, [isBrainstormMode, brainstormMessages, brainstormReady, isBrainstormSending, brainstormEvidenceProgress])
 
   useEffect(() => {
     if (!isBrainstormMode || brainstormReady) return
@@ -6308,10 +6311,23 @@ export function IdeaBacklogManagementPage() {
 
                           {isBrainstormSending && (
                             <div className="flex items-center gap-3 text-sm text-muted-foreground" aria-live="polite">
-                              <div className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
-                                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                              {/* Soft ping behind the avatar + a twinkling sparkle + bouncing dots, so
+                                  the wait reads as work in progress. Still for reduced-motion users. */}
+                              <div className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center">
+                                <span className="absolute inset-0 rounded-full bg-primary/30 animate-ping motion-reduce:animate-none" aria-hidden />
+                                <span className="relative inline-flex h-7 w-7 items-center justify-center rounded-full bg-foreground text-background">
+                                  <Sparkles className="h-3.5 w-3.5 animate-pulse motion-reduce:animate-none" aria-hidden />
+                                </span>
                               </div>
-                              <span>Writing a reply…</span>
+                              <span className="inline-flex items-baseline gap-1">
+                                Writing a reply
+                                <span className="inline-flex gap-0.5" aria-hidden>
+                                  {[0, 150, 300].map((delay) => (
+                                    <span key={delay} className="h-1 w-1 rounded-full bg-muted-foreground animate-bounce motion-reduce:animate-none"
+                                      style={{ animationDelay: `${delay}ms` }} />
+                                  ))}
+                                </span>
+                              </span>
                             </div>
                           )}
 
@@ -6322,44 +6338,8 @@ export function IdeaBacklogManagementPage() {
                                 : 'Enough context gathered. You can generate the draft now.'}
                             </div>
                           )}
-                          {!brainstormReady && brainstormOfferGenerateAnyway && (
-                            <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3">
-                              <p className="text-xs leading-5 text-muted-foreground">
-                                {isBrainstormThreadIndonesian(brainstormMessages)
-                                  ? 'Pilih salah satu. Bagian yang belum jelas akan ditandai sebagai asumsi jika kamu generate sekarang.'
-                                  : 'Choose one. Anything still unclear will be labeled as an assumption if you generate now.'}
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing}
-                                  className={cn(
-                                    enterpriseSecondaryButtonClass(),
-                                    'inline-flex h-9 items-center gap-2',
-                                    'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm',
-                                  )}
-                                  onClick={() => void handleSendBrainstormMessage(brainstormContinueDiscoveryMessage(brainstormMessages))}
-                                >
-                                  {isBrainstormThreadIndonesian(brainstormMessages) ? 'Lanjut ditanya' : 'Continue Discovery'}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing}
-                                  className={cn(
-                                    enterpriseCyanGradientActionButtonClass(),
-                                    'h-9',
-                                    'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
-                                  )}
-                                  onClick={() => void handleContinueIdeaDraft('generate_anyway')}
-                                >
-                                  <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                                  {isDraftContinuing
-                                    ? (isBrainstormThreadIndonesian(brainstormMessages) ? 'Sedang generate…' : 'Generating…')
-                                    : (isBrainstormThreadIndonesian(brainstormMessages) ? 'Generate saja' : 'Generate anyway')}
-                                </button>
-                              </div>
-                            </div>
-                          )}
+                          {/* The "more questions or enough?" choice is asked in the conversation
+                              itself (agent-runtime brainstorm_flow_steps), so there are no buttons here. */}
                           {!isBrainstormSending && !brainstormReady && !brainstormOfferGenerateAnyway && brainstormNextHint && brainstormMessages.length > 0 && !brainstormMessages.some((message) => message.role === 'assistant' && message.text.toLowerCase().includes(brainstormNextHint.toLowerCase())) && (
                             <p className="px-10 text-xs leading-5 text-muted-foreground">
                               <span className="mr-1 font-medium text-foreground">{brainstormThreadIndonesian ? 'Berikutnya:' : 'Next:'}</span>
@@ -6508,8 +6488,8 @@ export function IdeaBacklogManagementPage() {
                                     : 'Keep asking or answering here')
                                   : brainstormOfferGenerateAnyway
                                   ? (isBrainstormThreadIndonesian(brainstormMessages)
-                                    ? 'Opsional: koreksi diagram atau tambah catatan'
-                                    : 'Optional: correct the diagram or add a note')
+                                    ? 'Balas "lanjut" atau "cukup", atau tambah catatan'
+                                    : 'Reply "continue" or "enough", or add a note')
                                   : 'Ask Tectona Assistant'
                               }
                               spellCheck={false}
@@ -6573,8 +6553,8 @@ export function IdeaBacklogManagementPage() {
                                 : 'You can keep chatting. Click Generate draft when you are done.')
                               : brainstormOfferGenerateAnyway
                               ? (isBrainstormThreadIndonesian(brainstormMessages)
-                                ? 'Pakai tombol di atas untuk pilih. Input hanya jika mau menambah konteks.'
-                                : 'Use the buttons above to choose. Type here only to add extra context.')
+                                ? 'Jawab di chat: "lanjut" untuk beberapa pertanyaan lagi, "cukup" untuk generate draft.'
+                                : 'Answer in the chat: "continue" for a few more questions, "enough" to generate the draft.')
                               : 'Enter to send · Shift+Enter for new line'}
                           </p>
                         </div>

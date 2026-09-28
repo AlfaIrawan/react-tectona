@@ -659,10 +659,16 @@ export function formatActionPayloadPreview(action: TectonaProposedAction): Array
     case 'idea.content.inject': {
       push('Idea ID', 'idea_id')
       const updates = Array.isArray(p.updates) ? (p.updates as TectonaIdeaContentUpdate[]) : []
+      // Idea fields read by name; the content is shown in full, since it is what gets applied.
+      const fieldNames: Record<string, string> = {
+        business_objective: 'Business objective', scope_summary: 'Scope summary', risk_summary: 'Risk summary',
+        description: 'Description', title: 'Title',
+      }
       for (const [index, update] of updates.slice(0, 3).entries()) {
-        rows.push({ label: `Target ${index + 1}`, value: String(update.target ?? '') })
+        const target = String(update.target ?? '')
+        rows.push({ label: `Target ${index + 1}`, value: fieldNames[target] ?? target })
         rows.push({ label: `Mode ${index + 1}`, value: String(update.mode ?? 'replace') })
-        rows.push({ label: `Content ${index + 1}`, value: String(update.value ?? '').slice(0, 240) })
+        rows.push({ label: `Content ${index + 1}`, value: String(update.value ?? '').slice(0, 1200) })
       }
       break
     }

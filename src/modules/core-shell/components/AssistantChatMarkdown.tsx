@@ -13,6 +13,7 @@ import { AssistantChoiceGroup } from './AssistantChoiceGroup'
 import { AssistantChartBlock } from './AssistantChartBlock'
 import { AssistantMermaidBlock } from './AssistantMermaidBlock'
 import { splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
+import { citationNumberOf, markChatCitations } from '@/lib/chat/chatCitations'
 
 /** User-visible label for Gen AI assistant in sidebar chat. */
 export const TECTONA_ASSISTANT_LABEL = 'Smith'
@@ -153,7 +154,33 @@ type AssistantChatMarkdownProps = {
   onChoiceSubmit?: (labels: string[], mode: 'single' | 'multiple') => void
 }
 
-function NarrativeMarkdown({ content }: { content: string }) {
+const CITATION_CLASS = cn(
+  'ml-0.5 inline-flex h-4 min-w-4 cursor-help items-center justify-center rounded bg-slate-200/80 px-1 align-super',
+  'text-[10px] font-semibold leading-none text-slate-600 no-underline dark:bg-slate-700 dark:text-slate-200',
+)
+
+/** `[ref: …]` citations as small numbered markers naming the source on hover (lib/chat/chatCitations). */
+function useCitationComponents(content: string): { text: string; components: Components } {
+  return useMemo(() => {
+    const { text, sources } = markChatCitations(content)
+    if (!sources.length) return { text, components: MARKDOWN_COMPONENTS }
+    const components: Components = {
+      ...MARKDOWN_COMPONENTS,
+      a({ href, children, ...props }) {
+        const number = citationNumberOf(href)
+        const source = number ? sources[number - 1] : undefined
+        if (source) {
+          return <sup className={CITATION_CLASS} title={`Source: ${source}`} aria-label={`Source ${number}: ${source}`}>{number}</sup>
+        }
+        return <a href={href} {...props}>{children}</a>
+      },
+    }
+    return { text, components }
+  }, [content])
+}
+
+function NarrativeMarkdown({ content: raw }: { content: string }) {
+  const { text: content, components } = useCitationComponents(raw)
   const segments = useMemo(() => splitMermaidContent(content), [content])
 
   if (segments.length === 0) return null
@@ -167,7 +194,7 @@ function NarrativeMarkdown({ content }: { content: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeSanitize, CHAT_SANITIZE_SCHEMA]]}
-        components={MARKDOWN_COMPONENTS}
+        components={components}
       >
         {prose}
       </ReactMarkdown>
@@ -190,7 +217,7 @@ function NarrativeMarkdown({ content }: { content: string }) {
             key={`prose-${index}`}
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[[rehypeSanitize, CHAT_SANITIZE_SCHEMA]]}
-            components={MARKDOWN_COMPONENTS}
+            components={components}
           >
             {prose}
           </ReactMarkdown>

@@ -23,4 +23,14 @@ describe('process diagram editor helpers', () => {
     expect(stripProcessDiagramsFromText(persisted)).toBe('Ringkasan proses')
     expect(extractProcessDiagramsFromText(persisted)).toHaveLength(1)
   })
+
+  it('keeps AS-IS and TO-BE diagrams when both fences are in one assistant response', () => {
+    const response = `AS-IS — proses saat ini:\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\`\n\nTO-BE — proses yang diharapkan:\n\`\`\`plantuml\n${TO_BE_SOURCE}\n\`\`\``
+
+    const diagrams = extractProcessDiagramsFromText(response)
+
+    expect(diagrams).toHaveLength(2)
+    expect(diagrams.map((diagram) => diagram.kind)).toEqual(['as_is', 'to_be'])
+    expect(diagrams.map((diagram) => diagram.label)).toEqual(['AS-IS', 'TO-BE'])
+  })
 })

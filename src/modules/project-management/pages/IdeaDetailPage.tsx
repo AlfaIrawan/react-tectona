@@ -68,6 +68,7 @@ import {
   Workflow,
   ShieldCheck,
   Undo2,
+  LockKeyhole,
 } from 'lucide-react'
 import {
   DndContext,
@@ -187,7 +188,9 @@ import {
   upsertPersistentIdeaProcessDiagram,
   submitDiagramArchitectureReview,
   decideDiagramArchitectureReview,
+  type ScoreDimensionApi,
   type ScoringResponseApi,
+  type IdeaSectionKey,
   upsertPersistentIdeaSummary,
   toBackendStatus,
   toDisplayStatus,
@@ -212,6 +215,16 @@ import { EditableDiagramCanvas, type C4DiagramDrilldownTarget } from '@/modules/
 import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
 import { loadIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
 import { IdeaSectionReviewWorkspace } from '@/modules/project-management/components/IdeaSectionReviewWorkspace'
+import { IdeaSummaryFieldReviewProvider, SummaryInlineField } from '@/modules/project-management/components/IdeaSummaryInlineField'
+import { framingFieldKey, readinessAnchorKey, scoringFieldKey, type ScoringDimension } from '@/modules/project-management/lib/summaryFields'
+import { englishReadinessTitle, indonesianSubtitle, looksIndonesian } from '@/modules/project-management/lib/summaryTitleLocale'
+import { boardNotePoints } from '@/modules/project-management/lib/boardNote'
+import type { SectionReviewNotifyContext } from '@/lib/notifications/notifySectionReview'
+import { IdeaReviewedSectionContent } from '@/modules/project-management/components/IdeaReviewedSectionContent'
+import { IdeaScoringDraftEditor, PendingScoreProposalNote, usePendingScoreProposal } from '@/modules/project-management/components/IdeaScoringDraftEditor'
+import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-management/lib/reviewerDisplayName'
+import { NOTIFICATIONS_UPDATED_EVENT } from '@/lib/chat/chatRealtimeEvents'
+import { dispatchIdeaSectionRevisionUpdated } from '@/lib/chat/ideaSectionRevisionFromChat'
 import {
   formatConversionReviewContent,
   formatCostBenefitReviewContent,
@@ -281,6 +294,8 @@ type Idea = {
   reviewer: string
   status: IdeaStatus
   latestScoring?: ScoringResponseApi | null
+  /** The intake changed after the latest scores were approved (idea-backlog). */
+  scoringIntakeChanged?: boolean
   scoring: {
     businessValue: number
     effort: number
@@ -421,6 +436,7 @@ function ideaFromApi(api: IdeaApi): Idea {
     reviewer: api.assignee_id?.trim() ?? '',
     status: toDisplayStatus(api.status_code),
     latestScoring: api.latest_scoring ?? null,
+    scoringIntakeChanged: Boolean(api.scoring_intake_changed),
     scoring: extractScoringDimensions(api.latest_scoring),
     version: api.version,
   }
@@ -969,6 +985,8 @@ type RuntimeScoringAnalysis = {
   watchpoint_signal_detail: string
   missing_fields: string[]
   kpi_cards: RuntimeScoringCard[]
+  /** Indonesian versions of the AI-written labels, keyed like the fields above. */
+  labels_id: Record<string, string>
   confidence_score: number
 }
 
@@ -995,6 +1013,7 @@ const EMPTY_RUNTIME_SCORING_ANALYSIS: RuntimeScoringAnalysis = {
   watchpoint_signal_detail: '',
   missing_fields: [],
   kpi_cards: [],
+  labels_id: {},
   confidence_score: 0,
 }
 
@@ -1147,6 +1166,7 @@ function parseRuntimeScoringAnalysis(answer: string): RuntimeScoringAnalysis {
     positive_signal_detail: toText(payload.positive_signal_detail),
     watchpoint_signal_title: toText(payload.watchpoint_signal_title),
     watchpoint_signal_detail: toText(payload.watchpoint_signal_detail),
+    labels_id: payload.labels_id && typeof payload.labels_id === 'object' ? (payload.labels_id as Record<string, string>) : {},
     missing_fields: missingFields,
     kpi_cards: kpiCards,
     confidence_score: agentConfidencePercent(
@@ -1886,289 +1906,261 @@ function CostBenefitEvidenceSection({
   )
 }
 
-function formatScoringDimensionValue(score: number, hasNumericScoring: boolean): string {
-  if (!hasNumericScoring || score <= 0) return 'Pending'
-  return `${score}/10`
+// Checklist wording for the Scoring panel: English labels like every other
+// card; the Indonesian label from buildScoringEvidenceChecklist becomes the
+// small subtitle when the idea itself is Indonesian.
+const SCORING_EVIDENCE_EN: Record<string, { label: string; detail: string }> = {
+  title: { label: 'Idea title', detail: 'A clear name that helps prioritization.' },
+  description: { label: 'Problem and solution narrative', detail: 'A description of the business need.' },
+  business_objective: { label: 'Business objective', detail: 'Expected outcome and value hypothesis.' },
+  scope: { label: 'Scope summary', detail: 'Scope boundaries for the feasibility assessment.' },
+  risk: { label: 'Risk summary', detail: 'Delivery and governance watchpoints.' },
+  dimensions: { label: 'Backlog scoring dimensions', detail: 'Value, ROI, effort and risk scores: AI drafts them, a reviewer approves.' },
 }
 
-function ScoringFrameworkSection({
-  ideaTitle,
-  scoreData,
-  totalScore,
-  hasNumericScoring,
-  priorityLabel,
+/** No scores yet: what is missing leads, the framework is one line, no empty chart. */
+function ScoringPendingPanel({
+  ideaId,
+  currentContent,
+  notifyContext,
+  brief,
+  evidenceItems,
+  showIndonesian,
+  showFramework,
+  onNavigateToPanel,
 }: {
-  ideaTitle: string
-  scoreData: ScoringDimensionRow[]
-  totalScore: number
-  hasNumericScoring: boolean
-  priorityLabel: string
+  ideaId: string
+  currentContent: string
+  notifyContext?: SectionReviewNotifyContext
+  brief: string
+  evidenceItems: ScoringEvidenceItem[]
+  showIndonesian: boolean
+  showFramework: boolean
+  onNavigateToPanel: (panel: PanelKey) => void
 }) {
-  const scoreTierLabel = !hasNumericScoring
-    ? 'Awaiting intake'
-    : totalScore >= 80
-      ? 'Executive ready'
-      : totalScore >= 60
-        ? 'Strategic candidate'
-        : 'Needs refinement'
+  const [scoring, setScoring] = useState(false)
+  const pendingProposal = usePendingScoreProposal(ideaId)
+  // Scores are drafted from the intake, so every other item comes first.
+  const intakeReady = evidenceItems.every((item) => item.complete || item.id === 'dimensions')
+  const done = evidenceItems.filter((item) => item.complete).length
+  const percent = evidenceItems.length ? Math.round((done / evidenceItems.length) * 100) : 0
+  // Missing items first: they are the ones to act on.
+  const ordered = [...evidenceItems.filter((item) => !item.complete), ...evidenceItems.filter((item) => item.complete)]
 
   return (
     <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
       <CardContent className="relative z-10 space-y-4 p-4">
-        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0 space-y-2">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700 backdrop-blur-md">
-                <Gauge className="h-3.5 w-3.5" />
-                Scoring framework
-              </div>
-              <p className="text-sm font-semibold text-slate-900 truncate">{ideaTitle}</p>
-              <p className="text-[11px] text-slate-500">
-                Weighted model for enterprise prioritization — numbers appear only when backlog evidence exists.
-              </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 max-w-3xl">
+            <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+              <ClipboardList className="h-3.5 w-3.5" aria-hidden />
+              What&apos;s needed to score
+            </p>
+            {showIndonesian ? (
+              <span lang="id" className="mt-0.5 block text-[10px] text-slate-400">Yang dibutuhkan untuk penilaian</span>
+            ) : null}
+            <p className="mt-2 text-sm leading-6 text-slate-600">{brief}</p>
+          </div>
+          <div className="w-48 shrink-0 text-right">
+            <p className="text-sm font-semibold tabular-nums text-slate-900">
+              {done}/{evidenceItems.length} <span className="font-normal text-slate-500">intake items ready</span>
+            </p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200/80" aria-hidden>
+              <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${percent}%` }} />
             </div>
-            <div className="flex flex-wrap items-stretch justify-end gap-2 shrink-0">
-              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'min-w-[168px] px-4 py-2.5 text-right')}>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Weighted score</p>
-                <p className="text-3xl font-bold text-slate-900 leading-none mt-1 tabular-nums">
-                  {hasNumericScoring ? totalScore : '—'}
-                </p>
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  {hasNumericScoring ? priorityLabel : 'Pending intake scoring'}
-                </p>
-              </div>
-              <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex min-w-[168px] flex-col justify-center gap-2 px-4 py-2.5')}>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Decision signal</p>
-                <Badge variant="outline" className={cn(
-                  'w-fit text-[10px] font-semibold',
-                  hasNumericScoring
-                    ? totalScore >= 80
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : totalScore >= 60
-                        ? 'border-amber-200 bg-amber-50 text-amber-700'
-                        : 'border-rose-200 bg-rose-50 text-rose-700'
-                    : 'border-slate-200 bg-slate-50 text-slate-600',
+          </div>
+        </div>
+
+        <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          {ordered.map((item) => {
+            const en = SCORING_EVIDENCE_EN[item.id] ?? { label: item.label, detail: item.detail }
+            return (
+              <li
+                key={item.id}
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border px-3 py-2.5',
+                  item.complete ? 'border-slate-200/70 bg-white/40' : 'border-primary/25 bg-primary/5',
                 )}
-                >
-                  {scoreTierLabel}
-                </Badge>
-                <p className="text-[11px] leading-5 text-slate-600">
-                  Decision SLA: target within 2 business days from intake review.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 overflow-x-auto pb-0.5">
-            <div className="grid min-w-[640px] grid-cols-4 gap-3">
-              {SCORING_DISPLAY_ORDER.map((key) => {
-                const theme = SCORING_DIMENSION_THEMES[key]
-                const item = scoreData.find((row) => row.key === key)
-                if (!item) return null
-                return (
-                  <div key={key} className="flex min-w-0 flex-col gap-2">
-                    <div
-                      className={cn(
-                        'rounded-lg border px-3 py-2',
-                        theme.borderClass,
-                        theme.bgClass,
-                      )}
-                    >
-                      <p className={cn('text-[10px] font-medium uppercase tracking-wide', theme.textClass)}>
-                        {theme.weightLabel}
-                      </p>
-                      <p className={cn('text-sm font-semibold tabular-nums', theme.textClass)}>{theme.weightPercent}</p>
-                    </div>
-                    <div
-                      className={cn(
-                        'flex flex-1 flex-col rounded-xl border px-3 py-2.5',
-                        item.borderClass,
-                        item.bgClass,
-                      )}
-                    >
-                      <div className="mb-2 flex items-center justify-between text-xs">
-                        <span className={cn('font-semibold', item.textClass)}>{item.label}</span>
-                        <span className={cn(
-                          'font-semibold tabular-nums',
-                          hasNumericScoring && item.score > 0 ? item.textClass : 'text-slate-400',
-                        )}
-                        >
-                          {formatScoringDimensionValue(item.score, hasNumericScoring)}
-                        </span>
-                      </div>
-                      <div className={cn('h-2 overflow-hidden rounded-full', item.barTrackClass)}>
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{
-                            width: scoringBarWidth(item, hasNumericScoring),
-                            backgroundColor: scoringBarFill(item, hasNumericScoring),
-                          }}
-                        />
-                      </div>
-                      <p className="mt-2 text-[10px] leading-4 text-slate-600">{item.detail}</p>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-
-        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'h-[150px] px-2 pb-2 pt-3')}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={scoreData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis
-                dataKey="label"
-                tick={({ x, y, payload }) => {
-                  const row = scoreData.find((item) => item.label === payload.value)
-                  return (
-                    <text x={x} y={y} dy={12} textAnchor="middle" fontSize={11} fill={row?.fill ?? '#64748b'}>
-                      {payload.value}
-                    </text>
+              >
+                {item.complete ? (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+                ) : (
+                  <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className={cn('text-sm font-semibold', item.complete ? 'text-slate-500' : 'text-slate-900')}>{en.label}</p>
+                  {showIndonesian && en.label !== item.label ? (
+                    <span lang="id" className="block text-[10px] text-slate-400">{item.label}</span>
+                  ) : null}
+                  {item.complete ? null : <p className="mt-0.5 text-[11px] leading-4 text-slate-500">{en.detail}</p>}
+                </div>
+                {item.complete ? (
+                  <span className="shrink-0 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Ready</span>
+                ) : item.id === 'dimensions' ? (
+                  pendingProposal ? <PendingScoreProposalNote /> : intakeReady ? (
+                    <Button type="button" variant="link" className="h-auto shrink-0 gap-0.5 px-0 py-0.5 text-xs font-semibold text-primary"
+                      disabled={scoring} onClick={() => setScoring(true)}>
+                      Score this idea <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  ) : (
+                    <span className="shrink-0 pt-0.5 text-[11px] text-slate-500">Complete the intake first</span>
                   )
-                }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis domain={[0, 10]} ticks={[0, 3, 6, 10]} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-              <RechartsTooltip
-                formatter={(value, _name, props) => {
-                  const row = props.payload as ScoringDimensionRow | undefined
-                  const label = row?.label ?? 'Score'
-                  const display = hasNumericScoring && Number(value) > 0 ? `${value}/10` : 'Pending'
-                  return [display, label]
-                }}
-              />
-              <Bar dataKey="score" radius={[6, 6, 0, 0]}>
-                {scoreData.map((row) => (
-                  <Cell
-                    key={row.label}
-                    fill={scoringBarFill(row, hasNumericScoring)}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+                ) : item.ctaPanel ? (
+                  <Button type="button" variant="link" className="h-auto shrink-0 gap-0.5 px-0 py-0.5 text-xs font-semibold text-primary" onClick={() => onNavigateToPanel(item.ctaPanel!)}>
+                    Fill in <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+
+        {scoring && !pendingProposal ? (
+          <IdeaScoringDraftEditor ideaId={ideaId} currentContent={currentContent} notifyContext={notifyContext} onClose={() => setScoring(false)} />
+        ) : null}
+
+        {showFramework ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/45 pt-3 text-[11px] text-slate-500">
+            <span className="inline-flex items-center gap-1.5 font-semibold uppercase tracking-[0.14em] text-slate-600">
+              <Gauge className="h-3.5 w-3.5" aria-hidden /> Scoring framework
+            </span>
+            {SCORING_DISPLAY_ORDER.map((key, index) => (
+              <span key={key} title={SCORING_DIMENSION_THEMES[key].detail}>
+                {index ? <span className="mr-3 text-slate-300" aria-hidden>·</span> : null}
+                <span className="font-medium text-slate-700">{SCORING_DIMENSION_THEMES[key].label}</span>{' '}
+                <span className="tabular-nums">{SCORING_DIMENSION_THEMES[key].weightPercent}</span>
+              </span>
+            ))}
+            <span className="basis-full">Scores become official only when a reviewer approves them.</span>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )
 }
 
-function ScoringDraftReadinessCard({
-  title,
-  executiveBrief,
-  missingFields,
-  evidenceItems,
-  readinessPercent,
-  hasNumericScoring,
-  onNavigateToPanel,
-  onOpenBacklog,
-}: {
-  title: string
-  executiveBrief: string
-  missingFields: string[]
-  evidenceItems: ScoringEvidenceItem[]
-  readinessPercent: number
-  hasNumericScoring: boolean
-  onNavigateToPanel: (panel: PanelKey) => void
-  onOpenBacklog: () => void
+const SCORING_DIMENSION_FIELD: Record<ScoringDimensionKey, ScoringDimension> = {
+  businessValue: 'business_value',
+  roi: 'roi',
+  effort: 'effort',
+  risk: 'risk',
+}
+
+/** The latest scoring run's dimension for a card (idea-backlog keys vary: value / business_value). */
+function scoringDimensionOf(latest: ScoringResponseApi | null | undefined, key: ScoringDimensionKey): ScoreDimensionApi | undefined {
+  const aliases = key === 'businessValue' ? ['value', 'businessvalue'] : [key.toLowerCase()]
+  return latest?.score_dimensions?.find((dim) => aliases.includes((dim.key ?? '').toLowerCase().replace(/[^a-z]/g, '')))
+}
+
+/** The intake changed after these scores were approved: offer a new draft (they stay official until replaced). */
+function ScoringRescoreBanner({ ideaId, currentContent, notifyContext }: {
+  ideaId: string
+  currentContent: string
+  notifyContext?: SectionReviewNotifyContext
 }) {
-  const completedCount = evidenceItems.filter((item) => item.complete).length
-  const missingFieldLabels: Record<string, string> = {
-    business_objective: 'tujuan bisnis',
-    scope_summary: 'ringkasan ruang lingkup',
-    risk_summary: 'ringkasan risiko',
-    scoring: 'dimensi penilaian backlog',
-  }
-  const missingFieldText = missingFields.map((field) => missingFieldLabels[field] ?? field).join(', ')
-
+  const [open, setOpen] = useState(false)
+  const pending = usePendingScoreProposal(ideaId)
   return (
-    <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
-      <CardContent className="relative z-10 space-y-4 p-4">
-        <div className="flex flex-col gap-3 border-b border-white/45 pb-4 lg:flex-row lg:items-start lg:gap-4">
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-white/55 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-900 backdrop-blur-md">
-              <ClipboardList className="h-3.5 w-3.5" />
-              Kesiapan draft
+    <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-xs text-amber-900" role="status">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 font-medium">
+          <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
+          The intake changed after these scores were approved. They stay official until new scores are approved.
+        </p>
+        {pending ? <PendingScoreProposalNote /> : (
+          <Button type="button" variant="link" className="h-auto gap-0.5 px-0 py-0 text-xs font-semibold text-primary" disabled={open} onClick={() => setOpen(true)}>
+            Score again <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        )}
+      </div>
+      {open && !pending ? (
+        <IdeaScoringDraftEditor ideaId={ideaId} currentContent={currentContent} notifyContext={notifyContext} onClose={() => setOpen(false)} />
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * One card per dimension: the score is locked (it changes only through a new
+ * scoring run); the rationale under it is edited and discussed like a Summary
+ * card (IdeaSummaryInlineField, section "scoring").
+ */
+function ScoringDimensionCards({
+  scoreData,
+  latestScoring,
+  aiNotes,
+  subtitle,
+  nameOf,
+}: {
+  scoreData: ScoringDimensionRow[]
+  latestScoring: ScoringResponseApi | null | undefined
+  /** Display name for a user id (provenance line). */
+  nameOf: (userId: string) => string
+  /** AI explanation per dimension label, shown when the scoring run recorded no rationale. */
+  aiNotes: Record<string, string>
+  subtitle: (englishTitle: string) => React.ReactNode
+}) {
+  const scoredOn = latestScoring?.scored_at
+    ? new Date(latestScoring.scored_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    : ''
+  return (
+    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+      {scoreData.map((row) => {
+        const theme = SCORING_DIMENSION_THEMES[row.key]
+        const dim = scoringDimensionOf(latestScoring, row.key)
+        const weight = typeof dim?.weight === 'number'
+          ? `${Math.round(dim.weight <= 1 ? dim.weight * 100 : dim.weight)}%`
+          : theme.weightPercent
+        const scored = row.score > 0
+        const fallbackNote = aiNotes[row.label] || row.detail
+        const renderRationale = (value: string) => (
+          <p className={value ? 'text-slate-700' : 'text-slate-500'}>{value || fallbackNote}</p>
+        )
+        return (
+          <div key={row.key} className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">{row.label}</p>
+                {subtitle(row.label)}
+                <p className="mt-0.5 text-[11px] text-slate-500">{theme.weightLabel} {weight}</p>
+              </div>
+              <div className="flex shrink-0 items-baseline gap-1" title="Scores come from the scoring run and change only through a new scoring run.">
+                <LockKeyhole className="h-3 w-3 self-center text-slate-400" aria-label="Score locked" />
+                <span className="text-2xl font-semibold leading-none tabular-nums text-slate-950">{scored ? row.score : '—'}</span>
+                <span className="text-xs text-slate-500">/10</span>
+              </div>
             </div>
-            <h3 className="text-base font-semibold text-slate-950">{title}</h3>
-            <p className="w-full text-sm leading-6 text-slate-600">{executiveBrief}</p>
-            {!hasNumericScoring ? (
-              <p className="w-full text-xs text-amber-800">
-                Dimensi penilaian backlog belum tersedia. Nilai tidak akan dibuat sebelum ada evidence pendukung.
+            <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-slate-200/80" aria-hidden>
+              <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${scored ? Math.min(row.score, 10) * 10 : 0}%` }} />
+            </div>
+            <div className="mt-3 text-xs leading-5">
+              {dim ? (
+                <SummaryInlineField
+                  field={scoringFieldKey(SCORING_DIMENSION_FIELD[row.key])}
+                  label={`${row.label} rationale`}
+                  aiValue={dim.reason ?? ''}
+                  render={renderRationale}
+                />
+              ) : renderRationale('')}
+            </div>
+            {dim?.approved_by ? (
+              <p className="mt-2 text-[10px] text-slate-500" title={dim.change_reason ? `Why changed: ${dim.change_reason}` : undefined}>
+                {typeof dim.ai_score === 'number'
+                  ? dim.ai_score === dim.score
+                    ? `AI ${dim.ai_score} · accepted`
+                    : `AI ${dim.ai_score} · changed to ${dim.score}${dim.proposed_by ? ` by ${nameOf(dim.proposed_by)}` : ''}`
+                  : `Scored${dim.proposed_by ? ` by ${nameOf(dim.proposed_by)}` : ''}`}
+                {` · approved by ${nameOf(dim.approved_by)}`}{scoredOn ? ` · ${scoredOn}` : ''}
               </p>
-            ) : null}
+            ) : (
+              <p className="mt-2 text-[10px] text-slate-400">
+                Source: Idea &amp; Backlog scoring{scoredOn ? ` · ${scoredOn}` : ''}
+              </p>
+            )}
           </div>
-          <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'flex shrink-0 flex-col items-center gap-1 px-4 py-3 lg:mt-0')}>
-            <div
-              className="relative flex h-16 w-16 items-center justify-center rounded-full"
-              style={{
-                background: `conic-gradient(#f59e0b ${readinessPercent * 3.6}deg, #e2e8f0 0deg)`,
-              }}
-            >
-              <div className="flex h-[52px] w-[52px] flex-col items-center justify-center rounded-full bg-white text-center">
-                <span className="text-sm font-bold tabular-nums text-slate-900">{readinessPercent}%</span>
-              </div>
-            </div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Kepercayaan AI</p>
-            <p className="text-[11px] text-slate-600">{completedCount}/{evidenceItems.length} informasi intake</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-          {evidenceItems.map((item) => (
-            <div
-              key={item.id}
-              className={cn(
-                'flex items-start gap-3 rounded-xl border px-3 py-2.5 backdrop-blur-md',
-                item.complete
-                  ? 'border-emerald-200/80 bg-emerald-50/40'
-                  : cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'border-white/60'),
-              )}
-            >
-              {item.complete ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-              ) : (
-                <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-slate-900">{item.label}</p>
-                <p className="mt-0.5 text-[11px] leading-4 text-slate-500">{item.detail}</p>
-                {!item.complete && item.ctaPanel ? (
-                  <Button
-                    type="button"
-                    variant="link"
-                    className="h-auto px-0 py-0 mt-1 text-[11px] font-semibold text-violet-700"
-                    onClick={() => onNavigateToPanel(item.ctaPanel!)}
-                  >
-                    Lengkapi di Ringkasan
-                  </Button>
-                ) : null}
-                {!item.complete && item.ctaBacklog ? (
-                  <Button
-                    type="button"
-                    variant="link"
-                    className="h-auto px-0 py-0 mt-1 text-[11px] font-semibold text-violet-700"
-                    onClick={onOpenBacklog}
-                  >
-                    Buka Idea &amp; Backlog
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {missingFields.length > 0 ? (
-          <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Informasi yang masih diperlukan</p>
-            <p className="mt-1 text-xs leading-5 text-slate-600">{missingFieldText}</p>
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
+        )
+      })}
+    </div>
   )
 }
 
@@ -4821,7 +4813,13 @@ export function IdeaDetailPage() {
       void (async () => {
         try {
           const api = await getIdeaById(idea.id)
-          setIdea(ideaFromApi(api))
+          const refreshed = ideaFromApi(api)
+          setIdea(refreshed)
+          // New official scores (an approved "Score this idea"): the AI readout
+          // was written without them, so it is regenerated from the scores.
+          if ((api.latest_scoring?.scored_at ?? null) !== (idea.latestScoring?.scored_at ?? null)) {
+            void loadRuntimeScoringRef.current(refreshed, { forceRefresh: true })
+          }
           const persistentSummary = await getPersistentIdeaSummary(idea.id)
           if (persistentSummary) {
             applyRuntimeSummary(summaryFromPersistentRecord(persistentSummary))
@@ -4833,7 +4831,36 @@ export function IdeaDetailPage() {
     }
     window.addEventListener('tectona:idea-updated', handler)
     return () => window.removeEventListener('tectona:idea-updated', handler)
-  }, [applyRuntimeSummary, idea.id])
+  }, [applyRuntimeSummary, idea.id, idea.latestScoring?.scored_at])
+
+  // Someone else reviewed a section of this idea (e.g. approved its scores in
+  // another session): the notification arrives over the notification
+  // WebSocket, so reload the idea and that section instead of waiting for a
+  // page refresh. Viewers who get no notification refresh when the tab
+  // becomes visible again.
+  useEffect(() => {
+    let lastRefresh = 0
+    const refresh = (sectionKey?: string) => {
+      lastRefresh = Date.now()
+      window.dispatchEvent(new CustomEvent('tectona:idea-updated', { detail: { ideaId: idea.id } }))
+      const sections = sectionKey ? [sectionKey] : ['summary', 'scoring']
+      for (const key of sections) dispatchIdeaSectionRevisionUpdated(idea.id, key as IdeaSectionKey)
+    }
+    const onNotification = (event: Event) => {
+      const metadata = ((event as CustomEvent).detail as { metadata?: Record<string, unknown> } | undefined)?.metadata
+      if (metadata?.idea_id !== idea.id) return
+      refresh(typeof metadata.section_key === 'string' ? metadata.section_key : undefined)
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastRefresh > 15_000) refresh()
+    }
+    window.addEventListener(NOTIFICATIONS_UPDATED_EVENT, onNotification)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_UPDATED_EVENT, onNotification)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [idea.id])
 
   const loadRuntimeScoring = useCallback(async (
     sourceIdea: Idea = idea,
@@ -4921,6 +4948,7 @@ export function IdeaDetailPage() {
         positive_signal_detail: response.positive_signal_detail,
         watchpoint_signal_title: response.watchpoint_signal_title,
         watchpoint_signal_detail: response.watchpoint_signal_detail,
+        labels_id: response.labels_id ?? {},
         missing_fields: response.missing_fields ?? [],
         kpi_cards: response.kpi_cards ?? [],
         confidence_score: response.confidence_score ?? 0,
@@ -5811,6 +5839,9 @@ export function IdeaDetailPage() {
 
   const scoringEvidenceItems = useMemo(() => buildScoringEvidenceChecklist(idea), [idea])
   const showScoringFrameworkDraft = !scoringLoaded || scoringMissing
+  const scoringPendingReason = hasNumericScoring
+    ? null
+    : `Awaiting evidence · ${scoringEvidenceItems.filter((item) => item.complete).length}/${scoringEvidenceItems.length}`
   const openIdeaBacklogForScoring = useCallback(() => {
     navigate('/idea-backlog', { state: { selectedIdeaId: idea.id } })
   }, [navigate, idea.id])
@@ -6683,12 +6714,20 @@ export function IdeaDetailPage() {
     }
   }, [addToast, ideaDocFolderStack])
 
-  const openIdeaDocGenerateDialog = useCallback(() => {
+  const openIdeaDocGenerateDialog = useCallback(async () => {
     const firstTemplate = ideaDocTemplates[0]
     setIdeaDocGenerateTemplateId(firstTemplate?.id ?? '')
-    setIdeaDocGenerateSource((idea.description || idea.title || '').trim())
-    setIdeaDocGenerateOpen(true)
-  }, [idea.description, idea.title, ideaDocTemplates])
+    try {
+      const latest = await getIdeaById(idea.id)
+      const sections = Object.entries(latest.approved_sections || {}).map(([key, revision]) =>
+        `${key} (approved):\n${String(revision?.content_json.text || '')}`,
+      )
+      setIdeaDocGenerateSource(sections.length ? sections.join('\n\n') : (idea.description || idea.title || '').trim())
+      setIdeaDocGenerateOpen(true)
+    } catch (error) {
+      addToast({ title: 'Revisi approved belum dapat dimuat', description: error instanceof Error ? error.message : '', variant: 'error' })
+    }
+  }, [idea.id, idea.description, idea.title, ideaDocTemplates, addToast])
 
   const handleIdeaDocGenerate = useCallback(async () => {
     const template = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId)
@@ -6769,7 +6808,7 @@ export function IdeaDetailPage() {
         template_id: template.id,
         source_text: sourceWithProvenance.slice(0, 12000),
         reference_documents: referenceDocuments,
-        context: { workspace_id: idea.workspace ?? null, user_id: currentUserId || null },
+        context: { idea_id: idea.id, workspace_id: idea.workspace ?? null, user_id: currentUserId || null },
         options: { allow_llm: true },
       })
 
@@ -11018,7 +11057,52 @@ export function IdeaDetailPage() {
       : 'No supporting documents are linked to this idea yet.'
   }
 
-  const renderSectionReviewWorkspace = (sectionKey: PanelKey, sectionLabel: string) => (
+  // Section-review notifications: new revisions go to the idea's assigned
+  // reviewer (else its owner); review decisions go back to the revision author.
+  const sectionReviewNotifyContext: SectionReviewNotifyContext = {
+    ideaId: idea.id,
+    ideaTitle: idea.title,
+    linkUrl: workspaceScopedPath(tenant?.slug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId),
+    reviewerIds: [idea.reviewer?.trim() || idea.submittedBy?.trim() || ''].filter(Boolean),
+    actorId: currentUserId || runtimeUserId,
+    actorName: currentUserDisplayName || 'Seorang reviewer',
+  }
+
+  // Assignable people for revision requests: the identity directory, by name.
+  const threadPeople = Object.entries(identityUserNameById)
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  // Card titles are English; when the summary itself is Indonesian (the
+  // brainstorm's language), a small Indonesian subtitle sits under each one.
+  const summaryInIndonesian = looksIndonesian(
+    [runtimeSummary.executive_brief, runtimeSummary.core_pressure, runtimeSummary.value_thesis].join(' '),
+  )
+  const idSub = (...englishTitles: Array<string | null | undefined>) => {
+    if (!summaryInIndonesian) return null
+    const parts = englishTitles.map((t) => indonesianSubtitle(t)).filter(Boolean)
+    return parts.length ? parts.join(' · ') : null
+  }
+  const idSubtitle = (className: string, ...englishTitles: Array<string | null | undefined>) => {
+    const text = idSub(...englishTitles)
+    return text ? (
+      <span lang="id" className={cn('block text-[10px] font-normal normal-case tracking-normal text-slate-400', className)}>{text}</span>
+    ) : null
+  }
+
+  const scoreNameOf = (id: string) => displayNameOfUser(id, {
+    userId: currentUserId || runtimeUserId, userName: currentUserDisplayName || submittedByDisplayName, resolve: resolveIdentityDisplayName,
+  })
+
+  // AI-written labels (e.g. primary strength) come with their Indonesian version from agent-runtime.
+  const aiLabelSubtitle = (className: string, key: string) => {
+    const text = summaryInIndonesian ? runtimeScoringAnalysis.labels_id?.[key] : ''
+    return text ? (
+      <span lang="id" className={cn('block text-[10px] font-normal normal-case tracking-normal text-slate-400', className)}>{text}</span>
+    ) : null
+  }
+
+  const renderSectionReviewWorkspace = (sectionKey: IdeaSectionKey, sectionLabel: string, pendingReason?: string | null) => (
     <IdeaSectionReviewWorkspace
       ideaId={idea.id}
       ideaTitle={idea.title}
@@ -11026,11 +11110,30 @@ export function IdeaDetailPage() {
       workspaceId={idea.workspace}
       userId={currentUserId || runtimeUserId}
       userName={currentUserDisplayName || submittedByDisplayName}
+      resolveName={resolveIdentityDisplayName}
+      notifyContext={sectionReviewNotifyContext}
+      people={threadPeople}
       sectionKey={sectionKey}
       sectionLabel={sectionLabel}
       currentContent={getSectionReviewContent(sectionKey)}
-      ideaVersion={idea.version}
+      pendingReason={pendingReason}
+      ideaOwnerId={idea.submittedBy || null}
     />
+  )
+
+  const reviewedSection = (sectionKey: IdeaSectionKey, children?: React.ReactNode, keepOriginal = true) => (
+    <IdeaReviewedSectionContent ideaId={idea.id} sectionKey={sectionKey}
+      currentContent={getSectionReviewContent(sectionKey)} userId={currentUserId || runtimeUserId}
+      userName={currentUserDisplayName || submittedByDisplayName} resolveName={resolveIdentityDisplayName} keepOriginal={keepOriginal}>
+      {sectionKey === 'summary' || sectionKey === 'scoring' ? (
+        <IdeaSummaryFieldReviewProvider ideaId={idea.id} sectionKey={sectionKey} currentContent={getSectionReviewContent(sectionKey)}
+          userId={currentUserId || runtimeUserId} userName={currentUserDisplayName || submittedByDisplayName}
+          resolveName={resolveIdentityDisplayName} notifyContext={sectionReviewNotifyContext}
+          people={threadPeople} ideaOwnerId={idea.submittedBy?.trim() || undefined}>
+          {children}
+        </IdeaSummaryFieldReviewProvider>
+      ) : children}
+    </IdeaReviewedSectionContent>
   )
 
   const diagramStudioC4Level: C4ArchitectureLevel | null = diagramStudio?.diagramKey === 'c4-level-1'
@@ -11280,7 +11383,7 @@ export function IdeaDetailPage() {
                         title={isSummaryPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                         onClick={() => setIsSummaryPanelFullscreen((prev) => !prev)}
                         className={cn(
-                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                           enterpriseControlFocusClass,
                           isSummaryPanelFullscreen &&
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -11301,6 +11404,7 @@ export function IdeaDetailPage() {
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="space-y-4">
+              {reviewedSection('summary', <>
               {isSummaryRefreshing && (
                 <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_AGENTS_BAR, 'flex items-center gap-3 text-sm text-slate-900')}>
                   <RefreshCcw className="h-4 w-4 animate-spin text-slate-600" />
@@ -11339,31 +11443,6 @@ export function IdeaDetailPage() {
                 </div>
               )}
 
-              {!summaryGenerationError && !summaryMissing && summaryLoaded && !isSummaryRefreshing && summaryRoleModels.length > 0 && (
-                <div className={IDEA_SUMMARY_LIQUID_GLASS_AGENTS_BAR}>
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                    AI agents &amp; models
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {summaryRoleModels.map((entry) => (
-                      <Badge
-                        key={entry.roleId}
-                        variant="outline"
-                        title={entry.modelId}
-                        className="border-white/70 bg-white/55 text-[11px] font-medium text-slate-800 backdrop-blur-md"
-                      >
-                        <span className="font-semibold text-slate-900">{entry.roleLabel}</span>
-                        {/* fromCharCode keeps ASCII-only source/bundle — avoids Â· mojibake if JS is mis-decoded */}
-                        <span className="mx-1 text-slate-400" aria-hidden>
-                          {String.fromCharCode(0xb7)}
-                        </span>
-                        <span className="text-slate-600">{entry.modelShort}</span>
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {!summaryGenerationError && summaryLoaded && (
               <>
               <div className="grid grid-cols-1 xl:grid-cols-[1.55fr_0.85fr] gap-4">
@@ -11377,6 +11456,7 @@ export function IdeaDetailPage() {
                             <Bot className="h-3.5 w-3.5" />
                             Executive AI Brief
                           </div>
+                          {idSubtitle('!mt-0.5 pl-[calc(0.75rem+0.875rem+0.5rem+3px)]', 'Executive AI Brief')}
                           {isSummaryRefreshing ? (
                             <div className="space-y-2 animate-pulse">
                               <div className="h-8 w-4/5 rounded-md bg-slate-200" />
@@ -11386,7 +11466,9 @@ export function IdeaDetailPage() {
                           ) : (
                             <div className="space-y-2">
                               <h3 className="text-[22px] font-semibold leading-tight text-slate-950" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(runtimeSummary.summary_title ?? '') }} />
-                              <p className="w-full text-sm leading-7 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(runtimeSummary.executive_brief ?? '') }} />
+                              <SummaryInlineField field="executive_brief" aiValue={runtimeSummary.executive_brief ?? ''} render={(value) => (
+                                <p className="w-full text-sm leading-7 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(value) }} />
+                              )} />
                             </div>
                           )}
                         </div>
@@ -11399,13 +11481,16 @@ export function IdeaDetailPage() {
                           <TriangleAlert className="h-3.5 w-3.5 text-amber-600" />
                           Core Pressure
                         </div>
+                        {idSubtitle('-mt-1.5 mb-2 pl-[1.375rem]', 'Core Pressure')}
                         {isSummaryRefreshing ? (
                           <div className="space-y-2 animate-pulse">
                             <div className="h-4 w-full rounded-md bg-slate-200" />
                             <div className="h-4 w-10/12 rounded-md bg-slate-200" />
                           </div>
                         ) : (
-                          <p className="text-sm leading-6 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(runtimeSummary.core_pressure ?? '') }} />
+                          <SummaryInlineField field="core_pressure" aiValue={runtimeSummary.core_pressure ?? ''} render={(value) => (
+                            <p className="text-sm leading-6 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(value) }} />
+                          )} />
                         )}
                       </div>
 
@@ -11414,13 +11499,16 @@ export function IdeaDetailPage() {
                           <Target className="h-3.5 w-3.5 text-sky-700" />
                           Strategic Response
                         </div>
+                        {idSubtitle('-mt-1.5 mb-2 pl-[1.375rem]', 'Strategic Response')}
                         {isSummaryRefreshing ? (
                           <div className="space-y-2 animate-pulse">
                             <div className="h-4 w-full rounded-md bg-slate-200" />
                             <div className="h-4 w-9/12 rounded-md bg-slate-200" />
                           </div>
                         ) : (
-                          <p className="text-sm leading-6 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(runtimeSummary.strategic_response ?? '') }} />
+                          <SummaryInlineField field="strategic_response" aiValue={runtimeSummary.strategic_response ?? ''} render={(value) => (
+                            <p className="text-sm leading-6 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(value) }} />
+                          )} />
                         )}
                       </div>
 
@@ -11429,13 +11517,16 @@ export function IdeaDetailPage() {
                           <Briefcase className="h-3.5 w-3.5 text-emerald-700" />
                           Value Thesis
                         </div>
+                        {idSubtitle('-mt-1.5 mb-2 pl-[1.375rem]', 'Value Thesis')}
                         {isSummaryRefreshing ? (
                           <div className="space-y-2 animate-pulse">
                             <div className="h-4 w-full rounded-md bg-slate-200" />
                             <div className="h-4 w-8/12 rounded-md bg-slate-200" />
                           </div>
                         ) : (
-                          <p className="text-sm leading-6 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(runtimeSummary.value_thesis ?? '') }} />
+                          <SummaryInlineField field="value_thesis" aiValue={runtimeSummary.value_thesis ?? ''} render={(value) => (
+                            <p className="text-sm leading-6 text-slate-700" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(value) }} />
+                          )} />
                         )}
                       </div>
                     </div>
@@ -11446,6 +11537,7 @@ export function IdeaDetailPage() {
                         return (
                         <div key={`${card.label}-${index}`} className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'p-4')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{shown.label}</p>
+                          {idSubtitle('mt-0.5', shown.label)}
                           {isSummaryRefreshing ? (
                             <div className="mt-2 space-y-2 animate-pulse">
                               <div className="h-7 w-2/3 rounded-md bg-slate-200" />
@@ -11474,9 +11566,11 @@ export function IdeaDetailPage() {
                         <div>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Decision Signal</p>
                           <h3 className="mt-1 text-base font-semibold text-slate-950">Enterprise Readiness</h3>
+                          {idSubtitle('mt-0.5', 'Decision Signal', 'Enterprise Readiness')}
                         </div>
                         <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-3 py-1.5 text-right backdrop-blur-md">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Priority</p>
+                          {idSubtitle('text-right text-emerald-700/70', 'Priority')}
                           {isSummaryRefreshing ? (
                             <div className="mt-1 h-4 w-20 rounded-md bg-emerald-100 animate-pulse" />
                           ) : (
@@ -11488,6 +11582,7 @@ export function IdeaDetailPage() {
                       <div className="grid grid-cols-2 gap-3">
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Overall Score</p>
+                          {idSubtitle('mt-0.5', 'Overall Score')}
                           {isSummaryRefreshing ? (
                             <div className="mt-2 space-y-2 animate-pulse">
                               <div className="h-8 w-16 rounded-md bg-slate-200" />
@@ -11505,6 +11600,7 @@ export function IdeaDetailPage() {
                         </div>
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3.5')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Decision Bias</p>
+                          {idSubtitle('mt-0.5', 'Decision Bias')}
                           {isSummaryRefreshing ? (
                             <div className="mt-2 space-y-2 animate-pulse">
                               <div className="h-5 w-28 rounded-md bg-slate-200" />
@@ -11526,6 +11622,7 @@ export function IdeaDetailPage() {
 
                       <div className="rounded-2xl border border-white/10 bg-slate-950/90 px-4 py-4 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">Board Note</p>
+                        {idSubtitle('mt-0.5 text-sky-200/60', 'Board Note')}
                         {isSummaryRefreshing ? (
                           <div className="mt-2 space-y-2 animate-pulse">
                             <div className="h-3 w-full rounded-md bg-slate-700/60" />
@@ -11533,7 +11630,28 @@ export function IdeaDetailPage() {
                             <div className="h-3 w-9/12 rounded-md bg-slate-700/60" />
                           </div>
                         ) : (
-                          <p className="mt-2 text-sm leading-6 text-slate-200" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(runtimeSummary.board_note ?? '') }} />
+                          <div className="mt-2"><SummaryInlineField field="board_note" tone="dark" aiValue={runtimeSummary.board_note ?? ''} render={(value) => {
+                            // Board Note reads as a status plus numbered points (older
+                            // one-paragraph notes are split into sentences).
+                            const note = boardNotePoints(value)
+                            return (
+                              <div className="space-y-2">
+                                {note.status ? (
+                                  <span className="inline-flex rounded-md border border-sky-300/30 bg-sky-400/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-sky-100">
+                                    {note.status}
+                                  </span>
+                                ) : null}
+                                {note.lead ? (
+                                  <p className="text-sm leading-6 text-slate-200" dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(note.lead) }} />
+                                ) : null}
+                                <ol className="list-decimal space-y-1 pl-5 text-sm leading-6 text-slate-200 marker:text-sky-200/70">
+                                  {note.points.map((point, index) => (
+                                    <li key={index} dangerouslySetInnerHTML={{ __html: convertInlineMarkdown(point) }} />
+                                  ))}
+                                </ol>
+                              </div>
+                            )
+                          }} /></div>
                         )}
                       </div>
                     </CardContent>
@@ -11548,6 +11666,7 @@ export function IdeaDetailPage() {
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Strategic Framing</p>
                         <h3 className="mt-1 text-base font-semibold text-slate-950">Where enterprise value is expected</h3>
+                        {idSubtitle('mt-0.5', 'Strategic Framing', 'Where enterprise value is expected')}
                       </div>
                       <Badge variant="outline" className="border-white/70 bg-white/55 text-[10px] font-semibold text-slate-600 backdrop-blur-md">
                         Executive Lens
@@ -11575,6 +11694,7 @@ export function IdeaDetailPage() {
                                 item.title
                               )}
                             </div>
+                            {idSubtitle('-mt-1.5 mb-2 pl-6', item.title)}
                             {isSummaryRefreshing ? (
                               <div className="space-y-2 animate-pulse">
                                 <div className="h-3.5 w-full rounded-md bg-slate-200" />
@@ -11582,12 +11702,18 @@ export function IdeaDetailPage() {
                                 <div className="h-3.5 w-4/6 rounded-md bg-slate-200" />
                               </div>
                             ) : (
-                              <p
-                                className="text-sm leading-6 text-slate-700 line-clamp-[8] overflow-hidden"
-                                title={item.detail}
-                              >
-                                {item.detail}
-                              </p>
+                              // Strategic Framing items are edited inline like the cards above;
+                              // the item title stays locked (it is the key).
+                              <SummaryInlineField
+                                field={framingFieldKey(item.title)}
+                                label={`Strategic Framing · ${item.title}`}
+                                aiValue={item.detail ?? ''}
+                                render={(value) => (
+                                  <p className="text-sm leading-6 text-slate-700 line-clamp-[8] overflow-hidden" title={value}>
+                                    {value}
+                                  </p>
+                                )}
+                              />
                             )}
                           </div>
                         )
@@ -11606,6 +11732,7 @@ export function IdeaDetailPage() {
                         ) : (
                           <h3 className="mt-1 text-base font-semibold text-slate-950">{summaryGovernanceReadiness.title}</h3>
                         )}
+                        {isSummaryRefreshing ? null : idSubtitle('mt-0.5', 'Governance Readiness', summaryGovernanceReadiness.title)}
                       </div>
                       {isSummaryRefreshing ? (
                         <div className="h-6 w-20 rounded-full bg-slate-200 animate-pulse" />
@@ -11645,8 +11772,17 @@ export function IdeaDetailPage() {
                                 </div>
                               ) : (
                                 <>
-                                  <p className="text-sm font-semibold text-slate-900">{signal.title}</p>
-                                  <p className="mt-1 text-sm leading-6 text-slate-600">{signal.detail}</p>
+                                  <p className="text-sm font-semibold text-slate-900">{englishReadinessTitle(signal.title)}</p>
+                                  {idSubtitle('mt-0.5', englishReadinessTitle(signal.title))}
+                                  {/* A readiness signal is the system's assessment: it can be discussed
+                                      (challenged), not rewritten by the idea's own authors. */}
+                                  <SummaryInlineField
+                                    field={readinessAnchorKey(englishReadinessTitle(signal.title))}
+                                    label={`Governance Readiness · ${englishReadinessTitle(signal.title)}`}
+                                    aiValue={signal.detail ?? ''}
+                                    commentOnly
+                                    render={(value) => <p className="mt-1 text-sm leading-6 text-slate-600">{value}</p>}
+                                  />
                                 </>
                               )}
                             </div>
@@ -11659,6 +11795,7 @@ export function IdeaDetailPage() {
               </div>
               </>
               )}
+              </>)}
             </div>
                 </div>
               </div>
@@ -11704,15 +11841,7 @@ export function IdeaDetailPage() {
                       <h2 className="text-lg font-semibold text-foreground">AI Evaluation &amp; Scoring</h2>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {showScoringFrameworkDraft && !isScoringRefreshing ? (
-                        <Badge
-                          variant="outline"
-                          className="border-amber-200 bg-amber-50 text-[10px] font-semibold text-amber-800"
-                        >
-                          Pending evidence
-                        </Badge>
-                      ) : null}
-                      {typeof confidence.scoring === 'number' && confidence.scoring > 0 ? (
+                      {hasNumericScoring && typeof confidence.scoring === 'number' && confidence.scoring > 0 ? (
                         <Badge
                           variant="outline"
                           className={cn('text-[10px] font-semibold', confidenceClass(confidence.scoring))}
@@ -11720,7 +11849,7 @@ export function IdeaDetailPage() {
                           Confidence {confidence.scoring}%
                         </Badge>
                       ) : null}
-                      {renderSectionReviewWorkspace('scoring', 'Scoring')}
+                      {renderSectionReviewWorkspace('scoring', 'Scoring', scoringPendingReason)}
                       <button
                         type="button"
                         aria-pressed={isScoringPanelFullscreen}
@@ -11728,7 +11857,7 @@ export function IdeaDetailPage() {
                         title={isScoringPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                         onClick={() => setIsScoringPanelFullscreen((prev) => !prev)}
                         className={cn(
-                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                           enterpriseControlFocusClass,
                           isScoringPanelFullscreen &&
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -11749,6 +11878,7 @@ export function IdeaDetailPage() {
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="space-y-4">
+              {reviewedSection('scoring', <>
               {isScoringRefreshing && (
                 <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_AGENTS_BAR, 'flex items-center gap-3 text-sm text-slate-900')}>
                   <RefreshCcw className="h-4 w-4 animate-spin text-slate-600" />
@@ -11773,33 +11903,47 @@ export function IdeaDetailPage() {
                 </div>
               )}
 
-              {showScoringFrameworkDraft && !isScoringRefreshing ? (
-                <ScoringFrameworkSection
-                  ideaTitle={idea.title}
-                  scoreData={scoreData}
-                  totalScore={totalScore}
-                  hasNumericScoring={hasNumericScoring}
-                  priorityLabel={priorityLabel}
+              {!hasNumericScoring && !scoringGenerationError && !isScoringRefreshing ? (
+                <ScoringPendingPanel
+                  ideaId={idea.id}
+                  currentContent={getSectionReviewContent('scoring')}
+                  notifyContext={sectionReviewNotifyContext}
+                  brief={
+                    (scoringMissing && runtimeScoringAnalysis.executive_brief)
+                    || 'Complete the intake evidence below so AI can produce an honest scoring assessment without inventing numbers.'
+                  }
+                  evidenceItems={scoringEvidenceItems}
+                  showIndonesian={summaryInIndonesian}
+                  showFramework={!hasNumericScoring}
+                  onNavigateToPanel={navigateToPanel}
                 />
               ) : null}
 
-              {scoringMissing && !scoringGenerationError && !isScoringRefreshing && (
-                <ScoringDraftReadinessCard
-                  title={runtimeScoringAnalysis.summary_title || 'Scoring evidence is not sufficient yet'}
-                  executiveBrief={
-                    runtimeScoringAnalysis.executive_brief
-                    || 'Complete intake evidence below so AI can produce an honest scoring assessment without inventing numbers.'
-                  }
-                  missingFields={runtimeScoringAnalysis.missing_fields}
-                  evidenceItems={scoringEvidenceItems}
-                  readinessPercent={confidence.scoring}
-                  hasNumericScoring={hasNumericScoring}
-                  onNavigateToPanel={navigateToPanel}
-                  onOpenBacklog={openIdeaBacklogForScoring}
-                />
-              )}
+              {/* Scores without an AI readout yet: the dimension cards on their own. */}
+              {hasNumericScoring && (!scoringLoaded || scoringMissing) && !isScoringRefreshing ? (
+                <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
+                  <CardContent className="relative z-10 space-y-3 p-3.5">
+                    <div className="flex items-end justify-between gap-3 border-b border-white/45 pb-2.5">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Scoring dimensions</p>
+                        {idSubtitle('mt-0.5', 'Scoring dimensions')}
+                      </div>
+                      <p className="text-right text-[11px] text-slate-500">
+                        Weighted score <span className="ml-1 text-xl font-semibold tabular-nums text-slate-950">{totalScore}</span>
+                      </p>
+                    </div>
+                    {idea.scoringIntakeChanged ? (
+                      <ScoringRescoreBanner ideaId={idea.id} currentContent={getSectionReviewContent('scoring')} notifyContext={sectionReviewNotifyContext} />
+                    ) : null}
+                    <ScoringDimensionCards scoreData={scoreData} latestScoring={idea.latestScoring} aiNotes={{}}
+                      subtitle={(title) => idSubtitle('mt-0.5', title)} nameOf={scoreNameOf} />
+                  </CardContent>
+                </Card>
+              ) : null}
 
-              {!scoringGenerationError && scoringLoaded && (
+              {/* An "insufficient data" readout has nothing to show here: the pending
+                  panel (no scores) or the dimension cards (scores) cover that state. */}
+              {!scoringGenerationError && scoringLoaded && !scoringMissing && (
                 <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.55fr_0.95fr]">
                   <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
                     <CardContent className="relative z-10 space-y-3 p-3.5">
@@ -11809,6 +11953,7 @@ export function IdeaDetailPage() {
                             <Sparkles className="h-3.5 w-3.5 text-slate-600" />
                             Enterprise Scoring Signal
                           </div>
+                          {idSubtitle('mt-0.5', 'Enterprise Scoring Signal')}
                           <h3 className="mt-1.5 text-base font-semibold text-slate-950">
                             {runtimeScoringAnalysis.summary_title || 'Executive priority and feasibility readout'}
                           </h3>
@@ -11843,6 +11988,7 @@ export function IdeaDetailPage() {
                       <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Overall Score</p>
+                          {idSubtitle('mt-0.5', 'Overall Score')}
                           <div className="mt-2.5 flex items-end gap-2">
                             <p className="text-3xl font-semibold leading-none text-slate-950">
                               {runtimeScoringAnalysis.overall_score || totalScore}
@@ -11869,12 +12015,14 @@ export function IdeaDetailPage() {
 
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Primary Strength</p>
+                          {idSubtitle('mt-0.5', 'Primary Strength')}
                           <div className="mt-2.5 flex items-center gap-2 text-slate-950">
                             <TrendingUp className="h-4 w-4 text-sky-700" />
                             <p className="text-base font-semibold">
                               {runtimeScoringAnalysis.primary_strength || scoringOutlook.strongestDriver}
                             </p>
                           </div>
+                          {aiLabelSubtitle('mt-0.5 pl-6', 'primary_strength')}
                           <p className="mt-2 text-[11px] leading-4.5 text-slate-500">
                             {runtimeScoringAnalysis.primary_strength_detail}
                           </p>
@@ -11882,97 +12030,40 @@ export function IdeaDetailPage() {
 
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Execution Posture</p>
+                          {idSubtitle('mt-0.5', 'Execution Posture')}
                           <div className="mt-2.5 flex items-center gap-2 text-slate-950">
                             <Gauge className="h-4 w-4 text-violet-700" />
                             <p className="text-base font-semibold">
                               {runtimeScoringAnalysis.execution_posture || scoringOutlook.executionReadiness}
                             </p>
                           </div>
+                          {aiLabelSubtitle('mt-0.5 pl-6', 'execution_posture')}
                           <p className="mt-2 text-[11px] leading-4.5 text-slate-500">
                             {runtimeScoringAnalysis.execution_posture_detail}
                           </p>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[1.3fr_0.7fr]">
-                        <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'rounded-[24px] p-3.5')}>
-                          <div className="mb-2 flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Scoring Composition</p>
-                              <h4 className="mt-1 text-sm font-semibold text-slate-950">Raw score dimensions from Idea &amp; Backlog</h4>
-                            </div>
-                            <Badge variant="outline" className="border-white/70 bg-white/55 text-[10px] font-semibold text-slate-600 backdrop-blur-md">
-                              Backlog Source
-                            </Badge>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Scoring dimensions</p>
+                            {idSubtitle('mt-0.5', 'Scoring dimensions')}
                           </div>
-                          <div className="h-[165px] lg:h-[150px] xl:h-[165px]">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={scoreData} margin={{ top: 8, right: 6, left: -16, bottom: 0 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                                <XAxis
-                                  dataKey="label"
-                                  tick={({ x, y, payload }) => {
-                                    const row = scoreData.find((item) => item.label === payload.value)
-                                    return (
-                                      <text x={x} y={y} dy={12} textAnchor="middle" fontSize={11} fill={row?.fill ?? '#64748b'}>
-                                        {payload.value}
-                                      </text>
-                                    )
-                                  }}
-                                  axisLine={false}
-                                  tickLine={false}
-                                />
-                                <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                <RechartsTooltip
-                                  cursor={{ fill: 'rgba(148,163,184,0.08)' }}
-                                  contentStyle={{ borderRadius: 16, border: '1px solid #e2e8f0', boxShadow: '0 18px 40px -28px rgba(15,23,42,0.45)' }}
-                                  formatter={(value, _name, props) => {
-                                    const row = props.payload as ScoringDimensionRow | undefined
-                                    return [`${value}/10`, row?.label ?? 'Score']
-                                  }}
-                                />
-                                <Bar dataKey="score" radius={[10, 10, 0, 0]} barSize={42}>
-                                  {scoreData.map((item) => (
-                                    <Cell key={item.label} fill={scoringBarFill(item, hasNumericScoring)} />
-                                  ))}
-                                </Bar>
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
+                          <Badge variant="outline" className="border-white/70 bg-white/55 text-[10px] font-semibold text-slate-600 backdrop-blur-md">
+                            Backlog Source
+                          </Badge>
                         </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          {(runtimeScoringAnalysis.kpi_cards.length > 0 ? runtimeScoringAnalysis.kpi_cards : scoreData.map((item) => ({
-                            label: item.label,
-                            value: `${item.score}/10`,
-                            detail: item.detail,
-                          }))).slice(0, 4).map((item) => {
-                            const theme = scoreData.find((row) => row.label === item.label)
-                            return (
-                            <div
-                              key={item.label}
-                              className={cn(
-                                IDEA_SUMMARY_LIQUID_GLASS_TILE,
-                                'rounded-2xl border p-3',
-                                theme?.borderClass ?? 'border-white/60',
-                              )}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className={cn('text-[13px] font-semibold', theme?.textClass ?? 'text-slate-900')}>{item.label}</p>
-                                  <p className="mt-1 text-[11px] leading-4 text-slate-500">{item.detail}</p>
-                                </div>
-                                <div
-                                  className="rounded-xl px-2.5 py-1 text-xs font-semibold text-white shadow-sm"
-                                  style={{ backgroundColor: theme?.fill ?? '#334155' }}
-                                >
-                                  {item.value}
-                                </div>
-                              </div>
-                            </div>
-                            )
-                          })}
-                        </div>
+                        {idea.scoringIntakeChanged ? (
+                          <ScoringRescoreBanner ideaId={idea.id} currentContent={getSectionReviewContent('scoring')} notifyContext={sectionReviewNotifyContext} />
+                        ) : null}
+                        <ScoringDimensionCards
+                          nameOf={scoreNameOf}
+                          scoreData={scoreData}
+                          latestScoring={idea.latestScoring}
+                          aiNotes={Object.fromEntries(runtimeScoringAnalysis.kpi_cards.map((card) => [card.label, card.detail]))}
+                          subtitle={(title) => idSubtitle('mt-0.5', title)}
+                        />
                       </div>
                     </CardContent>
                   </Card>
@@ -11982,10 +12073,13 @@ export function IdeaDetailPage() {
                       <div className="flex items-center justify-between border-b border-white/45 pb-2.5">
                         <div>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Board Recommendation</p>
+                          {idSubtitle('mt-0.5', 'Board Recommendation')}
                           <h3 className="mt-1 text-sm font-semibold text-slate-950">Enterprise investment signal</h3>
+                          {idSubtitle('mt-0.5', 'Enterprise investment signal')}
                         </div>
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_TILE, 'rounded-xl px-3 py-1.5 text-right')}>
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Priority</p>
+                          {idSubtitle('', 'Priority')}
                           <p className="text-sm font-semibold text-slate-900">
                             {runtimeScoringAnalysis.priority || priorityLabel}
                           </p>
@@ -11996,9 +12090,11 @@ export function IdeaDetailPage() {
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Scoring Posture</p>
+                            {idSubtitle('mt-0.5', 'Scoring Posture')}
                             <p className="mt-1.5 text-xl font-semibold text-slate-950">
                               {runtimeScoringAnalysis.score_posture}
                             </p>
+                            {aiLabelSubtitle('mt-0.5', 'score_posture')}
                           </div>
                           <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-sm">
                             <Target className="h-4.5 w-4.5" />
@@ -12012,18 +12108,22 @@ export function IdeaDetailPage() {
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Primary Strength</p>
+                          {idSubtitle('mt-0.5', 'Primary Strength')}
                           <p className="mt-1.5 text-sm font-semibold text-slate-950">
                             {runtimeScoringAnalysis.primary_strength}
                           </p>
+                          {aiLabelSubtitle('mt-0.5', 'primary_strength')}
                           <p className="mt-1.5 text-xs leading-5 text-slate-500">
                             {runtimeScoringAnalysis.primary_strength_detail}
                           </p>
                         </div>
                         <div className={cn(IDEA_SUMMARY_LIQUID_GLASS_INNER, 'p-3')}>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Main Watchpoint</p>
+                          {idSubtitle('mt-0.5', 'Main Watchpoint')}
                           <p className="mt-1.5 text-sm font-semibold text-slate-950">
                             {runtimeScoringAnalysis.main_watchpoint}
                           </p>
+                          {aiLabelSubtitle('mt-0.5', 'main_watchpoint')}
                           <p className="mt-1.5 text-xs leading-5 text-slate-500">
                             {runtimeScoringAnalysis.main_watchpoint_detail}
                           </p>
@@ -12039,6 +12139,8 @@ export function IdeaDetailPage() {
                             <p className="text-sm font-semibold text-slate-900">
                               {runtimeScoringAnalysis.positive_signal_title}
                             </p>
+                            {/* The title is AI-written: its Indonesian version when the readout has one, else the card's kind. */}
+                            {aiLabelSubtitle('mt-0.5', 'positive_signal_title') ?? idSubtitle('mt-0.5', 'Positive signal')}
                             <p className="mt-1 text-xs leading-5 text-slate-600">
                               {runtimeScoringAnalysis.positive_signal_detail}
                             </p>
@@ -12053,6 +12155,8 @@ export function IdeaDetailPage() {
                             <p className="text-sm font-semibold text-slate-900">
                               {runtimeScoringAnalysis.watchpoint_signal_title}
                             </p>
+                            {/* The title is AI-written: its Indonesian version when the readout has one, else the card's kind. */}
+                            {aiLabelSubtitle('mt-0.5', 'watchpoint_signal_title') ?? idSubtitle('mt-0.5', 'Watchpoint signal')}
                             <p className="mt-1 text-xs leading-5 text-slate-600">
                               {runtimeScoringAnalysis.watchpoint_signal_detail}
                             </p>
@@ -12062,6 +12166,7 @@ export function IdeaDetailPage() {
 
                       <div className="rounded-2xl border border-white/10 bg-slate-950/90 px-4 py-3 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">AI Commentary</p>
+                        {idSubtitle('mt-0.5 text-slate-400', 'AI Commentary')}
                         <p className="mt-2 text-xs leading-5 text-slate-200">
                           {runtimeScoringAnalysis.commentary}
                         </p>
@@ -12070,6 +12175,7 @@ export function IdeaDetailPage() {
                   </Card>
                 </div>
               )}
+              </>)}
             </div>
                 </div>
               </div>
@@ -12130,7 +12236,7 @@ export function IdeaDetailPage() {
                         title={isImpactPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                         onClick={() => setIsImpactPanelFullscreen((prev) => !prev)}
                         className={cn(
-                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                           enterpriseControlFocusClass,
                           isImpactPanelFullscreen &&
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -12151,6 +12257,7 @@ export function IdeaDetailPage() {
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="space-y-3">
+              {reviewedSection('impact', <>
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.52fr_0.88fr]">
                 <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
                   <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.82),transparent_30%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.38),transparent_34%)]" />
@@ -12442,6 +12549,7 @@ export function IdeaDetailPage() {
                   </CardContent>
                 </Card>
               </div>
+              </>)}
             </div>
                 </div>
               </div>
@@ -12490,7 +12598,7 @@ export function IdeaDetailPage() {
                         title={isDiagramsPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                         onClick={() => setIsDiagramsPanelFullscreen((prev) => !prev)}
                         className={cn(
-                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                           enterpriseControlFocusClass,
                           isDiagramsPanelFullscreen &&
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -12887,7 +12995,7 @@ export function IdeaDetailPage() {
                           title="Exit fullscreen (Esc)"
                           onClick={() => setDiagramStudio(null)}
                           className={cn(
-                            'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                             'order-[30]',
                             enterpriseControlFocusClass,
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -13196,14 +13304,14 @@ export function IdeaDetailPage() {
                             <Button type="button" size="sm" variant="outline" className="h-9 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'reject' }) }}><X className="h-3.5 w-3.5" aria-hidden /> Reject</Button>
                           </div>
                         ) : null}
-                        {renderSectionReviewWorkspace('integration', 'Integration')}
+                      {renderSectionReviewWorkspace('integration', 'Integration')}
                         <button
                           type="button"
                           aria-label="Exit integration fullscreen"
                           title="Exit fullscreen (Esc)"
                           onClick={() => setIsIntegrationPanelFullscreen(false)}
                           className={cn(
-                            'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                             enterpriseControlFocusClass,
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
                           )}
@@ -13218,6 +13326,7 @@ export function IdeaDetailPage() {
                   </div>
 
                   <div className="min-h-0 flex-1 overflow-hidden">
+                    {reviewedSection('integration')}
                     <EditableIntegrationArchitectureCanvas
                       ideaId={idea.id}
                       bootstrapKey={integrationBootstrapKey}
@@ -13359,7 +13468,7 @@ export function IdeaDetailPage() {
                         title={isCostBenefitPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                         onClick={() => setIsCostBenefitPanelFullscreen((prev) => !prev)}
                         className={cn(
-                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                           enterpriseControlFocusClass,
                           isCostBenefitPanelFullscreen &&
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -13386,6 +13495,7 @@ export function IdeaDetailPage() {
                       </div>
                     ) : null}
 
+                    {reviewedSection('costBenefit', <>
                     {!benefitAnalysis && !benefitError ? (
                       <Card className={IDEA_SUMMARY_LIQUID_GLASS_CARD}>
                         <CardContent className="relative z-10 px-4 py-8 text-center">
@@ -13688,6 +13798,7 @@ export function IdeaDetailPage() {
                         ) : null}
                       </>
                     ) : null}
+                    </>)}
                   </div>
                 </div>
               </div>
@@ -13750,7 +13861,7 @@ export function IdeaDetailPage() {
                         title={isConversionPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                         onClick={() => setIsConversionPanelFullscreen((prev) => !prev)}
                         className={cn(
-                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                           enterpriseControlFocusClass,
                           isConversionPanelFullscreen &&
                             'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -13782,6 +13893,7 @@ export function IdeaDetailPage() {
                 </div>
 
                 <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+                  {reviewedSection('conversion', <>
                   {conversionError ? (
                     <div className="shrink-0 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
                       {conversionError}
@@ -13801,6 +13913,7 @@ export function IdeaDetailPage() {
                       </div>
                     )
                   )}
+                  </>)}
                 </div>
               </div>
               </div>
@@ -13850,7 +13963,7 @@ export function IdeaDetailPage() {
                       title={isIdeaDocsPanelFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
                       onClick={() => setIsIdeaDocsPanelFullscreen((prev) => !prev)}
                       className={cn(
-                        'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
+                        'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300/90 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-slate-100 hover:text-foreground',
                         enterpriseControlFocusClass,
                         isIdeaDocsPanelFullscreen &&
                           'bg-foreground text-background hover:bg-foreground/90 hover:text-background',
@@ -13865,6 +13978,7 @@ export function IdeaDetailPage() {
                   </div>
                 </div>
                 <div className="space-y-2 pb-4">
+                  {reviewedSection('document')}
                   <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
                     Upload supporting documents or diagrams to auto-generate a knowledge base entry, or
                     pick a Document & Knowledge Management template to draft a new document for this idea.

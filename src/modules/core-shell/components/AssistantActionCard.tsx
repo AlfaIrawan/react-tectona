@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { summaryFieldLabel } from '@/modules/project-management/lib/summaryFields'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -432,6 +433,23 @@ export function AssistantActionCard({
       </div>
 
       <p className="mb-2 font-medium text-[#111b21] dark:text-[#e9edef]">{action.summary}</p>
+
+      {action.action_code === 'idea.section.revision' && action.payload.transition !== 'reject'
+        && action.payload.fields && typeof action.payload.fields === 'object' ? (
+        <ul className="mb-2 space-y-2 text-xs" aria-label="Proposed card edits">
+          {Object.entries(action.payload.fields as Record<string, string>).map(([field, after]) => {
+            const before = ((action.payload.field_before ?? {}) as Record<string, string>)[field]
+            return (
+              <li key={field} className="rounded-md border border-border bg-background/70 p-2">
+                <p className="font-semibold text-foreground">{summaryFieldLabel(field)}</p>
+                {before ? <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground line-through decoration-muted-foreground/40">{before}</p> : null}
+                <p className="mt-1 whitespace-pre-wrap break-words text-foreground">{after}</p>
+              </li>
+            )
+          })}
+          <li className="text-[11px] text-muted-foreground">Saved as pending review; the approved version stays active until a reviewer approves this.</li>
+        </ul>
+      ) : null}
 
       {isFormAction && !isTerminal && rejectedEntries.length > 0 ? (
         <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-2 dark:border-amber-800/60 dark:bg-amber-950/30">

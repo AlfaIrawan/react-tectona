@@ -38,6 +38,11 @@ export type TectonaUiContextPayload = {
   selection_summary?: string | null
   data_summary?: string | null
   extra_notes?: string[]
+  /** "Discuss with AI" on an idea section: data only; agent-runtime builds the instructions. */
+  discussion_section_key?: string | null
+  discussion_section_label?: string | null
+  discussion_section_content?: string | null
+  discussion_idea_description?: string | null
   preferred_language?: string | null
   /** JWT / platform roles from identity-lite session. */
   platform_roles?: string[] | null

@@ -250,6 +250,8 @@ export interface AnalyzeIdeaScoringResponse {
   watchpoint_signal_detail: string
   missing_fields: string[]
   kpi_cards: AnalyzeIdeaScoringKpiCard[]
+  /** Indonesian versions of the short AI-written labels (primary_strength, …). */
+  labels_id?: Record<string, string>
   confidence_score: number
   warnings: string[]
   correlation_id: string
@@ -711,6 +713,11 @@ export interface RuntimeChatUiContext {
   selection_summary?: string | null
   data_summary?: string | null
   extra_notes?: string[]
+  /** "Discuss with AI" on an idea section: data only; agent-runtime builds the instructions. */
+  discussion_section_key?: string | null
+  discussion_section_label?: string | null
+  discussion_section_content?: string | null
+  discussion_idea_description?: string | null
   preferred_language?: string | null
   platform_roles?: string[] | null
   is_platform_admin?: boolean | null
@@ -1368,6 +1375,7 @@ export interface RepositoryKbDetectedAttachmentEntry {
 export interface GenerateRepositoryKbRequest {
   usage_source?: 'user' | 'system'
   context?: {
+    idea_id?: string | null
     workspace_id?: string | null
     user_id?: string | null
     user_name?: string | null
@@ -1605,6 +1613,7 @@ export interface FillDkmTemplateRequest {
   /** Existing Idea Docs (BRD/URD/…) passed as authoritative grounding for the fill. */
   reference_documents?: FillDkmTemplateReferenceDocument[]
   context?: {
+    idea_id?: string | null
     workspace_id?: string | null
     user_id?: string | null
     session_id?: string | null
@@ -1791,6 +1800,119 @@ export async function suggestKbRelations(
     timeoutMs,
   )
   return handleResponse<SuggestKbRelationsResponse>(res)
+}
+
+export type IdeaSummaryFieldKey = 'executive_brief' | 'core_pressure' | 'strategic_response' | 'value_thesis' | 'board_note' | `strategic_framing:${string}`
+
+export interface IdeaSummaryFieldSuggestion {
+  field: IdeaSummaryFieldKey
+  text: string
+  notes: string
+  model_id?: string | null
+  correlation_id: string
+}
+
+/** Draft a rewrite of one summary card. Advisory only: nothing is saved. */
+export async function suggestIdeaSummaryField(
+  payload: { idea_id: string; field: IdeaSummaryFieldKey; current_text: string; instruction: string },
+  timeoutMs: number = 120_000,
+): Promise<IdeaSummaryFieldSuggestion> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-summary/suggest-field`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    timeoutMs,
+  )
+  return handleResponse<IdeaSummaryFieldSuggestion>(res)
+}
+
+export type IdeaScoringDimensionKey = 'business_value' | 'roi' | 'effort' | 'risk'
+
+export interface IdeaScoringDraft {
+  /** Whole scores 1-10 with a reason each; a draft only (idea-backlog writes scores on approval). */
+  scores: Record<IdeaScoringDimensionKey, { score: number; reason: string }>
+  missing_evidence: string[]
+  sources: string[]
+  model_id?: string | null
+  correlation_id: string
+}
+
+/** AI draft of the four dimension scores for "Score this idea". Nothing is saved. */
+export async function draftIdeaScoring(ideaId: string, timeoutMs: number = 120_000): Promise<IdeaScoringDraft> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-scoring/draft`,
+    { method: 'POST', body: JSON.stringify({ idea_id: ideaId }) },
+    timeoutMs,
+  )
+  return handleResponse<IdeaScoringDraft>(res)
+}
+
+export interface IdeaScoringReview {
+  revision_id: string
+  dimensions: Record<string, { verdict: 'supported' | 'questionable' | 'unsupported'; note: string; evidence_quote: string }>
+  summary: string
+  /** Facts computed in code, e.g. big jumps from the AI draft or an owner-proposed score. */
+  signals: string[]
+  sources: string[]
+  model_id?: string | null
+  correlation_id: string
+}
+
+/** The reviewer's AI check of a pending score proposal. Advisory: nothing is saved. */
+export async function reviewIdeaScoring(ideaId: string, revisionId: string, timeoutMs: number = 120_000): Promise<IdeaScoringReview> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-scoring/review`,
+    { method: 'POST', body: JSON.stringify({ idea_id: ideaId, revision_id: revisionId }) },
+    timeoutMs,
+  )
+  return handleResponse<IdeaScoringReview>(res)
+}
+
+export interface IdeaSummaryProposalFromReply {
+  /** Card edits the reply proposes; empty when it only discusses. */
+  fields: Partial<Record<IdeaSummaryFieldKey, string>>
+  /** Each card's text before the proposal (for the preview). */
+  before: Partial<Record<IdeaSummaryFieldKey, string>>
+  dropped: Array<{ field: string; reason: string }>
+  model_id?: string | null
+  correlation_id: string
+}
+
+/** Turn a Discuss-with-AI reply into card-level Summary edits (nothing is saved). */
+export async function proposeIdeaSummaryFromReply(
+  payload: { idea_id: string; reply: string },
+  timeoutMs: number = 120_000,
+): Promise<IdeaSummaryProposalFromReply> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-summary/proposal-from-reply`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    timeoutMs,
+  )
+  return handleResponse<IdeaSummaryProposalFromReply>(res)
+}
+
+export type IdeaSummaryReviewFindingType = 'unsupported_claim' | 'contradiction' | 'lost_information'
+
+export interface IdeaSummaryRevisionReview {
+  revision_id: string
+  findings: Array<{ field: string; type: IdeaSummaryReviewFindingType; quote: string; explanation: string }>
+  summary: string
+  checked_fields: string[]
+  checked_sources: string[]
+  model_id?: string | null
+  correlation_id: string
+}
+
+/** Check a pending summary revision against the idea's sources. Advisory: the checker decides. */
+export async function reviewIdeaSummaryRevision(
+  payload: { idea_id: string; revision_id: string },
+  timeoutMs: number = 120_000,
+): Promise<IdeaSummaryRevisionReview> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-summary/review-revision`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    timeoutMs,
+  )
+  return handleResponse<IdeaSummaryRevisionReview>(res)
 }
 
 export async function analyzeIdeaScoring(
