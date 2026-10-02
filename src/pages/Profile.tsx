@@ -49,6 +49,7 @@ import { applyCatalogPricing, usageCost } from '@/lib/usageCost'
 import { OrganizationChart } from '@/components/profile/OrganizationChart'
 import {
   fetchMicrosoftProfileOrganization,
+  fetchMicrosoftProfilePhoto,
   type MicrosoftProfileOrganization,
 } from '@/lib/api/microsoftGraphApi'
 import { startSocialOAuthLogin } from '@/lib/authProviders'
@@ -624,6 +625,7 @@ export function ProfilePage() {
   const [identityProfile, setIdentityProfile] = useState<OidcUserInfo | null>(null)
   const [microsoftProfile, setMicrosoftProfile] = useState<MicrosoftProfileOrganization | null>(null)
   const [microsoftProfileLoading, setMicrosoftProfileLoading] = useState(true)
+  const [microsoftPhotoUrl, setMicrosoftPhotoUrl] = useState<string | null>(null)
   const [authzAssignments, setAuthzAssignments] = useState<AuthzAssignmentDto[]>([])
   const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [passkeyMsg, setPasskeyMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -695,6 +697,29 @@ export function ProfilePage() {
       graphController.abort()
     }
   }, [navigate])
+
+  useEffect(() => {
+    if (!session?.user.id) return
+    const controller = new AbortController()
+    let active = true
+    let objectUrl: string | null = null
+    void fetchMicrosoftProfilePhoto(controller.signal)
+      .then((photo) => {
+        if (!active) return
+        if (!photo) {
+          setMicrosoftPhotoUrl(null)
+          return
+        }
+        objectUrl = URL.createObjectURL(photo)
+        setMicrosoftPhotoUrl(objectUrl)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [session?.user.id, session?.token])
 
   useEffect(() => {
     const refreshTokenEvents = () => {
@@ -800,7 +825,7 @@ export function ProfilePage() {
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
               <button type="button" className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-2xl bg-primary text-lg font-semibold text-primary-foreground shadow-md" onClick={() => avatarInputRef.current?.click()} aria-label="Change profile photo">
-                {profilePrefs.avatar ? <img src={profilePrefs.avatar} alt="" className="h-full w-full object-cover" /> : initials}
+                {profilePrefs.avatar || microsoftPhotoUrl ? <img src={profilePrefs.avatar || microsoftPhotoUrl || ''} alt="" className="h-full w-full object-cover" onError={() => setMicrosoftPhotoUrl(null)} /> : initials}
                 <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100"><Camera className="h-5 w-5" aria-hidden /></span>
               </button>
               <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
