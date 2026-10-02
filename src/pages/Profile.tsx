@@ -34,7 +34,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { getSession, logoutAsync, requireAuth, registerPasskey, type Session } from '@/auth/authService'
-import { fetchTokenAudit, fetchUserInfo, requestPartnerPasswordReset, type OidcUserInfo } from '@/lib/api/identityApi'
+import { fetchTokenAuditHistory, fetchUserInfo, requestPartnerPasswordReset, type OidcUserInfo } from '@/lib/api/identityApi'
 import { listAuthzAssignments, type AuthzAssignmentDto } from '@/lib/api/authzApi'
 import { passkeyErrorMessage } from '@/lib/api/webauthnApi'
 import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
@@ -97,7 +97,6 @@ function mergeTokenEvents(primary: TokenTelemetryEvent[], secondary: TokenTeleme
   return merged
     .filter((event, index, all) => all.findIndex((candidate) => `${candidate.event}|${candidate.trigger ?? ''}|${candidate.occurredAt}` === `${event.event}|${event.trigger ?? ''}|${event.occurredAt}`) === index)
     .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt))
-    .slice(0, 120)
 }
 
 function profileInitials(name: string, email: string): string {
@@ -524,7 +523,7 @@ function AIActivityListDrawer({ events, onClose, onSelect }: { events: TokenTele
 function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders }: { events: TokenTelemetryEvent[]; loading: boolean; error: boolean; onRetry: () => void; onViewProviders: () => void }) {
   const [range, setRange] = useState<UsageRange>('30d')
   const [updatedAt, setUpdatedAt] = useState(() => new Date())
-  const [now] = useState(() => new Date())
+  const [now, setNow] = useState(() => new Date())
   const defaultFrom = new Date(now); defaultFrom.setDate(now.getDate() - 29)
   const [customFrom, setCustomFrom] = useState(defaultFrom.toISOString().slice(0, 10))
   const [customTo, setCustomTo] = useState(now.toISOString().slice(0, 10))
@@ -546,7 +545,7 @@ function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders 
   const period = usagePeriod(range, now, customFrom, customTo)
   const filteredRawEvents = events.filter((event) => { const timestamp = new Date(event.occurredAt); return timestamp >= period.start && timestamp <= period.end })
   const filteredEvents = filteredRawEvents.map((event) => applyCatalogPricing(event, pricingCatalog))
-  const periodDuration = Math.max(period.end.getTime() - period.start.getTime(), 86400000)
+  const periodDuration = Math.max(Math.ceil((period.end.getTime() - period.start.getTime()) / 86400000), 1) * 86400000
   const previousStart = new Date(period.start.getTime() - periodDuration)
   const previousRawEvents = events.filter((event) => { const timestamp = new Date(event.occurredAt); return timestamp >= previousStart && timestamp < period.start })
   const previousEvents = previousRawEvents.map((event) => applyCatalogPricing(event, pricingCatalog))
@@ -585,10 +584,10 @@ function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders 
   const recentEvents = filteredEvents.slice(0, 8)
 
   return <>
-    <SectionCard icon={Activity} title="AI Usage & Spending" description="Track your AI activity, token consumption, and estimated usage cost across TECTONA." headerAside={<div className="flex flex-wrap items-center justify-end gap-2"><select aria-label="Usage time range" value={range} onChange={(event) => setRange(event.target.value as UsageRange)} className="h-8 rounded-lg border border-border/60 bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="year">This year</option><option value="custom">Custom range</option></select><span title={updatedAt.toLocaleTimeString('en-US')} className="hidden text-xs text-muted-foreground sm:inline">Updated just now</span><button type="button" aria-label="Refresh AI usage and pricing" title="Refresh" onClick={() => { setUpdatedAt(new Date()); setPricingRevision((value) => value + 1); window.dispatchEvent(new CustomEvent('tectona:token-telemetry-updated')) }} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"><RefreshCw className={cn('h-3.5 w-3.5', pricingLoading && 'animate-spin')} /></button></div>}>
+    <SectionCard icon={Activity} title="AI Usage & Spending" description="Track your AI activity, token consumption, and estimated usage cost across TECTONA." headerAside={<div className="flex flex-wrap items-center justify-end gap-2"><select aria-label="Usage time range" value={range} onChange={(event) => setRange(event.target.value as UsageRange)} className="h-8 rounded-lg border border-border/60 bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="year">This year</option><option value="custom">Custom range</option></select><span title={updatedAt.toLocaleTimeString('en-US')} className="hidden text-xs text-muted-foreground sm:inline">Updated just now</span><button type="button" aria-label="Refresh AI usage and pricing" title="Refresh" onClick={() => { const refreshedAt = new Date(); setUpdatedAt(refreshedAt); setNow(refreshedAt); setPricingRevision((value) => value + 1); window.dispatchEvent(new CustomEvent('tectona:token-telemetry-updated')) }} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"><RefreshCw className={cn('h-3.5 w-3.5', pricingLoading && 'animate-spin')} /></button></div>}>
       <div className="space-y-4 py-4">
         {range === 'custom' ? <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-border/50 bg-muted/20 p-2 text-xs"><label className="flex items-center gap-2 text-muted-foreground">From<input type="date" value={customFrom} max={customTo} onChange={(event) => setCustomFrom(event.target.value)} className="rounded-md border border-border/60 bg-background px-2 py-1 text-foreground" /></label><label className="flex items-center gap-2 text-muted-foreground">To<input type="date" value={customTo} min={customFrom} onChange={(event) => setCustomTo(event.target.value)} className="rounded-md border border-border/60 bg-background px-2 py-1 text-foreground" /></label></div> : null}
-        {loading && !events.length ? <div className="space-y-4 animate-pulse"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 rounded-xl bg-muted/60" />)}</div><div className="grid gap-4 lg:grid-cols-[1.8fr_1fr]"><div className="h-64 rounded-xl bg-muted/50" /><div className="h-64 rounded-xl bg-muted/50" /></div><div className="grid gap-4 xl:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-64 rounded-xl bg-muted/40" />)}</div><div className="h-52 rounded-xl bg-muted/40" /></div> : error && !events.length ? <div className="rounded-xl border border-destructive/20 bg-destructive/[0.035] px-5 py-7 text-center"><h3 className="text-sm font-semibold">Unable to load AI usage data</h3><p className="mt-1 text-xs text-muted-foreground">AI usage information is temporarily unavailable.</p><Button type="button" variant="outline" className="mt-4" onClick={onRetry}>Retry</Button></div> : !filteredEvents.length ? <div className="rounded-xl border border-dashed border-border/70 px-5 py-9 text-center"><h3 className="text-sm font-semibold">No AI activity yet</h3><p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">Your AI usage, token consumption, and estimated cost will appear after you start using AI capabilities in TECTONA.</p><Link to="/projects" className="mt-4 inline-flex rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90">Explore AI Features</Link></div> : <>
+        {loading && !events.length ? <div className="space-y-4 animate-pulse"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 rounded-xl bg-muted/60" />)}</div><div className="grid gap-4 lg:grid-cols-[1.8fr_1fr]"><div className="h-64 rounded-xl bg-muted/50" /><div className="h-64 rounded-xl bg-muted/50" /></div><div className="grid gap-4 xl:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-64 rounded-xl bg-muted/40" />)}</div><div className="h-52 rounded-xl bg-muted/40" /></div> : error && !events.length ? <div className="rounded-xl border border-destructive/20 bg-destructive/[0.035] px-5 py-7 text-center"><h3 className="text-sm font-semibold">Unable to load AI usage data</h3><p className="mt-1 text-xs text-muted-foreground">AI usage information is temporarily unavailable.</p><Button type="button" variant="outline" className="mt-4" onClick={onRetry}>Retry</Button></div> : !filteredEvents.length ? <div className="rounded-xl border border-dashed border-border/70 px-5 py-9 text-center"><h3 className="text-sm font-semibold">{events.length ? `No AI activity in ${period.label.toLowerCase()}` : 'No AI activity yet'}</h3><p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">{events.length ? 'Choose another time range to see your recorded AI interactions.' : 'Your AI usage, token consumption, and estimated cost will appear after you start using AI capabilities in TECTONA.'}</p>{!events.length ? <Link to="/projects" className="mt-4 inline-flex rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90">Explore AI Features</Link> : null}</div> : <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
             { label: 'AI calls', value: filteredEvents.length.toLocaleString(), detail: comparisonText(filteredEvents.length, previousEvents.length, suffix), icon: MessageSquare, tone: 'text-blue-600 bg-blue-50 dark:bg-blue-950/20' },
             { label: 'Total tokens', value: totalTokens.toLocaleString(), detail: comparisonText(totalTokens, previousTokens, suffix), icon: Coins, tone: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20' },
@@ -687,7 +686,7 @@ export function ProfilePage() {
     void listAuthzAssignments().then(setAuthzAssignments).catch(() => undefined)
     const localEvents = mergeTokenEvents([], readTokenTelemetry(currentSession.user.id))
     setTokenEvents(localEvents)
-    void fetchTokenAudit(currentSession.token, 80, currentSession.user.id)
+    void fetchTokenAuditHistory(currentSession.token, currentSession.user.id)
       .then((events) => setTokenEvents(mergeTokenEvents(events, localEvents)))
       .catch(() => { if (!localEvents.length) setTokenEventsError(true) })
       .finally(() => setTokenEventsLoading(false))
@@ -703,7 +702,7 @@ export function ProfilePage() {
       if (!current) return
       setTokenEventsLoading(true)
       setTokenEventsError(false)
-      void fetchTokenAudit(current.token, 80, current.user.id)
+      void fetchTokenAuditHistory(current.token, current.user.id)
         .then((events) => setTokenEvents(mergeTokenEvents(events, readTokenTelemetry(current.user.id))))
         .catch(() => {
           const localEvents = mergeTokenEvents([], readTokenTelemetry(current.user.id))

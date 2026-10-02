@@ -47,12 +47,12 @@ export interface SsoBootstrapTokenResponse {
   refresh_token?: string
 }
 
-export async function fetchTokenAudit(accessToken: string, limit = 80, userId?: string): Promise<TokenTelemetryEvent[]> {
+export async function fetchTokenAudit(accessToken: string, limit = 500, userId?: string, offset = 0): Promise<TokenTelemetryEvent[]> {
   const runtimeBase = tectonaAgentRuntimeApiBase(
     import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL as string | undefined,
   )
   const res = await identityFetch(
-    `${runtimeBase}/v1/agent/llm-usage?limit=${encodeURIComponent(String(limit))}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`,
+    `${runtimeBase}/v1/agent/llm-usage?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`,
     { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } },
   )
   if (!res.ok) throw new Error(`LLM usage audit failed (${res.status})`)
@@ -97,6 +97,21 @@ export async function fetchTokenAudit(accessToken: string, limit = 80, userId?: 
     occurredAt: entry.occurred_at,
     tokenPreview: `${entry.total_tokens ?? 0} LLM tokens`,
   }))
+}
+
+/** Retrieve the complete personal audit history for date filters and the heatmap. */
+export async function fetchTokenAuditHistory(accessToken: string, userId: string): Promise<TokenTelemetryEvent[]> {
+  const pageSize = 500
+  const history: TokenTelemetryEvent[] = []
+  const seenIds = new Set<string>()
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await fetchTokenAudit(accessToken, pageSize, userId, offset)
+    if (page.length && page.every((event) => seenIds.has(event.id))) break
+    page.forEach((event) => seenIds.add(event.id))
+    history.push(...page)
+    if (page.length < pageSize) break
+  }
+  return history
 }
 
 /**
