@@ -889,7 +889,7 @@ export function ProfilePage() {
               <ProfileField label="Job title" value={graphProfile?.job_title || identityProfile?.job_title || session.user.jobTitle || '-'} />
               <ProfileField label="Department" value={graphProfile?.department || '-'} />
               <ProfileField label="NIK / Number" value={graphProfile?.employee_id || '-'} />
-              <ProfileField label="Organizational unit" value={identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
+              <ProfileField label="Organizational unit" value={graphProfile?.company_name || identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
               <ProfileField label="Office location" value={graphProfile?.office_location || '-'} />
               <ProfileField label="Account status" value={identityProfile?.account_status || session.user.accountStatus || 'Active'} />
               <ProfileField label="Last login" value={formatDate(session.loginAt)} />

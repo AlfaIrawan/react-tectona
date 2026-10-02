@@ -112,6 +112,7 @@ export type MicrosoftGraphPerson = {
   id: string
   display_name: string
   email: string
+  company_name?: string | null
   department?: string | null
   employee_id?: string | null
   job_title?: string | null
