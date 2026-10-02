@@ -46,13 +46,11 @@ import { fetchModelCatalog, catalogPrice, type CatalogModel, type ModelCatalog }
 import { maskToken, readTokenTelemetry, type TokenTelemetryEvent } from '@/lib/tokenTelemetry'
 import { normalizeUserDisplayName } from '@/lib/userDisplayName'
 import { applyCatalogPricing, usageCost } from '@/lib/usageCost'
-import { OrganizationChart } from '@/components/profile/OrganizationChart'
 import {
   fetchMicrosoftProfileOrganization,
   fetchMicrosoftProfilePhoto,
   type MicrosoftProfileOrganization,
 } from '@/lib/api/microsoftGraphApi'
-import { startSocialOAuthLogin } from '@/lib/authProviders'
 
 type ProfilePreferences = {
   displayName?: string
@@ -624,7 +622,6 @@ export function ProfilePage() {
   const [profileTab, setProfileTab] = useState<'account' | 'preferences' | 'security' | 'usage' | 'performance' | 'providers'>('account')
   const [identityProfile, setIdentityProfile] = useState<OidcUserInfo | null>(null)
   const [microsoftProfile, setMicrosoftProfile] = useState<MicrosoftProfileOrganization | null>(null)
-  const [microsoftProfileLoading, setMicrosoftProfileLoading] = useState(true)
   const [microsoftPhotoUrl, setMicrosoftPhotoUrl] = useState<string | null>(null)
   const [authzAssignments, setAuthzAssignments] = useState<AuthzAssignmentDto[]>([])
   const [passkeyBusy, setPasskeyBusy] = useState(false)
@@ -684,7 +681,6 @@ export function ProfilePage() {
     void fetchMicrosoftProfileOrganization(graphController.signal)
       .then((profile) => { if (graphActive) setMicrosoftProfile(profile) })
       .catch(() => { if (graphActive) setMicrosoftProfile(null) })
-      .finally(() => { if (graphActive) setMicrosoftProfileLoading(false) })
     void listAuthzAssignments().then(setAuthzAssignments).catch(() => undefined)
     const localEvents = mergeTokenEvents([], readTokenTelemetry(currentSession.user.id))
     setTokenEvents(localEvents)
@@ -894,22 +890,6 @@ export function ProfilePage() {
               <ProfileField label="Account status" value={identityProfile?.account_status || session.user.accountStatus || 'Active'} />
               <ProfileField label="Last login" value={formatDate(session.loginAt)} />
             </dl>
-          </SectionCard>
-
-          <SectionCard
-            icon={Boxes}
-            title="Organization structure"
-            description="Your manager and direct reports synchronized from Microsoft Graph."
-            className={profileTab === 'account' ? undefined : 'hidden'}
-          >
-            <OrganizationChart
-              profile={graphProfile}
-              manager={microsoftProfile?.organization.manager}
-              directReports={microsoftProfile?.organization.direct_reports ?? []}
-              permissionRequired={microsoftProfile?.organization.permission_required ?? false}
-              loading={microsoftProfileLoading}
-              onReconnect={() => { void startSocialOAuthLogin('microsoft', { oauthIntent: 'graph' }) }}
-            />
           </SectionCard>
 
           <div className={cn('space-y-6', profileTab === 'preferences' || profileTab === 'security' ? undefined : 'hidden')}>
