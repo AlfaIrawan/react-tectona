@@ -97,8 +97,8 @@ export default defineConfig({
         additionalManifestEntries: [
           { url: '/images/background-1.mp4', revision: null },
         ],
-        // Main app chunk can exceed 3 MiB after feature growth; Workbox default is 2 MiB.
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // Main app chunk is past 5 MiB (TeamCity: index-*.js 5.26 MB). Workbox default is 2 MiB.
+        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         navigateFallback: '/index.html',
         // Keep Vite/dev module graph and API off the SPA fallback.
         navigateFallbackDenylist: [/^\/api\//, /^\/src\//, /^\/@/, /^\/node_modules\//],
