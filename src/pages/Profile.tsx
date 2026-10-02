@@ -46,6 +46,12 @@ import { fetchModelCatalog, catalogPrice, type CatalogModel, type ModelCatalog }
 import { maskToken, readTokenTelemetry, type TokenTelemetryEvent } from '@/lib/tokenTelemetry'
 import { normalizeUserDisplayName } from '@/lib/userDisplayName'
 import { applyCatalogPricing, usageCost } from '@/lib/usageCost'
+import { OrganizationChart } from '@/components/profile/OrganizationChart'
+import {
+  fetchMicrosoftProfileOrganization,
+  type MicrosoftProfileOrganization,
+} from '@/lib/api/microsoftGraphApi'
+import { startSocialOAuthLogin } from '@/lib/authProviders'
 
 type ProfilePreferences = {
   displayName?: string
@@ -617,6 +623,8 @@ export function ProfilePage() {
   const [tokenEventsError, setTokenEventsError] = useState(false)
   const [profileTab, setProfileTab] = useState<'account' | 'preferences' | 'security' | 'usage' | 'performance' | 'providers'>('account')
   const [identityProfile, setIdentityProfile] = useState<OidcUserInfo | null>(null)
+  const [microsoftProfile, setMicrosoftProfile] = useState<MicrosoftProfileOrganization | null>(null)
+  const [microsoftProfileLoading, setMicrosoftProfileLoading] = useState(true)
   const [authzAssignments, setAuthzAssignments] = useState<AuthzAssignmentDto[]>([])
   const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [passkeyMsg, setPasskeyMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -670,6 +678,12 @@ export function ProfilePage() {
     setProfilePrefs(preferences)
     setEditName(normalizeUserDisplayName(currentSession.user.name || preferences.displayName || currentSession.user.email))
     void fetchUserInfo(currentSession.token).then(setIdentityProfile).catch(() => undefined)
+    const graphController = new AbortController()
+    let graphActive = true
+    void fetchMicrosoftProfileOrganization(graphController.signal)
+      .then((profile) => { if (graphActive) setMicrosoftProfile(profile) })
+      .catch(() => { if (graphActive) setMicrosoftProfile(null) })
+      .finally(() => { if (graphActive) setMicrosoftProfileLoading(false) })
     void listAuthzAssignments().then(setAuthzAssignments).catch(() => undefined)
     const localEvents = mergeTokenEvents([], readTokenTelemetry(currentSession.user.id))
     setTokenEvents(localEvents)
@@ -677,6 +691,10 @@ export function ProfilePage() {
       .then((events) => setTokenEvents(mergeTokenEvents(events, localEvents)))
       .catch(() => { if (!localEvents.length) setTokenEventsError(true) })
       .finally(() => setTokenEventsLoading(false))
+    return () => {
+      graphActive = false
+      graphController.abort()
+    }
   }, [navigate])
 
   useEffect(() => {
@@ -761,6 +779,7 @@ export function ProfilePage() {
     ? userAuthzAssignments.map((assignment) => `${assignment.role_name} (${scopeTypeLabel(assignment.scope_type_code)})`)
     : (effectiveRoles ?? []).map(rbacRoleLabel)
   const initials = profileInitials(displayName, session.user.email)
+  const graphProfile = microsoftProfile?.profile
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-muted/40 via-background to-background">
@@ -843,11 +862,30 @@ export function ProfilePage() {
               <ProfileField label="Primary RBAC role" value={platformRoleLabel} />
               <ProfileField label="RBAC roles" value={rbacRoles.length ? rbacRoles.join(', ') : 'No role claims'} />
               <ProfileField label="Account ID" value={session.user.id} mono />
-              <ProfileField label="Job title" value={identityProfile?.job_title || session.user.jobTitle || '-'} />
+              <ProfileField label="Job title" value={graphProfile?.job_title || identityProfile?.job_title || session.user.jobTitle || '-'} />
+              <ProfileField label="Department" value={graphProfile?.department || '-'} />
+              <ProfileField label="NIK / Number" value={graphProfile?.employee_id || '-'} />
               <ProfileField label="Organizational unit" value={identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
+              <ProfileField label="Office location" value={graphProfile?.office_location || '-'} />
               <ProfileField label="Account status" value={identityProfile?.account_status || session.user.accountStatus || 'Active'} />
               <ProfileField label="Last login" value={formatDate(session.loginAt)} />
             </dl>
+          </SectionCard>
+
+          <SectionCard
+            icon={Boxes}
+            title="Organization structure"
+            description="Your manager and direct reports synchronized from Microsoft Graph."
+            className={profileTab === 'account' ? undefined : 'hidden'}
+          >
+            <OrganizationChart
+              profile={graphProfile}
+              manager={microsoftProfile?.organization.manager}
+              directReports={microsoftProfile?.organization.direct_reports ?? []}
+              permissionRequired={microsoftProfile?.organization.permission_required ?? false}
+              loading={microsoftProfileLoading}
+              onReconnect={() => { void startSocialOAuthLogin('microsoft', { oauthIntent: 'graph' }) }}
+            />
           </SectionCard>
 
           <div className={cn('space-y-6', profileTab === 'preferences' || profileTab === 'security' ? undefined : 'hidden')}>

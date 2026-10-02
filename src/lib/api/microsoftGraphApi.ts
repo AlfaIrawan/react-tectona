@@ -108,6 +108,28 @@ export async function fetchMicrosoftDriveStatus(): Promise<MicrosoftDriveStatus>
   return handleJson<MicrosoftDriveStatus>(res)
 }
 
+export type MicrosoftGraphPerson = {
+  id: string
+  display_name: string
+  email: string
+  department?: string | null
+  employee_id?: string | null
+  job_title?: string | null
+  phone_number?: string | null
+  office_location?: string | null
+}
+
+export type MicrosoftProfileOrganization = {
+  connected: boolean
+  profile: MicrosoftGraphPerson
+  organization: {
+    manager?: MicrosoftGraphPerson | null
+    direct_reports: MicrosoftGraphPerson[]
+    permission_required: boolean
+    required_scope?: string | null
+  }
+}
+
 /** Fetches the signed-in user's Microsoft profile photo through identity-lite. */
 export async function fetchMicrosoftProfilePhoto(signal?: AbortSignal): Promise<Blob | null> {
   const res = await apiFetch(`${IDENTITY_API_BASE.replace(/\/$/, '')}/v1/me/microsoft/photo`, {
@@ -120,6 +142,17 @@ export async function fetchMicrosoftProfilePhoto(signal?: AbortSignal): Promise<
   if (!res.ok) return null
   const blob = await res.blob()
   return blob.type.startsWith('image/') && blob.size > 0 ? blob : null
+}
+
+/** Profile metadata plus the immediate manager/direct-report structure from Microsoft Graph. */
+export async function fetchMicrosoftProfileOrganization(
+  signal?: AbortSignal,
+): Promise<MicrosoftProfileOrganization> {
+  const res = await apiFetch(`${IDENTITY_API_BASE.replace(/\/$/, '')}/v1/me/microsoft/profile`, {
+    signal,
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+  })
+  return handleJson<MicrosoftProfileOrganization>(res)
 }
 
 /**
