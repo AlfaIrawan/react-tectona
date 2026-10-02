@@ -124,7 +124,7 @@ export function OrganizationChart({
     <div className="space-y-3 py-4">
       {permissionRequired ? (
         <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="text-xs font-semibold text-amber-900">Organization access needs Microsoft consent</p><p className="mt-0.5 text-[11px] text-amber-800">Your profile is synchronized, but manager and direct-report details require User.Read.All.</p></div>
+          <div><p className="text-xs font-semibold text-amber-900">TECTONA needs Microsoft consent for organization details</p><p className="mt-0.5 text-[11px] text-amber-800">Manager details require User.Read.All. Direct reports can use User.ReadBasic.All; User.Read.All also covers them. Graph Explorer permissions do not carry over to TECTONA.</p></div>
           <Button type="button" variant="outline" className="h-9 shrink-0 border-amber-300 bg-white text-xs" onClick={onReconnect}>Reconnect Microsoft</Button>
         </div>
       ) : null}
