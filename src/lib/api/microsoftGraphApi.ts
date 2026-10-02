@@ -108,6 +108,20 @@ export async function fetchMicrosoftDriveStatus(): Promise<MicrosoftDriveStatus>
   return handleJson<MicrosoftDriveStatus>(res)
 }
 
+/** Fetches the signed-in user's Microsoft profile photo through identity-lite. */
+export async function fetchMicrosoftProfilePhoto(signal?: AbortSignal): Promise<Blob | null> {
+  const res = await apiFetch(`${IDENTITY_API_BASE.replace(/\/$/, '')}/v1/me/microsoft/photo`, {
+    signal,
+    headers: tectonaServiceHeaders({ Accept: 'image/*' }),
+  })
+  // A local account, missing Graph consent, or a Microsoft account without a photo
+  // should use the normal Tectona avatar fallback without disrupting the topbar.
+  if (res.status === 404 || res.status === 409) return null
+  if (!res.ok) return null
+  const blob = await res.blob()
+  return blob.type.startsWith('image/') && blob.size > 0 ? blob : null
+}
+
 /**
  * Browsing and reading OneDrive go to document-knowledge-management: they are
  * document operations. identity-lite keeps only the credential and the question of
