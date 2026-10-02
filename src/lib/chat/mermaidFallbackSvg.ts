@@ -77,6 +77,37 @@ function wrapLabel(label: string, maxChars: number): string[] {
 }
 
 /** Parse flowchart / graph bodies into nodes + edges. */
+const PUML_NODE_RE = /^(\(\)|rectangle|hexagon)\s+"((?:[^"\\]|\\.)*)"\s+as\s+([A-Za-z_]\w*)$/
+const PUML_EDGE_RE = /^([A-Za-z_]\w*)\s+-+>\s+([A-Za-z_]\w*)\s*(?::\s*(.*))?$/
+
+/**
+ * The chat's process PlantUML (written by the backend's mermaid_flowchart_to_plantuml) as a
+ * Mermaid flowchart, for the local sketch shown when server rendering fails. Read as Mermaid
+ * directly, its arrows gave boxes named after their aliases ("node_u1"). Null for other text.
+ */
+export function processPlantUmlToMermaid(source: string): string | null {
+  if (!/@startuml/i.test(source) || !/\bas\s+process_start\b/.test(source)) return null
+  const clean = (label: string) =>
+    label.replace(/\\n/g, ' ').replace(/\\"/g, "'").replace(/["[\](){}|]/g, ' ').replace(/\s+/g, ' ').trim()
+  const lines = ['flowchart TD']
+  for (const raw of source.split('\n')) {
+    const line = raw.trim()
+    const node = PUML_NODE_RE.exec(line)
+    if (node) {
+      const [, kind, label, id] = node
+      const text = clean(label)
+      lines.push(kind === '()' ? `${id}((${text}))` : kind === 'hexagon' ? `${id}{${text}}` : `${id}[${text}]`)
+      continue
+    }
+    const edge = PUML_EDGE_RE.exec(line)
+    if (edge) {
+      const [, from, to, label] = edge
+      lines.push(label ? `${from} -->|${clean(label)}| ${to}` : `${from} --> ${to}`)
+    }
+  }
+  return lines.length > 2 ? lines.join('\n') : null
+}
+
 export function parseFlowchartFallback(source: string): FallbackGraph | null {
   const text = cleanSource(source)
   if (!text) return null
@@ -346,6 +377,46 @@ export function rewriteBareMermaidSource(source: string): string {
   return lines.join('\n')
 }
 
+/** Edges closing a cycle, as "source\u0001target" (iterative DFS from the roots, then any rest). */
+function findBackEdges(graph: FallbackGraph): Set<string> {
+  const out = new Map<string, string[]>()
+  const hasIncoming = new Set<string>()
+  for (const node of graph.nodes) out.set(node.id, [])
+  for (const edge of graph.edges) {
+    if (!out.has(edge.source) || !out.has(edge.target)) continue
+    out.get(edge.source)!.push(edge.target)
+    hasIncoming.add(edge.target)
+  }
+  const state = new Map<string, 1 | 2>() // 1 = on the stack, 2 = done
+  const back = new Set<string>()
+  const starts = [
+    ...graph.nodes.filter((node) => !hasIncoming.has(node.id)),
+    ...graph.nodes,
+  ].map((node) => node.id)
+  for (const start of starts) {
+    if (state.has(start)) continue
+    const stack: Array<{ id: string; next: number }> = [{ id: start, next: 0 }]
+    state.set(start, 1)
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1]
+      const targets = out.get(top.id) ?? []
+      if (top.next >= targets.length) {
+        state.set(top.id, 2)
+        stack.pop()
+        continue
+      }
+      const target = targets[top.next++]
+      const seen = state.get(target)
+      if (seen === 1) back.add(`${top.id}\u0001${target}`)
+      else if (seen === undefined) {
+        state.set(target, 1)
+        stack.push({ id: target, next: 0 })
+      }
+    }
+  }
+  return back
+}
+
 function layoutGraph(graph: FallbackGraph): {
   width: number
   height: number
@@ -382,8 +453,13 @@ function layoutGraph(graph: FallbackGraph): {
     indegree.set(node.id, 0)
     children.set(node.id, [])
   }
+  // A process loop ("belum clear → diskusi → review lagi") is a cycle. Longest-path ranking
+  // raised the ranks around it forever: the tab froze and ran out of memory before the
+  // diagram showed. Back edges (to a node still on the DFS stack) are left out of ranking.
+  const backEdges = findBackEdges(graph)
   for (const edge of graph.edges) {
     if (!indegree.has(edge.source) || !indegree.has(edge.target)) continue
+    if (backEdges.has(`${edge.source}\u0001${edge.target}`)) continue
     indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
     children.get(edge.source)?.push(edge.target)
   }
@@ -393,13 +469,15 @@ function layoutGraph(graph: FallbackGraph): {
   if (queue.length === 0 && graph.nodes[0]) queue.push(graph.nodes[0].id)
   for (const id of queue) rank.set(id, 0)
 
+  // Safety net: in a DAG no rank exceeds the node count.
+  const maxRank = graph.nodes.length
   const visiting = [...queue]
   while (visiting.length > 0) {
     const id = visiting.shift()!
     const base = rank.get(id) ?? 0
     for (const child of children.get(id) ?? []) {
       const next = base + 1
-      if ((rank.get(child) ?? -1) < next) {
+      if (next <= maxRank && (rank.get(child) ?? -1) < next) {
         rank.set(child, next)
         visiting.push(child)
       }

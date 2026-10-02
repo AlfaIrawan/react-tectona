@@ -1619,6 +1619,8 @@ export interface FillDkmTemplateRequest {
     session_id?: string | null
   }
   options?: { allow_llm?: boolean }
+  /** The idea's title; the backend sets the document's title placeholders to it exactly. */
+  document_title?: string
 }
 
 export interface FillDkmTemplateResponse {
@@ -1658,10 +1660,12 @@ export interface TemplateSchemaPlaceholderRecommendation {
   source?: string
   confidence?: number
   reason?: string
-  /** Table cell this placeholder maps to (table_index/row_index) — enables precise write-back. */
-  location?: { table_index: number; row_index: number } | null
+  /** Table cell (table_index/row_index) or Word checkbox group (checkbox_group) this maps to. */
+  location?: { table_index?: number; row_index?: number; checkbox_group?: number } | null
   /** Literal instructional/prompt text from the source cell (e.g. "Provide the project name…"). */
   instruction?: string | null
+  /** multi_choice (checkbox group): option labels the agent picks from. */
+  options?: string[] | null
 }
 
 export interface TemplateSchemaSectionRecommendation {
@@ -2187,12 +2191,87 @@ export async function renderMermaidFlowchartAsBpmnPng(
 }
 
 /** Render legacy Mermaid or canonical PlantUML through the shared process renderer. */
+// Rendered process diagrams by source. A chat re-renders its messages often (and remounts
+// them); without this every remount asked PlantUML again. The Blob is cached — each caller
+// gets its own object URL, which it may revoke.
+const plantUmlPngCache = new Map<string, Promise<RenderedProcessDiagram>>()
+const PLANTUML_CACHE_MAX = 40
+
+/**
+ * How a process graph is drawn. `bpmn` is BPMN 2.0 notation from the renderer of the Idea
+ * Diagram section (the backend falls back to PlantUML when the graph cannot be converted).
+ */
+export type ProcessDiagramNotation = 'plantuml' | 'bpmn'
+
+function plantUmlCacheKey(source: string, language: string, notation: ProcessDiagramNotation): string {
+  return `${notation}|${language}|${source}`
+}
+
+/**
+ * Start rendering a diagram before it is shown (e.g. as soon as a brainstorm reply arrives,
+ * while its text is still being typed). Failures are dropped so a later render retries.
+ */
+export function prefetchProcessDiagramPlantUmlPng(
+  source: string,
+  language: 'id' | 'en' = 'id',
+  notation: ProcessDiagramNotation = 'plantuml',
+): void {
+  void renderProcessDiagramPlantUmlBlob(source, language, notation).catch(() => undefined)
+}
+
+/** A rendered process diagram and the notation it was actually drawn in. */
+type RenderedProcessDiagram = { blob: Blob; notation: ProcessDiagramNotation }
+
+function renderProcessDiagramPlantUmlBlob(
+  source: string,
+  language: 'id' | 'en',
+  notation: ProcessDiagramNotation,
+): Promise<RenderedProcessDiagram> {
+  const key = plantUmlCacheKey(source, language, notation)
+  const cached = plantUmlPngCache.get(key)
+  if (cached) return cached
+  const pending = fetchProcessDiagramPlantUmlBlob(source, language, notation)
+  plantUmlPngCache.set(key, pending)
+  pending.then(
+    (rendered) => {
+      // A PlantUML fallback for a BPMN request (renderer down or restarting) is not kept:
+      // the next render asks for BPMN again instead of showing the fallback until a reload.
+      if (rendered.notation !== notation) plantUmlPngCache.delete(key)
+    },
+    () => plantUmlPngCache.delete(key),
+  )
+  if (plantUmlPngCache.size > PLANTUML_CACHE_MAX) {
+    const oldest = plantUmlPngCache.keys().next().value
+    if (oldest !== undefined) plantUmlPngCache.delete(oldest)
+  }
+  return pending
+}
+
 export async function renderProcessDiagramAsPlantUmlPng(
   source: string,
   language: 'id' | 'en' = 'id',
+  notation: ProcessDiagramNotation = 'plantuml',
 ): Promise<string> {
+  return (await renderProcessDiagram(source, language, notation)).url
+}
+
+/** Object URL of the rendered diagram, and the notation the server actually used. */
+export async function renderProcessDiagram(
+  source: string,
+  language: 'id' | 'en' = 'id',
+  notation: ProcessDiagramNotation = 'plantuml',
+): Promise<{ url: string; notation: ProcessDiagramNotation }> {
+  const rendered = await renderProcessDiagramPlantUmlBlob(source, language, notation)
+  return { url: URL.createObjectURL(rendered.blob), notation: rendered.notation }
+}
+
+async function fetchProcessDiagramPlantUmlBlob(
+  source: string,
+  language: 'id' | 'en',
+  notation: ProcessDiagramNotation,
+): Promise<RenderedProcessDiagram> {
   const res = await fetchWithTimeout(
-    `${BASE_URL}/v1/agent/render-process-plantuml`,
+    `${BASE_URL}/v1/agent/${notation === 'bpmn' ? 'render-process-bpmn' : 'render-process-plantuml'}`,
     {
       method: 'POST',
       body: JSON.stringify({ source, language }),
@@ -2206,7 +2285,8 @@ export async function renderProcessDiagramAsPlantUmlPng(
   if (!blob.size || !/^image\//i.test(blob.type || 'image/png')) {
     throw new Error('PlantUML process render returned an empty image')
   }
-  return URL.createObjectURL(blob)
+  const drawnAs = res.headers.get('X-Diagram-Notation')
+  return { blob, notation: drawnAs === 'bpmn' || drawnAs === 'plantuml' ? drawnAs : notation }
 }
 
 export async function brainstormIdeaDraftJob(

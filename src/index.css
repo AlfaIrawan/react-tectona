@@ -389,6 +389,26 @@
     background: transparent;
   }
 
+  .abbreviation-scan-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: stable;
+  }
+  .abbreviation-scan-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .abbreviation-scan-scroll::-webkit-scrollbar-track,
+  .abbreviation-scan-scroll::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+  .abbreviation-scan-dialog:hover .abbreviation-scan-scroll {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.55) transparent;
+  }
+  .abbreviation-scan-dialog:hover .abbreviation-scan-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.55);
+    border-radius: 9999px;
+  }
+
   /* Source editors retain wheel and trackpad scrolling, but only expose native scrollbars while
      the pointer is within the editor. */
   .source-editor-scroll {

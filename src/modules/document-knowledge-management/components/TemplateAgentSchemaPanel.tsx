@@ -75,6 +75,7 @@ function recommendationToSchema(
         required: Boolean(item.required),
         location: item.location ?? null,
         instruction: item.instruction ?? null,
+        options: item.options ?? null,
       })),
     sections: sections
       .filter((item) => item.accepted)

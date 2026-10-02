@@ -13,6 +13,10 @@ import {
   isSamplesSystemFolder,
   SAMPLES_FOLDER_ACCENT_COLOR,
 } from '@/modules/document-knowledge-management/lib/samplesFolder'
+import {
+  isGovernanceRootFolder,
+  GOVERNANCE_FOLDER_ACCENT_COLOR,
+} from '@/modules/document-knowledge-management/lib/governanceFolder'
 import compactStyles from './DocumentRepositoryFolderCard.module.css'
 
 type DocumentRepositoryFolderCardReadOnlyProps = {
@@ -29,13 +33,16 @@ export function DocumentRepositoryFolderCardReadOnly({
   const hasDocuments = folder.document_count > 0
   const metaLabel = `${folder.document_count} docs · ${folder.children_count} subfolders`
   const isProjectFolder = isProjectLinkedDocumentFolder(folder.description)
-  const isSamplesLocked = isSamplesSystemFolder(folder)
+  const isGovernanceLocked = isGovernanceRootFolder(folder)
+  const isSamplesLocked = isSamplesSystemFolder(folder) || isGovernanceLocked
   const isSamplesLibrary = isSamplesLibraryFolder(folder, folders)
-  const accentColor = isSamplesLibrary
-    ? SAMPLES_FOLDER_ACCENT_COLOR
-    : isProjectFolder
-      ? PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR
-      : null
+  const accentColor = isGovernanceLocked
+    ? GOVERNANCE_FOLDER_ACCENT_COLOR
+    : isSamplesLibrary
+      ? SAMPLES_FOLDER_ACCENT_COLOR
+      : isProjectFolder
+        ? PROJECT_DOCUMENT_FOLDER_ACCENT_COLOR
+        : null
   const themedStyle = accentColor
     ? (buildFolderCardThemeVariables(accentColor, hasDocuments) as CSSProperties)
     : undefined
@@ -47,6 +54,7 @@ export function DocumentRepositoryFolderCardReadOnly({
         compactStyles.compactCard,
         isProjectFolder && folderCardStyles.folderCardThemed,
         isSamplesLibrary && folderCardStyles.folderCardThemed,
+        isGovernanceLocked && folderCardStyles.folderCardThemed,
         hasDocuments && folderCardStyles.hasProjects,
         'cursor-pointer',
       )}

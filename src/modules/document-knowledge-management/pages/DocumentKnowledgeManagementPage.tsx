@@ -521,10 +521,13 @@ import {
 import {
   createDocumentFolder,
   deleteDocumentFolder,
+  ensureDocumentGovernanceFolders,
   fetchAllDocumentFolders,
   updateDocumentFolder,
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
+import { isOrganizationHomeWorkspace } from '@/lib/workspaceOwnershipVisibility'
+import { isGovernanceRootFolder } from '@/modules/document-knowledge-management/lib/governanceFolder'
 import { bootstrapSamplesLibraryIfMissing, pruneEmptySeededSampleCategoryFolders } from '@/modules/document-knowledge-management/lib/ensureSamplesLibrary'
 import { isFolderInSamplesTree, isSamplesRootFolder, isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
 import { isDocumentFolderDescendant } from '@/modules/document-knowledge-management/lib/repositoryFolderNav'
@@ -5776,6 +5779,8 @@ export function DocumentKnowledgeManagementPage() {
   const [templateSharingBusyId, setTemplateSharingBusyId] = useState<string | null>(null)
   const [templateDeleteBusyId, setTemplateDeleteBusyId] = useState<string | null>(null)
   const [templateDeleteTarget, setTemplateDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [templateRenameTarget, setTemplateRenameTarget] = useState<{ id: string; name: string } | null>(null)
+  const [templateRenameValue, setTemplateRenameValue] = useState('')
   const kbEditorTableMenuPos = useFlippedMenuPosition(
     kbEditorTableMenuRef,
     !!kbEditorTableMenu,
@@ -5797,6 +5802,10 @@ export function DocumentKnowledgeManagementPage() {
     }
     return 'repository'
   })
+
+  useEffect(() => {
+    setSearchQuery('')
+  }, [activePanel])
 
   // Layout choices persist per user (identity-lite), hydrated from localStorage on
   // first paint so the page never flashes its default layout before restoring.
@@ -6799,6 +6808,26 @@ export function DocumentKnowledgeManagementPage() {
           /* keep listing without Samples if folder create is unavailable */
         }
       }
+      // Governance is an organization-only system folder: only the organization-home workspace
+      // (classification 'Organization', no parent) gets it, so it never appears in child/personal
+      // workspaces. Best-effort — listing still works if the folder cannot be created.
+      const activeWorkspaceOption = resolveKbWorkspaceOption(
+        activeWorkspaceApiId ?? tenant?.workspaceId,
+        kbWorkspaceOptions,
+      )
+      if (
+        activeWorkspaceApiId
+        && activeWorkspaceOption
+        && isOrganizationHomeWorkspace(activeWorkspaceOption)
+        && !folders.some((folder) => isGovernanceRootFolder(folder))
+      ) {
+        try {
+          await ensureDocumentGovernanceFolders([activeWorkspaceApiId])
+          folders = await fetchAllDocumentFolders(activeWorkspaceApiId)
+        } catch {
+          /* keep listing without Governance if folder create is unavailable */
+        }
+      }
       const occupiedFolderIds = new Set(
         repositoryItems
           .map((item) => item.folderId)
@@ -6815,7 +6844,11 @@ export function DocumentKnowledgeManagementPage() {
         repositoryItems.map((item) => item.folderId),
         currentOwnerId,
         {
-          alwaysRetain: (folder) => isFolderInSamplesTree(folder.id, folders),
+          // System folders are owned by 'system' (not the current user) and hold no
+          // documents, so they'd be filtered out without an explicit retain. Samples keeps
+          // its whole tree; Governance is a root-only locked folder.
+          alwaysRetain: (folder) =>
+            isFolderInSamplesTree(folder.id, folders) || isGovernanceRootFolder(folder),
         },
       )
       const activeProjectIds = new Set(repositoryProjects.map((project) => project.id))
@@ -6834,7 +6867,7 @@ export function DocumentKnowledgeManagementPage() {
     } catch {
       setRepositoryFolders([])
     }
-  }, [repositoryItems, repositoryProjects, activeWorkspaceApiId])
+  }, [repositoryItems, repositoryProjects, activeWorkspaceApiId, kbWorkspaceOptions, tenant?.workspaceId])
 
   useEffect(() => {
     void loadRepositoryFolders()
@@ -10304,6 +10337,22 @@ export function DocumentKnowledgeManagementPage() {
   }, [templateDeleteTarget, templateDeleteBusyId])
 
   useEffect(() => {
+    if (!templateRenameTarget) return
+
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (templateStatusBusyId === templateRenameTarget.id) return
+      event.preventDefault()
+      setTemplateRenameTarget(null)
+    }
+
+    window.addEventListener('keydown', onWindowKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown)
+    }
+  }, [templateRenameTarget, templateStatusBusyId])
+
+  useEffect(() => {
     if (!kbAddOpen) return
 
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -11431,7 +11480,7 @@ export function DocumentKnowledgeManagementPage() {
     if (kbSystemTableEdit) return systemKbTablePlainLength(kbSystemTableEdit)
     return kbExtractPlainText(kbFormContent).length
   }, [kbFormContent, kbStructuredEdit, kbSystemTableEdit])
-  const kbContentMaxLength = kbSystemTableEdit?.specId === 'aplikasi' ? 20_000 : 8_000
+  const kbContentMaxLength = ['aplikasi', 'singkatan'].includes(kbSystemTableEdit?.specId || '') ? 20_000 : 8_000
 
   const runKbAiAction = useCallback((action: KbAiActionKey, task: () => void | Promise<void>) => {
     if (kbAiActionLoading) return
@@ -13458,6 +13507,10 @@ export function DocumentKnowledgeManagementPage() {
     // Read once — calling readKbEditorContentForSave twice used to overwrite the editor DOM
     // with a rebuilt copy that lost column widths before the PATCH body was built.
     const contentForSave = readKbEditorContentForSave()
+    if (kbSystemTableEdit?.specId === 'singkatan' && contentForSave.length > 50_000) {
+      addToast({ title: 'Content is too long', description: 'Maximum 50,000 characters including table markup. Reduce the selected rows before saving.', variant: 'error' })
+      return
+    }
     const plainContent = kbExtractPlainText(contentForSave).trim()
     if (!kbFormCategory) {
       addToast({
@@ -14853,25 +14906,33 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [addToast, templateById])
 
-  const handleTemplateRename = useCallback(async (templateId: string) => {
+  const handleTemplateRename = useCallback((templateId: string) => {
     const template = templateById.get(templateId)
     if (!template) {
       addToast({ title: 'Template not found', description: 'Reload the library and try again.', variant: 'error' })
       return
     }
-    const nextName = window.prompt('Rename template', template.name)
-    if (nextName === null) return
-    const trimmed = nextName.trim()
+    setTemplateRenameValue(template.name)
+    setTemplateRenameTarget({ id: template.id, name: template.name })
+  }, [addToast, templateById])
+
+  const handleTemplateRenameConfirm = useCallback(async () => {
+    if (!templateRenameTarget) return
+    const trimmed = templateRenameValue.trim()
     if (trimmed.length < 3) {
       addToast({ title: 'Name too short', description: 'Template name must be at least 3 characters.', variant: 'error' })
       return
     }
-    if (trimmed === template.name) return
+    if (trimmed === templateRenameTarget.name) {
+      setTemplateRenameTarget(null)
+      return
+    }
     if (templateStatusBusyId) return
-    setTemplateStatusBusyId(templateId)
+    setTemplateStatusBusyId(templateRenameTarget.id)
     try {
-      await patchTemplate(templateId, { name: trimmed })
+      await patchTemplate(templateRenameTarget.id, { name: trimmed })
       await loadMasterTemplates()
+      setTemplateRenameTarget(null)
       addToast({ title: 'Template renamed', description: trimmed, variant: 'success' })
     } catch (error) {
       addToast({
@@ -14882,7 +14943,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setTemplateStatusBusyId(null)
     }
-  }, [addToast, loadMasterTemplates, templateById, templateStatusBusyId])
+  }, [addToast, loadMasterTemplates, templateRenameTarget, templateRenameValue, templateStatusBusyId])
 
   const handleTemplateDelete = useCallback((templateId: string, templateName: string) => {
     setTemplateDeleteTarget({ id: templateId, name: templateName })
@@ -18586,7 +18647,12 @@ export function DocumentKnowledgeManagementPage() {
               ) : null}
               <div
                 className={cn(
-                  'relative flex h-full min-h-0 flex-col gap-3 overflow-visible transition-all duration-200',
+                  // This repository panel is content-height (its DocPanelSection has no computed
+                  // viewport height in this view), so flex-1 alone can't stretch an empty/short
+                  // folder. Give it a viewport-relative min-height so the drop zone fills down to
+                  // near the bottom of the screen; real content taller than this still grows/scrolls.
+                  'relative flex h-full min-h-0 flex-1 flex-col gap-3 overflow-visible transition-all duration-200',
+                  !repositorySplitActive && 'min-h-[calc(100vh-27rem)]',
                   repositoryViewMode === 'split'
                     && !repositorySplitActive
                     && cn(
@@ -23573,7 +23639,7 @@ export function DocumentKnowledgeManagementPage() {
                       </Label>
                       <div ref={kbAiStickySentinelRef} className="h-px w-full" aria-hidden="true" />
                       <div className="sticky top-1 z-20 space-y-2">
-                      {kbSystemTableEdit?.specId !== 'aplikasi' ? (
+                      {!['aplikasi', 'singkatan'].includes(kbSystemTableEdit?.specId || '') ? (
                       <div
                         className={cn(
                           'rounded-xl border p-2.5 backdrop-blur transition-all duration-300 ease-out supports-[backdrop-filter]:bg-background/85',
@@ -23721,6 +23787,8 @@ export function DocumentKnowledgeManagementPage() {
                           <SystemKbTableEditorForm
                             model={kbSystemTableEdit}
                             onChange={setKbSystemTableEdit}
+                            workspaceId={canonicalizeKbWorkspaceId(kbFormWorkspace) || activeWorkspaceApiId || undefined}
+                            entryId={kbEditingEntryId}
                             onScanApplications={kbSystemTableEdit.specId === 'aplikasi' ? handleApplicationCatalogScan : undefined}
                           />
                           <div className="flex justify-end px-1">
@@ -26195,6 +26263,93 @@ export function DocumentKnowledgeManagementPage() {
         ) : null}
       </ContextMenu>
 
+      {templateRenameTarget && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close template rename dialog"
+                disabled={templateStatusBusyId === templateRenameTarget.id}
+                onClick={() => {
+                  if (templateStatusBusyId !== templateRenameTarget.id) setTemplateRenameTarget(null)
+                }}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-rename-dialog-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary ring-1 ring-primary/25">
+                      <CaseSensitive className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="template-rename-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Rename template
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        Update the master template name shown in the library.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void handleTemplateRenameConfirm()
+                  }}
+                >
+                  <div className="space-y-3 px-6 py-5">
+                    <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Template</p>
+                      <p className="mt-1 break-words text-sm font-semibold text-foreground">{templateRenameTarget.name}</p>
+                    </div>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-foreground">New name</span>
+                      <Input
+                        autoFocus
+                        value={templateRenameValue}
+                        onChange={(event) => setTemplateRenameValue(event.target.value)}
+                        disabled={templateStatusBusyId === templateRenameTarget.id}
+                        aria-label="New template name"
+                      />
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      The name must be at least 3 characters. Documents already created from this template keep their current titles.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                      disabled={templateStatusBusyId === templateRenameTarget.id}
+                      onClick={() => setTemplateRenameTarget(null)}
+                    >
+                      <X className="h-4 w-4 shrink-0" aria-hidden />
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      className={cn(enterprisePrimarySolidButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                      disabled={templateStatusBusyId === templateRenameTarget.id || templateRenameValue.trim().length < 3}
+                    >
+                      <CaseSensitive className="h-4 w-4 shrink-0" aria-hidden />
+                      {templateStatusBusyId === templateRenameTarget.id ? 'Renaming...' : 'Rename template'}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
       {templateDeleteTarget && typeof document !== 'undefined'
         ? createPortal(
             <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
@@ -26386,7 +26541,7 @@ export function DocumentKnowledgeManagementPage() {
                 onClick={() => {
                   const target = templateContextMenuItem
                   setTemplateRowContextMenu(null)
-                  void handleTemplateRename(target.id)
+                  handleTemplateRename(target.id)
                 }}
               >
                 <CaseSensitive className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />

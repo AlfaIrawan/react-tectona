@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
-import { renderProcessDiagramAsPlantUmlPng } from '@/lib/api/tectonaAgentRuntimeApi'
-import { buildFlowchartFallbackSvg, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
+import { renderProcessDiagram, type ProcessDiagramNotation } from '@/lib/api/tectonaAgentRuntimeApi'
+import { buildFlowchartFallbackSvg, processPlantUmlToMermaid, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
 import {
   AssistantFlowchartCanvas,
   canRenderAssistantFlowchart,
@@ -15,7 +15,15 @@ import { cn } from '@/lib/utils'
 type AssistantMermaidBlockProps = {
   source: string
   className?: string
+  /** `bpmn`: BPMN 2.0 notation, the same renderer as the Idea Diagram section. */
+  notation?: ProcessDiagramNotation
 }
+
+/** Smallest scale a BPMN diagram is shown at in a message; wider ones scroll sideways. */
+const BPMN_MIN_SCALE = 0.6
+/** Retries of a BPMN request answered with the PlantUML fallback (after 6 s, 12 s, 18 s). */
+const BPMN_FALLBACK_RETRIES = 3
+const BPMN_FALLBACK_RETRY_MS = 6000
 
 const MERMAID_INIT = {
   startOnLoad: false,
@@ -362,11 +370,16 @@ async function renderMermaidSvg(source: string, reactId: string): Promise<{ svg:
   throw new Error('Diagram could not be rendered')
 }
 
-export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlockProps) {
+export function AssistantMermaidBlock({ source, className, notation = 'plantuml' }: AssistantMermaidBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const reactId = useId().replace(/:/g, '')
   const [svgHtml, setSvgHtml] = useState<string | null>(null)
   const [bpmnUrl, setBpmnUrl] = useState<string | null>(null)
+  const [bpmnImageWidth, setBpmnImageWidth] = useState<number | null>(null)
+  const [drawnNotation, setDrawnNotation] = useState<ProcessDiagramNotation>(notation)
+  const fallbackRetriesRef = useRef(0)
+  const fallbackRetryTimerRef = useRef<number | null>(null)
+  const renderedKeyRef = useRef<string | null>(null)
   const [viaFallback, setViaFallback] = useState(false)
   const [previewHeight, setPreviewHeight] = useState<number>(180)
   const [fullscreenOpen, setFullscreenOpen] = useState(false)
@@ -375,11 +388,16 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
   const [hardError, setHardError] = useState<string | null>(null)
 
   const cleanedSource = useMemo(() => sanitizeMermaidSource(source), [source])
-  const flowchartSource = canRenderAssistantFlowchart(cleanedSource)
-    ? cleanedSource
-    : canRenderAssistantFlowchart(source)
-      ? source
-      : cleanedSource
+  // The local sketch (used only when server rendering fails) must show step names, not the
+  // PlantUML aliases.
+  const plantUmlAsMermaid = useMemo(() => processPlantUmlToMermaid(source), [source])
+  const flowchartSource = plantUmlAsMermaid && canRenderAssistantFlowchart(plantUmlAsMermaid)
+    ? plantUmlAsMermaid
+    : canRenderAssistantFlowchart(cleanedSource)
+      ? cleanedSource
+      : canRenderAssistantFlowchart(source)
+        ? source
+        : cleanedSource
   const showFlowchart = canRenderAssistantFlowchart(flowchartSource)
   const flowHeight = showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
   const isEmptyPlaceholder = useMemo(() => isEmptyProcessPlaceholder(source), [source])
@@ -393,20 +411,38 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
       return
     }
     let cancelled = false
+    // A retry of the same diagram keeps the image on screen until the new one arrives.
+    const renderKey = `${notation}|${source}`
+    const isRetry = renderedKeyRef.current === renderKey
+    renderedKeyRef.current = renderKey
+    if (!isRetry) fallbackRetriesRef.current = 0
     const timer = window.setTimeout(() => {
       void (async () => {
         setIsRendering(true)
-        setBpmnUrl(null)
-        setSvgHtml(null)
+        if (!isRetry) {
+          setBpmnUrl(null)
+          setBpmnImageWidth(null)
+          setSvgHtml(null)
+        }
         try {
-          const imageUrl = await renderProcessDiagramAsPlantUmlPng(source)
+          const rendered = await renderProcessDiagram(source, 'id', notation)
           if (cancelled) {
-            URL.revokeObjectURL(imageUrl)
+            URL.revokeObjectURL(rendered.url)
             return
           }
-          setBpmnUrl(imageUrl)
+          setBpmnUrl(rendered.url)
+          setDrawnNotation(rendered.notation)
           setViaFallback(false)
           setHardError(null)
+          // BPMN was asked for but the server answered with its PlantUML fallback (renderer
+          // down or restarting): show it, and ask for BPMN again shortly — a few times at most.
+          if (rendered.notation !== notation && fallbackRetriesRef.current < BPMN_FALLBACK_RETRIES) {
+            fallbackRetriesRef.current += 1
+            fallbackRetryTimerRef.current = window.setTimeout(
+              () => setRetryTick((tick) => tick + 1),
+              BPMN_FALLBACK_RETRY_MS * fallbackRetriesRef.current,
+            )
+          }
         } catch (err) {
           // Keep a local preview only when PlantUML is temporarily unavailable.
           // This preserves access to existing in-progress brainstorms without
@@ -446,8 +482,9 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
     return () => {
       cancelled = true
       window.clearTimeout(timer)
+      if (fallbackRetryTimerRef.current !== null) window.clearTimeout(fallbackRetryTimerRef.current)
     }
-  }, [isEmptyPlaceholder, reactId, source, retryTick, showFlowchart])
+  }, [isEmptyPlaceholder, notation, reactId, source, retryTick, showFlowchart])
 
   useEffect(() => {
     return () => {
@@ -531,7 +568,7 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
         ) : null}
         {bpmnUrl ? (
           <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
-            PlantUML process flow
+            {drawnNotation === 'bpmn' ? 'BPMN process flow' : 'PlantUML process flow'}
           </p>
         ) : showFlowchart ? (
           <p className="absolute left-2 top-2 z-20 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
@@ -544,16 +581,28 @@ export function AssistantMermaidBlock({ source, className }: AssistantMermaidBlo
           </p>
         ) : null}
         {bpmnUrl ? (
-          <div className="flex w-full justify-center overflow-x-auto p-3">
+          <div className={cn('flex w-full overflow-x-auto p-3', bpmnImageWidth ? 'justify-start' : 'justify-center')}>
             <img
               src={bpmnUrl}
-              alt="Diagram proses bisnis PlantUML"
-              className="mx-auto max-h-[min(70vh,640px)] w-auto max-w-full object-contain"
+              alt={drawnNotation === 'bpmn' ? 'Diagram proses bisnis BPMN' : 'Diagram proses bisnis PlantUML'}
+              className={cn(
+                'max-h-[min(70vh,640px)] object-contain',
+                bpmnImageWidth ? 'max-w-none' : 'mx-auto w-auto max-w-full',
+              )}
+              style={bpmnImageWidth ? { width: bpmnImageWidth, maxHeight: 'none' } : undefined}
               onLoad={(event) => {
                 const height = event.currentTarget.naturalHeight
                 const width = event.currentTarget.naturalWidth
-                const host = event.currentTarget.parentElement?.clientWidth || 480
-                const scale = width > 0 ? Math.min(1, host / width) : 1
+                const host = (event.currentTarget.parentElement?.clientWidth || 480) - 24
+                let scale = width > 0 ? Math.min(1, host / width) : 1
+                // A BPMN process is laid out left to right: fitted into a chat bubble its labels
+                // became unreadable. Keep it at >= 60% and let it scroll sideways instead.
+                if (drawnNotation === 'bpmn' && scale < BPMN_MIN_SCALE) {
+                  scale = BPMN_MIN_SCALE
+                  setBpmnImageWidth(Math.round(width * scale))
+                } else {
+                  setBpmnImageWidth(null)
+                }
                 setPreviewHeight(Math.max(180, Math.ceil(height * scale) + 24))
               }}
             />

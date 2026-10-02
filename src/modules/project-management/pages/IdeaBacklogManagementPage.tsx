@@ -144,6 +144,7 @@ import {
   getIdeaDraftVersion,
   listIdeaDraftVersions,
   reanalyzeIdeaDraftJob,
+  prefetchProcessDiagramPlantUmlPng,
   restoreIdeaDraftBrainstormSession,
   startIdeaDraftJob,
   startIdeaSummaryJob,
@@ -1077,6 +1078,12 @@ function BrainstormProseSegments({ text }: { text: string }) {
   )
 }
 
+function prefetchBrainstormDiagrams(text: string): void {
+  for (const part of splitBrainstormDisplayParts(text)) {
+    if (part.type === 'plantuml' || part.type === 'mermaid') prefetchProcessDiagramPlantUmlPng(part.source, 'id', 'bpmn')
+  }
+}
+
 function BrainstormAssistantMessageBody({ text }: { text: string }) {
   const parts = splitBrainstormDisplayParts(text)
   if (parts.length === 0) return null
@@ -1100,7 +1107,8 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
           )
         }
         if (part.type === 'mermaid' || part.type === 'plantuml') {
-          return <AssistantMermaidBlock key={`m-${index}`} source={part.source} />
+          // BPMN 2.0, like the Idea Diagram section: one notation for the idea's process.
+          return <AssistantMermaidBlock key={`m-${index}`} source={part.source} notation="bpmn" />
         }
         const prose = part.text.trim()
         if (!prose) return null
@@ -1122,39 +1130,7 @@ function BrainstormAssistantTypingMessage({
   onProgress?: () => void
 }) {
   const typingTarget = text.slice(0, brainstormTypingCutoff(text))
-  const [displayText, setDisplayText] = useState(animate ? '' : text)
-  const [isTyping, setIsTyping] = useState(animate)
-
-  useEffect(() => {
-    if (!animate) {
-      setDisplayText(text)
-      setIsTyping(false)
-      return
-    }
-    setDisplayText('')
-    setIsTyping(true)
-    const tokens = typingTarget.match(/\S+\s*|\s+/g) ?? [typingTarget]
-    if (tokens.length === 0) {
-      setDisplayText(text)
-      setIsTyping(false)
-      onComplete?.()
-      return
-    }
-    let index = 0
-    const timerId = window.setInterval(() => {
-      index += 1
-      if (index >= tokens.length) {
-        window.clearInterval(timerId)
-        setDisplayText(text)
-        setIsTyping(false)
-        onComplete?.()
-        return
-      }
-      setDisplayText(tokens.slice(0, index).join(''))
-      onProgress?.()
-    }, 36)
-    return () => window.clearInterval(timerId)
-  }, [animate, onComplete, onProgress, text, typingTarget])
+  const { displayText, isTyping } = useTypingReveal({ text, typingTarget, animate, onComplete, onProgress })
 
   return (
     <div className="relative">
@@ -1179,6 +1155,7 @@ import {
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { brainstormTypingCutoff, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
+import { useTypingReveal } from '@/lib/chat/useTypingReveal'
 import {
   appendProcessDiagramsToText,
   extractProcessDiagramsFromText,
@@ -3798,6 +3775,8 @@ export function IdeaBacklogManagementPage() {
       )
       setBrainstormMessages(mergedMessages)
       const lastAssistantIndex = mergedMessages.findLastIndex((item) => item.role === 'assistant')
+      // Render the reply's diagram while its text is still being typed, not after.
+      if (lastAssistantIndex >= 0) prefetchBrainstormDiagrams(mergedMessages[lastAssistantIndex].text)
       setBrainstormAnimatingAssistantIndex(lastAssistantIndex >= 0 ? lastAssistantIndex : null)
       // Sticky: further answers can only add context, so never drop back to
       // not-ready and pull the Generate draft button out from under the user.

@@ -179,3 +179,18 @@ export async function ensureDocumentSamplesFolders(workspaceIds: string[]): Prom
   })
   await handleJson<unknown>(res)
 }
+
+/**
+ * Ensure the locked "Governance" system root folder. Only ever called for organization-home
+ * workspaces (see DocumentKnowledgeManagementPage), so the folder appears there and nowhere else.
+ */
+export async function ensureDocumentGovernanceFolders(workspaceIds: string[]): Promise<void> {
+  const ids = [...new Set(workspaceIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return
+  const res = await apiFetch(`${getV1Base()}/folders/system/governance/ensure`, {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ workspace_ids: ids }),
+  })
+  await handleJson<unknown>(res)
+}

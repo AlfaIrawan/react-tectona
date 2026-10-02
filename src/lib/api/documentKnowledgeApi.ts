@@ -397,6 +397,38 @@ export async function patchDocument(
   return handleJson<DocumentResponse>(res)
 }
 
+export interface IdeaTitleSyncResult {
+  idea_id: string
+  title: string
+  updated: number
+  documents: Array<{
+    document_id: string
+    previous_title: string
+    title: string
+    title_changed: boolean
+    version_no: number | null
+    docx: { attachment_id?: string; file_name?: string; replacements?: number; error?: string } | null
+  }>
+}
+
+/**
+ * Put every document generated from the idea (URD/BRD/FSD) on the idea's title: new title,
+ * a document version recording the change, and a new .docx version with the old title replaced.
+ */
+export async function syncIdeaDocumentTitles(body: {
+  idea_id: string
+  title: string
+  previous_title?: string
+}): Promise<IdeaTitleSyncResult> {
+  const base = getV1Base()
+  const res = await apiFetch(`${base}/documents/idea-title-sync`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  return handleJson<IdeaTitleSyncResult>(res)
+}
+
 export async function getDocument(documentId: string): Promise<DocumentResponse> {
   const base = getV1Base()
   const res = await apiFetch(`${base}/documents/${encodeURIComponent(documentId)}`, {
@@ -727,10 +759,12 @@ export interface TemplateAgentSchema {
     label?: string
     type?: string
     required?: boolean
-    /** Table cell this placeholder maps to (table_index/row_index) — enables precise write-back. */
-    location?: { table_index: number; row_index: number } | null
+    /** Table cell (table_index/row_index) or Word checkbox group (checkbox_group) this maps to. */
+    location?: { table_index?: number; row_index?: number; checkbox_group?: number } | null
     /** Literal instructional/prompt text from the source cell (e.g. "Provide the project name…"). */
     instruction?: string | null
+    /** multi_choice (checkbox group): option labels the agent picks from. */
+    options?: string[] | null
   }>
   sections?: Array<{
     id: string

@@ -331,6 +331,7 @@ function AgentWorkflowStudioInner({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [question, setQuestion] = useState('Apa ketentuan PH Maks untuk UMCY?')
   const [run, setRun] = useState<AgentWorkflowRunDto | null>(null)
+  const [simulationStep, setSimulationStep] = useState(-1)
   const [reviews, setReviews] = useState<AgentWorkflowReviewDto[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -343,6 +344,20 @@ function AgentWorkflowStudioInner({
   const pendingReview = useMemo(() => reviews.find((review) => review.status === 'pending') ?? null, [reviews])
   const approvedReview = useMemo(() => reviews.find((review) => review.status === 'approved') ?? null, [reviews])
   const isReviewAuthor = pendingReview?.requested_by === getSession()?.user.id
+
+  useEffect(() => {
+    if (!run?.steps.length) return undefined
+    let index = 0
+    const advance = () => {
+      const step = run.steps[index]
+      setSimulationStep(index)
+      setSelectedId(step.node_id)
+      index += 1
+      if (index < run.steps.length) window.setTimeout(advance, 520)
+    }
+    advance()
+    return undefined
+  }, [run])
   const workspaceAgents = useMemo<AgentCatalogEntryDto[]>(() => {
     // `runtime:vero` is a legacy, global catalog record. Vero must be selected
     // through its published assistant identity so it cannot leak into another workspace.
@@ -574,7 +589,7 @@ function AgentWorkflowStudioInner({
   const testRun = async () => {
     if (!workflowId) { setError('Save the workflow before testing.'); return }
     if (!isPublished) { setError('Publish this workflow after an independent review is approved before running it.'); return }
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); setRun(null); setSimulationStep(-1)
     try { setRun(await runAgentWorkflow(workflowId, question)) }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Test run failed') } finally { setBusy(false) }
   }
@@ -778,6 +793,45 @@ function AgentWorkflowStudioInner({
           </ReactFlow>
         </div>
 
+        {run ? (
+          <section
+            className="absolute bottom-6 z-30 w-[min(620px,calc(100%-820px))] min-w-[360px] overflow-hidden rounded-xl border border-slate-200/90 bg-white/92 shadow-xl backdrop-blur-md"
+            style={{ left: panelCollapsed ? 190 : 450 }}
+            aria-label="Run simulation"
+          >
+            <header className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Play className="h-4 w-4 text-blue-600" aria-hidden />
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Run simulation</p>
+                  <p className="text-[11px] text-slate-500">{run.status === 'waiting_approval' ? 'Paused for escalation approval' : 'Workflow execution trace'}</p>
+                </div>
+              </div>
+              <Badge variant={run.status === 'completed' ? 'default' : run.status === 'waiting_approval' ? 'outline' : 'destructive'}>{run.status.replace('_', ' ')}</Badge>
+            </header>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(112px,1fr))] gap-2 px-4 py-3">
+              {run.steps.map((step, index) => {
+                const node = nodes.find((item) => item.id === step.node_id)
+                const isActive = index === simulationStep
+                const isComplete = index < simulationStep || (simulationStep >= run.steps.length - 1 && run.status !== 'running')
+                return (
+                  <div key={step.id} className={cn(
+                    'relative min-w-0 border-l-2 px-2.5 py-1.5 transition-all',
+                    isActive ? 'border-blue-500 bg-blue-50 text-blue-950' : isComplete ? 'border-emerald-500 bg-emerald-50/70 text-slate-800' : 'border-slate-200 text-slate-400',
+                  )}>
+                    <p className="truncate text-[10px] font-semibold uppercase tracking-wide">{node ? KIND_LABEL[node.data.kind] : 'Step'}</p>
+                    <p className="truncate text-xs font-medium">{node?.data.label || step.node_id}</p>
+                    <p className="mt-0.5 text-[10px] capitalize opacity-75">{isActive ? 'Running' : step.status}</p>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="border-t border-slate-100 px-4 py-2.5 text-xs leading-relaxed text-slate-600">
+              {run.output?.answer || (run.status === 'waiting_approval' ? 'No document evidence was found. The approved escalation is waiting for a human decision.' : 'No answer returned.')}
+            </div>
+          </section>
+        ) : null}
+
         <div
           className="pointer-events-none absolute z-20"
           style={{
@@ -958,7 +1012,7 @@ function AgentWorkflowStudioInner({
                           <p className="whitespace-pre-wrap leading-relaxed text-slate-700">{run.output?.answer || (run.status === 'waiting_approval' ? 'Operational action is waiting for approval.' : 'No answer returned.')}</p>
                           {run.actions.filter((action) => action.status === 'pending_approval').map((action) => (
                             <div key={action.id} className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-2">
-                              <p className="font-medium text-amber-900">Vena requests approval to create a {String(action.payload.priority ?? 'medium')} service request.</p>
+                              <p className="font-medium text-amber-900">This workflow requests approval for a {String(action.payload.priority ?? 'medium')} {action.action_code.replaceAll('_', ' ')}.</p>
                               <div className="flex gap-2">
                                 <Button size="sm" onClick={() => void decideAction(action.id, true)} disabled={busy}>Approve</Button>
                                 <Button size="sm" variant="outline" onClick={() => void decideAction(action.id, false)} disabled={busy}>Reject</Button>
@@ -1060,7 +1114,7 @@ function AgentWorkflowStudioInner({
                   <p className="whitespace-pre-wrap leading-relaxed text-slate-700">{run.output?.answer || (run.status === 'waiting_approval' ? 'Operational action is waiting for approval.' : 'No answer returned.')}</p>
                   {run.actions.filter((action) => action.status === 'pending_approval').map((action) => (
                     <div key={action.id} className="space-y-2 rounded-md border border-amber-200 bg-amber-50/85 p-2">
-                      <p className="font-medium text-amber-900">Vena requests approval to create a {String(action.payload.priority ?? 'medium')} service request.</p>
+                      <p className="font-medium text-amber-900">This workflow requests approval for a {String(action.payload.priority ?? 'medium')} {action.action_code.replaceAll('_', ' ')}.</p>
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => void decideAction(action.id, true)} disabled={busy}>Approve</Button>
                         <Button size="sm" variant="outline" onClick={() => void decideAction(action.id, false)} disabled={busy}>Reject</Button>

@@ -224,6 +224,8 @@ export interface ArtifactApi {
 
 export interface IdeaApi {
   approved_sections?: Partial<Record<IdeaSectionKey, IdeaSectionRevisionApi>>
+  /** Set after a title change: how the linked URD/BRD/FSD documents were synced. */
+  title_sync?: { status: 'synced' | 'failed' | 'disabled'; updated?: number; error?: string } | null
   id: string
   workspace_id?: string | null
   project_id?: string | null
@@ -774,6 +776,10 @@ export async function patchIdea(
     workspace_id?: string
     project_id?: string | null
     folder_id?: string | null
+    /** Where a title change came from; the backend versions every title change. */
+    title_source?: 'idea' | 'document'
+    title_source_document_id?: string
+    title_source_label?: string
     version: number
   }
 ): Promise<IdeaApi> {
@@ -783,6 +789,27 @@ export async function patchIdea(
     body: JSON.stringify(body),
   })
   return handleResponse<IdeaApi>(res)
+}
+
+/** One version of an idea's title — shared by the idea and its URD/BRD/FSD documents. */
+export interface IdeaTitleVersionApi {
+  id?: string | null
+  idea_id: string
+  version_no: number
+  title: string
+  previous_title?: string | null
+  source_code: 'initial' | 'idea' | 'document'
+  source_document_id?: string | null
+  source_label?: string | null
+  created_by?: string | null
+  created_at?: string | null
+}
+
+export async function listIdeaTitleVersions(ideaId: string): Promise<IdeaTitleVersionApi[]> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/title-versions`, {
+    headers: defaultHeaders(),
+  })
+  return handleResponse<IdeaTitleVersionApi[]>(res)
 }
 
 export async function deleteIdea(ideaId: string, version: number): Promise<void> {

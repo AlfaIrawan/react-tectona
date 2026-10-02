@@ -139,6 +139,7 @@ import {
   listAllDocuments,
   listTemplates,
   patchDocument,
+  syncIdeaDocumentTitles,
   resolveLatestDocumentAttachmentBlob,
   type DocumentResponse,
   type DocumentTemplateResponse,
@@ -220,9 +221,10 @@ import { framingFieldKey, readinessAnchorKey, scoringFieldKey, type ScoringDimen
 import { englishReadinessTitle, indonesianSubtitle, looksIndonesian } from '@/modules/project-management/lib/summaryTitleLocale'
 import { boardNotePoints } from '@/modules/project-management/lib/boardNote'
 import type { SectionReviewNotifyContext } from '@/lib/notifications/notifySectionReview'
-import { IdeaReviewedSectionContent } from '@/modules/project-management/components/IdeaReviewedSectionContent'
+import { IdeaReviewedSectionContent, ScoringNarrativeEcho } from '@/modules/project-management/components/IdeaReviewedSectionContent'
 import { IdeaScoringDraftEditor, PendingScoreProposalNote, usePendingScoreProposal } from '@/modules/project-management/components/IdeaScoringDraftEditor'
 import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-management/lib/reviewerDisplayName'
+import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
 import { NOTIFICATIONS_UPDATED_EVENT } from '@/lib/chat/chatRealtimeEvents'
 import { dispatchIdeaSectionRevisionUpdated } from '@/lib/chat/ideaSectionRevisionFromChat'
 import {
@@ -414,6 +416,16 @@ function buildArchitectureReview(
 function isWorkspaceUuid(value: string | null | undefined): value is string {
   const trimmed = value?.trim()
   return !!trimmed && WORKSPACE_GUID_RE.test(trimmed)
+}
+
+/** "brd-adirafinancews-…" → "BRD": what the document is, next to the shared idea title. */
+function ideaDocTypeLabel(templateCode: string | null | undefined): string {
+  return (templateCode ?? '').split('-', 1)[0]?.trim().toUpperCase() || 'DOC'
+}
+
+function ideaDocFileName(label: string, title: string): string {
+  const safe = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return `${label} - ${safe}`.slice(0, 250) + '.docx'
 }
 
 function ideaFromApi(api: IdeaApi): Idea {
@@ -3505,6 +3517,8 @@ export function IdeaDetailPage() {
   const [ideaDocTemplates, setIdeaDocTemplates] = useState<DocumentTemplateResponse[]>([])
   const [ideaDocTemplatesLoading, setIdeaDocTemplatesLoading] = useState(false)
   const [ideaGeneratedDocs, setIdeaGeneratedDocs] = useState<DocumentResponse[]>([])
+  const [ideaDocsReloadKey, setIdeaDocsReloadKey] = useState(0)
+  const ideaDocTitleHealRef = useRef<string | null>(null)
   const [ideaDocsLoading, setIdeaDocsLoading] = useState(false)
   const [ideaDocsPage, setIdeaDocsPage] = useState(1)
   const [ideaDocsPageSize, setIdeaDocsPageSize] = useState(10)
@@ -6026,8 +6040,22 @@ export function IdeaDetailPage() {
         const linked = response.items.filter(
           (item) => item.tags.includes(idea.id) || item.metadata?.idea_id === idea.id,
         )
+        // URD/BRD/FSD carry the idea's title. A document still on another title (generated
+        // before this rule, or a sync that failed) is put on it once, versioned, then reloaded.
+        const healKey = `${idea.id}:${idea.title}`
+        const offTitle = linked.filter((item) => item.title !== idea.title)
+        if (offTitle.length > 0 && ideaDocTitleHealRef.current !== healKey) {
+          ideaDocTitleHealRef.current = healKey
+          void syncIdeaDocumentTitles({ idea_id: idea.id, title: idea.title, previous_title: offTitle[0].title })
+            .then((result) => {
+              if (!cancelled && result.updated > 0) setIdeaDocsReloadKey((key) => key + 1)
+            })
+            .catch(() => {
+              // Best-effort — the rename flows sync on every change; this only heals old documents.
+            })
+        }
         setIdeaGeneratedDocs((prev) => {
-          const merged = [...prev, ...linked].filter(
+          const merged = [...linked, ...prev].filter(
             (doc, index, arr) => arr.findIndex((other) => other.id === doc.id) === index,
           )
           return merged.sort(
@@ -6046,7 +6074,7 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [activePanel, idea.id, idea.workspace])
+  }, [activePanel, idea.id, idea.title, idea.workspace, ideaDocsReloadKey])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -6810,10 +6838,14 @@ export function IdeaDetailPage() {
         reference_documents: referenceDocuments,
         context: { idea_id: idea.id, workspace_id: idea.workspace ?? null, user_id: currentUserId || null },
         options: { allow_llm: true },
+        // The idea's title is the document's title (URD/BRD/FSD stay on it; see idea-title-sync).
+        document_title: idea.title,
       })
 
+      const docTypeLabel = ideaDocTypeLabel(template.template_code)
       const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
-        title: `${template.name} — ${idea.title}`.slice(0, 255),
+        title: idea.title.slice(0, 255),
+        attachment_file_name: ideaDocFileName(docTypeLabel, idea.title),
         summary: filled.payload.summary?.trim() || template.description || undefined,
         workspace_id: idea.workspace ?? null,
         folder_id: targetFolderId,
@@ -6826,6 +6858,8 @@ export function IdeaDetailPage() {
           source: 'idea-docs-ai-generate',
           idea_id: idea.id,
           template_code: template.template_code,
+          doc_type_label: docTypeLabel,
+          idea_title: idea.title,
           ai_generated: true,
           fill_correlation_id: filled.correlation_id,
           storage_project_id: targetProject.id,
@@ -6930,13 +6964,27 @@ export function IdeaDetailPage() {
     }
     setIdeaDocRenameBusy(true)
     try {
+      const linkedToIdea = ideaGeneratedDocs.some(
+        (doc) => doc.id === ideaDocRenameTarget.id && doc.metadata?.idea_id === idea.id,
+      )
       const updated = await patchDocument(ideaDocRenameTarget.id, {
         version: ideaDocRenameTarget.documentVersion,
         title: nextTitle,
       })
       setIdeaGeneratedDocs((prev) => prev.map((doc) => (doc.id === updated.id ? updated : doc)))
       setIdeaDocRenameTarget(null)
-      addToast({ title: 'Document renamed', description: nextTitle, variant: 'success' })
+      if (linkedToIdea) {
+        // The backend renamed the idea and every URD/BRD/FSD of it (versioned): reload both.
+        window.dispatchEvent(new CustomEvent('tectona:idea-updated', { detail: { ideaId: idea.id } }))
+        setIdeaDocsReloadKey((key) => key + 1)
+        addToast({
+          title: 'Judul diperbarui',
+          description: `"${nextTitle}" — Idea, URD, BRD dan FSD ikut berubah.`,
+          variant: 'success',
+        })
+      } else {
+        addToast({ title: 'Document renamed', description: nextTitle, variant: 'success' })
+      }
     } catch (error) {
       addToast({
         title: 'Rename failed',
@@ -6946,7 +6994,7 @@ export function IdeaDetailPage() {
     } finally {
       setIdeaDocRenameBusy(false)
     }
-  }, [addToast, ideaDocRenameTarget, ideaDocRenameValue])
+  }, [addToast, idea.id, ideaDocRenameTarget, ideaDocRenameValue, ideaGeneratedDocs])
 
   const handleIdeaDocRegenerateKb = useCallback(async (item: RepositoryItem) => {
     const document_ = ideaGeneratedDocs.find((doc) => doc.id === item.id)
@@ -11260,7 +11308,24 @@ export function IdeaDetailPage() {
                   </Badge>
                 ))}
               </div>
-              <h1 className="text-2xl font-semibold text-slate-900 leading-tight">{idea.title}</h1>
+              <IdeaTitleEditor
+                ideaId={idea.id}
+                title={idea.title}
+                version={idea.version}
+                nameOf={scoreNameOf}
+                onRenamed={(api) => {
+                  setIdea(ideaFromApi(api))
+                  const sync = api.title_sync
+                  addToast({
+                    title: 'Judul diperbarui',
+                    description: sync?.status === 'failed'
+                      ? 'Judul Idea tersimpan, tapi URD/BRD/FSD belum tersinkron — dicoba lagi saat membuka Docs.'
+                      : 'Idea, URD, BRD dan FSD memakai judul yang sama.',
+                    variant: sync?.status === 'failed' ? 'warning' : 'success',
+                  })
+                }}
+                onError={(message) => addToast({ title: 'Judul gagal disimpan', description: message, variant: 'error' })}
+              />
               <p className="text-sm text-muted-foreground">
                 Workspace: <span className="font-medium text-slate-700">{workspaceDisplayName}</span>
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
@@ -11954,12 +12019,14 @@ export function IdeaDetailPage() {
                             Enterprise Scoring Signal
                           </div>
                           {idSubtitle('mt-0.5', 'Enterprise Scoring Signal')}
-                          <h3 className="mt-1.5 text-base font-semibold text-slate-950">
-                            {runtimeScoringAnalysis.summary_title || 'Executive priority and feasibility readout'}
-                          </h3>
-                          <p className="mt-1.5 max-w-2xl text-xs leading-5 text-slate-600">
-                            {runtimeScoringAnalysis.executive_brief}
-                          </p>
+                          <ScoringNarrativeEcho>
+                            <h3 className="mt-1.5 text-base font-semibold text-slate-950">
+                              {runtimeScoringAnalysis.summary_title || 'Executive priority and feasibility readout'}
+                            </h3>
+                            <p className="mt-1.5 max-w-2xl text-xs leading-5 text-slate-600">
+                              {runtimeScoringAnalysis.executive_brief}
+                            </p>
+                          </ScoringNarrativeEcho>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {runtimeScoringAnalysis.score_posture && (
@@ -12100,9 +12167,11 @@ export function IdeaDetailPage() {
                             <Target className="h-4.5 w-4.5" />
                           </div>
                         </div>
-                        <p className="mt-3 text-xs leading-5 text-slate-600">
-                          {runtimeScoringAnalysis.recommended_action}
-                        </p>
+                        <ScoringNarrativeEcho>
+                          <p className="mt-3 text-xs leading-5 text-slate-600">
+                            {runtimeScoringAnalysis.recommended_action}
+                          </p>
+                        </ScoringNarrativeEcho>
                       </div>
 
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -12164,13 +12233,15 @@ export function IdeaDetailPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-white/10 bg-slate-950/90 px-4 py-3 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">AI Commentary</p>
-                        {idSubtitle('mt-0.5 text-slate-400', 'AI Commentary')}
-                        <p className="mt-2 text-xs leading-5 text-slate-200">
-                          {runtimeScoringAnalysis.commentary}
-                        </p>
-                      </div>
+                      <ScoringNarrativeEcho>
+                        <div className="rounded-2xl border border-white/10 bg-slate-950/90 px-4 py-3 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">AI Commentary</p>
+                          {idSubtitle('mt-0.5 text-slate-400', 'AI Commentary')}
+                          <p className="mt-2 text-xs leading-5 text-slate-200">
+                            {runtimeScoringAnalysis.commentary}
+                          </p>
+                        </div>
+                      </ScoringNarrativeEcho>
                     </CardContent>
                   </Card>
                 </div>

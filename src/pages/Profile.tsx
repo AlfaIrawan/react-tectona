@@ -440,11 +440,13 @@ function AIProviderModelsCard({ onViewPerformance, onViewUsage }: { onViewPerfor
   </>
 }
 
-const usageCapabilities = ['AI Assistant', 'Agent Tool Call', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation', 'Application Catalog Scan']
+const usageCapabilities = ['AI Assistant', 'Agent Tool Call', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation', 'Application Catalog Scan', 'Abbreviation Scan']
 
 function interactionName(event: TokenTelemetryEvent): string {
   if (event.interactionType) return event.interactionType
   const source = `${event.trigger ?? ''} ${event.context ?? ''}`.toLowerCase()
+  if (/abbreviation scan/.test(source)) return 'Abbreviation Scan'
+  if (/application catalog scan/.test(source)) return 'Application Catalog Scan'
   if (/agent tool call|chat tools|tool.call|tool calling/.test(source)) return 'Agent Tool Call'
   if (/document|template|generate/.test(source)) return 'Document Generation'
   if (/requirement|idea|analysis|analyz/.test(source)) return 'Requirement Analysis'

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { getActiveIdeaSectionRevision, type IdeaSectionKey, type IdeaSectionRevisionApi } from '@/lib/api/ideaBacklogApi'
 import { IDEA_SECTION_REVISION_UPDATED_EVENT } from '@/lib/chat/ideaSectionRevisionFromChat'
@@ -10,7 +10,76 @@ import { reviewerDisplayName, type ReviewerNameResolver } from '@/modules/projec
 // official scores away behind a collapsed panel.
 const OFFICIAL_FIGURE_SECTIONS = new Set<IdeaSectionKey>(['scoring', 'impact'])
 
+// True only under the approved scoring narrative, so the score cards below
+// can drop the title, brief, action, and commentary that the narrative already shows.
+const ScoringNarrativeLeadsContext = createContext(false)
+
+export function ScoringNarrativeEcho({ children }: { children: ReactNode }) {
+  const leads = useContext(ScoringNarrativeLeadsContext)
+  if (leads) return null
+  return <>{children}</>
+}
+
 type ReviewMeta = { original_ai_text?: string; ai_text_at_edit?: string }
+
+type ScoringNarrative = {
+  portfolio: string | null
+  action: string | null
+  thesis: string[]
+}
+
+// Approved scoring text is four blocks joined by blank lines: portfolio title,
+// executive brief, "Recommended action: …", then the value-thesis commentary.
+function parseScoringNarrative(text: string): ScoringNarrative | null {
+  const blocks = text.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean)
+  let portfolio: string | null = null
+  let action: string | null = null
+  const thesis: string[] = []
+  for (const block of blocks) {
+    const portfolioMatch = block.match(/^(?:Analisis\s+Portfolio|Portfolio)\s*:\s*(.+)$/is)
+    if (portfolioMatch && !portfolio) {
+      portfolio = portfolioMatch[1].trim()
+      continue
+    }
+    const actionMatch = block.match(/^Recommended action\s*:\s*(.+)$/is)
+    if (actionMatch && !action) {
+      action = actionMatch[1].trim()
+      continue
+    }
+    thesis.push(block)
+  }
+  if (!portfolio && !action) return null
+  return { portfolio, action, thesis }
+}
+
+function ScoringNarrativeView({ narrative }: { narrative: ScoringNarrative }) {
+  return (
+    <div className="space-y-4">
+      {narrative.portfolio ? (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Portfolio</p>
+          <p className="mt-1 text-sm font-semibold text-slate-950">{narrative.portfolio}</p>
+        </div>
+      ) : null}
+      {narrative.thesis.length ? (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Tesis</p>
+          <div className="mt-1 space-y-2 text-sm leading-6 text-slate-700">
+            {narrative.thesis.map((paragraph, index) => (
+              <p key={index} className="whitespace-pre-wrap">{paragraph}</p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {narrative.action ? (
+        <div className="border-l-2 border-slate-900 pl-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Recommended action</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-800">{narrative.action}</p>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 export function IdeaReviewedSectionContent({ ideaId, sectionKey, currentContent, userId, userName, resolveName, children, keepOriginal = false }: {
   ideaId: string; sectionKey: IdeaSectionKey; currentContent: string
@@ -99,26 +168,48 @@ export function IdeaReviewedSectionContent({ ideaId, sectionKey, currentContent,
   // A human edit — or an approved AI version that differs from the current AI
   // output — is the authoritative narrative, so it leads.
   const keepFiguresVisible = OFFICIAL_FIGURE_SECTIONS.has(sectionKey)
+  const narrativeText = showOriginal ? review.original_ai_text || currentContent : approvedText
+  const scoringNarrative = sectionKey === 'scoring' ? parseScoringNarrative(narrativeText) : null
+  const versionToggle = (
+    <Button
+      variant="link"
+      size="sm"
+      className="h-auto px-0 text-xs font-normal text-muted-foreground"
+      aria-pressed={showOriginal}
+      onClick={() => setShowOriginal(!showOriginal)}
+    >
+      {showOriginal ? 'Show approved version' : 'Show original AI version'}
+    </Button>
+  )
   return <>
     <section className="space-y-3 border-b border-border px-4 py-4" aria-label="Versi section approved">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <span className="font-medium text-emerald-700">
-          {revision.source === 'human'
-            ? <>Edited by {author}{approver !== author ? <> · approved by {approver}</> : null}</>
-            : <>AI version approved by {approver}</>} · {approvedOn}
-        </span>
-        <Button variant="ghost" size="sm" aria-pressed={showOriginal} onClick={() => setShowOriginal(!showOriginal)}>
-          {showOriginal ? 'Show approved version' : 'Show original AI version'}
-        </Button>
-      </div>
-      <div className="prose prose-sm max-w-none break-words whitespace-pre-wrap text-foreground">
-        <ReactMarkdown>{showOriginal ? review.original_ai_text || currentContent : approvedText}</ReactMarkdown>
-      </div>
+      {sectionKey === 'scoring' ? null : (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <span className="font-medium text-emerald-700">
+            {revision.source === 'human'
+              ? <>Edited by {author}{approver !== author ? <> · approved by {approver}</> : null}</>
+              : <>AI version approved by {approver}</>} · {approvedOn}
+          </span>
+          {versionToggle}
+        </div>
+      )}
+      {scoringNarrative ? (
+        <ScoringNarrativeView narrative={scoringNarrative} />
+      ) : (
+        <div className="prose prose-sm max-w-none break-words whitespace-pre-wrap text-foreground">
+          <ReactMarkdown>{narrativeText}</ReactMarkdown>
+        </div>
+      )}
+      {sectionKey === 'scoring' ? versionToggle : null}
     </section>
     {children && keepFiguresVisible ? (
       <div className="pt-2">
-        <p className="px-4 pb-1 text-xs font-medium text-muted-foreground">AI analysis &amp; official scores</p>
-        {children}
+        <p className="px-4 pb-1 text-xs font-medium text-muted-foreground">
+          {sectionKey === 'scoring' ? 'Official scores' : 'AI analysis & official scores'}
+        </p>
+        <ScoringNarrativeLeadsContext.Provider value={sectionKey === 'scoring'}>
+          {children}
+        </ScoringNarrativeLeadsContext.Provider>
       </div>
     ) : children && keepOriginal ? (
       <details className="mx-4 mb-4 rounded-lg border border-border bg-muted/20">
