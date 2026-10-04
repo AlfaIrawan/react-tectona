@@ -94,6 +94,7 @@ import { EnterpriseSelectionToggle } from '@/components/enterprise/EnterpriseSel
 import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/EnterpriseColumnVisibilityControl'
 import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
 import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
+import { ApprovalsPanel } from '@/modules/workflow-automation-engine/components/ApprovalsPanel'
 import { WorkflowBuilderCanvas } from '@/modules/workflow-automation-engine/components/WorkflowBuilderCanvas'
 import { AgentWorkflowStudio } from '@/modules/workflow-automation-engine/components/AgentWorkflowStudio'
 import { createAgentWorkflow, deleteAgentWorkflow, listAgentWorkflows, type AgentWorkflowSummaryDto } from '@/lib/api/agentWorkflowApi'
@@ -120,7 +121,7 @@ import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import { UI_SCOPE_WORKFLOW_AUTOMATION, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused' | 'Needs Approval'
-type PanelId = 'overview' | 'catalog' | 'agentCatalog' | 'automation' | 'monitoring'
+type PanelId = 'overview' | 'catalog' | 'agentCatalog' | 'automation' | 'approvals' | 'monitoring'
 
 type WorkflowRecord = {
   id: string
@@ -290,13 +291,14 @@ const PANELS: Array<{ id: PanelId; label: string; icon: React.ComponentType<{ cl
   { id: 'catalog', label: 'Workflow Catalog', icon: Workflow, badge: 'Core', desc: 'Workflow directory with filters and quick actions.' },
   { id: 'agentCatalog', label: 'Agent Catalog', icon: Bot, badge: 'AI', desc: 'Directory of governed agent workflows with status and publish state.' },
   { id: 'automation', label: 'Automation Rules', icon: Bot, badge: 'Rules', desc: 'Trigger, condition, action, and status control.' },
+  { id: 'approvals', label: 'Approvals', icon: ShieldCheck, badge: 'Gate', desc: 'Your approval inbox and who holds each approval role.' },
   { id: 'monitoring', label: 'Runtime Monitoring', icon: Activity, badge: 'Runtime', desc: 'Execution, queues, and operational incidents.' },
 ]
 
 const PANEL_GROUPS: Array<{ group: string; items: typeof PANELS }> = [
   { group: 'Command Center', items: PANELS.filter((panel) => panel.id === 'overview') },
   { group: 'Control Library', items: PANELS.filter((panel) => ['catalog', 'agentCatalog'].includes(panel.id)) },
-  { group: 'Assurance & Traceability', items: PANELS.filter((panel) => ['automation', 'monitoring'].includes(panel.id)) },
+  { group: 'Assurance & Traceability', items: PANELS.filter((panel) => ['automation', 'approvals', 'monitoring'].includes(panel.id)) },
 ]
 
 const WORKFLOW_NAV_RAIL_ITEMS = PANELS.map(({ id, label, icon }) => ({ id, label, icon }))
@@ -1016,6 +1018,7 @@ export function WorkflowAutomationEnginePage() {
     || activePanel === 'catalog'
     || activePanel === 'agentCatalog'
     || activePanel === 'automation'
+    || activePanel === 'approvals'
     || activePanel === 'monitoring'
 
   useLayoutEffect(() => {
@@ -2068,7 +2071,7 @@ export function WorkflowAutomationEnginePage() {
                       </thead>
                       <tbody>
                         {catalogSnapshotRows.map((item) => (
-                          <tr key={item.name} className="border-t border-slate-100">
+                          <tr key={item.id} className="border-t border-slate-100">
                             <td className="px-1 py-2 font-medium text-slate-900">
                               <div>{item.name}</div>
                               <div className="mt-0.5 text-[10px] font-normal text-slate-500">{item.project}</div>
@@ -3425,6 +3428,23 @@ export function WorkflowAutomationEnginePage() {
                   <Trash2 className="h-4 w-4 shrink-0 text-rose-500" aria-hidden /> <span className="text-rose-600">Delete</span>
                 </ContextMenuItem>
               </ContextMenu>
+            </Panel>
+          ) : null}
+
+          {activePanel === 'approvals' ? (
+            <Panel
+              title="Approvals"
+              description="Decisions waiting on you, and who holds each approval role in this workspace."
+              headerIcon={<ShieldCheck className="h-5 w-5" />}
+              panelRef={activeMainPanelRef}
+              style={workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx)}
+              className={cn('flex min-h-0 w-full flex-col', mainPanelViewportHeightPx != null && 'overflow-hidden')}
+              bodyClassName="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            >
+              <ApprovalsPanel
+                workspaceId={isAllWorkspacesSelection(workspaceId) ? null : workspaceId}
+                members={workflowOwnerOptions}
+              />
             </Panel>
           ) : null}
 
