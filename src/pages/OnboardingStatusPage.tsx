@@ -52,7 +52,7 @@ export function OnboardingStatusPage() {
   }
 
   if (!loading && !bypass && canAccessMainApp) {
-    return <Navigate to="/projects" replace />
+    return <Navigate to="/idea-backlog" replace />
   }
 
   const emailVerificationPathActive =

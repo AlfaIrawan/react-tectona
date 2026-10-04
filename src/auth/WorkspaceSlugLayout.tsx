@@ -57,7 +57,7 @@ export function WorkspaceSlugLayout() {
   }, [workspaceSlug, setActiveTenant])
 
   if (!workspaceSlug?.trim()) {
-    return <Navigate to="/projects" replace />
+    return <Navigate to="/idea-backlog" replace />
   }
 
   if (accessState === 'pending') {

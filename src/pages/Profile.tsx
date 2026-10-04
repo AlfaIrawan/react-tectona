@@ -807,7 +807,7 @@ export function ProfilePage() {
         {/* Top navigation */}
         <header className="mb-6 flex items-center justify-between gap-4">
           <Link
-            to="/projects"
+            to="/idea-backlog"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden />

@@ -38,7 +38,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
 
   const currentAppPath = useMemo(() => {
     const path = legacyAppPathFromLocation(location.pathname, location.search, location.hash)
-    return path && path !== '' ? path : '/projects'
+    return path && path !== '' ? path : '/idea-backlog'
   }, [location.hash, location.pathname, location.search])
 
   const activeOption = useMemo(() => {
