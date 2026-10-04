@@ -29,6 +29,48 @@ export interface DocumentResponse {
   content?: string | null
 }
 
+export interface DocumentRevision {
+  source_document_id: string
+  version_no: number
+  created_date: string
+  created_by: string
+  version_notes?: string | null
+  attachment_id?: string | null
+  is_current: boolean
+  can_restore: boolean
+}
+
+export async function listDocumentRevisions(documentId: string): Promise<DocumentRevision[]> {
+  return handleJson(await apiFetch(`${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions`, {
+    headers: { Accept: 'application/json' },
+  }))
+}
+
+/** Plain text of one saved revision, read from that revision's file. */
+export async function getDocumentRevisionText(
+  documentId: string,
+  revision: Pick<DocumentRevision, 'source_document_id' | 'version_no'>,
+): Promise<string> {
+  const params = new URLSearchParams({
+    source_document_id: revision.source_document_id,
+    version_no: String(revision.version_no),
+  })
+  const res = await apiFetch(
+    `${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions/text?${params}`,
+    { headers: { Accept: 'application/json' } },
+  )
+  const body = await handleJson<{ text?: string | null }>(res)
+  return body.text ?? ''
+}
+
+export async function restoreDocumentRevision(documentId: string, body: {
+  source_document_id: string; version_no: number; version: number
+}): Promise<DocumentResponse> {
+  return handleJson(await apiFetch(`${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions:restore`, {
+    method: 'POST', headers: tectonaServiceHeaders({ Accept: 'application/json' }), body: JSON.stringify(body),
+  }))
+}
+
 export interface DocumentIndexSnapshotResponse {
   id: string
   project_id: string
@@ -309,6 +351,7 @@ export async function listProjectDocuments(
  */
 export async function listAllDocuments(params?: {
   workspace_id?: string
+  idea_id?: string
   status?: string
   document_type?: string
   category?: string
@@ -322,6 +365,7 @@ export async function listAllDocuments(params?: {
   const base = getV1Base()
   const sp = new URLSearchParams()
   if (params?.workspace_id) sp.set('workspace_id', params.workspace_id)
+  if (params?.idea_id) sp.set('idea_id', params.idea_id)
   if (params?.status) sp.set('status', params.status)
   if (params?.document_type) sp.set('document_type', params.document_type)
   if (params?.category) sp.set('category', params.category)
@@ -427,6 +471,30 @@ export async function syncIdeaDocumentTitles(body: {
     body: JSON.stringify(body),
   })
   return handleJson<IdeaTitleSyncResult>(res)
+}
+
+export type SubmitDocumentReviewResult = {
+  document: DocumentResponse
+  /** started | no_workflow | failed | disabled — "no_workflow" means nothing listens yet. */
+  workflow_status: 'started' | 'no_workflow' | 'failed' | 'disabled'
+  run_ids: string[]
+}
+
+/**
+ * Ask for approval of a document. The document goes to In Review and Workflow Automation
+ * runs the approval gates — who approves is decided by the published workflow, not here.
+ */
+export async function submitDocumentForReview(
+  documentId: string,
+  body: { version: number; note?: string; event_type?: string },
+): Promise<SubmitDocumentReviewResult> {
+  const base = getV1Base()
+  const res = await apiFetch(`${base}/documents/${encodeURIComponent(documentId)}:submit-review`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  return handleJson<SubmitDocumentReviewResult>(res)
 }
 
 export async function getDocument(documentId: string): Promise<DocumentResponse> {
@@ -829,6 +897,7 @@ export interface DocumentTemplatePatchRequest {
 
 export interface TemplateInstantiateRequest {
   title?: string
+  existing_document_id?: string
   summary?: string | null
   workspace_id?: string | null
   folder_id?: string | null

@@ -1,13 +1,14 @@
 import type { DocumentResponse } from '@/lib/api/documentKnowledgeApi'
 import { humanizeCapabilityCode } from '@/lib/kb/documentCapabilityClassification'
 import { resolveRepositoryDocumentVersionLabel } from '@/lib/kb/repositoryKbFromDocument'
-import { getFileTypeLabel } from '../fileTypeIcon'
+import { getExplorerFileTypeLabel } from '../fileTypeIcon'
 
 export const UNIDENTIFIED_PROJECT_LABEL = 'Unidentified Project'
 
 export type RepositoryItem = {
   id: string
   name: string
+  displayName?: string
   fileName: string
   type: string
   capabilityCode: string | null
@@ -114,7 +115,7 @@ export function mapDocumentToRepositoryItem(doc: DocumentResponse, projectName: 
     id: doc.id,
     name: doc.title,
     fileName: resolvedFileName,
-    type: getFileTypeLabel(resolvedFileName),
+    type: getExplorerFileTypeLabel(resolvedFileName),
     capabilityCode: doc.capability_code ?? null,
     capability: humanizeCapabilityCode(doc.capability_code),
     linkedContext,
