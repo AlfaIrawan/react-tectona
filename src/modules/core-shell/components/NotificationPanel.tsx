@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Bell, Check, CheckCheck, Loader2, AlertCircle, Info, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -39,6 +40,18 @@ function formatNotificationTime(createdAt: string): string {
   }
 }
 
+/** Same-origin links are routed in place; anything else is left to the browser.
+    `link_url` is an absolute URL because the sender has no idea where it will be read. */
+function inAppPath(link: string): string | null {
+  try {
+    const url = new URL(link, window.location.origin)
+    if (url.origin !== window.location.origin) return null
+    return `${url.pathname}${url.search}${url.hash}`
+  } catch {
+    return null
+  }
+}
+
 function typeColor(type: NotificationApi['type']): string {
   switch (type) {
     case 'success':
@@ -72,6 +85,7 @@ export function NotificationPanel({
   onOpenChange,
   onUnreadCountChange,
 }: NotificationPanelProps) {
+  const navigate = useNavigate()
   const [notifications, setNotifications] = useState<NotificationApi[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -205,6 +219,17 @@ export function NotificationPanel({
                   const openedVoice = openVoiceRecordFromNotificationMetadata(n.metadata ?? null)
                   if (openedChat || openedVoice) {
                     onOpenChange?.(false)
+                  } else if (n.link) {
+                    // A notification that points somewhere has to take you there. An
+                    // approval request is only actionable on the document it names, and
+                    // the bell is where the approver finds out about it.
+                    const path = inAppPath(n.link)
+                    if (path) {
+                      navigate(path)
+                      onOpenChange?.(false)
+                    } else {
+                      window.open(n.link, '_blank', 'noopener,noreferrer')
+                    }
                   }
                   if (!n.read) handleMarkRead(n.id)
                 }}
