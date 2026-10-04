@@ -31,6 +31,7 @@ import { useTenantContextOptional } from '@/auth/TenantContext'
 import { isAllWorkspacesSelection, readStoredTenantSelection } from '@/lib/tenantWorkspaceScope'
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
+import { ApprovalTargetField } from '@/modules/workflow-automation-engine/components/ApprovalTargetField'
 import { WorkflowBuilderNode } from '@/modules/workflow-automation-engine/components/workflowBuilderNodes'
 import {
   WORKFLOW_KIND_META,
@@ -55,6 +56,7 @@ import {
   createWorkflow as createWorkflowApi,
   getWorkflow,
   getWorkflowRun,
+  listWorkflowApprovalRoles,
   listWorkflowRuns,
   publishWorkflowApi,
   rejectWorkflowRun,
@@ -67,6 +69,7 @@ import {
   type WorkflowGraph,
   type WorkflowCreateInput,
   type WorkflowDto,
+  type WorkflowApprovalRoleDto,
 } from '@/lib/api/workflowAutomationApi'
 
 type WorkflowGraphRecord = {
@@ -425,7 +428,13 @@ function loadOrSeedWorkflowGraph(workflowId: string | null, workflowName?: strin
 // ---------------------------------------------------------------------------
 type WorkflowIssue = { level: 'error' | 'warning'; nodeId?: string; message: string }
 
-function validateWorkflowGraph(nodes: Node<WorkflowNodeData>[], edges: Edge[]): WorkflowIssue[] {
+function validateWorkflowGraph(
+  nodes: Node<WorkflowNodeData>[],
+  edges: Edge[],
+  /** Role codes that have at least one holder in scope. Undefined while still loading,
+      which must not be reported as "nobody holds it". */
+  rolesWithHolders?: Set<string>,
+): WorkflowIssue[] {
   const issues: WorkflowIssue[] = []
   const triggers = nodes.filter((n) => n.data.kind === 'trigger')
   if (triggers.length === 0) issues.push({ level: 'error', message: 'Workflow has no Trigger node — add an entry point.' })
@@ -459,6 +468,20 @@ function validateWorkflowGraph(nodes: Node<WorkflowNodeData>[], edges: Edge[]): 
       const hasStructuredCondition = config.field?.trim() && config.operator?.trim() && config.value?.trim()
       if (!hasStructuredCondition && !config.condition?.trim()) issues.push({ level: 'error', nodeId: n.id, message: `"${label}" has an empty condition.` })
     }
+    if (kind === 'approval') {
+      const role = config.approverRole?.trim()
+      const team = config.approverTeam?.trim()
+      const named = config.approver?.trim()
+      if (!role && !team && !named) {
+        issues.push({ level: 'error', nodeId: n.id, message: `"${label}" has no approver: pick a role, a team or a named approver.` })
+      } else if (role && rolesWithHolders && !rolesWithHolders.has(role)) {
+        // The engine fails closed on an unheld role, so this must be visible while
+        // designing rather than discovered when a real document is already in review.
+        issues.push({ level: 'error', nodeId: n.id, message: `No one holds the role "${role}" — "${label}" would fail every run.` })
+      }
+      const handles = branchHandles.get(n.id) ?? new Set<string>()
+      if (!handles.has('false')) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no REJECTED branch; a rejection fails the run.` })
+    }
     if (kind === 'parallel') {
       const handles = branchHandles.get(n.id) ?? new Set<string>()
       if (!handles.has('branchA')) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" is missing Branch A.` })
@@ -469,7 +492,6 @@ function validateWorkflowGraph(nodes: Node<WorkflowNodeData>[], edges: Edge[]): 
       if (!handles.has('body')) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" is missing a loop body connection.` })
       if (!handles.has('done')) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" is missing a done connection.` })
     }
-    if (kind === 'approval' && !config.approver?.trim() && !config.approverRole?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no approver role assigned.` })
     if (kind === 'assignOwner' && !config.ownerId?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no workspace member assigned.` })
     if (kind === 'aiProcess' && !config.prompt?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has an empty AI prompt.` })
     if (kind === 'action' && !config.target?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no target set.` })
@@ -773,6 +795,31 @@ function WorkflowBuilderCanvasInner({
     }
     return null
   }, [tenant?.workspaceId, workspaceId])
+  // One fetch serves both the approval node's control and graph validation.
+  const [approvalRoles, setApprovalRoles] = useState<WorkflowApprovalRoleDto[]>([])
+  const [approvalRolesState, setApprovalRolesState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const reloadApprovalRoles = useCallback(() => {
+    if (!activeWorkspaceId) {
+      setApprovalRoles([])
+      setApprovalRolesState('ready')
+      return
+    }
+    setApprovalRolesState('loading')
+    listWorkflowApprovalRoles(activeWorkspaceId)
+      .then((items) => {
+        setApprovalRoles(items)
+        setApprovalRolesState('ready')
+      })
+      .catch(() => setApprovalRolesState('error'))
+  }, [activeWorkspaceId])
+  useEffect(reloadApprovalRoles, [reloadApprovalRoles])
+  const rolesWithHolders = useMemo(
+    // Undefined while loading or unavailable: a validator must not claim "nobody holds
+    // this role" when it simply has not been told yet.
+    () => (approvalRolesState === 'ready' ? new Set(approvalRoles.map((role) => role.role_code)) : undefined),
+    [approvalRoles, approvalRolesState],
+  )
+
   const { screenToFlowPosition, fitView } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const idCounterRef = useRef(0)
@@ -931,7 +978,7 @@ function WorkflowBuilderCanvasInner({
   }, [activeWorkspaceId, addToast, edges, name, nodes, onWorkflowCreated, persist, workflowId])
 
   const handlePublish = useCallback(() => {
-    if (validateWorkflowGraph(nodes, edges).some((issue) => issue.level === 'error')) {
+    if (validateWorkflowGraph(nodes, edges, rolesWithHolders).some((issue) => issue.level === 'error')) {
       addToast({ variant: 'error', title: 'Cannot publish workflow', description: 'Resolve blocking validation issues first.' })
       return
     }
@@ -985,7 +1032,7 @@ function WorkflowBuilderCanvasInner({
         addToast({ variant: 'warning', title: 'Save first', description: 'Save the workflow before running it.' })
         return
       }
-      if (validateWorkflowGraph(nodes, edges).some((issue) => issue.level === 'error')) {
+      if (validateWorkflowGraph(nodes, edges, rolesWithHolders).some((issue) => issue.level === 'error')) {
         addToast({ variant: 'error', title: 'Cannot run workflow', description: 'Resolve blocking validation issues first.' })
         return
       }
@@ -1268,7 +1315,7 @@ function WorkflowBuilderCanvasInner({
 
   const selectedMeta = selectedNode ? WORKFLOW_KIND_META[selectedNode.data.kind] : null
 
-  const issues = useMemo(() => validateWorkflowGraph(nodes, edges), [nodes, edges])
+  const issues = useMemo(() => validateWorkflowGraph(nodes, edges, rolesWithHolders), [edges, nodes, rolesWithHolders])
   const errorCount = issues.filter((i) => i.level === 'error').length
   const warningCount = issues.filter((i) => i.level === 'warning').length
   const issueLevelByNode = useMemo(() => {
@@ -1675,6 +1722,23 @@ function WorkflowBuilderCanvasInner({
                   })
                   .map((field) => {
                   const value = selectedNode.data.config[field.key] ?? ''
+                  // Brings its own label, and edits workspace-shared data rather than a
+                  // single config key, so it does not fit the generic field wrapper.
+                  if (field.type === 'approvalTarget') {
+                    return (
+                      <ApprovalTargetField
+                        key={selectedNode.id}
+                        workspaceId={activeWorkspaceId}
+                        members={workspaceMembers}
+                        roleCode={selectedNode.data.config.approverRole ?? ''}
+                        teamCode={selectedNode.data.config.approverTeam ?? ''}
+                        onChange={(patch) => updateSelectedNode({ config: patch })}
+                        roles={approvalRoles}
+                        rolesState={approvalRolesState}
+                        onRolesChanged={reloadApprovalRoles}
+                      />
+                    )
+                  }
                   return (
                     <div key={field.key} className="space-y-1.5">
                       <label className={FIELD_LABEL_CLASS}>{field.label}</label>

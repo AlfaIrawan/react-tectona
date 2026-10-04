@@ -43,7 +43,7 @@ export type WorkflowNodeData = {
   _issue?: 'error' | 'warning'
 }
 
-export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
+export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'approvalTarget' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
 
 export type WorkflowFieldDef = {
   key: string
@@ -342,16 +342,18 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     icon: ShieldCheck,
     accent: '#f97316',
     chipClass: 'bg-orange-50 text-orange-600 ring-orange-100',
-    // The gate names a ROLE; who holds it per workspace is maintained separately, so the
-    // flow survives people changing jobs. `approver` stays for a one-off named approver.
+    // The gate names a ROLE (one accountability) or an operational TEAM (a group of
+    // people) -- never a person, so the flow survives people changing jobs. Who holds a
+    // role is workspace data shared by every node; the `approvalTarget` control edits it
+    // in place and says so. `approver` stays for a one-off named approver.
     fields: [
-      { key: 'approverRole', label: 'Approver role', type: 'text', placeholder: 'e.g. business_owner' },
+      { key: 'approverRole', label: 'Approver', type: 'approvalTarget' },
       { key: 'approver', label: 'Named approver (optional)', type: 'text', placeholder: 'user id, comma separated' },
       { key: 'quorum', label: 'When there are several', type: 'select', options: ['all', 'any'] },
       { key: 'allowSelfApproval', label: 'Requester may approve', type: 'select', options: ['no', 'yes'] },
       { key: 'subjectLabel', label: 'What is being approved', type: 'text', placeholder: 'e.g. URD {{idea_title}}' },
     ],
-    defaultConfig: { approverRole: '', approver: '', quorum: 'all', allowSelfApproval: 'no', subjectLabel: '' },
+    defaultConfig: { approverRole: '', approverTeam: '', approver: '', quorum: 'all', allowSelfApproval: 'no', subjectLabel: '' },
   },
   assignOwner: {
     kind: 'assignOwner',
