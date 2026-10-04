@@ -1165,7 +1165,7 @@ function parseRuntimeErrorBody(text: string, status: number): string {
     /gateway time-?out/i.test(trimmed) ||
     (trimmed.includes('<html') && /504|502|503/.test(trimmed) && /nginx/i.test(trimmed))
   if (status === 504 || looksLikeGatewayHtml) {
-    return 'Generate dokumen melewati batas waktu gateway (504). Template URD butuh beberapa menit — coba lagi, atau generate saat LLM tidak sedang antri.'
+    return 'Permintaan ke layanan AI melewati batas waktu gateway (504). Periksa status layanan, lalu coba lagi.'
   }
   if (status === 502 || status === 503) {
     if (looksLikeGatewayHtml || /bad gateway|service unavailable/i.test(trimmed)) {
