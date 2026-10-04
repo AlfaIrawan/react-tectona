@@ -111,7 +111,7 @@ export const WORKFLOW_TRIGGER_EVENT_CATALOG = {
     Compliance: ['Exception Created', 'Evidence Missing', 'Status Changed'],
   },
   'Document & Knowledge': {
-    Document: ['Uploaded', 'Updated', 'Version Published', 'Archived'],
+    Document: ['Review Requested', 'Uploaded', 'Updated', 'Version Published', 'Archived'],
     'Knowledge Article': ['Created', 'Updated', 'Published', 'Review Due'],
     'Meeting Note': ['Created', 'Decision Captured', 'Follow-up Created'],
     'Artifact Link': ['Created', 'Removed', 'Target Changed'],
@@ -202,7 +202,7 @@ export const WORKFLOW_ACTION_CATALOG = {
     Compliance: ['Create Exception', 'Request Evidence', 'Escalate'],
   },
   'Document & Knowledge': {
-    Document: ['Upload', 'Update Metadata', 'Publish Version', 'Archive'],
+    Document: ['Set Status', 'Upload', 'Update Metadata', 'Publish Version', 'Archive'],
     'Knowledge Article': ['Create', 'Update', 'Publish', 'Request Review'],
     'Meeting Note': ['Create', 'Add Decision', 'Create Follow-up'],
     'Artifact Link': ['Link', 'Unlink', 'Update Target'],
@@ -245,6 +245,9 @@ export const WORKFLOW_ACTION_CATALOG = {
     'Alert Rule': ['Create', 'Update', 'Enable', 'Disable'],
   },
 } as const
+
+/** Document statuses a workflow may set (lookup_document_status in Document & Knowledge). */
+export const WORKFLOW_DOCUMENT_STATUSES = ['draft', 'in_review', 'approved', 'published', 'archived'] as const
 
 export const WORKFLOW_ACTION_DOMAINS = Object.keys(WORKFLOW_ACTION_CATALOG) as Array<keyof typeof WORKFLOW_ACTION_CATALOG>
 
@@ -339,8 +342,16 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     icon: ShieldCheck,
     accent: '#f97316',
     chipClass: 'bg-orange-50 text-orange-600 ring-orange-100',
-    fields: [{ key: 'approver', label: 'Approver', type: 'text', placeholder: 'e.g. Finance Manager' }],
-    defaultConfig: { approver: '' },
+    // The gate names a ROLE; who holds it per workspace is maintained separately, so the
+    // flow survives people changing jobs. `approver` stays for a one-off named approver.
+    fields: [
+      { key: 'approverRole', label: 'Approver role', type: 'text', placeholder: 'e.g. business_owner' },
+      { key: 'approver', label: 'Named approver (optional)', type: 'text', placeholder: 'user id, comma separated' },
+      { key: 'quorum', label: 'When there are several', type: 'select', options: ['all', 'any'] },
+      { key: 'allowSelfApproval', label: 'Requester may approve', type: 'select', options: ['no', 'yes'] },
+      { key: 'subjectLabel', label: 'What is being approved', type: 'text', placeholder: 'e.g. URD {{idea_title}}' },
+    ],
+    defaultConfig: { approverRole: '', approver: '', quorum: 'all', allowSelfApproval: 'no', subjectLabel: '' },
   },
   assignOwner: {
     kind: 'assignOwner',

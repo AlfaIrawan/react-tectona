@@ -27,6 +27,8 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { Input } from '@/components/ui/input'
 import { Select, SelectItem } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useTenantContextOptional } from '@/auth/TenantContext'
+import { isAllWorkspacesSelection, readStoredTenantSelection } from '@/lib/tenantWorkspaceScope'
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { WorkflowBuilderNode } from '@/modules/workflow-automation-engine/components/workflowBuilderNodes'
@@ -35,6 +37,7 @@ import {
   WORKFLOW_PALETTE_MIME,
   WORKFLOW_PALETTE_ORDER,
   WORKFLOW_ACTION_DOMAINS,
+  WORKFLOW_DOCUMENT_STATUSES,
   workflowActionEntities,
   workflowActionOperations,
   WORKFLOW_NOTIFICATION_CHANNELS,
@@ -62,6 +65,7 @@ import {
   type WorkflowRunStatus,
   type WorkflowRunSummaryDto,
   type WorkflowGraph,
+  type WorkflowCreateInput,
   type WorkflowDto,
 } from '@/lib/api/workflowAutomationApi'
 
@@ -82,11 +86,22 @@ type CanvasMenuState = { kind: 'node' | 'edge' | 'pane'; x: number; y: number; t
 type WorkflowBuilderCanvasProps = {
   open: boolean
   workflowId: string | null
+  /**
+   * Workspace the new workflow belongs to. An approval workflow drawn in the ORGANISATION
+   * workspace governs every workspace under it; without this a saved workflow is global.
+   */
+  workspaceId?: string | null
   /** Used to label the seeded graph for an existing workflow. */
   workflowName?: string | null
   workspaceMembers?: Array<{ id: string; name: string; email: string }>
   onWorkflowCreated?: (workflow: WorkflowDto) => void
   onClose: () => void
+}
+
+/** The workflow row's trigger must mirror the Trigger node, or event dispatch skips it. */
+function triggerTypeOf(nodes: Node<WorkflowNodeData>[]): NonNullable<WorkflowCreateInput['trigger']> {
+  const configured = nodes.find((node) => node.data.kind === 'trigger')?.data.config?.triggerType?.trim()
+  return (configured as NonNullable<WorkflowCreateInput['trigger']>) || 'Manual'
 }
 
 const EDGE_STROKE = '#94a3b8'
@@ -454,7 +469,7 @@ function validateWorkflowGraph(nodes: Node<WorkflowNodeData>[], edges: Edge[]): 
       if (!handles.has('body')) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" is missing a loop body connection.` })
       if (!handles.has('done')) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" is missing a done connection.` })
     }
-    if (kind === 'approval' && !config.approver?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no approver assigned.` })
+    if (kind === 'approval' && !config.approver?.trim() && !config.approverRole?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no approver role assigned.` })
     if (kind === 'assignOwner' && !config.ownerId?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no workspace member assigned.` })
     if (kind === 'aiProcess' && !config.prompt?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has an empty AI prompt.` })
     if (kind === 'action' && !config.target?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no target set.` })
@@ -599,6 +614,13 @@ function actionPropertyControls(config: Record<string, string>): ActionPropertyC
   const entity = config.actionEntity ?? ''
   const operation = config.actionOperation ?? ''
   const key = `${entity}:${operation}`
+  if (entity === 'Document' && (operation === 'Set Status' || operation === 'Publish Version' || operation === 'Archive')) {
+    return [
+      { key: 'status_code', label: 'Status', type: 'select', options: WORKFLOW_DOCUMENT_STATUSES, required: operation === 'Set Status' },
+      { key: 'document_id', label: 'Document ID', type: 'text', placeholder: 'Leave empty to use the document from the trigger' },
+      { key: 'reason', label: 'Reason', type: 'text', placeholder: 'Shown in the document audit trail' },
+    ]
+  }
   if (key === 'Task:Create' || key === 'Work Item:Create') {
     return [
       { key: 'project_id', label: 'Project', type: 'text', placeholder: 'e.g. PRJ-1001', required: true },
@@ -734,12 +756,23 @@ function stepStatusTextClass(status: WorkflowRunStepStatus): string {
 
 function WorkflowBuilderCanvasInner({
   workflowId,
+  workspaceId,
   workflowName,
   workspaceMembers = [],
   onWorkflowCreated,
   onClose,
 }: Omit<WorkflowBuilderCanvasProps, 'open'>) {
   const { addToast } = useToast()
+  // The builder renders in a portal outside the page's tree, so read the active workspace
+  // here rather than trusting a prop chain: a workflow must be saved into the workspace it
+  // was drawn in (an organisation workflow governs every workspace under it).
+  const tenant = useTenantContextOptional()
+  const activeWorkspaceId = useMemo(() => {
+    for (const candidate of [workspaceId, tenant?.workspaceId, readStoredTenantSelection()?.workspaceId]) {
+      if (candidate && !isAllWorkspacesSelection(candidate)) return candidate
+    }
+    return null
+  }, [tenant?.workspaceId, workspaceId])
   const { screenToFlowPosition, fitView } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const idCounterRef = useRef(0)
@@ -872,7 +905,15 @@ function WorkflowBuilderCanvasInner({
   const handleSaveDraft = useCallback(() => {
     persist() // local backup
     if (!workflowId) {
-      createWorkflowApi({ name, status: 'Draft', definition: buildRuntimeDefinition(nodes, edges) })
+      createWorkflowApi({
+        name,
+        status: 'Draft',
+        // The backend matches events against the workflow row's own trigger, so it has to
+        // mirror the Trigger node — otherwise an Event workflow can never fire.
+        trigger: triggerTypeOf(nodes),
+        definition: buildRuntimeDefinition(nodes, edges),
+        workspace_id: activeWorkspaceId ?? undefined,
+      })
         .then((created) => {
           onWorkflowCreated?.(created)
           addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved to backend.` })
@@ -884,10 +925,10 @@ function WorkflowBuilderCanvasInner({
         }))
       return
     }
-    updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges) })
+    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges) })
       .then(() => addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved.` }))
       .catch(() => addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' }))
-  }, [addToast, edges, name, nodes, onWorkflowCreated, persist, workflowId])
+  }, [activeWorkspaceId, addToast, edges, name, nodes, onWorkflowCreated, persist, workflowId])
 
   const handlePublish = useCallback(() => {
     if (validateWorkflowGraph(nodes, edges).some((issue) => issue.level === 'error')) {
@@ -899,7 +940,7 @@ function WorkflowBuilderCanvasInner({
       addToast({ variant: 'info', title: 'Workflow published', description: `${name} published (prototype).` })
       return
     }
-    updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges) })
+    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges) })
       .then(() => publishWorkflowApi(workflowId))
       .then(() => addToast({ variant: 'success', title: 'Workflow published', description: `${name} published.` }))
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
@@ -1145,7 +1186,10 @@ function WorkflowBuilderCanvasInner({
         current.map((edge) => {
           if (edge.id !== edgeId) return edge
           if (edge.label) return { ...edge, label: '' }
-          const label = edge.sourceHandle === 'false' ? 'No' : 'Yes'
+          const sourceKind = nodes.find((n) => n.id === edge.source)?.data?.kind
+          const label = sourceKind === 'approval'
+            ? (edge.sourceHandle === 'false' ? 'Rejected' : 'Approved')
+            : edge.sourceHandle === 'false' ? 'No' : 'Yes'
           return { ...edge, label }
         }),
       )
@@ -1394,7 +1438,7 @@ function WorkflowBuilderCanvasInner({
           {tab === 'builder' ? (
             <div ref={wrapperRef} className="absolute inset-0 min-h-[320px] min-w-0" onDragOver={handleCanvasDragOver} onDrop={handleCanvasDrop}>
               <ReactFlow
-                className="h-full w-full"
+                className="workflow-builder-canvas h-full w-full"
                 nodes={displayNodes}
                 edges={edges}
                 nodeTypes={WORKFLOW_NODE_TYPES}
@@ -2035,15 +2079,17 @@ function WorkflowBuilderCanvasInner({
   )
 }
 
-export function WorkflowBuilderCanvas({ open, workflowId, workflowName, workspaceMembers, onClose }: WorkflowBuilderCanvasProps) {
+export function WorkflowBuilderCanvas({ open, workflowId, workspaceId, workflowName, workspaceMembers, onWorkflowCreated, onClose }: WorkflowBuilderCanvasProps) {
   if (!open || typeof document === 'undefined') return null
   return createPortal(
     <ReactFlowProvider>
       <WorkflowBuilderCanvasInner
         key={workflowId ?? 'new'}
         workflowId={workflowId}
+        workspaceId={workspaceId}
         workflowName={workflowName}
         workspaceMembers={workspaceMembers}
+        onWorkflowCreated={onWorkflowCreated}
         onClose={onClose}
       />
     </ReactFlowProvider>,

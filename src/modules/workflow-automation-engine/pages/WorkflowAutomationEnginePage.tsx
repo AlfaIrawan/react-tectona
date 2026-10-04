@@ -135,6 +135,9 @@ type WorkflowRecord = {
   successRate: number
   executions: number
   lastUpdated: string
+  /** Owning workspace. The catalog also lists workflows inherited from the
+      organization home, so this is what separates an inherited row from a local one. */
+  workspaceId?: string | null
 }
 
 type WorkflowOwnerOption = {
@@ -782,6 +785,7 @@ function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOpti
     successRate: dto.success_rate,
     executions: dto.executions,
     lastUpdated: dto.last_updated,
+    workspaceId: dto.workspace_id ?? null,
   }
 }
 
@@ -1286,7 +1290,12 @@ export function WorkflowAutomationEnginePage() {
   )
 
   const createWorkflow = useCallback(() => {
-    apiCreateWorkflow({ name: 'Untitled Workflow' })
+    // The row is created here, not in the builder — and workspace_id can only be set at
+    // creation time, so it has to carry the active workspace or the workflow stays global.
+    apiCreateWorkflow({
+      name: 'Untitled Workflow',
+      workspace_id: isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined,
+    })
       .then((created) => {
         setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current, 0), ...current])
         setBuilder({ open: true, workflowId: created.id })
@@ -1296,7 +1305,7 @@ export function WorkflowAutomationEnginePage() {
         setBuilder({ open: true, workflowId: null })
         addToast({ variant: 'warning', title: 'Offline mode', description: 'Backend unavailable — new workflow will be saved locally.' })
       })
-  }, [addToast])
+  }, [addToast, workspaceId])
   const [workflowPage, setWorkflowPage] = useState(1)
   const [workflowPageSize, setWorkflowPageSize] = useState(10)
   const [workflowFilterType, setWorkflowFilterType] = useState<Set<string>>(new Set())
@@ -1418,12 +1427,35 @@ export function WorkflowAutomationEnginePage() {
     if (!checked) setWorkflowTableSelectedIds([])
   }, [])
 
+  /** The catalog lists what governs this workspace, which includes the organization
+      home's workflows. A row owned by another workspace is inherited — it runs here but
+      belongs elsewhere. Global workflows (no workspace) stay unmarked, as before. */
+  const isInheritedWorkflow = useCallback(
+    (item: WorkflowRecord) => {
+      const owner = item.workspaceId?.trim()
+      if (!owner) return false
+      if (!workspaceId || isAllWorkspacesSelection(workspaceId)) return false
+      return owner !== workspaceId
+    },
+    [workspaceId],
+  )
+
   const renderWorkflowTableCell = (item: WorkflowRecord, key: WorkflowTableColumnKey) => {
     switch (key) {
       case 'name':
         return (
           <div className="min-w-0">
-            <div className="truncate font-semibold text-slate-900">{item.name}</div>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <div className="truncate font-semibold text-slate-900">{item.name}</div>
+              {isInheritedWorkflow(item) ? (
+                <span
+                  className="shrink-0 rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700"
+                  title="Inherited from the organization workspace — it runs here, but edit it where it was created."
+                >
+                  Organization
+                </span>
+              ) : null}
+            </div>
             <div className="mt-0.5 truncate text-[10px] text-slate-500" title={item.project}>{item.project}</div>
             <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{workflowCode(item)}</div>
           </div>
@@ -3421,6 +3453,7 @@ export function WorkflowAutomationEnginePage() {
       <WorkflowBuilderCanvas
         open={builder.open}
         workflowId={builder.workflowId}
+        workspaceId={isAllWorkspacesSelection(workspaceId) ? null : workspaceId}
         workflowName={builder.workflowId ? workflows.find((item) => item.id === builder.workflowId)?.name ?? null : null}
         workspaceMembers={workflowOwnerOptions}
         onWorkflowCreated={(created) => {

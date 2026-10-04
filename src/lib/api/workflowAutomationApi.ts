@@ -44,12 +44,14 @@ export type WorkflowSummaryDto = {
   version: number
   last_updated: string
   updated_date?: string
+  /** Owning workspace; present so the catalog can mark rows inherited from the
+      organization home, which the listing now includes. */
+  workspace_id?: string | null
 }
 
 /** Full record returned by GET /workflows/{id} (includes `definition`). */
 export type WorkflowDto = WorkflowSummaryDto & {
   definition: WorkflowGraph
-  workspace_id?: string | null
   created_date: string
 }
 
@@ -232,18 +234,92 @@ export async function getWorkflowRun(runId: string): Promise<WorkflowRunDto> {
   return readJson<WorkflowRunDto>(res)
 }
 
-export async function approveWorkflowRun(runId: string): Promise<WorkflowRunDto> {
+export async function approveWorkflowRun(runId: string, note?: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/approve`, {
     method: 'POST',
     headers: defaultHeaders(),
+    body: JSON.stringify({ note: note ?? null }),
   })
   return readJson<WorkflowRunDto>(res)
 }
 
-export async function rejectWorkflowRun(runId: string): Promise<WorkflowRunDto> {
+export async function rejectWorkflowRun(runId: string, note?: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/reject`, {
     method: 'POST',
     headers: defaultHeaders(),
+    body: JSON.stringify({ note: note ?? null }),
   })
   return readJson<WorkflowRunDto>(res)
+}
+
+/** One person's approval request on a parked workflow run. */
+export type WorkflowApprovalDto = {
+  id: string
+  run_id: string
+  workflow_id: string
+  node_id: string
+  attempt: number
+  subject_id: string
+  role_code?: string | null
+  quorum: 'all' | 'any'
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled'
+  subject_context: Record<string, string | number | null>
+  requested_by?: string | null
+  requested_at?: string | null
+  decided_at?: string | null
+  decision_note?: string | null
+}
+
+/** The caller's approval inbox (`mine`), or every approval of one document / idea. */
+export async function listWorkflowApprovals(params: {
+  mine?: boolean
+  subjectContextKey?: string
+  subjectContextValue?: string
+  limit?: number
+} = {}): Promise<WorkflowApprovalDto[]> {
+  const query = new URLSearchParams()
+  if (params.mine === false) query.set('mine', 'false')
+  if (params.subjectContextKey) query.set('subject_context_key', params.subjectContextKey)
+  if (params.subjectContextValue) query.set('subject_context_value', params.subjectContextValue)
+  if (params.limit) query.set('limit', String(params.limit))
+  const res = await apiFetch(`${BASE_URL}/v1/approvals?${query.toString()}`, { headers: defaultHeaders() })
+  return readJson<WorkflowApprovalDto[]>(res)
+}
+
+export type WorkflowApprovalRoleDto = {
+  id: string
+  workspace_id: string
+  role_code: string
+  role_name: string
+  subject_id: string
+}
+
+/** Who holds a business role ("Business Owner") in a workspace — what approval nodes name. */
+export async function listWorkflowApprovalRoles(workspaceId?: string): Promise<WorkflowApprovalRoleDto[]> {
+  const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : ''
+  const res = await apiFetch(`${BASE_URL}/v1/approval-roles${query}`, { headers: defaultHeaders() })
+  return readJson<WorkflowApprovalRoleDto[]>(res)
+}
+
+export async function assignWorkflowApprovalRole(body: {
+  workspace_id: string
+  role_code: string
+  role_name?: string
+  subject_id: string
+}): Promise<WorkflowApprovalRoleDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/approval-roles`, {
+    method: 'POST',
+    headers: defaultHeaders(),
+    body: JSON.stringify(body),
+  })
+  return readJson<WorkflowApprovalRoleDto>(res)
+}
+
+export async function unassignWorkflowApprovalRole(params: {
+  workspace_id: string
+  role_code: string
+  subject_id: string
+}): Promise<void> {
+  const query = new URLSearchParams(params).toString()
+  await apiFetch(`${BASE_URL}/v1/approval-roles?${query}`, { method: 'DELETE', headers: defaultHeaders() })
 }

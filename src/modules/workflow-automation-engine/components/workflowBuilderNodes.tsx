@@ -17,7 +17,10 @@ export function WorkflowBuilderNode({ data, selected }: NodeProps<WorkflowNodeDa
   const summary = workflowNodeSummary(data)
   const isTrigger = data.kind === 'trigger'
   const isEnd = data.kind === 'end'
-  const isBranch = data.kind === 'ifElse'
+  // An approval branches too: the green handle is taken when approved, the red one when
+  // rejected (draw it to a 'back to draft' step, or leave it to fail the run).
+  const isBranch = data.kind === 'ifElse' || data.kind === 'approval'
+  const isApproval = data.kind === 'approval'
   const isParallel = data.kind === 'parallel'
   const isLoop = data.kind === 'loop'
   const isDisabled = data.disabled === true
@@ -78,8 +81,8 @@ export function WorkflowBuilderNode({ data, selected }: NodeProps<WorkflowNodeDa
 
       {isBranch || isParallel || isLoop ? (
         <div className="flex items-center justify-between px-4 pb-2 text-[10px] font-semibold">
-          <span className={isBranch ? 'text-emerald-600' : 'text-blue-600'}>{isBranch ? 'TRUE' : isParallel ? 'BRANCH A' : 'BODY'}</span>
-          <span className={isBranch ? 'text-rose-500' : 'text-indigo-500'}>{isBranch ? 'FALSE' : isParallel ? 'BRANCH B' : 'DONE'}</span>
+          <span className={isBranch ? 'text-emerald-600' : 'text-blue-600'}>{isApproval ? 'APPROVED' : isBranch ? 'TRUE' : isParallel ? 'BRANCH A' : 'BODY'}</span>
+          <span className={isBranch ? 'text-rose-500' : 'text-indigo-500'}>{isApproval ? 'REJECTED' : isBranch ? 'FALSE' : isParallel ? 'BRANCH B' : 'DONE'}</span>
         </div>
       ) : null}
 

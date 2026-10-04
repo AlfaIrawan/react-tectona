@@ -1650,6 +1650,33 @@
   transform: none !important;
 }
 
+/* Workflow builder edges: React Flow makes the whole .react-flow__edges SVG
+   pointer-events:none, and its invisible interaction path carries no stroke paint,
+   so `visibleStroke` on the edge group never produces a hit region. Without these
+   rules a connection cannot be clicked, selected or right-clicked, which made the
+   edge context menu (insert step / relabel / delete connection) unreachable. */
+.workflow-builder-canvas .react-flow__edges {
+  pointer-events: none;
+}
+.workflow-builder-canvas .react-flow__edge {
+  pointer-events: visibleStroke;
+  cursor: pointer;
+}
+.workflow-builder-canvas .react-flow__edge-path,
+.workflow-builder-canvas .react-flow__edge-interaction {
+  pointer-events: stroke !important;
+  cursor: pointer;
+}
+/* A stroke region only exists when the stroke is actually painted -- `transparent`
+   still paints, `none` does not. This is what makes the 20px interaction path hittable. */
+.workflow-builder-canvas .react-flow__edge-interaction {
+  stroke: transparent !important;
+}
+.workflow-builder-canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke: #0284c7 !important;
+  stroke-width: 3 !important;
+}
+
 .integration-flow-canvas .react-flow__edge {
   pointer-events: none;
   cursor: pointer;
