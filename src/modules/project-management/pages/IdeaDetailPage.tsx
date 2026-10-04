@@ -28,6 +28,7 @@ import {
   Eraser,
   ExternalLink,
   FileText,
+  FileStack,
   Files,
   Gauge,
   GitBranch,
@@ -43,6 +44,7 @@ import {
   MoveRight,
   Type,
   RefreshCcw,
+  Send,
   Sparkles,
   Strikethrough,
   Subscript,
@@ -65,6 +67,7 @@ import {
   Circle,
   Info,
   GripVertical,
+  History,
   Workflow,
   ShieldCheck,
   Undo2,
@@ -107,7 +110,7 @@ import {
 } from '@/components/ui/dialog'
 import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import { enterpriseCyanGradientActionButtonClass, enterpriseIndigoGradientActionButtonClass, enterpriseSecondaryButtonClass, enterpriseControlFocusClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
+import { enterpriseCyanGradientActionButtonClass, enterprisePrimarySolidButtonClass, enterpriseSecondaryButtonClass, enterpriseControlFocusClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import {
   analyzeIdeaScoring,
   analyzeIdeaIntegration,
@@ -139,12 +142,15 @@ import {
   listAllDocuments,
   listTemplates,
   patchDocument,
+  submitDocumentForReview,
   syncIdeaDocumentTitles,
   resolveLatestDocumentAttachmentBlob,
   type DocumentResponse,
   type DocumentTemplateResponse,
 } from '@/lib/api/documentKnowledgeApi'
 import { belongsToDkmTemplateScope } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
+import { IdeaDocumentHistory } from '../components/IdeaDocumentHistory'
+import { IdeaTemplateLibrary } from '../components/IdeaTemplateLibrary'
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import {
   createDocumentFolder,
@@ -165,6 +171,12 @@ import {
   DocumentRepositoryPaginationControls,
   DocumentRepositoryTableView,
 } from '@/modules/document-knowledge-management/components/DocumentRepositoryTableView'
+import { DocumentRepositoryFolderCard } from '@/modules/document-knowledge-management/components/DocumentRepositoryFolderCard'
+import { DocumentRepositoryExplorerView } from '@/modules/document-knowledge-management/components/DocumentRepositoryExplorerView'
+import {
+  RepositoryViewModeSwitch,
+  type RepositoryLayoutMode,
+} from '@/modules/document-knowledge-management/components/RepositoryViewModeSwitch'
 import {
   mapDocumentToRepositoryItem,
   type RepositoryItem,
@@ -225,6 +237,8 @@ import { IdeaReviewedSectionContent, ScoringNarrativeEcho } from '@/modules/proj
 import { IdeaScoringDraftEditor, PendingScoreProposalNote, usePendingScoreProposal } from '@/modules/project-management/components/IdeaScoringDraftEditor'
 import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-management/lib/reviewerDisplayName'
 import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
+import { docApprovalState, useIdeaDocApprovals } from '@/modules/project-management/lib/ideaDocApprovals'
+import { approveWorkflowRun, rejectWorkflowRun } from '@/lib/api/workflowAutomationApi'
 import { NOTIFICATIONS_UPDATED_EVENT } from '@/lib/chat/chatRealtimeEvents'
 import { dispatchIdeaSectionRevisionUpdated } from '@/lib/chat/ideaSectionRevisionFromChat'
 import {
@@ -423,9 +437,29 @@ function ideaDocTypeLabel(templateCode: string | null | undefined): string {
   return (templateCode ?? '').split('-', 1)[0]?.trim().toUpperCase() || 'DOC'
 }
 
+function ideaDocumentType(doc: DocumentResponse): string | null {
+  const metadata = doc.metadata ?? {}
+  const candidate = metadata.doc_type_label || metadata.template_code || doc.document_type_code
+  const label = typeof candidate === 'string' ? ideaDocTypeLabel(candidate) : ''
+  return ['URD', 'BRD', 'FSD'].includes(label) ? label : null
+}
+
 function ideaDocFileName(label: string, title: string): string {
   const safe = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
   return `${label} - ${safe}`.slice(0, 250) + '.docx'
+}
+
+/** Append the same version label shown in the Version column, unless the name already contains it. */
+function withDocumentVersion(name: string, version: string): string {
+  const label = version.trim()
+  if (!label || label === '-') return name
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (new RegExp(`(^|[\\s_\\-.(])${escaped}($|[\\s_.\\-)])`, 'i').test(name)) return name
+  const extension = name.match(/\.[A-Za-z0-9]{1,8}$/)
+  if (extension?.index !== undefined) {
+    return `${name.slice(0, extension.index)} ${label}${extension[0]}`
+  }
+  return `${name} ${label}`
 }
 
 function ideaFromApi(api: IdeaApi): Idea {
@@ -3234,7 +3268,8 @@ function IdeaDetailSidebar({
   const isEditable = actionControlMode === 'editable'
   const isReadonly = actionControlMode === 'readonly'
   const showActionControl = isEditable || isReadonly
-  const showActionControlSection = showActionControl || showManualPublishFooter || Boolean(orgWorkspaceNotice)
+  // Temporarily keep Action & Control out of the Idea Detail sidebar.
+  const showActionControlSection = false
   const [statusManagerOpen, setStatusManagerOpen] = useState(false)
   const [roleManagerOpen, setRoleManagerOpen] = useState(false)
   const [departmentManagerOpen, setDepartmentManagerOpen] = useState(false)
@@ -3517,11 +3552,20 @@ export function IdeaDetailPage() {
   const [ideaDocTemplates, setIdeaDocTemplates] = useState<DocumentTemplateResponse[]>([])
   const [ideaDocTemplatesLoading, setIdeaDocTemplatesLoading] = useState(false)
   const [ideaGeneratedDocs, setIdeaGeneratedDocs] = useState<DocumentResponse[]>([])
+  const [ideaDocHistoryTarget, setIdeaDocHistoryTarget] = useState<DocumentResponse | null>(null)
   const [ideaDocsReloadKey, setIdeaDocsReloadKey] = useState(0)
+  const [ideaDocApprovalTarget, setIdeaDocApprovalTarget] = useState<
+    { item: RepositoryItem; mode: 'submit' | 'approve' | 'reject' } | null
+  >(null)
+  const [ideaDocApprovalNote, setIdeaDocApprovalNote] = useState('')
+  const [ideaDocApprovalBusy, setIdeaDocApprovalBusy] = useState(false)
   const ideaDocTitleHealRef = useRef<string | null>(null)
   const [ideaDocsLoading, setIdeaDocsLoading] = useState(false)
   const [ideaDocsPage, setIdeaDocsPage] = useState(1)
   const [ideaDocsPageSize, setIdeaDocsPageSize] = useState(10)
+  const [ideaDocsView, setIdeaDocsView] = useState<'documents' | 'templates'>('documents')
+  const [ideaDocsLayout, setIdeaDocsLayout] = useState<RepositoryLayoutMode>('folders')
+  const [ideaTemplateLayout, setIdeaTemplateLayout] = useState<RepositoryLayoutMode>('folders')
   const ideaDocsPanelRef = useRef<HTMLDivElement>(null)
   const [ideaDocsPanelHeightPx, setIdeaDocsPanelHeightPx] = useState<number | null>(null)
   const [isIdeaDocsPanelFullscreen, setIsIdeaDocsPanelFullscreen] = useState(false)
@@ -4411,6 +4455,8 @@ export function IdeaDetailPage() {
     }
   }, [setRightDrawerOpen, setRightDrawerWidth])
   const [activePanel, setActivePanel] = useState<PanelKey>('summary')
+  // Approvals live in Workflow Automation: the drawn flow decides who approves a document.
+  const ideaDocApprovals = useIdeaDocApprovals(idea.id, activePanel === 'document')
   const reorderIdeaMenuSections = useIdeaNavSectionsStore((state) => state.reorderSections)
   const savedMenuSections = useIdeaNavSectionsStore((state) => state.sectionsByIdea[idea.id])
   const menuSections = useMemo(
@@ -6031,10 +6077,8 @@ export function IdeaDetailPage() {
     if (activePanel !== 'document') return
     let cancelled = false
     setIdeaDocsLoading(true)
-    // Load the repository without a workspace filter so legacy documents that
-    // were created before workspace metadata was populated remain discoverable.
-    // The Idea tag/metadata filter below still scopes the result to this Idea.
-    void listAllDocuments({ page: 1, page_size: 100 })
+    // Query by idea across workspaces so older documents remain discoverable.
+    void listAllDocuments({ idea_id: idea.id, page: 1, page_size: 100 })
       .then((response) => {
         if (cancelled) return
         const linked = response.items.filter(
@@ -6471,7 +6515,23 @@ export function IdeaDetailPage() {
   }, [ideaDocCurrentFolder, ideaGeneratedDocs, isIdeaDocAtProjectRoot])
 
   const ideaRepositoryItems = useMemo(
-    () => ideaDocsInCurrentFolder.map((doc) => mapDocumentToRepositoryItem(doc, idea.title)),
+    () => ideaDocsInCurrentFolder.filter((doc, index, all) => {
+      const label = ideaDocumentType(doc)
+      return !label || !doc.metadata?.ai_generated || all.findIndex((candidate) =>
+        candidate.metadata?.ai_generated && ideaDocumentType(candidate) === label,
+      ) === index
+    }).map((doc) => {
+      const item = mapDocumentToRepositoryItem(doc, idea.title)
+      const label = ideaDocumentType(doc)
+      const displayName = label
+        ? `${label} - ${doc.title.replace(/^(?:URD|BRD|FSD)\s*[-:]\s*/i, '')}`
+        : (item.displayName || item.name)
+      return {
+        ...item,
+        displayName: withDocumentVersion(displayName, item.version),
+        fileName: withDocumentVersion(item.fileName, item.version),
+      }
+    }),
     [ideaDocsInCurrentFolder, idea.title],
   )
 
@@ -6742,9 +6802,9 @@ export function IdeaDetailPage() {
     }
   }, [addToast, ideaDocFolderStack])
 
-  const openIdeaDocGenerateDialog = useCallback(async () => {
-    const firstTemplate = ideaDocTemplates[0]
-    setIdeaDocGenerateTemplateId(firstTemplate?.id ?? '')
+  const openIdeaDocGenerateDialog = useCallback(async (preferredTemplateId?: string) => {
+    const template = ideaDocTemplates.find((item) => item.id === preferredTemplateId) ?? ideaDocTemplates[0]
+    setIdeaDocGenerateTemplateId(template?.id ?? '')
     try {
       const latest = await getIdeaById(idea.id)
       const sections = Object.entries(latest.approved_sections || {}).map(([key, revision]) =>
@@ -6756,6 +6816,11 @@ export function IdeaDetailPage() {
       addToast({ title: 'Revisi approved belum dapat dimuat', description: error instanceof Error ? error.message : '', variant: 'error' })
     }
   }, [idea.id, idea.description, idea.title, ideaDocTemplates, addToast])
+
+  const openTemplateManagementAction = useCallback((action: 'upload' | 'new-template' | 'new-folder') => {
+    const workspacePrefix = location.pathname.match(/^\/w\/[^/]+/)?.[0] ?? ''
+    navigate(`${workspacePrefix}/document-knowledge-management?view=templates&action=${action}`)
+  }, [location.pathname, navigate])
 
   const handleIdeaDocGenerate = useCallback(async () => {
     const template = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId)
@@ -6783,25 +6848,30 @@ export function IdeaDetailPage() {
     }
     const documentAuthor = (currentUserDisplayName || submittedByDisplayName).trim()
     const generatedOn = new Date().toISOString().slice(0, 10)
+    const previousDocument = ideaGeneratedDocs
+      .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === ideaDocTypeLabel(template.template_code))
+      .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0]
+    const generationVersion = (previousDocument?.current_version_no ?? 0) + 1
     const sourceWithProvenance = [
       documentAuthor && documentAuthor !== 'Root'
         ? [
             '--- Verified document provenance ---',
             `Document author: ${documentAuthor}`,
-            'Revision history: version 1.0',
+            `Revision history: version ${generationVersion}.0`,
             `Revision date: ${generatedOn}`,
-            'Revision description: Initial AI-generated draft.',
+            previousDocument ? 'Revision description: Regenerated AI draft.' : 'Revision description: Initial AI-generated draft.',
           ].join('\n')
         : '',
       sourceText,
     ].filter(Boolean).join('\n\n')
+    const docTypeLabel = ideaDocTypeLabel(template.template_code)
 
     // The template-fill service cannot infer BRD/URD requirements from the short idea summary.
     // Send every document visible in this Idea Docs section as named evidence, with the latest
     // attachment text when it can be extracted. Failed extraction still preserves the document
     // name so the generated FSD can list it under Reference Documents.
     const referenceDocuments = await Promise.all(
-      ideaGeneratedDocs.map(async (document_) => {
+      ideaGeneratedDocs.filter((document_) => ideaDocumentType(document_) !== docTypeLabel).map(async (document_) => {
         const fallbackName = document_.title || `Idea document ${document_.id}`
         try {
           const { blob, fileName, contentType } = await resolveLatestDocumentAttachmentBlob(document_.id, {
@@ -6831,6 +6901,13 @@ export function IdeaDetailPage() {
         id: targetProject.id,
         name: targetProject.name,
       })
+      const existingDocument = ideaGeneratedDocs
+        .filter((document_) =>
+          document_.project_id === targetProject.id &&
+          document_.metadata?.idea_id === idea.id &&
+          ideaDocumentType(document_) === docTypeLabel,
+        )
+        .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0]
 
       const filled = await fillDkmTemplate({
         template_id: template.id,
@@ -6842,9 +6919,9 @@ export function IdeaDetailPage() {
         document_title: idea.title,
       })
 
-      const docTypeLabel = ideaDocTypeLabel(template.template_code)
       const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
         title: idea.title.slice(0, 255),
+        existing_document_id: existingDocument?.id,
         attachment_file_name: ideaDocFileName(docTypeLabel, idea.title),
         summary: filled.payload.summary?.trim() || template.description || undefined,
         workspace_id: idea.workspace ?? null,
@@ -6995,6 +7072,61 @@ export function IdeaDetailPage() {
       setIdeaDocRenameBusy(false)
     }
   }, [addToast, idea.id, ideaDocRenameTarget, ideaDocRenameValue, ideaGeneratedDocs])
+
+  /** Ask for approval, or record the caller's decision — both run through the workflow. */
+  const handleIdeaDocApprovalConfirm = useCallback(async () => {
+    if (!ideaDocApprovalTarget) return
+    const { item, mode } = ideaDocApprovalTarget
+    const note = ideaDocApprovalNote.trim()
+    if (mode === 'reject' && !note) {
+      addToast({ title: 'Alasan wajib diisi', description: 'Tulis apa yang perlu diperbaiki.', variant: 'error' })
+      return
+    }
+    setIdeaDocApprovalBusy(true)
+    try {
+      if (mode === 'submit') {
+        const result = await submitDocumentForReview(item.id, { version: item.documentVersion, note: note || undefined })
+        setIdeaGeneratedDocs((prev) => prev.map((doc) => (doc.id === result.document.id ? result.document : doc)))
+        if (result.workflow_status === 'started') {
+          addToast({ title: 'Diajukan untuk review', description: `${item.name} menunggu persetujuan.`, variant: 'success' })
+        } else {
+          // The document is in review, but nothing will move it: say so instead of
+          // leaving it stuck with no approver.
+          addToast({
+            title: 'Belum ada workflow yang menangani',
+            description: 'Dokumen berstatus In Review, tapi belum ada alur approval yang terbit untuk event ini. Atur di Workflow Automation.',
+            variant: 'warning',
+          })
+        }
+      } else {
+        const approval = docApprovalState(
+          ideaGeneratedDocs.find((doc) => doc.id === item.id),
+          ideaDocApprovals.byDocument[item.id] ?? [],
+          currentUserId,
+        ).mine
+        if (!approval) throw new Error('Permintaan approval ini bukan untukmu, atau sudah kamu putuskan.')
+        if (mode === 'approve') await approveWorkflowRun(approval.run_id, note || undefined)
+        else await rejectWorkflowRun(approval.run_id, note)
+        addToast({
+          title: mode === 'approve' ? 'Disetujui' : 'Perbaikan diminta',
+          description: item.name,
+          variant: 'success',
+        })
+      }
+      setIdeaDocApprovalTarget(null)
+      setIdeaDocApprovalNote('')
+      await ideaDocApprovals.reload()
+      setIdeaDocsReloadKey((key) => key + 1)
+    } catch (error) {
+      addToast({
+        title: 'Gagal memproses approval',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setIdeaDocApprovalBusy(false)
+    }
+  }, [addToast, currentUserId, ideaDocApprovalNote, ideaDocApprovalTarget, ideaDocApprovals, ideaGeneratedDocs])
 
   const handleIdeaDocRegenerateKb = useCallback(async (item: RepositoryItem) => {
     const document_ = ideaGeneratedDocs.find((doc) => doc.id === item.id)
@@ -14022,11 +14154,36 @@ export function IdeaDetailPage() {
               <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
-                    <FileText className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                    <h2 className="text-lg font-semibold text-foreground">Idea Docs</h2>
+                    {ideaDocsView === 'documents' ? <FileText className="h-5 w-5 shrink-0 text-foreground" aria-hidden /> : <FileStack className="h-5 w-5 shrink-0 text-foreground" aria-hidden />}
+                    <h2 className="text-lg font-semibold text-foreground">
+                      {ideaDocsView === 'documents' ? 'Idea Docs' : 'Templates & reusable content'}
+                    </h2>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {renderSectionReviewWorkspace('document', 'Docs')}
+                    <div className="inline-flex h-10 items-center rounded-lg border border-slate-300/90 bg-background/95 p-1 shadow-sm" role="group" aria-label="Idea document view">
+                      <button
+                        type="button"
+                        aria-pressed={ideaDocsView === 'documents'}
+                        className={cn('inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition', ideaDocsView === 'documents' ? 'bg-slate-900 text-white shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
+                        onClick={() => setIdeaDocsView('documents')}
+                      >
+                        <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        Idea Docs
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={ideaDocsView === 'templates'}
+                        className={cn('inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition', ideaDocsView === 'templates' ? 'bg-slate-900 text-white shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
+                        onClick={() => setIdeaDocsView('templates')}
+                      >
+                        <FileStack className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        Templates
+                      </button>
+                    </div>
+                    <RepositoryViewModeSwitch
+                      value={ideaDocsView === 'documents' ? ideaDocsLayout : ideaTemplateLayout}
+                      onChange={ideaDocsView === 'documents' ? setIdeaDocsLayout : setIdeaTemplateLayout}
+                    />
                     <button
                       type="button"
                       aria-pressed={isIdeaDocsPanelFullscreen}
@@ -14048,13 +14205,15 @@ export function IdeaDetailPage() {
                     </button>
                   </div>
                 </div>
-                <div className="space-y-2 pb-4">
-                  {reviewedSection('document')}
-                  <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
-                    Upload supporting documents or diagrams to auto-generate a knowledge base entry, or
-                    pick a Document & Knowledge Management template to draft a new document for this idea.
+                <div className={cn('space-y-2', ideaDocsView === 'documents' ? 'pb-4' : 'pb-1')}>
+                  <p className="w-full text-[11px] leading-snug text-muted-foreground">
+                    {ideaDocsView === 'documents'
+                      ? 'Upload supporting documents or diagrams to auto-generate a knowledge base entry, or pick a Document & Knowledge Management template to draft a new document for this idea.'
+                      : 'Structured template library with category grouping, version context, and direct reuse for this idea.'}
                   </p>
                 </div>
+                {ideaDocsView === 'documents' ? (
+                  <>
                 {!isIdeaDocAtProjectRoot && ideaDocFolderStack.length > 0 ? (
                   <div className="flex flex-wrap items-center gap-1 text-sm">
                     <button
@@ -14088,35 +14247,36 @@ export function IdeaDetailPage() {
                       <>
                         <button
                           type="button"
-                          className={enterpriseIndigoGradientActionButtonClass()}
+                          className={enterprisePrimarySolidButtonClass()}
                           title="Generate a document from a DKM master template"
                           disabled={ideaDocTemplatesLoading || ideaDocGenerateBusy}
-                          onClick={openIdeaDocGenerateDialog}
+                          onClick={() => void openIdeaDocGenerateDialog()}
                         >
                           {ideaDocGenerateBusy ? (
-                            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                            <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
-                            <Sparkles className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                            <Sparkles className="h-4 w-4" />
                           )}
                           Generate from template
                         </button>
                         <button
                           type="button"
-                          className={enterpriseCyanGradientActionButtonClass()}
+                          className={enterpriseSecondaryButtonClass()}
                           disabled={ideaDocFolderCreateBusy}
                           onClick={() => void handleIdeaDocCreateFolder()}
                           title="Create a subfolder to organize documents"
                         >
                           {ideaDocFolderCreateBusy ? (
-                            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                            <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
-                            <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
+                            <FolderPlus className="h-4 w-4" />
                           )}
                           New folder
                         </button>
                       </>
                     ) : null}
                   </div>
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {ideaDocsTotalCount > 0 ? (
                     <DocumentRepositoryPaginationControls
                       page={ideaDocsPage}
@@ -14130,9 +14290,24 @@ export function IdeaDetailPage() {
                       }}
                     />
                   ) : null}
+                  </div>
                 </div>
+                  </>
+                ) : null}
               </div>
 
+              {ideaDocsView === 'templates' ? (
+                <IdeaTemplateLibrary
+                  templates={ideaDocTemplates}
+                  documents={ideaGeneratedDocs}
+                  loading={ideaDocTemplatesLoading}
+                  layout={ideaTemplateLayout}
+                  onUseTemplate={(templateId) => { void openIdeaDocGenerateDialog(templateId) }}
+                  onUploadTemplate={() => openTemplateManagementAction('upload')}
+                  onNewTemplate={() => openTemplateManagementAction('new-template')}
+                  onNewFolder={() => openTemplateManagementAction('new-folder')}
+                />
+              ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
                 <div
                   className={cn(
@@ -14166,56 +14341,123 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                      {ideaDocSubfolders.length > 0 ? (
-                        <div className="shrink-0 border-b border-border/40 px-3 py-2">
-                          <div className="space-y-1">
-                            {ideaDocSubfolders.map((folder) => (
-                              <button
-                                key={folder.id}
-                                type="button"
-                                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-muted/40"
-                                title={`Open ${folder.name}`}
-                                onClick={() => openIdeaDocSubfolder(folder)}
-                                onContextMenu={(event) => {
-                                  event.preventDefault()
-                                  openIdeaDocFolderContextMenu(folder, event.clientX, event.clientY)
-                                }}
-                                onKeyDown={(event) => {
-                                  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
-                                    event.preventDefault()
-                                    const rect = event.currentTarget.getBoundingClientRect()
-                                    openIdeaDocFolderContextMenu(folder, rect.left + 24, rect.top + rect.height / 2)
-                                  }
-                                }}
-                              >
-                                <Folder className="h-4 w-4 shrink-0 text-sky-600" aria-hidden />
-                                <span className="min-w-0 flex-1 truncate font-medium text-foreground">{folder.name}</span>
-                                <span className="shrink-0 text-xs text-muted-foreground">
-                                  {folder.document_count} docs · {folder.children_count} subfolders
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      {ideaRepositoryItems.length > 0 ? (
-                        <DocumentRepositoryTableView
-                          items={ideaDocsPaginatedItems}
-                          loading={ideaDocsLoading}
-                          emptyMessage={
-                            isIdeaDocAtProjectRoot
-                              ? 'No documents in this idea folder yet.'
-                              : 'No documents in this folder.'
-                          }
-                          isKbGenerated={(item) => ideaDocKbGeneratedIds.has(item.id)}
-                          onDocumentClick={(item) => {
+                    <div className={cn(
+                      'flex min-h-0 flex-1 overflow-hidden',
+                      ideaDocsLayout === 'split' ? 'flex-row gap-3' : 'flex-col',
+                    )}>
+                      {ideaDocsLayout === 'explorer' ? (
+                        <DocumentRepositoryExplorerView
+                          folders={ideaDocSubfolders}
+                          documents={ideaDocsPaginatedItems.map((item) => ({
+                            id: item.id,
+                            name: item.displayName || item.name,
+                            fileName: item.fileName || item.name,
+                            updatedAt: item.updatedAt,
+                          }))}
+                          selectedDocumentId={ideaDocEditId}
+                          dropTargetFolderId={null}
+                          onOpenFolder={(folderId) => {
+                            const folder = ideaDocSubfolders.find((entry) => entry.id === folderId)
+                            if (folder) openIdeaDocSubfolder(folder)
+                          }}
+                          onOpenDocument={(documentId) => {
+                            const item = ideaRepositoryItems.find((entry) => entry.id === documentId)
+                            if (!item) return
                             setIdeaDocEditId(item.id)
                             setIdeaDocEditTitle(item.name)
                           }}
-                          onRowContextMenu={(event, item) => openIdeaDocContextMenu(event, item)}
+                          onFolderContextMenu={(event, folder) => {
+                            event.preventDefault()
+                            openIdeaDocFolderContextMenu(folder, event.clientX, event.clientY)
+                          }}
+                          onDocumentContextMenu={(event, documentId) => {
+                            const item = ideaRepositoryItems.find((entry) => entry.id === documentId)
+                            if (item) openIdeaDocContextMenu(event, item)
+                          }}
+                          onFolderDragOver={(event) => event.preventDefault()}
+                          onFolderDragLeave={() => undefined}
+                          onFolderDrop={(event) => event.preventDefault()}
                         />
-                      ) : null}
+                      ) : (
+                        <>
+                          {ideaDocsLayout === 'folders' && ideaDocSubfolders.length > 0 ? (
+                            <div className="mb-3 flex min-w-0 shrink-0 items-center gap-2">
+                              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-hide">
+                                {ideaDocSubfolders.map((folder) => (
+                                  <DocumentRepositoryFolderCard
+                                    key={folder.id}
+                                    folder={folder}
+                                    folders={ideaDocSubfolders}
+                                    isRenaming={false}
+                                    isDragOver={false}
+                                    onOpen={() => openIdeaDocSubfolder(folder)}
+                                    onStartRename={() => {
+                                      setIdeaDocFolderRenameTarget(folder)
+                                      setIdeaDocFolderRenameValue(folder.name)
+                                    }}
+                                    onRename={() => undefined}
+                                    onCancelRename={() => undefined}
+                                    onContextMenu={(event) => {
+                                      event.preventDefault()
+                                      openIdeaDocFolderContextMenu(folder, event.clientX, event.clientY)
+                                    }}
+                                    onDragOver={(event) => event.preventDefault()}
+                                    onDragLeave={() => undefined}
+                                    onDrop={(event) => event.preventDefault()}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {ideaDocsLayout === 'split' ? (
+                            <div className="flex w-60 shrink-0 flex-col overflow-y-auto rounded-xl border border-border/60 bg-background/70">
+                              {ideaDocSubfolders.length === 0 ? (
+                                <p className="px-3 py-4 text-xs text-muted-foreground">No subfolders here.</p>
+                              ) : ideaDocSubfolders.map((folder) => (
+                                <button
+                                  key={folder.id}
+                                  type="button"
+                                  className="flex items-center gap-2 border-b border-border/40 px-3 py-2.5 text-left last:border-b-0 hover:bg-muted/40"
+                                  onClick={() => openIdeaDocSubfolder(folder)}
+                                  onContextMenu={(event) => {
+                                    event.preventDefault()
+                                    openIdeaDocFolderContextMenu(folder, event.clientX, event.clientY)
+                                  }}
+                                >
+                                  <Folder className="h-4 w-4 shrink-0 text-sky-600" aria-hidden />
+                                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>
+                                  <span className="shrink-0 text-[11px] text-muted-foreground">{folder.document_count}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          {ideaRepositoryItems.length > 0 ? (
+                            <div className="min-h-0 min-w-0 flex-1 overflow-auto scrollbar-hide">
+                              <DocumentRepositoryTableView
+                                hiddenColumnKeys={['linked', 'access']}
+                                items={ideaDocsPaginatedItems}
+                                showTags={false}
+                                loading={ideaDocsLoading}
+                                emptyMessage={
+                                  isIdeaDocAtProjectRoot
+                                    ? 'No documents in this idea folder yet.'
+                                    : 'No documents in this folder.'
+                                }
+                                isKbGenerated={(item) => ideaDocKbGeneratedIds.has(item.id)}
+                                onDocumentClick={(item) => {
+                                  setIdeaDocEditId(item.id)
+                                  setIdeaDocEditTitle(item.name)
+                                }}
+                                onVersionClick={(item) => {
+                                  const document = ideaGeneratedDocs.find((doc) => doc.id === item.id)
+                                  if (document) setIdeaDocHistoryTarget(document)
+                                }}
+                                onRowContextMenu={(event, item) => openIdeaDocContextMenu(event, item)}
+                              />
+                            </div>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -14234,6 +14476,7 @@ export function IdeaDetailPage() {
                   </ul>
                 ) : null}
               </div>
+              )}
             </div>
             </div>
           </div>
@@ -14427,6 +14670,7 @@ export function IdeaDetailPage() {
             onClose={() => {
               setIdeaDocEditId(null)
               setIdeaDocEditTitle(null)
+              setIdeaDocsReloadKey((key) => key + 1)
             }}
           />
 
@@ -14628,6 +14872,15 @@ export function IdeaDetailPage() {
             dialogTitleId="idea-doc-delete-folder-dialog-title"
           />
 
+          <IdeaDocumentHistory
+            document={ideaDocHistoryTarget}
+            onClose={() => setIdeaDocHistoryTarget(null)}
+            onRestored={(updated) => {
+              setIdeaGeneratedDocs((docs) => [updated, ...docs.filter((doc) => doc.id !== updated.id)])
+              setIdeaDocsReloadKey((key) => key + 1)
+              addToast({ title: 'Document restored', variant: 'success' })
+            }}
+          />
           {ideaDocContextMenu ? (
             <ContextMenu
               open
@@ -14635,6 +14888,14 @@ export function IdeaDetailPage() {
               y={ideaDocContextMenu.y}
               onClose={() => setIdeaDocContextMenu(null)}
             >
+              <ContextMenuItem onSelect={() => {
+                const document = ideaGeneratedDocs.find((doc) => doc.id === ideaDocContextMenu.item.id)
+                setIdeaDocContextMenu(null)
+                if (document) setIdeaDocHistoryTarget(document)
+              }}>
+                <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+                Version history
+              </ContextMenuItem>
               <ContextMenuItem
                 onSelect={() => {
                   const { item } = ideaDocContextMenu
@@ -14691,6 +14952,59 @@ export function IdeaDetailPage() {
                 )}
                 {ideaDocKbGeneratedIds.has(ideaDocContextMenu.item.id) ? 'Regenerate KB' : 'Generate KB'}
               </ContextMenuItem>
+              {(() => {
+                const { item } = ideaDocContextMenu
+                const state = docApprovalState(
+                  ideaGeneratedDocs.find((doc) => doc.id === item.id),
+                  ideaDocApprovals.byDocument[item.id] ?? [],
+                  currentUserId,
+                )
+                if (!state.canSubmit && !state.canDecide) return null
+                return (
+                  <>
+                    <ContextMenuSeparator />
+                    {state.canSubmit ? (
+                      <ContextMenuItem
+                        className="text-blue-700 hover:bg-blue-50"
+                        onSelect={() => {
+                          setIdeaDocContextMenu(null)
+                          setIdeaDocApprovalNote('')
+                          setIdeaDocApprovalTarget({ item, mode: 'submit' })
+                        }}
+                      >
+                        <Send className="h-4 w-4 shrink-0" />
+                        Ajukan Review
+                      </ContextMenuItem>
+                    ) : null}
+                    {state.canDecide ? (
+                      <>
+                        <ContextMenuItem
+                          className="text-emerald-700 hover:bg-emerald-50"
+                          onSelect={() => {
+                            setIdeaDocContextMenu(null)
+                            setIdeaDocApprovalNote('')
+                            setIdeaDocApprovalTarget({ item, mode: 'approve' })
+                          }}
+                        >
+                          <ShieldCheck className="h-4 w-4 shrink-0" />
+                          Setujui
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          className="text-amber-700 hover:bg-amber-50"
+                          onSelect={() => {
+                            setIdeaDocContextMenu(null)
+                            setIdeaDocApprovalNote('')
+                            setIdeaDocApprovalTarget({ item, mode: 'reject' })
+                          }}
+                        >
+                          <PencilLine className="h-4 w-4 shrink-0" />
+                          Minta Perbaikan
+                        </ContextMenuItem>
+                      </>
+                    ) : null}
+                  </>
+                )
+              })()}
               <ContextMenuSeparator />
               <ContextMenuItem
                 className="text-rose-600 hover:bg-rose-50"
@@ -14705,6 +15019,68 @@ export function IdeaDetailPage() {
               </ContextMenuItem>
             </ContextMenu>
           ) : null}
+
+          <Dialog
+            open={Boolean(ideaDocApprovalTarget)}
+            onOpenChange={(open) => {
+              if (!open) setIdeaDocApprovalTarget(null)
+            }}
+          >
+            <DialogContent className="max-w-md overflow-hidden rounded-2xl p-0">
+              <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                <div className="flex items-start gap-4">
+                  <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
+                    <ShieldCheck className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="space-y-1">
+                    <DialogTitle className="text-base font-semibold tracking-tight text-foreground">
+                      {ideaDocApprovalTarget?.mode === 'submit'
+                        ? 'Ajukan untuk review'
+                        : ideaDocApprovalTarget?.mode === 'approve'
+                          ? 'Setujui dokumen'
+                          : 'Minta perbaikan'}
+                    </DialogTitle>
+                    <DialogDescription>
+                      {ideaDocApprovalTarget?.item.name}
+                      {ideaDocApprovalTarget?.mode === 'submit'
+                        ? ' — approver ditentukan oleh alur di Workflow Automation.'
+                        : ''}
+                    </DialogDescription>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2 px-6 py-5">
+                <Label htmlFor="idea-doc-approval-note" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {ideaDocApprovalTarget?.mode === 'reject' ? 'Apa yang perlu diperbaiki' : 'Catatan (opsional)'}
+                </Label>
+                <Textarea
+                  id="idea-doc-approval-note"
+                  value={ideaDocApprovalNote}
+                  onChange={(event) => setIdeaDocApprovalNote(event.target.value)}
+                  placeholder={
+                    ideaDocApprovalTarget?.mode === 'reject'
+                      ? 'mis. Benefit belum terukur — tambahkan target angkanya.'
+                      : 'Catatan untuk approver'
+                  }
+                  className="min-h-24 text-sm"
+                  disabled={ideaDocApprovalBusy}
+                />
+              </div>
+              <div className="flex justify-end gap-2 border-t border-border/70 bg-muted/15 px-6 py-4">
+                <Button variant="outline" onClick={() => setIdeaDocApprovalTarget(null)} disabled={ideaDocApprovalBusy}>
+                  Batal
+                </Button>
+                <Button onClick={() => void handleIdeaDocApprovalConfirm()} disabled={ideaDocApprovalBusy}>
+                  {ideaDocApprovalBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {ideaDocApprovalTarget?.mode === 'submit'
+                    ? 'Ajukan'
+                    : ideaDocApprovalTarget?.mode === 'approve'
+                      ? 'Setujui'
+                      : 'Kirim permintaan perbaikan'}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           <Dialog
             open={Boolean(ideaDocRenameTarget)}
