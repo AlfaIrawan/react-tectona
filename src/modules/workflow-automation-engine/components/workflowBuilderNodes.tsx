@@ -28,7 +28,8 @@ export function WorkflowBuilderNode({ data, selected }: NodeProps<WorkflowNodeDa
   return (
     <div
       className={cn(
-        'relative w-[224px] overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow',
+        'relative overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow',
+        isParallel ? 'w-[300px]' : 'w-[224px]',
         selected ? 'border-slate-900 shadow-lg ring-2 ring-slate-900/10' : 'border-slate-200 hover:shadow-md',
         isDisabled && 'opacity-50',
       )}
@@ -81,8 +82,10 @@ export function WorkflowBuilderNode({ data, selected }: NodeProps<WorkflowNodeDa
 
       {isBranch || isParallel || isLoop ? (
         <div className="flex items-center justify-between px-4 pb-2 text-[10px] font-semibold">
-          <span className={isBranch ? 'text-emerald-600' : 'text-blue-600'}>{isApproval ? 'APPROVED' : isBranch ? 'TRUE' : isParallel ? 'BRANCH A' : 'BODY'}</span>
-          <span className={isBranch ? 'text-rose-500' : 'text-indigo-500'}>{isApproval ? 'REJECTED' : isBranch ? 'FALSE' : isParallel ? 'BRANCH B' : 'DONE'}</span>
+          <span className={isBranch ? 'text-emerald-600' : 'text-blue-600'}>{isApproval ? 'APPROVED' : isBranch ? 'TRUE' : isParallel ? 'A' : 'BODY'}</span>
+          {isParallel ? <span className="text-indigo-500">B</span> : null}
+          {isParallel ? <span className="text-violet-500">C</span> : null}
+          <span className={isBranch ? 'text-rose-500' : 'text-indigo-500'}>{isApproval ? 'REJECTED' : isBranch ? 'FALSE' : isParallel ? 'D' : 'DONE'}</span>
         </div>
       ) : null}
 
@@ -105,20 +108,10 @@ export function WorkflowBuilderNode({ data, selected }: NodeProps<WorkflowNodeDa
         </>
       ) : isParallel ? (
         <>
-          <Handle
-            id="branchA"
-            type="source"
-            position={Position.Bottom}
-            className={HANDLE_BASE_CLASS}
-            style={{ background: '#2563eb', left: '22%' }}
-          />
-          <Handle
-            id="branchB"
-            type="source"
-            position={Position.Bottom}
-            className={HANDLE_BASE_CLASS}
-            style={{ background: '#4f46e5', left: '78%' }}
-          />
+          <Handle id="branchA" type="source" position={Position.Bottom} className={HANDLE_BASE_CLASS} style={{ background: '#2563eb', left: '14%' }} />
+          <Handle id="branchB" type="source" position={Position.Bottom} className={HANDLE_BASE_CLASS} style={{ background: '#4f46e5', left: '38%' }} />
+          <Handle id="branchC" type="source" position={Position.Bottom} className={HANDLE_BASE_CLASS} style={{ background: '#7c3aed', left: '62%' }} />
+          <Handle id="branchD" type="source" position={Position.Bottom} className={HANDLE_BASE_CLASS} style={{ background: '#0f766e', left: '86%' }} />
         </>
       ) : isLoop ? (
         <>

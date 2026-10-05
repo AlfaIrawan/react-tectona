@@ -135,6 +135,7 @@ import {
   type IdeaApi,
   type IdeaAiAssistanceMode,
 } from '@/lib/api/ideaBacklogApi'
+import { dispatchWorkflowEvent } from '@/lib/api/workflowAutomationApi'
 import {
   brainstormIdeaDraftJob,
   cancelIdeaDraftJob,
@@ -3331,6 +3332,35 @@ export function IdeaBacklogManagementPage() {
           generated_by: idea.submittedBy || 'tectona-ui',
           source_session_id: runtimeSummary.correlation_id ?? `idea-backlog-${idea.id}`,
           version: ideaVersion,
+        })
+      }
+
+      // The approval workflow starts when AI analysis finishes, not when the
+      // draft row is inserted. A dispatch failure must not undo the saved idea.
+      try {
+        const runIds = await dispatchWorkflowEvent({
+          event_type: 'Scored',
+          domain: 'AI Idea & Prioritization',
+          entity: 'Idea',
+          context: {
+            workspace_id: idea.workspace ?? null,
+            idea_id: idea.id,
+            idea_title: idea.title,
+            requested_by: idea.submittedBy || currentUserId || null,
+          },
+        })
+        if (runIds.length > 0) {
+          addToast({
+            title: 'Approval workflow started',
+            description: 'Summary, diagram, dan URD menunggu review.',
+            variant: 'success',
+          })
+        }
+      } catch (dispatchError) {
+        addToast({
+          title: 'Approval workflow did not start',
+          description: dispatchError instanceof Error ? dispatchError.message.slice(0, 180) : 'The review workflow could not be started.',
+          variant: 'warning',
         })
       }
     } catch (error) {
