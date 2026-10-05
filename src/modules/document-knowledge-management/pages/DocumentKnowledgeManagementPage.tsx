@@ -15234,30 +15234,50 @@ export function DocumentKnowledgeManagementPage() {
     userWorkspaceOptions,
   ])
 
-  const queueTemplateUploadFile = useCallback((
-    file: File,
+  // Several templates dropped/picked at once are uploaded one after another: each upload can stop
+  // for a duplicate/revision prompt, so they must not run concurrently.
+  const templateUploadBatchRunningRef = useRef(false)
+  const runTemplateUploadBatch = useCallback(async (
+    files: File[],
+    workspaceId: string | null,
+    options?: { category_code?: string; document_type_code?: string; workspaceName?: string },
+  ) => {
+    if (templateUploadBatchRunningRef.current) return
+    templateUploadBatchRunningRef.current = true
+    try {
+      for (const file of files) {
+        await processUploadMasterTemplateFile(file, workspaceId, options)
+      }
+    } finally {
+      templateUploadBatchRunningRef.current = false
+    }
+  }, [processUploadMasterTemplateFile])
+
+  const queueTemplateUploadFiles = useCallback((
+    files: File[],
     options?: { category_code?: string; document_type_code?: string },
   ) => {
-    if (templateBusy) return
+    if (templateBusy || templateUploadBatchRunningRef.current || files.length === 0) return
     const resolved = resolveRepositoryUploadWorkspaceCandidates()
     if (resolved.mode === 'choose') {
       setUploadWorkspacePicker({
         purpose: 'template-upload',
         candidates: resolved.candidates,
-        pendingFile: file,
+        pendingFile: files[0],
+        pendingFiles: files,
         templateUploadOptions: options,
       })
       return
     }
-    void processUploadMasterTemplateFile(file, resolved.workspaceId, options)
-  }, [processUploadMasterTemplateFile, resolveRepositoryUploadWorkspaceCandidates, templateBusy])
+    void runTemplateUploadBatch(files, resolved.workspaceId, options)
+  }, [resolveRepositoryUploadWorkspaceCandidates, runTemplateUploadBatch, templateBusy])
 
   const handleUploadMasterTemplateFile = useCallback(async (
     file: File,
     options?: { category_code?: string; document_type_code?: string },
   ) => {
-    queueTemplateUploadFile(file, options)
-  }, [queueTemplateUploadFile])
+    queueTemplateUploadFiles([file], options)
+  }, [queueTemplateUploadFiles])
 
   const processCreateMasterTemplate = useCallback(async (workspaceId: string | null) => {
     if (!workspaceId?.trim()) {
@@ -15349,11 +15369,9 @@ export function DocumentKnowledgeManagementPage() {
     event.stopPropagation()
     setIsTemplateDragActive(false)
 
-    const files = event.dataTransfer.files
-    if (files && files.length > 0) {
-      void handleUploadMasterTemplateFile(files[0])
-    }
-  }, [handleUploadMasterTemplateFile])
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) queueTemplateUploadFiles(files)
+  }, [queueTemplateUploadFiles])
 
   const filteredMasterTemplates = useMemo(() => {
     return masterTemplateRows.filter((row) => {
@@ -20512,7 +20530,7 @@ export function DocumentKnowledgeManagementPage() {
                   <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-blue-500/5">
                     <div className="text-center">
                       <Upload className="mx-auto mb-2 h-8 w-8 text-blue-500" />
-                      <p className="text-sm font-semibold text-blue-700">Drop Word template to upload</p>
+                      <p className="text-sm font-semibold text-blue-700">Drop Word template(s) to upload</p>
                     </div>
                   </div>
                 ) : null}
@@ -22827,12 +22845,13 @@ export function DocumentKnowledgeManagementPage() {
         id="dkm-master-template-upload"
         name="dkm-master-template-upload"
         type="file"
+        multiple
         accept=".doc,.docx,.dot,.dotx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="hidden"
         onChange={(event) => {
-          const file = event.target.files?.[0]
+          const files = Array.from(event.target.files ?? [])
           event.target.value = ''
-          if (file) void handleUploadMasterTemplateFile(file)
+          if (files.length > 0) queueTemplateUploadFiles(files)
         }}
       />
 
@@ -23459,9 +23478,10 @@ export function DocumentKnowledgeManagementPage() {
                             return
                           }
                           if (pending.purpose === 'template-upload') {
-                            if (!pending.pendingFile) return
-                            void processUploadMasterTemplateFile(
-                              pending.pendingFile,
+                            const files = pending.pendingFiles?.length ? pending.pendingFiles : pending.pendingFile ? [pending.pendingFile] : []
+                            if (files.length === 0) return
+                            void runTemplateUploadBatch(
+                              files,
                               candidate.id,
                               {
                                 ...pending.templateUploadOptions,
