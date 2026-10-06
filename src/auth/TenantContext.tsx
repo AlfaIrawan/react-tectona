@@ -1,5 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { UI_SCOPE_WORKSPACE, readRememberedWorkspace, setUiLayoutValue } from '@/stores/ui-layout-store'
+import {
+  UI_SCOPE_WORKSPACE,
+  readRememberedWorkspace,
+  setUiLayoutValue,
+  useUiLayoutStore,
+} from '@/stores/ui-layout-store'
 import {
   createContext,
   useCallback,
@@ -189,7 +194,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
   }, [session?.user.email])
 
   useEffect(() => {
-  if (tenant || !subjectId) {
+    if (tenant || !subjectId) {
       setLoading(false)
       return
     }
@@ -197,52 +202,65 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     setLoading(true)
 
-    void Promise.all([
-      fetchSubjectMembershipsCached(subjectId, { activeOnly: true }),
-      fetchAllWorkspaceOrgWorkspacesCached(),
-    ])
-      .then(([memberships, workspaces]) => {
-        if (cancelled) return
-        const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
-        const membershipRows = memberships.items ?? []
-        const accessible = isPlatformAdmin
-          ? workspaces.map((workspace) => ({
-              workspaceId: workspace.id,
-              tenantMode: workspace.tenant_mode ?? null,
-            }))
-          : membershipRows
-              .filter((row) => Boolean(row.workspace_id))
-              .filter((row) => {
-                const workspace = workspaceById.get(row.workspace_id)
-                if (!workspace) return true
-                return !isOrganizationWorkspaceHiddenByDefault(workspace.tenant_mode ?? null, {
-                  isPlatformAdmin,
-                  isOrganizationAdmin,
-                  isCorporateUser,
-                  hasActiveMembership: true,
-                  membershipParticipationScopeCode: row.participation_scope_code,
-                  isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
-                })
-              })
-              .map((row) => ({
-                workspaceId: row.workspace_id,
-                tenantMode: workspaceById.get(row.workspace_id)?.tenant_mode ?? null,
-              }))
+    void (async () => {
+      const preferenceStore = useUiLayoutStore.getState()
+      if (preferenceStore.identityRef !== subjectId) {
+        preferenceStore.resetForIdentity(subjectId)
+      }
+      await useUiLayoutStore.getState().hydrateFromServer(subjectId)
+      const rememberedWorkspaceId = readRememberedWorkspace()?.workspaceId ?? null
 
-        const preferredId = pickPreferredCorporateWorkspaceId(accessible)
-        const preferredWorkspace = preferredId ? workspaceById.get(preferredId) : undefined
-        if (preferredId) {
-          const fallback: StoredTenantSelection = {
-            workspaceId: preferredId,
-            orgId: preferredWorkspace?.organization_id ?? null,
-            slug: preferredWorkspace?.slug ?? null,
-            tenantMode: preferredWorkspace?.tenant_mode ?? null,
-            displayName: preferredWorkspace?.name ?? null,
-          }
-          setActiveTenant(fallback)
+      const [memberships, workspaces] = await Promise.all([
+        fetchSubjectMembershipsCached(subjectId, { activeOnly: true }),
+        fetchAllWorkspaceOrgWorkspacesCached(),
+      ])
+
+      if (cancelled) return
+      const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
+      const membershipRows = memberships.items ?? []
+      const accessible = isPlatformAdmin
+        ? workspaces.map((workspace) => ({
+            workspaceId: workspace.id,
+            tenantMode: workspace.tenant_mode ?? null,
+          }))
+        : membershipRows
+            .filter((row) => Boolean(row.workspace_id))
+            .filter((row) => {
+              const workspace = workspaceById.get(row.workspace_id)
+              if (!workspace) return true
+              return !isOrganizationWorkspaceHiddenByDefault(workspace.tenant_mode ?? null, {
+                isPlatformAdmin,
+                isOrganizationAdmin,
+                isCorporateUser,
+                hasActiveMembership: true,
+                membershipParticipationScopeCode: row.participation_scope_code,
+                isOrganizationHomeWorkspace: isOrganizationHomeWorkspace(workspace),
+              })
+            })
+            .map((row) => ({
+              workspaceId: row.workspace_id,
+              tenantMode: workspaceById.get(row.workspace_id)?.tenant_mode ?? null,
+            }))
+
+      const rememberedIsAccessible = rememberedWorkspaceId
+        ? accessible.some((workspace) => workspace.workspaceId === rememberedWorkspaceId)
+        : false
+      const preferredId = rememberedIsAccessible
+        ? rememberedWorkspaceId
+        : pickPreferredCorporateWorkspaceId(accessible)
+      const preferredWorkspace = preferredId ? workspaceById.get(preferredId) : undefined
+      if (preferredId) {
+        const fallback: StoredTenantSelection = {
+          workspaceId: preferredId,
+          orgId: preferredWorkspace?.organization_id ?? null,
+          slug: preferredWorkspace?.slug ?? null,
+          tenantMode: preferredWorkspace?.tenant_mode ?? null,
+          displayName: preferredWorkspace?.name ?? null,
         }
-        setLoading(false)
-      })
+        setActiveTenant(fallback)
+      }
+      setLoading(false)
+    })()
       .catch(() => {
         if (!cancelled) setLoading(false)
       })

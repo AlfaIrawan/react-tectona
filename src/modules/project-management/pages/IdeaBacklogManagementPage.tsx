@@ -43,6 +43,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Mic,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Circle,
@@ -155,7 +156,10 @@ import {
   type IdeaDraftEvidenceProgress,
   type IdeaDraftJobStatusResponse,
   type IdeaDraftVersionDetail,
+  type ContextUsageReport,
 } from '@/lib/api/tectonaAgentRuntimeApi'
+import { ChatContextUsagePanel } from '@/modules/core-shell/components/chat/ChatContextUsagePanel'
+import { ChatContextUsageRing } from '@/modules/core-shell/components/chat/ChatContextUsageRing'
 import { UI_SCOPE_IDEA_BACKLOG, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
 type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
@@ -317,6 +321,7 @@ function isIdeaDraftJobLostError(message: string): boolean {
   const text = message.trim()
   return (
     text.includes('IDEA_DRAFT_JOB_NOT_FOUND')
+    || text.includes('IDEA_DRAFT_JOB_NOT_AWAITING_INPUT')
     || /^HTTP 404\b/i.test(text)
   )
 }
@@ -672,24 +677,41 @@ function inferInitiativeLens(
     .sort((a, b) => b.percent - a.percent || b.score - a.score)
 }
 
+// Same share as _W_DISCOVERY in intake_checklist.py. Five intake answers cannot
+// read as ~80% while the deep-discovery list on this rail is still empty.
+const DISCOVERY_CONFIDENCE_SHARE = 0.43
+
+function discoveryConfidenceCeiling(covered: number, total: number): number {
+  if (total <= 0) return 100
+  const ratio = Math.max(0, Math.min(1, covered / total))
+  return Math.round(100 - (1 - ratio) * DISCOVERY_CONFIDENCE_SHARE * 100)
+}
+
 function resolveBrainstormConfidencePercent(
   backendPercent: number | undefined,
   progress: IdeaDraftEvidenceProgress | null,
   ready: boolean,
+  discovery?: { covered: number; total: number } | null,
 ): number {
+  let percent: number
   if (typeof backendPercent === 'number' && backendPercent > 0) {
-    return Math.max(0, Math.min(100, Math.round(backendPercent)))
+    percent = Math.max(0, Math.min(100, Math.round(backendPercent)))
+  } else if (!progress) {
+    percent = ready ? 57 : 0
+  } else {
+    const requiredRatio = progress.required_total > 0
+      ? progress.required_answered / progress.required_total
+      : progress.total > 0
+        ? progress.answered / progress.total
+        : 0
+    const overallRatio = progress.total > 0 ? progress.answered / progress.total : 0
+    const derived = Math.round(requiredRatio * 37 + overallRatio * 20)
+    percent = ready ? Math.min(derived, 57) : derived
   }
-  if (!progress) return ready ? 85 : 0
-  const requiredRatio = progress.required_total > 0
-    ? progress.required_answered / progress.required_total
-    : progress.total > 0
-      ? progress.answered / progress.total
-      : 0
-  const overallRatio = progress.total > 0 ? progress.answered / progress.total : 0
-  const derived = Math.round(requiredRatio * 70 + overallRatio * 30)
-  if (ready) return Math.max(derived, 85)
-  return derived
+  if (discovery && discovery.total > 0) {
+    percent = Math.min(percent, discoveryConfidenceCeiling(discovery.covered, discovery.total))
+  }
+  return percent
 }
 
 function confidenceReadinessLabel(percent: number, ready: boolean): string {
@@ -768,7 +790,12 @@ function BrainstormEvidenceRail({
   onToggleCollapsed: () => void
   indonesian?: boolean
 }) {
-  const resolvedConfidence = resolveBrainstormConfidencePercent(confidencePercent, progress, ready)
+  const resolvedConfidence = resolveBrainstormConfidencePercent(
+    confidencePercent,
+    progress,
+    ready,
+    discoveryProgress,
+  )
   const readinessLabel = confidenceReadinessLabel(resolvedConfidence, ready)
   const items = checklist.length > 0 ? checklist : progress?.items ?? []
   const requiredTotal = progress?.required_total ?? items.filter((item) => item.required !== false).length
@@ -1081,7 +1108,9 @@ function BrainstormProseSegments({ text }: { text: string }) {
 
 function prefetchBrainstormDiagrams(text: string): void {
   for (const part of splitBrainstormDisplayParts(text)) {
-    if (part.type === 'plantuml' || part.type === 'mermaid') prefetchProcessDiagramPlantUmlPng(part.source, 'id', 'bpmn')
+    if (part.type === 'plantuml' || part.type === 'mermaid') {
+      prefetchProcessDiagramPlantUmlPng(part.source, 'id', isTechnicalViewSource(part.source) ? 'plantuml' : 'bpmn')
+    }
   }
 }
 
@@ -1109,7 +1138,13 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
         }
         if (part.type === 'mermaid' || part.type === 'plantuml') {
           // BPMN 2.0, like the Idea Diagram section: one notation for the idea's process.
-          return <AssistantMermaidBlock key={`m-${index}`} source={part.source} notation="bpmn" />
+          return (
+            <AssistantMermaidBlock
+              key={`m-${index}`}
+              source={part.source}
+              notation={isTechnicalViewSource(part.source) ? 'plantuml' : 'bpmn'}
+            />
+          )
         }
         const prose = part.text.trim()
         if (!prose) return null
@@ -1155,7 +1190,7 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
-import { brainstormTypingCutoff, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
+import { brainstormTypingCutoff, isTechnicalViewSource, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
 import { useTypingReveal } from '@/lib/chat/useTypingReveal'
 import {
   appendProcessDiagramsToText,
@@ -1799,6 +1834,75 @@ function createIdeaFolderDropCollisionDetection(folders: IdeaBacklogFolder[]): C
   }
 }
 
+const BRAINSTORM_CONTEXT_CHARS_PER_TOKEN = 4
+const BRAINSTORM_INSTRUCTION_TOKENS = 4_000
+
+function brainstormContextReport(
+  messages: Array<{ text: string }>,
+  draft: string,
+  mode: 'normal' | 'thinking',
+): ContextUsageReport {
+  const conversationTokens = Math.ceil(
+    messages.reduce((sum, message) => sum + message.text.length, 0) / BRAINSTORM_CONTEXT_CHARS_PER_TOKEN,
+  )
+  const draftTokens = Math.ceil(draft.length / BRAINSTORM_CONTEXT_CHARS_PER_TOKEN)
+  const estimatedTokens = BRAINSTORM_INSTRUCTION_TOKENS + conversationTokens + draftTokens
+  const maxTokens = mode === 'thinking' ? 1_047_576 : 131_072
+  const usagePercent = Math.min(100, (estimatedTokens / maxTokens) * 100)
+  const share = (tokens: number) => (estimatedTokens > 0 ? (tokens / estimatedTokens) * 100 : 0)
+  const categories = [
+    { key: 'instructions', label: 'Assistant instructions', tokens: BRAINSTORM_INSTRUCTION_TOKENS, color: '#6b7280' },
+    { key: 'conversation', label: 'Conversation', tokens: conversationTokens, color: '#ef4444' },
+    { key: 'draft', label: 'Draft message', tokens: draftTokens, color: '#f97316' },
+  ]
+  return {
+    estimated_chars: estimatedTokens * BRAINSTORM_CONTEXT_CHARS_PER_TOKEN,
+    estimated_tokens: estimatedTokens,
+    max_chars: maxTokens * BRAINSTORM_CONTEXT_CHARS_PER_TOKEN,
+    max_tokens: maxTokens,
+    warn_chars: Math.round(maxTokens * 0.8) * BRAINSTORM_CONTEXT_CHARS_PER_TOKEN,
+    usage_percent: usagePercent,
+    level: usagePercent >= 95 ? 'reached' : usagePercent >= 80 ? 'warning' : 'ok',
+    categories: categories.map((item) => ({
+      ...item,
+      chars: item.tokens * BRAINSTORM_CONTEXT_CHARS_PER_TOKEN,
+      share_percent: share(item.tokens),
+    })),
+  }
+}
+
+function BrainstormContextUsage({
+  messages,
+  draft,
+  mode,
+}: {
+  messages: Array<{ text: string }>
+  draft: string
+  mode: 'normal' | 'thinking'
+}) {
+  const [open, setOpen] = useState(false)
+  const report = brainstormContextReport(messages, draft, mode)
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[#5d5d5d] transition-colors hover:bg-black/[0.04]"
+        title="Context usage"
+        aria-label="Context usage"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChatContextUsageRing usagePercent={report.usage_percent} level={report.level} size={14} strokeWidth={1.5} />
+      </button>
+      {open ? (
+        <div className="absolute bottom-10 left-0 z-30 w-[320px]">
+          <ChatContextUsagePanel report={report} onClose={() => setOpen(false)} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function IdeaBacklogManagementPage() {
   type SubmissionSortOrder = 'name-asc' | 'name-desc'
 
@@ -1874,6 +1978,14 @@ export function IdeaBacklogManagementPage() {
   const [isBrainstormMode, setIsBrainstormMode] = useState(false)
   const [brainstormMessages, setBrainstormMessages] = useState<BrainstormUiMessage[]>([])
   const [brainstormInput, setBrainstormInput] = useState('')
+  const [brainstormLlmMode, setBrainstormLlmMode] = useState<'normal' | 'thinking'>(() => {
+    try {
+      return sessionStorage.getItem('tectona-brainstorm-llm-mode') === 'thinking' ? 'thinking' : 'normal'
+    } catch {
+      return 'normal'
+    }
+  })
+  const [brainstormLlmMenuOpen, setBrainstormLlmMenuOpen] = useState(false)
   const [isBrainstormSending, setIsBrainstormSending] = useState(false)
   const [brainstormAnimatingAssistantIndex, setBrainstormAnimatingAssistantIndex] = useState<number | null>(null)
   const [isDraftContinuing, setIsDraftContinuing] = useState(false)
@@ -1970,6 +2082,7 @@ export function IdeaBacklogManagementPage() {
         status.confidence_percent,
         status.evidence_progress ?? null,
         Boolean(status.brainstorm_ready),
+        status.discovery_progress ?? null,
       ),
     )
   }
@@ -3736,13 +3849,19 @@ export function IdeaBacklogManagementPage() {
   const handleSendBrainstormMessage = async (messageOverride?: string) => {
     // 'completed' is accepted too: chatting on a finished draft is what feeds
     // the next re-analysis.
-    if (!ideaDraftJob || !['awaiting_input', 'completed'].includes(ideaDraftJob.status)) {
-      // Never swallow the send silently: a dead composer with no explanation reads
-      // as "the chat closed itself" to the user.
+    if (!ideaDraftJob) {
       setBrainstormError(
         isBrainstormThreadIndonesian(brainstormMessages)
           ? 'Sesi brainstorm ini sudah tidak menerima pesan baru. Tutup lalu mulai Generate Draft lagi untuk melanjutkan.'
           : 'This brainstorm session is no longer accepting messages. Close it and start Generate Draft again to continue.',
+      )
+      return
+    }
+    if (ideaDraftJob.status === 'running' || ideaDraftJob.status === 'queued') {
+      setBrainstormError(
+        isBrainstormThreadIndonesian(brainstormMessages)
+          ? 'Generate draft masih berjalan. Tunggu sampai selesai, lalu lanjutkan chat.'
+          : 'Draft generation is still running. Wait for it to finish, then continue the chat.',
       )
       return
     }
@@ -3760,7 +3879,7 @@ export function IdeaBacklogManagementPage() {
     const requestSentAt = new Date().toISOString()
     setBrainstormMessages((current) => [...current, { role: 'user', text: message, sentAt: requestSentAt }])
     try {
-      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(jobId, message)
+      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(jobId, message, brainstormLlmMode)
       let response
       try {
         response = await sendWithJob(ideaDraftJob.job_id)
@@ -3821,6 +3940,7 @@ export function IdeaBacklogManagementPage() {
           response.confidence_percent,
           response.evidence_progress ?? null,
           response.ready_to_continue,
+          response.discovery_progress ?? null,
         ),
       )
       setIdeaDraftJob((current) => current
@@ -6514,15 +6634,64 @@ export function IdeaBacklogManagementPage() {
                               }}
                             />
                             <div className="mt-1 flex items-center justify-between gap-2">
-                              <button
-                                type="button"
-                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black/10 bg-transparent text-[#5d5d5d] transition-colors hover:bg-black/[0.04] disabled:opacity-40"
-                                aria-label="Add attachment"
-                                title="Coming soon"
-                                disabled
-                              >
-                                <Plus className="h-4 w-4" strokeWidth={2} />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black/10 bg-transparent text-[#5d5d5d] transition-colors hover:bg-black/[0.04] disabled:opacity-40"
+                                  aria-label="Add attachment"
+                                  title="Coming soon"
+                                  disabled
+                                >
+                                  <Plus className="h-4 w-4" strokeWidth={2} />
+                                </button>
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-8 items-center gap-1 rounded-full px-2 text-[13px] font-medium text-[#5d5d5d] transition-colors hover:bg-black/[0.04]"
+                                    aria-haspopup="listbox"
+                                    aria-expanded={brainstormLlmMenuOpen}
+                                    onClick={() => setBrainstormLlmMenuOpen((open) => !open)}
+                                  >
+                                    {brainstormLlmMode === 'thinking' ? 'Thinking' : 'Normal'}
+                                    <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+                                  </button>
+                                  {brainstormLlmMenuOpen ? (
+                                    <div
+                                      role="listbox"
+                                      className="absolute bottom-9 left-0 z-20 w-36 overflow-hidden rounded-xl border border-black/10 bg-white py-1 shadow-lg"
+                                    >
+                                      {(['normal', 'thinking'] as const).map((mode) => (
+                                        <button
+                                          key={mode}
+                                          type="button"
+                                          role="option"
+                                          aria-selected={brainstormLlmMode === mode}
+                                          className={cn(
+                                            'flex w-full items-center px-3 py-1.5 text-left text-[13px] hover:bg-black/[0.04]',
+                                            brainstormLlmMode === mode ? 'font-medium text-foreground' : 'text-[#5d5d5d]',
+                                          )}
+                                          onClick={() => {
+                                            setBrainstormLlmMode(mode)
+                                            setBrainstormLlmMenuOpen(false)
+                                            try {
+                                              sessionStorage.setItem('tectona-brainstorm-llm-mode', mode)
+                                            } catch {
+                                              /* ignore private-mode storage failures */
+                                            }
+                                          }}
+                                        >
+                                          {mode === 'thinking' ? 'Thinking' : 'Normal'}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <BrainstormContextUsage
+                                  messages={brainstormMessages}
+                                  draft={brainstormInput}
+                                  mode={brainstormLlmMode}
+                                />
+                              </div>
                               <div className="flex items-center gap-0.5">
                                 <button
                                   type="button"

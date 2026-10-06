@@ -1676,6 +1676,26 @@
   stroke: #0284c7 !important;
   stroke-width: 3 !important;
 }
+.workflow-builder-canvas .workflow-routed-edge-endpoint {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.workflow-builder-canvas .react-flow__edge:hover .workflow-routed-edge-endpoint,
+.workflow-builder-canvas .react-flow__edge.selected .workflow-routed-edge-endpoint {
+  opacity: 1;
+}
+.workflow-builder-canvas .workflow-routed-edge-anchor {
+  pointer-events: all;
+  cursor: grab;
+}
+.workflow-builder-canvas .workflow-routed-edge-anchor:active {
+  cursor: grabbing;
+}
+.workflow-builder-canvas .workflow-routed-edge-waypoint {
+  cursor: move;
+  pointer-events: all;
+}
 
 .integration-flow-canvas .react-flow__edge {
   pointer-events: none;

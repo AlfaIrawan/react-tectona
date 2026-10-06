@@ -462,7 +462,11 @@ function interactionName(event: TokenTelemetryEvent): string {
 type UsageRange = '7d' | '30d' | '90d' | 'year' | 'custom'
 
 function catalogModelLabel(model?: string): string {
-  return model || 'Unknown model'
+  const value = (model || '').trim()
+  if (!value) return 'Unknown model'
+  if (/gpt-4\.1/i.test(value)) return 'ChatGPT · GPT-4.1'
+  if (/gpt-5/i.test(value)) return 'ChatGPT · Thinking'
+  return value
 }
 
 function usagePeriod(range: UsageRange, now: Date, customFrom: string, customTo: string): { start: Date; end: Date; label: string } {

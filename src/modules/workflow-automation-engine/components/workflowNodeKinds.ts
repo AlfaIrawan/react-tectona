@@ -43,7 +43,7 @@ export type WorkflowNodeData = {
   _issue?: 'error' | 'warning'
 }
 
-export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'approvalTarget' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
+export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'approvalTarget' | 'approvalMembers' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
 
 export type WorkflowFieldDef = {
   key: string
@@ -329,6 +329,7 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     accent: '#f59e0b',
     chipClass: 'bg-amber-50 text-amber-600 ring-amber-100',
     fields: [
+      { key: 'condition', label: 'Condition', type: 'text', placeholder: "origin_teams == 'operations'" },
       { key: 'field', label: 'Field', type: 'select', options: WORKFLOW_CONDITION_FIELDS },
       { key: 'operator', label: 'Operator', type: 'select', options: WORKFLOW_CONDITION_OPERATORS },
       { key: 'value', label: 'Value', type: 'text', placeholder: 'e.g. High, 80, or Today' },
@@ -348,7 +349,7 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     // in place and says so. `approver` stays for a one-off named approver.
     fields: [
       { key: 'approverRole', label: 'Approver', type: 'approvalTarget' },
-      { key: 'approver', label: 'Named approver (optional)', type: 'text', placeholder: 'user id, comma separated' },
+      { key: 'approver', label: 'Named approver (optional)', type: 'approvalMembers' },
       { key: 'quorum', label: 'When there are several', type: 'select', options: ['all', 'any'] },
       { key: 'allowSelfApproval', label: 'Requester may approve', type: 'select', options: ['no', 'yes'] },
       { key: 'subjectLabel', label: 'What is being approved', type: 'text', placeholder: 'e.g. URD {{idea_title}}' },

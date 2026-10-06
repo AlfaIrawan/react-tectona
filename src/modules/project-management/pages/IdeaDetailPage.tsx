@@ -214,6 +214,11 @@ import { useTenantContextOptional } from '@/auth/TenantContext'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import { fetchWorkspaceOrgWorkspaceById } from '@/lib/api/workspaceOrgApi'
 import { resolveWorkspaceApiId } from '@/lib/tenantWorkspaceScope'
+import {
+  loadIdeaDocumentWorkflowGate,
+  templateAllowedByWorkflow,
+  type IdeaDocumentWorkflowGate,
+} from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
 import {
   fetchWorkspaceMembers,
@@ -386,6 +391,42 @@ function createC4ReviewAuditEntry(
     at: new Date().toISOString(),
     ...(comment?.trim() ? { comment: comment.trim() } : {}),
     ...(snapshot ? { snapshot } : {}),
+  }
+}
+
+function diagramContentSignature(graph: {
+  nodes?: Array<{ id: string; position?: { x: number; y: number } }>
+  edges?: Array<{ source?: string; target?: string }>
+  source?: string
+  plantumlSource?: string
+} | null | undefined): string {
+  if (!graph) return ''
+  const nodes = (graph.nodes ?? [])
+    .map((node) => `${node.id}@${Math.round(node.position?.x ?? 0)},${Math.round(node.position?.y ?? 0)}`)
+    .join(';')
+  const edges = (graph.edges ?? []).map((edge) => `${edge.source ?? ''}>${edge.target ?? ''}`).join(';')
+  const source = (graph.source || graph.plantumlSource || '').trim()
+  if (!nodes && !edges && !source) return ''
+  return `${nodes}|${edges}|${source}`
+}
+
+function architectureReviewAfterDiagramEdit(
+  currentReview: C4ArchitectureReview | undefined,
+  previousGraph: Parameters<typeof diagramContentSignature>[0],
+  nextGraph: Parameters<typeof diagramContentSignature>[0],
+  actor: { id: string; name: string; team: string | null },
+): C4ArchitectureReview | undefined {
+  const previous = diagramContentSignature(previousGraph)
+  const next = diagramContentSignature(nextGraph)
+  const changed = previous.length > 0 && previous !== next
+  if (!changed || !currentReview || (currentReview.status !== 'pending' && currentReview.status !== 'approved')) {
+    return currentReview
+  }
+  return {
+    ...currentReview,
+    status: 'superseded',
+    version: currentReview.version + 1,
+    history: [...currentReview.history, createC4ReviewAuditEntry('diagram_changed', currentReview.version + 1, actor)],
   }
 }
 
@@ -3610,6 +3651,8 @@ export function IdeaDetailPage() {
   const [ideaDocDeleteTarget, setIdeaDocDeleteTarget] = useState<RepositoryItem | null>(null)
   const [ideaDocDeleteBusy, setIdeaDocDeleteBusy] = useState(false)
   const [ideaDocGenerateOpen, setIdeaDocGenerateOpen] = useState(false)
+  const [ideaDocWorkflowGate, setIdeaDocWorkflowGate] = useState<IdeaDocumentWorkflowGate>({ enforced: false, allowedKinds: null })
+  const [ideaDocWorkflowGateLoading, setIdeaDocWorkflowGateLoading] = useState(false)
   const [ideaDocGenerateTemplateId, setIdeaDocGenerateTemplateId] = useState('')
   const [ideaDocGenerateSource, setIdeaDocGenerateSource] = useState('')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
@@ -3631,6 +3674,7 @@ export function IdeaDetailPage() {
   const [ideaDocFolderDeleteTarget, setIdeaDocFolderDeleteTarget] = useState<DocumentFolder | null>(null)
   const [ideaDocFolderDeleteBusy, setIdeaDocFolderDeleteBusy] = useState(false)
   const selectedIdeaDocGenerateTemplate = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId) ?? null
+  const ideaDocGenerateTemplates = ideaDocTemplates.filter((template) => templateAllowedByWorkflow(template, ideaDocWorkflowGate))
   const ideaDocGenerateSourceChars = ideaDocGenerateSource.trim().length
   const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
   const [ideaDocEditTitle, setIdeaDocEditTitle] = useState<string | null>(null)
@@ -4054,14 +4098,12 @@ export function IdeaDetailPage() {
         name: currentUserDisplayName || 'Unknown user',
         team: currentArchitectureTeamName,
       }
-      const architectureReview = currentReview && (currentReview.status === 'pending' || currentReview.status === 'approved')
-        ? {
-            ...currentReview,
-            status: 'superseded' as const,
-            version: currentReview.version + 1,
-            history: [...currentReview.history, createC4ReviewAuditEntry('diagram_changed', currentReview.version + 1, actor)],
-          }
-        : currentReview
+      const architectureReview = architectureReviewAfterDiagramEdit(
+        currentReview,
+        integrationBootstrapRecord ?? { nodes: [], edges: [], plantumlSource: current.plantumlSource },
+        graph,
+        actor,
+      )
       const nextAnalysis = { ...current, architectureReview }
       setRuntimeIntegrationAnalysis(nextAnalysis)
       setIntegrationBootstrapRecord(graph)
@@ -4078,7 +4120,7 @@ export function IdeaDetailPage() {
         )
       })
     },
-    [idea.id, idea.version, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId],
+    [idea.id, idea.version, integrationBootstrapRecord, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId],
   )
   const [c4Level1Analysis, setC4Level1Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L1'))
   const [c4Level1Loaded, setC4Level1Loaded] = useState(false)
@@ -4101,17 +4143,12 @@ export function IdeaDetailPage() {
         name: currentUserDisplayName || 'Unknown user',
         team: currentArchitectureTeamName,
       }
-      const architectureReview = currentReview && (currentReview.status === 'pending' || currentReview.status === 'approved')
-        ? {
-            ...currentReview,
-            status: 'superseded' as const,
-            version: currentReview.version + 1,
-            history: [
-              ...currentReview.history,
-              createC4ReviewAuditEntry('diagram_changed', currentReview.version + 1, actor),
-            ],
-          }
-        : currentReview
+      const architectureReview = architectureReviewAfterDiagramEdit(
+        currentReview,
+        current.canvasGraph,
+        graph,
+        actor,
+      )
       const nextAnalysis: RuntimeC4Analysis = {
         ...current,
         plantumlSource: graph.source || current.plantumlSource,
@@ -4647,8 +4684,8 @@ export function IdeaDetailPage() {
     setReviewerOptionsError('')
 
     const workspaceCandidates = [
-      resolveWorkspaceApiId(tenant?.workspaceId),
       isWorkspaceUuid(idea.workspace) ? idea.workspace.trim() : null,
+      resolveWorkspaceApiId(tenant?.workspaceId),
     ].filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index)
 
     if (workspaceCandidates.length === 0) {
@@ -5515,14 +5552,12 @@ export function IdeaDetailPage() {
           name: currentUserDisplayName || 'Unknown user',
           team: currentArchitectureTeamName,
         }
-        const architectureReview = currentReview && (currentReview.status === 'pending' || currentReview.status === 'approved')
-          ? {
-              ...currentReview,
-              status: 'superseded' as const,
-              version: currentReview.version + 1,
-              history: [...currentReview.history, createC4ReviewAuditEntry('diagram_changed', currentReview.version + 1, actor)],
-            }
-          : currentReview
+        const architectureReview = architectureReviewAfterDiagramEdit(
+          currentReview,
+          current.canvasGraph,
+          graph,
+          actor,
+        )
         return {
           ...current,
           canvasGraph: { ...graph, userCustomized: true },
@@ -6802,8 +6837,35 @@ export function IdeaDetailPage() {
     }
   }, [addToast, ideaDocFolderStack])
 
+  const refreshIdeaDocWorkflowGate = useCallback(async () => {
+    setIdeaDocWorkflowGateLoading(true)
+    try {
+      const gate = await loadIdeaDocumentWorkflowGate(idea.workspace, idea.id)
+      setIdeaDocWorkflowGate(gate)
+      return gate
+    } catch {
+      const openGate: IdeaDocumentWorkflowGate = { enforced: false, allowedKinds: null }
+      setIdeaDocWorkflowGate(openGate)
+      return openGate
+    } finally {
+      setIdeaDocWorkflowGateLoading(false)
+    }
+  }, [idea.id, idea.workspace])
+
   const openIdeaDocGenerateDialog = useCallback(async (preferredTemplateId?: string) => {
-    const template = ideaDocTemplates.find((item) => item.id === preferredTemplateId) ?? ideaDocTemplates[0]
+    const gate = await refreshIdeaDocWorkflowGate()
+    const selectable = ideaDocTemplates.filter((template) => templateAllowedByWorkflow(template, gate))
+    const preferred = selectable.find((template) => template.id === preferredTemplateId)
+    if (preferredTemplateId && !preferred && gate.enforced) {
+      addToast({
+        title: 'Template is locked by the approval workflow',
+        description: gate.allowedKinds?.length
+          ? `Only ${gate.allowedKinds.join(', ')} can be generated until the earlier approvals finish.`
+          : 'No document can be generated until the current approval step is finished.',
+        variant: 'warning',
+      })
+    }
+    const template = preferred ?? selectable[0]
     setIdeaDocGenerateTemplateId(template?.id ?? '')
     try {
       const latest = await getIdeaById(idea.id)
@@ -6815,7 +6877,7 @@ export function IdeaDetailPage() {
     } catch (error) {
       addToast({ title: 'Revisi approved belum dapat dimuat', description: error instanceof Error ? error.message : '', variant: 'error' })
     }
-  }, [idea.id, idea.description, idea.title, ideaDocTemplates, addToast])
+  }, [addToast, idea.description, idea.id, idea.title, ideaDocTemplates, refreshIdeaDocWorkflowGate])
 
   const openTemplateManagementAction = useCallback((action: 'upload' | 'new-template' | 'new-folder') => {
     const workspacePrefix = location.pathname.match(/^\/w\/[^/]+/)?.[0] ?? ''
@@ -6826,6 +6888,17 @@ export function IdeaDetailPage() {
     const template = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId)
     if (!template) {
       addToast({ title: 'Select a template', description: 'Pick a DKM master template first.', variant: 'error' })
+      return
+    }
+    const gate = await refreshIdeaDocWorkflowGate()
+    if (!templateAllowedByWorkflow(template, gate)) {
+      addToast({
+        title: 'Document is not available yet',
+        description: gate.allowedKinds?.length
+          ? `The approval workflow only allows ${gate.allowedKinds.join(', ')} right now. Delete that workflow to generate any template again.`
+          : 'The approval workflow has not unlocked a document yet. Delete that workflow to generate any template again.',
+        variant: 'warning',
+      })
       return
     }
     const sourceText = ideaDocGenerateSource.trim()
@@ -6987,6 +7060,7 @@ export function IdeaDetailPage() {
     ideaDocGenerateTemplateId,
     ideaDocTemplates,
     ideaDocsLoading,
+    refreshIdeaDocWorkflowGate,
     ideaGeneratedDocs,
     resolveIdeaTargetProject,
     submittedByDisplayName,
@@ -14535,18 +14609,30 @@ export function IdeaDetailPage() {
                           id="idea-doc-template"
                           className="rounded-xl"
                           value={ideaDocGenerateTemplateId}
-                          disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading}
+                          disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
                           onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
                         >
                           <option value="" disabled>
-                            {ideaDocTemplatesLoading ? 'Loading templates…' : 'Select template…'}
+                            {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
+                              ? 'Loading templates…'
+                              : ideaDocGenerateTemplates.length === 0
+                                ? 'No template is available at this stage'
+                                : 'Select template…'}
                           </option>
-                          {ideaDocTemplates.map((template) => (
+                          {ideaDocGenerateTemplates.map((template) => (
                             <option key={template.id} value={template.id}>
                               {template.name}
                             </option>
                           ))}
                         </Select>
+                        {ideaDocWorkflowGate.enforced ? (
+                          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                            {ideaDocWorkflowGate.allowedKinds?.length
+                              ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
+                              : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
+                            {' '}Deleting that workflow makes every template available again.
+                          </p>
+                        ) : null}
                         {selectedIdeaDocGenerateTemplate ? (
                           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5">
                             <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background text-blue-700 ring-1 ring-border">
@@ -14646,7 +14732,7 @@ export function IdeaDetailPage() {
                       <Button
                         type="button"
                         className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
-                        disabled={ideaDocGenerateBusy || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim()}
+                        disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
                         onClick={() => { void handleIdeaDocGenerate() }}
                       >
                         {ideaDocGenerateBusy ? (

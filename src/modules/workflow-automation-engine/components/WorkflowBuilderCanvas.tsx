@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import {
   Background,
   BackgroundVariant,
+  ConnectionMode,
   Controls,
   MarkerType,
   MiniMap,
@@ -16,7 +17,9 @@ import {
   type Edge,
   type EdgeMouseHandler,
   type Node,
+  type NodeChange,
   type NodeMouseHandler,
+  type EdgeTypes,
   type NodeTypes,
   type OnSelectionChangeFunc,
 } from 'reactflow'
@@ -32,7 +35,11 @@ import { isAllWorkspacesSelection, readStoredTenantSelection } from '@/lib/tenan
 import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { ApprovalTargetField } from '@/modules/workflow-automation-engine/components/ApprovalTargetField'
+import { ApprovalNamedApproverField } from '@/modules/workflow-automation-engine/components/ApprovalNamedApproverField'
+import { WorkflowConnectionPreview } from '@/modules/workflow-automation-engine/components/WorkflowConnectionPreview'
+import { WorkflowCanvasActionsProvider, type WorkflowWaypoint } from '@/modules/workflow-automation-engine/components/workflowCanvasActions'
 import { WorkflowBuilderNode } from '@/modules/workflow-automation-engine/components/workflowBuilderNodes'
+import { WorkflowRoutedEdge } from '@/modules/workflow-automation-engine/components/workflowRoutedEdge'
 import {
   WORKFLOW_KIND_META,
   WORKFLOW_PALETTE_MIME,
@@ -82,6 +89,45 @@ type WorkflowGraphRecord = {
 }
 
 const WORKFLOW_TEMPLATE_VERSION = 3
+const RESIZE_ALIGNMENT_THRESHOLD = 12
+
+type NodeFrame = { x: number; y: number; width: number; height: number }
+
+function frameForNode(node: Node<WorkflowNodeData>): NodeFrame {
+  const fallback = workflowNodeSize(node.data.kind)
+  const width = Number(node.style?.width ?? node.width ?? fallback.width)
+  const height = Number(node.style?.height ?? node.height ?? fallback.height)
+  return { x: node.position.x, y: node.position.y, width, height }
+}
+
+function nearestAlignment(value: number, guides: number[]): number | null {
+  let closest: number | null = null
+  let distance = RESIZE_ALIGNMENT_THRESHOLD + 1
+  for (const guide of guides) {
+    const nextDistance = Math.abs(value - guide)
+    if (nextDistance <= RESIZE_ALIGNMENT_THRESHOLD && nextDistance < distance) {
+      closest = guide
+      distance = nextDistance
+    }
+  }
+  return closest
+}
+
+function snapNodeOrigin(origin: number, size: number, guides: number[]): number {
+  const anchors = [0, size / 2, size]
+  let snappedOrigin = origin
+  let smallestDelta = RESIZE_ALIGNMENT_THRESHOLD + 1
+  for (const anchor of anchors) {
+    const guide = nearestAlignment(origin + anchor, guides)
+    if (guide == null) continue
+    const delta = guide - (origin + anchor)
+    if (Math.abs(delta) < smallestDelta) {
+      snappedOrigin = origin + delta
+      smallestDelta = Math.abs(delta)
+    }
+  }
+  return snappedOrigin
+}
 
 /** Canvas right-click menu — one state drives node/edge/pane variants. */
 type CanvasMenuState = { kind: 'node' | 'edge' | 'pane'; x: number; y: number; targetId?: string }
@@ -109,7 +155,7 @@ function triggerTypeOf(nodes: Node<WorkflowNodeData>[]): NonNullable<WorkflowCre
 
 const EDGE_STROKE = '#94a3b8'
 const DEFAULT_EDGE_OPTIONS = {
-  type: 'smoothstep' as const,
+  type: 'routed' as const,
   markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_STROKE },
   style: { stroke: EDGE_STROKE, strokeWidth: 2 },
 }
@@ -117,6 +163,8 @@ const FIT_VIEW_OPTIONS = { padding: 0.2, minZoom: 0.6 }
 const PRO_OPTIONS = { hideAttribution: true as const }
 
 // One entry per kind — all map to the same renderer, keyed on data.kind.
+const WORKFLOW_EDGE_TYPES: EdgeTypes = { routed: WorkflowRoutedEdge }
+
 const WORKFLOW_NODE_TYPES: NodeTypes = {
   trigger: WorkflowBuilderNode,
   action: WorkflowBuilderNode,
@@ -164,12 +212,31 @@ function workflowStorageKey(workflowId: string | null): string {
   return `tectona.workflow-builder.${workflowId ?? 'new'}`
 }
 
+function workflowNodeSize(kind: WorkflowNodeKind): { width: number; height: number } {
+  return {
+    width: kind === 'parallel' ? 300 : 224,
+    height: kind === 'ifElse' || kind === 'approval' || kind === 'parallel' || kind === 'loop' ? 104 : 78,
+  }
+}
+
+/**
+ * React Flow owns a node's outer dimensions. Keep an explicit style on every
+ * workflow node so the resizer changes the visible card, not only its handles.
+ */
+function withWorkflowNodeSize(node: Node<WorkflowNodeData>): Node<WorkflowNodeData> {
+  const fallback = workflowNodeSize(node.data.kind)
+  const width = node.style?.width ?? node.width ?? fallback.width
+  const height = node.style?.height ?? node.height ?? fallback.height
+  return { ...node, style: { ...node.style, width, height } }
+}
+
 function makeNode(kind: WorkflowNodeKind, position: { x: number; y: number }, id: string): Node<WorkflowNodeData> {
   const meta = WORKFLOW_KIND_META[kind]
   return {
     id,
     type: kind,
     position,
+    style: workflowNodeSize(kind),
     data: { kind, label: meta.label, config: { ...meta.defaultConfig } },
   }
 }
@@ -188,7 +255,13 @@ function tNode(
 ): Node<WorkflowNodeData> {
   const meta = WORKFLOW_KIND_META[kind]
   const mergedConfig = { ...meta.defaultConfig, ...config }
-  return { id, type: kind, position: { x, y }, data: { kind, label, config: kind === 'action' ? normalizeActionConfig(mergedConfig) : mergedConfig } }
+  return {
+    id,
+    type: kind,
+    position: { x, y },
+    style: workflowNodeSize(kind),
+    data: { kind, label, config: kind === 'action' ? normalizeActionConfig(mergedConfig) : mergedConfig },
+  }
 }
 
 function tEdge(id: string, source: string, target: string, extra?: Partial<Edge>): Edge {
@@ -322,7 +395,7 @@ const WORKFLOW_TEMPLATES: Record<string, WorkflowGraphRecord> = {
 function cloneGraph(record: WorkflowGraphRecord): WorkflowGraphRecord {
   return {
     name: record.name,
-    nodes: record.nodes.map((n) => ({ ...n, position: { ...n.position }, data: { ...n.data, config: { ...n.data.config } } })),
+    nodes: record.nodes.map((n) => ({ ...n, position: { ...n.position }, style: { ...n.style }, data: { ...n.data, config: { ...n.data.config } } })),
     edges: record.edges.map((e) => ({ ...e })),
   }
 }
@@ -409,7 +482,7 @@ function loadOrSeedWorkflowGraph(workflowId: string | null, workflowName?: strin
         if (Array.isArray(parsed.nodes) && Array.isArray(parsed.edges) && !stale) {
           return {
             name: parsed.name || workflowName || 'Untitled Workflow',
-            nodes: parsed.nodes.map((node) => normalizeActionNode(normalizeTriggerNode(node))),
+            nodes: parsed.nodes.map((node) => withWorkflowNodeSize(normalizeActionNode(normalizeTriggerNode(node)))),
             edges: parsed.edges,
             savedAt: parsed.savedAt,
             version: parsed.version,
@@ -514,6 +587,12 @@ function buildRuntimeDefinition(nodes: Node<WorkflowNodeData>[], edges: Edge[]):
       id: node.id,
       type: node.type ?? node.data.kind,
       position: node.position,
+      // Keep visual dimensions with the executable definition. The runtime ignores
+      // this presentation metadata; the editor restores it after a reload.
+      style: {
+        width: Number(node.style?.width ?? node.width ?? workflowNodeSize(node.data.kind).width),
+        height: Number(node.style?.height ?? node.height ?? workflowNodeSize(node.data.kind).height),
+      },
       data: {
         kind: node.data.kind,
         label: node.data.label,
@@ -528,8 +607,29 @@ function buildRuntimeDefinition(nodes: Node<WorkflowNodeData>[], edges: Edge[]):
       sourceHandle: edge.sourceHandle ?? 'out',
       targetHandle: edge.targetHandle ?? 'in',
       ...(edge.label ? { label: edge.label } : {}),
+      ...(Array.isArray((edge.data as { waypoints?: unknown } | undefined)?.waypoints)
+        || typeof (edge.data as { sourcePort?: unknown } | undefined)?.sourcePort === 'string'
+        || typeof (edge.data as { targetPort?: unknown } | undefined)?.targetPort === 'string'
+        ? {
+            data: {
+              ...(Array.isArray((edge.data as { waypoints?: unknown } | undefined)?.waypoints)
+                ? { waypoints: (edge.data as { waypoints: WorkflowWaypoint[] }).waypoints }
+                : {}),
+              ...(typeof (edge.data as { sourcePort?: unknown } | undefined)?.sourcePort === 'string'
+                ? { sourcePort: (edge.data as { sourcePort: string }).sourcePort }
+                : {}),
+              ...(typeof (edge.data as { targetPort?: unknown } | undefined)?.targetPort === 'string'
+                ? { targetPort: (edge.data as { targetPort: string }).targetPort }
+                : {}),
+            },
+          }
+        : {}),
     })),
   }
+}
+
+function workflowRevision(name: string, nodes: Node<WorkflowNodeData>[], edges: Edge[]): string {
+  return JSON.stringify({ name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges) })
 }
 
 
@@ -831,6 +931,11 @@ function WorkflowBuilderCanvasInner({
 
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNodeData>(initial.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
+  const nodesRef = useRef(nodes)
+  const resizeStartRef = useRef(new Map<string, NodeFrame>())
+  const savedRevisionRef = useRef<string | null>(null)
+  const [autosaveReady, setAutosaveReady] = useState(!workflowId)
+  const [draftSaveState, setDraftSaveState] = useState<'saved' | 'unsaved' | 'saving'>(workflowId ? 'saved' : 'unsaved')
   const [name, setName] = useState(initial.name)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [tab, setTab] = useState<'builder' | 'debug'>('builder')
@@ -841,6 +946,159 @@ function WorkflowBuilderCanvasInner({
   const [contextMenu, setContextMenu] = useState<CanvasMenuState | null>(null)
 
   const closeContextMenu = useCallback(() => setContextMenu(null), [])
+
+  useEffect(() => {
+    nodesRef.current = nodes
+  }, [nodes])
+
+  const currentRevision = useMemo(() => workflowRevision(name, nodes, edges), [edges, name, nodes])
+  const latestRevisionRef = useRef(currentRevision)
+
+  useEffect(() => {
+    latestRevisionRef.current = currentRevision
+    if (!autosaveReady) return
+    setDraftSaveState(currentRevision === savedRevisionRef.current ? 'saved' : 'unsaved')
+  }, [autosaveReady, currentRevision])
+
+  const onWorkflowNodesChange = useCallback((changes: NodeChange[]) => {
+    for (const change of changes) {
+      if (change.type !== 'dimensions') continue
+      if (change.resizing && !resizeStartRef.current.has(change.id)) {
+        const node = nodesRef.current.find((item) => item.id === change.id)
+        if (node) resizeStartRef.current.set(change.id, frameForNode(node))
+      }
+    }
+
+    // NodeResizer emits position and dimension changes together for top/left
+    // handles. Adjust those changes before React Flow applies them so the card
+    // visibly locks to a nearby node edge or centre while it is being dragged.
+    const alignedChanges = changes.map((change) => ({ ...change }))
+    for (const change of alignedChanges) {
+      // Node drag changes explicitly carry a dragging flag. Resize-generated
+      // position changes do not, so this cannot interfere with resize snapping.
+      if (change.type !== 'position' || change.dragging === undefined || !change.position) continue
+      const node = nodesRef.current.find((item) => item.id === change.id)
+      if (!node) continue
+      const frame = frameForNode(node)
+      const otherFrames = nodesRef.current.filter((item) => item.id !== node.id).map(frameForNode)
+      const xGuides = otherFrames.flatMap((item) => [item.x, item.x + item.width / 2, item.x + item.width])
+      const yGuides = otherFrames.flatMap((item) => [item.y, item.y + item.height / 2, item.y + item.height])
+      change.position = {
+        ...change.position,
+        x: snapNodeOrigin(change.position.x, frame.width, xGuides),
+        y: snapNodeOrigin(change.position.y, frame.height, yGuides),
+      }
+    }
+    for (const change of alignedChanges) {
+      if (change.type !== 'dimensions' || !change.resizing || !change.dimensions) continue
+      const node = nodesRef.current.find((item) => item.id === change.id)
+      const start = resizeStartRef.current.get(change.id)
+      if (!node || !start) continue
+
+      const positionChange = alignedChanges.find((item) => item.type === 'position' && item.id === change.id)
+      const nextX = positionChange?.type === 'position' ? positionChange.position?.x ?? node.position.x : node.position.x
+      const nextY = positionChange?.type === 'position' ? positionChange.position?.y ?? node.position.y : node.position.y
+      const frame = { x: nextX, y: nextY, width: change.dimensions.width, height: change.dimensions.height }
+      const otherFrames = nodesRef.current.filter((item) => item.id !== node.id).map(frameForNode)
+      const xGuides = otherFrames.flatMap((item) => [item.x, item.x + item.width / 2, item.x + item.width])
+      const yGuides = otherFrames.flatMap((item) => [item.y, item.y + item.height / 2, item.y + item.height])
+      const leftMoved = positionChange?.type === 'position' && Math.abs(frame.x - start.x) > 0.5
+      const topMoved = positionChange?.type === 'position' && Math.abs(frame.y - start.y) > 0.5
+      const snappedX = leftMoved ? nearestAlignment(frame.x, xGuides) : nearestAlignment(frame.x + frame.width, xGuides)
+      const snappedY = topMoved ? nearestAlignment(frame.y, yGuides) : nearestAlignment(frame.y + frame.height, yGuides)
+
+      if (snappedX != null) {
+        if (leftMoved) {
+          frame.width = frame.x + frame.width - snappedX
+          frame.x = snappedX
+        } else {
+          frame.width = snappedX - frame.x
+        }
+      }
+      if (snappedY != null) {
+        if (topMoved) {
+          frame.height = frame.y + frame.height - snappedY
+          frame.y = snappedY
+        } else {
+          frame.height = snappedY - frame.y
+        }
+      }
+
+      if (positionChange?.type === 'position') {
+        positionChange.position = { ...positionChange.position, x: frame.x, y: frame.y }
+      }
+      const minHeight = ['ifElse', 'approval', 'parallel', 'loop'].includes(node.data.kind) ? 104 : 78
+      change.dimensions = { width: Math.max(180, frame.width), height: Math.max(minHeight, frame.height) }
+    }
+
+    onNodesChange(alignedChanges)
+
+    const finishedNodeIds = changes
+      .filter((change): change is Extract<NodeChange, { type: 'dimensions' }> => change.type === 'dimensions' && change.resizing === false)
+      .map((change) => change.id)
+      .filter((id) => resizeStartRef.current.has(id))
+
+    if (finishedNodeIds.length === 0) return
+
+    window.requestAnimationFrame(() => {
+      setNodes((current) => {
+        const resized = new Set(finishedNodeIds)
+        const next = current.map((node) => {
+          if (!resized.has(node.id)) return node
+
+          const start = resizeStartRef.current.get(node.id)
+          const frame = frameForNode(node)
+          if (!start) return node
+
+          const otherFrames = current.filter((item) => item.id !== node.id).map(frameForNode)
+          const xGuides = otherFrames.flatMap((item) => [item.x, item.x + item.width / 2, item.x + item.width])
+          const yGuides = otherFrames.flatMap((item) => [item.y, item.y + item.height / 2, item.y + item.height])
+          const minWidth = 180
+          const minHeight = ['ifElse', 'approval', 'parallel', 'loop'].includes(node.data.kind) ? 104 : 78
+
+          const leftMoved = Math.abs(frame.x - start.x) > 0.5
+          const topMoved = Math.abs(frame.y - start.y) > 0.5
+          const snappedX = leftMoved
+            ? nearestAlignment(frame.x, xGuides)
+            : nearestAlignment(frame.x + frame.width, xGuides)
+          const snappedY = topMoved
+            ? nearestAlignment(frame.y, yGuides)
+            : nearestAlignment(frame.y + frame.height, yGuides)
+
+          let x = frame.x
+          let y = frame.y
+          let width = frame.width
+          let height = frame.height
+
+          if (snappedX != null) {
+            if (leftMoved) {
+              x = snappedX
+              width = frame.x + frame.width - snappedX
+            } else {
+              width = snappedX - frame.x
+            }
+          }
+          if (snappedY != null) {
+            if (topMoved) {
+              y = snappedY
+              height = frame.y + frame.height - snappedY
+            } else {
+              height = snappedY - frame.y
+            }
+          }
+
+          width = Math.max(minWidth, width)
+          height = Math.max(minHeight, height)
+          const changed = x !== frame.x || y !== frame.y || width !== frame.width || height !== frame.height
+          return changed
+            ? { ...node, position: { x, y }, style: { ...node.style, width, height } }
+            : node
+        })
+        finishedNodeIds.forEach((id) => resizeStartRef.current.delete(id))
+        return next
+      })
+    })
+  }, [onNodesChange, setNodes])
 
   const nextNodeId = useCallback((kind: WorkflowNodeKind) => {
     idCounterRef.current += 1
@@ -853,6 +1111,28 @@ function WorkflowBuilderCanvasInner({
     },
     [setEdges],
   )
+
+  const setEdgeWaypoints = useCallback((edgeId: string, waypoints: WorkflowWaypoint[]) => {
+    setEdges((current) => current.map((edge) => (
+      edge.id === edgeId
+        ? { ...edge, data: { ...edge.data, waypoints } }
+        : edge
+    )))
+  }, [setEdges])
+
+  const setEdgeAnchor = useCallback((edgeId: string, endpoint: 'source' | 'target', portId: string) => {
+    setEdges((current) => current.map((edge) => (
+      edge.id === edgeId
+        ? {
+            ...edge,
+            data: {
+              ...edge.data,
+              [endpoint === 'source' ? 'sourcePort' : 'targetPort']: portId,
+            },
+          }
+        : edge
+    )))
+  }, [setEdges])
 
   const handleSelectionChange = useCallback<OnSelectionChangeFunc>(({ nodes: selectedNodes }) => {
     setSelectedNodeId(selectedNodes[0]?.id ?? null)
@@ -920,6 +1200,23 @@ function WorkflowBuilderCanvasInner({
     [selectedNodeId, setNodes],
   )
 
+  const updateSelectedNodeLayout = useCallback(
+    (patch: Partial<NodeFrame>) => {
+      if (!selectedNodeId) return
+      setNodes((current) => current.map((node) => {
+        if (node.id !== selectedNodeId) return node
+        const frame = frameForNode(node)
+        const minHeight = ['ifElse', 'approval', 'parallel', 'loop'].includes(node.data.kind) ? 104 : 78
+        const x = Number.isFinite(patch.x) ? patch.x! : frame.x
+        const y = Number.isFinite(patch.y) ? patch.y! : frame.y
+        const width = Math.max(180, Number.isFinite(patch.width) ? patch.width! : frame.width)
+        const height = Math.max(minHeight, Number.isFinite(patch.height) ? patch.height! : frame.height)
+        return { ...node, position: { x, y }, style: { ...node.style, width, height } }
+      }))
+    },
+    [selectedNodeId, setNodes],
+  )
+
   const deleteNodeById = useCallback(
     (nodeId: string) => {
       setNodes((current) => current.filter((node) => node.id !== nodeId))
@@ -949,8 +1246,43 @@ function WorkflowBuilderCanvasInner({
     }
   }, [edges, name, nodes, workflowId])
 
+  // Persist editing changes after the pointer/input settles. This keeps drag and
+  // resize interactions responsive while ensuring positions and dimensions survive
+  // a reload without requiring an extra click on Save Draft.
+  useEffect(() => {
+    if (!workflowId || !autosaveReady) return
+    const revision = currentRevision
+    if (revision === savedRevisionRef.current) {
+      setDraftSaveState('saved')
+      return
+    }
+    setDraftSaveState('unsaved')
+
+    const timeout = window.setTimeout(() => {
+      if (revision === savedRevisionRef.current) return
+      setDraftSaveState('saving')
+      persist()
+      updateWorkflow(workflowId, {
+        name,
+        trigger: triggerTypeOf(nodes),
+        definition: buildRuntimeDefinition(nodes, edges),
+        })
+        .then(() => {
+          savedRevisionRef.current = revision
+          setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
+        })
+        .catch(() => {
+          // The local copy written above remains the recovery path while offline.
+          if (latestRevisionRef.current === revision) setDraftSaveState('unsaved')
+        })
+    }, 700)
+
+    return () => window.clearTimeout(timeout)
+  }, [autosaveReady, currentRevision, edges, name, nodes, persist, workflowId])
+
   const handleSaveDraft = useCallback(() => {
     persist() // local backup
+    setDraftSaveState('saving')
     if (!workflowId) {
       createWorkflowApi({
         name,
@@ -960,21 +1292,35 @@ function WorkflowBuilderCanvasInner({
         trigger: triggerTypeOf(nodes),
         definition: buildRuntimeDefinition(nodes, edges),
         workspace_id: activeWorkspaceId ?? undefined,
-      })
+        })
         .then((created) => {
+          const revision = workflowRevision(name, nodes, edges)
+          savedRevisionRef.current = revision
+          setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
           onWorkflowCreated?.(created)
           addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved to backend.` })
         })
-        .catch((error) => addToast({
-          variant: 'warning',
-          title: 'Saved locally',
-          description: error instanceof Error ? `Backend unavailable: ${error.message}` : 'Backend unavailable — not synced.',
-        }))
+        .catch((error) => {
+          setDraftSaveState('unsaved')
+          addToast({
+            variant: 'warning',
+            title: 'Saved locally',
+            description: error instanceof Error ? `Backend unavailable: ${error.message}` : 'Backend unavailable — not synced.',
+          })
+        })
       return
     }
     updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges) })
-      .then(() => addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved.` }))
-      .catch(() => addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' }))
+      .then(() => {
+        const revision = workflowRevision(name, nodes, edges)
+        savedRevisionRef.current = revision
+        setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
+        addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved.` })
+      })
+      .catch(() => {
+        setDraftSaveState('unsaved')
+        addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' })
+      })
   }, [activeWorkspaceId, addToast, edges, name, nodes, onWorkflowCreated, persist, workflowId])
 
   const handlePublish = useCallback(() => {
@@ -998,23 +1344,31 @@ function WorkflowBuilderCanvasInner({
   useEffect(() => {
     if (!workflowId) return
     let cancelled = false
+    setAutosaveReady(false)
     getWorkflow(workflowId)
       .then((wf) => {
         if (cancelled) return
+        const loadedName = wf.name || workflowName || 'Untitled Workflow'
         if (wf.name) setName(wf.name)
         const def = wf.definition
         if (def && Array.isArray(def.nodes) && def.nodes.length > 0) {
-          setNodes(def.nodes as Node<WorkflowNodeData>[])
-          setEdges((Array.isArray(def.edges) ? def.edges : []) as Edge[])
+          const loadedNodes = (def.nodes as Node<WorkflowNodeData>[]).map(withWorkflowNodeSize)
+          const loadedEdges = (Array.isArray(def.edges) ? def.edges : []) as Edge[]
+          savedRevisionRef.current = workflowRevision(loadedName, loadedNodes, loadedEdges)
+          setNodes(loadedNodes)
+          setEdges(loadedEdges)
         }
       })
       .catch(() => {
         // Offline — keep the localStorage/template seed already loaded.
       })
+      .finally(() => {
+        if (!cancelled) setAutosaveReady(true)
+      })
     return () => {
       cancelled = true
     }
-  }, [workflowId, setEdges, setNodes])
+  }, [workflowId, workflowName, setEdges, setNodes])
 
   // ── Execution (Phase B) ─────────────────────────────────────────────────
   const refreshRuns = useCallback(() => {
@@ -1314,6 +1668,7 @@ function WorkflowBuilderCanvasInner({
   )
 
   const selectedMeta = selectedNode ? WORKFLOW_KIND_META[selectedNode.data.kind] : null
+  const selectedNodeFrame = selectedNode ? frameForNode(selectedNode) : null
 
   const issues = useMemo(() => validateWorkflowGraph(nodes, edges, rolesWithHolders), [edges, nodes, rolesWithHolders])
   const errorCount = issues.filter((i) => i.level === 'error').length
@@ -1330,9 +1685,13 @@ function WorkflowBuilderCanvasInner({
     () => nodes.map((n) => (issueLevelByNode.has(n.id) ? { ...n, data: { ...n.data, _issue: issueLevelByNode.get(n.id) } } : n)),
     [nodes, issueLevelByNode],
   )
+  const displayEdges = useMemo(
+    () => edges.map((edge) => (edge.type === 'routed' ? edge : { ...edge, type: 'routed' as const })),
+    [edges],
+  )
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-12 z-[55] flex flex-col bg-slate-50">
+    <div className="fixed inset-x-0 bottom-0 top-12 z-[45] flex flex-col bg-slate-50">
       {/* Top bar */}
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 shadow-sm">
         <Button
@@ -1427,10 +1786,16 @@ function WorkflowBuilderCanvasInner({
             type="button"
             variant="outline"
             size="sm"
-            className="h-9 rounded-lg px-3 text-xs"
+            className={cn(
+              'h-9 rounded-lg px-3 text-xs transition-colors',
+              draftSaveState === 'unsaved' && 'border-amber-400 bg-amber-50 text-amber-800 hover:border-amber-500 hover:bg-amber-100',
+              draftSaveState === 'saving' && 'border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100',
+            )}
             onClick={handleSaveDraft}
+            title={draftSaveState === 'unsaved' ? 'Changes have not been saved to the backend' : draftSaveState === 'saving' ? 'Saving changes' : 'All changes saved'}
           >
-            <Save className="mr-1.5 h-3.5 w-3.5" /> Save Draft
+            {draftSaveState === 'saving' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+            {draftSaveState === 'unsaved' ? 'Save changes' : draftSaveState === 'saving' ? 'Saving...' : 'Save Draft'}
           </Button>
           <Button type="button" size="sm" className="h-9 rounded-lg px-3 text-xs" onClick={handlePublish}>
             <Send className="mr-1.5 h-3.5 w-3.5" /> Publish
@@ -1484,12 +1849,14 @@ function WorkflowBuilderCanvasInner({
         <main className="relative min-h-0 min-w-0 flex-1">
           {tab === 'builder' ? (
             <div ref={wrapperRef} className="absolute inset-0 min-h-[320px] min-w-0" onDragOver={handleCanvasDragOver} onDrop={handleCanvasDrop}>
+              <WorkflowCanvasActionsProvider value={{ setEdgeWaypoints, setEdgeAnchor }}>
               <ReactFlow
                 className="workflow-builder-canvas h-full w-full"
                 nodes={displayNodes}
-                edges={edges}
+                edges={displayEdges}
                 nodeTypes={WORKFLOW_NODE_TYPES}
-                onNodesChange={onNodesChange}
+                edgeTypes={WORKFLOW_EDGE_TYPES}
+                onNodesChange={onWorkflowNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
                 onSelectionChange={handleSelectionChange}
@@ -1497,6 +1864,8 @@ function WorkflowBuilderCanvasInner({
                 onEdgeContextMenu={onEdgeContextMenu}
                 onPaneContextMenu={onPaneContextMenu}
                 defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+                connectionLineComponent={WorkflowConnectionPreview}
+                connectionMode={ConnectionMode.Loose}
                 fitView
                 fitViewOptions={FIT_VIEW_OPTIONS}
                 minZoom={0.4}
@@ -1513,6 +1882,7 @@ function WorkflowBuilderCanvasInner({
                   className="!rounded-lg !border !border-slate-200 !bg-white/95"
                 />
               </ReactFlow>
+              </WorkflowCanvasActionsProvider>
               {nodes.length <= 1 ? (
                 <div className="pointer-events-none absolute inset-x-0 top-6 flex justify-center">
                   <div className="rounded-full border border-slate-200 bg-white/90 px-3.5 py-1.5 text-[11px] text-slate-500 shadow-sm backdrop-blur">
@@ -1711,6 +2081,41 @@ function WorkflowBuilderCanvasInner({
                   />
                 </div>
 
+                {selectedNodeFrame ? (
+                  <div className="space-y-2 border-t border-slate-100 pt-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Layout</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ['x', 'X'],
+                        ['y', 'Y'],
+                        ['width', 'Width'],
+                        ['height', 'Height'],
+                      ] as const).map(([field, label]) => {
+                        const value = Math.round(selectedNodeFrame[field])
+                        return (
+                          <div key={field} className="space-y-1">
+                            <label className={FIELD_LABEL_CLASS}>{label}</label>
+                            <Input
+                              key={`${selectedNode.id}-${field}-${value}`}
+                              type="number"
+                              step="1"
+                              defaultValue={value}
+                              className="h-8"
+                              onBlur={(event) => {
+                                const next = Number(event.currentTarget.value)
+                                if (Number.isFinite(next)) updateSelectedNodeLayout({ [field]: next })
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') event.currentTarget.blur()
+                              }}
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
                 {selectedMeta.fields
                   .filter((field) => {
                     if (selectedNode.data.kind !== 'trigger') return true
@@ -1737,6 +2142,18 @@ function WorkflowBuilderCanvasInner({
                         rolesState={approvalRolesState}
                         onRolesChanged={reloadApprovalRoles}
                       />
+                    )
+                  }
+                  if (field.type === 'approvalMembers') {
+                    return (
+                      <div key={field.key} className="space-y-1.5">
+                        <label className={FIELD_LABEL_CLASS}>{field.label}</label>
+                        <ApprovalNamedApproverField
+                          members={workspaceMembers}
+                          value={value}
+                          onChange={(next) => updateSelectedNode({ config: { [field.key]: next } })}
+                        />
+                      </div>
                     )
                   }
                   return (

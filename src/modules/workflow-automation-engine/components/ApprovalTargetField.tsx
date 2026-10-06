@@ -45,8 +45,8 @@ export function ApprovalTargetField({
   const [newRole, setNewRole] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // Explicit, not derived from teamCode: switching to Tim clears the role first, so a
-  // derived mode would snap straight back to Peran before a team is ever picked.
+  // Explicit, not derived from teamCode: switching to Team clears the role first, so a
+  // derived mode would snap straight back to Role before a team is ever picked.
   // The canvas keys this component by node id, so selecting another node re-seeds it.
   const [mode, setMode] = useState<'role' | 'team'>(teamCode.trim() ? 'team' : 'role')
 
@@ -112,8 +112,8 @@ export function ApprovalTargetField({
       .catch((error) =>
         addToast({
           variant: 'error',
-          title: 'Gagal menambah pemegang peran',
-          description: error instanceof Error ? error.message : 'Coba lagi.',
+          title: 'Could not add role holder',
+          description: error instanceof Error ? error.message : 'Please try again.',
         }),
       )
       .finally(() => setBusy(false))
@@ -130,8 +130,8 @@ export function ApprovalTargetField({
         .catch((error) =>
           addToast({
             variant: 'error',
-            title: 'Gagal melepas pemegang peran',
-            description: error instanceof Error ? error.message : 'Coba lagi.',
+            title: 'Could not remove role holder',
+            description: error instanceof Error ? error.message : 'Please try again.',
           }),
         )
     },
@@ -157,7 +157,7 @@ export function ApprovalTargetField({
               mode === option ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50',
             )}
           >
-            {option === 'role' ? 'Peran' : 'Tim'}
+            {option === 'role' ? 'Role' : 'Team'}
           </button>
         ))}
       </div>
@@ -169,7 +169,7 @@ export function ApprovalTargetField({
             onChange={(event) => onChange({ approverTeam: event.target.value })}
             className="h-9 text-sm"
           >
-            <SelectItem value="">Pilih tim</SelectItem>
+            <SelectItem value="">Select team</SelectItem>
             {teams.map((team) => (
               <SelectItem key={team.code} value={team.code}>{team.label}</SelectItem>
             ))}
@@ -177,13 +177,13 @@ export function ApprovalTargetField({
           {teams.length === 0 ? (
             <p className="flex gap-1.5 text-[10px] leading-snug text-amber-700">
               <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
-              Workspace ini belum punya tim operasional. Pakai peran, atau isi timnya di Workspace Members.
+              This workspace has no operational teams yet. Use a role, or add teams in Workspace Members.
             </p>
           ) : (
             <p className="flex gap-1.5 text-[10px] leading-snug text-slate-500">
               <Info className="mt-px h-3 w-3 shrink-0" />
-              Tim itu sekumpulan orang, bukan tanggung jawab tunggal — biasanya dipasangkan dengan kuorum
-              &ldquo;any&rdquo;.
+              A team is a group of people, not a single responsibility. It is usually paired with an
+              &ldquo;any&rdquo; quorum.
             </p>
           )}
         </>
@@ -201,11 +201,11 @@ export function ApprovalTargetField({
             }}
             className="h-9 text-sm"
           >
-            <SelectItem value="">Pilih peran</SelectItem>
+            <SelectItem value="">Select role</SelectItem>
             {roleCodes.map((code) => (
               <SelectItem key={code} value={code}>{code}</SelectItem>
             ))}
-            <SelectItem value={NEW_ROLE}>+ Peran baru…</SelectItem>
+            <SelectItem value={NEW_ROLE}>+ New role...</SelectItem>
           </Select>
 
           {newRole !== '' || (roleCode.trim() && !roleCodes.includes(roleCode.trim())) ? (
@@ -220,25 +220,25 @@ export function ApprovalTargetField({
 
           {!workspaceId ? (
             <p className="text-[10px] leading-snug text-slate-500">
-              Pilih satu workspace untuk melihat pemegang perannya.
+              Select a workspace to view its role holders.
             </p>
           ) : rolesState === 'loading' ? (
             <p className="flex items-center gap-1.5 text-[10px] text-slate-400">
-              <Loader2 className="h-3 w-3 animate-spin" /> Memuat pemegang peran…
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading role holders...
             </p>
           ) : rolesState === 'error' ? (
-            <p className="text-[10px] leading-snug text-amber-700">Daftar pemegang peran tidak bisa dimuat.</p>
+            <p className="text-[10px] leading-snug text-amber-700">Role holders could not be loaded.</p>
           ) : !roleCode.trim() ? null : holders.length === 0 ? (
             <p className="flex gap-1.5 rounded-lg bg-amber-50 p-2 text-[10px] leading-snug text-amber-800">
               <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
               <span>
-                <strong>{roleCode.trim()}</strong> belum punya pemegang di workspace ini maupun di organisasinya. Node ini akan
-                menggagalkan alurnya saat dijalankan.
+                <strong>{roleCode.trim()}</strong> has no holder in this workspace or its organization. This node
+                will fail when the workflow runs.
               </span>
             </p>
           ) : (
             <div className="space-y-1">
-              <div className="text-[10px] text-slate-500">{holders.length} orang</div>
+              <div className="text-[10px] text-slate-500">{holders.length} people</div>
               <div className="flex flex-wrap gap-1">
                 {holders.map((holder) => {
                   // Held at the organization workspace: it applies here, but it is
@@ -247,7 +247,7 @@ export function ApprovalTargetField({
                   return (
                     <span
                       key={holder.id}
-                      title={inherited ? 'Diwariskan dari workspace organisasi — ubah di sana.' : undefined}
+                      title={inherited ? 'Inherited from the organization workspace. Manage it there.' : undefined}
                       className={cn(
                         'inline-flex items-center gap-1 rounded-full border py-0.5 pl-2 text-[10px]',
                         inherited ? 'border-sky-200 bg-sky-50 pr-2 text-sky-800' : 'border-slate-200 bg-slate-50 pr-0.5 text-slate-700',
@@ -260,7 +260,7 @@ export function ApprovalTargetField({
                         <button
                           type="button"
                           onClick={() => removeHolder(holder)}
-                          aria-label={`Lepas ${memberName(holder.subject_id)} dari ${holder.role_code}`}
+                          aria-label={`Remove ${memberName(holder.subject_id)} from ${holder.role_code}`}
                           className="rounded-full p-0.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                         >
                           <X className="h-2.5 w-2.5" />
@@ -277,14 +277,14 @@ export function ApprovalTargetField({
             adding ? (
               <div className="space-y-1.5">
                 <Select value={newHolder} onChange={(event) => setNewHolder(event.target.value)} className="h-8 text-xs">
-                  <SelectItem value="">Pilih anggota workspace</SelectItem>
+                  <SelectItem value="">Select workspace member</SelectItem>
                   {assignable.map((member) => (
                     <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>
                   ))}
                 </Select>
                 <div className="flex gap-1.5">
                   <Button size="sm" className="h-7 flex-1 text-[11px]" onClick={addHolder} disabled={busy || !newHolder}>
-                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Simpan'}
+                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
                   </Button>
                   <Button
                     size="sm"
@@ -295,13 +295,13 @@ export function ApprovalTargetField({
                       setNewHolder('')
                     }}
                   >
-                    Batal
+                    Cancel
                   </Button>
                 </div>
               </div>
             ) : (
               <Button size="sm" variant="outline" className="h-7 w-full text-[11px]" onClick={() => setAdding(true)}>
-                <Plus className="mr-1 h-3 w-3" /> Tambah pemegang peran
+                <Plus className="mr-1 h-3 w-3" /> Add role holder
               </Button>
             )
           ) : null}
@@ -309,7 +309,7 @@ export function ApprovalTargetField({
           {workspaceId && roleCode.trim() ? (
             <p className="flex gap-1.5 text-[10px] leading-snug text-slate-500">
               <Info className="mt-px h-3 w-3 shrink-0" />
-              Pemegang peran berlaku untuk seluruh workspace, bukan hanya node ini.
+              Role holders apply to the entire workspace, not only this node.
             </p>
           ) : null}
         </>
