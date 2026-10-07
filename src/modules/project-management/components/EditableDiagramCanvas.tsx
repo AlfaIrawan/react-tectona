@@ -30,6 +30,7 @@ import { C4_APPLICATION_CATALOG_MIME, C4_PALETTE_MIME, C4_PALETTE_ITEMS, createC
 import { type DiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
 import { isArchimateElementData, type ArchimateElementNodeData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, parseC4Graph, serializeC4Graph, type C4ElementKind, type C4ParsedGraph } from '@/modules/project-management/lib/c4PlantUml'
+import { parseUmlDiagram, serializeUmlDiagram, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
 import { isCanvasViewport, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
 import { resolveEdgeTextStyle } from '@/modules/project-management/lib/integrationEdgeAppearance'
 import { defaultIntegrationNodeTextStyle, defaultIntegrationNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
@@ -46,9 +47,9 @@ import { requestOpenIdeaDiscussChat } from '@/stores/chat-navigation-store'
 import { createDiagramAiDraftAudit, listDiagramAiDraftAudit, type DiagramAiDraftAuditApi } from '@/lib/api/ideaBacklogApi'
 import { jsPDF } from 'jspdf'
 
-type DiagramFormat = 'plantuml' | 'bpmn' | 'c4'
+type DiagramFormat = 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
 type ParsedKind = 'activity' | 'decision' | 'start' | 'end'
-type ParsedNode = { id: string; label: string; kind: ParsedKind; bpmnType?: string }
+type ParsedNode = { id: string; label: string; kind: ParsedKind; bpmnType?: string; lane?: string }
 type ParsedGraph = { nodes: ParsedNode[]; edges: Array<{ id: string; source: string; target: string; label?: string }> }
 type DiagramStore = Record<string, { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source?: string; viewport?: CanvasViewport; snapToGrid?: boolean }>
 
@@ -167,7 +168,17 @@ function squareSize(width: number, height: number): number {
   return Math.max(width, height)
 }
 
+const BPMN_LANE_BAND = 36
+const BPMN_LANE_HEIGHT = 188
+const BPMN_COLUMN_PITCH = 248
+const BPMN_LANE_PAD_TOP = 32
+const BPMN_LANE_PAD_BOTTOM = 56
+const BPMN_STACK_GAP = 20
+const BPMN_LAYOUT_MARK = 'swimlane-layout-2'
+
 function layoutBpmnPositions(nodes: ParsedNode[], edges: ParsedGraph['edges']): Map<string, { x: number; y: number }> {
+  const lanes = swimlaneOrder(nodes)
+  if (lanes.length >= 2) return layoutBpmnSwimlanes(nodes, edges, lanes)
   const outgoing = new Map<string, string[]>()
   const indegree = new Map(nodes.map((node) => [node.id, 0]))
   for (const edge of edges) {
@@ -214,6 +225,119 @@ function layoutBpmnPositions(nodes: ParsedNode[], edges: ParsedGraph['edges']): 
   return positions
 }
 
+function swimlaneOrder(nodes: ParsedNode[]): string[] {
+  const order: string[] = []
+  for (const node of nodes) {
+    if (node.lane && !order.includes(node.lane)) order.push(node.lane)
+  }
+  return order
+}
+
+function bpmnColumnRank(nodes: ParsedNode[], edges: ParsedGraph['edges']): Map<string, number> {
+  const outgoing = new Map<string, string[]>()
+  const indegree = new Map(nodes.map((node) => [node.id, 0]))
+  for (const edge of edges) {
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target])
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
+  }
+  const rank = new Map<string, number>()
+  const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id)
+  if (!queue.length && nodes[0]) queue.push(nodes[0].id)
+  const seen = new Set<string>()
+  while (queue.length) {
+    const id = queue.shift()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const current = rank.get(id) ?? 0
+    for (const target of outgoing.get(id) ?? []) {
+      rank.set(target, Math.max(rank.get(target) ?? 0, current + 1))
+      queue.push(target)
+    }
+    if (!rank.has(id)) rank.set(id, current)
+  }
+  return rank
+}
+
+function swimlaneFrames(nodes: ParsedNode[], edges: ParsedGraph['edges'], lanes: string[]) {
+  const rank = bpmnColumnRank(nodes, edges)
+  const slot = new Map<string, number>()
+  const used = new Map<string, number>()
+  for (const node of nodes) {
+    const key = `${node.lane ?? lanes[0]}:${rank.get(node.id) ?? 0}`
+    slot.set(node.id, used.get(key) ?? 0)
+    used.set(key, (used.get(key) ?? 0) + 1)
+  }
+  const heights = lanes.map((lane) => {
+    const members = nodes.filter((node) => (node.lane ?? lanes[0]) === lane)
+    const rows = Math.max(1, ...members.map((node) => (slot.get(node.id) ?? 0) + 1))
+    const tallest = Math.max(BPMN_LANE_HEIGHT - BPMN_LANE_PAD_TOP - BPMN_LANE_PAD_BOTTOM, ...members.map((node) => bpmnNodeSize(node.bpmnType ?? 'task').height))
+    return Math.max(BPMN_LANE_HEIGHT, BPMN_LANE_PAD_TOP + rows * tallest + Math.max(0, rows - 1) * BPMN_STACK_GAP + BPMN_LANE_PAD_BOTTOM)
+  })
+  const tops: number[] = []
+  let cursor = 0
+  for (const height of heights) {
+    tops.push(cursor)
+    cursor += height
+  }
+  return { rank, slot, heights, tops }
+}
+
+function layoutBpmnSwimlanes(
+  nodes: ParsedNode[],
+  edges: ParsedGraph['edges'],
+  lanes: string[],
+): Map<string, { x: number; y: number }> {
+  const { rank, slot, tops } = swimlaneFrames(nodes, edges, lanes)
+  const positions = new Map<string, { x: number; y: number }>()
+  for (const node of nodes) {
+    const size = bpmnNodeSize(node.bpmnType ?? 'task')
+    const column = rank.get(node.id) ?? 0
+    const laneIndex = Math.max(0, lanes.indexOf(node.lane ?? lanes[0]))
+    const stack = slot.get(node.id) ?? 0
+    positions.set(node.id, {
+      x: BPMN_LANE_BAND + 16 + column * BPMN_COLUMN_PITCH + (BPMN_COLUMN_PITCH - size.width) / 2,
+      y: (tops[laneIndex] ?? 0) + BPMN_LANE_PAD_TOP + stack * (size.height + BPMN_STACK_GAP),
+    })
+  }
+  return positions
+}
+
+function bpmnSwimlaneNodes(nodes: ParsedNode[], edges: ParsedGraph['edges']): Node<ArchimateNodeData>[] {
+  const lanes = swimlaneOrder(nodes)
+  if (lanes.length < 2) return []
+  const { rank, heights, tops } = swimlaneFrames(nodes, edges, lanes)
+  const columns = Math.max(1, ...nodes.map((node) => (rank.get(node.id) ?? 0) + 1))
+  const width = BPMN_LANE_BAND + 16 + columns * BPMN_COLUMN_PITCH
+  return lanes.map((lane, index) => ({
+    id: `bpmn-lane-${index}`,
+    type: 'bpmnElement',
+    position: { x: 0, y: tops[index] ?? 0 },
+    zIndex: 0,
+    draggable: false,
+    selectable: false,
+    connectable: false,
+    focusable: false,
+    style: { width, height: heights[index] ?? BPMN_LANE_HEIGHT, zIndex: 0 },
+    data: {
+      kind: 'element',
+      layer: 'business',
+      stereotype: 'Lane',
+      title: lane,
+      description: [BPMN_LAYOUT_MARK],
+      notationId: 'lane',
+      visual: {
+        fillEnabled: true,
+        fillColor: index % 2 === 0 ? '#f8fafc' : '#ffffff',
+        lineEnabled: true,
+        lineColor: '#0284c7',
+        lineWidth: 2,
+        lineStyle: 'solid',
+        rounded: false,
+      },
+    },
+  }))
+}
+
 function toBpmnNode(item: ParsedNode, position: { x: number; y: number }): Node<ArchimateNodeData> {
   const bpmnType = item.bpmnType ?? 'task'
   const size = bpmnNodeSize(bpmnType)
@@ -221,7 +345,8 @@ function toBpmnNode(item: ParsedNode, position: { x: number; y: number }): Node<
     id: item.id,
     type: 'bpmnElement',
     position,
-    style: { width: size.width, height: size.height },
+    zIndex: 2,
+    style: { width: size.width, height: size.height, zIndex: 2 },
     data: {
       kind: 'element',
       layer: 'business',
@@ -427,12 +552,29 @@ const ELEMENT_KIND_SET = new Set([
   'Person', 'Person_Ext', 'System', 'System_Ext', 'SystemDb', 'Container', 'Container_Ext', 'ContainerDb', 'Component',
 ])
 
+function isStoredUmlGraph(nodes: Node<ArchimateNodeData>[]): boolean {
+  return nodes.some((node) => node.type === 'umlClass')
+}
+
 function isStoredC4Graph(nodes: Node<ArchimateNodeData>[]): boolean {
   return nodes.some((node) => node.type === 'c4Element')
 }
 
 function isStoredBpmnGraph(nodes: Node<ArchimateNodeData>[]): boolean {
   return nodes.some((node) => node.type === 'bpmnElement')
+}
+
+function graphHasSwimlanes(nodes: Node<ArchimateNodeData>[]): boolean {
+  return nodes.some((node) => node.type === 'bpmnElement' && node.data.kind === 'element' && node.data.notationId === 'lane')
+}
+
+function graphHasFittedSwimlanes(nodes: Node<ArchimateNodeData>[]): boolean {
+  return nodes.some((node) => (
+    node.type === 'bpmnElement'
+    && node.data.kind === 'element'
+    && node.data.notationId === 'lane'
+    && node.data.description?.includes(BPMN_LAYOUT_MARK)
+  ))
 }
 
 function nodeStyleSize(node: Node): { width: number; height: number } {
@@ -560,12 +702,119 @@ function graphFromPlantUml(source: string): ParsedGraph {
   return { nodes, edges }
 }
 
+const ERD_FILLS = ['#EDE4F7', '#E5F4E0', '#FFF4CC', '#F4F4F4', '#FDE8D8', '#DCEBFA']
+const ERD_LINES = ['#8E6BB0', '#6B9B63', '#C4A35A', '#8A8A8A', '#C4895A', '#6A94C4']
+
+function erdMemberName(raw: string): string {
+  return raw.replace(/^\*\s*/, '').replace(/<<[^>]+>>/g, '').replace(/\s*:\s*.+$/, '').trim().toLowerCase()
+}
+
+function entityReferences(fromMembers: string[], toId: string, toTitle: string): boolean {
+  const keys = new Set([toId, toTitle, `${toId}_id`, `${toTitle}_id`].map((value) => value.toLowerCase()))
+  return fromMembers.some((member) => keys.has(erdMemberName(member)))
+}
+
+function graphFromUml(source: string, view: UmlView): { nodes: Node<ArchimateNodeData>[]; edges: Edge[] } {
+  const parsed = parseUmlDiagram(source, view)
+  const erd = view === 'erd'
+  const stroke = '#E07A3D'
+  const placed: Node<ArchimateNodeData>[] = []
+  let x = 48
+  let y = 48
+  let column = 0
+  let rowHeight = 0
+  const columns = 3
+  for (const box of parsed.boxes) {
+    const attributes = box.members.filter((line) => !line.includes('('))
+    const methods = box.members.filter((line) => line.includes('('))
+    const rowCount = erd ? Math.max(1, box.members.length) : attributes.length
+    const height = erd
+      ? 34 + rowCount * 18 + 10
+      : 36 + Math.max(28, attributes.length * 18 + 10) + (methods.length ? methods.length * 18 + 10 : 0)
+    const longest = Math.max(box.title.length, ...box.members.map((line) => erdMemberName(line).length))
+    const width = erd ? Math.min(260, Math.max(168, longest * 7 + 28)) : 210
+    if (column === columns) {
+      column = 0
+      x = 48
+      y += rowHeight + 72
+      rowHeight = 0
+    }
+    const fill = ERD_FILLS[placed.length % ERD_FILLS.length]
+    const line = ERD_LINES[placed.length % ERD_LINES.length]
+    placed.push({
+      id: box.id,
+      type: erd ? 'erdEntity' : 'umlClass',
+      position: { x, y },
+      style: { width, height },
+      data: {
+        kind: 'element',
+        layer: 'application',
+        stereotype: erd ? 'entity' : 'class',
+        title: box.title,
+        description: box.members,
+        notationId: erd ? 'Entity' : 'Class',
+        visual: {
+          fillEnabled: true,
+          fillColor: erd ? fill : '#ffffff',
+          lineEnabled: true,
+          lineColor: erd ? line : stroke,
+          lineWidth: erd ? 1.5 : 2,
+          lineStyle: 'solid',
+          rounded: false,
+          shadow: false,
+        },
+      },
+    })
+    rowHeight = Math.max(rowHeight, height)
+    x += width + 80
+    column += 1
+  }
+  const boxesById = new Map(parsed.boxes.map((box) => [box.id, box]))
+  const edges = withFacingHandles(placed, parsed.links.map((link, index) => {
+    const from = boxesById.get(link.source)
+    const to = boxesById.get(link.target)
+    const sourceFk = from && to ? entityReferences(from.members, to.id, to.title) : false
+    const targetFk = from && to ? entityReferences(to.members, from.id, from.title) : false
+    const sourceEnd = link.sourceEnd ?? (sourceFk && !targetFk ? { many: true, optional: false } : { many: false, optional: false })
+    const targetEnd = link.targetEnd ?? (targetFk && !sourceFk ? { many: true, optional: false } : sourceFk ? { many: false, optional: false } : { many: true, optional: false })
+    if (erd) {
+      return {
+        id: `uml-${link.source}-${link.target}-${index}`,
+        source: link.source,
+        target: link.target,
+        label: link.label || undefined,
+        type: 'erd' as const,
+        data: {
+          sourceMany: sourceEnd.many,
+          sourceOptional: sourceEnd.optional,
+          targetMany: targetEnd.many,
+          targetOptional: targetEnd.optional,
+        },
+      }
+    }
+    return {
+      id: `uml-${link.source}-${link.target}-${index}`,
+      source: link.source,
+      target: link.target,
+      label: link.label || undefined,
+      type: 'smoothstep' as const,
+      markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 12, height: 12 },
+      style: { stroke, strokeWidth: 1.75 },
+    }
+  }))
+  return { nodes: placed, edges }
+}
+
 function parseSource(source: string, format: DiagramFormat) {
+  if (format === 'class' || format === 'erd') return graphFromUml(source, format)
   if (format === 'c4') return graphFromC4(source)
   if (format === 'bpmn') {
     const parsed = parseBpmnSource(source)
     const positions = layoutBpmnPositions(parsed.nodes, parsed.edges)
-    const nodes = parsed.nodes.map((item) => toBpmnNode(item, positions.get(item.id) ?? { x: 48, y: 48 }))
+    const nodes = [
+      ...bpmnSwimlaneNodes(parsed.nodes, parsed.edges),
+      ...parsed.nodes.map((item) => toBpmnNode(item, positions.get(item.id) ?? { x: 48, y: 48 })),
+    ]
     return { nodes, edges: withFacingHandles(nodes, toArchimateEdges(parsed)) }
   }
   const parsed = graphFromPlantUml(source)
@@ -670,7 +919,10 @@ function EditableDiagramCanvasInner({
     [c4Source, format],
   )
   const imported = useMemo(() => parseSource(bpmnEditorSource, format), [bpmnEditorSource, format])
-  const shouldMigrateStoredBpmnGraph = format === 'bpmn' && c4Source.trim() !== bpmnEditorSource
+  const shouldMigrateStoredBpmnGraph = format === 'bpmn' && (
+    c4Source.trim() !== bpmnEditorSource
+    || (graphHasSwimlanes(imported.nodes) && Boolean(savedGraph?.nodes?.length) && !graphHasFittedSwimlanes(savedGraph.nodes))
+  )
   const initial = useMemo(() => {
     if (savedGraph?.nodes?.length) {
       if (format === 'bpmn' && (!isStoredBpmnGraph(savedGraph.nodes) || shouldMigrateStoredBpmnGraph)) {
@@ -694,7 +946,23 @@ function EditableDiagramCanvasInner({
         edges: withFacingHandles(imported.nodes, imported.edges),
       }
     }
-    if (format === 'bpmn' && (!isStoredBpmnGraph(stored.nodes) || shouldMigrateStoredBpmnGraph)) {
+    if (format === 'class' && !isStoredUmlGraph(stored.nodes)) {
+      return {
+        ...imported,
+        viewport: stored.viewport,
+        snapToGrid: stored.snapToGrid,
+        edges: withFacingHandles(imported.nodes, imported.edges),
+      }
+    }
+    if (format === 'erd' && !stored.nodes.some((node) => node.type === 'erdEntity')) {
+      return {
+        ...imported,
+        viewport: stored.viewport,
+        snapToGrid: stored.snapToGrid,
+        edges: withFacingHandles(imported.nodes, imported.edges),
+      }
+    }
+    if (format === 'bpmn' && (!isStoredBpmnGraph(stored.nodes) || shouldMigrateStoredBpmnGraph || (graphHasSwimlanes(imported.nodes) && !graphHasFittedSwimlanes(stored.nodes)))) {
       return {
         ...imported,
         viewport: stored.viewport,
@@ -709,7 +977,9 @@ function EditableDiagramCanvasInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
-  const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(format === 'c4' ? 'diagram' : 'source')
+  const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(
+    format === 'c4' || format === 'class' || format === 'erd' ? 'diagram' : 'source',
+  )
   const [sourceDraft, setSourceDraft] = useState(() => bpmnEditorSource)
   const c4Level = c4LevelFromDiagramKey(diagramKey)
   const applicationCatalogScope = useMemo(() => tenant ? buildWorkspaceScopeFromTenant(tenant) : null, [tenant])
@@ -930,6 +1200,25 @@ function EditableDiagramCanvasInner({
       return next === current ? current : next
     })
   }, [c4Level, edges, format, nodes])
+  useEffect(() => {
+    if (format !== 'class' && format !== 'erd') return
+    setSourceDraft((current) => {
+      const boxes = nodes
+        .filter((node) => (node.type === 'umlClass' || node.type === 'erdEntity') && node.data.kind === 'element')
+        .map((node) => ({
+          id: node.id,
+          title: node.data.title,
+          members: node.data.description,
+        }))
+      const links = edges.map((edge) => ({
+        source: edge.source,
+        target: edge.target,
+        label: String(edge.label ?? ''),
+      }))
+      const next = serializeUmlDiagram({ view: format, boxes, links })
+      return next === current ? current : next
+    })
+  }, [edges, format, nodes])
   useEffect(() => {
     if (format !== 'bpmn') return
     setSourceDraft((current) => {
@@ -2704,7 +2993,13 @@ function EditableDiagramCanvasInner({
                     value={sourceDraft}
                     onChange={setSourceDraft}
                     onBlur={applySource}
-                    languageLabel={format === 'bpmn' ? 'BPMN PlantUML' : format === 'c4' ? 'C4 PlantUML' : 'PlantUML'}
+                    languageLabel={
+                      format === 'bpmn' ? 'BPMN PlantUML'
+                        : format === 'c4' ? 'C4 PlantUML'
+                          : format === 'class' ? 'Class PlantUML'
+                            : format === 'erd' ? 'ERD PlantUML'
+                              : 'PlantUML'
+                    }
                   />
                 ) : isC4 && sidebarPanel === 'catalog' ? (
                   <C4ApplicationCatalogPalette

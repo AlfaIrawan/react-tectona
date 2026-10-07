@@ -57,8 +57,39 @@ describe('bpmnPlantUml', () => {
       Task --> End((Selesai))
     `)
     expect(graph.nodes.find((node) => node.id === 'Task')?.label).toBe(
-      'Saat ini ketika ada isu di nasabah dan cabang tidak tahu\napa yang harus dilakukan',
+      'Saat ini ketika ada isu di nasabah dan cabang tidak tahu apa yang harus dilakukan',
     )
+  })
+
+  it('puts each named participant on its own swimlane, like the brainstorm diagram', () => {
+    const graph = parseBpmnSource(`@startuml
+      () "Isu diterima Tim Cabang" as StartEvent_1
+      rectangle "Interaksi dengan Chat Gen AI" as Task_Chat
+      hexagon "Jenis Isu?" as Gateway_Issue
+      rectangle "Otomasi Pembuatan Tiket di Ivanti (via API)" as Task_Ivanti
+      rectangle "Pemberian Jawaban Real-time (Policy/Process)" as Task_Answer
+      StartEvent_1 --> Task_Chat
+      Task_Chat --> Gateway_Issue
+      Gateway_Issue --> Task_Ivanti
+      Gateway_Issue --> Task_Answer
+      @enduml`)
+    expect(graph.nodes.find((node) => node.id === 'StartEvent_1')?.lane).toBe('Tim Cabang')
+    expect(graph.nodes.find((node) => node.id === 'Task_Chat')?.lane).toBe('Chat Gen AI')
+    expect(graph.nodes.find((node) => node.id === 'Task_Ivanti')?.lane).toBe('Ivanti')
+    expect(graph.nodes.find((node) => node.id === 'Gateway_Issue')?.lane).toBe('Chat Gen AI')
+    expect(graph.nodes.find((node) => node.id === 'Task_Answer')?.lane).toBe('Chat Gen AI')
+  })
+
+  it('hides escape characters and does not repeat the swimlane name inside the task', () => {
+    const graph = parseBpmnSource(`@startuml
+      rectangle "Nasabah: melaporkan isu\\nke\\\\nTim Cabang" as Task_Report
+      rectangle "Tim Cabang: chat dengan\\nChat Gen AI" as Task_Chat
+      Task_Report --> Task_Chat
+      @enduml`)
+    expect(graph.nodes.find((node) => node.id === 'Task_Report')?.label).toBe('melaporkan isu ke Tim Cabang')
+    expect(graph.nodes.find((node) => node.id === 'Task_Report')?.lane).toBe('Nasabah')
+    expect(graph.nodes.find((node) => node.id === 'Task_Chat')?.label).toBe('chat dengan Chat Gen AI')
+    expect(graph.nodes.find((node) => node.id === 'Task_Chat')?.label).not.toMatch(/\\/)
   })
 
   it('repairs a misplaced Start event and serializes BPMN vertically', () => {

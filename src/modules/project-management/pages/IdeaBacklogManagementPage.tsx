@@ -1194,7 +1194,8 @@ import { brainstormTypingCutoff, isTechnicalViewSource, splitBrainstormDisplayPa
 import { useTypingReveal } from '@/lib/chat/useTypingReveal'
 import {
   appendProcessDiagramsToText,
-  extractProcessDiagramsFromText,
+  latestRevisedProcessDiagrams,
+  latestValidatedTechnicalDiagrams,
   stripProcessDiagramsFromText,
   type ExtractedProcessDiagram,
 } from '@/lib/chat/extractProcessDiagrams'
@@ -2096,7 +2097,11 @@ export function IdeaBacklogManagementPage() {
   }
 
   const setCreateIdeaDescriptionFromPlainText = (nextText: string) => {
-    const diagrams = extractProcessDiagramsFromText(nextText)
+    const brainstormText = brainstormMessages.map((message) => message.text).filter(Boolean).join('\n\n')
+    const diagrams = [
+      ...latestRevisedProcessDiagrams(nextText),
+      ...latestValidatedTechnicalDiagrams([nextText, brainstormText].filter(Boolean).join('\n\n')),
+    ]
     const plain = stripProcessDiagramsFromText(nextText)
     setCreateIdeaProcessDiagrams(diagrams)
     const html = plainTextToIdeaRichHtml(plain)
@@ -3459,6 +3464,7 @@ export function IdeaBacklogManagementPage() {
             workspace_id: idea.workspace ?? null,
             idea_id: idea.id,
             idea_title: idea.title,
+            idea_description: idea.description || idea.title,
             requested_by: idea.submittedBy || currentUserId || null,
           },
         })
@@ -4096,6 +4102,15 @@ export function IdeaBacklogManagementPage() {
     syncBrainstormComposerHeight()
   }, [isBrainstormMode, brainstormInput])
 
+  const brainstormComposerDisabled = isBrainstormSending || isDraftContinuing
+  const brainstormComposerWasDisabledRef = useRef(false)
+  useEffect(() => {
+    const wasDisabled = brainstormComposerWasDisabledRef.current
+    brainstormComposerWasDisabledRef.current = brainstormComposerDisabled
+    if (!isBrainstormMode || !wasDisabled || brainstormComposerDisabled) return
+    brainstormComposerRef.current?.focus({ preventScroll: true })
+  }, [isBrainstormMode, brainstormComposerDisabled])
+
   // The conversation continued after a draft already existed, so ask the agent
   // to redo the analysis. The outcome is the NEXT version: the description the
   // user is looking at is left untouched until they pick "Pakai versi ini",
@@ -4182,9 +4197,14 @@ export function IdeaBacklogManagementPage() {
   useEffect(() => {
     if (!ideaDraftJob) return
     // Keep the recovery snapshot while generation is running or fails.
+    const currentPointer = useIdeaDraftBrainstormPointerStore.getState().pointer
+    const typedTitle = createIdeaForm.title.trim()
+    const title = typedTitle
+      || (currentPointer?.jobId === ideaDraftJob.job_id ? currentPointer.title : '')
+      || 'Untitled idea'
     useIdeaDraftBrainstormPointerStore.getState().retainPointer(ideaDraftJob.status, {
       jobId: ideaDraftJob.job_id,
-      title: createIdeaForm.title.trim() || 'Untitled idea',
+      title,
       updatedAt: Date.now(),
       // Recovery snapshot survives jobs being evicted from the runtime.
       tags: effectiveCreateIdeaTags,
@@ -6025,7 +6045,7 @@ export function IdeaBacklogManagementPage() {
                               The agreed AS-IS / TO-BE diagram is also saved in the draft so it can be analyzed in the Process section.
                             </p>
                           </div>
-                          {createIdeaProcessDiagrams.map((diagram) => (
+                          {createIdeaProcessDiagrams.filter((diagram) => diagram.kind === 'as_is' || diagram.kind === 'to_be').map((diagram) => (
                             <div key={`${diagram.label}-${diagram.source.slice(0, 40)}`} className="space-y-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 {diagram.label}

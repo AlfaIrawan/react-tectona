@@ -229,6 +229,14 @@ export async function listWorkflowRuns(id: string): Promise<WorkflowRunSummaryDt
   return readJson<WorkflowRunSummaryDto[]>(res)
 }
 
+export async function retryFailedDocumentActions(runId: string): Promise<WorkflowRunDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/retry-document-actions`, {
+    method: 'POST',
+    headers: defaultHeaders(),
+  })
+  return readJson<WorkflowRunDto>(res)
+}
+
 export async function getWorkflowRun(runId: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}`, { headers: defaultHeaders() })
   return readJson<WorkflowRunDto>(res)

@@ -50,6 +50,8 @@ import {
   Subscript,
   Superscript,
   Table,
+  Boxes,
+  Database,
   Target,
   TriangleAlert,
   TrendingUp,
@@ -227,7 +229,8 @@ import {
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
-import { brainstormProcessPersistKey, extractProcessDiagramsFromText } from '@/lib/chat/extractProcessDiagrams'
+import { brainstormProcessPersistKey, latestRevisedProcessDiagrams, latestValidatedTechnicalDiagrams } from '@/lib/chat/extractProcessDiagrams'
+import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
 import { EditableDiagramCanvas, type C4DiagramDrilldownTarget } from '@/modules/project-management/components/EditableDiagramCanvas'
 import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
@@ -243,7 +246,7 @@ import { IdeaScoringDraftEditor, PendingScoreProposalNote, usePendingScorePropos
 import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-management/lib/reviewerDisplayName'
 import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
 import { docApprovalState, useIdeaDocApprovals } from '@/modules/project-management/lib/ideaDocApprovals'
-import { approveWorkflowRun, rejectWorkflowRun } from '@/lib/api/workflowAutomationApi'
+import { approveWorkflowRun, getWorkflowRun, listWorkflowApprovals, rejectWorkflowRun, retryFailedDocumentActions } from '@/lib/api/workflowAutomationApi'
 import { NOTIFICATIONS_UPDATED_EVENT } from '@/lib/chat/chatRealtimeEvents'
 import { dispatchIdeaSectionRevisionUpdated } from '@/lib/chat/ideaSectionRevisionFromChat'
 import {
@@ -2255,12 +2258,13 @@ type DiagramStudioSession = {
   ideaId: string
   diagramKey: string
   diagramSource?: string
-  diagramFormat?: 'plantuml' | 'bpmn' | 'c4'
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
   savedGraph?: C4CanvasGraph
   onPersistGraph?: (graph: C4CanvasGraph) => void
   title: string
   description: string
   icon: LucideIcon
+  renderAsImage?: boolean
   imageSrc: string | null
   imageLoading?: boolean
   imageError?: string | null
@@ -2284,6 +2288,7 @@ function DiagramGalleryCard({
   title,
   icon: Icon,
   description,
+  renderAsImage = false,
   imageSrc,
   imageLoading = false,
   imageError = null,
@@ -2301,12 +2306,13 @@ function DiagramGalleryCard({
   ideaId: string
   diagramKey: string
   diagramSource?: string
-  diagramFormat?: 'plantuml' | 'bpmn' | 'c4'
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
   savedGraph?: C4CanvasGraph
   onPersistGraph?: (graph: C4CanvasGraph) => void
   title: string
   icon: LucideIcon
   description: string
+  renderAsImage?: boolean
   imageSrc: string | null
   imageLoading?: boolean
   imageError?: string | null
@@ -2321,7 +2327,11 @@ function DiagramGalleryCard({
   onOpenC4Drilldown?: (diagramKey: string) => void
   className?: string
 }) {
-  const hasDiagram = Boolean(imageSrc || diagramSource)
+  const renderedPreview = usePlantUmlPngPreview(renderAsImage ? diagramSource : null)
+  const previewSrc = renderAsImage ? renderedPreview.objectUrl : imageSrc
+  const previewLoading = renderAsImage ? renderedPreview.isLoading : imageLoading
+  const previewError = renderAsImage ? renderedPreview.error : imageError
+  const hasDiagram = Boolean(previewSrc || (!renderAsImage && diagramSource))
   const openStudio = () => {
     onOpenStudio({
       ideaId,
@@ -2333,9 +2343,10 @@ function DiagramGalleryCard({
       title,
       description,
       icon: Icon,
-      imageSrc,
-      imageLoading,
-      imageError,
+      renderAsImage,
+      imageSrc: previewSrc,
+      imageLoading: previewLoading,
+      imageError: previewError,
       missing,
       generationError,
       confidence,
@@ -2362,7 +2373,26 @@ function DiagramGalleryCard({
       </div>
       <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
       <div className="relative mt-2 aspect-[16/10] overflow-hidden rounded-lg border border-border/30 bg-slate-50">
-        {diagramSource ? (
+        {renderAsImage ? (
+          previewSrc ? (
+            <img
+              src={previewSrc}
+              alt={title}
+              className="h-full w-full object-contain"
+            />
+          ) : (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center text-[11px] text-muted-foreground">
+              {previewLoading ? (
+                <>
+                  <RefreshCcw className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  Building diagram…
+                </>
+              ) : (
+                <span className="text-rose-600">{previewError || 'Diagram belum bisa digambar.'}</span>
+              )}
+            </div>
+          )
+        ) : diagramSource ? (
           <EditableDiagramCanvas
             ideaId={ideaId}
             diagramKey={diagramKey}
@@ -3601,6 +3631,7 @@ export function IdeaDetailPage() {
   const [ideaDocApprovalNote, setIdeaDocApprovalNote] = useState('')
   const [ideaDocApprovalBusy, setIdeaDocApprovalBusy] = useState(false)
   const ideaDocTitleHealRef = useRef<string | null>(null)
+  const ideaDocGenerationRetryRef = useRef<string | null>(null)
   const [ideaDocsLoading, setIdeaDocsLoading] = useState(false)
   const [ideaDocsPage, setIdeaDocsPage] = useState(1)
   const [ideaDocsPageSize, setIdeaDocsPageSize] = useState(10)
@@ -3627,6 +3658,9 @@ export function IdeaDetailPage() {
   const [isImpactPanelFullscreen, setIsImpactPanelFullscreen] = useState(false)
   const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
   const [diagramStudio, setDiagramStudio] = useState<DiagramStudioSession | null>(null)
+  const studioPlantUmlPreview = usePlantUmlPngPreview(
+    diagramStudio?.renderAsImage ? diagramStudio.diagramSource : null,
+  )
   const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
   const [isEmbeddedExportMenuOpen, setIsEmbeddedExportMenuOpen] = useState(false)
   const [c4AlternativePreview, setC4AlternativePreview] = useState<{
@@ -6033,10 +6067,27 @@ export function IdeaDetailPage() {
     [confidence.costBenefit, costBenefitEvidenceItems],
   )
 
+  const brainstormPointer = useIdeaDraftBrainstormPointerStore((state) => state.pointer)
   const brainstormProcessDiagrams = useMemo(
-    () => extractProcessDiagramsFromText(idea.description || ''),
+    () => latestRevisedProcessDiagrams(idea.description || ''),
     [idea.description],
   )
+  const validatedTechnicalDiagrams = useMemo(() => {
+    const description = idea.description || ''
+    const chat = (brainstormPointer?.messages ?? []).map((message) => message.text).filter(Boolean).join('\n\n')
+    const titlesMatch = Boolean(
+      brainstormPointer
+      && brainstormPointer.title.trim().toLowerCase() === (idea.title || '').trim().toLowerCase(),
+    )
+    const normalize = (source: string) => source.replace(/\s+/g, ' ').trim()
+    const savedProcess = latestRevisedProcessDiagrams(description).map((diagram) => normalize(diagram.source))
+    const chatProcess = latestRevisedProcessDiagrams(chat).map((diagram) => normalize(diagram.source))
+    const sameBrainstorm = savedProcess.some((source) => chatProcess.includes(source))
+    const corpus = titlesMatch || sameBrainstorm
+      ? [description, chat].filter(Boolean).join('\n\n')
+      : description
+    return latestValidatedTechnicalDiagrams(corpus)
+  }, [brainstormPointer, idea.description, idea.title])
 
   useEffect(() => {
     let cancelled = false
@@ -6143,6 +6194,30 @@ export function IdeaDetailPage() {
               new Date(a.updated_date || a.created_date).getTime(),
           )
         })
+        const hasUrd = linked.some((item) => ideaDocumentType(item) === 'URD')
+        if (!hasUrd && ideaDocGenerationRetryRef.current !== idea.id) {
+          ideaDocGenerationRetryRef.current = idea.id
+          void (async () => {
+            const approvals = await listWorkflowApprovals({
+              subjectContextKey: 'idea_id',
+              subjectContextValue: idea.id,
+              limit: 50,
+            })
+            const runIds = [...new Set(approvals.map((row) => row.run_id))]
+            for (const runId of runIds) {
+              const run = await getWorkflowRun(runId)
+              const failedUpload = run.steps.some(
+                (step) => step.status === 'failed' && /generation failed/i.test(step.message || ''),
+              )
+              if (!failedUpload) continue
+              await retryFailedDocumentActions(runId)
+              if (!cancelled) setIdeaDocsReloadKey((key) => key + 1)
+              return
+            }
+          })().catch(() => {
+            // The Docs panel stays empty until the next visit if generation still cannot reach a template.
+          })
+        }
       })
       .catch(() => {
         // Best-effort — the Docs table still works with session-generated documents only.
@@ -12890,12 +12965,13 @@ export function IdeaDetailPage() {
                     </div>
                   </div>
                   <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
-                    AI-generated architecture and business process diagrams for this idea.
+                    C4, Class, ERD, AS-IS, dan TO-BE terakhir yang sudah dikonfirmasi saat brainstorming.
                   </p>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
+              {isIntegrationRefreshing || !integrationLoaded || (integrationBootstrapRecord?.nodes.length ?? 0) > 0 ? (
               <div className="order-5 flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -12949,6 +13025,52 @@ export function IdeaDetailPage() {
                   />
                 </div>
               </div>
+              ) : null}
+
+              {validatedTechnicalDiagrams.map((diagram) => {
+                const isBrainstormC4 = diagram.kind === 'c4'
+                const canvasFormat = diagram.kind === 'c4'
+                  ? 'c4'
+                  : diagram.kind === 'class'
+                    ? 'class'
+                    : diagram.kind === 'erd'
+                      ? 'erd'
+                      : 'plantuml'
+                const technicalKey = isBrainstormC4
+                  ? (/!include\s*<\s*C4\/C4_Container|\bContainer\s*\(/i.test(diagram.source)
+                    ? 'brainstorm-c4-level-2'
+                    : 'brainstorm-c4-level-1')
+                  : diagram.kind === 'class'
+                    ? 'brainstorm-class'
+                    : diagram.kind === 'erd'
+                      ? 'brainstorm-erd'
+                      : brainstormProcessPersistKey(diagram.label, 0)
+                const technicalMeta = diagram.kind === 'c4'
+                  ? { icon: Layers, description: 'Gambaran sistem (C4) terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                  : diagram.kind === 'class'
+                    ? { icon: Boxes, description: 'Class diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                    : { icon: Database, description: 'ERD terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                return (
+                  <DiagramGalleryCard
+                    key={technicalKey}
+                    ideaId={idea.id}
+                    diagramKey={technicalKey}
+                    diagramSource={diagram.source}
+                    diagramFormat={canvasFormat}
+                    renderAsImage={canvasFormat === 'plantuml'}
+                    title={diagram.label}
+                    icon={technicalMeta.icon}
+                    description={technicalMeta.description}
+                    imageSrc={null}
+                    missing={false}
+                    generationError={null}
+                    confidence={null}
+                    isRegenerating={false}
+                    onOpenStudio={setDiagramStudio}
+                    className="order-6"
+                  />
+                )
+              })}
 
               {brainstormProcessDiagrams.length > 0 ? (
                 brainstormProcessDiagrams.map((diagram, index) => {
@@ -12965,7 +13087,9 @@ export function IdeaDetailPage() {
                     onPersistGraph={(graph) => persistBpmnCanvas(processKey, graph)}
                     title={diagram.label}
                     icon={Workflow}
-                    description="BPMN process diagram from brainstorming during Create Idea."
+                    description={diagram.kind === 'as_is'
+                      ? 'Proses saat ini (AS-IS) terakhir yang sudah direvisi.'
+                      : 'Proses target (TO-BE) terakhir yang sudah direvisi.'}
                     imageSrc={null}
                     missing={false}
                     generationError={null}
@@ -12976,16 +13100,17 @@ export function IdeaDetailPage() {
                   />
                   )
                 })
-              ) : (
+              ) : validatedTechnicalDiagrams.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-border/50 bg-white/60 p-6 text-center">
                   <Workflow className="h-5 w-5 text-muted-foreground" aria-hidden />
-                  <p className="text-xs font-semibold text-slate-600">No process diagram from brainstorming yet</p>
+                  <p className="text-xs font-semibold text-slate-600">AS-IS dan TO-BE belum ada</p>
                   <p className="text-[11px] text-muted-foreground">
-                    AS-IS/TO-BE diagrams will appear here once they're drawn during Create Idea.
+                    Diagram proses terakhir yang sudah direvisi saat brainstorming akan muncul di sini.
                   </p>
                 </div>
-              )}
+              ) : null}
 
+              {(regenerating.c4Level1 || Boolean(c4Level1Analysis.plantumlSource?.trim()) || (c4Level1Analysis.canvasGraph?.nodes.length ?? 0) > 0) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-1"
@@ -13010,6 +13135,8 @@ export function IdeaDetailPage() {
                 onOpenC4Drilldown={openC4Drilldown}
                 className="order-1"
               />
+              ) : null}
+              {(regenerating.c4Level2 || Boolean(c4Level2Analysis.plantumlSource?.trim()) || (c4Level2Analysis.canvasGraph?.nodes.length ?? 0) > 0) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-2"
@@ -13032,6 +13159,8 @@ export function IdeaDetailPage() {
                 onOpenStudio={setDiagramStudio}
                 className="order-2"
               />
+              ) : null}
+              {(regenerating.bpmnHigh || Boolean(bpmnHighAnalysis.bpmnXml?.trim()) || Boolean(bpmnHighAnalysis.renderedPngBase64) || (bpmnHighAnalysis.canvasGraph?.nodes.length ?? 0) > 0) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="bpmn-high-level"
@@ -13050,20 +13179,16 @@ export function IdeaDetailPage() {
                 onOpenStudio={setDiagramStudio}
                 className="order-3"
               />
+              ) : null}
 
-              {bpmnHighAnalysis.subProcesses.length === 0 ? (
-                <div className="order-4 flex flex-col justify-between rounded-2xl border border-dashed border-border/40 bg-muted/10 p-4 opacity-60">
-                  <div className="flex items-center gap-2">
-                    <ListTree className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="text-sm font-semibold text-muted-foreground">BPMN Detail</span>
-                  </div>
-                  <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-                    Generate BPMN High-Level first to see per-step detail.
-                  </p>
-                </div>
-              ) : (
-                bpmnHighAnalysis.subProcesses.map((task: ProcessSubTask) => {
+              {bpmnHighAnalysis.subProcesses.map((task: ProcessSubTask) => {
                   const detail = processDetailsByKey[task.key]
+                  const hasDetail = Boolean(
+                    detail?.analysis.renderedPngBase64
+                    || detail?.analysis.bpmnXml?.trim()
+                    || detail?.analysis.canvasGraph?.nodes.length,
+                  )
+                  if (!hasDetail && !detail?.isRegenerating) return null
                   return (
                     <DiagramGalleryCard
                       key={task.key}
@@ -13089,8 +13214,7 @@ export function IdeaDetailPage() {
                       className="order-4"
                     />
                   )
-                })
-              )}
+                })}
             </div>
 
                 </div>
@@ -13288,7 +13412,24 @@ export function IdeaDetailPage() {
                   </div>
 
                   <div className="min-h-0 flex-1 overflow-hidden">
-                    {diagramStudio.diagramSource ? (
+                    {diagramStudio.renderAsImage ? (
+                      studioPlantUmlPreview.objectUrl ? (
+                        <div className="flex h-full items-center justify-center overflow-auto rounded-2xl border border-white/60 bg-white/75">
+                          <img src={studioPlantUmlPreview.objectUrl} alt={diagramStudio.title} className="max-h-full max-w-full object-contain" />
+                        </div>
+                      ) : (
+                        <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-center text-sm text-muted-foreground">
+                          {studioPlantUmlPreview.isLoading ? (
+                            <>
+                              <RefreshCcw className="h-4 w-4 animate-spin" aria-hidden />
+                              Building diagram…
+                            </>
+                          ) : (
+                            <span className="text-rose-600">{studioPlantUmlPreview.error || 'Diagram belum bisa digambar.'}</span>
+                          )}
+                        </div>
+                      )
+                    ) : diagramStudio.diagramSource ? (
                       <EditableDiagramCanvas
                         ideaId={diagramStudio.ideaId}
                         diagramKey={diagramStudio.diagramKey}

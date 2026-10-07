@@ -22,6 +22,7 @@ import {
 } from 'reactflow'
 import { CanvasViewportGrid, CanvasViewportRulers } from '@/modules/project-management/components/CanvasViewportRulers'
 import { AnchoredSmoothStepEdge } from '@/modules/project-management/components/AnchoredSmoothStepEdge'
+import { ErdCrowfootEdge } from '@/modules/project-management/components/ErdCrowfootEdge'
 import { integrationArchimateNodeTypes } from '@/modules/project-management/components/integrationArchimateNodeTypes'
 import { isArchimateElementData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
@@ -29,7 +30,7 @@ const INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS = { type: 'smoothstep' as const }
 const INTEGRATION_FLOW_FIT_VIEW_OPTIONS = { padding: 0.08, minZoom: 0.7 }
 const INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS = { padding: 0.22, maxZoom: 1 }
 const INTEGRATION_FLOW_PRO_OPTIONS = { hideAttribution: true as const }
-const INTEGRATION_EDGE_TYPES: EdgeTypes = { smoothstep: AnchoredSmoothStepEdge }
+const INTEGRATION_EDGE_TYPES: EdgeTypes = { smoothstep: AnchoredSmoothStepEdge, erd: ErdCrowfootEdge }
 const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
 const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
 const EDGE_UPDATE_DRAG_THRESHOLD_PX = 8
@@ -76,7 +77,8 @@ function PatchReactFlowOnError() {
 
 function integrationMinimapNodeColor(node: Node): string {
   if (node.type === 'archimateBoundary') return '#e2e8f0'
-  if (node.type === 'bpmnElement') return '#ffffff'
+  if (node.type === 'umlClass') return '#E07A3D'
+  if (node.type === 'erdEntity') return '#C4A35A'
   if (node.type === 'c4Element') {
     const data = node.data
     if (isArchimateElementData(data) && /external/i.test(data.stereotype)) return '#999999'

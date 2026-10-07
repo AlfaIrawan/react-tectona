@@ -671,7 +671,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         </div>
       ) : (
         <div
-          className="relative flex h-full min-h-0 w-full min-w-0 flex-col justify-center overflow-visible rounded-[10px] border-2 px-3 py-2 text-center"
+          className="relative flex h-full min-h-0 w-full min-w-0 flex-col justify-center overflow-hidden rounded-[10px] border-2 px-3 py-2 text-center"
           style={{
             borderColor: stroke,
             background: fill,
@@ -688,7 +688,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
             <span className="absolute bottom-1.5 left-1/2 flex h-3.5 w-3.5 -translate-x-1/2 items-center justify-center border border-slate-800 text-[10px] leading-none">+</span>
           ) : null}
           <p
-            className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words text-[12px] font-medium leading-4 text-slate-900 [line-clamp:unset] [-webkit-line-clamp:unset]"
+            className="min-h-0 min-w-0 w-full max-h-full overflow-hidden break-words text-[12px] font-medium leading-4 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:4]"
             style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
           >
             {data.title}
@@ -727,6 +727,83 @@ export function ArchimateLegendNode() {
   )
 }
 
+export function UmlClassNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+  const layoutKey = `${width ?? 0}x${height ?? 0}`
+  const attributes = data.description.filter((line) => !line.includes('('))
+  const methods = data.description.filter((line) => line.includes('('))
+  const stroke = '#E07A3D'
+  const ink = '#C65A28'
+  return (
+    <div className="group relative h-full w-full overflow-visible">
+      <SelectionResizer selected={selected} minWidth={160} minHeight={72} />
+      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <div
+        className="flex h-full w-full flex-col bg-white text-left"
+        style={{ border: `2px solid ${stroke}`, fontFamily: 'Arial, sans-serif', color: ink }}
+      >
+        <div className="px-2 py-1.5 text-center text-[13px] font-semibold" style={{ borderBottom: `2px solid ${stroke}` }}>
+          {data.title}
+        </div>
+        <div className="min-h-7 px-2 py-1 text-[11px] leading-[18px]" style={{ borderBottom: methods.length ? `2px solid ${stroke}` : undefined }}>
+          {attributes.map((lineText, index) => (
+            <p key={`${lineText}-${index}`}>{lineText}</p>
+          ))}
+        </div>
+        {methods.length > 0 ? (
+          <div className="px-2 py-1 text-[11px] leading-[18px]">
+            {methods.map((lineText, index) => (
+              <p key={`${lineText}-${index}`}>{lineText}</p>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function erdColumn(raw: string): { name: string; label: string; pk: boolean; fk: boolean } {
+  const pk = /^\*/.test(raw.trim()) || /<<\s*PK\s*>>/i.test(raw)
+  const markedFk = /<<\s*FK\s*>>/i.test(raw)
+  const cleaned = raw.replace(/^\*\s*/, '').replace(/<<[^>]+>>/g, '').trim()
+  const typed = cleaned.match(/^([^:]+):\s*(.+)$/)
+  const name = (typed ? typed[1] : cleaned).trim()
+  const typeName = typed ? typed[2].trim() : ''
+  const fk = markedFk || (!pk && /_id$/i.test(name) && !/^id$/i.test(name))
+  return { name, label: typeName ? `${name} : ${typeName}` : name, pk, fk }
+}
+
+export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+  const layoutKey = `${width ?? 0}x${height ?? 0}`
+  const fill = data.visual?.fillColor || '#FFF4CC'
+  const stroke = data.visual?.lineColor || '#C4A35A'
+  const columns = data.description.map(erdColumn).filter((column) => column.name)
+  return (
+    <div className="group relative h-full w-full overflow-visible">
+      <SelectionResizer selected={selected} minWidth={150} minHeight={64} />
+      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <div
+        className="flex h-full w-full flex-col text-left text-slate-800"
+        style={{ background: fill, border: `1.5px solid ${stroke}`, fontFamily: 'Arial, Helvetica, sans-serif' }}
+      >
+        <div className="px-2 py-1.5 text-center text-[13px] font-bold" style={{ borderBottom: `1.5px solid ${stroke}` }}>
+          {data.title}
+        </div>
+        <div className="px-2 py-1 text-[11px] leading-[18px]">
+          {columns.map((column, index) => (
+            <p
+              key={`${column.name}-${index}`}
+              className={column.fk ? 'font-bold' : undefined}
+              style={{ textDecoration: column.pk ? 'underline' : undefined }}
+            >
+              {column.label}
+            </p>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export const integrationArchimateNodeTypes: NodeTypes = {
   archimateElement: ArchimateElementNode,
   archimateBoundary: ArchimateBoundaryNode,
@@ -734,5 +811,7 @@ export const integrationArchimateNodeTypes: NodeTypes = {
   archimateImage: ArchimateImageNode,
   archimateLegend: ArchimateLegendNode,
   c4Element: C4ElementNode,
+  umlClass: UmlClassNode,
+  erdEntity: ErdEntityNode,
   bpmnElement: BpmnElementNode,
 }
