@@ -28,6 +28,8 @@ export type WorkflowGraph = {
   nodes: unknown[]
   edges: unknown[]
   schema_version?: number
+  /** Idea Detail sidebar visibility. The executor ignores this; the editor and Idea Detail read it. */
+  ideaSections?: Partial<Record<string, 'show' | 'hide'>>
 }
 
 /** Row shape returned by GET /workflows (no heavy `definition`). */

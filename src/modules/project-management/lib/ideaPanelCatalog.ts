@@ -58,3 +58,29 @@ export function resolveIdeaNavSections(saved?: IdeaPanelKey[]): IdeaPanelKey[] {
   }
   return ordered
 }
+
+export type IdeaSectionVisibility = 'show' | 'hide'
+export type IdeaSectionVisibilityMap = Partial<Record<IdeaPanelKey, IdeaSectionVisibility>>
+
+export function readIdeaSectionVisibility(value: unknown): IdeaSectionVisibilityMap {
+  if (!value || typeof value !== 'object') return {}
+  const source = value as Record<string, unknown>
+  const next: IdeaSectionVisibilityMap = {}
+  for (const entry of IDEA_PANEL_CATALOG) {
+    const raw = source[entry.key]
+    if (raw === 'show' || raw === 'hide') next[entry.key] = raw
+  }
+  return next
+}
+
+/** Catalog order, minus sections a published workflow marked hide. An empty result keeps Summary. */
+export function visibleIdeaNavSections(
+  saved: IdeaPanelKey[] | undefined,
+  visibility: IdeaSectionVisibilityMap | undefined,
+): IdeaPanelKey[] {
+  const hidden = new Set(
+    IDEA_PANEL_CATALOG.map((entry) => entry.key).filter((key) => visibility?.[key] === 'hide'),
+  )
+  const visible = resolveIdeaNavSections(saved).filter((key) => !hidden.has(key))
+  return visible.length > 0 ? visible : ['summary']
+}

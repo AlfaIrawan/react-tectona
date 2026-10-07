@@ -5,6 +5,10 @@ import {
   type WorkflowApprovalDto,
   type WorkflowGraph,
 } from '@/lib/api/workflowAutomationApi'
+import {
+  readIdeaSectionVisibility,
+  type IdeaSectionVisibilityMap,
+} from '@/modules/project-management/lib/ideaPanelCatalog'
 
 export const WORKFLOW_DOCUMENT_KINDS = ['URD', 'BRD', 'FSD'] as const
 export type WorkflowDocumentKind = (typeof WORKFLOW_DOCUMENT_KINDS)[number]
@@ -181,6 +185,28 @@ export function allowedDocumentKinds(
     allowed.push(stage.kind)
   }
   return allowed
+}
+
+/**
+ * Newest published Active workflow that stored an Idea section map.
+ * Workflows with no map are skipped, so a team branch cannot wipe the page.
+ * Missing map means every section stays visible.
+ */
+export async function loadPublishedIdeaSectionVisibility(
+  workspaceId: string | null | undefined,
+): Promise<IdeaSectionVisibilityMap> {
+  const workflows = await listWorkflows(workspaceId?.trim() || undefined)
+  const active = workflows.filter((workflow) => workflow.is_published && workflow.status === 'Active')
+  for (const summary of active) {
+    try {
+      const full = await getWorkflow(summary.id)
+      const map = readIdeaSectionVisibility(full.definition?.ideaSections)
+      if (Object.keys(map).length > 0) return map
+    } catch {
+      // A workflow that cannot be loaded does not decide the menu.
+    }
+  }
+  return {}
 }
 
 export async function loadIdeaDocumentWorkflowGate(

@@ -218,9 +218,11 @@ import { fetchWorkspaceOrgWorkspaceById } from '@/lib/api/workspaceOrgApi'
 import { resolveWorkspaceApiId } from '@/lib/tenantWorkspaceScope'
 import {
   loadIdeaDocumentWorkflowGate,
+  loadPublishedIdeaSectionVisibility,
   templateAllowedByWorkflow,
   type IdeaDocumentWorkflowGate,
 } from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
+import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
 import {
   fetchWorkspaceMembers,
@@ -295,7 +297,9 @@ import {
   DEFAULT_IDEA_NAV_SECTIONS,
   getIdeaPanelCatalogEntry,
   resolveIdeaNavSections,
+  visibleIdeaNavSections,
   type IdeaPanelKey,
+  type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
 import { useIdeaNavSectionsStore } from '@/modules/project-management/store/ideaNavSectionsStore'
 import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
@@ -2278,6 +2282,30 @@ type DiagramStudioSession = {
   onOpenC4Drilldown?: (diagramKey: string) => void
 }
 
+function StudioImageSurface({ src, title, source }: { src: string; title: string; source?: string }) {
+  const menu = useDiagramSurfaceMenu()
+  return (
+    <div
+      className="flex h-full items-center justify-center overflow-auto rounded-2xl border border-white/60 bg-white/75"
+      onContextMenu={menu.open}
+    >
+      <img src={src} alt={title} className="max-h-full max-w-full object-contain" />
+      <DiagramSurfaceMenu menu={menu.menu}>
+        {source ? (
+          <DiagramSurfaceMenuButton
+            label="Copy source"
+            icon="copy"
+            onClick={() => {
+              void navigator.clipboard.writeText(source)
+              menu.close()
+            }}
+          />
+        ) : null}
+      </DiagramSurfaceMenu>
+    </div>
+  )
+}
+
 function DiagramGalleryCard({
   ideaId,
   diagramKey,
@@ -2332,6 +2360,8 @@ function DiagramGalleryCard({
   const previewLoading = renderAsImage ? renderedPreview.isLoading : imageLoading
   const previewError = renderAsImage ? renderedPreview.error : imageError
   const hasDiagram = Boolean(previewSrc || (!renderAsImage && diagramSource))
+  const imageMenu = useDiagramSurfaceMenu()
+  const showImageMenu = renderAsImage || !diagramSource
   const openStudio = () => {
     onOpenStudio({
       ideaId,
@@ -2427,8 +2457,40 @@ function DiagramGalleryCard({
           type="button"
           aria-label={`Open ${title}`}
           onClick={openStudio}
+          onContextMenu={(event) => {
+            if (showImageMenu) {
+              imageMenu.open(event)
+              return
+            }
+            event.preventDefault()
+            event.stopPropagation()
+            const cover = event.currentTarget
+            cover.style.pointerEvents = 'none'
+            const under = document.elementFromPoint(event.clientX, event.clientY)
+            cover.style.pointerEvents = ''
+            under?.dispatchEvent(new MouseEvent('contextmenu', {
+              bubbles: true,
+              cancelable: true,
+              clientX: event.clientX,
+              clientY: event.clientY,
+              view: window,
+            }))
+          }}
           className="absolute inset-0 z-10"
         />
+        <DiagramSurfaceMenu menu={imageMenu.menu}>
+          <DiagramSurfaceMenuButton label="Open" icon="fullscreen" onClick={() => { imageMenu.close(); openStudio() }} />
+          {diagramSource ? (
+            <DiagramSurfaceMenuButton
+              label="Copy source"
+              icon="copy"
+              onClick={() => {
+                void navigator.clipboard.writeText(diagramSource)
+                imageMenu.close()
+              }}
+            />
+          ) : null}
+        </DiagramSurfaceMenu>
       </div>
     </div>
   )
@@ -3657,6 +3719,7 @@ export function IdeaDetailPage() {
   const [ideaImpactPanelHeightPx, setIdeaImpactPanelHeightPx] = useState<number | null>(null)
   const [isImpactPanelFullscreen, setIsImpactPanelFullscreen] = useState(false)
   const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
+  const integrationPreviewMenu = useDiagramSurfaceMenu()
   const [diagramStudio, setDiagramStudio] = useState<DiagramStudioSession | null>(null)
   const studioPlantUmlPreview = usePlantUmlPngPreview(
     diagramStudio?.renderAsImage ? diagramStudio.diagramSource : null,
@@ -4530,10 +4593,28 @@ export function IdeaDetailPage() {
   const ideaDocApprovals = useIdeaDocApprovals(idea.id, activePanel === 'document')
   const reorderIdeaMenuSections = useIdeaNavSectionsStore((state) => state.reorderSections)
   const savedMenuSections = useIdeaNavSectionsStore((state) => state.sectionsByIdea[idea.id])
+  const [workflowSectionVisibility, setWorkflowSectionVisibility] = useState<IdeaSectionVisibilityMap>({})
+  useEffect(() => {
+    let cancelled = false
+    void loadPublishedIdeaSectionVisibility(idea.workspace)
+      .then((map) => {
+        if (!cancelled) setWorkflowSectionVisibility(map)
+      })
+      .catch(() => {
+        if (!cancelled) setWorkflowSectionVisibility({})
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [idea.workspace])
   const menuSections = useMemo(
-    () => resolveIdeaNavSections(savedMenuSections),
-    [savedMenuSections],
+    () => visibleIdeaNavSections(savedMenuSections, workflowSectionVisibility),
+    [savedMenuSections, workflowSectionVisibility],
   )
+  useEffect(() => {
+    if (menuSections.includes(activePanel)) return
+    setActivePanel(menuSections[0] ?? 'summary')
+  }, [activePanel, menuSections])
   const [actionControlStore, setActionControlStore] = useState<IdeaActionControlStore>(() => (
     readActionControlStore(initialIdea.id)
   ))
@@ -11517,7 +11598,10 @@ export function IdeaDetailPage() {
         activePanel={activePanel}
         onNavigatePanel={navigateToPanel}
         menuSections={menuSections}
-        onReorderMenuSections={(orderedKeys) => reorderIdeaMenuSections(idea.id, orderedKeys)}
+        onReorderMenuSections={(orderedKeys) => {
+          const hidden = resolveIdeaNavSections(savedMenuSections).filter((key) => !orderedKeys.includes(key))
+          reorderIdeaMenuSections(idea.id, [...orderedKeys, ...hidden])
+        }}
         actionControlMode={actionControlSidebarMode}
         showManualPublishFooter={showActionControlManualPublishFooter}
         orgWorkspaceNotice={orgWorkspaceNotice}
@@ -13021,8 +13105,19 @@ export function IdeaDetailPage() {
                     type="button"
                     aria-label="Open ArchiMate canvas"
                     onClick={() => setIsIntegrationPanelFullscreen(true)}
+                    onContextMenu={integrationPreviewMenu.open}
                     className="absolute inset-0 z-10"
                   />
+                  <DiagramSurfaceMenu menu={integrationPreviewMenu.menu}>
+                    <DiagramSurfaceMenuButton
+                      label="Open"
+                      icon="fullscreen"
+                      onClick={() => {
+                        integrationPreviewMenu.close()
+                        setIsIntegrationPanelFullscreen(true)
+                      }}
+                    />
+                  </DiagramSurfaceMenu>
                 </div>
               </div>
               ) : null}
@@ -13414,9 +13509,11 @@ export function IdeaDetailPage() {
                   <div className="min-h-0 flex-1 overflow-hidden">
                     {diagramStudio.renderAsImage ? (
                       studioPlantUmlPreview.objectUrl ? (
-                        <div className="flex h-full items-center justify-center overflow-auto rounded-2xl border border-white/60 bg-white/75">
-                          <img src={studioPlantUmlPreview.objectUrl} alt={diagramStudio.title} className="max-h-full max-w-full object-contain" />
-                        </div>
+                        <StudioImageSurface
+                          src={studioPlantUmlPreview.objectUrl}
+                          title={diagramStudio.title}
+                          source={diagramStudio.diagramSource}
+                        />
                       ) : (
                         <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-center text-sm text-muted-foreground">
                           {studioPlantUmlPreview.isLoading ? (

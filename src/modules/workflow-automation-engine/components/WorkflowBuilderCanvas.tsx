@@ -78,11 +78,19 @@ import {
   type WorkflowDto,
   type WorkflowApprovalRoleDto,
 } from '@/lib/api/workflowAutomationApi'
+import {
+  IDEA_PANEL_CATALOG,
+  readIdeaSectionVisibility,
+  type IdeaPanelKey,
+  type IdeaSectionVisibility,
+  type IdeaSectionVisibilityMap,
+} from '@/modules/project-management/lib/ideaPanelCatalog'
 
 type WorkflowGraphRecord = {
   name: string
   nodes: Node<WorkflowNodeData>[]
   edges: Edge[]
+  ideaSections?: IdeaSectionVisibilityMap
   savedAt?: string
   /** Bumped when the pre-built templates change, so stale autosaves are re-seeded. */
   version?: number
@@ -484,6 +492,7 @@ function loadOrSeedWorkflowGraph(workflowId: string | null, workflowName?: strin
             name: parsed.name || workflowName || 'Untitled Workflow',
             nodes: parsed.nodes.map((node) => withWorkflowNodeSize(normalizeActionNode(normalizeTriggerNode(node)))),
             edges: parsed.edges,
+            ideaSections: readIdeaSectionVisibility(parsed.ideaSections),
             savedAt: parsed.savedAt,
             version: parsed.version,
           }
@@ -580,9 +589,15 @@ function validateWorkflowGraph(
   return issues
 }
 
-function buildRuntimeDefinition(nodes: Node<WorkflowNodeData>[], edges: Edge[]): WorkflowGraph {
+function buildRuntimeDefinition(
+  nodes: Node<WorkflowNodeData>[],
+  edges: Edge[],
+  ideaSections: IdeaSectionVisibilityMap = {},
+): WorkflowGraph {
+  const sections = readIdeaSectionVisibility(ideaSections)
   return {
     schema_version: 2,
+    ...(Object.keys(sections).length > 0 ? { ideaSections: sections } : {}),
     nodes: nodes.map((node) => ({
       id: node.id,
       type: node.type ?? node.data.kind,
@@ -628,8 +643,17 @@ function buildRuntimeDefinition(nodes: Node<WorkflowNodeData>[], edges: Edge[]):
   }
 }
 
-function workflowRevision(name: string, nodes: Node<WorkflowNodeData>[], edges: Edge[]): string {
-  return JSON.stringify({ name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges) })
+function workflowRevision(
+  name: string,
+  nodes: Node<WorkflowNodeData>[],
+  edges: Edge[],
+  ideaSections: IdeaSectionVisibilityMap = {},
+): string {
+  return JSON.stringify({
+    name,
+    trigger: triggerTypeOf(nodes),
+    definition: buildRuntimeDefinition(nodes, edges, ideaSections),
+  })
 }
 
 
@@ -869,6 +893,47 @@ function stepStatusDotClass(status: WorkflowRunStepStatus): string {
   return 'bg-slate-300'
 }
 
+function IdeaSectionVisibilityEditor({
+  value,
+  onChange,
+}: {
+  value: IdeaSectionVisibilityMap
+  onChange: (key: IdeaPanelKey, visibility: IdeaSectionVisibility) => void
+}) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Idea sections</p>
+      <p className="mt-1 text-xs leading-relaxed text-slate-500">
+        Show or hide each section on Idea Detail. A published Active workflow applies this to its workspace.
+      </p>
+      <ul className="mt-3 space-y-1">
+        {IDEA_PANEL_CATALOG.map((entry) => {
+          const shown = value[entry.key] !== 'hide'
+          const Icon = entry.icon
+          return (
+            <li key={entry.key} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-2 py-1.5">
+              <span className={cn('flex min-w-0 items-center gap-2 text-sm', shown ? 'text-slate-800' : 'text-slate-400')}>
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{entry.label}</span>
+              </span>
+              <button
+                type="button"
+                className={cn(
+                  'shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold',
+                  shown ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
+                )}
+                onClick={() => onChange(entry.key, shown ? 'hide' : 'show')}
+              >
+                {shown ? 'Show' : 'Hide'}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 function stepStatusTextClass(status: WorkflowRunStepStatus): string {
   if (status === 'succeeded') return 'text-emerald-600'
   if (status === 'failed') return 'text-rose-600'
@@ -931,7 +996,11 @@ function WorkflowBuilderCanvasInner({
 
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNodeData>(initial.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
+  const [ideaSections, setIdeaSections] = useState<IdeaSectionVisibilityMap>(
+    () => readIdeaSectionVisibility(initial.ideaSections),
+  )
   const nodesRef = useRef(nodes)
+  const edgesRef = useRef(edges)
   const resizeStartRef = useRef(new Map<string, NodeFrame>())
   const savedRevisionRef = useRef<string | null>(null)
   const [autosaveReady, setAutosaveReady] = useState(!workflowId)
@@ -947,11 +1016,22 @@ function WorkflowBuilderCanvasInner({
 
   const closeContextMenu = useCallback(() => setContextMenu(null), [])
 
+  const setIdeaSectionVisibility = useCallback((key: IdeaPanelKey, visibility: IdeaSectionVisibility) => {
+    setIdeaSections((current) => ({ ...current, [key]: visibility }))
+  }, [])
+
   useEffect(() => {
     nodesRef.current = nodes
   }, [nodes])
 
-  const currentRevision = useMemo(() => workflowRevision(name, nodes, edges), [edges, name, nodes])
+  useEffect(() => {
+    edgesRef.current = edges
+  }, [edges])
+
+  const currentRevision = useMemo(
+    () => workflowRevision(name, nodes, edges, ideaSections),
+    [edges, ideaSections, name, nodes],
+  )
   const latestRevisionRef = useRef(currentRevision)
 
   useEffect(() => {
@@ -1238,13 +1318,20 @@ function WorkflowBuilderCanvasInner({
 
   const persist = useCallback(() => {
     if (typeof window === 'undefined') return
-    const record: WorkflowGraphRecord = { name, nodes, edges, savedAt: new Date().toISOString(), version: WORKFLOW_TEMPLATE_VERSION }
+    const record: WorkflowGraphRecord = {
+      name,
+      nodes,
+      edges,
+      ideaSections,
+      savedAt: new Date().toISOString(),
+      version: WORKFLOW_TEMPLATE_VERSION,
+    }
     try {
       window.localStorage.setItem(workflowStorageKey(workflowId), JSON.stringify(record))
     } catch {
       // localStorage may be unavailable — this is a prototype persistence layer.
     }
-  }, [edges, name, nodes, workflowId])
+  }, [edges, ideaSections, name, nodes, workflowId])
 
   // Persist editing changes after the pointer/input settles. This keeps drag and
   // resize interactions responsive while ensuring positions and dimensions survive
@@ -1265,7 +1352,7 @@ function WorkflowBuilderCanvasInner({
       updateWorkflow(workflowId, {
         name,
         trigger: triggerTypeOf(nodes),
-        definition: buildRuntimeDefinition(nodes, edges),
+        definition: buildRuntimeDefinition(nodes, edges, ideaSections),
         })
         .then(() => {
           savedRevisionRef.current = revision
@@ -1290,11 +1377,11 @@ function WorkflowBuilderCanvasInner({
         // The backend matches events against the workflow row's own trigger, so it has to
         // mirror the Trigger node — otherwise an Event workflow can never fire.
         trigger: triggerTypeOf(nodes),
-        definition: buildRuntimeDefinition(nodes, edges),
+        definition: buildRuntimeDefinition(nodes, edges, ideaSections),
         workspace_id: activeWorkspaceId ?? undefined,
         })
         .then((created) => {
-          const revision = workflowRevision(name, nodes, edges)
+          const revision = workflowRevision(name, nodes, edges, ideaSections)
           savedRevisionRef.current = revision
           setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
           onWorkflowCreated?.(created)
@@ -1310,9 +1397,9 @@ function WorkflowBuilderCanvasInner({
         })
       return
     }
-    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges) })
+    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
       .then(() => {
-        const revision = workflowRevision(name, nodes, edges)
+        const revision = workflowRevision(name, nodes, edges, ideaSections)
         savedRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
         addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved.` })
@@ -1321,7 +1408,7 @@ function WorkflowBuilderCanvasInner({
         setDraftSaveState('unsaved')
         addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' })
       })
-  }, [activeWorkspaceId, addToast, edges, name, nodes, onWorkflowCreated, persist, workflowId])
+  }, [activeWorkspaceId, addToast, edges, ideaSections, name, nodes, onWorkflowCreated, persist, workflowId])
 
   const handlePublish = useCallback(() => {
     if (validateWorkflowGraph(nodes, edges, rolesWithHolders).some((issue) => issue.level === 'error')) {
@@ -1333,11 +1420,11 @@ function WorkflowBuilderCanvasInner({
       addToast({ variant: 'info', title: 'Workflow published', description: `${name} published (prototype).` })
       return
     }
-    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges) })
+    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
       .then(() => publishWorkflowApi(workflowId))
       .then(() => addToast({ variant: 'success', title: 'Workflow published', description: `${name} published.` }))
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
-  }, [addToast, edges, name, nodes, persist, workflowId])
+  }, [addToast, edges, ideaSections, name, nodes, persist, workflowId])
 
   // Load the saved graph from the backend (source of truth). If the backend has a
   // non-empty definition, it replaces the local seed; otherwise the seed/template stays.
@@ -1351,12 +1438,16 @@ function WorkflowBuilderCanvasInner({
         const loadedName = wf.name || workflowName || 'Untitled Workflow'
         if (wf.name) setName(wf.name)
         const def = wf.definition
+        const loadedSections = readIdeaSectionVisibility(def?.ideaSections)
+        setIdeaSections(loadedSections)
         if (def && Array.isArray(def.nodes) && def.nodes.length > 0) {
           const loadedNodes = (def.nodes as Node<WorkflowNodeData>[]).map(withWorkflowNodeSize)
           const loadedEdges = (Array.isArray(def.edges) ? def.edges : []) as Edge[]
-          savedRevisionRef.current = workflowRevision(loadedName, loadedNodes, loadedEdges)
+          savedRevisionRef.current = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections)
           setNodes(loadedNodes)
           setEdges(loadedEdges)
+        } else {
+          savedRevisionRef.current = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections)
         }
       })
       .catch(() => {
@@ -1393,7 +1484,7 @@ function WorkflowBuilderCanvasInner({
       setIsRunning(true)
       setTab('debug')
       try {
-        await updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges) })
+        await updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
         let context: Record<string, unknown> = {}
         if (runContextText.trim()) {
           try {
@@ -1420,7 +1511,7 @@ function WorkflowBuilderCanvasInner({
         setIsRunning(false)
       }
     },
-    [addToast, edges, name, nodes, refreshRuns, runContextText, workflowId],
+    [addToast, edges, ideaSections, name, nodes, refreshRuns, runContextText, workflowId],
   )
 
   const handleRun = useCallback(() => {
@@ -2055,7 +2146,9 @@ function WorkflowBuilderCanvasInner({
         {/* Right config panel */}
         <aside className="flex w-72 shrink-0 flex-col border-l border-slate-200 bg-white">
           <div className="border-b border-slate-100 px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Node Configuration</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              {selectedNode ? 'Node Configuration' : 'Workflow'}
+            </p>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {selectedNode && selectedMeta ? (
@@ -2377,15 +2470,12 @@ function WorkflowBuilderCanvasInner({
                     <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete Node
                   </Button>
                 </div>
+                <div className="border-t border-slate-100 pt-3">
+                  <IdeaSectionVisibilityEditor value={ideaSections} onChange={setIdeaSectionVisibility} />
+                </div>
               </div>
             ) : (
-              <div className="flex h-full flex-col items-center justify-center text-center">
-                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
-                  <Plus className="h-5 w-5" />
-                </span>
-                <p className="mt-3 text-sm font-medium text-slate-500">No node selected</p>
-                <p className="mt-1 text-xs text-slate-400">Select a node on the canvas, or add one from the palette to edit its properties.</p>
-              </div>
+              <IdeaSectionVisibilityEditor value={ideaSections} onChange={setIdeaSectionVisibility} />
             )}
           </div>
         </aside>

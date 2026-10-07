@@ -10,6 +10,7 @@ import {
   canRenderAssistantFlowchart,
   flowchartPreviewHeight,
 } from '@/modules/core-shell/components/AssistantFlowchartCanvas'
+import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
 import { cn } from '@/lib/utils'
 
 type AssistantMermaidBlockProps = {
@@ -386,6 +387,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
   const [retryTick, setRetryTick] = useState(0)
   const [isRendering, setIsRendering] = useState(false)
   const [hardError, setHardError] = useState<string | null>(null)
+  const surfaceMenu = useDiagramSurfaceMenu()
 
   const cleanedSource = useMemo(() => sanitizeMermaidSource(source), [source])
   // The local sketch (used only when server rendering fails) must show step names, not the
@@ -562,6 +564,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
           'relative my-2 w-full min-w-0 rounded-md border border-[#d1d7db]/80 bg-white dark:border-[#3b4a54] dark:bg-[#111b21]',
           className,
         )}
+        onContextMenu={surfaceMenu.open}
       >
         {hasPreview ? (
           <MermaidToolbar onCopy={() => void handleCopy()} onFullscreen={() => setFullscreenOpen(true)} />
@@ -623,6 +626,24 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
           />
         )}
       </div>
+      <DiagramSurfaceMenu menu={surfaceMenu.menu}>
+        <DiagramSurfaceMenuButton
+          label="Copy source"
+          icon="copy"
+          onClick={() => {
+            void handleCopy()
+            surfaceMenu.close()
+          }}
+        />
+        <DiagramSurfaceMenuButton
+          label="Full screen"
+          icon="fullscreen"
+          onClick={() => {
+            setFullscreenOpen(true)
+            surfaceMenu.close()
+          }}
+        />
+      </DiagramSurfaceMenu>
       {fullscreenOpen && bpmnUrl ? (
         <MermaidFullscreenModal imageUrl={bpmnUrl} source={source} onClose={() => setFullscreenOpen(false)} />
       ) : null}

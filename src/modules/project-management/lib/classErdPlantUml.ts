@@ -4,6 +4,7 @@ export type UmlBox = {
   id: string
   title: string
   members: string[]
+  kind?: 'class' | 'interface' | 'enumeration' | 'entity'
 }
 
 export type ErdEnd = {
@@ -45,8 +46,8 @@ function memberLines(body: string): string[] {
     .filter((line) => line && line !== '--' && line !== '..' && line !== '__' && !line.startsWith("'"))
 }
 
-const BLOCK_RE = /(?:class|entity|interface)\s+(?:"([^"]+)"|([A-Za-z_][\w]*))(?:\s+as\s+([A-Za-z_][\w]*))?\s*\{([^}]*)\}/gi
-const BARE_RE = /(?:class|entity|interface)\s+(?:"([^"]+)"|([A-Za-z_][\w]*))(?:\s+as\s+([A-Za-z_][\w]*))?\s*$/gim
+const BLOCK_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w]*))(?:\s+as\s+([A-Za-z_][\w]*))?\s*\{([^}]*)\}/gi
+const BARE_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w]*))(?:\s+as\s+([A-Za-z_][\w]*))?\s*$/gim
 const REL_RE = /^([A-Za-z_][\w]*)\s+([|}.o<>*+]*)\s*((?:--+>?)|(?:\.+>?)|(?:--+)|(?:\.+))\s*([|}.o<>*+]*)\s+([A-Za-z_][\w]*)(?:\s*:\s*(.+))?$/
 
 function parseCardinality(token: string): ErdEnd | undefined {
@@ -60,19 +61,20 @@ function parseCardinality(token: string): ErdEnd | undefined {
 export function parseUmlDiagram(source: string, view: UmlView): UmlDiagram {
   const boxes: UmlBox[] = []
   const seen = new Set<string>()
-  const add = (title: string, id: string, members: string) => {
+  const add = (keyword: string, title: string, id: string, members: string) => {
     const boxId = id || slug(title)
     if (!title || seen.has(boxId)) return
     seen.add(boxId)
-    boxes.push({ id: boxId, title, members: memberLines(members) })
+    const kind = keyword === 'enum' ? 'enumeration' : keyword === 'interface' ? 'interface' : keyword === 'entity' ? 'entity' : 'class'
+    boxes.push({ id: boxId, title, members: memberLines(members), kind })
   }
 
-  let rest = extractBody(source).replace(BLOCK_RE, (_match, quoted: string, plain: string, alias: string, members: string) => {
-    add((quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), members || '')
+  let rest = extractBody(source).replace(BLOCK_RE, (_match, keyword: string, quoted: string, plain: string, alias: string, members: string) => {
+    add(keyword, (quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), members || '')
     return ''
   })
-  rest = rest.replace(BARE_RE, (_match, quoted: string, plain: string, alias: string) => {
-    add((quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), '')
+  rest = rest.replace(BARE_RE, (_match, keyword: string, quoted: string, plain: string, alias: string) => {
+    add(keyword, (quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), '')
     return ''
   })
 
@@ -107,10 +109,17 @@ function quote(value: string): string {
   return `"${value.replace(/"/g, "'")}"`
 }
 
+function boxKeyword(view: UmlView, box: UmlBox): string {
+  if (box.kind === 'interface') return 'interface'
+  if (box.kind === 'enumeration') return 'enum'
+  if (box.kind === 'entity' || view === 'erd') return 'entity'
+  return 'class'
+}
+
 export function serializeUmlDiagram(diagram: UmlDiagram): string {
-  const keyword = diagram.view === 'erd' ? 'entity' : 'class'
   const lines = ['@startuml', `' tectona-view: ${diagram.view}`]
   for (const box of diagram.boxes) {
+    const keyword = boxKeyword(diagram.view, box)
     const simple = box.title === box.id && /^[A-Za-z_]\w*$/.test(box.title)
     const name = simple ? box.title : `${quote(box.title)} as ${box.id}`
     if (box.members.length === 0) {

@@ -77,7 +77,7 @@ function PatchReactFlowOnError() {
 
 function integrationMinimapNodeColor(node: Node): string {
   if (node.type === 'archimateBoundary') return '#e2e8f0'
-  if (node.type === 'umlClass') return '#E07A3D'
+  if (node.type === 'umlClass') return '#7F8C9B'
   if (node.type === 'erdEntity') return '#C4A35A'
   if (node.type === 'c4Element') {
     const data = node.data
@@ -139,7 +139,7 @@ function IntegrationArchitectureFlowInner({
   onNodeDoubleClick,
   onEdgeContextMenu,
   showGrid = true,
-  snapToGrid = true,
+  snapToGrid = false,
   showRuler = true,
   showConnectionPoints = true,
   preview = false,

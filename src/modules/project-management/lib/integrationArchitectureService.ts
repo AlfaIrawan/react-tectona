@@ -172,7 +172,7 @@ export function buildPersistentIntegrationPayload(
       edges: graph.edges,
       user_customized: graph.userCustomized,
       viewport: graph.viewport,
-      snap_to_grid: graph.snapToGrid ?? true,
+      snap_to_grid: graph.snapToGrid ?? false,
       architecture_review: analysis.architectureReview,
     },
     status: analysis.status,
