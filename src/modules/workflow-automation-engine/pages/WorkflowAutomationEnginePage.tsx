@@ -105,8 +105,10 @@ import {
   createWorkflow as apiCreateWorkflow,
   deleteWorkflowApi,
   duplicateWorkflowApi,
+  getWorkflowOverview,
   listWorkflows,
   updateWorkflow,
+  type WorkflowOverviewDto,
   type WorkflowSummaryDto,
 } from '@/lib/api/workflowAutomationApi'
 import {
@@ -281,12 +283,37 @@ const AUTOMATION_SPLIT = [
 ]
 
 type InsightLevel = 'Critical' | 'Warning' | 'Info'
-const AI_INSIGHTS: Array<{ text: string; level: InsightLevel }> = [
-  { text: 'Capital approval workflow exceeds SLA by 18%', level: 'Critical' },
-  { text: 'Vendor onboarding automation failed 4 times this week', level: 'Warning' },
-  { text: 'Sprint escalation workflow shows retry spikes', level: 'Warning' },
-  { text: 'Manager approval stage is bottlenecked', level: 'Info' },
-]
+
+// Trigger and status colours. Unknown statuses fall back to a neutral grey.
+const TRIGGER_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#f97316', '#8b5cf6', '#cbd5e1']
+const STATUS_COLORS: Record<string, string> = {
+  Active: '#10b981',
+  Draft: '#94a3b8',
+  Paused: '#f59e0b',
+  'Needs Approval': '#f59e0b',
+  Failed: '#ef4444',
+}
+function statusColor(label: string): string {
+  return STATUS_COLORS[label] ?? '#cbd5e1'
+}
+
+/** "2026-10-05" -> "Oct 5", matching how the chart axis has always read. */
+function shortDayLabel(iso: string): string {
+  const day = new Date(`${iso}T00:00:00`)
+  return day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null) return '—'
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
+}
+
+function formatMinutes(minutes: number | null): string {
+  if (minutes == null) return '—'
+  if (minutes < 60) return `${Math.round(minutes)}m`
+  return `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`
+}
 
 const PANELS: Array<{ id: PanelId; label: string; icon: React.ComponentType<{ className?: string }>; badge: string; desc: string }> = [
   { id: 'overview', label: 'Execution Overview', icon: Sparkles, badge: 'Command', desc: 'Health, throughput, and KPI summary for workflows.' },
@@ -1127,14 +1154,111 @@ export function WorkflowAutomationEnginePage() {
   // only a presentation filter and must never change the source metrics.
   const overviewWorkflows = workflows
 
+  // Dashboard state comes from the backend aggregate. Until it arrives, every figure is
+  // empty rather than a placeholder that could be mistaken for real data.
+  const [overview, setOverview] = useState<WorkflowOverviewDto | null>(null)
+  const [overviewState, setOverviewState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const overviewWorkspaceId = isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined
+  useEffect(() => {
+    if (activePanel !== 'overview') return
+    let cancelled = false
+    setOverviewState('loading')
+    getWorkflowOverview({ workspaceId: overviewWorkspaceId, days: 7 })
+      .then((next) => {
+        if (cancelled) return
+        setOverview(next)
+        setOverviewState('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setOverviewState('error')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activePanel, overviewWorkspaceId])
+
   const summary = useMemo(() => {
-    const active = overviewWorkflows.filter((item) => item.status === 'Active').length
-    const paused = overviewWorkflows.filter((item) => item.status === 'Paused').length
+    const kpis = overview?.kpis
     const needsApproval = overviewWorkflows.filter((item) => item.status === 'Needs Approval').length
-    const avgSuccess = overviewWorkflows.length === 0 ? 0 : Math.round(overviewWorkflows.reduce((sum, item) => sum + item.successRate, 0) / overviewWorkflows.length)
-    const executions = overviewWorkflows.reduce((sum, item) => sum + item.executions, 0)
-    return { total: overviewWorkflows.length, active, paused, needsApproval, avgSuccess, executions }
-  }, [overviewWorkflows])
+    const paused = overview?.status_mix.find((item) => item.label === 'Paused')?.value ?? 0
+    return {
+      total: kpis?.workflows_total ?? 0,
+      active: kpis?.workflows_active ?? 0,
+      paused,
+      needsApproval,
+      successRate: kpis?.success_rate ?? null,
+      executions: kpis?.runs_total ?? 0,
+    }
+  }, [overview, overviewWorkflows])
+
+  const dashboard = useMemo(() => {
+    const kpis = overview?.kpis
+    const successLabel = summary.successRate == null ? '—' : `${summary.successRate}%`
+    const trend = (overview?.trend ?? []).map((day) => ({
+      date: shortDayLabel(day.date),
+      total: day.total,
+      success: day.completed,
+      failure: day.failed,
+      cancelled: day.cancelled,
+    }))
+    const approvalTotal = overview
+      ? overview.approvals.approved + overview.approvals.rejected + overview.approvals.cancelled + overview.approvals.pending
+      : 0
+    const triggerTotal = (overview?.triggers ?? []).reduce((sum, item) => sum + item.value, 0)
+    const statusTotal = (overview?.status_mix ?? []).reduce((sum, item) => sum + item.value, 0)
+    return {
+      kpis,
+      successLabel,
+      trend,
+      // Retries are not recorded by the engine, so the reliability split is success,
+      // cancelled and failure only.
+      reliability: trend.map((day) => ({ date: day.date, success: day.success, cancelled: day.cancelled, failure: day.failure })),
+      funnel: (overview?.funnel ?? []).map((stage) => ({
+        label: stage.label,
+        value: stage.value,
+        pct: stage.pct,
+        color: stage.label === 'Completed' ? '#34d399' : stage.label === 'Failed' ? '#ef4444' : '#3b82f6',
+      })),
+      approvalItems: overview
+        ? [
+            { label: 'Approved', value: overview.approvals.approved, color: '#10b981' },
+            { label: 'Rejected', value: overview.approvals.rejected, color: '#ef4444' },
+            { label: 'Cancelled', value: overview.approvals.cancelled, color: '#94a3b8' },
+            { label: 'Pending', value: overview.approvals.pending, color: '#f59e0b' },
+          ].map((item) => ({ ...item, pct: approvalTotal ? Math.round((item.value / approvalTotal) * 100) : 0 }))
+        : [],
+      triggers: (overview?.triggers ?? []).map((item, index) => ({
+        label: item.label,
+        value: item.value,
+        pct: item.pct,
+        color: TRIGGER_COLORS[index % TRIGGER_COLORS.length],
+      })),
+      triggerTotal,
+      statusMix: (overview?.status_mix ?? []).map((item) => ({
+        label: item.label,
+        value: item.value,
+        pct: statusTotal ? Math.round((item.value / statusTotal) * 100) : 0,
+        color: statusColor(item.label),
+      })),
+      queueItems: overview
+        ? [
+            { label: 'Waiting approval', value: overview.queue.waiting_approval, color: '#f59e0b' },
+            { label: 'Waiting delay', value: overview.queue.waiting_delay, color: '#8b5cf6' },
+            { label: 'Running', value: overview.queue.running, color: '#3b82f6' },
+            { label: 'Pending approvals', value: overview.queue.pending_approvals, color: '#f97316' },
+          ]
+        : [],
+      insights: overview?.insights ?? [],
+      executionSpark: (overview?.trend ?? []).map((day) => day.total),
+      successSpark: (overview?.trend ?? [])
+        .filter((day) => day.completed + day.failed > 0)
+        .map((day) => Math.round((day.completed / (day.completed + day.failed)) * 100)),
+    }
+  }, [overview, summary.successRate])
+  const kpiSpark: Record<string, number[]> = {
+    executions: dashboard.executionSpark,
+    success: dashboard.successSpark,
+  }
 
   const filteredAutomationRules = useMemo(() => {
     const q = ruleSearch.trim().toLowerCase()
@@ -1846,7 +1970,7 @@ export function WorkflowAutomationEnginePage() {
             { id: 'active', label: 'Active', value: summary.active, icon: CheckCircle2, sparkColor: '#10b981' },
             { id: 'approval', label: 'Needs Approval', value: summary.needsApproval, icon: AlertTriangle, sparkColor: '#f59e0b' },
             { id: 'paused', label: 'Paused', value: summary.paused, icon: Clock3, sparkColor: '#f97316' },
-            { id: 'success', label: 'Avg Success Rate', value: `${summary.avgSuccess}%`, icon: Zap, sparkColor: '#6366f1' },
+            { id: 'success', label: 'Success Rate', value: dashboard.successLabel, icon: Zap, sparkColor: '#6366f1' },
             { id: 'executions', label: 'Executions', value: summary.executions, icon: PlayCircle, sparkColor: '#06b6d4' },
           ].map((item) => (
             <button key={item.label} type="button" className="group text-left">
@@ -1855,7 +1979,7 @@ export function WorkflowAutomationEnginePage() {
                 <div className="mt-1 flex items-center gap-3">
                   <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{item.value}</div>
                   <div className="h-10 min-w-0 flex-1">
-                    <KpiSparkline data={[70, 74, 72, 76, 80, 82]} color={item.sparkColor} />
+                    {(kpiSpark[item.id] ?? []).length > 1 ? <KpiSparkline data={kpiSpark[item.id]} color={item.sparkColor} /> : null}
                   </div>
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
@@ -2013,13 +2137,13 @@ export function WorkflowAutomationEnginePage() {
                         Automation Health
                       </div>
                       <div className="mt-3 flex items-start gap-3">
-                        <div className="shrink-0 text-3xl font-bold leading-none tabular-nums text-slate-900">{summary.avgSuccess}%</div>
+                        <div className="shrink-0 text-3xl font-bold leading-none tabular-nums text-slate-900">{dashboard.successLabel}</div>
                         <p className="min-w-0 flex-1 text-[10px] leading-snug text-slate-600">
                           Workflow execution reliability indicator across visible catalog.
                         </p>
                       </div>
                       <div className="mt-3 h-2 rounded-full bg-blue-100">
-                        <div className="h-2 rounded-full bg-blue-600" style={{ width: `${summary.avgSuccess}%` }} />
+                        <div className="h-2 rounded-full bg-blue-600" style={{ width: `${summary.successRate ?? 0}%` }} />
                       </div>
                     </div>
                   </div>
@@ -2122,17 +2246,25 @@ export function WorkflowAutomationEnginePage() {
                   </div>
                 </OverviewCard>
 
+                {overviewState === 'error' ? (
+                  <Card className="rounded-2xl border-amber-200 bg-amber-50/80">
+                    <CardContent className="py-3 text-xs text-amber-800">
+                      Dashboard data could not be loaded from the Workflow &amp; Automation service. Figures below are unavailable.
+                    </CardContent>
+                  </Card>
+                ) : null}
+
                 {/* 2. Execution Trend */}
                 <OverviewCard
                   icon={TrendingUp}
                   tone="cyan"
                   title="Execution Trend"
-                  description="Execution trend over time."
+                  description={`Runs per day, last ${overview?.window.days ?? 7} days.`}
                   footer={
                     <div className="grid grid-cols-3 gap-2">
-                      <CardMetric label="Success Rate" value="91%" tone="emerald" />
-                      <CardMetric label="Total Executions" value="5,785" />
-                      <CardMetric label="Failed Executions" value="535" tone="rose" />
+                      <CardMetric label="Success Rate" value={dashboard.successLabel} tone="emerald" />
+                      <CardMetric label="Total Executions" value={(dashboard.kpis?.runs_total ?? 0).toLocaleString()} />
+                      <CardMetric label="Failed Executions" value={(dashboard.kpis?.runs_failed ?? 0).toLocaleString()} tone="rose" />
                     </div>
                   }
                 >
@@ -2145,10 +2277,10 @@ export function WorkflowAutomationEnginePage() {
                   />
                   <div className="mt-3 h-56">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={EXECUTION_TREND} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                      <LineChart data={dashboard.trend} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                         <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <YAxis allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
                         <Tooltip />
                         <Line type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2} dot={{ r: 2 }} isAnimationActive={false} />
                         <Line type="monotone" dataKey="success" stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} isAnimationActive={false} />
@@ -2163,38 +2295,38 @@ export function WorkflowAutomationEnginePage() {
                   icon={ShieldCheck}
                   tone="emerald"
                   title="Success vs Failure Rate"
-                  description="Comparison of success, failure, and retry rate."
+                  description="Share of runs completed, cancelled, or failed per day."
                   headerRight={
                     <div className="text-right">
                       <div className="text-[10px] uppercase tracking-wide text-slate-400">Workflow Reliability</div>
-                      <div className="text-xl font-bold leading-none text-slate-900">96%</div>
-                      <div className="text-[10px] font-semibold text-emerald-600">↑ 4.2% vs prior 7 days</div>
+                      <div className="text-xl font-bold leading-none text-slate-900">{dashboard.successLabel}</div>
+                      <div className="text-[10px] text-slate-400">of finished runs</div>
                     </div>
                   }
                   footer={
                     <div className="grid grid-cols-3 gap-2">
-                      <CardMetric label="Success Rate" value="91%" tone="emerald" />
-                      <CardMetric label="Error Rate" value="5.4%" tone="rose" />
-                      <CardMetric label="Retry Rate" value="3.6%" tone="amber" />
+                      <CardMetric label="Success Rate" value={dashboard.successLabel} tone="emerald" />
+                      <CardMetric label="Failed Runs" value={(dashboard.kpis?.runs_failed ?? 0).toLocaleString()} tone="rose" />
+                      <CardMetric label="Cancelled Runs" value={(dashboard.kpis?.runs_cancelled ?? 0).toLocaleString()} tone="amber" />
                     </div>
                   }
                 >
                   <ChartLegend
                     items={[
                       { label: 'Success', color: '#10b981' },
-                      { label: 'Retry', color: '#f59e0b' },
+                      { label: 'Cancelled', color: '#f59e0b' },
                       { label: 'Failure', color: '#ef4444' },
                     ]}
                   />
                   <div className="mt-3 h-56">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={RELIABILITY_TREND} margin={{ top: 4, right: 8, left: -16, bottom: 0 }} stackOffset="expand">
+                      <AreaChart data={dashboard.reliability} margin={{ top: 4, right: 8, left: -16, bottom: 0 }} stackOffset="expand">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                         <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
                         <YAxis tickFormatter={(value) => `${Math.round(value * 100)}%`} tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
                         <Tooltip />
                         <Area type="monotone" dataKey="success" stackId="r" stroke="#10b981" fill="#10b981" fillOpacity={0.35} isAnimationActive={false} />
-                        <Area type="monotone" dataKey="retry" stackId="r" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.35} isAnimationActive={false} />
+                        <Area type="monotone" dataKey="cancelled" stackId="r" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.35} isAnimationActive={false} />
                         <Area type="monotone" dataKey="failure" stackId="r" stroke="#ef4444" fill="#ef4444" fillOpacity={0.35} isAnimationActive={false} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -2206,23 +2338,30 @@ export function WorkflowAutomationEnginePage() {
                   icon={Filter}
                   tone="violet"
                   title="Workflow Funnel"
-                  description="Distribusi workflow berdasarkan tahap eksekusi."
+                  description="Runs in this period, by final outcome."
                   footer={
                     <div className="grid grid-cols-2 gap-2">
-                      <CardMetric label="Completion Rate" value="73%" tone="emerald" />
-                      <CardMetric label="Avg. Execution Time" value="12m 34s" />
+                      <CardMetric
+                        label="Completion Rate"
+                        value={dashboard.funnel.find((stage) => stage.label === 'Completed')?.pct != null
+                          ? `${dashboard.funnel.find((stage) => stage.label === 'Completed')?.pct}%`
+                          : '—'}
+                        tone="emerald"
+                      />
+                      <CardMetric label="Median Duration" value={formatDuration(dashboard.kpis?.median_duration_seconds ?? null)} />
                     </div>
                   }
                 >
                   <div className="space-y-2">
-                    {FUNNEL_STAGES.map((stage) => (
+                    {dashboard.funnel.length === 0 ? (
+                      <p className="py-6 text-center text-[11px] text-slate-400">No runs in this period yet.</p>
+                    ) : dashboard.funnel.map((stage) => (
                       <div key={stage.label} className="flex items-center gap-3 text-[11px]">
                         <span className="flex w-28 shrink-0 items-center gap-1 text-slate-600">
-                          {stage.bottleneck ? <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" /> : null}
                           <span className="truncate">{stage.label}</span>
                         </span>
                         <div className="flex-1">
-                          <div className={cn('h-5 rounded-md', stage.bottleneck && 'ring-1 ring-amber-300')} style={{ width: `${stage.pct}%`, backgroundColor: stage.color }} />
+                          <div className="h-5 rounded-md" style={{ width: `${stage.pct}%`, backgroundColor: stage.color }} />
                         </div>
                         <span className="w-24 shrink-0 text-right tabular-nums text-slate-700">{stage.value.toLocaleString()} ({stage.pct}%)</span>
                       </div>
@@ -2230,22 +2369,24 @@ export function WorkflowAutomationEnginePage() {
                   </div>
                 </OverviewCard>
 
-                {/* 5. Approval SLA */}
+                {/* 5. Approval Outcomes */}
                 <OverviewCard
                   icon={Clock3}
                   tone="amber"
-                  title="Approval SLA"
-                  description="SLA compliance for approval workflows."
+                  title="Approval Outcomes"
+                  description="Outcomes of approvals requested in this period. Pending is counted as of now."
                   footer={
                     <div className="grid grid-cols-3 gap-2">
-                      <CardMetric label="Average Approval Time" value="1h 32m" />
-                      <CardMetric label="SLA Breach Count" value="62" tone="rose" />
-                      <CardMetric label="SLA Breach Rate" value="5%" tone="amber" />
+                      <CardMetric label="Median Decision Time" value={formatMinutes(overview?.approvals.median_decision_minutes ?? null)} />
+                      <CardMetric label="Pending Now" value={(overview?.approvals.pending ?? 0).toLocaleString()} tone="amber" />
+                      <CardMetric label="Rejected" value={(overview?.approvals.rejected ?? 0).toLocaleString()} tone="rose" />
                     </div>
                   }
                 >
                   <div className="space-y-3">
-                    {APPROVAL_SLA.map((item) => (
+                    {dashboard.approvalItems.every((item) => item.value === 0) ? (
+                      <p className="py-6 text-center text-[11px] text-slate-400">No approvals in this period yet.</p>
+                    ) : dashboard.approvalItems.map((item) => (
                       <div key={item.label}>
                         <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
                           <span>{item.label}</span>
@@ -2259,42 +2400,28 @@ export function WorkflowAutomationEnginePage() {
                   </div>
                 </OverviewCard>
 
-                {/* 6. Execution Queue Depth */}
+                {/* 6. Execution Queue (current state only: the engine keeps no queue history) */}
                 <OverviewCard
                   icon={Layers3}
                   tone="indigo"
-                  title="Execution Queue Depth"
-                  description="Depth of the workflow execution queue in the system."
-                  headerRight={
-                    <Badge className="rounded-full border border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">Queue Health · Healthy</Badge>
-                  }
-                  footer={
-                    <div className="grid grid-cols-3 gap-2">
-                      <CardMetric label="Total Pending" value="248" tone="sky" />
-                      <CardMetric label="Waiting Jobs" value="128" />
-                      <CardMetric label="Retry Queue" value="32" tone="amber" />
-                    </div>
-                  }
+                  title="Execution Queue Now"
+                  description="Queue state right now. No queue history is recorded."
                 >
-                  <ChartLegend
-                    items={[
-                      { label: 'Pending Executions', color: '#3b82f6' },
-                      { label: 'Waiting Jobs', color: '#8b5cf6' },
-                      { label: 'Retry Queue', color: '#f59e0b' },
-                    ]}
-                  />
-                  <div className="mt-3 h-56">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={QUEUE_DEPTH_TREND} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                        <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <Tooltip />
-                        <Area type="monotone" dataKey="pending" stackId="q" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} isAnimationActive={false} />
-                        <Area type="monotone" dataKey="waiting" stackId="q" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.3} isAnimationActive={false} />
-                        <Area type="monotone" dataKey="retry" stackId="q" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.3} isAnimationActive={false} />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <div className="space-y-3">
+                    {(() => {
+                      const max = Math.max(1, ...dashboard.queueItems.map((item) => item.value))
+                      return dashboard.queueItems.map((item) => (
+                        <div key={item.label}>
+                          <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
+                            <span>{item.label}</span>
+                            <span className="tabular-nums text-slate-700">{item.value.toLocaleString()}</span>
+                          </div>
+                          <div className="h-2.5 w-full rounded-full bg-slate-100">
+                            <div className="h-2.5 rounded-full" style={{ width: `${(item.value / max) * 100}%`, backgroundColor: item.color }} />
+                          </div>
+                        </div>
+                      ))
+                    })()}
                   </div>
                 </OverviewCard>
 
@@ -2303,55 +2430,47 @@ export function WorkflowAutomationEnginePage() {
                   icon={Zap}
                   tone="cyan"
                   title="Trigger Source Distribution"
-                  description="Distribusi berdasarkan sumber trigger workflow."
+                  description="Where runs started, in this period."
                 >
-                  <WorkflowDonut data={TRIGGER_SOURCES} centerValue="324" centerLabel="Executions" />
+                  {dashboard.triggers.length === 0 ? (
+                    <p className="py-6 text-center text-[11px] text-slate-400">No runs in this period yet.</p>
+                  ) : (
+                    <WorkflowDonut data={dashboard.triggers} centerValue={String(dashboard.kpis?.runs_total ?? 0)} centerLabel="Runs" />
+                  )}
                 </OverviewCard>
 
-                {/* 8. Automation Coverage */}
+                {/* 8. Workflow Status (replaces an automation coverage figure the engine cannot compute) */}
                 <OverviewCard
-                  icon={Gauge}
+                  icon={Workflow}
                   tone="emerald"
-                  title="Automation Coverage"
-                  description="Tingkat otomatisasi workflow dalam organisasi."
+                  title="Workflow Status"
+                  description="Workflow status mix in this scope."
                 >
                   <div className="flex items-center justify-between gap-6">
-                    <div className="relative h-36 w-60 shrink-0">
-                      <div
-                        className="pointer-events-none absolute inset-x-2 bottom-0 top-2 rounded-full"
-                        style={{ background: 'radial-gradient(ellipse 80% 100% at 50% 100%, rgba(16,185,129,0.18) 0%, rgba(14,165,233,0.08) 50%, transparent 75%)', filter: 'blur(6px)' }}
-                      />
+                    <div className="relative h-40 w-40 shrink-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
-                          <defs>
-                            <linearGradient id="automation-gauge-fill" x1="0" y1="0" x2="1" y2="0">
-                              <stop offset="0%" stopColor="#34d399" />
-                              <stop offset="100%" stopColor="#059669" />
-                            </linearGradient>
-                          </defs>
-                          <Pie data={AUTOMATION_COVERAGE} dataKey="value" nameKey="name" cx="50%" cy="100%" startAngle={180} endAngle={0} innerRadius={70} outerRadius={98} cornerRadius={6} stroke="white" strokeWidth={1.5} isAnimationActive={false}>
-                            {AUTOMATION_COVERAGE.map((entry) => (
-                              <Cell key={entry.name} fill={entry.name === 'Automated' ? 'url(#automation-gauge-fill)' : entry.color} />
+                          <Pie data={dashboard.statusMix} dataKey="value" nameKey="label" cx="50%" cy="50%" innerRadius={48} outerRadius={70} stroke="white" strokeWidth={1.5} isAnimationActive={false}>
+                            {dashboard.statusMix.map((entry) => (
+                              <Cell key={entry.label} fill={entry.color} />
                             ))}
                           </Pie>
                         </PieChart>
                       </ResponsiveContainer>
-                      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center">
-                        <span className="text-3xl font-bold leading-none text-emerald-600">72%</span>
-                        <span className="text-[11px] text-slate-500">Automated</span>
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-2xl font-bold leading-none text-emerald-600">{dashboard.kpis?.workflows_active ?? 0}</span>
+                        <span className="text-[11px] text-slate-500">Active</span>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-400">Automation Maturity Score</div>
-                      <div className="text-3xl font-bold leading-none text-emerald-600">A</div>
-                      <div className="text-xs text-slate-500">Excellent</div>
-                      <div className="mt-1 text-[11px] font-semibold text-emerald-600">↑ 6% vs prior 7 days</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-400">Total Workflows</div>
+                      <div className="text-3xl font-bold leading-none text-slate-900">{dashboard.kpis?.workflows_total ?? 0}</div>
                     </div>
                   </div>
 
                   <div className="mt-auto pt-4">
                     <div className="grid grid-cols-2 gap-2">
-                      {AUTOMATION_SPLIT.map((item) => (
+                      {dashboard.statusMix.map((item) => (
                         <div key={item.label} className="rounded-xl border border-slate-200/90 bg-white/80 px-3 py-2">
                           <div className="flex items-center justify-between gap-2">
                             <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-600">
@@ -2360,58 +2479,40 @@ export function WorkflowAutomationEnginePage() {
                             </span>
                             <span className="text-sm font-bold tabular-nums text-slate-900">{item.pct}%</span>
                           </div>
-                          <div className="mt-1.5 flex items-center gap-2">
-                            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-                              <div className="h-full rounded-full" style={{ width: `${item.pct}%`, background: `linear-gradient(90deg, ${item.color}, ${item.color}bb)` }} />
-                            </div>
-                            <span className="text-[10px] tabular-nums text-slate-500">{item.count}</span>
-                          </div>
+                          <div className="mt-1 text-[10px] tabular-nums text-slate-500">{item.value} workflow</div>
                         </div>
                       ))}
                     </div>
                   </div>
                 </OverviewCard>
 
-                {/* 9. AI Workflow Insight */}
+                {/* 9. Workflow Insights: rule-based facts from the data, not a model's guess */}
                 <OverviewCard
                   icon={Sparkles}
                   tone="violet"
                   className="xl:col-span-2"
-                  title="AI Workflow Insight"
-                  description="Smart insights and recommendations from TECTONA AI."
-                  headerRight={
-                    <div className="text-right">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-400">Confidence Score</div>
-                      <div className="text-xl font-bold leading-none text-violet-600">92%</div>
-                    </div>
-                  }
-                  footer={
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] text-slate-400">Generated 5 minutes ago</span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-600">Powered by TECTONA AI <Sparkles className="h-3 w-3" /></span>
-                    </div>
-                  }
+                  title="Workflow Insights"
+                  description="Facts drawn from run and approval data. No estimates."
                 >
-                  <div className="space-y-2">
-                    {AI_INSIGHTS.map((insight) => {
-                      const tone = insightTone(insight.level)
-                      const Icon = tone.Icon
-                      return (
-                        <div key={insight.text} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
-                          <span className="flex min-w-0 items-center gap-2 text-[11px] text-slate-700">
-                            <Icon className={cn('h-3.5 w-3.5 shrink-0', tone.icon)} />
-                            <span className="truncate">{insight.text}</span>
-                          </span>
-                          <Badge className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px]', tone.badge)}>{insight.level}</Badge>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button type="button" size="sm" className="h-8 rounded-lg bg-violet-600 text-xs hover:bg-violet-700">Open Workflow</Button>
-                    <Button type="button" size="sm" variant="outline" className="h-8 rounded-lg text-xs">Generate Optimization</Button>
-                    <Button type="button" size="sm" variant="outline" className="h-8 rounded-lg text-xs">Simulate Impact</Button>
-                  </div>
+                  {dashboard.insights.length === 0 ? (
+                    <p className="py-4 text-center text-[11px] text-slate-400">Nothing needs attention in this period.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {dashboard.insights.map((insight) => {
+                        const tone = insightTone(insight.level)
+                        const Icon = tone.Icon
+                        return (
+                          <div key={insight.text} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+                            <span className="flex min-w-0 items-center gap-2 text-[11px] text-slate-700">
+                              <Icon className={cn('h-3.5 w-3.5 shrink-0', tone.icon)} />
+                              <span className="truncate">{insight.text}</span>
+                            </span>
+                            <Badge className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px]', tone.badge)}>{insight.level}</Badge>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </OverviewCard>
               </div>
             </Panel>

@@ -108,6 +108,45 @@ export async function listWorkflows(workspaceId?: string): Promise<WorkflowSumma
   return readJson<WorkflowSummaryDto[]>(res)
 }
 
+/** Everything the engine dashboard shows, computed by the backend from runs, steps and
+    approvals. Fields that the data cannot back (retries, per-day queue history) are absent. */
+export type WorkflowOverviewDto = {
+  window: { days: number; from: string; to: string }
+  kpis: {
+    workflows_total: number
+    workflows_active: number
+    runs_total: number
+    runs_completed: number
+    runs_failed: number
+    runs_cancelled: number
+    waiting_now: number
+    success_rate: number | null
+    median_duration_seconds: number | null
+  }
+  trend: Array<{ date: string; total: number; completed: number; failed: number; cancelled: number }>
+  funnel: Array<{ label: string; value: number; pct: number }>
+  approvals: {
+    approved: number
+    rejected: number
+    cancelled: number
+    pending: number
+    median_decision_minutes: number | null
+  }
+  triggers: Array<{ label: string; value: number; pct: number }>
+  status_mix: Array<{ label: string; value: number }>
+  queue: { waiting_approval: number; waiting_delay: number; running: number; pending_approvals: number }
+  insights: Array<{ level: 'Critical' | 'Warning' | 'Info'; text: string }>
+}
+
+export async function getWorkflowOverview(params: { workspaceId?: string; days?: number } = {}): Promise<WorkflowOverviewDto> {
+  const query = new URLSearchParams()
+  if (params.workspaceId) query.set('workspace_id', params.workspaceId)
+  if (params.days) query.set('days', String(params.days))
+  const qs = query.toString() ? `?${query.toString()}` : ''
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/overview${qs}`, { headers: defaultHeaders() })
+  return readJson<WorkflowOverviewDto>(res)
+}
+
 export async function getWorkflow(id: string): Promise<WorkflowDto> {
   const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}`, { headers: defaultHeaders() })
   return readJson<WorkflowDto>(res)
