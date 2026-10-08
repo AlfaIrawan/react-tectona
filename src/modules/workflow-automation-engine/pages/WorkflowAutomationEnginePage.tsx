@@ -140,6 +140,9 @@ type WorkflowRecord = {
   successRate: number
   executions: number
   lastUpdated: string
+  /** Scope, shown under the name so it is clear where a workflow fires. */
+  scopeMode?: 'organization' | 'include' | 'exclude'
+  scopeWorkspaceIds?: string[]
   /** Owning workspace. The catalog also lists workflows inherited from the
       organization home, so this is what separates an inherited row from a local one. */
   workspaceId?: string | null
@@ -801,6 +804,14 @@ function KpiSparkline({ data, color }: { data: number[]; color: string }) {
 }
 
 /** Map a backend workflow DTO (snake_case) to the UI's WorkflowRecord shape. */
+/** Short catalog label for where a workflow fires. */
+function workflowScopeLabel(item: WorkflowRecord): string {
+  const count = item.scopeWorkspaceIds?.length ?? 0
+  if (item.scopeMode === 'include') return `Only ${count} workspace${count === 1 ? '' : 's'}`
+  if (item.scopeMode === 'exclude') return `All except ${count} workspace${count === 1 ? '' : 's'}`
+  return 'All workspaces in organization'
+}
+
 function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOption[] = []): WorkflowRecord {
   const owner = resolveWorkflowOwner(dto.owner, ownerOptions, -1)
   return {
@@ -817,6 +828,8 @@ function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOpti
     executions: dto.executions,
     lastUpdated: dto.last_updated,
     workspaceId: dto.workspace_id ?? null,
+    scopeMode: dto.scope_mode ?? 'organization',
+    scopeWorkspaceIds: dto.scope_workspace_ids ?? [],
   }
 }
 
@@ -1619,6 +1632,7 @@ export function WorkflowAutomationEnginePage() {
               ) : null}
             </div>
             <div className="mt-0.5 truncate text-[10px] text-slate-500" title={item.project}>{item.project}</div>
+            <div className="mt-0.5 truncate text-[10px] text-slate-500" title="Where this workflow fires">{workflowScopeLabel(item)}</div>
             <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{workflowCode(item)}</div>
           </div>
         )

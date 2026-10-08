@@ -46,6 +46,9 @@ export type WorkflowSummaryDto = {
   version: number
   last_updated: string
   updated_date?: string
+  /** Where the workflow fires: its organization, only listed workspaces, or the organization minus some. */
+  scope_mode?: 'organization' | 'include' | 'exclude'
+  scope_workspace_ids?: string[]
   /** Owning workspace; present so the catalog can mark rows inherited from the
       organization home, which the listing now includes. */
   workspace_id?: string | null
@@ -73,6 +76,8 @@ export type WorkflowCreateInput = {
   name: string
   category?: string
   owner?: string
+  scope_mode?: 'organization' | 'include' | 'exclude'
+  scope_workspace_ids?: string[]
   trigger?: WorkflowApiTrigger
   status?: WorkflowApiStatus
   definition?: WorkflowGraph
@@ -83,6 +88,8 @@ export type WorkflowUpdateInput = Partial<{
   name: string
   category: string
   owner: string
+  scope_mode: 'organization' | 'include' | 'exclude'
+  scope_workspace_ids: string[]
   trigger: WorkflowApiTrigger
   status: WorkflowApiStatus
   success_rate: number

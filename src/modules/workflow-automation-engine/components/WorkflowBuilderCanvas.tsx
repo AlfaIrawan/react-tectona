@@ -39,6 +39,8 @@ import { EmailBodyField } from '@/modules/workflow-automation-engine/components/
 import { EmailRecipientsField } from '@/modules/workflow-automation-engine/components/EmailRecipientsField'
 import { WorkflowConnectionPreview } from '@/modules/workflow-automation-engine/components/WorkflowConnectionPreview'
 import { WorkflowCanvasActionsProvider, type WorkflowWaypoint } from '@/modules/workflow-automation-engine/components/workflowCanvasActions'
+import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
+import type { WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
 import { WorkflowBuilderNode } from '@/modules/workflow-automation-engine/components/workflowBuilderNodes'
 import { WorkflowRoutedEdge } from '@/modules/workflow-automation-engine/components/workflowRoutedEdge'
 import {
@@ -163,6 +165,8 @@ type WorkflowBuilderCanvasProps = {
 /** The workflow row's trigger must mirror the Trigger node, or event dispatch skips it. */
 // Workflow types offered in the builder. General is the backend default for workflows created before this list existed.
 const WORKFLOW_TYPES = ['General', 'Delivery', 'Governance', 'Financial', 'Change', 'Risk'] as const
+// Where a workflow fires. organization = every workspace under its owner's organization.
+type WorkflowScopeMode = 'organization' | 'include' | 'exclude'
 
 function triggerTypeOf(nodes: Node<WorkflowNodeData>[]): NonNullable<WorkflowCreateInput['trigger']> {
   const configured = nodes.find((node) => node.data.kind === 'trigger')?.data.config?.triggerType?.trim()
@@ -678,17 +682,26 @@ function buildRuntimeDefinition(
   }
 }
 
+type WorkflowRevisionMeta = {
+  category: string
+  owner: string
+  scopeMode: WorkflowScopeMode
+  scopeWorkspaceIds: string[]
+}
+
 function workflowRevision(
   name: string,
   nodes: Node<WorkflowNodeData>[],
   edges: Edge[],
   ideaSections: IdeaSectionVisibilityMap = {},
-  meta: { category: string; owner: string } = { category: 'General', owner: '' },
+  meta: WorkflowRevisionMeta = { category: 'General', owner: '', scopeMode: 'organization', scopeWorkspaceIds: [] },
 ): string {
   return JSON.stringify({
     name,
     category: meta.category,
     owner: meta.owner,
+    scopeMode: meta.scopeMode,
+    scopeWorkspaceIds: meta.scopeMode === 'organization' ? [] : [...meta.scopeWorkspaceIds].sort(),
     trigger: triggerTypeOf(nodes),
     definition: buildRuntimeDefinition(nodes, edges, ideaSections),
   })
@@ -1073,6 +1086,11 @@ function WorkflowBuilderCanvasInner({
   const [workflowType, setWorkflowType] = useState<string>('General')
   // Owner is a workspace member's id; empty means unassigned.
   const [ownerId, setOwnerId] = useState<string>('')
+  const [scopeMode, setScopeMode] = useState<WorkflowScopeMode>('organization')
+  const [scopeWorkspaceIds, setScopeWorkspaceIds] = useState<string[]>([])
+  // The owning workspace decides which organization's workspaces can be chosen.
+  const [ownerWorkspaceId, setOwnerWorkspaceId] = useState<string | null>(activeWorkspaceId)
+  const [orgWorkspaces, setOrgWorkspaces] = useState<WorkspaceOrgWorkspaceDto[]>([])
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [tab, setTab] = useState<'builder' | 'debug'>(initialView === 'builder' ? 'builder' : 'debug')
   const [runs, setRuns] = useState<WorkflowRunSummaryDto[]>([])
@@ -1096,8 +1114,8 @@ function WorkflowBuilderCanvasInner({
   }, [edges])
 
   const currentRevision = useMemo(
-    () => workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId }),
-    [edges, ideaSections, name, nodes, ownerId, workflowType],
+    () => workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds }),
+    [edges, ideaSections, name, nodes, ownerId, scopeMode, scopeWorkspaceIds, workflowType],
   )
   const latestRevisionRef = useRef(currentRevision)
 
@@ -1439,11 +1457,14 @@ function WorkflowBuilderCanvasInner({
 
     const timeout = window.setTimeout(() => {
       if (revision === savedRevisionRef.current) return
+      // An incomplete scope is not saved automatically; the editor shows what is missing.
+      if (scopeMode !== 'organization' && scopeWorkspaceIds.length === 0) return
       persist()
       updateWorkflow(workflowId, {
         name,
         category: workflowType,
         owner: ownerId,
+        scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds,
         trigger: triggerTypeOf(nodes),
         definition: buildRuntimeDefinition(nodes, edges, ideaSections),
         })
@@ -1456,9 +1477,34 @@ function WorkflowBuilderCanvasInner({
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [autosaveReady, currentRevision, edges, name, nodes, ownerId, persist, workflowId, workflowType])
+  }, [autosaveReady, currentRevision, edges, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchAllWorkspaceOrgWorkspacesCached()
+      .then((list) => {
+        if (!cancelled) setOrgWorkspaces(list)
+      })
+      .catch(() => {
+        if (!cancelled) setOrgWorkspaces([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const scopeCandidates = useMemo(() => {
+    const organizationId = orgWorkspaces.find((item) => item.id === ownerWorkspaceId)?.organization_id
+    if (!organizationId) return []
+    return orgWorkspaces
+      .filter((item) => item.organization_id === organizationId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [orgWorkspaces, ownerWorkspaceId])
 
   const handleSaveDraft = useCallback(() => {
+    if (scopeMode !== 'organization' && scopeWorkspaceIds.length === 0) {
+      addToast({ variant: 'warning', title: 'Choose workspaces for this scope', description: 'Pick at least one workspace, or switch back to all workspaces in the organization.' })
+      return
+    }
     persist() // local backup
     setDraftSaveState('saving')
     if (!workflowId) {
@@ -1466,6 +1512,7 @@ function WorkflowBuilderCanvasInner({
         name,
         category: workflowType,
         owner: ownerId,
+        scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds,
         status: 'Draft',
         // The backend matches events against the workflow row's own trigger, so it has to
         // mirror the Trigger node — otherwise an Event workflow can never fire.
@@ -1474,7 +1521,7 @@ function WorkflowBuilderCanvasInner({
         workspace_id: activeWorkspaceId ?? undefined,
         })
         .then((created) => {
-          const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId })
+          const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
           savedRevisionRef.current = revision
           explicitRevisionRef.current = revision
           setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1491,9 +1538,9 @@ function WorkflowBuilderCanvasInner({
         })
       return
     }
-    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
       .then(() => {
-        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId })
+        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1503,9 +1550,13 @@ function WorkflowBuilderCanvasInner({
         setDraftSaveState('unsaved')
         addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' })
       })
-  }, [activeWorkspaceId, addToast, edges, ideaSections, name, nodes, onWorkflowCreated, ownerId, persist, workflowId, workflowType])
+  }, [activeWorkspaceId, addToast, edges, ideaSections, name, nodes, onWorkflowCreated, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   const handlePublish = useCallback(() => {
+    if (scopeMode !== 'organization' && scopeWorkspaceIds.length === 0) {
+      addToast({ variant: 'warning', title: 'Choose workspaces for this scope', description: 'Pick at least one workspace, or switch back to all workspaces in the organization.' })
+      return
+    }
     if (validateWorkflowGraph(nodes, edges, rolesWithHolders).some((issue) => issue.level === 'error')) {
       addToast({ variant: 'error', title: 'Cannot publish workflow', description: 'Resolve blocking validation issues first.' })
       return
@@ -1515,10 +1566,10 @@ function WorkflowBuilderCanvasInner({
       addToast({ variant: 'info', title: 'Workflow published', description: `${name} published (prototype).` })
       return
     }
-    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
       .then(() => publishWorkflowApi(workflowId))
       .then((published) => {
-        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId })
+        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1527,7 +1578,7 @@ function WorkflowBuilderCanvasInner({
         addToast({ variant: 'success', title: 'Workflow published', description: `${name} published as v${published.version}.` })
       })
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
-  }, [addToast, edges, ideaSections, name, nodes, ownerId, persist, workflowId, workflowType])
+  }, [addToast, edges, ideaSections, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   const openVersions = useCallback(() => {
     setVersionsOpen((open) => {
@@ -1584,9 +1635,17 @@ function WorkflowBuilderCanvasInner({
         if (cancelled) return
         const loadedName = wf.name || workflowName || 'Untitled Workflow'
         if (wf.name) setName(wf.name)
-        const loadedMeta = { category: wf.category || 'General', owner: wf.owner ?? '' }
+        const loadedMeta: WorkflowRevisionMeta = {
+          category: wf.category || 'General',
+          owner: wf.owner ?? '',
+          scopeMode: (wf.scope_mode as WorkflowScopeMode) ?? 'organization',
+          scopeWorkspaceIds: wf.scope_workspace_ids ?? [],
+        }
         setWorkflowType(loadedMeta.category)
         setOwnerId(loadedMeta.owner)
+        setScopeMode(loadedMeta.scopeMode)
+        setScopeWorkspaceIds(loadedMeta.scopeWorkspaceIds)
+        setOwnerWorkspaceId(wf.workspace_id ?? activeWorkspaceId)
         const def = wf.definition
         const loadedSections = readIdeaSectionVisibility(def?.ideaSections)
         setIdeaSections(loadedSections)
@@ -2799,9 +2858,56 @@ function WorkflowBuilderCanvasInner({
                 </div>
               </div>
             ) : (
-              <p className="text-sm leading-relaxed text-slate-500">
-                Select a node to configure it. Idea Detail sections are set on the Idea event trigger.
-              </p>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Applies to</label>
+                  <Select
+                    value={scopeMode}
+                    onChange={(event) => setScopeMode(event.target.value as WorkflowScopeMode)}
+                    className="h-9 text-sm"
+                  >
+                    <SelectItem value="organization">All workspaces in the organization</SelectItem>
+                    <SelectItem value="include">Only the selected workspaces</SelectItem>
+                    <SelectItem value="exclude">All except the selected workspaces</SelectItem>
+                  </Select>
+                  {scopeMode !== 'organization' ? (
+                    <div className="space-y-1.5">
+                      {scopeCandidates.length === 0 ? (
+                        <p className="text-[11px] text-slate-500">No workspaces found in this organization.</p>
+                      ) : (
+                        <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
+                          {scopeCandidates.map((item) => (
+                            <label key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={scopeWorkspaceIds.includes(item.id)}
+                                onChange={() => setScopeWorkspaceIds((current) => (
+                                  current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+                                ))}
+                              />
+                              <span className="truncate">{item.name}</span>
+                              {item.slug ? <span className="shrink-0 truncate text-[10px] text-slate-400">{item.slug}</span> : null}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {scopeWorkspaceIds.length === 0 ? (
+                        <p className="text-[11px] text-amber-700">Choose at least one workspace. Nothing is saved until you do.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <p className="text-[11px] leading-snug text-slate-500">
+                    {scopeMode === 'organization'
+                      ? 'Runs for every workspace in this organization.'
+                      : scopeMode === 'include'
+                        ? 'Runs only in the workspaces you select.'
+                        : 'Runs everywhere in this organization except the workspaces you select.'}
+                  </p>
+                </div>
+                <p className="text-sm leading-relaxed text-slate-500">
+                  Select a node to configure it. Idea Detail sections are set on the Idea event trigger.
+                </p>
+              </div>
             )}
           </div>
         </aside>
