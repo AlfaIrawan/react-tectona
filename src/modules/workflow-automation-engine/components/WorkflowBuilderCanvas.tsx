@@ -161,6 +161,9 @@ type WorkflowBuilderCanvasProps = {
 }
 
 /** The workflow row's trigger must mirror the Trigger node, or event dispatch skips it. */
+// Workflow types offered in the builder. General is the backend default for workflows created before this list existed.
+const WORKFLOW_TYPES = ['General', 'Delivery', 'Governance', 'Financial', 'Change', 'Risk'] as const
+
 function triggerTypeOf(nodes: Node<WorkflowNodeData>[]): NonNullable<WorkflowCreateInput['trigger']> {
   const configured = nodes.find((node) => node.data.kind === 'trigger')?.data.config?.triggerType?.trim()
   return (configured as NonNullable<WorkflowCreateInput['trigger']>) || 'Manual'
@@ -680,9 +683,12 @@ function workflowRevision(
   nodes: Node<WorkflowNodeData>[],
   edges: Edge[],
   ideaSections: IdeaSectionVisibilityMap = {},
+  meta: { category: string; owner: string } = { category: 'General', owner: '' },
 ): string {
   return JSON.stringify({
     name,
+    category: meta.category,
+    owner: meta.owner,
     trigger: triggerTypeOf(nodes),
     definition: buildRuntimeDefinition(nodes, edges, ideaSections),
   })
@@ -1064,6 +1070,9 @@ function WorkflowBuilderCanvasInner({
   const [autosaveReady, setAutosaveReady] = useState(!workflowId)
   const [draftSaveState, setDraftSaveState] = useState<'saved' | 'unsaved' | 'saving'>(workflowId ? 'saved' : 'unsaved')
   const [name, setName] = useState(initial.name)
+  const [workflowType, setWorkflowType] = useState<string>('General')
+  // Owner is a workspace member's id; empty means unassigned.
+  const [ownerId, setOwnerId] = useState<string>('')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [tab, setTab] = useState<'builder' | 'debug'>(initialView === 'builder' ? 'builder' : 'debug')
   const [runs, setRuns] = useState<WorkflowRunSummaryDto[]>([])
@@ -1087,8 +1096,8 @@ function WorkflowBuilderCanvasInner({
   }, [edges])
 
   const currentRevision = useMemo(
-    () => workflowRevision(name, nodes, edges, ideaSections),
-    [edges, ideaSections, name, nodes],
+    () => workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId }),
+    [edges, ideaSections, name, nodes, ownerId, workflowType],
   )
   const latestRevisionRef = useRef(currentRevision)
 
@@ -1433,6 +1442,8 @@ function WorkflowBuilderCanvasInner({
       persist()
       updateWorkflow(workflowId, {
         name,
+        category: workflowType,
+        owner: ownerId,
         trigger: triggerTypeOf(nodes),
         definition: buildRuntimeDefinition(nodes, edges, ideaSections),
         })
@@ -1445,7 +1456,7 @@ function WorkflowBuilderCanvasInner({
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [autosaveReady, currentRevision, edges, name, nodes, persist, workflowId])
+  }, [autosaveReady, currentRevision, edges, name, nodes, ownerId, persist, workflowId, workflowType])
 
   const handleSaveDraft = useCallback(() => {
     persist() // local backup
@@ -1453,6 +1464,8 @@ function WorkflowBuilderCanvasInner({
     if (!workflowId) {
       createWorkflowApi({
         name,
+        category: workflowType,
+        owner: ownerId,
         status: 'Draft',
         // The backend matches events against the workflow row's own trigger, so it has to
         // mirror the Trigger node — otherwise an Event workflow can never fire.
@@ -1461,7 +1474,7 @@ function WorkflowBuilderCanvasInner({
         workspace_id: activeWorkspaceId ?? undefined,
         })
         .then((created) => {
-          const revision = workflowRevision(name, nodes, edges, ideaSections)
+          const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId })
           savedRevisionRef.current = revision
           explicitRevisionRef.current = revision
           setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1478,9 +1491,9 @@ function WorkflowBuilderCanvasInner({
         })
       return
     }
-    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
       .then(() => {
-        const revision = workflowRevision(name, nodes, edges, ideaSections)
+        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1490,7 +1503,7 @@ function WorkflowBuilderCanvasInner({
         setDraftSaveState('unsaved')
         addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' })
       })
-  }, [activeWorkspaceId, addToast, edges, ideaSections, name, nodes, onWorkflowCreated, persist, workflowId])
+  }, [activeWorkspaceId, addToast, edges, ideaSections, name, nodes, onWorkflowCreated, ownerId, persist, workflowId, workflowType])
 
   const handlePublish = useCallback(() => {
     if (validateWorkflowGraph(nodes, edges, rolesWithHolders).some((issue) => issue.level === 'error')) {
@@ -1502,10 +1515,10 @@ function WorkflowBuilderCanvasInner({
       addToast({ variant: 'info', title: 'Workflow published', description: `${name} published (prototype).` })
       return
     }
-    updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
       .then(() => publishWorkflowApi(workflowId))
       .then((published) => {
-        const revision = workflowRevision(name, nodes, edges, ideaSections)
+        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1514,7 +1527,7 @@ function WorkflowBuilderCanvasInner({
         addToast({ variant: 'success', title: 'Workflow published', description: `${name} published as v${published.version}.` })
       })
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
-  }, [addToast, edges, ideaSections, name, nodes, persist, workflowId])
+  }, [addToast, edges, ideaSections, name, nodes, ownerId, persist, workflowId, workflowType])
 
   const openVersions = useCallback(() => {
     setVersionsOpen((open) => {
@@ -1571,6 +1584,9 @@ function WorkflowBuilderCanvasInner({
         if (cancelled) return
         const loadedName = wf.name || workflowName || 'Untitled Workflow'
         if (wf.name) setName(wf.name)
+        const loadedMeta = { category: wf.category || 'General', owner: wf.owner ?? '' }
+        setWorkflowType(loadedMeta.category)
+        setOwnerId(loadedMeta.owner)
         const def = wf.definition
         const loadedSections = readIdeaSectionVisibility(def?.ideaSections)
         setIdeaSections(loadedSections)
@@ -1581,7 +1597,7 @@ function WorkflowBuilderCanvasInner({
             return { ...sized, data: { ...sized.data, config: withoutApprovalConfig(sized.data.config ?? {}) } }
           })
           const loadedEdges = (Array.isArray(def.edges) ? def.edges : []) as Edge[]
-          const revision = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections)
+          const revision = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections, loadedMeta)
           savedRevisionRef.current = revision
           explicitRevisionRef.current = revision
           setPublishedRevision(wf.is_published ? revision : null)
@@ -1589,7 +1605,7 @@ function WorkflowBuilderCanvasInner({
           setNodes(loadedNodes)
           setEdges(loadedEdges)
         } else {
-          const revision = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections)
+          const revision = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections, loadedMeta)
           savedRevisionRef.current = revision
           explicitRevisionRef.current = revision
           setPublishedRevision(wf.is_published ? revision : null)
@@ -1959,6 +1975,30 @@ function WorkflowBuilderCanvasInner({
             aria-label="Workflow name"
             className="h-9 w-[260px] max-w-[42vw] rounded-lg border-transparent bg-transparent px-2 text-sm font-semibold text-slate-900 hover:border-slate-200 focus-visible:border-slate-300 focus-visible:ring-1 focus-visible:ring-slate-200 focus-visible:ring-offset-0"
           />
+          <Select
+            value={workflowType}
+            onChange={(event) => setWorkflowType(event.target.value)}
+            title="Workflow type"
+            className="h-8 w-[130px] text-xs"
+          >
+            {WORKFLOW_TYPES.map((type) => (
+              <SelectItem key={type} value={type}>{type}</SelectItem>
+            ))}
+          </Select>
+          <Select
+            value={ownerId}
+            onChange={(event) => setOwnerId(event.target.value)}
+            title="Workflow owner"
+            className="h-8 w-[180px] text-xs"
+          >
+            <SelectItem value="">Unassigned</SelectItem>
+            {ownerId && !workspaceMembers.some((member) => member.id === ownerId) ? (
+              <SelectItem value={ownerId}>{ownerId}</SelectItem>
+            ) : null}
+            {workspaceMembers.map((member) => (
+              <SelectItem key={member.id} value={member.id}>{member.name}</SelectItem>
+            ))}
+          </Select>
           {autosaveReady && (
             <span
               className={cn(

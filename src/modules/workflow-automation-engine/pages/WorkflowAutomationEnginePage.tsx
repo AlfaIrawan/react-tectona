@@ -216,8 +216,9 @@ function resolveWorkflowOwner(
 ): WorkflowOwnerOption | null {
   if (ownerOptions.length === 0) return null
   const candidateKey = normalizeOwnerLookup(candidate)
+  const byId = ownerOptions.find((owner) => owner.id === candidate)
   const matched = ownerOptions.find((owner) => normalizeOwnerLookup(owner.name) === candidateKey || normalizeOwnerLookup(owner.email) === candidateKey)
-  return matched ?? ownerOptions[fallbackIndex % ownerOptions.length] ?? null
+  return byId ?? matched ?? ownerOptions[fallbackIndex % ownerOptions.length] ?? null
 }
 
 const EXECUTION_TREND = [
