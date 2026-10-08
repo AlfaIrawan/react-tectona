@@ -275,6 +275,19 @@ function brainstormContinueDiscoveryMessage(messages: Array<{ role: string; text
   return isBrainstormThreadIndonesian(messages) ? 'Lanjut ditanya' : 'Continue questions'
 }
 
+const BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER = '<!-- tectona-brainstorm-evidence-guardrail -->'
+
+function withBrainstormEvidenceGuardrail(message: string, indonesian: boolean): string {
+  const guardrail = indonesian
+    ? 'Instruksi keselamatan: Jika ada singkatan atau akronim yang artinya tidak didukung oleh judul ide, deskripsi, percakapan, glossary, atau evidence workspace, jangan menebak kepanjangannya. Tanyakan arti singkatan tersebut kepada user terlebih dahulu, satu per satu bila ada beberapa, dan jangan membuat asumsi atau melanjutkan bagian draft yang bergantung pada istilah itu sampai user menjawab.'
+    : 'Safety instruction: If an abbreviation or acronym is not defined by the idea title, description, conversation, glossary, or workspace evidence, do not guess its expansion. Ask the user what it means first, one at a time when there are several, and do not make assumptions or continue draft sections that depend on it until the user answers.'
+  return `${message}\n\n${BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER}\n${guardrail}`
+}
+
+function withoutBrainstormEvidenceGuardrail(message: string): string {
+  return message.split(BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER, 1)[0].trimEnd()
+}
+
 function formatBrainstormTimestamp(iso?: string): string {
   if (!iso) return ''
   try {
@@ -3888,7 +3901,11 @@ export function IdeaBacklogManagementPage() {
     const requestSentAt = new Date().toISOString()
     setBrainstormMessages((current) => [...current, { role: 'user', text: message, sentAt: requestSentAt }])
     try {
-      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(jobId, message, brainstormLlmMode)
+      const guardedMessage = withBrainstormEvidenceGuardrail(
+        message,
+        isBrainstormThreadIndonesian(historyBeforeSend),
+      )
+      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(jobId, guardedMessage, brainstormLlmMode)
       let response
       try {
         response = await sendWithJob(ideaDraftJob.job_id)
@@ -3926,9 +3943,13 @@ export function IdeaBacklogManagementPage() {
         response = await sendWithJob(restored.job_id)
       }
       const responseReceivedAt = new Date().toISOString()
+      const visibleResponseMessages = response.messages.map((item) => ({
+        ...item,
+        text: item.role === 'user' ? withoutBrainstormEvidenceGuardrail(item.text) : item.text,
+      }))
       const mergedMessages = mergeBrainstormUiMessages(
         [...historyBeforeSend, { role: 'user', text: message, sentAt: requestSentAt }],
-        response.messages,
+        visibleResponseMessages,
         responseReceivedAt,
       )
       setBrainstormMessages(mergedMessages)
@@ -3955,7 +3976,7 @@ export function IdeaBacklogManagementPage() {
       setIdeaDraftJob((current) => current
         ? {
             ...current,
-            brainstorm_messages: response.messages,
+            brainstorm_messages: visibleResponseMessages,
             brainstorm_ready: current.brainstorm_ready || response.ready_to_continue,
             brainstorm_remaining_gaps: response.remaining_gaps,
             intake_checklist: response.intake_checklist ?? current.intake_checklist,
