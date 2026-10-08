@@ -36,6 +36,7 @@ import {
   Italic,
   Underline,
   CircleHelp,
+  BriefcaseBusiness,
   Building2,
   Sparkles,
   Users,
@@ -55,6 +56,7 @@ import {
   FolderPlus,
   Folder as FolderIcon,
   RefreshCw,
+  Wrench,
 } from 'lucide-react'
 import {
   Bar,
@@ -6481,15 +6483,70 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           )}
 
-                          {brainstormReady && (
-                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-950">
-                              {brainstormThreadIndonesian
-                                ? 'Konteks sudah cukup. Draft bisa di-generate sekarang.'
-                                : 'Enough context gathered. You can generate the draft now.'}
+                          {brainstormReady && ideaDraftJob?.status === 'awaiting_input' && (
+                            <div className="space-y-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-950">
+                              <div>
+                                <p className="text-sm font-semibold">
+                                  {brainstormThreadIndonesian
+                                    ? 'Konteks wajib sudah cukup'
+                                    : 'Required context is complete'}
+                                </p>
+                                <p className="mt-0.5 text-xs leading-5 text-emerald-900/80">
+                                  {brainstormThreadIndonesian
+                                    ? 'Pilih fokus pertanyaan berikutnya, atau generate draft sekarang.'
+                                    : 'Choose the focus for the next questions, or generate the draft now.'}
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  className={cn(
+                                    enterpriseSecondaryButtonClass(),
+                                    'inline-flex h-9 items-center gap-2 border-emerald-300 bg-white text-emerald-950 hover:bg-emerald-100',
+                                  )}
+                                  onClick={() => void handleSendBrainstormMessage(
+                                    brainstormThreadIndonesian
+                                      ? 'Lanjutkan dengan pertanyaan bisnis. Beri label "Business" pada setiap pertanyaan, ajukan satu per satu, dan fokus pada value, outcome, stakeholder, scope, KPI, risiko, serta prioritas bisnis.'
+                                      : 'Continue with business questions. Label every question "Business", ask them one at a time, and focus on value, outcomes, stakeholders, scope, KPIs, risks, and business priorities.',
+                                  )}
+                                >
+                                  <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden />
+                                  {brainstormThreadIndonesian ? 'Pertanyaan bisnis' : 'Business questions'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  className={cn(
+                                    enterpriseSecondaryButtonClass(),
+                                    'inline-flex h-9 items-center gap-2 border-sky-300 bg-white text-sky-950 hover:bg-sky-100',
+                                  )}
+                                  onClick={() => void handleSendBrainstormMessage(
+                                    brainstormThreadIndonesian
+                                      ? 'Lanjutkan dengan pertanyaan teknis. Beri label "Technical" pada setiap pertanyaan, ajukan satu per satu, dan fokus pada aplikasi, integrasi, data, security, infrastructure, operasional, serta constraint teknis.'
+                                      : 'Continue with technical questions. Label every question "Technical", ask them one at a time, and focus on applications, integrations, data, security, infrastructure, operations, and technical constraints.',
+                                  )}
+                                >
+                                  <Wrench className="h-4 w-4 shrink-0" aria-hidden />
+                                  {brainstormThreadIndonesian ? 'Pertanyaan teknis' : 'Technical questions'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  className={cn(
+                                    enterpriseCyanGradientActionButtonClass(),
+                                    'h-9 disabled:cursor-not-allowed disabled:opacity-60',
+                                  )}
+                                  onClick={() => void handleContinueIdeaDraft('use_brainstorm')}
+                                >
+                                  <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
+                                  {isDraftContinuing
+                                    ? (brainstormThreadIndonesian ? 'Membuat draft…' : 'Generating…')
+                                    : (brainstormThreadIndonesian ? 'Generate draft' : 'Generate draft')}
+                                </button>
+                              </div>
                             </div>
                           )}
-                          {/* The "more questions or enough?" choice is asked in the conversation
-                              itself (agent-runtime brainstorm_flow_steps), so there are no buttons here. */}
                           {!isBrainstormSending && !brainstormReady && !brainstormOfferGenerateAnyway && brainstormNextHint && brainstormMessages.length > 0 && !brainstormMessages.some((message) => message.role === 'assistant' && message.text.toLowerCase().includes(brainstormNextHint.toLowerCase())) && (
                             <p className="px-10 text-xs leading-5 text-muted-foreground">
                               <span className="mr-1 font-medium text-foreground">{brainstormThreadIndonesian ? 'Berikutnya:' : 'Next:'}</span>
