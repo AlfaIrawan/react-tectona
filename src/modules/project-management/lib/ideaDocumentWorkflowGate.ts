@@ -9,6 +9,12 @@ import {
   readIdeaSectionVisibility,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
+import {
+  emailDocumentKindFromTemplateCode,
+  parseEmailRecipientBy,
+  parseJobTitles,
+  type EmailRecipientBy,
+} from '@/modules/project-management/lib/urdReviewHeads'
 
 export const WORKFLOW_DOCUMENT_KINDS = ['URD', 'BRD', 'FSD'] as const
 export type WorkflowDocumentKind = (typeof WORKFLOW_DOCUMENT_KINDS)[number]
@@ -162,14 +168,42 @@ export function documentStagesFromGraph(graph: WorkflowGraph): DocumentStage[] {
   return stages
 }
 
+/** Documents a published workflow allows before it has asked this idea for anything. */
+export function standingDocumentKinds(stages: DocumentStage[]): WorkflowDocumentKind[] | null {
+  const openers = stages
+    .filter((stage) => stage.requiredApprovalIds.length === 0)
+    .map((stage) => stage.kind)
+  return openers.length > 0 ? openers : null
+}
+
+export function documentKindsAllowedByWorkflows(
+  gates: { id: string; stages: DocumentStage[] }[],
+  approvals: WorkflowApprovalDto[],
+): IdeaDocumentWorkflowGate {
+  if (gates.length === 0) return { enforced: false, allowedKinds: null }
+  let allowed: WorkflowDocumentKind[] | null = null
+  for (const gate of gates) {
+    const hasAsked = approvals.some((row) => row.workflow_id === gate.id)
+    // A team branch that starts with its own approval does not block other ideas
+    // until that branch has actually asked. A workflow whose first document needs
+    // no prior approval (URD) applies as soon as it is published.
+    const kinds = hasAsked
+      ? allowedDocumentKinds(gate.stages, approvals, gate.id)
+      : standingDocumentKinds(gate.stages)
+    if (kinds === null) continue
+    allowed = allowed === null ? kinds : allowed.filter((kind) => kinds.includes(kind))
+  }
+  if (allowed === null) return { enforced: false, allowedKinds: null }
+  return { enforced: true, allowedKinds: allowed }
+}
+
 export function allowedDocumentKinds(
   stages: DocumentStage[],
   approvals: WorkflowApprovalDto[],
   workflowId: string,
 ): WorkflowDocumentKind[] | null {
   const rows = approvals.filter((row) => row.workflow_id === workflowId)
-  // A published sibling flow that never asked this idea for a decision does not
-  // constrain it. Only the run that actually opened a gate does.
+  // No rows yet: the caller decides whether the published stages still apply.
   if (rows.length === 0) return null
   const latestRunId = rows.reduce<{ id: string | null; at: string }>((latest, row) => {
     const at = row.requested_at ?? ''
@@ -187,26 +221,87 @@ export function allowedDocumentKinds(
   return allowed
 }
 
+export type IdeaWorkflowAudience = {
+  by: EmailRecipientBy
+  values: string[]
+}
+
+export type PublishedIdeaSectionPolicy = {
+  map: IdeaSectionVisibilityMap
+  audience: IdeaWorkflowAudience
+  requestsApproval: boolean
+  /** Document kinds whose row shows Request for Approval. Empty parameter means URD. */
+  requestDocumentKinds: string[]
+}
+
+export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | undefined): string[] {
+  const kinds: string[] = []
+  for (const node of asNodes(graph ?? {})) {
+    const config = node.data?.config ?? {}
+    if (config.actionOperation !== 'Request for Approval') continue
+    const fromParameter = emailDocumentKindFromTemplateCode(config.parameter)
+    const label = (node.data?.label || '').toUpperCase()
+    const fromLabel = (['URD', 'BRD', 'FSD', 'SRD'] as const).find((kind) => label.includes(kind))
+    const kind = fromParameter || fromLabel || 'URD'
+    if (!kinds.includes(kind)) kinds.push(kind)
+  }
+  return kinds
+}
+
+const OPEN_AUDIENCE: IdeaWorkflowAudience = { by: 'jobTitle', values: [] }
+
+function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkflowAudience {
+  const trigger = asNodes(graph ?? {}).find((node) => {
+    const config = node.data?.config ?? {}
+    return node.data?.kind === 'trigger'
+      && config.triggerType === 'Event'
+      && config.triggerDomain === 'AI Idea & Prioritization'
+      && config.triggerEntity === 'Idea'
+  })
+  const config = trigger?.data?.config ?? {}
+  return {
+    by: parseEmailRecipientBy(config.audienceBy),
+    values: parseJobTitles(config.audienceValues),
+  }
+}
+
 /**
  * Newest published Active workflow that stored an Idea section map.
  * Workflows with no map are skipped, so a team branch cannot wipe the page.
  * Missing map means every section stays visible.
+ * An empty audience includes everyone. Badges limit the map to matching people.
  */
-export async function loadPublishedIdeaSectionVisibility(
+export async function loadPublishedIdeaSectionPolicy(
   workspaceId: string | null | undefined,
-): Promise<IdeaSectionVisibilityMap> {
+): Promise<PublishedIdeaSectionPolicy> {
   const workflows = await listWorkflows(workspaceId?.trim() || undefined)
   const active = workflows.filter((workflow) => workflow.is_published && workflow.status === 'Active')
   for (const summary of active) {
     try {
       const full = await getWorkflow(summary.id)
-      const map = readIdeaSectionVisibility(full.definition?.ideaSections)
-      if (Object.keys(map).length > 0) return map
+      const published = full.published_definition ?? full.definition
+      const map = readIdeaSectionVisibility(published?.ideaSections)
+      if (Object.keys(map).length > 0) {
+        const requestDocumentKinds = requestDocumentKindsFromGraph(published)
+        return {
+          map,
+          audience: ideaTriggerAudience(published),
+          requestsApproval: requestDocumentKinds.length > 0,
+          requestDocumentKinds,
+        }
+      }
     } catch {
       // A workflow that cannot be loaded does not decide the menu.
     }
   }
-  return {}
+  return { map: {}, audience: OPEN_AUDIENCE, requestsApproval: false, requestDocumentKinds: [] }
+}
+
+export async function loadPublishedIdeaSectionVisibility(
+  workspaceId: string | null | undefined,
+): Promise<IdeaSectionVisibilityMap> {
+  const policy = await loadPublishedIdeaSectionPolicy(workspaceId)
+  return policy.map
 }
 
 export async function loadIdeaDocumentWorkflowGate(
@@ -224,24 +319,16 @@ export async function loadIdeaDocumentWorkflowGate(
   }))
   const gates = definitions.flatMap((workflow) => {
     if (!workflow) return []
-    const stages = documentStagesFromGraph(workflow.definition)
+    const stages = documentStagesFromGraph(workflow.published_definition ?? workflow.definition)
     return stages.length > 0 ? [{ id: workflow.id, stages }] : []
   })
   if (gates.length === 0) return { enforced: false, allowedKinds: null }
-
   const approvals = await listWorkflowApprovals({
     subjectContextKey: 'idea_id',
     subjectContextValue: ideaId,
     limit: 200,
   })
-  let allowed: WorkflowDocumentKind[] | null = null
-  for (const gate of gates) {
-    const kinds = allowedDocumentKinds(gate.stages, approvals, gate.id)
-    if (kinds === null) continue
-    allowed = allowed === null ? kinds : allowed.filter((kind) => kinds.includes(kind))
-  }
-  if (allowed === null) return { enforced: false, allowedKinds: null }
-  return { enforced: true, allowedKinds: allowed }
+  return documentKindsAllowedByWorkflows(gates, approvals)
 }
 
 export function templateAllowedByWorkflow(

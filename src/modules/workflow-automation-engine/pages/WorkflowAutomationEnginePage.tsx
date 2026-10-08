@@ -22,6 +22,7 @@ import {
   PanelLeft,
   Layers3,
   MousePointerClick,
+  PauseCircle,
   Pin,
   PlayCircle,
   Copy,
@@ -93,6 +94,7 @@ import { EnterpriseGroupByControl } from '@/components/enterprise/EnterpriseGrou
 import { EnterpriseSelectionToggle } from '@/components/enterprise/EnterpriseSelectionToggle'
 import { EnterpriseColumnVisibilityControl } from '@/components/enterprise/EnterpriseColumnVisibilityControl'
 import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseColumnWidthModal'
+import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/EnterpriseDeleteConfirmModal'
 import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
 import { WorkflowBuilderCanvas } from '@/modules/workflow-automation-engine/components/WorkflowBuilderCanvas'
 import { AgentWorkflowStudio } from '@/modules/workflow-automation-engine/components/AgentWorkflowStudio'
@@ -104,6 +106,7 @@ import {
   deleteWorkflowApi,
   duplicateWorkflowApi,
   listWorkflows,
+  updateWorkflow,
   type WorkflowSummaryDto,
 } from '@/lib/api/workflowAutomationApi'
 import {
@@ -826,12 +829,15 @@ export function WorkflowAutomationEnginePage() {
     false,
   )
   const [search, setSearch] = useState('')
-  const [builder, setBuilder] = useState<{ open: boolean; workflowId: string | null }>({ open: false, workflowId: null })
+  const [builder, setBuilder] = useState<{ open: boolean; workflowId: string | null; view?: 'builder' | 'runs' | 'run' }>({ open: false, workflowId: null })
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([])
   const [workflowCatalogState, setWorkflowCatalogState] = useState<'loading' | 'backend' | 'error'>('loading')
   const workflowOwnerOptionsRef = useRef<WorkflowOwnerOption[]>([])
   const [workflowOwnerOptions, setWorkflowOwnerOptions] = useState<WorkflowOwnerOption[]>([])
   const [rowMenu, setRowMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const rowMenuWorkflow = workflows.find((item) => item.id === rowMenu?.id)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [workflowStatusBusyId, setWorkflowStatusBusyId] = useState<string | null>(null)
   const [automationRules, setAutomationRules] = useState<AutomationRule[]>([])
   const [automationRulesState, setAutomationRulesState] = useState<'loading' | 'backend' | 'error'>('loading')
   const [ruleSearch, setRuleSearch] = useState('')
@@ -1270,21 +1276,52 @@ export function WorkflowAutomationEnginePage() {
     [addToast, insertCopyLocally],
   )
 
+  const changeWorkflowStatus = useCallback((id: string, status: 'Active' | 'Paused') => {
+    if (workflowStatusBusyId) return
+    setWorkflowStatusBusyId(id)
+    void updateWorkflow(id, { status })
+      .then((updated) => {
+        setWorkflows((current) => current.map((item) => (
+          item.id === id ? mapWorkflowDto(updated, workflowOwnerOptionsRef.current) : item
+        )))
+        addToast({ variant: 'success', title: `Workflow ${status === 'Paused' ? 'paused' : 'resumed'}` })
+      })
+      .catch((error) => addToast({
+        variant: 'error',
+        title: `Could not ${status === 'Paused' ? 'pause' : 'resume'} workflow`,
+        description: error instanceof Error ? error.message : 'Please try again.',
+      }))
+      .finally(() => setWorkflowStatusBusyId(null))
+  }, [addToast, workflowStatusBusyId])
+
+  const copyWorkflowId = useCallback((id: string) => {
+    if (!navigator.clipboard?.writeText) {
+      addToast({ variant: 'error', title: 'Clipboard is unavailable' })
+      return
+    }
+    void navigator.clipboard.writeText(id)
+      .then(() => addToast({ variant: 'success', title: 'Workflow ID copied', description: id }))
+      .catch(() => addToast({ variant: 'error', title: 'Could not copy workflow ID' }))
+  }, [addToast])
+
   const deleteWorkflow = useCallback(
     (id: string) => {
-      // Optimistic removal from the UI.
-      setWorkflows((current) => current.filter((item) => item.id !== id))
-      setWorkflowTableSelectedIds((current) => current.filter((sid) => sid !== id))
-      if (typeof window !== 'undefined') {
-        try {
-          window.localStorage.removeItem(`tectona.workflow-builder.${id}`)
-        } catch {
-          // ignore — prototype persistence only
-        }
-      }
       deleteWorkflowApi(id)
-        .then(() => addToast({ variant: 'success', title: 'Workflow deleted' }))
-        .catch(() => addToast({ variant: 'warning', title: 'Deleted locally', description: 'Backend unavailable — change is not saved.' }))
+        .then(() => {
+          setWorkflows((current) => current.filter((item) => item.id !== id))
+          setWorkflowTableSelectedIds((current) => current.filter((selectedId) => selectedId !== id))
+          try {
+            window.localStorage.removeItem(`tectona.workflow-builder.${id}`)
+          } catch {
+            // The backend deletion succeeded; a stale local draft is non-blocking.
+          }
+          addToast({ variant: 'success', title: 'Workflow deleted' })
+        })
+        .catch((error) => addToast({
+          variant: 'error',
+          title: 'Could not delete workflow',
+          description: error instanceof Error ? error.message : 'Please try again.',
+        }))
     },
     [addToast],
   )
@@ -2560,6 +2597,10 @@ export function WorkflowAutomationEnginePage() {
                                   ) : null}
                                   <tr
                                     onClick={() => setBuilder({ open: true, workflowId: item.id })}
+                                    onContextMenu={(event) => {
+                                      event.preventDefault()
+                                      setRowMenu({ id: item.id, x: event.clientX, y: event.clientY })
+                                    }}
                                     className="group cursor-pointer transition-colors"
                                   >
                                     {showWorkflowTableSelection ? (
@@ -2598,7 +2639,7 @@ export function WorkflowAutomationEnginePage() {
                                     >
                                       <button
                                         type="button"
-                                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 data-[open=true]:opacity-100"
+                                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 focus-visible:opacity-100 data-[open=true]:opacity-100"
                                         data-open={rowMenu?.id === item.id}
                                         aria-label={`Actions for ${item.name}`}
                                         onClick={(event) => {
@@ -2781,13 +2822,34 @@ export function WorkflowAutomationEnginePage() {
                       >
                         <ContextMenuItem
                           onSelect={() => {
-                            if (rowMenu) setBuilder({ open: true, workflowId: rowMenu.id })
+                            if (rowMenu) setBuilder({ open: true, workflowId: rowMenu.id, view: 'builder' })
                             setRowMenu(null)
                           }}
                         >
                           <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                           Open in Builder
                         </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (rowMenu) setBuilder({ open: true, workflowId: rowMenu.id, view: 'runs' })
+                            setRowMenu(null)
+                          }}
+                        >
+                          <Activity className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          View Runs &amp; Validation
+                        </ContextMenuItem>
+                        {rowMenuWorkflow?.status === 'Active' ? (
+                          <ContextMenuItem
+                            onSelect={() => {
+                              if (rowMenu) setBuilder({ open: true, workflowId: rowMenu.id, view: 'run' })
+                              setRowMenu(null)
+                            }}
+                          >
+                            <PlayCircle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            Run Workflow
+                          </ContextMenuItem>
+                        ) : null}
+                        <ContextMenuSeparator />
                         <ContextMenuItem
                           onSelect={() => {
                             if (rowMenu) duplicateWorkflow(rowMenu.id)
@@ -2797,10 +2859,33 @@ export function WorkflowAutomationEnginePage() {
                           <Copy className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                           Duplicate
                         </ContextMenuItem>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            if (rowMenu) copyWorkflowId(rowMenu.id)
+                            setRowMenu(null)
+                          }}
+                        >
+                          <Hash className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                          Copy Workflow ID
+                        </ContextMenuItem>
+                        {rowMenuWorkflow && ['Active', 'Paused'].includes(rowMenuWorkflow.status) ? (
+                          <ContextMenuItem
+                            disabled={workflowStatusBusyId !== null}
+                            onSelect={() => {
+                              if (rowMenuWorkflow) changeWorkflowStatus(rowMenuWorkflow.id, rowMenuWorkflow.status === 'Active' ? 'Paused' : 'Active')
+                              setRowMenu(null)
+                            }}
+                          >
+                            {rowMenuWorkflow.status === 'Active'
+                              ? <PauseCircle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              : <PlayCircle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />}
+                            {rowMenuWorkflow.status === 'Active' ? 'Pause' : 'Resume'}
+                          </ContextMenuItem>
+                        ) : null}
                         <ContextMenuSeparator />
                         <ContextMenuItem
                           onSelect={() => {
-                            if (rowMenu) deleteWorkflow(rowMenu.id)
+                            if (rowMenu) setDeleteTargetId(rowMenu.id)
                             setRowMenu(null)
                           }}
                         >
@@ -3453,6 +3538,7 @@ export function WorkflowAutomationEnginePage() {
       <WorkflowBuilderCanvas
         open={builder.open}
         workflowId={builder.workflowId}
+        initialView={builder.view}
         workspaceId={isAllWorkspacesSelection(workspaceId) ? null : workspaceId}
         workflowName={builder.workflowId ? workflows.find((item) => item.id === builder.workflowId)?.name ?? null : null}
         workspaceMembers={workflowOwnerOptions}
@@ -3461,6 +3547,19 @@ export function WorkflowAutomationEnginePage() {
           setBuilder({ open: true, workflowId: created.id })
         }}
         onClose={() => setBuilder({ open: false, workflowId: null })}
+      />
+      <EnterpriseDeleteConfirmModal
+        open={deleteTargetId !== null}
+        onClose={() => setDeleteTargetId(null)}
+        onConfirm={() => {
+          if (deleteTargetId) deleteWorkflow(deleteTargetId)
+          setDeleteTargetId(null)
+        }}
+        title="Delete workflow?"
+        description="This removes the workflow from the directory."
+        entityLabel="Workflow"
+        entityValue={workflows.find((item) => item.id === deleteTargetId)?.name ?? ''}
+        confirmLabel="Delete workflow"
       />
       {agentStudioOpen
         ? createPortal(

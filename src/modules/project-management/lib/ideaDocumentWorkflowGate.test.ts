@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { WorkflowApprovalDto, WorkflowGraph } from '@/lib/api/workflowAutomationApi'
 import {
   allowedDocumentKinds,
+  documentKindsAllowedByWorkflows,
   documentStagesFromGraph,
   templateAllowedByWorkflow,
   templateDocumentKind,

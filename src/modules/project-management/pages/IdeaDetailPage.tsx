@@ -213,12 +213,12 @@ import {
   type IdeaSummaryPersistent,
 } from '@/lib/api/ideaBacklogApi'
 import { useTenantContextOptional } from '@/auth/TenantContext'
-import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
+import { fetchIdentityUser, fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import { fetchWorkspaceOrgWorkspaceById } from '@/lib/api/workspaceOrgApi'
 import { resolveWorkspaceApiId } from '@/lib/tenantWorkspaceScope'
 import {
   loadIdeaDocumentWorkflowGate,
-  loadPublishedIdeaSectionVisibility,
+  loadPublishedIdeaSectionPolicy,
   templateAllowedByWorkflow,
   type IdeaDocumentWorkflowGate,
 } from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
@@ -247,6 +247,7 @@ import { IdeaReviewedSectionContent, ScoringNarrativeEcho } from '@/modules/proj
 import { IdeaScoringDraftEditor, PendingScoreProposalNote, usePendingScoreProposal } from '@/modules/project-management/components/IdeaScoringDraftEditor'
 import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-management/lib/reviewerDisplayName'
 import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
+import { IdeaApprovalBanner, useIdeaApprovalStatus } from '@/modules/project-management/components/IdeaApprovalBanner'
 import { docApprovalState, useIdeaDocApprovals } from '@/modules/project-management/lib/ideaDocApprovals'
 import { approveWorkflowRun, getWorkflowRun, listWorkflowApprovals, rejectWorkflowRun, retryFailedDocumentActions } from '@/lib/api/workflowAutomationApi'
 import { NOTIFICATIONS_UPDATED_EVENT } from '@/lib/chat/chatRealtimeEvents'
@@ -296,12 +297,15 @@ import { ManageActionControlListModal } from '@/modules/project-management/compo
 import {
   DEFAULT_IDEA_NAV_SECTIONS,
   getIdeaPanelCatalogEntry,
+  ideaDiagramAudienceFromLabels,
+  ideaMenuForWorkflowAudience,
   resolveIdeaNavSections,
-  visibleIdeaNavSections,
+  type IdeaDiagramAudience,
   type IdeaPanelKey,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
-import { useIdeaNavSectionsStore } from '@/modules/project-management/store/ideaNavSectionsStore'
+import { ideaAudienceMatches, sendUrdForBusinessReview, urdReviewSummaryText } from '@/modules/project-management/lib/urdReviewHeads'
+import { readPersistedIdeaNavTop, useIdeaNavSectionsStore } from '@/modules/project-management/store/ideaNavSectionsStore'
 import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 
 type IdeaStatus = 'New Submission' | 'Under Review' | 'Approved' | 'Rejected' | 'Converted to Project'
@@ -3753,6 +3757,7 @@ export function IdeaDetailPage() {
   const [ideaDocGenerateTemplateId, setIdeaDocGenerateTemplateId] = useState('')
   const [ideaDocGenerateSource, setIdeaDocGenerateSource] = useState('')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
+  const [urdSendBusy, setUrdSendBusy] = useState(false)
   const [ideaDocGenerateStepIndex, setIdeaDocGenerateStepIndex] = useState(0)
   const ideaDocGenerateTimerRef = useRef<number | null>(null)
   type IdeaDocFolderStackEntry = { id: string; name: string }
@@ -4588,33 +4593,98 @@ export function IdeaDetailPage() {
       setRightDrawerWidth(DEFAULT_RIGHT_DRAWER_WIDTH)
     }
   }, [setRightDrawerOpen, setRightDrawerWidth])
-  const [activePanel, setActivePanel] = useState<PanelKey>('summary')
+  const [activePanel, setActivePanel] = useState<PanelKey>(() => readPersistedIdeaNavTop(idea.id))
+  const [navStoreHydrated, setNavStoreHydrated] = useState(() => useIdeaNavSectionsStore.persist.hasHydrated())
+  const userChosePanelRef = useRef(false)
+  const appliedInitialPanelForIdea = useRef<string | null>(null)
   // Approvals live in Workflow Automation: the drawn flow decides who approves a document.
   const ideaDocApprovals = useIdeaDocApprovals(idea.id, activePanel === 'document')
   const reorderIdeaMenuSections = useIdeaNavSectionsStore((state) => state.reorderSections)
   const savedMenuSections = useIdeaNavSectionsStore((state) => state.sectionsByIdea[idea.id])
   const [workflowSectionVisibility, setWorkflowSectionVisibility] = useState<IdeaSectionVisibilityMap>({})
+  const [workflowRequestDocumentKinds, setWorkflowRequestDocumentKinds] = useState<string[]>([])
+  const ideaApprovalStatus = useIdeaApprovalStatus(idea.id, idea.workspace, ideaDocsReloadKey, () => {
+    void ideaDocApprovals.reload()
+    setIdeaDocsReloadKey((key) => key + 1)
+  })
+  const ideaWorkspaceLabels = useMemo(() => {
+    const option = userWorkspaceOptions.find((item) => item.workspaceId === idea.workspace || item.workspaceName === idea.workspace)
+    return [idea.workspace, option?.workspaceName, option?.slug]
+  }, [idea.workspace, userWorkspaceOptions])
   useEffect(() => {
+    if (isReviewerOptionsLoading) return
     let cancelled = false
-    void loadPublishedIdeaSectionVisibility(idea.workspace)
-      .then((map) => {
-        if (!cancelled) setWorkflowSectionVisibility(map)
+    void loadPublishedIdeaSectionPolicy(idea.workspace)
+      .then(async (policy) => {
+        if (cancelled) return
+        setWorkflowRequestDocumentKinds(policy.requestDocumentKinds)
+        if (policy.audience.values.length === 0) {
+          setWorkflowSectionVisibility(policy.map)
+          return
+        }
+        const user = currentUserId ? await fetchIdentityUser(currentUserId).catch(() => null) : null
+        const matches = ideaAudienceMatches({
+          user,
+          memberships: reviewerMemberships.filter((membership) => membership.subject_id === currentUserId),
+          workspaces: ideaWorkspaceLabels,
+          by: policy.audience.by,
+          values: policy.audience.values,
+        })
+        if (!cancelled) setWorkflowSectionVisibility(matches ? policy.map : {})
       })
       .catch(() => {
-        if (!cancelled) setWorkflowSectionVisibility({})
+        if (!cancelled) {
+          setWorkflowSectionVisibility({})
+          setWorkflowRequestDocumentKinds([])
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [idea.workspace])
+  }, [currentUserId, idea.workspace, ideaWorkspaceLabels, isReviewerOptionsLoading, reviewerMemberships])
+  const ideaDiagramAudience = useMemo<IdeaDiagramAudience>(() => {
+    if (!currentUserId) return 'none'
+    const labels = reviewerMemberships
+      .filter((membership) => membership.subject_id === currentUserId)
+      .flatMap((membership) => [
+        membership.role_code,
+        membership.role_display_name,
+        membership.operational_team_code,
+        membership.operational_team_display_name,
+        ...(membership.operational_teams ?? []).flatMap((team) => [team.team_code, team.display_name]),
+      ])
+    return ideaDiagramAudienceFromLabels(labels)
+  }, [currentUserId, reviewerMemberships])
+  const showTechnicalDiagrams = ideaDiagramAudience === 'architecture' || ideaDiagramAudience === 'both'
+  const showBpmnDiagrams = ideaDiagramAudience === 'business' || ideaDiagramAudience === 'both'
   const menuSections = useMemo(
-    () => visibleIdeaNavSections(savedMenuSections, workflowSectionVisibility),
-    [savedMenuSections, workflowSectionVisibility],
+    () => ideaMenuForWorkflowAudience(savedMenuSections, workflowSectionVisibility, ideaDiagramAudience),
+    [ideaDiagramAudience, savedMenuSections, workflowSectionVisibility],
   )
   useEffect(() => {
-    if (menuSections.includes(activePanel)) return
-    setActivePanel(menuSections[0] ?? 'summary')
-  }, [activePanel, menuSections])
+    userChosePanelRef.current = false
+    appliedInitialPanelForIdea.current = null
+  }, [idea.id])
+  useEffect(() => {
+    if (useIdeaNavSectionsStore.persist.hasHydrated()) {
+      setNavStoreHydrated(true)
+      return
+    }
+    return useIdeaNavSectionsStore.persist.onFinishHydration(() => setNavStoreHydrated(true))
+  }, [])
+  useEffect(() => {
+    const top = menuSections[0] ?? 'summary'
+    if (!navStoreHydrated) {
+      if (!menuSections.includes(activePanel)) setActivePanel(top)
+      return
+    }
+    if (userChosePanelRef.current || appliedInitialPanelForIdea.current === idea.id) {
+      if (!menuSections.includes(activePanel)) setActivePanel(top)
+      return
+    }
+    appliedInitialPanelForIdea.current = idea.id
+    if (activePanel !== top) setActivePanel(top)
+  }, [activePanel, idea.id, menuSections, navStoreHydrated])
   const [actionControlStore, setActionControlStore] = useState<IdeaActionControlStore>(() => (
     readActionControlStore(initialIdea.id)
   ))
@@ -7230,6 +7300,67 @@ export function IdeaDetailPage() {
     }
   }, [])
 
+  const sendUrdToHeads = useCallback(async () => {
+    if (urdSendBusy) return
+    setUrdSendBusy(true)
+    try {
+      const summary = urdReviewSummaryText([
+        runtimeSummary.executive_brief,
+        runtimeSummary.core_pressure,
+        runtimeSummary.strategic_response,
+        runtimeSummary.value_thesis,
+        runtimeSummary.board_note,
+      ]) || (idea.description || idea.title).trim()
+      const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+      const result = await sendUrdForBusinessReview({
+        ideaId: idea.id,
+        ideaTitle: idea.title,
+        summaryText: summary,
+        linkUrl,
+        createdBy: currentUserId || runtimeUserId || 'unknown',
+        workspaceId: idea.workspace,
+      })
+      if (result.notified.length === 0) {
+        addToast({
+          title: 'Reviewers were not found',
+          description: `Set the job title to ${result.missing.join(' and ')}.`,
+          variant: 'warning',
+        })
+        return
+      }
+      addToast({
+        title: 'URD sent for review',
+        description: result.mailErrors.length
+          ? `Notification sent to ${result.notified.join(' and ')}. Email: ${result.mailErrors.join('; ')}`
+          : `Email and notification sent to ${result.notified.join(' and ')}.`,
+        variant: result.mailErrors.length ? 'warning' : 'success',
+      })
+    } catch (error) {
+      addToast({
+        title: 'Could not send the URD review',
+        description: error instanceof Error ? error.message : '',
+        variant: 'error',
+      })
+    } finally {
+      setUrdSendBusy(false)
+    }
+  }, [
+    addToast,
+    currentUserId,
+    idea.description,
+    idea.id,
+    idea.title,
+    runtimeSummary.board_note,
+    runtimeSummary.core_pressure,
+    runtimeSummary.executive_brief,
+    runtimeSummary.strategic_response,
+    runtimeSummary.value_thesis,
+    runtimeUserId,
+    tenant?.workspaceId,
+    tenant?.workspaceSlug,
+    urdSendBusy,
+  ])
+
   const openIdeaDocContextMenu = useCallback((event: { clientX: number; clientY: number }, item: RepositoryItem) => {
     const menuWidth = 224
     const menuHeight = 260
@@ -7891,6 +8022,8 @@ export function IdeaDetailPage() {
   }
 
   const navigateToPanel = (panel: PanelKey) => {
+    userChosePanelRef.current = true
+    appliedInitialPanelForIdea.current = idea.id
     setActivePanel(panel)
     setCollapsed((prev) => ({ ...prev, [panel]: true }))
     const target = document.getElementById(`panel-${panel}`)
@@ -11673,6 +11806,11 @@ export function IdeaDetailPage() {
                   </Badge>
                 ))}
               </div>
+              <IdeaApprovalBanner
+                status={ideaApprovalStatus}
+                currentUserId={currentUserId}
+                nameOf={resolveIdentityDisplayName}
+              />
               <IdeaTitleEditor
                 ideaId={idea.id}
                 title={idea.title}
@@ -13049,13 +13187,17 @@ export function IdeaDetailPage() {
                     </div>
                   </div>
                   <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">
-                    C4, Class, ERD, AS-IS, dan TO-BE terakhir yang sudah dikonfirmasi saat brainstorming.
+                    {showTechnicalDiagrams && showBpmnDiagrams
+                      ? 'C4, Sequence, ERD, Class, ArchiMate, dan BPMN.'
+                      : showTechnicalDiagrams
+                        ? 'C4, Sequence, ERD, Class, dan ArchiMate.'
+                        : 'Diagram proses BPMN untuk Business Relationship dan Business Partner.'}
                   </p>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
-              {isIntegrationRefreshing || !integrationLoaded || (integrationBootstrapRecord?.nodes.length ?? 0) > 0 ? (
+              {(showTechnicalDiagrams && (isIntegrationRefreshing || !integrationLoaded || (integrationBootstrapRecord?.nodes.length ?? 0) > 0)) ? (
               <div className="order-5 flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -13122,7 +13264,7 @@ export function IdeaDetailPage() {
               </div>
               ) : null}
 
-              {validatedTechnicalDiagrams.map((diagram) => {
+              {(showTechnicalDiagrams ? validatedTechnicalDiagrams : []).map((diagram) => {
                 const isBrainstormC4 = diagram.kind === 'c4'
                 const canvasFormat = diagram.kind === 'c4'
                   ? 'c4'
@@ -13139,12 +13281,16 @@ export function IdeaDetailPage() {
                     ? 'brainstorm-class'
                     : diagram.kind === 'erd'
                       ? 'brainstorm-erd'
-                      : brainstormProcessPersistKey(diagram.label, 0)
+                      : diagram.kind === 'sequence'
+                        ? 'brainstorm-sequence'
+                        : brainstormProcessPersistKey(diagram.label, 0)
                 const technicalMeta = diagram.kind === 'c4'
                   ? { icon: Layers, description: 'Gambaran sistem (C4) terakhir yang sudah dikonfirmasi saat brainstorming.' }
                   : diagram.kind === 'class'
                     ? { icon: Boxes, description: 'Class diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
-                    : { icon: Database, description: 'ERD terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                    : diagram.kind === 'sequence'
+                      ? { icon: Workflow, description: 'Sequence diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                      : { icon: Database, description: 'ERD terakhir yang sudah dikonfirmasi saat brainstorming.' }
                 return (
                   <DiagramGalleryCard
                     key={technicalKey}
@@ -13167,7 +13313,7 @@ export function IdeaDetailPage() {
                 )
               })}
 
-              {brainstormProcessDiagrams.length > 0 ? (
+              {showBpmnDiagrams && brainstormProcessDiagrams.length > 0 ? (
                 brainstormProcessDiagrams.map((diagram, index) => {
                   const processKey = brainstormProcessPersistKey(diagram.label, index)
                   const savedGraph = brainstormCanvasByKey[processKey]
@@ -13195,7 +13341,7 @@ export function IdeaDetailPage() {
                   />
                   )
                 })
-              ) : validatedTechnicalDiagrams.length === 0 ? (
+              ) : showBpmnDiagrams && brainstormProcessDiagrams.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-border/50 bg-white/60 p-6 text-center">
                   <Workflow className="h-5 w-5 text-muted-foreground" aria-hidden />
                   <p className="text-xs font-semibold text-slate-600">AS-IS dan TO-BE belum ada</p>
@@ -13205,7 +13351,7 @@ export function IdeaDetailPage() {
                 </div>
               ) : null}
 
-              {(regenerating.c4Level1 || Boolean(c4Level1Analysis.plantumlSource?.trim()) || (c4Level1Analysis.canvasGraph?.nodes.length ?? 0) > 0) ? (
+              {(showTechnicalDiagrams && (regenerating.c4Level1 || Boolean(c4Level1Analysis.plantumlSource?.trim()) || (c4Level1Analysis.canvasGraph?.nodes.length ?? 0) > 0)) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-1"
@@ -13231,7 +13377,7 @@ export function IdeaDetailPage() {
                 className="order-1"
               />
               ) : null}
-              {(regenerating.c4Level2 || Boolean(c4Level2Analysis.plantumlSource?.trim()) || (c4Level2Analysis.canvasGraph?.nodes.length ?? 0) > 0) ? (
+              {(showTechnicalDiagrams && (regenerating.c4Level2 || Boolean(c4Level2Analysis.plantumlSource?.trim()) || (c4Level2Analysis.canvasGraph?.nodes.length ?? 0) > 0)) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-2"
@@ -13255,7 +13401,7 @@ export function IdeaDetailPage() {
                 className="order-2"
               />
               ) : null}
-              {(regenerating.bpmnHigh || Boolean(bpmnHighAnalysis.bpmnXml?.trim()) || Boolean(bpmnHighAnalysis.renderedPngBase64) || (bpmnHighAnalysis.canvasGraph?.nodes.length ?? 0) > 0) ? (
+              {(showBpmnDiagrams && (regenerating.bpmnHigh || Boolean(bpmnHighAnalysis.bpmnXml?.trim()) || Boolean(bpmnHighAnalysis.renderedPngBase64) || (bpmnHighAnalysis.canvasGraph?.nodes.length ?? 0) > 0)) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="bpmn-high-level"
@@ -13276,7 +13422,7 @@ export function IdeaDetailPage() {
               />
               ) : null}
 
-              {bpmnHighAnalysis.subProcesses.map((task: ProcessSubTask) => {
+              {(showBpmnDiagrams ? bpmnHighAnalysis.subProcesses : []).map((task: ProcessSubTask) => {
                   const detail = processDetailsByKey[task.key]
                   const hasDetail = Boolean(
                     detail?.analysis.renderedPngBase64
@@ -14587,6 +14733,22 @@ export function IdeaDetailPage() {
                         </button>
                       </>
                     ) : null}
+                    {showBpmnDiagrams ? (
+                      <button
+                        type="button"
+                        className={enterpriseSecondaryButtonClass()}
+                        title="Send the URD to Head of Business Project & Research and Head of Business Project Management Office"
+                        disabled={urdSendBusy}
+                        onClick={() => void sendUrdToHeads()}
+                      >
+                        {urdSendBusy ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        Send to Head of Business Project &amp; Research and Head of PMO
+                      </button>
+                    ) : null}
                   </div>
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {ideaDocsTotalCount > 0 ? (
@@ -14765,6 +14927,31 @@ export function IdeaDetailPage() {
                                   if (document) setIdeaDocHistoryTarget(document)
                                 }}
                                 onRowContextMenu={(event, item) => openIdeaDocContextMenu(event, item)}
+                                rowAction={(item) => {
+                                  const label = `${item.name} ${item.displayName ?? ''} ${item.type}`
+                                  const matchesRequestedDocument = workflowRequestDocumentKinds.some((kind) => (
+                                    new RegExp(`\\b${kind}\\b`, 'i').test(label)
+                                  ))
+                                  if (!matchesRequestedDocument || !isIdeaCreator || !ideaApprovalStatus.awaitingRequest) return null
+                                  return (
+                                    <div className="mt-2">
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        className="h-7 text-xs"
+                                        disabled={ideaApprovalStatus.busy}
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          void ideaApprovalStatus.request()
+                                        }}
+                                      >
+                                        {ideaApprovalStatus.busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                                        Request for Approval
+                                      </Button>
+                                      {ideaApprovalStatus.error ? <p className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
+                                    </div>
+                                  )
+                                }}
                               />
                             </div>
                           ) : null}

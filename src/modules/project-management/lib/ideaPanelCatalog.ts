@@ -84,3 +84,32 @@ export function visibleIdeaNavSections(
   const visible = resolveIdeaNavSections(saved).filter((key) => !hidden.has(key))
   return visible.length > 0 ? visible : ['summary']
 }
+
+export type IdeaDiagramAudience = 'architecture' | 'business' | 'both' | 'none'
+
+/** Architecture sees technical diagrams. Business Relationship / Business Partner sees BPMN. */
+export function ideaDiagramAudienceFromLabels(labels: Array<string | null | undefined>): IdeaDiagramAudience {
+  const architecture = labels.some((label) => /architecture|arsitektur/i.test(label ?? ''))
+  const business = labels.some((label) => /business\s*relationship|business\s*partner|business\s*relation/i.test(label ?? ''))
+  if (architecture && business) return 'both'
+  if (architecture) return 'architecture'
+  if (business) return 'business'
+  return 'none'
+}
+
+/**
+ * A published section map means the Idea document workflow is in force:
+ * everyone sees Docs, and Diagrams returns only for Architecture or Business Relationship / Partner.
+ */
+export function ideaMenuForWorkflowAudience(
+  saved: IdeaPanelKey[] | undefined,
+  visibility: IdeaSectionVisibilityMap | undefined,
+  audience: IdeaDiagramAudience,
+): IdeaPanelKey[] {
+  const governed = Object.values(visibility ?? {}).some((value) => value === 'show' || value === 'hide')
+  if (!governed) return visibleIdeaNavSections(saved, visibility)
+  const next: IdeaPanelKey[] = []
+  if (audience !== 'none') next.push('diagrams')
+  next.push('document')
+  return next
+}

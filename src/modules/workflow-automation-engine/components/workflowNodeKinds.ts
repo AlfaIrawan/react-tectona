@@ -43,7 +43,7 @@ export type WorkflowNodeData = {
   _issue?: 'error' | 'warning'
 }
 
-export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'approvalTarget' | 'approvalMembers' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
+export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'approvalTarget' | 'approvalMembers' | 'emailRecipients' | 'emailBody' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
 
 export type WorkflowFieldDef = {
   key: string
@@ -202,7 +202,7 @@ export const WORKFLOW_ACTION_CATALOG = {
     Compliance: ['Create Exception', 'Request Evidence', 'Escalate'],
   },
   'Document & Knowledge': {
-    Document: ['Set Status', 'Upload', 'Update Metadata', 'Publish Version', 'Archive'],
+    Document: ['Set Status', 'Upload', 'Request for Approval', 'Update Metadata', 'Publish Version', 'Archive'],
     'Knowledge Article': ['Create', 'Update', 'Publish', 'Request Review'],
     'Meeting Note': ['Create', 'Add Decision', 'Create Follow-up'],
     'Artifact Link': ['Link', 'Unlink', 'Update Target'],
@@ -343,18 +343,25 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     icon: ShieldCheck,
     accent: '#f97316',
     chipClass: 'bg-orange-50 text-orange-600 ring-orange-100',
-    // The gate names a ROLE (one accountability) or an operational TEAM (a group of
-    // people) -- never a person, so the flow survives people changing jobs. Who holds a
-    // role is workspace data shared by every node; the `approvalTarget` control edits it
-    // in place and says so. `approver` stays for a one-off named approver.
+    // Approvers use the same badge list as email recipients: name, job title,
+    // department, team, or role. Older nodes still store approverRole / approverTeam.
     fields: [
       { key: 'approverRole', label: 'Approver', type: 'approvalTarget' },
       { key: 'approver', label: 'Named approver (optional)', type: 'approvalMembers' },
       { key: 'quorum', label: 'When there are several', type: 'select', options: ['all', 'any'] },
       { key: 'allowSelfApproval', label: 'Requester may approve', type: 'select', options: ['no', 'yes'] },
       { key: 'subjectLabel', label: 'What is being approved', type: 'text', placeholder: 'e.g. URD {{idea_title}}' },
+      { key: 'jobTitles', label: 'Email recipients', type: 'emailRecipients' },
+      { key: 'emailBodySource', label: 'Email content', type: 'emailBody' },
     ],
-    defaultConfig: { approverRole: '', approverTeam: '', approver: '', quorum: 'all', allowSelfApproval: 'no', subjectLabel: '' },
+    defaultConfig: {
+      approverRole: '',
+      approverTeam: '',
+      approver: '',
+      quorum: 'all',
+      allowSelfApproval: 'no',
+      subjectLabel: '',
+    },
   },
   assignOwner: {
     kind: 'assignOwner',
@@ -460,14 +467,20 @@ export function workflowNodeSummary(data: WorkflowNodeData): string {
       if (c.triggerType === 'Webhook') return `${c.triggerType} · ${c.webhookEvent || 'Select source'}`
       return 'Manual trigger'
     case 'action':
+      if (c.actionOperation === 'Request for Approval') {
+        const kind = (c.parameter || '').trim()
+        return kind ? `Waits for the idea owner · ${kind}` : 'Waits for the idea owner'
+      }
       if (c.actionDomain && c.actionEntity && c.actionOperation) return `${c.actionDomain} · ${c.actionEntity} · ${c.actionOperation}`
       return c.target ? `${c.actionType} → ${ACTION_TARGET_LABELS[c.target] ?? c.target}` : c.actionType || 'Configure action'
     case 'ifElse':
       return c.field && c.operator && c.value
         ? `${c.field} ${c.operator} ${c.value}`
         : c.condition || 'Set a condition'
-    case 'approval':
-      return c.approver ? `Approver: ${c.approver}` : 'Assign an approver'
+    case 'approval': {
+      const who = (c.approverValues || c.approverTeam || c.approverRole || c.approver || '').split('\n').filter(Boolean)[0]
+      return who ? who : 'Assign an approver'
+    }
     case 'assignOwner':
       return c.ownerId ? `Assign to ${c.ownerId}` : 'Select a workspace member'
     case 'aiProcess':

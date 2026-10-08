@@ -54,7 +54,19 @@ export type WorkflowSummaryDto = {
 /** Full record returned by GET /workflows/{id} (includes `definition`). */
 export type WorkflowDto = WorkflowSummaryDto & {
   definition: WorkflowGraph
+  /** Newest published snapshot. The draft in `definition` is what the builder edits. */
+  published_definition?: WorkflowGraph | null
   created_date: string
+}
+
+export type WorkflowVersionDto = {
+  id: string
+  workflow_id: string
+  version: number
+  name: string
+  created_by: string
+  created_date: string
+  definition?: WorkflowGraph
 }
 
 export type WorkflowCreateInput = {
@@ -146,6 +158,16 @@ export async function publishWorkflowApi(id: string): Promise<WorkflowDto> {
   return readJson<WorkflowDto>(res)
 }
 
+export async function listWorkflowVersions(id: string): Promise<WorkflowVersionDto[]> {
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/versions`, { headers: defaultHeaders() })
+  return readJson<WorkflowVersionDto[]>(res)
+}
+
+export async function getWorkflowVersion(id: string, version: number): Promise<WorkflowVersionDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/versions/${version}`, { headers: defaultHeaders() })
+  return readJson<WorkflowVersionDto>(res)
+}
+
 export async function dispatchWorkflowEvent(body: {
   event_type: string
   domain?: string
@@ -217,7 +239,7 @@ export type WorkflowRunDto = WorkflowRunSummaryDto & {
   parallel_branches: WorkflowParallelBranchDto[]
 }
 
-export async function runWorkflow(id: string, body?: { trigger_type?: string; context?: Record<string, unknown>; start_node_id?: string }): Promise<WorkflowRunDto> {
+export async function runWorkflow(id: string, body?: { trigger_type?: string; context?: Record<string, unknown>; start_node_id?: string; use_draft?: boolean }): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/run`, {
     method: 'POST',
     headers: defaultHeaders(),
@@ -253,11 +275,46 @@ export async function approveWorkflowRun(runId: string, note?: string): Promise<
   return readJson<WorkflowRunDto>(res)
 }
 
-export async function rejectWorkflowRun(runId: string, note?: string): Promise<WorkflowRunDto> {
+export async function rejectWorkflowRun(runId: string, note?: string, outcome?: 'reject' | 'revision'): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/reject`, {
     method: 'POST',
     headers: defaultHeaders(),
-    body: JSON.stringify({ note: note ?? null }),
+    body: JSON.stringify({ note: note ?? null, outcome: outcome ?? 'revision' }),
+  })
+  return readJson<WorkflowRunDto>(res)
+}
+
+export type IdeaWorkflowRunDto = {
+  id: string
+  workflow_id: string
+  status: string
+  current_node_id?: string | null
+  approval_request_pending: boolean
+  approval_requested?: boolean
+  approval_decision?: string | null
+  decision_note?: string | null
+  approver_labels: string[]
+  requested_by?: string | null
+}
+
+export async function listIdeaWorkflowRuns(ideaId: string): Promise<IdeaWorkflowRunDto[]> {
+  const res = await apiFetch(`${BASE_URL}/v1/runs?idea_id=${encodeURIComponent(ideaId)}`, { headers: defaultHeaders() })
+  return readJson<IdeaWorkflowRunDto[]>(res)
+}
+
+export async function requestIdeaApproval(ideaId: string, workspaceId?: string | null): Promise<WorkflowRunDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/request-approval`, {
+    method: 'POST',
+    headers: defaultHeaders(),
+    body: JSON.stringify({ workspace_id: workspaceId ?? null }),
+  })
+  return readJson<WorkflowRunDto>(res)
+}
+
+export async function requestWorkflowApproval(runId: string): Promise<WorkflowRunDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/request-approval`, {
+    method: 'POST',
+    headers: defaultHeaders(),
   })
   return readJson<WorkflowRunDto>(res)
 }

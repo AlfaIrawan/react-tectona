@@ -31,11 +31,12 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectItem } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useTenantContextOptional } from '@/auth/TenantContext'
-import { isAllWorkspacesSelection, readStoredTenantSelection } from '@/lib/tenantWorkspaceScope'
 import { useToast } from '@/components/ui/toast'
+import { isAllWorkspacesSelection, readStoredTenantSelection } from '@/lib/tenantWorkspaceScope'
 import { cn } from '@/lib/utils'
-import { ApprovalTargetField } from '@/modules/workflow-automation-engine/components/ApprovalTargetField'
-import { ApprovalNamedApproverField } from '@/modules/workflow-automation-engine/components/ApprovalNamedApproverField'
+import { DocumentTemplateKindField } from '@/modules/workflow-automation-engine/components/DocumentTemplateKindField'
+import { EmailBodyField } from '@/modules/workflow-automation-engine/components/EmailBodyField'
+import { EmailRecipientsField } from '@/modules/workflow-automation-engine/components/EmailRecipientsField'
 import { WorkflowConnectionPreview } from '@/modules/workflow-automation-engine/components/WorkflowConnectionPreview'
 import { WorkflowCanvasActionsProvider, type WorkflowWaypoint } from '@/modules/workflow-automation-engine/components/workflowCanvasActions'
 import { WorkflowBuilderNode } from '@/modules/workflow-automation-engine/components/workflowBuilderNodes'
@@ -63,8 +64,10 @@ import {
   createWorkflow as createWorkflowApi,
   getWorkflow,
   getWorkflowRun,
+  getWorkflowVersion,
   listWorkflowApprovalRoles,
   listWorkflowRuns,
+  listWorkflowVersions,
   publishWorkflowApi,
   rejectWorkflowRun,
   runWorkflow,
@@ -76,6 +79,7 @@ import {
   type WorkflowGraph,
   type WorkflowCreateInput,
   type WorkflowDto,
+  type WorkflowVersionDto,
   type WorkflowApprovalRoleDto,
 } from '@/lib/api/workflowAutomationApi'
 import {
@@ -143,6 +147,7 @@ type CanvasMenuState = { kind: 'node' | 'edge' | 'pane'; x: number; y: number; t
 type WorkflowBuilderCanvasProps = {
   open: boolean
   workflowId: string | null
+  initialView?: 'builder' | 'runs' | 'run'
   /**
    * Workspace the new workflow belongs to. An approval workflow drawn in the ORGANISATION
    * workspace governs every workspace under it; without this a saved workflow is global.
@@ -431,18 +436,43 @@ function normalizeTriggerNode(node: Node<WorkflowNodeData>): Node<WorkflowNodeDa
   return { ...node, data: { ...node.data, config: { ...config, triggerDomain: domain, triggerEntity: entity, triggerEvent: event } } }
 }
 
+function withoutApprovalConfig(config: Record<string, string>): Record<string, string> {
+  const next = { ...config }
+  for (const key of [
+    'approverBy',
+    'approverValues',
+    'approverRole',
+    'approverTeam',
+    'approver',
+    'jobTitles',
+    'job_titles',
+    'emailRecipients',
+    'emailRecipientBy',
+    'emailBodySource',
+    'emailBodySections',
+    'emailBodyText',
+    'emailIncludeCover',
+    'emailDocumentKind',
+    'quorum',
+    'allowSelfApproval',
+    'subjectLabel',
+  ]) delete next[key]
+  return next
+}
+
 function normalizeActionConfig(config: Record<string, string>): Record<string, string> {
   const actionType = config.actionType ?? ''
   const target = config.target ?? ''
-  if (actionType === 'Notify') return { ...config, actionDomain: 'Notifications & Alerts', actionEntity: 'Notification', actionOperation: 'Send' }
-  if (actionType === 'HTTP Request') return { ...config, actionDomain: 'Integration & API', actionEntity: 'API', actionOperation: 'Send Request' }
-  if (actionType === 'Create Task') return { ...config, actionDomain: 'Project Management', actionEntity: 'Task', actionOperation: 'Create' }
-  if (actionType === 'Update Record' && target.includes('milestone')) return { ...config, actionDomain: 'Project Management', actionEntity: 'Milestone', actionOperation: 'Update' }
-  if (actionType === 'Update Record' && target.includes('dependency')) return { ...config, actionDomain: 'Project Management', actionEntity: 'Dependency', actionOperation: 'Update' }
-  if (actionType === 'Update Record' && target.includes('capacity')) return { ...config, actionDomain: 'Resource Management', actionEntity: 'Capacity', actionOperation: 'Rebalance' }
-  if (actionType === 'Update Record') return { ...config, actionDomain: 'Project Management', actionEntity: 'Task', actionOperation: 'Update' }
-  if (actionType === 'Custom Script') return { ...config, actionDomain: 'Integration & API', actionEntity: 'External System', actionOperation: 'Start Sync' }
-  return { ...config, actionDomain: config.actionDomain || 'Project Management', actionEntity: config.actionEntity || 'Task', actionOperation: config.actionOperation || 'Update' }
+  const base = withoutApprovalConfig(config)
+  if (actionType === 'Notify') return { ...base, actionDomain: 'Notifications & Alerts', actionEntity: 'Notification', actionOperation: 'Send' }
+  if (actionType === 'HTTP Request') return { ...base, actionDomain: 'Integration & API', actionEntity: 'API', actionOperation: 'Send Request' }
+  if (actionType === 'Create Task') return { ...base, actionDomain: 'Project Management', actionEntity: 'Task', actionOperation: 'Create' }
+  if (actionType === 'Update Record' && target.includes('milestone')) return { ...base, actionDomain: 'Project Management', actionEntity: 'Milestone', actionOperation: 'Update' }
+  if (actionType === 'Update Record' && target.includes('dependency')) return { ...base, actionDomain: 'Project Management', actionEntity: 'Dependency', actionOperation: 'Update' }
+  if (actionType === 'Update Record' && target.includes('capacity')) return { ...base, actionDomain: 'Resource Management', actionEntity: 'Capacity', actionOperation: 'Rebalance' }
+  if (actionType === 'Update Record') return { ...base, actionDomain: 'Project Management', actionEntity: 'Task', actionOperation: 'Update' }
+  if (actionType === 'Custom Script') return { ...base, actionDomain: 'Integration & API', actionEntity: 'External System', actionOperation: 'Start Sync' }
+  return { ...base, actionDomain: base.actionDomain || 'Project Management', actionEntity: base.actionEntity || 'Task', actionOperation: base.actionOperation || 'Update' }
 }
 
 function normalizeActionNode(node: Node<WorkflowNodeData>): Node<WorkflowNodeData> {
@@ -551,12 +581,13 @@ function validateWorkflowGraph(
       if (!hasStructuredCondition && !config.condition?.trim()) issues.push({ level: 'error', nodeId: n.id, message: `"${label}" has an empty condition.` })
     }
     if (kind === 'approval') {
+      const badges = config.approverValues?.trim()
       const role = config.approverRole?.trim()
       const team = config.approverTeam?.trim()
       const named = config.approver?.trim()
-      if (!role && !team && !named) {
-        issues.push({ level: 'error', nodeId: n.id, message: `"${label}" has no approver: pick a role, a team or a named approver.` })
-      } else if (role && rolesWithHolders && !rolesWithHolders.has(role)) {
+      if (!badges && !role && !team && !named) {
+        issues.push({ level: 'error', nodeId: n.id, message: `"${label}" has no approver: add at least one badge.` })
+      } else if (!badges && role && !team && rolesWithHolders && !rolesWithHolders.has(role)) {
         // The engine fails closed on an unheld role, so this must be visible while
         // designing rather than discovered when a real document is already in review.
         issues.push({ level: 'error', nodeId: n.id, message: `No one holds the role "${role}" — "${label}" would fail every run.` })
@@ -576,7 +607,8 @@ function validateWorkflowGraph(
     }
     if (kind === 'assignOwner' && !config.ownerId?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no workspace member assigned.` })
     if (kind === 'aiProcess' && !config.prompt?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has an empty AI prompt.` })
-    if (kind === 'action' && !config.target?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no target set.` })
+    const catalogAction = Boolean(config.actionDomain?.trim() && config.actionEntity?.trim() && (config.actionOperation?.trim() || config.actionType?.trim()))
+    if (kind === 'action' && !catalogAction && !config.target?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no target set.` })
     if (kind === 'action' && (!config.actionDomain?.trim() || !config.actionEntity?.trim() || (!config.actionOperation?.trim() && !config.actionType?.trim()))) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" needs a module, entity, and operation.` })
     if (kind === 'action') {
       const propertyControls = actionPropertyControls(config)
@@ -893,6 +925,22 @@ function stepStatusDotClass(status: WorkflowRunStepStatus): string {
   return 'bg-slate-300'
 }
 
+function showsReviewEmailSettings(node: { data: { kind: string; config: Record<string, string> } }): boolean {
+  if (node.data.kind !== 'approval') return false
+  const config = node.data.config as Record<string, unknown>
+  const titles = config.jobTitles ?? config.job_titles ?? config.emailRecipients
+  const hasTitles = Array.isArray(titles) ? titles.length > 0 : Boolean(String(titles ?? '').trim())
+  return hasTitles || Boolean(config.emailBodySource) || Boolean(config.emailRecipientBy)
+}
+
+function showsIdeaSectionSettings(node: { data: { kind: string; config: Record<string, string> } }): boolean {
+  const config = node.data.config
+  return node.data.kind === 'trigger'
+    && config.triggerType === 'Event'
+    && config.triggerDomain === 'AI Idea & Prioritization'
+    && config.triggerEntity === 'Idea'
+}
+
 function IdeaSectionVisibilityEditor({
   value,
   onChange,
@@ -905,6 +953,7 @@ function IdeaSectionVisibilityEditor({
       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Idea sections</p>
       <p className="mt-1 text-xs leading-relaxed text-slate-500">
         Show or hide each section on Idea Detail. A published Active workflow applies this to its workspace.
+        Diagrams stays hidden here: Architecture still sees C4, Sequence, ERD, Class, and ArchiMate, and Business Relationship or Business Partner still sees BPMN.
       </p>
       <ul className="mt-3 space-y-1">
         {IDEA_PANEL_CATALOG.map((entry) => {
@@ -943,6 +992,7 @@ function stepStatusTextClass(status: WorkflowRunStepStatus): string {
 
 function WorkflowBuilderCanvasInner({
   workflowId,
+  initialView = 'builder',
   workspaceId,
   workflowName,
   workspaceMembers = [],
@@ -1003,15 +1053,23 @@ function WorkflowBuilderCanvasInner({
   const edgesRef = useRef(edges)
   const resizeStartRef = useRef(new Map<string, NodeFrame>())
   const savedRevisionRef = useRef<string | null>(null)
+  // Autosave writes the graph, but Save Draft stays enabled until the user saves
+  // that revision themselves.
+  const explicitRevisionRef = useRef<string | null>(null)
+  const [publishedRevision, setPublishedRevision] = useState<string | null>(null)
+  const [publishedVersion, setPublishedVersion] = useState<number | null>(null)
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [versionRows, setVersionRows] = useState<WorkflowVersionDto[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
   const [autosaveReady, setAutosaveReady] = useState(!workflowId)
   const [draftSaveState, setDraftSaveState] = useState<'saved' | 'unsaved' | 'saving'>(workflowId ? 'saved' : 'unsaved')
   const [name, setName] = useState(initial.name)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const [tab, setTab] = useState<'builder' | 'debug'>('builder')
+  const [tab, setTab] = useState<'builder' | 'debug'>(initialView === 'builder' ? 'builder' : 'debug')
   const [runs, setRuns] = useState<WorkflowRunSummaryDto[]>([])
   const [activeRun, setActiveRun] = useState<WorkflowRunDto | null>(null)
   const [isRunning, setIsRunning] = useState(false)
-  const [runContextText, setRunContextText] = useState('{\n  "amount": 600000000\n}')
+  const [runContextText, setRunContextText] = useState(initialView === 'run' ? '{}' : '{\n  "amount": 600000000\n}')
   const [contextMenu, setContextMenu] = useState<CanvasMenuState | null>(null)
 
   const closeContextMenu = useCallback(() => setContextMenu(null), [])
@@ -1037,7 +1095,7 @@ function WorkflowBuilderCanvasInner({
   useEffect(() => {
     latestRevisionRef.current = currentRevision
     if (!autosaveReady) return
-    setDraftSaveState(currentRevision === savedRevisionRef.current ? 'saved' : 'unsaved')
+    setDraftSaveState(currentRevision === explicitRevisionRef.current ? 'saved' : 'unsaved')
   }, [autosaveReady, currentRevision])
 
   const onWorkflowNodesChange = useCallback((changes: NodeChange[]) => {
@@ -1214,9 +1272,38 @@ function WorkflowBuilderCanvasInner({
     )))
   }, [setEdges])
 
+  const clickedNodeIdRef = useRef<string | null>(null)
+
+  const focusNode = useCallback((nodeId: string | null) => {
+    clickedNodeIdRef.current = nodeId
+    setSelectedNodeId(nodeId)
+    setNodes((current) => current.map((node) => {
+      const selected = nodeId != null && node.id === nodeId
+      return node.selected === selected ? node : { ...node, selected }
+    }))
+  }, [setNodes])
+
   const handleSelectionChange = useCallback<OnSelectionChangeFunc>(({ nodes: selectedNodes }) => {
-    setSelectedNodeId(selectedNodes[0]?.id ?? null)
+    const clickedId = clickedNodeIdRef.current
+    if (clickedId && selectedNodes.some((node) => node.id === clickedId)) {
+      setSelectedNodeId(clickedId)
+      return
+    }
+    if (clickedId) {
+      setSelectedNodeId(clickedId)
+      return
+    }
+    setSelectedNodeId(selectedNodes.length === 1 ? selectedNodes[0].id : null)
   }, [])
+
+  const handleNodeClick = useCallback<NodeMouseHandler>((_event, node) => {
+    focusNode(node.id)
+    window.requestAnimationFrame(() => focusNode(node.id))
+  }, [focusNode])
+
+  const handlePaneClick = useCallback(() => {
+    focusNode(null)
+  }, [focusNode])
 
   const addNode = useCallback(
     (kind: WorkflowNodeKind, position?: { x: number; y: number }) => {
@@ -1339,15 +1426,10 @@ function WorkflowBuilderCanvasInner({
   useEffect(() => {
     if (!workflowId || !autosaveReady) return
     const revision = currentRevision
-    if (revision === savedRevisionRef.current) {
-      setDraftSaveState('saved')
-      return
-    }
-    setDraftSaveState('unsaved')
+    if (revision === savedRevisionRef.current) return
 
     const timeout = window.setTimeout(() => {
       if (revision === savedRevisionRef.current) return
-      setDraftSaveState('saving')
       persist()
       updateWorkflow(workflowId, {
         name,
@@ -1356,11 +1438,9 @@ function WorkflowBuilderCanvasInner({
         })
         .then(() => {
           savedRevisionRef.current = revision
-          setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
         })
         .catch(() => {
           // The local copy written above remains the recovery path while offline.
-          if (latestRevisionRef.current === revision) setDraftSaveState('unsaved')
         })
     }, 700)
 
@@ -1383,6 +1463,7 @@ function WorkflowBuilderCanvasInner({
         .then((created) => {
           const revision = workflowRevision(name, nodes, edges, ideaSections)
           savedRevisionRef.current = revision
+          explicitRevisionRef.current = revision
           setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
           onWorkflowCreated?.(created)
           addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved to backend.` })
@@ -1401,6 +1482,7 @@ function WorkflowBuilderCanvasInner({
       .then(() => {
         const revision = workflowRevision(name, nodes, edges, ideaSections)
         savedRevisionRef.current = revision
+        explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
         addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved.` })
       })
@@ -1422,9 +1504,59 @@ function WorkflowBuilderCanvasInner({
     }
     updateWorkflow(workflowId, { name, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
       .then(() => publishWorkflowApi(workflowId))
-      .then(() => addToast({ variant: 'success', title: 'Workflow published', description: `${name} published.` }))
+      .then((published) => {
+        const revision = workflowRevision(name, nodes, edges, ideaSections)
+        savedRevisionRef.current = revision
+        explicitRevisionRef.current = revision
+        setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
+        setPublishedRevision(revision)
+        setPublishedVersion(published.version)
+        addToast({ variant: 'success', title: 'Workflow published', description: `${name} published as v${published.version}.` })
+      })
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
   }, [addToast, edges, ideaSections, name, nodes, persist, workflowId])
+
+  const openVersions = useCallback(() => {
+    setVersionsOpen((open) => {
+      const next = !open
+      if (next && workflowId) {
+        setVersionsLoading(true)
+        listWorkflowVersions(workflowId)
+          .then(setVersionRows)
+          .catch(() => setVersionRows([]))
+          .finally(() => setVersionsLoading(false))
+      }
+      return next
+    })
+  }, [workflowId])
+
+  const restoreVersion = useCallback((version: number) => {
+    if (!workflowId) return
+    getWorkflowVersion(workflowId, version)
+      .then((row) => {
+        const def = row.definition
+        if (!def || !Array.isArray(def.nodes) || def.nodes.length === 0) return
+        const loadedNodes = (def.nodes as Node<WorkflowNodeData>[]).map((node) => {
+          const sized = withWorkflowNodeSize(node)
+          if (sized.data?.kind !== 'action') return sized
+          return { ...sized, data: { ...sized.data, config: withoutApprovalConfig(sized.data.config ?? {}) } }
+        })
+        const loadedEdges = (Array.isArray(def.edges) ? def.edges : []) as Edge[]
+        const loadedSections = readIdeaSectionVisibility(def.ideaSections)
+        setNodes(loadedNodes)
+        setEdges(loadedEdges)
+        setIdeaSections(loadedSections)
+        setVersionsOpen(false)
+        addToast({
+          variant: 'success',
+          title: `Version ${version} restored`,
+          description: 'This copy is a draft. Publish it to make this version live.',
+        })
+      })
+      .catch(() => {
+        addToast({ variant: 'error', title: 'Could not restore version', description: 'The published snapshot could not be loaded.' })
+      })
+  }, [addToast, setEdges, setNodes, workflowId])
 
   // Load the saved graph from the backend (source of truth). If the backend has a
   // non-empty definition, it replaces the local seed; otherwise the seed/template stays.
@@ -1432,6 +1564,8 @@ function WorkflowBuilderCanvasInner({
     if (!workflowId) return
     let cancelled = false
     setAutosaveReady(false)
+    setPublishedRevision(null)
+    setPublishedVersion(null)
     getWorkflow(workflowId)
       .then((wf) => {
         if (cancelled) return
@@ -1441,20 +1575,34 @@ function WorkflowBuilderCanvasInner({
         const loadedSections = readIdeaSectionVisibility(def?.ideaSections)
         setIdeaSections(loadedSections)
         if (def && Array.isArray(def.nodes) && def.nodes.length > 0) {
-          const loadedNodes = (def.nodes as Node<WorkflowNodeData>[]).map(withWorkflowNodeSize)
+          const loadedNodes = (def.nodes as Node<WorkflowNodeData>[]).map((node) => {
+            const sized = withWorkflowNodeSize(node)
+            if (sized.data?.kind !== 'action') return sized
+            return { ...sized, data: { ...sized.data, config: withoutApprovalConfig(sized.data.config ?? {}) } }
+          })
           const loadedEdges = (Array.isArray(def.edges) ? def.edges : []) as Edge[]
-          savedRevisionRef.current = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections)
+          const revision = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections)
+          savedRevisionRef.current = revision
+          explicitRevisionRef.current = revision
+          setPublishedRevision(wf.is_published ? revision : null)
+          setPublishedVersion(wf.is_published ? wf.version : null)
           setNodes(loadedNodes)
           setEdges(loadedEdges)
         } else {
-          savedRevisionRef.current = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections)
+          const revision = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections)
+          savedRevisionRef.current = revision
+          explicitRevisionRef.current = revision
+          setPublishedRevision(wf.is_published ? revision : null)
+          setPublishedVersion(wf.is_published ? wf.version : null)
         }
       })
       .catch(() => {
         // Offline — keep the localStorage/template seed already loaded.
       })
       .finally(() => {
-        if (!cancelled) setAutosaveReady(true)
+        if (cancelled) return
+        if (explicitRevisionRef.current == null) explicitRevisionRef.current = latestRevisionRef.current
+        setAutosaveReady(true)
       })
     return () => {
       cancelled = true
@@ -1496,6 +1644,7 @@ function WorkflowBuilderCanvasInner({
         const run = await runWorkflow(workflowId, {
           trigger_type: 'Manual',
           context,
+          use_draft: true,
           ...(startNodeId ? { start_node_id: startNodeId } : {}),
         })
         setActiveRun(run)
@@ -1517,6 +1666,13 @@ function WorkflowBuilderCanvasInner({
   const handleRun = useCallback(() => {
     void executeRun()
   }, [executeRun])
+
+  const initialRunStartedRef = useRef(false)
+  useEffect(() => {
+    if (initialView !== 'run' || !workflowId || !autosaveReady || initialRunStartedRef.current) return
+    initialRunStartedRef.current = true
+    void executeRun()
+  }, [autosaveReady, executeRun, initialView, workflowId])
 
   const openRun = useCallback((runId: string) => {
     getWorkflowRun(runId).then(setActiveRun).catch(() => {})
@@ -1803,9 +1959,18 @@ function WorkflowBuilderCanvasInner({
             aria-label="Workflow name"
             className="h-9 w-[260px] max-w-[42vw] rounded-lg border-transparent bg-transparent px-2 text-sm font-semibold text-slate-900 hover:border-slate-200 focus-visible:border-slate-300 focus-visible:ring-1 focus-visible:ring-slate-200 focus-visible:ring-offset-0"
           />
-          <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-            Draft
-          </span>
+          {autosaveReady && (
+            <span
+              className={cn(
+                'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                publishedRevision !== null
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-amber-200 bg-amber-50 text-amber-700',
+              )}
+            >
+              {publishedVersion !== null ? `Published v${publishedVersion}` : 'Draft'}
+            </span>
+          )}
         </div>
 
         <div className="mx-2 hidden items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5 md:flex">
@@ -1883,12 +2048,74 @@ function WorkflowBuilderCanvasInner({
               draftSaveState === 'saving' && 'border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100',
             )}
             onClick={handleSaveDraft}
+            disabled={draftSaveState !== 'unsaved'}
             title={draftSaveState === 'unsaved' ? 'Changes have not been saved to the backend' : draftSaveState === 'saving' ? 'Saving changes' : 'All changes saved'}
           >
             {draftSaveState === 'saving' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
             {draftSaveState === 'unsaved' ? 'Save changes' : draftSaveState === 'saving' ? 'Saving...' : 'Save Draft'}
           </Button>
-          <Button type="button" size="sm" className="h-9 rounded-lg px-3 text-xs" onClick={handlePublish}>
+          <div className="relative">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-lg px-3 text-xs"
+              onClick={openVersions}
+              disabled={!workflowId}
+              title={workflowId ? 'Published versions' : 'Save the workflow first'}
+            >
+              <Clock3 className="mr-1.5 h-3.5 w-3.5" /> Versions
+            </Button>
+            {versionsOpen && (
+              <div className="absolute right-0 top-11 z-50 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-900">Published versions</p>
+                  <button type="button" className="text-[11px] text-slate-500 hover:text-slate-800" onClick={() => setVersionsOpen(false)}>
+                    Close
+                  </button>
+                </div>
+                <p className="mb-2 text-[11px] leading-4 text-slate-500">
+                  The live workflow is the newest published version. Saving a draft does not replace it.
+                </p>
+                {versionsLoading ? (
+                  <p className="py-3 text-xs text-slate-500">Loading versions...</p>
+                ) : versionRows.length === 0 ? (
+                  <p className="py-3 text-xs text-slate-500">No published versions yet.</p>
+                ) : (
+                  <ul className="max-h-72 space-y-1 overflow-y-auto">
+                    {versionRows.map((row) => (
+                      <li key={row.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-slate-50">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-slate-900">
+                            v{row.version}
+                            {row.version === publishedVersion ? <span className="ml-1.5 text-[10px] font-semibold uppercase text-emerald-700">Live</span> : null}
+                          </p>
+                          <p className="truncate text-[10px] text-slate-500">
+                            {new Date(row.created_date).toLocaleString()} · {row.created_by}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-md border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-100"
+                          onClick={() => restoreVersion(row.version)}
+                        >
+                          Restore
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 rounded-lg px-3 text-xs"
+            onClick={handlePublish}
+            disabled={draftSaveState === 'saved' && publishedRevision !== null && publishedRevision === currentRevision}
+            title={draftSaveState === 'saved' && publishedRevision !== null && publishedRevision === currentRevision ? 'Already published' : 'Publish this workflow'}
+          >
             <Send className="mr-1.5 h-3.5 w-3.5" /> Publish
           </Button>
         </div>
@@ -1951,6 +2178,8 @@ function WorkflowBuilderCanvasInner({
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
                 onSelectionChange={handleSelectionChange}
+                onNodeClick={handleNodeClick}
+                onPaneClick={handlePaneClick}
                 onNodeContextMenu={onNodeContextMenu}
                 onEdgeContextMenu={onEdgeContextMenu}
                 onPaneContextMenu={onPaneContextMenu}
@@ -2150,9 +2379,9 @@ function WorkflowBuilderCanvasInner({
               {selectedNode ? 'Node Configuration' : 'Workflow'}
             </p>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="source-editor-scroll min-h-0 flex-1 overflow-y-auto p-4">
             {selectedNode && selectedMeta ? (
-              <div className="space-y-4">
+              <div key={`${selectedNode.id}:${selectedNode.data.kind}`} className="space-y-4">
                 <div className="flex items-center gap-2.5">
                   <span
                     className={cn('inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1', selectedMeta.chipClass)}
@@ -2209,8 +2438,37 @@ function WorkflowBuilderCanvasInner({
                   </div>
                 ) : null}
 
+                {selectedNode.data.kind === 'approval' ? (
+                  <>
+                    <EmailRecipientsField
+                      key={`${selectedNode.id}:approver`}
+                      label="Approver"
+                      hint="Type and press Enter. Each badge is one approver."
+                      modes={['name', 'jobTitle', 'department', 'team', 'role']}
+                      mode={selectedNode.data.config.approverBy
+                        || (selectedNode.data.config.approverTeam ? 'team' : '')
+                        || (selectedNode.data.config.approverRole ? 'role' : 'jobTitle')}
+                      values={selectedNode.data.config.approverValues
+                        || selectedNode.data.config.approverTeam
+                        || selectedNode.data.config.approverRole
+                        || ''}
+                      onChange={(patch) => updateSelectedNode({
+                        config: {
+                          approverBy: patch.emailRecipientBy,
+                          approverValues: patch.emailRecipients,
+                          approverRole: '',
+                          approverTeam: '',
+                          approver: '',
+                        },
+                      })}
+                    />
+                  </>
+                ) : null}
+
                 {selectedMeta.fields
                   .filter((field) => {
+                    if (field.type === 'approvalTarget' || field.type === 'approvalMembers' || field.type === 'emailRecipients' || field.type === 'emailBody') return false
+                    if (selectedNode.data.kind === 'action') return field.type === 'actionDomain' || field.type === 'actionEntity' || field.type === 'actionOperation'
                     if (selectedNode.data.kind !== 'trigger') return true
                     const triggerType = selectedNode.data.config.triggerType
                     if (field.key === 'triggerDomain' || field.key === 'triggerEntity' || field.key === 'triggerEvent') return triggerType === 'Event'
@@ -2220,35 +2478,6 @@ function WorkflowBuilderCanvasInner({
                   })
                   .map((field) => {
                   const value = selectedNode.data.config[field.key] ?? ''
-                  // Brings its own label, and edits workspace-shared data rather than a
-                  // single config key, so it does not fit the generic field wrapper.
-                  if (field.type === 'approvalTarget') {
-                    return (
-                      <ApprovalTargetField
-                        key={selectedNode.id}
-                        workspaceId={activeWorkspaceId}
-                        members={workspaceMembers}
-                        roleCode={selectedNode.data.config.approverRole ?? ''}
-                        teamCode={selectedNode.data.config.approverTeam ?? ''}
-                        onChange={(patch) => updateSelectedNode({ config: patch })}
-                        roles={approvalRoles}
-                        rolesState={approvalRolesState}
-                        onRolesChanged={reloadApprovalRoles}
-                      />
-                    )
-                  }
-                  if (field.type === 'approvalMembers') {
-                    return (
-                      <div key={field.key} className="space-y-1.5">
-                        <label className={FIELD_LABEL_CLASS}>{field.label}</label>
-                        <ApprovalNamedApproverField
-                          members={workspaceMembers}
-                          value={value}
-                          onChange={(next) => updateSelectedNode({ config: { [field.key]: next } })}
-                        />
-                      </div>
-                    )
-                  }
                   return (
                     <div key={field.key} className="space-y-1.5">
                       <label className={FIELD_LABEL_CLASS}>{field.label}</label>
@@ -2387,9 +2616,50 @@ function WorkflowBuilderCanvasInner({
                           className="h-8"
                         />
                       )}
+                      {selectedNode.data.kind === 'action' && selectedNode.data.config.actionOperation === 'Request for Approval' && field.key === 'actionOperation' ? (
+                        <p className="text-[11px] leading-4 text-slate-500">
+                          The idea owner must press Request for Approval before the next node runs. Remove this node to notify approvers immediately.
+                        </p>
+                      ) : null}
                     </div>
                   )
                   })}
+
+                {selectedNode.data.kind === 'approval' && showsReviewEmailSettings(selectedNode) ? (
+                  <>
+                    <EmailRecipientsField
+                      key={`${selectedNode.id}:email-recipients`}
+                      mode={selectedNode.data.config.emailRecipientBy || 'jobTitle'}
+                      values={selectedNode.data.config.emailRecipients || selectedNode.data.config.jobTitles || ''}
+                      onChange={(patch) => updateSelectedNode({ config: patch })}
+                    />
+                    <EmailBodyField
+                      key={`${selectedNode.id}:email-body`}
+                      workspaceId={activeWorkspaceId}
+                      source={selectedNode.data.config.emailBodySource ?? 'urd'}
+                      documentKind={selectedNode.data.config.emailDocumentKind ?? 'URD'}
+                      sections={selectedNode.data.config.emailBodySections ?? ''}
+                      fixedText={selectedNode.data.config.emailBodyText ?? ''}
+                      includeCover={selectedNode.data.config.emailIncludeCover ?? 'no'}
+                      onChange={(patch) => updateSelectedNode({ config: patch })}
+                    />
+                  </>
+                ) : null}
+
+                {selectedNode.data.kind === 'action'
+                  && selectedNode.data.config.actionDomain === 'Document & Knowledge'
+                  && selectedNode.data.config.actionEntity === 'Document'
+                  && (selectedNode.data.config.actionOperation === 'Upload' || selectedNode.data.config.actionOperation === 'Request for Approval') ? (
+                  <DocumentTemplateKindField
+                    workspaceId={activeWorkspaceId}
+                    parameter={selectedNode.data.config.parameter ?? ''}
+                    nodeLabel={selectedNode.data.label}
+                    description={selectedNode.data.config.actionOperation === 'Request for Approval'
+                      ? 'The Request for Approval button is shown on this document.'
+                      : undefined}
+                    onChange={(kind) => updateSelectedNode({ config: { parameter: kind } })}
+                  />
+                ) : null}
 
                 {selectedNode.data.kind === 'action' && actionPropertyControls(selectedNode.data.config).length > 0 ? (
                   <div className="space-y-3 border-t border-slate-100 pt-3">
@@ -2459,6 +2729,23 @@ function WorkflowBuilderCanvasInner({
                   )
                 })() : null}
 
+                {showsIdeaSectionSettings(selectedNode) ? (
+                  <>
+                    <EmailRecipientsField
+                      label="Applies to"
+                      hint="Leave empty to include everyone. Add badges to limit who this workflow applies to."
+                      modes={['jobTitle', 'department', 'name', 'team', 'role', 'workspace']}
+                      mode={selectedNode.data.config.audienceBy || 'jobTitle'}
+                      values={selectedNode.data.config.audienceValues || ''}
+                      onChange={(patch) => updateSelectedNode({
+                        config: { audienceBy: patch.emailRecipientBy, audienceValues: patch.emailRecipients },
+                      })}
+                    />
+                    <div className="border-t border-slate-100 pt-3">
+                      <IdeaSectionVisibilityEditor value={ideaSections} onChange={setIdeaSectionVisibility} />
+                    </div>
+                  </>
+                ) : null}
                 <div className="border-t border-slate-100 pt-3">
                   <Button
                     type="button"
@@ -2470,17 +2757,15 @@ function WorkflowBuilderCanvasInner({
                     <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete Node
                   </Button>
                 </div>
-                <div className="border-t border-slate-100 pt-3">
-                  <IdeaSectionVisibilityEditor value={ideaSections} onChange={setIdeaSectionVisibility} />
-                </div>
               </div>
             ) : (
-              <IdeaSectionVisibilityEditor value={ideaSections} onChange={setIdeaSectionVisibility} />
+              <p className="text-sm leading-relaxed text-slate-500">
+                Select a node to configure it. Idea Detail sections are set on the Idea event trigger.
+              </p>
             )}
           </div>
         </aside>
       </div>
-
       {/* Right-click context menu — one component, items switch on kind. */}
       <ContextMenu
         open={contextMenu !== null}
@@ -2650,13 +2935,14 @@ function WorkflowBuilderCanvasInner({
   )
 }
 
-export function WorkflowBuilderCanvas({ open, workflowId, workspaceId, workflowName, workspaceMembers, onWorkflowCreated, onClose }: WorkflowBuilderCanvasProps) {
+export function WorkflowBuilderCanvas({ open, workflowId, initialView, workspaceId, workflowName, workspaceMembers, onWorkflowCreated, onClose }: WorkflowBuilderCanvasProps) {
   if (!open || typeof document === 'undefined') return null
   return createPortal(
     <ReactFlowProvider>
       <WorkflowBuilderCanvasInner
         key={workflowId ?? 'new'}
         workflowId={workflowId}
+        initialView={initialView}
         workspaceId={workspaceId}
         workflowName={workflowName}
         workspaceMembers={workspaceMembers}

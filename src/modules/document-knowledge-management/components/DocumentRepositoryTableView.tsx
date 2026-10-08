@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { DndContext } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import {
@@ -188,6 +188,8 @@ type DocumentRepositoryTableViewProps = {
   isKbGenerated?: (item: RepositoryItem) => boolean
   /** When provided, right-clicking a row calls this instead of showing the browser's context menu. */
   onRowContextMenu?: (event: MouseEvent<HTMLTableRowElement>, item: RepositoryItem) => void
+  /** Extra control under the document name. Idea Docs uses it for Request for Approval. */
+  rowAction?: (item: RepositoryItem) => ReactNode
   /** `project-list` matches Project Detail → List table styling. */
   variant?: 'repository' | 'project-list'
   /** Header keys to omit. Idea Docs hides Linked project and Access so the table matches Document repository. */
@@ -206,6 +208,7 @@ export function DocumentRepositoryTableView({
   showTags = true,
   isKbGenerated,
   onRowContextMenu,
+  rowAction,
   variant = 'repository',
   hiddenColumnKeys = [],
   kbLayout = 'compact',
@@ -427,6 +430,7 @@ export function DocumentRepositoryTableView({
                         progress,
                         onDocumentClick,
                         onVersionClick,
+                        rowAction,
                       })}
                     </td>
                   )
@@ -469,6 +473,7 @@ export function DocumentRepositoryTableView({
                   ) : (
                     <DocumentCellContent item={item} compact={isProjectListVariant} showTags={showTags} />
                   )}
+                  {rowAction?.(item)}
                 </td>
                 <td
                   className={cn(
@@ -608,6 +613,7 @@ function renderRepositoryColumnCell({
   progress,
   onDocumentClick,
   onVersionClick,
+  rowAction,
 }: {
   item: RepositoryItem
   key: RepositoryColumnKey
@@ -617,15 +623,21 @@ function renderRepositoryColumnCell({
   progress: number
   onDocumentClick?: (item: RepositoryItem) => void
   onVersionClick?: (item: RepositoryItem) => void
+  rowAction?: (item: RepositoryItem) => ReactNode
 }) {
   switch (key) {
     case 'document':
-      return onDocumentClick ? (
-        <button type="button" className="min-w-0 text-left" onClick={() => onDocumentClick(item)}>
-          <DocumentCellContent item={item} showTags={showTags} />
-        </button>
-      ) : (
-        <DocumentCellContent item={item} showTags={showTags} />
+      return (
+        <div>
+          {onDocumentClick ? (
+            <button type="button" className="min-w-0 text-left" onClick={() => onDocumentClick(item)}>
+              <DocumentCellContent item={item} showTags={showTags} />
+            </button>
+          ) : (
+            <DocumentCellContent item={item} showTags={showTags} />
+          )}
+          {rowAction?.(item)}
+        </div>
       )
     case 'type':
       return item.type

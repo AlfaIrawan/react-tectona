@@ -3465,7 +3465,8 @@ export function IdeaBacklogManagementPage() {
             idea_id: idea.id,
             idea_title: idea.title,
             idea_description: idea.description || idea.title,
-            requested_by: idea.submittedBy || currentUserId || null,
+            requested_by: currentUserId || idea.submittedBy || null,
+            submitted_by: idea.submittedBy || null,
           },
         })
         if (runIds.length > 0) {
