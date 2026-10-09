@@ -248,15 +248,45 @@ function formatBrainstormGapLabel(gap: string, indonesian = false): string {
     .replace(/^\w/, (char) => char.toUpperCase())
 }
 
+function normalizeChecklistPrompt(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/** Shipped default wording. A Knowledge Base edit of the same id must stay visible. */
+const BRAINSTORM_BUILTIN_PROMPTS: Record<string, string[]> = {
+  as_is_actors: [BRAINSTORM_GAP_LABELS_EN.as_is_actors, BRAINSTORM_GAP_LABELS_ID.as_is_actors],
+  as_is_steps: [BRAINSTORM_GAP_LABELS_EN.as_is_steps, BRAINSTORM_GAP_LABELS_ID.as_is_steps],
+  as_is_systems: [
+    BRAINSTORM_GAP_LABELS_EN.as_is_systems,
+    BRAINSTORM_GAP_LABELS_ID.as_is_systems,
+    'Which systems or applications are used today, and how do they integrate with other existing/surrounding systems?',
+    'Sistem atau aplikasi apa saja yang digunakan saat ini, dan bagaimana integrasinya dengan sistem lain yang sudah ada?',
+  ],
+  pain_points: [
+    BRAINSTORM_GAP_LABELS_EN.pain_points,
+    BRAINSTORM_GAP_LABELS_ID.pain_points,
+    'What is the biggest pain point or bottleneck?',
+  ],
+  to_be_process: [BRAINSTORM_GAP_LABELS_EN.to_be_process, BRAINSTORM_GAP_LABELS_ID.to_be_process],
+}
+
+function isBuiltinChecklistPrompt(itemId: string | undefined, prompt: string): boolean {
+  if (!itemId) return false
+  const known = BRAINSTORM_BUILTIN_PROMPTS[itemId]
+  if (!known) return false
+  const normalized = normalizeChecklistPrompt(prompt)
+  return known.some((candidate) => normalizeChecklistPrompt(candidate) === normalized)
+}
+
 function formatBrainstormChecklistPrompt(prompt: string, indonesian = false, itemId?: string): string {
   const trimmed = prompt.trim()
   if (!trimmed) return trimmed
   const labels = brainstormGapLabels(indonesian)
-  if (itemId && labels[itemId]) return labels[itemId]
+  if (itemId && labels[itemId] && isBuiltinChecklistPrompt(itemId, trimmed)) return labels[itemId]
   const normalized = normalizeBrainstormGapKey(trimmed)
-  if (labels[normalized]) return labels[normalized]
+  if (labels[normalized] && isBuiltinChecklistPrompt(normalized, trimmed)) return labels[normalized]
   if (indonesian) {
-    const mapped = BRAINSTORM_ENGLISH_PROMPT_TO_ID[trimmed.toLowerCase()]
+    const mapped = BRAINSTORM_ENGLISH_PROMPT_TO_ID[normalizeChecklistPrompt(trimmed)]
     if (mapped) return mapped
   }
   return trimmed
