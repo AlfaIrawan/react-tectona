@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import {
@@ -123,7 +123,7 @@ function ProfileField({
   mono,
 }: {
   label: string
-  value: string
+  value: ReactNode
   mono?: boolean
 }) {
   return (
@@ -960,7 +960,17 @@ export function ProfilePage() {
               <ProfileField label="Account ID" value={session.user.id} mono />
               <ProfileField
                 label="Secondary email"
-                value={identityProfile?.secondary_email ? `${identityProfile.secondary_email}${identityProfile.secondary_email_verified ? ' · Verified' : ' · Pending verification'}` : '-'}
+                value={identityProfile?.secondary_email ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span>{identityProfile.secondary_email}</span>
+                    {identityProfile.secondary_email_verified ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600" title="Verified">
+                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                        <span className="text-xs font-semibold">Verified</span>
+                      </span>
+                    ) : <span className="text-xs text-muted-foreground">· Pending verification</span>}
+                  </span>
+                ) : '-'}
               />
               {isMicrosoftSso ? (
                 <>
