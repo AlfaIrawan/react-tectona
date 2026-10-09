@@ -1884,7 +1884,7 @@ function parseKbStructuredJson(content: string): unknown | null {
 
 type KbQuestionEditModel = {
   version: number
-  questions: Array<{ id: string; prompt: string; required: boolean }>
+  questions: Array<{ id: string; prompt: string; required: boolean; type: 'text' | 'option' | 'check'; options: string[] }>
 }
 
 function parseKbQuestionEditModel(content: string): KbQuestionEditModel | null {
@@ -1903,12 +1903,16 @@ function parseKbQuestionEditModel(content: string): KbQuestionEditModel | null {
       id: typeof question.id === 'string' && question.id.trim() ? question.id : `question_${index + 1}`,
       prompt,
       required: question.required === true,
+      type: question.type === 'option' || question.type === 'check' ? question.type : 'text',
+      options: Array.isArray(question.options)
+        ? question.options.filter((option): option is string => typeof option === 'string')
+        : [],
     }
   })
   if (questions.some((question): question is null => question === null)) return null
   return {
     version: typeof record.version === 'number' ? record.version : 1,
-    questions: questions as Array<{ id: string; prompt: string; required: boolean }>,
+    questions: questions as KbQuestionEditModel['questions'],
   }
 }
 
@@ -23766,8 +23770,8 @@ export function DocumentKnowledgeManagementPage() {
                                     Required
                                   </label>
                                 </div>
-                                <textarea
-                                  id={`kb-question-${index}`}
+                              <textarea
+                                id={`kb-question-${index}`}
                                   value={question.prompt}
                                   onChange={(event) => setKbStructuredEdit((current) => current
                                     ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, prompt: event.target.value } : item) }
@@ -23775,6 +23779,34 @@ export function DocumentKnowledgeManagementPage() {
                                   rows={2}
                                   className="w-full resize-y rounded-md border border-border/70 bg-background px-2.5 py-2 text-sm leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 />
+                                <label htmlFor={`kb-question-type-${index}`} className="mt-2 block text-[11px] font-medium text-muted-foreground">Answer type</label>
+                                <select
+                                  id={`kb-question-type-${index}`}
+                                  value={question.type}
+                                  onChange={(event) => setKbStructuredEdit((current) => current
+                                    ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value as 'text' | 'option' | 'check' } : item) }
+                                    : current)}
+                                  className="mt-1 h-9 w-full rounded-md border border-border/70 bg-background px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  <option value="text">Input Text</option>
+                                  <option value="option">Option Button (pilih satu)</option>
+                                  <option value="check">Check Button (pilih beberapa)</option>
+                                </select>
+                                {question.type !== 'text' ? (
+                                  <div className="mt-2">
+                                    <label htmlFor={`kb-question-options-${index}`} className="block text-[11px] font-medium text-muted-foreground">Options (satu pilihan per baris)</label>
+                                    <textarea
+                                      id={`kb-question-options-${index}`}
+                                      value={question.options.join('\n')}
+                                      onChange={(event) => setKbStructuredEdit((current) => current
+                                        ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, options: event.target.value.split('\n') } : item) }
+                                        : current)}
+                                      rows={3}
+                                      placeholder={'Contoh:\nYa\nTidak'}
+                                      className="mt-1 w-full resize-y rounded-md border border-border/70 bg-background px-2.5 py-2 text-sm leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                    />
+                                  </div>
+                                ) : null}
                               </div>
                             ))}
                           </div>
@@ -23792,6 +23824,8 @@ export function DocumentKnowledgeManagementPage() {
                                       id: `question_${current.questions.length + 1}`,
                                       prompt: '',
                                       required: false,
+                                      type: 'text',
+                                      options: [],
                                     },
                                   ],
                                 }
