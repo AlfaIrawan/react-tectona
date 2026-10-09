@@ -514,6 +514,19 @@ function withDocumentVersion(name: string, version: string): string {
   return `${name} ${label}`
 }
 
+/** Save as the name shown in Idea Docs, keeping the attachment extension. */
+function downloadNameFromDisplay(displayName: string, sourceFileName: string): string {
+  const extension = sourceFileName.match(/\.[A-Za-z0-9]{1,8}$/i)?.[0]
+    ?? displayName.match(/\.[A-Za-z0-9]{1,8}$/i)?.[0]
+    ?? '.docx'
+  const base = (displayName.trim() || sourceFileName)
+    .replace(/\.[A-Za-z0-9]{1,8}$/i, '')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return `${base || 'document'}${extension}`
+}
+
 function ideaFromApi(api: IdeaApi): Idea {
   const type: IdeaType = IDEA_TYPES.includes(api.category as IdeaType)
     ? (api.category as IdeaType)
@@ -7374,12 +7387,12 @@ export function IdeaDetailPage() {
     setIdeaDocDownloadBusyId(item.id)
     try {
       const { blob, fileName } = await resolveLatestDocumentAttachmentBlob(item.id, {
-        fileNameHint: item.fileName || item.name,
+        fileNameHint: item.displayName || item.name,
       })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = fileName || item.fileName || 'document.docx'
+      anchor.download = downloadNameFromDisplay(item.displayName || item.name, fileName || item.fileName || 'document.docx')
       anchor.click()
       URL.revokeObjectURL(url)
     } catch (error) {
