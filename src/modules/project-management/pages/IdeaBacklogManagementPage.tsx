@@ -324,6 +324,7 @@ function withBrainstormEvidenceGuardrail(
   activeParentId: string | null,
   abbreviations: BrainstormAbbreviation[],
 ): string {
+  if (message.length >= 3900) return message
   const requiredItems = mandatoryItems.filter((item) => item.required)
   const activeParent = requiredItems.find((item) => item.id === activeParentId)
   const mandatoryList = requiredItems.length > 0
@@ -339,12 +340,41 @@ function withBrainstormEvidenceGuardrail(
     : indonesian
       ? 'Tidak ada mandatory parent yang sedang aktif. Jangan membuat sub-pertanyaan yang mengaitkan beberapa mandatory. Tanyakan mandatory pending berikutnya; jika mandatory sudah selesai, ajukan satu pertanyaan eksplorasi mandiri yang diberi fokus Bisnis, Teknis, atau Keduanya berdasarkan evidence.'
       : 'There is no active mandatory parent. Do not create a sub-question that links multiple mandatory items. Ask the next pending mandatory question; if mandatory questions are complete, ask one standalone discovery question labeled Business, Technical, or Both based on evidence.'
+  const responseQualityRule = indonesian
+    ? 'Gunakan kalimat lengkap dan ringkas. Jangan memotong kalimat atau mengakhirinya dengan "..."/elipsis; parafrasekan lebih singkat bila konteks panjang. Jika jawaban user masih ambigu atau belum cukup jelas, tanyakan satu klarifikasi yang langsung terkait dengan jawaban dan parent aktif sebelum lanjut ke mandatory berikutnya.'
+    : 'Use concise, complete sentences. Never truncate a sentence or end it with an ellipsis; paraphrase more briefly when context is long. If the user’s answer is still ambiguous or unclear, ask one clarification directly tied to that answer and active parent before moving to the next mandatory question.'
   /* The escaped quotes intentionally preserve a JSON example in the prompt. */
   /* eslint-disable no-useless-escape */
   const guardrail = indonesian
     ? `Instruksi untuk balasan ini: Awali dengan ringkasan singkat dan natural dari konteks yang relevan, gunakan parafrasa dengan kalimatmu sendiri. Jangan menyalin atau menggabungkan potongan jawaban user secara verbatim, jangan menyambung jawaban terbaru ke ringkasan lama menjadi satu kalimat panjang, dan jangan mengulang seluruh ringkasan kumulatif. Batasi ringkasan maksimal 1-2 kalimat faktual. Setelah ringkasan, letakkan kalimat "Kalau ada yang kurang pas, bilang ya." tepat sebelum pertanyaan. ${questionScope}\n\nDaftar pertanyaan mandatory:\n${mandatoryList}\n\nAbbreviation List Knowledge Management workspace ini (Use for AI aktif):\n${abbreviationList}\nPeriksa daftar ini saat menemukan singkatan. Jika singkatan ada di daftar, jangan langsung membenarkan atau menganggap kepanjangannya sesuai konteks. Tanyakan konfirmasi eksplisit kepada user apakah kepanjangan yang tercatat memang yang dimaksud dalam konteks ini, sebelum menggunakannya. Jika user mengonfirmasi berbeda/tidak sesuai, tanyakan kepanjangan yang benar dan minta persetujuan eksplisit untuk menyimpannya sebagai entri abbreviation baru pada workspace ini. Jangan simpan sebelum user mengonfirmasi kepanjangan baru. Jika user sudah memberikan kepanjangan baru dan secara eksplisit setuju menyimpan, tambahkan tepat satu baris tersembunyi di akhir balasan dengan format: <TECTONA_ABBREVIATION_SAVE>{\"abbr\":\"...\",\"expansion\":\"...\",\"domain\":\"...\",\"not_confused_with\":\"...\"}</TECTONA_ABBREVIATION_SAVE>. Jangan keluarkan format ini tanpa persetujuan eksplisit user pada pesan sebelumnya. Jika singkatan tidak ada di daftar, jangan menebak; tanyakan artinya, lalu minta izin menyimpan definisi yang user berikan sebagai entri baru. Jangan lanjutkan asumsi yang bergantung padanya sebelum dikonfirmasi.`
     : `Instructions for this reply: Start with a brief, natural summary of relevant context in your own words. Do not copy or concatenate fragments of the user’s answers verbatim, append the latest answer to an old summary as one long sentence, or repeat the entire cumulative summary. Keep the summary to 1-2 factual sentences. After the summary, place "If something is off, just say so." immediately before the question. ${questionScope}\n\nMandatory questions:\n${mandatoryList}\n\nWorkspace Knowledge Management Abbreviation List (Use for AI enabled):\n${abbreviationList}\nCheck this list whenever an abbreviation appears. If it is listed, do not automatically correct it or assume the stored expansion matches the current context. Ask the user to explicitly confirm whether the listed expansion is what they mean before using it. If the user says it differs/is incorrect, ask for the intended expansion and explicit permission to save it as a new abbreviation entry in this workspace. Do not save until the user confirms the new expansion. After the user provides the new expansion and explicitly agrees to save it, append exactly one hidden line at the end of the reply in this format: <TECTONA_ABBREVIATION_SAVE>{\"abbr\":\"...\",\"expansion\":\"...\",\"domain\":\"...\",\"not_confused_with\":\"...\"}</TECTONA_ABBREVIATION_SAVE>. Never emit this format without the user's explicit permission in a previous message. If an abbreviation is not listed, do not guess; ask what it means. Do not proceed with assumptions depending on it until confirmed.`
-  return `${message}\n\n${BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER}\n${guardrail}`
+  const fullMessage = `${message}\n\n${BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER}\n${guardrail}\n${responseQualityRule}`
+  if (fullMessage.length <= 3900) return fullMessage
+
+  const compactCore = indonesian
+    ? 'Ringkas 1-2 kalimat lengkap dengan parafrasa, jangan gabungkan verbatim atau gunakan elipsis. Letakkan "Kalau ada yang kurang pas, bilang ya." tepat sebelum pertanyaan. Jika jawaban ambigu, klarifikasi satu kali terkait parent sebelum mandatory berikutnya.'
+    : 'Summarize in 1-2 complete paraphrased sentences; do not concatenate verbatim or use ellipses. Put "If something is off, just say so." before the question. If the answer is ambiguous, ask one parent-related clarification before the next mandatory.'
+  const compactScope = activeParent
+    ? indonesian
+      ? `Parent aktif ${activeParent.id}: ${activeParent.prompt}. Klasifikasikan semua mandatory sebagai Bisnis/Teknis/Keduanya. Maksimal satu follow-up, hanya tentang parent ini dan domainnya; hindari duplikasi/topik mandatory lain.`
+      : `Active parent ${activeParent.id}: ${activeParent.prompt}. Classify every mandatory as Business/Technical/Both. Ask at most one follow-up, only about this parent and its domain; do not overlap other mandatory items.`
+    : indonesian
+      ? 'Klasifikasikan mandatory sebagai Bisnis/Teknis/Keduanya. Jangan membuat follow-up yang mengaitkan mandatory lain.'
+      : 'Classify mandatory questions as Business/Technical/Both. Do not link follow-ups across mandatory items.'
+  const abbreviationRules = indonesian
+    ? 'Periksa KB singkatan; konfirmasi kepanjangan terdaftar kepada user sebelum digunakan. Jangan menebak yang tidak terdaftar. Jika berbeda, minta kepanjangan baru dan izin simpan eksplisit. Hanya setelah disetujui, keluarkan marker <TECTONA_ABBREVIATION_SAVE>{"abbr":"...","expansion":"...","domain":"...","not_confused_with":"..."}</TECTONA_ABBREVIATION_SAVE>.'
+    : 'Check the abbreviation KB and confirm a listed expansion with the user before using it. Never guess unknown terms. If incorrect, ask for the intended expansion and explicit save permission. Only after consent, emit <TECTONA_ABBREVIATION_SAVE>{"abbr":"...","expansion":"...","domain":"...","not_confused_with":"..."}</TECTONA_ABBREVIATION_SAVE>.'
+  const prefix = `${message}\n\n${BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER}\n`
+  const available = Math.max(0, 3900 - prefix.length)
+  const fixed = `${compactCore}\n${compactScope}\n${abbreviationRules}\n`
+  const listBudget = Math.max(0, available - fixed.length)
+  const abbreviationBudget = Math.ceil(listBudget * 0.7)
+  const mandatoryBudget = listBudget - abbreviationBudget
+  const trimTo = (value: string, max: number) => value.length <= max
+    ? value
+    : max > 1 ? `${value.slice(0, max - 1)}…` : ''
+  const compactGuardrail = `${fixed}Abbreviations:\n${trimTo(abbreviationList, abbreviationBudget)}\nMandatory:\n${trimTo(mandatoryList, mandatoryBudget)}`
+  return `${prefix}${trimTo(compactGuardrail, available)}`
 }
 
 /* eslint-enable no-useless-escape */
@@ -4011,11 +4041,12 @@ export function IdeaBacklogManagementPage() {
           title: createIdeaForm.title.trim(),
           tags: effectiveCreateIdeaTags,
           source_text: [
-            createIdeaForm.description.trim().slice(0, 12000),
+            createIdeaForm.description.trim().slice(0, 10000),
+            'Panduan proses brainstorm (instruksi, bukan fakta proyek): rangkum jawaban dengan kalimat lengkap dan ringkas, jangan gunakan elipsis atau memotong kalimat. Sebelum membuat sub-pertanyaan, klasifikasikan setiap mandatory sebagai Bisnis, Teknis, atau Keduanya. Jangan pindah ke mandatory berikutnya jika jawaban terakhir masih ambigu; ajukan satu klarifikasi yang langsung terkait dengan jawaban dan parent aktif, mengikuti domain parent, tanpa menyinggung mandatory lain. Lanjutkan checklist setelah jawaban cukup jelas.',
             ...(abbreviationRowsForInitialPrompt.length > 0 ? [
               `Knowledge Management Abbreviation List (Use for AI enabled):\n${abbreviationRowsForInitialPrompt.map((row) => `- ${row.abbr}: ${row.expansion}${row.domain ? ` [${row.domain}]` : ''}${row.not_confused_with ? ` (do not confuse with: ${row.not_confused_with})` : ''}`).join('\n')}\nCheck this list when an abbreviation appears. Confirm the listed expansion with the user before using it; never silently correct or assume it matches the current context. If it differs, ask for the intended meaning and explicit permission before adding a new abbreviation entry. Do not guess unknown abbreviations.`,
             ] : []),
-          ].filter(Boolean).join('\n\n'),
+          ].filter(Boolean).join('\n\n').slice(0, 12000),
           context: {
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
             workspace_name: createIdeaWorkspaceOptions.find(
@@ -4083,6 +4114,12 @@ export function IdeaBacklogManagementPage() {
     const historyBeforeSend = brainstormMessages
     const indonesian = isBrainstormThreadIndonesian(historyBeforeSend)
     const shown = attached ? diagramUploadCaption(message, indonesian) : message
+    if (shown.length > 4000) {
+      setBrainstormError(indonesian
+        ? 'Pesan terlalu panjang. Batas pesan adalah 4.000 karakter.'
+        : 'Message is too long. The limit is 4,000 characters.')
+      return
+    }
     const mandatoryItems = (brainstormChecklist.length > 0
       ? brainstormChecklist
       : brainstormEvidenceProgress?.items ?? [])
