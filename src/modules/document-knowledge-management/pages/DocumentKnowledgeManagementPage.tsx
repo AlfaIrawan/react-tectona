@@ -13550,7 +13550,6 @@ export function DocumentKnowledgeManagementPage() {
     }
     const isApplicationCatalogEntry = kbSystemTableEdit?.specId === 'aplikasi'
     const normalizedWorkspaceId = canonicalizeKbWorkspaceId(kbFormWorkspace)
-    const workspaceForSave = resolveWorkspaceIdForKbSave(kbFormWorkspace, kbWorkspaceOptions)
     if (
       isApplicationCatalogEntry
       && !resolveKbWorkspaceOption(kbFormWorkspace, kbApplicationCatalogWorkspaceOptions)
@@ -13598,6 +13597,9 @@ export function DocumentKnowledgeManagementPage() {
         return
       }
       const contentToSave = contentForSave
+      const workspaceForSave = isPlatformWideSystemKbEntry({ title: normalizedTitle })
+        ? null
+        : resolveWorkspaceIdForKbSave(kbFormWorkspace, kbWorkspaceOptions)
       const payload = {
         category: kbFormCategory,
         title: normalizedTitle,
