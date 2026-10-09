@@ -176,6 +176,9 @@ export interface OidcUserInfo {
   employee_number?: string | null
   organizational_unit?: string | null
   office_location?: string | null
+  secondary_email?: string | null
+  secondary_email_verified?: boolean
+  secondary_email_verification_sent?: boolean
   account_status?: string | null
   created_at?: string | null
   email_verified?: boolean
@@ -378,6 +381,7 @@ export async function updateUserProfile(input: {
   employeeNumber?: string
   organizationalUnit?: string
   officeLocation?: string
+  secondaryEmail?: string
 }): Promise<OidcUserInfo> {
   const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/userinfo`, {
     method: 'PATCH',
@@ -389,6 +393,7 @@ export async function updateUserProfile(input: {
       employee_number: input.employeeNumber?.trim() || null,
       organizational_unit: input.organizationalUnit?.trim() || null,
       office_location: input.officeLocation?.trim() || null,
+      secondary_email: input.secondaryEmail?.trim() || null,
     }),
   })
   const raw = await res.text().catch(() => '')
@@ -554,6 +559,28 @@ export async function verifyEmailToken(token: string): Promise<VerifyEmailRespon
     throw new Error('Email verification failed. Try the latest confirmation link, or sign in and resend the email.')
   }
   return res.json() as Promise<VerifyEmailResponse>
+}
+
+export type VerifySecondaryEmailResponse = {
+  verified: boolean
+  email: string
+}
+
+export async function verifySecondaryEmailToken(token: string): Promise<VerifySecondaryEmailResponse> {
+  const q = new URLSearchParams({ token })
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/verify-secondary-email?${q}`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    const payload = extractErrorPayload(text)
+    const code = typeof payload?.error === 'string' ? payload.error : typeof payload?.detail === 'string' ? payload.detail : ''
+    if (res.status === 400 || /invalid_or_expired_token|secondary_email_no_longer_current/i.test(code)) {
+      throw new Error('This secondary email link is invalid, expired, or no longer current. Save the address again to request a new link.')
+    }
+    throw new Error('Secondary email verification failed. Please request a new verification link.')
+  }
+  return res.json() as Promise<VerifySecondaryEmailResponse>
 }
 
 export async function resendDomainOnboardingVerificationEmail(input: {

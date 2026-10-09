@@ -66,6 +66,7 @@ type EditableProfile = {
   employeeNumber: string
   organizationalUnit: string
   officeLocation: string
+  secondaryEmail: string
 }
 
 const PROFILE_PREFS_PREFIX = 'tectona_profile_preferences:'
@@ -629,9 +630,10 @@ export function ProfilePage() {
   const [profilePrefs, setProfilePrefs] = useState<ProfilePreferences>(DEFAULT_PROFILE_PREFERENCES)
   const [editOpen, setEditOpen] = useState(false)
   const [editName, setEditName] = useState('')
-  const [editProfile, setEditProfile] = useState<EditableProfile>({ jobTitle: '', department: '', employeeNumber: '', organizationalUnit: '', officeLocation: '' })
+  const [editProfile, setEditProfile] = useState<EditableProfile>({ jobTitle: '', department: '', employeeNumber: '', organizationalUnit: '', officeLocation: '', secondaryEmail: '' })
   const [profileSaveBusy, setProfileSaveBusy] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
+  const [profileSaveNotice, setProfileSaveNotice] = useState<string | null>(null)
   const [tokenEvents, setTokenEvents] = useState<TokenTelemetryEvent[]>([])
   const [tokenEventsLoading, setTokenEventsLoading] = useState(true)
   const [tokenEventsError, setTokenEventsError] = useState(false)
@@ -699,6 +701,7 @@ export function ProfilePage() {
         employeeNumber: profile.employee_number || '',
         organizationalUnit: profile.organizational_unit || '',
         officeLocation: profile.office_location || '',
+        secondaryEmail: profile.secondary_email || '',
       })
       if (profile.display_name) setEditName(normalizeUserDisplayName(profile.display_name))
     }).catch(() => undefined)
@@ -784,8 +787,10 @@ export function ProfilePage() {
       employeeNumber: identityProfile?.employee_number || '',
       organizationalUnit: identityProfile?.organizational_unit || '',
       officeLocation: identityProfile?.office_location || '',
+      secondaryEmail: identityProfile?.secondary_email || '',
     })
     setProfileSaveError(null)
+    setProfileSaveNotice(null)
     setEditOpen(true)
   }
 
@@ -793,7 +798,10 @@ export function ProfilePage() {
     if (!session || !editName.trim() || profileSaveBusy) return
     setProfileSaveBusy(true)
     setProfileSaveError(null)
+    setProfileSaveNotice(null)
     try {
+      const previousSecondary = identityProfile?.secondary_email?.trim().toLowerCase() || ''
+      const nextSecondary = editProfile.secondaryEmail.trim().toLowerCase()
       const updated = await updateUserProfile({
         accessToken: session.token,
         displayName: editName,
@@ -802,10 +810,20 @@ export function ProfilePage() {
         employeeNumber: editProfile.employeeNumber,
         organizationalUnit: editProfile.organizationalUnit,
         officeLocation: editProfile.officeLocation,
+        secondaryEmail: editProfile.secondaryEmail,
       })
       setIdentityProfile(updated)
       setProfilePrefs((current) => ({ ...current, displayName: updated.display_name || editName.trim() }))
       setEditOpen(false)
+      if (nextSecondary && nextSecondary !== previousSecondary) {
+        setProfileSaveNotice(
+          updated.secondary_email_verification_sent
+            ? 'A verification link was sent to your secondary email. It can be used for password recovery after verification.'
+            : 'Secondary email saved, but the verification email could not be delivered yet. It will not be used for recovery until verified.',
+        )
+      } else if (!nextSecondary && previousSecondary) {
+        setProfileSaveNotice('Secondary email removed. Password recovery will use your primary email only.')
+      }
     } catch (error) {
       setProfileSaveError(error instanceof Error ? error.message : 'Unable to save profile changes.')
     } finally {
@@ -933,12 +951,17 @@ export function ProfilePage() {
             description="Your identity and session summary."
             className={profileTab === 'account' ? undefined : 'hidden'}
           >
-            <dl>
+            {profileSaveNotice ? <p role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">{profileSaveNotice}</p> : null}
+              <dl>
               <ProfileField label="Display name" value={displayName} />
               <ProfileField label="Email" value={session.user.email || '-'} />
               <ProfileField label="Primary RBAC role" value={platformRoleLabel} />
               <ProfileField label="RBAC roles" value={rbacRoles.length ? rbacRoles.join(', ') : 'No role claims'} />
               <ProfileField label="Account ID" value={session.user.id} mono />
+              <ProfileField
+                label="Secondary email"
+                value={identityProfile?.secondary_email ? `${identityProfile.secondary_email}${identityProfile.secondary_email_verified ? ' · Verified' : ' · Pending verification'}` : '-'}
+              />
               {isMicrosoftSso ? (
                 <>
                   <ProfileField label="Job title" value={graphProfile?.job_title || identityProfile?.job_title || session.user.jobTitle || '-'} />
@@ -1021,7 +1044,7 @@ export function ProfilePage() {
               description="Active session on this device."
               className={profileTab === 'security' ? undefined : 'hidden'}
             >
-              <dl>
+            <dl>
                 <ProfileField label="Session token" value={maskToken(session.token)} mono />
               </dl>
               <p className="flex items-start gap-2 border-t border-border/40 py-4 text-xs leading-relaxed text-muted-foreground">
@@ -1137,10 +1160,12 @@ export function ProfilePage() {
                     ['employee-number', 'NIK / Number', editProfile.employeeNumber, (value: string) => setEditProfile((current) => ({ ...current, employeeNumber: value }))],
                     ['organizational-unit', 'Organizational unit', editProfile.organizationalUnit, (value: string) => setEditProfile((current) => ({ ...current, organizationalUnit: value }))],
                     ['office-location', 'Office location', editProfile.officeLocation, (value: string) => setEditProfile((current) => ({ ...current, officeLocation: value }))],
+                    ['secondary-email', 'Secondary email', editProfile.secondaryEmail, (value: string) => setEditProfile((current) => ({ ...current, secondaryEmail: value }))],
                   ].map(([id, label, value, onChange]) => (
                     <div key={id as string} className="space-y-2">
                       <Label htmlFor={id as string}>{label as string}</Label>
-                      <input id={id as string} value={value as string} onChange={(event) => (onChange as (value: string) => void)(event.target.value)} className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" autoFocus={id === 'display-name'} />
+                      <input id={id as string} type={id === 'secondary-email' ? 'email' : 'text'} value={value as string} onChange={(event) => (onChange as (value: string) => void)(event.target.value)} className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" autoComplete={id === 'secondary-email' ? 'email' : undefined} autoFocus={id === 'display-name'} />
+                      {id === 'secondary-email' ? <p className="text-xs text-muted-foreground">Verify this address before it can receive password recovery links.</p> : null}
                     </div>
                   ))}
                 </div>
