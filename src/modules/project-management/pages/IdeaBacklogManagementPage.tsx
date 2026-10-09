@@ -2315,6 +2315,18 @@ export function IdeaBacklogManagementPage() {
     [brainstormMessages],
   )
 
+  const waitingToConfirm = useMemo(() => {
+    const lastAssistant = [...brainstormMessages].reverse().find((message) => message.role === 'assistant')
+    const text = lastAssistant?.text ?? ''
+    return (
+      text.includes('Konfirmasi pemahaman ini dulu')
+      || text.includes('Confirm this understanding first')
+      || text.includes('sudah tepat?')
+      || text.includes('Is this AS-IS flow right')
+      || text.includes('Is this TO-BE flow right')
+    )
+  }, [brainstormMessages])
+
   const brainstormNextHint = useMemo(() => {
     if (brainstormAskedItem?.prompt) {
       return formatBrainstormChecklistPrompt(
@@ -6695,7 +6707,7 @@ export function IdeaBacklogManagementPage() {
                               </div>
                             </div>
                           )}
-                          {!isBrainstormSending && !brainstormReady && !brainstormOfferGenerateAnyway && brainstormNextHint && brainstormMessages.length > 0 && !brainstormMessages.some((message) => message.role === 'assistant' && message.text.toLowerCase().includes(brainstormNextHint.toLowerCase())) && (
+                          {!isBrainstormSending && !brainstormReady && !brainstormOfferGenerateAnyway && !waitingToConfirm && brainstormNextHint && brainstormMessages.length > 0 && !brainstormMessages.some((message) => message.role === 'assistant' && message.text.toLowerCase().includes(brainstormNextHint.toLowerCase())) && (
                             <p className="px-10 text-xs leading-5 text-muted-foreground">
                               <span className="mr-1 font-medium text-foreground">{brainstormThreadIndonesian ? 'Berikutnya:' : 'Next:'}</span>
                               {brainstormNextHint}
