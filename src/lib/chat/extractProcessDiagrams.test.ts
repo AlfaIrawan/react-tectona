@@ -103,4 +103,11 @@ describe('process diagram editor helpers', () => {
     expect(persisted).toContain('tectona-process-diagram:erd:')
     expect(latestValidatedTechnicalDiagrams(persisted).map((diagram) => diagram.kind)).toEqual(['c4', 'class', 'erd'])
   })
+
+  it('keeps a confirmed sequence diagram with the technical set', () => {
+    const sequence = '@startuml\nparticipant User\nparticipant API\nUser -> API : submit\n@enduml'
+    const text = `\`\`\`plantuml\n${sequence}\n\`\`\``
+    expect(latestValidatedTechnicalDiagrams(text).map((diagram) => diagram.kind)).toEqual(['sequence'])
+    expect(latestRevisedProcessDiagrams(text)).toEqual([])
+  })
 })
