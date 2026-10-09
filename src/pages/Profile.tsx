@@ -948,35 +948,13 @@ export function ProfilePage() {
                   <ProfileField label="Office location" value={graphProfile?.office_location || identityProfile?.office_location || '-'} />
                 </>
               ) : (
-                <div className="space-y-3 border-b border-border/40 py-3.5">
-                  <p className="text-xs text-muted-foreground">Akun ini tidak masuk lewat Microsoft, jadi detail berikut bisa diubah.</p>
-                  {(
-                    [
-                      ['job-title', 'Job title', editProfile.jobTitle, 'jobTitle'],
-                      ['department', 'Department', editProfile.department, 'department'],
-                      ['employee-number', 'NIK / Number', editProfile.employeeNumber, 'employeeNumber'],
-                      ['organizational-unit', 'Organizational unit', editProfile.organizationalUnit, 'organizationalUnit'],
-                      ['office-location', 'Office location', editProfile.officeLocation, 'officeLocation'],
-                    ] as const
-                  ).map(([id, label, value, key]) => (
-                    <div key={id} className="grid gap-1 sm:grid-cols-[minmax(0,11rem)_1fr] sm:items-center sm:gap-6">
-                      <Label htmlFor={`account-${id}`} className="text-sm text-muted-foreground">{label}</Label>
-                      <input
-                        id={`account-${id}`}
-                        value={value}
-                        onChange={(event) => setEditProfile((current) => ({ ...current, [key]: event.target.value }))}
-                        className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      />
-                    </div>
-                  ))}
-                  {profileSaveError ? <p className="text-xs text-destructive">{profileSaveError}</p> : null}
-                  <div className="flex justify-end">
-                    <Button type="button" className="h-9 gap-2" disabled={profileSaveBusy || !editName.trim()} onClick={() => { void saveProfile() }}>
-                      <Check className="h-4 w-4" aria-hidden />
-                      {profileSaveBusy ? 'Saving…' : 'Save details'}
-                    </Button>
-                  </div>
-                </div>
+                <>
+                  <ProfileField label="Job title" value={identityProfile?.job_title || session.user.jobTitle || '-'} />
+                  <ProfileField label="Department" value={identityProfile?.department || '-'} />
+                  <ProfileField label="NIK / Number" value={identityProfile?.employee_number || '-'} />
+                  <ProfileField label="Organizational unit" value={identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
+                  <ProfileField label="Office location" value={identityProfile?.office_location || '-'} />
+                </>
               )}
               <ProfileField label="Account status" value={identityProfile?.account_status || session.user.accountStatus || 'Active'} />
               <ProfileField label="Last login" value={formatDate(session.loginAt)} />
