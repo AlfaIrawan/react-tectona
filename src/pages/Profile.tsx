@@ -34,10 +34,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { getSession, logoutAsync, requireAuth, registerPasskey, type Session } from '@/auth/authService'
-import { fetchTokenAuditHistory, fetchUserInfo, requestPartnerPasswordReset, type OidcUserInfo } from '@/lib/api/identityApi'
+import { fetchTokenAuditHistory, fetchUserInfo, requestPartnerPasswordReset, updateUserProfile, type OidcUserInfo } from '@/lib/api/identityApi'
 import { listAuthzAssignments, type AuthzAssignmentDto } from '@/lib/api/authzApi'
 import { passkeyErrorMessage } from '@/lib/api/webauthnApi'
 import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
+import { readAuthMethod } from '@/lib/authMethodSession'
 import { authCardButtonClass } from '@/lib/authUiClasses'
 import { enterpriseCyanGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
@@ -57,6 +58,14 @@ type ProfilePreferences = {
   timezone: string
   avatar?: string
   notifications: Record<string, boolean>
+}
+
+type EditableProfile = {
+  jobTitle: string
+  department: string
+  employeeNumber: string
+  organizationalUnit: string
+  officeLocation: string
 }
 
 const PROFILE_PREFS_PREFIX = 'tectona_profile_preferences:'
@@ -620,6 +629,9 @@ export function ProfilePage() {
   const [profilePrefs, setProfilePrefs] = useState<ProfilePreferences>(DEFAULT_PROFILE_PREFERENCES)
   const [editOpen, setEditOpen] = useState(false)
   const [editName, setEditName] = useState('')
+  const [editProfile, setEditProfile] = useState<EditableProfile>({ jobTitle: '', department: '', employeeNumber: '', organizationalUnit: '', officeLocation: '' })
+  const [profileSaveBusy, setProfileSaveBusy] = useState(false)
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
   const [tokenEvents, setTokenEvents] = useState<TokenTelemetryEvent[]>([])
   const [tokenEventsLoading, setTokenEventsLoading] = useState(true)
   const [tokenEventsError, setTokenEventsError] = useState(false)
@@ -679,7 +691,17 @@ export function ProfilePage() {
     const preferences = readProfilePreferences(currentSession.user.id)
     setProfilePrefs(preferences)
     setEditName(normalizeUserDisplayName(currentSession.user.name || preferences.displayName || currentSession.user.email))
-    void fetchUserInfo(currentSession.token).then(setIdentityProfile).catch(() => undefined)
+    void fetchUserInfo(currentSession.token).then((profile) => {
+      setIdentityProfile(profile)
+      setEditProfile({
+        jobTitle: profile.job_title || '',
+        department: profile.department || '',
+        employeeNumber: profile.employee_number || '',
+        organizationalUnit: profile.organizational_unit || '',
+        officeLocation: profile.office_location || '',
+      })
+      if (profile.display_name) setEditName(normalizeUserDisplayName(profile.display_name))
+    }).catch(() => undefined)
     const graphController = new AbortController()
     let graphActive = true
     void fetchMicrosoftProfileOrganization(graphController.signal)
@@ -754,11 +776,41 @@ export function ProfilePage() {
     reader.readAsDataURL(file)
   }
 
-  const saveDisplayName = () => {
-    const nextName = editName.trim()
-    if (!nextName) return
-    updateProfilePreferences({ ...profilePrefs, displayName: nextName })
-    setEditOpen(false)
+  const openEditProfile = () => {
+    setEditName(identityProfile?.display_name || session?.user.name || '')
+    setEditProfile({
+      jobTitle: identityProfile?.job_title || '',
+      department: identityProfile?.department || '',
+      employeeNumber: identityProfile?.employee_number || '',
+      organizationalUnit: identityProfile?.organizational_unit || '',
+      officeLocation: identityProfile?.office_location || '',
+    })
+    setProfileSaveError(null)
+    setEditOpen(true)
+  }
+
+  const saveProfile = async () => {
+    if (!session || !editName.trim() || profileSaveBusy) return
+    setProfileSaveBusy(true)
+    setProfileSaveError(null)
+    try {
+      const updated = await updateUserProfile({
+        accessToken: session.token,
+        displayName: editName,
+        jobTitle: editProfile.jobTitle,
+        department: editProfile.department,
+        employeeNumber: editProfile.employeeNumber,
+        organizationalUnit: editProfile.organizationalUnit,
+        officeLocation: editProfile.officeLocation,
+      })
+      setIdentityProfile(updated)
+      setProfilePrefs((current) => ({ ...current, displayName: updated.display_name || editName.trim() }))
+      setEditOpen(false)
+    } catch (error) {
+      setProfileSaveError(error instanceof Error ? error.message : 'Unable to save profile changes.')
+    } finally {
+      setProfileSaveBusy(false)
+    }
   }
 
   const handleLogout = () => {
@@ -804,6 +856,7 @@ export function ProfilePage() {
     : (effectiveRoles ?? []).map(rbacRoleLabel)
   const initials = profileInitials(displayName, session.user.email)
   const graphProfile = microsoftProfile?.profile
+  const isMicrosoftSso = readAuthMethod() === 'microsoft' || identityProfile?.microsoft_sso === true
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-muted/40 via-background to-background">
@@ -840,7 +893,7 @@ export function ProfilePage() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-              <Button type="button" variant="outline" className="h-10 gap-2" onClick={() => setEditOpen(true)}>
+              <Button type="button" variant="outline" className="h-10 gap-2" onClick={openEditProfile}>
                 <Edit3 className="h-4 w-4" aria-hidden /> Edit profile
               </Button>
               <Button type="button" variant="outline" className={cn(authCardButtonClass, 'sm:w-auto sm:min-w-[10rem] border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive')} onClick={handleLogout}>
@@ -886,11 +939,45 @@ export function ProfilePage() {
               <ProfileField label="Primary RBAC role" value={platformRoleLabel} />
               <ProfileField label="RBAC roles" value={rbacRoles.length ? rbacRoles.join(', ') : 'No role claims'} />
               <ProfileField label="Account ID" value={session.user.id} mono />
-              <ProfileField label="Job title" value={graphProfile?.job_title || identityProfile?.job_title || session.user.jobTitle || '-'} />
-              <ProfileField label="Department" value={graphProfile?.department || '-'} />
-              <ProfileField label="NIK / Number" value={graphProfile?.employee_id || '-'} />
-              <ProfileField label="Organizational unit" value={graphProfile?.company_name || identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
-              <ProfileField label="Office location" value={graphProfile?.office_location || '-'} />
+              {isMicrosoftSso ? (
+                <>
+                  <ProfileField label="Job title" value={graphProfile?.job_title || identityProfile?.job_title || session.user.jobTitle || '-'} />
+                  <ProfileField label="Department" value={graphProfile?.department || identityProfile?.department || '-'} />
+                  <ProfileField label="NIK / Number" value={graphProfile?.employee_id || identityProfile?.employee_number || '-'} />
+                  <ProfileField label="Organizational unit" value={graphProfile?.company_name || identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
+                  <ProfileField label="Office location" value={graphProfile?.office_location || identityProfile?.office_location || '-'} />
+                </>
+              ) : (
+                <div className="space-y-3 border-b border-border/40 py-3.5">
+                  <p className="text-xs text-muted-foreground">Akun ini tidak masuk lewat Microsoft, jadi detail berikut bisa diubah.</p>
+                  {(
+                    [
+                      ['job-title', 'Job title', editProfile.jobTitle, 'jobTitle'],
+                      ['department', 'Department', editProfile.department, 'department'],
+                      ['employee-number', 'NIK / Number', editProfile.employeeNumber, 'employeeNumber'],
+                      ['organizational-unit', 'Organizational unit', editProfile.organizationalUnit, 'organizationalUnit'],
+                      ['office-location', 'Office location', editProfile.officeLocation, 'officeLocation'],
+                    ] as const
+                  ).map(([id, label, value, key]) => (
+                    <div key={id} className="grid gap-1 sm:grid-cols-[minmax(0,11rem)_1fr] sm:items-center sm:gap-6">
+                      <Label htmlFor={`account-${id}`} className="text-sm text-muted-foreground">{label}</Label>
+                      <input
+                        id={`account-${id}`}
+                        value={value}
+                        onChange={(event) => setEditProfile((current) => ({ ...current, [key]: event.target.value }))}
+                        className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                    </div>
+                  ))}
+                  {profileSaveError ? <p className="text-xs text-destructive">{profileSaveError}</p> : null}
+                  <div className="flex justify-end">
+                    <Button type="button" className="h-9 gap-2" disabled={profileSaveBusy || !editName.trim()} onClick={() => { void saveProfile() }}>
+                      <Check className="h-4 w-4" aria-hidden />
+                      {profileSaveBusy ? 'Saving…' : 'Save details'}
+                    </Button>
+                  </div>
+                </div>
+              )}
               <ProfileField label="Account status" value={identityProfile?.account_status || session.user.accountStatus || 'Active'} />
               <ProfileField label="Last login" value={formatDate(session.loginAt)} />
             </dl>
@@ -1054,18 +1141,36 @@ export function ProfilePage() {
 
         {editOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
-            <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card p-6 shadow-xl">
+            <div className="w-full max-w-2xl rounded-2xl border border-border/60 bg-card p-6 shadow-xl">
               <div className="flex items-start justify-between gap-4">
-                <div><h2 id="edit-profile-title" className="text-lg font-semibold text-foreground">Edit profile</h2><p className="mt-1 text-sm text-muted-foreground">These changes are saved for this browser.</p></div>
+                <div><h2 id="edit-profile-title" className="text-lg font-semibold text-foreground">Edit profile</h2><p className="mt-1 text-sm text-muted-foreground">Update your personal and organizational information.</p></div>
                 <button type="button" onClick={() => setEditOpen(false)} className="rounded-lg p-1 text-muted-foreground hover:bg-muted" aria-label="Close edit profile"><span className="text-lg">×</span></button>
               </div>
-              <div className="mt-5 space-y-2">
-                <Label htmlFor="display-name">Display name</Label>
-                <input id="display-name" value={editName} onChange={(event) => setEditName(event.target.value)} className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" autoFocus />
-              </div>
+              {isMicrosoftSso ? (
+                <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  Your profile information is managed by Microsoft and can only be changed in your organization directory.
+                </div>
+              ) : (
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  {[
+                    ['display-name', 'Display name', editName, (value: string) => setEditName(value)],
+                    ['job-title', 'Job title', editProfile.jobTitle, (value: string) => setEditProfile((current) => ({ ...current, jobTitle: value }))],
+                    ['department', 'Department', editProfile.department, (value: string) => setEditProfile((current) => ({ ...current, department: value }))],
+                    ['employee-number', 'NIK / Number', editProfile.employeeNumber, (value: string) => setEditProfile((current) => ({ ...current, employeeNumber: value }))],
+                    ['organizational-unit', 'Organizational unit', editProfile.organizationalUnit, (value: string) => setEditProfile((current) => ({ ...current, organizationalUnit: value }))],
+                    ['office-location', 'Office location', editProfile.officeLocation, (value: string) => setEditProfile((current) => ({ ...current, officeLocation: value }))],
+                  ].map(([id, label, value, onChange]) => (
+                    <div key={id as string} className="space-y-2">
+                      <Label htmlFor={id as string}>{label as string}</Label>
+                      <input id={id as string} value={value as string} onChange={(event) => (onChange as (value: string) => void)(event.target.value)} className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" autoFocus={id === 'display-name'} />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {profileSaveError ? <p className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{profileSaveError}</p> : null}
               <div className="mt-6 flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
-                <Button type="button" className="gap-2" onClick={saveDisplayName}><Check className="h-4 w-4" aria-hidden />Save changes</Button>
+                {!isMicrosoftSso ? <Button type="button" className="gap-2" onClick={() => { void saveProfile() }} disabled={profileSaveBusy || !editName.trim()}><Check className="h-4 w-4" aria-hidden />{profileSaveBusy ? 'Saving…' : 'Save changes'}</Button> : null}
               </div>
             </div>
           </div>

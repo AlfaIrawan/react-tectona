@@ -172,11 +172,15 @@ export interface OidcUserInfo {
   email?: string
   display_name?: string | null
   job_title?: string | null
+  department?: string | null
+  employee_number?: string | null
   organizational_unit?: string | null
+  office_location?: string | null
   account_status?: string | null
   created_at?: string | null
   email_verified?: boolean
   roles?: string[]
+  microsoft_sso?: boolean
 }
 
 export function normalizeLoginEmail(input: string): string {
@@ -364,6 +368,40 @@ export async function fetchUserInfo(accessToken: string): Promise<OidcUserInfo> 
     throw new Error(`userinfo failed (${res.status})`)
   }
   return res.json() as Promise<OidcUserInfo>
+}
+
+export async function updateUserProfile(input: {
+  accessToken: string
+  displayName: string
+  jobTitle?: string
+  department?: string
+  employeeNumber?: string
+  organizationalUnit?: string
+  officeLocation?: string
+}): Promise<OidcUserInfo> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/userinfo`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      display_name: input.displayName.trim(),
+      job_title: input.jobTitle?.trim() || null,
+      department: input.department?.trim() || null,
+      employee_number: input.employeeNumber?.trim() || null,
+      organizational_unit: input.organizationalUnit?.trim() || null,
+      office_location: input.officeLocation?.trim() || null,
+    }),
+  })
+  const raw = await res.text().catch(() => '')
+  if (!res.ok) {
+    try {
+      const payload = JSON.parse(raw) as { error?: { message?: string; error_description?: string }; detail?: string }
+      throw new Error(payload.error?.error_description || payload.error?.message || payload.detail || 'Unable to save profile changes.')
+    } catch (error) {
+      if (error instanceof Error && error.message !== 'Unable to save profile changes.') throw error
+      throw new Error('Unable to save profile changes.')
+    }
+  }
+  return JSON.parse(raw) as OidcUserInfo
 }
 
 export type RegisterResponse = {
