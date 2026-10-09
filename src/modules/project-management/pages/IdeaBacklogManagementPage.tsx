@@ -167,6 +167,8 @@ import { UI_SCOPE_IDEA_BACKLOG, useUiLayoutBoolean } from '@/stores/ui-layout-st
 type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
   sentAt?: string
   respondedAt?: string
+  /** Local preview of an uploaded diagram. Not stored in the chat log. */
+  imagePreview?: string
 }
 
 const BRAINSTORM_GAP_LABELS_EN: Record<string, string> = {
@@ -315,9 +317,11 @@ function mergeBrainstormUiMessages(
   responseReceivedAt: string,
 ): BrainstormUiMessage[] {
   const userSentAtByText = new Map<string, string>()
+  const userPreviewByText = new Map<string, string>()
   const assistantRespondedAtByText = new Map<string, string>()
   for (const message of previous) {
     if (message.role === 'user' && message.sentAt) userSentAtByText.set(message.text, message.sentAt)
+    if (message.role === 'user' && message.imagePreview) userPreviewByText.set(message.text, message.imagePreview)
     if (message.role === 'assistant' && message.respondedAt) {
       assistantRespondedAtByText.set(message.text, message.respondedAt)
     }
@@ -325,11 +329,35 @@ function mergeBrainstormUiMessages(
   return incoming.map((message) => {
     if (message.role === 'user') {
       const sentAt = userSentAtByText.get(message.text)
-      return sentAt ? { ...message, sentAt } : message
+      const imagePreview = userPreviewByText.get(message.text)
+      return sentAt || imagePreview ? { ...message, sentAt, imagePreview } : message
     }
     const respondedAt = assistantRespondedAtByText.get(message.text) ?? responseReceivedAt
     return { ...message, respondedAt }
   })
+}
+
+function diagramUploadCaption(message: string, indonesian: boolean): string {
+  const typed = message.trim()
+  if (typed) return typed
+  return indonesian ? 'Gambar diagram yang sudah ada.' : 'Existing process diagram.'
+}
+
+async function resizeDiagramUpload(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file)
+  try {
+    const maxEdge = 1600
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('DIAGRAM_IMAGE_CANVAS')
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.85)
+  } finally {
+    bitmap.close()
+  }
 }
 
 function isIdeaDraftJobLostError(message: string): boolean {
@@ -1994,6 +2022,8 @@ export function IdeaBacklogManagementPage() {
   const [isBrainstormMode, setIsBrainstormMode] = useState(false)
   const [brainstormMessages, setBrainstormMessages] = useState<BrainstormUiMessage[]>([])
   const [brainstormInput, setBrainstormInput] = useState('')
+  const [brainstormDiagramImage, setBrainstormDiagramImage] = useState<string | null>(null)
+  const brainstormDiagramInputRef = useRef<HTMLInputElement | null>(null)
   const [brainstormLlmMode, setBrainstormLlmMode] = useState<'normal' | 'thinking'>(() => {
     try {
       return sessionStorage.getItem('tectona-brainstorm-llm-mode') === 'thinking' ? 'thinking' : 'normal'
@@ -3888,24 +3918,37 @@ export function IdeaBacklogManagementPage() {
       return
     }
     const message = (messageOverride ?? brainstormInput).trim()
+    const attached = messageOverride ? null : brainstormDiagramImage
     // Deliberately NOT gated on brainstormReady: "enough context" only unlocks
     // Generate draft, it does not end the conversation. The assistant often asks
     // one more question in the same turn, and blocking the send left that question
     // unanswerable.
-    if (!message || isBrainstormSending) return
+    if ((!message && !attached) || isBrainstormSending) return
     const historyBeforeSend = brainstormMessages
+    const shown = attached ? diagramUploadCaption(message, isBrainstormThreadIndonesian(historyBeforeSend)) : message
     setIsBrainstormSending(true)
     setBrainstormError('')
-    if (!messageOverride) setBrainstormInput('')
+    if (!messageOverride) {
+      setBrainstormInput('')
+      setBrainstormDiagramImage(null)
+    }
     setBrainstormOfferGenerateAnyway(false)
     const requestSentAt = new Date().toISOString()
-    setBrainstormMessages((current) => [...current, { role: 'user', text: message, sentAt: requestSentAt }])
+    setBrainstormMessages((current) => [
+      ...current,
+      { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined },
+    ])
     try {
       const guardedMessage = withBrainstormEvidenceGuardrail(
         message,
         isBrainstormThreadIndonesian(historyBeforeSend),
       )
-      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(jobId, guardedMessage, brainstormLlmMode)
+      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(
+        jobId,
+        attached ? shown : guardedMessage,
+        brainstormLlmMode,
+        attached,
+      )
       let response
       try {
         response = await sendWithJob(ideaDraftJob.job_id)
@@ -3948,7 +3991,7 @@ export function IdeaBacklogManagementPage() {
         text: item.role === 'user' ? withoutBrainstormEvidenceGuardrail(item.text) : item.text,
       }))
       const mergedMessages = mergeBrainstormUiMessages(
-        [...historyBeforeSend, { role: 'user', text: message, sentAt: requestSentAt }],
+        [...historyBeforeSend, { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined }],
         visibleResponseMessages,
         responseReceivedAt,
       )
@@ -3993,7 +4036,10 @@ export function IdeaBacklogManagementPage() {
         return
       }
     } catch (error) {
-      if (!messageOverride) setBrainstormInput(message)
+      if (!messageOverride) {
+        setBrainstormInput(message)
+        if (attached) setBrainstormDiagramImage(attached)
+      }
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
       setBrainstormError(friendlyBrainstormError(rawMessage))
       setBrainstormMessages((current) => current.filter(
@@ -4001,6 +4047,38 @@ export function IdeaBacklogManagementPage() {
       ))
     } finally {
       setIsBrainstormSending(false)
+    }
+  }
+
+  const handlePickBrainstormDiagram = async (file: File | undefined) => {
+    if (!file) return
+    const indonesian = isBrainstormThreadIndonesian(brainstormMessages)
+    if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.type)) {
+      setBrainstormError(
+        indonesian
+          ? 'Unggah gambar PNG, JPG, WEBP, atau GIF.'
+          : 'Upload a PNG, JPG, WEBP, or GIF image.',
+      )
+      return
+    }
+    try {
+      const dataUrl = await resizeDiagramUpload(file)
+      if (dataUrl.length > 5_500_000) {
+        setBrainstormError(
+          indonesian
+            ? 'Gambar masih terlalu besar setelah diperkecil. Coba potong bagian diagramnya.'
+            : 'The image is still too large after resizing. Crop it to the diagram.',
+        )
+        return
+      }
+      setBrainstormDiagramImage(dataUrl)
+      setBrainstormError('')
+    } catch {
+      setBrainstormError(
+        indonesian
+          ? 'Gambar itu tidak bisa dibaca. Coba unggah ulang.'
+          : 'That image could not be read. Try uploading it again.',
+      )
     }
   }
 
@@ -6471,6 +6549,13 @@ export function IdeaBacklogManagementPage() {
                               ) : (
                                 <div className="flex max-w-[85%] flex-col items-end gap-1">
                                   <div className="whitespace-pre-wrap rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
+                                    {message.imagePreview ? (
+                                      <img
+                                        src={message.imagePreview}
+                                        alt=""
+                                        className="mb-2 max-h-40 rounded-2xl border border-black/10"
+                                      />
+                                    ) : null}
                                     {message.text}
                                   </div>
                                   {sentLabel ? (
@@ -6705,6 +6790,28 @@ export function IdeaBacklogManagementPage() {
                               conversation — the assistant usually still has an open question,
                               and unmounting this left the user staring at a dead chat. */}
                           <div className="rounded-2xl border border-border bg-background px-3 pb-2.5 pt-3 shadow-[0_4px_18px_rgba(15,23,42,0.08)] transition-shadow focus-within:border-primary/40 focus-within:shadow-[0_6px_24px_rgba(15,23,42,0.12)]">
+                            {brainstormDiagramImage ? (
+                              <div className="mb-2 flex items-center gap-2 px-1">
+                                <img
+                                  src={brainstormDiagramImage}
+                                  alt=""
+                                  className="h-14 w-14 rounded-xl border border-black/10 object-cover"
+                                />
+                                <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+                                  {isBrainstormThreadIndonesian(brainstormMessages)
+                                    ? 'Diagram akan digambar ulang lalu dikonfirmasi.'
+                                    : 'The diagram will be redrawn, then confirmed.'}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#5d5d5d] hover:bg-black/[0.04]"
+                                  aria-label={isBrainstormThreadIndonesian(brainstormMessages) ? 'Hapus gambar' : 'Remove image'}
+                                  onClick={() => setBrainstormDiagramImage(null)}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : null}
                             <textarea
                               ref={brainstormComposerRef}
                               value={brainstormInput}
@@ -6734,12 +6841,24 @@ export function IdeaBacklogManagementPage() {
                             />
                             <div className="mt-1 flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1">
+                                <input
+                                  ref={brainstormDiagramInputRef}
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/webp,image/gif"
+                                  className="hidden"
+                                  onChange={(event) => {
+                                    const file = event.target.files?.[0]
+                                    event.target.value = ''
+                                    void handlePickBrainstormDiagram(file)
+                                  }}
+                                />
                                 <button
                                   type="button"
                                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black/10 bg-transparent text-[#5d5d5d] transition-colors hover:bg-black/[0.04] disabled:opacity-40"
-                                  aria-label="Add attachment"
-                                  title="Coming soon"
-                                  disabled
+                                  aria-label={isBrainstormThreadIndonesian(brainstormMessages) ? 'Unggah gambar diagram' : 'Upload a diagram image'}
+                                  title={isBrainstormThreadIndonesian(brainstormMessages) ? 'Unggah gambar diagram' : 'Upload a diagram image'}
+                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  onClick={() => brainstormDiagramInputRef.current?.click()}
                                 >
                                   <Plus className="h-4 w-4" strokeWidth={2} />
                                 </button>
@@ -6806,11 +6925,11 @@ export function IdeaBacklogManagementPage() {
                                   size="icon"
                                   className={cn(
                                     'ml-0.5 h-8 w-8 shrink-0 rounded-full transition-colors',
-                                    brainstormInput.trim() && !isBrainstormSending && !isDraftContinuing
+                                    (brainstormInput.trim() || brainstormDiagramImage) && !isBrainstormSending && !isDraftContinuing
                                       ? 'bg-[#0d0d0d] text-white hover:bg-black'
                                       : 'bg-[#e5e5e5] text-[#9a9a9a] hover:bg-[#e5e5e5]',
                                   )}
-                                  disabled={!brainstormInput.trim() || isBrainstormSending || isDraftContinuing}
+                                  disabled={(!brainstormInput.trim() && !brainstormDiagramImage) || isBrainstormSending || isDraftContinuing}
                                   onClick={() => void handleSendBrainstormMessage()}
                                   aria-label="Send message"
                                 >

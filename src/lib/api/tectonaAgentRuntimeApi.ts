@@ -2293,12 +2293,17 @@ export async function brainstormIdeaDraftJob(
   jobId: string,
   message: string,
   llmMode: 'normal' | 'thinking' = 'normal',
+  diagramImage?: string | null,
 ): Promise<IdeaDraftBrainstormResponse> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm`,
     {
       method: 'POST',
-      body: JSON.stringify({ message, llm_mode: llmMode }),
+      body: JSON.stringify({
+        message,
+        llm_mode: llmMode,
+        ...(diagramImage ? { diagram_image: diagramImage } : {}),
+      }),
     },
     MULTI_ROLE_SUMMARY_TIMEOUT_MS,
   )
