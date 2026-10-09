@@ -343,6 +343,18 @@ function diagramUploadCaption(message: string, indonesian: boolean): string {
   return indonesian ? 'Gambar diagram yang sudah ada.' : 'Existing process diagram.'
 }
 
+function imageFileFromClipboard(data: DataTransfer | null): File | null {
+  if (!data) return null
+  const fromFiles = Array.from(data.files).find((file) => /^image\/(png|jpeg|webp|gif)$/i.test(file.type))
+  if (fromFiles) return fromFiles
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== 'file' || !/^image\/(png|jpeg|webp|gif)$/i.test(item.type)) continue
+    const file = item.getAsFile()
+    if (file) return file
+  }
+  return null
+}
+
 async function resizeDiagramUpload(file: File): Promise<string> {
   const bitmap = await createImageBitmap(file)
   try {
@@ -6799,8 +6811,8 @@ export function IdeaBacklogManagementPage() {
                                 />
                                 <span className="min-w-0 flex-1 text-xs text-muted-foreground">
                                   {isBrainstormThreadIndonesian(brainstormMessages)
-                                    ? 'Diagram akan digambar ulang lalu dikonfirmasi.'
-                                    : 'The diagram will be redrawn, then confirmed.'}
+                                    ? 'Gambar akan dicek dulu. Kalau memang diagram proses yang sesuai, aku gambar ulang.'
+                                    : 'The image is checked first. A matching process diagram is redrawn.'}
                                 </span>
                                 <button
                                   type="button"
@@ -6832,6 +6844,12 @@ export function IdeaBacklogManagementPage() {
                               className="block w-full resize-none border-0 bg-transparent px-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
                               style={{ height: 24, overflowY: 'hidden' }}
                               disabled={isBrainstormSending || isDraftContinuing}
+                              onPaste={(event) => {
+                                const file = imageFileFromClipboard(event.clipboardData)
+                                if (!file) return
+                                event.preventDefault()
+                                void handlePickBrainstormDiagram(file)
+                              }}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter' && !event.shiftKey) {
                                   event.preventDefault()
@@ -6951,7 +6969,9 @@ export function IdeaBacklogManagementPage() {
                               ? (isBrainstormThreadIndonesian(brainstormMessages)
                                 ? 'Jawab di chat: "lanjut" untuk beberapa pertanyaan lagi, "cukup" untuk generate draft.'
                                 : 'Answer in the chat: "continue" for a few more questions, "enough" to generate the draft.')
-                              : 'Enter to send · Shift+Enter for new line'}
+                              : (isBrainstormThreadIndonesian(brainstormMessages)
+                                ? 'Enter untuk kirim · Shift+Enter baris baru · Ctrl+V untuk menempel gambar'
+                                : 'Enter to send · Shift+Enter for new line · Ctrl+V to paste a diagram')}
                           </p>
                         </div>
                       </div>
