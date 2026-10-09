@@ -2319,8 +2319,8 @@ export function IdeaBacklogManagementPage() {
     const lastAssistant = [...brainstormMessages].reverse().find((message) => message.role === 'assistant')
     const text = lastAssistant?.text ?? ''
     return (
-      text.includes('Konfirmasi pemahaman ini dulu')
-      || text.includes('Confirm this understanding first')
+      text.includes('Kalau ada yang kurang pas, bilang ya.')
+      || text.includes('If something is off, just say so.')
       || text.includes('sudah tepat?')
       || text.includes('Is this AS-IS flow right')
       || text.includes('Is this TO-BE flow right')
