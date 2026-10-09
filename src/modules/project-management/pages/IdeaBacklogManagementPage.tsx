@@ -49,6 +49,7 @@ import {
   ChevronRight,
   Circle,
   CircleCheck,
+  SkipForward,
   Target,
   FolderKanban,
   Palette,
@@ -309,13 +310,44 @@ function brainstormContinueDiscoveryMessage(messages: Array<{ role: string; text
 
 const BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER = '<!-- tectona-brainstorm-evidence-guardrail -->'
 
-function withBrainstormEvidenceGuardrail(message: string, indonesian: boolean): string {
+type BrainstormAbbreviation = {
+  abbr: string
+  expansion: string
+  domain: string
+  not_confused_with: string
+}
+
+function withBrainstormEvidenceGuardrail(
+  message: string,
+  indonesian: boolean,
+  mandatoryItems: IdeaDraftChecklistItem[],
+  activeParentId: string | null,
+  abbreviations: BrainstormAbbreviation[],
+): string {
+  const requiredItems = mandatoryItems.filter((item) => item.required)
+  const activeParent = requiredItems.find((item) => item.id === activeParentId)
+  const mandatoryList = requiredItems.length > 0
+    ? requiredItems.map((item) => `- ${item.id}: ${item.prompt}`).join('\n')
+    : indonesian ? '(daftar mandatory belum tersedia)' : '(mandatory list unavailable)'
+  const abbreviationList = abbreviations.length > 0
+    ? abbreviations.map((item) => `- ${item.abbr}: ${item.expansion}${item.domain ? ` [${item.domain}]` : ''}${item.not_confused_with ? ` (jangan disamakan dengan: ${item.not_confused_with})` : ''}`).join('\n')
+    : indonesian ? '(tidak ada abbreviation aktif untuk AI pada workspace ini)' : '(no AI-enabled abbreviations for this workspace)'
+  const questionScope = activeParent
+    ? indonesian
+      ? `Mandatory yang sedang dijawab (parent aktif): ${activeParent.id}: ${activeParent.prompt}. Sebelum membuat sub-pertanyaan, klasifikasikan SETIAP pertanyaan mandatory di daftar sebagai Bisnis, Teknis, atau Keduanya berdasarkan teks pertanyaan itu sendiri. Tampilkan fokus parent aktif secara singkat sebagai "Fokus mandatory: Bisnis/Teknis/Keduanya". Buat maksimal satu sub-pertanyaan hanya jika ada detail penting dari parent ini yang belum jelas. Sub-pertanyaan wajib mengklarifikasi parent aktif saja dan mengikuti fokus domain parent. Jangan mengambil topik, menggabungkan jawaban, atau menanyakan ulang hal yang dimiliki mandatory lain. Jika parent berfokus teknis, tanyakan hanya detail teknis yang langsung terkait parent; jika bisnis, tetap pada aspek bisnis parent; jika keduanya, pilih satu aspek yang paling penting dan tetap terkait langsung. Jika sub-pertanyaan akan menduplikasi atau menyentuh mandatory lain, jangan tanyakan; lanjutkan ke mandatory pending berikutnya. Jika domain parent belum jelas dari evidence, tanyakan dulu apakah fokusnya bisnis, teknis, atau keduanya.`
+      : `Mandatory question currently being answered (active parent): ${activeParent.id}: ${activeParent.prompt}. Before creating any sub-question, classify EVERY mandatory question in the list as Business, Technical, or Both based on that question’s own wording. Briefly show the active parent focus as "Mandatory focus: Business/Technical/Both". Ask at most one sub-question, and only if an important detail of this parent remains unclear. The sub-question must clarify this active parent alone and follow its domain. Do not borrow topics from, combine answers with, or repeat another mandatory question. If the parent is technical, ask only technical details directly related to it; if business, stay on its business aspects; if both, choose one important aspect that remains directly related. If a sub-question would duplicate or touch another mandatory item, do not ask it; continue to the next pending mandatory question. If the parent domain is unclear from evidence, first ask whether its focus is business, technical, or both.`
+    : indonesian
+      ? 'Tidak ada mandatory parent yang sedang aktif. Jangan membuat sub-pertanyaan yang mengaitkan beberapa mandatory. Tanyakan mandatory pending berikutnya; jika mandatory sudah selesai, ajukan satu pertanyaan eksplorasi mandiri yang diberi fokus Bisnis, Teknis, atau Keduanya berdasarkan evidence.'
+      : 'There is no active mandatory parent. Do not create a sub-question that links multiple mandatory items. Ask the next pending mandatory question; if mandatory questions are complete, ask one standalone discovery question labeled Business, Technical, or Both based on evidence.'
+  /* The escaped quotes intentionally preserve a JSON example in the prompt. */
+  /* eslint-disable no-useless-escape */
   const guardrail = indonesian
-    ? 'Instruksi keselamatan: Jika ada singkatan atau akronim yang artinya tidak didukung oleh judul ide, deskripsi, percakapan, glossary, atau evidence workspace, jangan menebak kepanjangannya. Tanyakan arti singkatan tersebut kepada user terlebih dahulu, satu per satu bila ada beberapa, dan jangan membuat asumsi atau melanjutkan bagian draft yang bergantung pada istilah itu sampai user menjawab.'
-    : 'Safety instruction: If an abbreviation or acronym is not defined by the idea title, description, conversation, glossary, or workspace evidence, do not guess its expansion. Ask the user what it means first, one at a time when there are several, and do not make assumptions or continue draft sections that depend on it until the user answers.'
+    ? `Instruksi untuk balasan ini: Awali dengan ringkasan singkat dan natural dari konteks yang relevan, gunakan parafrasa dengan kalimatmu sendiri. Jangan menyalin atau menggabungkan potongan jawaban user secara verbatim, jangan menyambung jawaban terbaru ke ringkasan lama menjadi satu kalimat panjang, dan jangan mengulang seluruh ringkasan kumulatif. Batasi ringkasan maksimal 1-2 kalimat faktual. Setelah ringkasan, letakkan kalimat "Kalau ada yang kurang pas, bilang ya." tepat sebelum pertanyaan. ${questionScope}\n\nDaftar pertanyaan mandatory:\n${mandatoryList}\n\nAbbreviation List Knowledge Management workspace ini (Use for AI aktif):\n${abbreviationList}\nPeriksa daftar ini saat menemukan singkatan. Jika singkatan ada di daftar, jangan langsung membenarkan atau menganggap kepanjangannya sesuai konteks. Tanyakan konfirmasi eksplisit kepada user apakah kepanjangan yang tercatat memang yang dimaksud dalam konteks ini, sebelum menggunakannya. Jika user mengonfirmasi berbeda/tidak sesuai, tanyakan kepanjangan yang benar dan minta persetujuan eksplisit untuk menyimpannya sebagai entri abbreviation baru pada workspace ini. Jangan simpan sebelum user mengonfirmasi kepanjangan baru. Jika user sudah memberikan kepanjangan baru dan secara eksplisit setuju menyimpan, tambahkan tepat satu baris tersembunyi di akhir balasan dengan format: <TECTONA_ABBREVIATION_SAVE>{\"abbr\":\"...\",\"expansion\":\"...\",\"domain\":\"...\",\"not_confused_with\":\"...\"}</TECTONA_ABBREVIATION_SAVE>. Jangan keluarkan format ini tanpa persetujuan eksplisit user pada pesan sebelumnya. Jika singkatan tidak ada di daftar, jangan menebak; tanyakan artinya, lalu minta izin menyimpan definisi yang user berikan sebagai entri baru. Jangan lanjutkan asumsi yang bergantung padanya sebelum dikonfirmasi.`
+    : `Instructions for this reply: Start with a brief, natural summary of relevant context in your own words. Do not copy or concatenate fragments of the user’s answers verbatim, append the latest answer to an old summary as one long sentence, or repeat the entire cumulative summary. Keep the summary to 1-2 factual sentences. After the summary, place "If something is off, just say so." immediately before the question. ${questionScope}\n\nMandatory questions:\n${mandatoryList}\n\nWorkspace Knowledge Management Abbreviation List (Use for AI enabled):\n${abbreviationList}\nCheck this list whenever an abbreviation appears. If it is listed, do not automatically correct it or assume the stored expansion matches the current context. Ask the user to explicitly confirm whether the listed expansion is what they mean before using it. If the user says it differs/is incorrect, ask for the intended expansion and explicit permission to save it as a new abbreviation entry in this workspace. Do not save until the user confirms the new expansion. After the user provides the new expansion and explicitly agrees to save it, append exactly one hidden line at the end of the reply in this format: <TECTONA_ABBREVIATION_SAVE>{\"abbr\":\"...\",\"expansion\":\"...\",\"domain\":\"...\",\"not_confused_with\":\"...\"}</TECTONA_ABBREVIATION_SAVE>. Never emit this format without the user's explicit permission in a previous message. If an abbreviation is not listed, do not guess; ask what it means. Do not proceed with assumptions depending on it until confirmed.`
   return `${message}\n\n${BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER}\n${guardrail}`
 }
 
+/* eslint-enable no-useless-escape */
 function withoutBrainstormEvidenceGuardrail(message: string): string {
   return message.split(BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER, 1)[0].trimEnd()
 }
@@ -1199,13 +1231,29 @@ function prefetchBrainstormDiagrams(text: string): void {
   }
 }
 
+function moveBrainstormCorrectionBeforeQuestion(text: string): string {
+  const correctionPattern = /(?:kalau|jika) ada yang kurang pas, bilang ya\.?|if something is off, just say so\.?/gi
+  const corrections = [...text.matchAll(correctionPattern)].map(([phrase]) => phrase.trim())
+  if (corrections.length === 0) return text
+
+  const cleanText = text.replace(correctionPattern, '').replace(/[ \t]+\n/g, '\n').trim()
+  if (!cleanText) return corrections.join('\n')
+
+  const paragraphs = cleanText.split(/\n\s*\n/)
+  const questionIndex = paragraphs.findIndex((paragraph) => paragraph.includes('?'))
+  if (questionIndex < 0) return `${corrections.join('\n')}\n\n${cleanText}`
+  paragraphs.splice(questionIndex, 0, corrections.join('\n'))
+  return paragraphs.join('\n\n')
+}
+
 function BrainstormAssistantMessageBody({ text }: { text: string }) {
-  const parts = splitBrainstormDisplayParts(text)
+  const displayText = moveBrainstormCorrectionBeforeQuestion(text)
+  const parts = splitBrainstormDisplayParts(displayText)
   if (parts.length === 0) return null
 
   const hasVisual = parts.some((part) => part.type === 'png' || part.type === 'mermaid' || part.type === 'plantuml')
   if (!hasVisual) {
-    return <BrainstormProseSegments text={text} />
+    return <BrainstormProseSegments text={displayText} />
   }
 
   return (
@@ -1293,6 +1341,9 @@ import { useIdeaFolderStore, type IdeaBacklogFolder } from '@/modules/project-ma
 import { ProjectDragLayer } from '@/modules/projects/components/ProjectDragLayer'
 import { useToast } from '@/components/ui/toast'
 import { notifyEvent } from '@/lib/api/notificationApi'
+import { listAllKbEntries, patchKbEntry } from '@/lib/api/tectonaKbApi'
+import { isAbbreviationListTitle } from '@/lib/kb/systemKbEntry'
+import { parseSystemKbTableContent, serializeSystemKbTable } from '@/lib/kb/systemKbTableEditor'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 
 type IdeaStatus = 'New Submission' | 'Under Review' | 'Approved' | 'Rejected' | 'Converted to Project'
@@ -2082,6 +2133,12 @@ export function IdeaBacklogManagementPage() {
   const [brainstormRemainingGaps, setBrainstormRemainingGaps] = useState<string[]>([])
   const [brainstormChecklist, setBrainstormChecklist] = useState<IdeaDraftChecklistItem[]>([])
   const [brainstormEvidenceProgress, setBrainstormEvidenceProgress] = useState<IdeaDraftEvidenceProgress | null>(null)
+  const [brainstormAbbreviationEntry, setBrainstormAbbreviationEntry] = useState<{
+    id: string
+    content: string
+    rows: BrainstormAbbreviation[]
+    workspaceId: string
+  } | null>(null)
   const [brainstormDiscoveryProgress, setBrainstormDiscoveryProgress] = useState<IdeaDraftDiscoveryProgress | null>(null)
   const [brainstormConfidencePercent, setBrainstormConfidencePercent] = useState(0)
   const [brainstormOfferGenerateAnyway, setBrainstormOfferGenerateAnyway] = useState(false)
@@ -2309,6 +2366,18 @@ export function IdeaBacklogManagementPage() {
       : brainstormEvidenceProgress?.items ?? []
     return items.find((item) => item.status === 'asked') ?? null
   }, [brainstormChecklist, brainstormEvidenceProgress])
+
+  const hasPendingMandatoryQuestion = useMemo(() => {
+    const items = brainstormChecklist.length > 0
+      ? brainstormChecklist
+      : brainstormEvidenceProgress?.items ?? []
+    return items.some((item) => item.required && item.status === 'pending')
+  }, [brainstormChecklist, brainstormEvidenceProgress])
+
+  const brainstormLatestAssistantIndex = useMemo(
+    () => brainstormMessages.findLastIndex((message) => message.role === 'assistant'),
+    [brainstormMessages],
+  )
 
   const brainstormThreadIndonesian = useMemo(
     () => isBrainstormThreadIndonesian(brainstormMessages),
@@ -3900,6 +3969,7 @@ export function IdeaBacklogManagementPage() {
       setBrainstormRemainingGaps([])
       setBrainstormChecklist([])
       setBrainstormEvidenceProgress(null)
+      setBrainstormAbbreviationEntry(null)
       setBrainstormConfidencePercent(0)
       setBrainstormOfferGenerateAnyway(false)
       setBrainstormEvidenceRailCollapsed(false)
@@ -3910,10 +3980,42 @@ export function IdeaBacklogManagementPage() {
 
     try {
       if (mode === 'generate_draft') {
+        const workspaceId = createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID
+        let abbreviationRowsForInitialPrompt: BrainstormAbbreviation[] = []
+        try {
+          const kbEntries = await listAllKbEntries({ workspace_id: workspaceId, is_active: true })
+          const abbreviationEntry = kbEntries.items.find(
+            (entry) => isAbbreviationListTitle(entry.title) && entry.workspace_id === workspaceId,
+          )
+          const abbreviationModel = abbreviationEntry
+            ? parseSystemKbTableContent(abbreviationEntry.title, abbreviationEntry.content)
+            : null
+          if (abbreviationEntry && abbreviationModel?.specId === 'singkatan') {
+            abbreviationRowsForInitialPrompt = abbreviationModel.rows.map((row) => ({
+              abbr: row.abbr ?? '',
+              expansion: row.expansion ?? '',
+              domain: row.domain ?? '',
+              not_confused_with: row.not_confused_with ?? '',
+            })).filter((row) => row.abbr && row.expansion)
+            setBrainstormAbbreviationEntry({
+              id: abbreviationEntry.id,
+              content: abbreviationEntry.content,
+              workspaceId,
+              rows: abbreviationRowsForInitialPrompt,
+            })
+          }
+        } catch {
+          setBrainstormAbbreviationEntry(null)
+        }
         const started = await startIdeaDraftJob({
           title: createIdeaForm.title.trim(),
           tags: effectiveCreateIdeaTags,
-          source_text: createIdeaForm.description.trim().slice(0, 12000),
+          source_text: [
+            createIdeaForm.description.trim().slice(0, 12000),
+            ...(abbreviationRowsForInitialPrompt.length > 0 ? [
+              `Knowledge Management Abbreviation List (Use for AI enabled):\n${abbreviationRowsForInitialPrompt.map((row) => `- ${row.abbr}: ${row.expansion}${row.domain ? ` [${row.domain}]` : ''}${row.not_confused_with ? ` (do not confuse with: ${row.not_confused_with})` : ''}`).join('\n')}\nCheck this list when an abbreviation appears. Confirm the listed expansion with the user before using it; never silently correct or assume it matches the current context. If it differs, ask for the intended meaning and explicit permission before adding a new abbreviation entry. Do not guess unknown abbreviations.`,
+            ] : []),
+          ].filter(Boolean).join('\n\n'),
           context: {
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
             workspace_name: createIdeaWorkspaceOptions.find(
@@ -3979,7 +4081,13 @@ export function IdeaBacklogManagementPage() {
     // unanswerable.
     if ((!message && !attached) || isBrainstormSending) return
     const historyBeforeSend = brainstormMessages
-    const shown = attached ? diagramUploadCaption(message, isBrainstormThreadIndonesian(historyBeforeSend)) : message
+    const indonesian = isBrainstormThreadIndonesian(historyBeforeSend)
+    const shown = attached ? diagramUploadCaption(message, indonesian) : message
+    const mandatoryItems = (brainstormChecklist.length > 0
+      ? brainstormChecklist
+      : brainstormEvidenceProgress?.items ?? [])
+      .filter((item) => item.required)
+    const activeMandatoryParent = mandatoryItems.find((item) => item.status === 'asked') ?? null
     setIsBrainstormSending(true)
     setBrainstormError('')
     if (!messageOverride) {
@@ -3994,12 +4102,15 @@ export function IdeaBacklogManagementPage() {
     ])
     try {
       const guardedMessage = withBrainstormEvidenceGuardrail(
-        message,
-        isBrainstormThreadIndonesian(historyBeforeSend),
+        shown,
+        indonesian,
+        mandatoryItems,
+        activeMandatoryParent?.id ?? null,
+        brainstormAbbreviationEntry?.rows ?? [],
       )
       const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(
         jobId,
-        attached ? shown : guardedMessage,
+        guardedMessage,
         brainstormLlmMode,
         attached,
       )
@@ -4040,10 +4151,80 @@ export function IdeaBacklogManagementPage() {
         response = await sendWithJob(restored.job_id)
       }
       const responseReceivedAt = new Date().toISOString()
-      const visibleResponseMessages = response.messages.map((item) => ({
-        ...item,
-        text: item.role === 'user' ? withoutBrainstormEvidenceGuardrail(item.text) : item.text,
-      }))
+      let updatedAbbreviationEntry = brainstormAbbreviationEntry
+      const explicitSaveConsent = /\b(ya|iya|betul|benar|setuju|simpan|boleh)\b/i.test(shown)
+        && !/\b(tidak|bukan|jangan|belum)\b/i.test(shown)
+      const visibleResponseMessages = [] as typeof response.messages
+      for (const item of response.messages) {
+        if (item.role !== 'assistant') {
+          visibleResponseMessages.push({
+            ...item,
+            text: withoutBrainstormEvidenceGuardrail(item.text),
+          })
+          continue
+        }
+        const saveMatch = item.text.match(/<TECTONA_ABBREVIATION_SAVE>(\{[\s\S]*?\})<\/TECTONA_ABBREVIATION_SAVE>/i)
+        if (saveMatch && updatedAbbreviationEntry && explicitSaveConsent) {
+          try {
+            const candidate = JSON.parse(saveMatch[1]) as Partial<BrainstormAbbreviation>
+            const abbr = candidate.abbr?.trim() ?? ''
+            const expansion = candidate.expansion?.trim() ?? ''
+            const normalizedReply = shown.toLocaleLowerCase().replace(/\s+/g, ' ')
+            const expansionIsNew = !updatedAbbreviationEntry.rows.some(
+              (row) => row.abbr.toLocaleLowerCase() === abbr.toLocaleLowerCase()
+                && row.expansion.toLocaleLowerCase() === expansion.toLocaleLowerCase(),
+            )
+            const abbreviationWasDiscussed = [...historyBeforeSend, { role: 'user', text: shown }]
+              .some((entry) => entry.text.toLocaleLowerCase().includes(abbr.toLocaleLowerCase()))
+            if (
+              abbr && expansion && expansionIsNew
+              && abbreviationWasDiscussed
+              && normalizedReply.includes(expansion.toLocaleLowerCase().replace(/\s+/g, ' '))
+            ) {
+              const model = parseSystemKbTableContent('Abbreviation List (Default)', updatedAbbreviationEntry.content)
+              if (model?.specId === 'singkatan') {
+                const updatedModel = {
+                  ...model,
+                  rows: [...model.rows, {
+                    abbr,
+                    expansion,
+                    domain: candidate.domain?.trim() ?? '',
+                    not_confused_with: candidate.not_confused_with?.trim() ?? '',
+                  }],
+                }
+                const content = serializeSystemKbTable(updatedModel)
+                const saved = await patchKbEntry(updatedAbbreviationEntry.id, { content })
+                updatedAbbreviationEntry = {
+                  ...updatedAbbreviationEntry,
+                  content: saved.content,
+                  rows: [...updatedAbbreviationEntry.rows, {
+                    abbr,
+                    expansion,
+                    domain: candidate.domain?.trim() ?? '',
+                    not_confused_with: candidate.not_confused_with?.trim() ?? '',
+                  }],
+                }
+                setBrainstormAbbreviationEntry(updatedAbbreviationEntry)
+                addToast({
+                  title: indonesian ? 'Singkatan disimpan' : 'Abbreviation saved',
+                  description: `${abbr} · ${expansion}`,
+                  variant: 'success',
+                })
+              }
+            }
+          } catch (saveError) {
+            addToast({
+              title: indonesian ? 'Singkatan belum tersimpan' : 'Abbreviation was not saved',
+              description: saveError instanceof Error ? saveError.message : '',
+              variant: 'error',
+            })
+          }
+        }
+        visibleResponseMessages.push({
+          ...item,
+          text: item.text.replace(/\s*<TECTONA_ABBREVIATION_SAVE>[\s\S]*?<\/TECTONA_ABBREVIATION_SAVE>/gi, '').trim(),
+        })
+      }
       const mergedMessages = mergeBrainstormUiMessages(
         [...historyBeforeSend, { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined }],
         visibleResponseMessages,
@@ -6572,7 +6753,10 @@ export function IdeaBacklogManagementPage() {
                             return (
                             <div
                               key={`${message.role}-${index}-${message.text.slice(0, 24)}`}
-                              className={cn('flex w-full', message.role === 'user' ? 'justify-end' : 'justify-start')}
+                              className={cn(
+                                'flex w-full',
+                                message.role === 'user' ? 'justify-end' : 'flex-col items-start',
+                              )}
                             >
                               {message.role === 'assistant' ? (
                                 <div className="flex w-full items-start gap-3">
@@ -6617,6 +6801,33 @@ export function IdeaBacklogManagementPage() {
                                   ) : null}
                                 </div>
                               )}
+                            {message.role === 'assistant'
+                              && index === brainstormLatestAssistantIndex
+                              && !brainstormAskedItem
+                              && hasPendingMandatoryQuestion
+                              && !isBrainstormSending
+                              && !brainstormReady
+                              && ideaDraftJob?.status === 'awaiting_input' ? (
+                                <div className="ml-10 mt-2 max-w-lg">
+                                  <button
+                                    type="button"
+                                    disabled={isDraftContinuing}
+                                    className={cn(
+                                      'inline-flex min-h-9 max-w-full items-center gap-2 whitespace-normal rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-left text-xs font-medium leading-5 text-sky-800 shadow-sm transition-colors hover:border-sky-300 hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
+                                    )}
+                                    onClick={() => void handleSendBrainstormMessage(
+                                      brainstormThreadIndonesian
+                                        ? 'Lewati pertanyaan lanjutan AI ini. Jangan tandai pertanyaan ini sebagai terjawab dan jangan gunakan jawaban yang belum diberikan sebagai evidence. Lanjutkan langsung ke pertanyaan mandatory berikutnya yang belum terjawab.'
+                                        : 'Skip this AI follow-up. Do not mark it as answered or use an answer that was not provided as evidence. Continue directly to the next unanswered mandatory question.',
+                                    )}
+                                  >
+                                    <SkipForward className="h-4 w-4 shrink-0" aria-hidden />
+                                    {brainstormThreadIndonesian
+                                      ? 'Lewati pertanyaan AI ini dan lanjut ke pertanyaan wajib berikutnya'
+                                      : 'Skip this AI question and continue to the next required question'}
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
                             )
                           })}
