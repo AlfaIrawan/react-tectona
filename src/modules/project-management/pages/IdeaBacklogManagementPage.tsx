@@ -317,67 +317,6 @@ type BrainstormAbbreviation = {
   not_confused_with: string
 }
 
-function withBrainstormEvidenceGuardrail(
-  message: string,
-  indonesian: boolean,
-  mandatoryItems: IdeaDraftChecklistItem[],
-  activeParentId: string | null,
-  abbreviations: BrainstormAbbreviation[],
-): string {
-  if (message.length >= 3900) return message
-  const requiredItems = mandatoryItems.filter((item) => item.required)
-  const activeParent = requiredItems.find((item) => item.id === activeParentId)
-  const mandatoryList = requiredItems.length > 0
-    ? requiredItems.map((item) => `- ${item.id}: ${item.prompt}`).join('\n')
-    : indonesian ? '(daftar mandatory belum tersedia)' : '(mandatory list unavailable)'
-  const abbreviationList = abbreviations.length > 0
-    ? abbreviations.map((item) => `- ${item.abbr}: ${item.expansion}${item.domain ? ` [${item.domain}]` : ''}${item.not_confused_with ? ` (jangan disamakan dengan: ${item.not_confused_with})` : ''}`).join('\n')
-    : indonesian ? '(tidak ada abbreviation aktif untuk AI pada workspace ini)' : '(no AI-enabled abbreviations for this workspace)'
-  const questionScope = activeParent
-    ? indonesian
-      ? `Mandatory yang sedang dijawab (parent aktif): ${activeParent.id}: ${activeParent.prompt}. Sebelum membuat sub-pertanyaan, klasifikasikan SETIAP pertanyaan mandatory di daftar sebagai Bisnis, Teknis, atau Keduanya berdasarkan teks pertanyaan itu sendiri. Tampilkan fokus parent aktif secara singkat sebagai "Fokus mandatory: Bisnis/Teknis/Keduanya". Buat maksimal satu sub-pertanyaan hanya jika ada detail penting dari parent ini yang belum jelas. Sub-pertanyaan wajib mengklarifikasi parent aktif saja dan mengikuti fokus domain parent. Jangan mengambil topik, menggabungkan jawaban, atau menanyakan ulang hal yang dimiliki mandatory lain. Jika parent berfokus teknis, tanyakan hanya detail teknis yang langsung terkait parent; jika bisnis, tetap pada aspek bisnis parent; jika keduanya, pilih satu aspek yang paling penting dan tetap terkait langsung. Jika sub-pertanyaan akan menduplikasi atau menyentuh mandatory lain, jangan tanyakan; lanjutkan ke mandatory pending berikutnya. Jika domain parent belum jelas dari evidence, tanyakan dulu apakah fokusnya bisnis, teknis, atau keduanya.`
-      : `Mandatory question currently being answered (active parent): ${activeParent.id}: ${activeParent.prompt}. Before creating any sub-question, classify EVERY mandatory question in the list as Business, Technical, or Both based on that question’s own wording. Briefly show the active parent focus as "Mandatory focus: Business/Technical/Both". Ask at most one sub-question, and only if an important detail of this parent remains unclear. The sub-question must clarify this active parent alone and follow its domain. Do not borrow topics from, combine answers with, or repeat another mandatory question. If the parent is technical, ask only technical details directly related to it; if business, stay on its business aspects; if both, choose one important aspect that remains directly related. If a sub-question would duplicate or touch another mandatory item, do not ask it; continue to the next pending mandatory question. If the parent domain is unclear from evidence, first ask whether its focus is business, technical, or both.`
-    : indonesian
-      ? 'Tidak ada mandatory parent yang sedang aktif. Jangan membuat sub-pertanyaan yang mengaitkan beberapa mandatory. Tanyakan mandatory pending berikutnya; jika mandatory sudah selesai, ajukan satu pertanyaan eksplorasi mandiri yang diberi fokus Bisnis, Teknis, atau Keduanya berdasarkan evidence.'
-      : 'There is no active mandatory parent. Do not create a sub-question that links multiple mandatory items. Ask the next pending mandatory question; if mandatory questions are complete, ask one standalone discovery question labeled Business, Technical, or Both based on evidence.'
-  const responseQualityRule = indonesian
-    ? 'Gunakan kalimat lengkap dan ringkas. Jangan memotong kalimat atau mengakhirinya dengan "..."/elipsis; parafrasekan lebih singkat bila konteks panjang. Jika jawaban user masih ambigu atau belum cukup jelas, tanyakan satu klarifikasi yang langsung terkait dengan jawaban dan parent aktif sebelum lanjut ke mandatory berikutnya.'
-    : 'Use concise, complete sentences. Never truncate a sentence or end it with an ellipsis; paraphrase more briefly when context is long. If the user’s answer is still ambiguous or unclear, ask one clarification directly tied to that answer and active parent before moving to the next mandatory question.'
-  /* The escaped quotes intentionally preserve a JSON example in the prompt. */
-  /* eslint-disable no-useless-escape */
-  const guardrail = indonesian
-    ? `Instruksi untuk balasan ini: Awali dengan ringkasan singkat dan natural dari konteks yang relevan, gunakan parafrasa dengan kalimatmu sendiri. Jangan menyalin atau menggabungkan potongan jawaban user secara verbatim, jangan menyambung jawaban terbaru ke ringkasan lama menjadi satu kalimat panjang, dan jangan mengulang seluruh ringkasan kumulatif. Batasi ringkasan maksimal 1-2 kalimat faktual. Setelah ringkasan, letakkan kalimat "Kalau ada yang kurang pas, bilang ya." tepat sebelum pertanyaan. ${questionScope}\n\nDaftar pertanyaan mandatory:\n${mandatoryList}\n\nAbbreviation List Knowledge Management workspace ini (Use for AI aktif):\n${abbreviationList}\nPeriksa daftar ini saat menemukan singkatan. Jika singkatan ada di daftar, jangan langsung membenarkan atau menganggap kepanjangannya sesuai konteks. Tanyakan konfirmasi eksplisit kepada user apakah kepanjangan yang tercatat memang yang dimaksud dalam konteks ini, sebelum menggunakannya. Jika user mengonfirmasi berbeda/tidak sesuai, tanyakan kepanjangan yang benar dan minta persetujuan eksplisit untuk menyimpannya sebagai entri abbreviation baru pada workspace ini. Jangan simpan sebelum user mengonfirmasi kepanjangan baru. Jika user sudah memberikan kepanjangan baru dan secara eksplisit setuju menyimpan, tambahkan tepat satu baris tersembunyi di akhir balasan dengan format: <TECTONA_ABBREVIATION_SAVE>{\"abbr\":\"...\",\"expansion\":\"...\",\"domain\":\"...\",\"not_confused_with\":\"...\"}</TECTONA_ABBREVIATION_SAVE>. Jangan keluarkan format ini tanpa persetujuan eksplisit user pada pesan sebelumnya. Jika singkatan tidak ada di daftar, jangan menebak; tanyakan artinya, lalu minta izin menyimpan definisi yang user berikan sebagai entri baru. Jangan lanjutkan asumsi yang bergantung padanya sebelum dikonfirmasi.`
-    : `Instructions for this reply: Start with a brief, natural summary of relevant context in your own words. Do not copy or concatenate fragments of the user’s answers verbatim, append the latest answer to an old summary as one long sentence, or repeat the entire cumulative summary. Keep the summary to 1-2 factual sentences. After the summary, place "If something is off, just say so." immediately before the question. ${questionScope}\n\nMandatory questions:\n${mandatoryList}\n\nWorkspace Knowledge Management Abbreviation List (Use for AI enabled):\n${abbreviationList}\nCheck this list whenever an abbreviation appears. If it is listed, do not automatically correct it or assume the stored expansion matches the current context. Ask the user to explicitly confirm whether the listed expansion is what they mean before using it. If the user says it differs/is incorrect, ask for the intended expansion and explicit permission to save it as a new abbreviation entry in this workspace. Do not save until the user confirms the new expansion. After the user provides the new expansion and explicitly agrees to save it, append exactly one hidden line at the end of the reply in this format: <TECTONA_ABBREVIATION_SAVE>{\"abbr\":\"...\",\"expansion\":\"...\",\"domain\":\"...\",\"not_confused_with\":\"...\"}</TECTONA_ABBREVIATION_SAVE>. Never emit this format without the user's explicit permission in a previous message. If an abbreviation is not listed, do not guess; ask what it means. Do not proceed with assumptions depending on it until confirmed.`
-  const fullMessage = `${message}\n\n${BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER}\n${guardrail}\n${responseQualityRule}`
-  if (fullMessage.length <= 3900) return fullMessage
-
-  const compactCore = indonesian
-    ? 'Ringkas 1-2 kalimat lengkap dengan parafrasa, jangan gabungkan verbatim atau gunakan elipsis. Letakkan "Kalau ada yang kurang pas, bilang ya." tepat sebelum pertanyaan. Jika jawaban ambigu, klarifikasi satu kali terkait parent sebelum mandatory berikutnya.'
-    : 'Summarize in 1-2 complete paraphrased sentences; do not concatenate verbatim or use ellipses. Put "If something is off, just say so." before the question. If the answer is ambiguous, ask one parent-related clarification before the next mandatory.'
-  const compactScope = activeParent
-    ? indonesian
-      ? `Parent aktif ${activeParent.id}: ${activeParent.prompt}. Klasifikasikan semua mandatory sebagai Bisnis/Teknis/Keduanya. Maksimal satu follow-up, hanya tentang parent ini dan domainnya; hindari duplikasi/topik mandatory lain.`
-      : `Active parent ${activeParent.id}: ${activeParent.prompt}. Classify every mandatory as Business/Technical/Both. Ask at most one follow-up, only about this parent and its domain; do not overlap other mandatory items.`
-    : indonesian
-      ? 'Klasifikasikan mandatory sebagai Bisnis/Teknis/Keduanya. Jangan membuat follow-up yang mengaitkan mandatory lain.'
-      : 'Classify mandatory questions as Business/Technical/Both. Do not link follow-ups across mandatory items.'
-  const abbreviationRules = indonesian
-    ? 'Periksa KB singkatan; konfirmasi kepanjangan terdaftar kepada user sebelum digunakan. Jangan menebak yang tidak terdaftar. Jika berbeda, minta kepanjangan baru dan izin simpan eksplisit. Hanya setelah disetujui, keluarkan marker <TECTONA_ABBREVIATION_SAVE>{"abbr":"...","expansion":"...","domain":"...","not_confused_with":"..."}</TECTONA_ABBREVIATION_SAVE>.'
-    : 'Check the abbreviation KB and confirm a listed expansion with the user before using it. Never guess unknown terms. If incorrect, ask for the intended expansion and explicit save permission. Only after consent, emit <TECTONA_ABBREVIATION_SAVE>{"abbr":"...","expansion":"...","domain":"...","not_confused_with":"..."}</TECTONA_ABBREVIATION_SAVE>.'
-  const prefix = `${message}\n\n${BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER}\n`
-  const available = Math.max(0, 3900 - prefix.length)
-  const fixed = `${compactCore}\n${compactScope}\n${abbreviationRules}\n`
-  const listBudget = Math.max(0, available - fixed.length)
-  const abbreviationBudget = Math.ceil(listBudget * 0.7)
-  const mandatoryBudget = listBudget - abbreviationBudget
-  const trimTo = (value: string, max: number) => value.length <= max
-    ? value
-    : max > 1 ? `${value.slice(0, max - 1)}…` : ''
-  const compactGuardrail = `${fixed}Abbreviations:\n${trimTo(abbreviationList, abbreviationBudget)}\nMandatory:\n${trimTo(mandatoryList, mandatoryBudget)}`
-  return `${prefix}${trimTo(compactGuardrail, available)}`
-}
-
-/* eslint-enable no-useless-escape */
 function withoutBrainstormEvidenceGuardrail(message: string): string {
   return message.split(BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER, 1)[0].trimEnd()
 }
@@ -393,6 +332,22 @@ function formatBrainstormTimestamp(iso?: string): string {
   } catch {
     return ''
   }
+}
+
+// The status line while a brainstorm turn runs. The server reports the step it is in (see
+// brainstorm_phase on the job status); this table only gives each step its display wording.
+const BRAINSTORM_PHASE_LABELS: Record<string, { id: string; en: string }> = {
+  reading_kb: {
+    id: 'Mengecek Abbreviation List dan Application Catalog',
+    en: 'Checking the Abbreviation List and Application Catalog',
+  },
+  checking_points: { id: 'Memeriksa poin yang belum jelas', en: 'Checking open points' },
+  writing: { id: 'Menyusun balasan', en: 'Writing a reply' },
+}
+
+function brainstormPhaseLabel(phase: string | null, indonesian: boolean): string {
+  const label = BRAINSTORM_PHASE_LABELS[phase ?? 'writing'] ?? BRAINSTORM_PHASE_LABELS.writing
+  return indonesian ? label.id : label.en
 }
 
 function formatBrainstormLatencyMs(sentAt?: string, respondedAt?: string): string {
@@ -1261,23 +1216,8 @@ function prefetchBrainstormDiagrams(text: string): void {
   }
 }
 
-function moveBrainstormCorrectionBeforeQuestion(text: string): string {
-  const correctionPattern = /(?:kalau|jika) ada yang kurang pas, bilang ya\.?|if something is off, just say so\.?/gi
-  const corrections = [...text.matchAll(correctionPattern)].map(([phrase]) => phrase.trim())
-  if (corrections.length === 0) return text
-
-  const cleanText = text.replace(correctionPattern, '').replace(/[ \t]+\n/g, '\n').trim()
-  if (!cleanText) return corrections.join('\n')
-
-  const paragraphs = cleanText.split(/\n\s*\n/)
-  const questionIndex = paragraphs.findIndex((paragraph) => paragraph.includes('?'))
-  if (questionIndex < 0) return `${corrections.join('\n')}\n\n${cleanText}`
-  paragraphs.splice(questionIndex, 0, corrections.join('\n'))
-  return paragraphs.join('\n\n')
-}
-
 function BrainstormAssistantMessageBody({ text }: { text: string }) {
-  const displayText = moveBrainstormCorrectionBeforeQuestion(text)
+  const displayText = text
   const parts = splitBrainstormDisplayParts(displayText)
   if (parts.length === 0) return null
 
@@ -1421,6 +1361,20 @@ type Idea = {
     roi: number
   }
   version: number
+}
+
+function normalizeIdeaTitle(title: string): string {
+  return title.replace(/\s+/gu, ' ').trim()
+}
+
+function validateIdeaTitle(title: string): string {
+  const normalizedTitle = normalizeIdeaTitle(title)
+  if (!normalizedTitle) return 'Please enter an idea title before continuing.'
+  const words = normalizedTitle.match(/[\p{L}\p{N}]+/gu) ?? []
+  if (words.length < 2 || !/\s/u.test(normalizedTitle)) {
+    return 'Please enter an idea title with at least two words separated by a space.'
+  }
+  return ''
 }
 
 const IDEA_STATUS_CARD_LABEL: Record<IdeaStatus, string> = {
@@ -2134,12 +2088,14 @@ export function IdeaBacklogManagementPage() {
   const [isDeletingIdea, setIsDeletingIdea] = useState(false)
   const [deleteIdeaError, setDeleteIdeaError] = useState('')
   const [aiAssistanceLoading, setAiAssistanceLoading] = useState<IdeaAiAssistanceMode | null>(null)
+  const [createIdeaDraftMode, setCreateIdeaDraftMode] = useState<'ai' | 'manual'>('ai')
   const [aiAssistanceResult, setAiAssistanceResult] = useState<{
     mode: IdeaAiAssistanceMode
     result: string
   } | null>(null)
   const [aiAssistanceError, setAiAssistanceError] = useState('')
   const [aiAssistanceWarning, setAiAssistanceWarning] = useState('')
+  const [createIdeaTitleError, setCreateIdeaTitleError] = useState('')
   const [ideaDraftJob, setIdeaDraftJob] = useState<IdeaDraftJobStatusResponse | null>(null)
   const [isEvidenceDialogOpen, setIsEvidenceDialogOpen] = useState(false)
   const [isBrainstormMode, setIsBrainstormMode] = useState(false)
@@ -2156,6 +2112,30 @@ export function IdeaBacklogManagementPage() {
   })
   const [brainstormLlmMenuOpen, setBrainstormLlmMenuOpen] = useState(false)
   const [isBrainstormSending, setIsBrainstormSending] = useState(false)
+  const [brainstormPhase, setBrainstormPhase] = useState<string | null>(null)
+  // While a turn is sent, read the step the server is in so the status line can show it.
+  const brainstormPollJobId = ideaDraftJob?.job_id ?? null
+  useEffect(() => {
+    if (!isBrainstormSending || !brainstormPollJobId) {
+      setBrainstormPhase(null)
+      return
+    }
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const status = await getIdeaDraftJob(brainstormPollJobId)
+        if (!cancelled) setBrainstormPhase(status.brainstorm_phase ?? null)
+      } catch {
+        // The send request reports its own errors; a missed poll keeps the last step shown.
+      }
+    }
+    void poll()
+    const timer = window.setInterval(poll, 800)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [isBrainstormSending, brainstormPollJobId])
   const [brainstormAnimatingAssistantIndex, setBrainstormAnimatingAssistantIndex] = useState<number | null>(null)
   const [isDraftContinuing, setIsDraftContinuing] = useState(false)
   const [brainstormError, setBrainstormError] = useState('')
@@ -2418,8 +2398,8 @@ export function IdeaBacklogManagementPage() {
     const lastAssistant = [...brainstormMessages].reverse().find((message) => message.role === 'assistant')
     const text = lastAssistant?.text ?? ''
     return (
-      text.includes('Kalau ada yang kurang pas, bilang ya.')
-      || text.includes('If something is off, just say so.')
+      (/\b(?:apakah|apa|kalau|jika|beri tahu|beritahu|kabari|koreksi|silakan|mohon|tolong|let me know|does that|is that|please correct|tell me|if)\b/i.test(text)
+        && /\b(?:pemahaman|ringkasan|jawabanmu|jawabanku|maksudmu|yang saya tangkap|saya memahami|sudah|tepat|sesuai|benar|akurat|kurang|cocok|captured|understanding|summary|your answer|what you meant|right|correct|accurate|missed|off)\b/i.test(text))
       || text.includes('sudah tepat?')
       || text.includes('Is this AS-IS flow right')
       || text.includes('Is this TO-BE flow right')
@@ -3731,6 +3711,7 @@ export function IdeaBacklogManagementPage() {
   }
 
   const openCreateIdeaDrawer = () => {
+    setCreateIdeaDraftMode('ai')
     setCreateIdeaForm({
       title: '',
       description: '',
@@ -3761,6 +3742,7 @@ export function IdeaBacklogManagementPage() {
     setBrainstormAnimatingAssistantIndex(null)
     setAiAssistanceError('')
     setAiAssistanceWarning('')
+    setCreateIdeaTitleError('')
     setIsCreateIdeaDrawerOpen(true)
   }
 
@@ -3852,8 +3834,10 @@ export function IdeaBacklogManagementPage() {
   }
 
   const submitCreateIdea = async () => {
-    if (!createIdeaForm.title.trim()) {
-      setCreateIdeaError('Idea title is required.')
+    const titleError = validateIdeaTitle(createIdeaForm.title)
+    if (titleError) {
+      setCreateIdeaTitleError(titleError)
+      document.getElementById('idea-title')?.focus()
       return
     }
 
@@ -3876,7 +3860,7 @@ export function IdeaBacklogManagementPage() {
 
     try {
       const created = await apiCreateIdea({
-        title: createIdeaForm.title.trim(),
+        title: normalizeIdeaTitle(createIdeaForm.title),
         description: appendProcessDiagramsToText(
           createIdeaForm.description.trim() || 'Define business problem, expected value, and target outcomes for governance review.',
           createIdeaProcessDiagrams,
@@ -3914,6 +3898,7 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaDescriptionHtml('')
     setCreateIdeaProcessDiagrams([])
     setCreateIdeaError('')
+    setCreateIdeaTitleError('')
   }
 
   const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse) => {
@@ -3975,8 +3960,10 @@ export function IdeaBacklogManagementPage() {
   }
 
   const handleAiAssistance = async (mode: IdeaAiAssistanceMode) => {
-    if (!createIdeaForm.title.trim()) {
-      setAiAssistanceError('Please enter an idea title first.')
+    const titleError = validateIdeaTitle(createIdeaForm.title)
+    if (titleError) {
+      setCreateIdeaTitleError(titleError)
+      document.getElementById('idea-title')?.focus()
       return
     }
     if (
@@ -4038,15 +4025,9 @@ export function IdeaBacklogManagementPage() {
           setBrainstormAbbreviationEntry(null)
         }
         const started = await startIdeaDraftJob({
-          title: createIdeaForm.title.trim(),
+          title: normalizeIdeaTitle(createIdeaForm.title),
           tags: effectiveCreateIdeaTags,
-          source_text: [
-            createIdeaForm.description.trim().slice(0, 10000),
-            'Panduan proses brainstorm (instruksi, bukan fakta proyek): rangkum jawaban dengan kalimat lengkap dan ringkas, jangan gunakan elipsis atau memotong kalimat. Sebelum membuat sub-pertanyaan, klasifikasikan setiap mandatory sebagai Bisnis, Teknis, atau Keduanya. Jangan pindah ke mandatory berikutnya jika jawaban terakhir masih ambigu; ajukan satu klarifikasi yang langsung terkait dengan jawaban dan parent aktif, mengikuti domain parent, tanpa menyinggung mandatory lain. Lanjutkan checklist setelah jawaban cukup jelas.',
-            ...(abbreviationRowsForInitialPrompt.length > 0 ? [
-              `Knowledge Management Abbreviation List (Use for AI enabled):\n${abbreviationRowsForInitialPrompt.map((row) => `- ${row.abbr}: ${row.expansion}${row.domain ? ` [${row.domain}]` : ''}${row.not_confused_with ? ` (do not confuse with: ${row.not_confused_with})` : ''}`).join('\n')}\nCheck this list when an abbreviation appears. Confirm the listed expansion with the user before using it; never silently correct or assume it matches the current context. If it differs, ask for the intended meaning and explicit permission before adding a new abbreviation entry. Do not guess unknown abbreviations.`,
-            ] : []),
-          ].filter(Boolean).join('\n\n').slice(0, 12000),
+          source_text: createIdeaForm.description.trim().slice(0, 10000),
           context: {
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
             workspace_name: createIdeaWorkspaceOptions.find(
@@ -4070,7 +4051,7 @@ export function IdeaBacklogManagementPage() {
       } else {
         const result = await generateIdeaDescriptionWithAI(
           mode,
-          createIdeaForm.title.trim(),
+          normalizeIdeaTitle(createIdeaForm.title),
           createIdeaForm.description && createIdeaForm.description.trim() ? createIdeaForm.description : undefined
         )
         setCreateIdeaDescriptionFromPlainText(result.result)
@@ -4120,11 +4101,6 @@ export function IdeaBacklogManagementPage() {
         : 'Message is too long. The limit is 4,000 characters.')
       return
     }
-    const mandatoryItems = (brainstormChecklist.length > 0
-      ? brainstormChecklist
-      : brainstormEvidenceProgress?.items ?? [])
-      .filter((item) => item.required)
-    const activeMandatoryParent = mandatoryItems.find((item) => item.status === 'asked') ?? null
     setIsBrainstormSending(true)
     setBrainstormError('')
     if (!messageOverride) {
@@ -4138,18 +4114,12 @@ export function IdeaBacklogManagementPage() {
       { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined },
     ])
     try {
-      const guardedMessage = withBrainstormEvidenceGuardrail(
-        shown,
-        indonesian,
-        mandatoryItems,
-        activeMandatoryParent?.id ?? null,
-        brainstormAbbreviationEntry?.rows ?? [],
-      )
       const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(
         jobId,
-        guardedMessage,
+        shown,
         brainstormLlmMode,
         attached,
+        brainstormAbbreviationEntry?.rows ?? [],
       )
       let response
       try {
@@ -4257,9 +4227,12 @@ export function IdeaBacklogManagementPage() {
             })
           }
         }
+        const visibleAssistantText = item.text
+          .replace(/\s*<TECTONA_ABBREVIATION_SAVE>[\s\S]*?<\/TECTONA_ABBREVIATION_SAVE>/gi, '')
+          .trim()
         visibleResponseMessages.push({
           ...item,
-          text: item.text.replace(/\s*<TECTONA_ABBREVIATION_SAVE>[\s\S]*?<\/TECTONA_ABBREVIATION_SAVE>/gi, '').trim(),
+          text: visibleAssistantText,
         })
       }
       const mergedMessages = mergeBrainstormUiMessages(
@@ -6056,10 +6029,25 @@ export function IdeaBacklogManagementPage() {
                     <Input
                       id="idea-title"
                       value={createIdeaForm.title}
-                      onChange={(e) => setCreateIdeaForm((prev) => ({ ...prev, title: e.target.value }))}
+                      aria-invalid={Boolean(createIdeaTitleError)}
+                      aria-describedby={createIdeaTitleError ? 'idea-title-error' : undefined}
+                      onChange={(e) => {
+                        const title = e.target.value
+                        setCreateIdeaForm((prev) => ({ ...prev, title }))
+                        if (createIdeaTitleError) setCreateIdeaTitleError(validateIdeaTitle(title))
+                      }}
+                      onBlur={() => setCreateIdeaTitleError(validateIdeaTitle(createIdeaForm.title))}
                       placeholder="Enter idea title"
-                      className="h-10 text-sm"
+                      className={cn('h-10 text-sm', createIdeaTitleError && 'border-destructive focus-visible:ring-destructive/20')}
                     />
+                    {createIdeaTitleError && (
+                      <p id="idea-title-error" className="text-xs text-destructive" role="alert">
+                        {createIdeaTitleError}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Use a phrase that describes the core idea; add context and benefits in the Description.
+                    </p>
                   </div>
 
                   <div className="space-y-1.5">
@@ -6068,75 +6056,100 @@ export function IdeaBacklogManagementPage() {
                         Description <RequiredFieldMark />
                       </Label>
 
-                      {/* AI Assist Section - KB Reference Style */}
-                      <div className="space-y-3 rounded-lg border border-border/60 bg-background/40 p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Wand2 className="h-4 w-4 text-blue-600" aria-hidden />
-                            <span className="text-xs font-semibold text-foreground">AI Assist</span>
-                          </div>
-                          <span className="text-xs text-muted-foreground">Quick actions</span>
-                        </div>
-
-                        {/* AI Buttons Grid 2x2 */}
-                        <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <Button
                             type="button"
                             variant="outline"
-                            disabled={aiAssistanceLoading !== null || !createIdeaForm.title.trim()}
-                            className="h-9 justify-start gap-2 rounded-lg border-border/70 bg-background/70 text-xs font-medium text-foreground hover:bg-background hover:text-foreground"
-                            onClick={() => handleAiAssistance('generate_draft')}
+                            aria-pressed={createIdeaDraftMode === 'ai'}
+                            disabled={aiAssistanceLoading !== null}
+                            className={cn(
+                              'h-auto min-h-[76px] justify-start gap-3 rounded-lg px-3 py-3 text-left',
+                              createIdeaDraftMode === 'ai' && !validateIdeaTitle(createIdeaForm.title)
+                                ? 'border-emerald-300 bg-emerald-50 text-emerald-950 shadow-sm hover:bg-emerald-100'
+                                : createIdeaDraftMode === 'ai'
+                                  ? 'border-blue-300 bg-blue-50/80 text-blue-950 hover:bg-blue-50'
+                                  : 'border-border/70 bg-background/70 text-foreground hover:bg-muted/40',
+                            )}
+                            onClick={() => {
+                              setCreateIdeaDraftMode('ai')
+                              void handleAiAssistance('generate_draft')
+                            }}
                           >
                             {aiAssistanceLoading === 'generate_draft' ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                             ) : (
-                              <Wand2 className="h-3.5 w-3.5 shrink-0" />
+                              <Sparkles className={cn(
+                                'h-4 w-4 shrink-0',
+                                createIdeaDraftMode === 'ai' && !validateIdeaTitle(createIdeaForm.title)
+                                  ? 'text-emerald-700'
+                                  : 'text-blue-600',
+                              )} />
                             )}
-                            Generate Draft
+                            <span className="min-w-0 whitespace-normal">
+                              <span className="block text-xs font-semibold">
+                                {!validateIdeaTitle(createIdeaForm.title) ? 'Click here' : 'Generate Draft with AI Assist'}
+                              </span>
+                              <span className="mt-1 block text-[11px] font-normal leading-4 text-muted-foreground">
+                                {!validateIdeaTitle(createIdeaForm.title)
+                                  ? 'Start a guided draft with AI Assist.'
+                                  : 'Build a draft through a guided AI conversation.'}
+                              </span>
+                            </span>
                           </Button>
 
                           <Button
                             type="button"
                             variant="outline"
-                            disabled={
-                              aiAssistanceLoading !== null
-                              || !createIdeaForm.title.trim()
-                              || !createIdeaForm.description.trim()
-                            }
-                            className="h-9 justify-start gap-2 rounded-lg border-border/70 bg-background/70 text-xs font-medium text-foreground hover:bg-background hover:text-foreground"
-                            onClick={() => handleAiAssistance('improve_writing')}
-                          >
-                            {aiAssistanceLoading === 'improve_writing' ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-                            ) : (
-                              <Wand2 className="h-3.5 w-3.5 shrink-0" />
+                            aria-pressed={createIdeaDraftMode === 'manual'}
+                            className={cn(
+                              'h-auto min-h-[76px] justify-start gap-3 rounded-lg px-3 py-3 text-left',
+                              createIdeaDraftMode === 'manual'
+                                ? 'border-slate-300 bg-slate-50 text-slate-900 hover:bg-slate-100'
+                                : 'border-border/70 bg-background/70 text-foreground hover:bg-muted/40',
                             )}
-                            Improve Writing
-                          </Button>
-
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={
-                              aiAssistanceLoading !== null
-                              || !createIdeaForm.title.trim()
-                              || !createIdeaForm.description.trim()
-                            }
-                            className="h-9 justify-start gap-2 rounded-lg border-border/70 bg-background/70 text-xs font-medium text-foreground hover:bg-background hover:text-foreground"
-                            onClick={() => handleAiAssistance('suggest_structure')}
+                            onClick={() => setCreateIdeaDraftMode('manual')}
                           >
-                            {aiAssistanceLoading === 'suggest_structure' ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-                            ) : (
-                              <Wand2 className="h-3.5 w-3.5 shrink-0" />
-                            )}
-                            Make Structured
+                            <ClipboardList className="h-4 w-4 shrink-0 text-slate-600" />
+                            <span className="min-w-0 whitespace-normal">
+                              <span className="block text-xs font-semibold">Manual Create Draft</span>
+                              <span className="mt-1 block text-[11px] font-normal leading-4 text-muted-foreground">
+                                Write your draft directly in the editor.
+                              </span>
+                            </span>
                           </Button>
-
-                          <div className="h-9 rounded-lg border border-border/70 bg-background/70 flex items-center justify-center text-xs text-muted-foreground/50 cursor-not-allowed">
-                            More coming soon
-                          </div>
                         </div>
+
+                        {(createIdeaDraftMode === 'manual' || ideaDraftJob?.status === 'completed') && (
+                          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+                            <span className="mr-auto flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                              <Wand2 className="h-3.5 w-3.5 text-blue-600" aria-hidden />
+                              AI writing tools
+                            </span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={aiAssistanceLoading !== null || !createIdeaForm.title.trim() || !createIdeaForm.description.trim()}
+                              className="h-8 gap-1.5 px-2.5 text-[11px]"
+                              onClick={() => handleAiAssistance('improve_writing')}
+                            >
+                              {aiAssistanceLoading === 'improve_writing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                              Improve Writing
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={aiAssistanceLoading !== null || !createIdeaForm.title.trim() || !createIdeaForm.description.trim()}
+                              className="h-8 gap-1.5 px-2.5 text-[11px]"
+                              onClick={() => handleAiAssistance('suggest_structure')}
+                            >
+                              {aiAssistanceLoading === 'suggest_structure' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                              Make Structured
+                            </Button>
+                          </div>
+                        )}
 
                         {ideaDraftJob && ideaDraftJob.status !== 'completed' && (
                           <div className="space-y-3 rounded-lg border border-blue-200/80 bg-blue-50/60 p-3">
@@ -6280,6 +6293,7 @@ export function IdeaBacklogManagementPage() {
                       </div>
                     </div>
 
+                    {(createIdeaDraftMode === 'manual' || ideaDraftJob?.status === 'completed') && (
                     <div id="idea-description" aria-labelledby="idea-description-label" className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
                         <Button
@@ -6430,6 +6444,7 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       ) : null}
                     </div>
+                    )}
                   </div>
 
                   <div className="rounded-xl border border-border/70 bg-gradient-to-br from-muted/30 via-background to-muted/10 p-4 shadow-sm sm:p-5">
@@ -6840,7 +6855,8 @@ export function IdeaBacklogManagementPage() {
                               )}
                             {message.role === 'assistant'
                               && index === brainstormLatestAssistantIndex
-                              && !brainstormAskedItem
+                              && Boolean(brainstormAskedItem)
+                              && !(brainstormAskedItem?.prompt && message.text.includes(brainstormAskedItem.prompt))
                               && hasPendingMandatoryQuestion
                               && !isBrainstormSending
                               && !brainstormReady
@@ -6880,7 +6896,7 @@ export function IdeaBacklogManagementPage() {
                                 </span>
                               </div>
                               <span className="inline-flex items-baseline gap-1">
-                                Writing a reply
+                                {brainstormPhaseLabel(brainstormPhase, brainstormThreadIndonesian)}
                                 <span className="inline-flex gap-0.5" aria-hidden>
                                   {[0, 150, 300].map((delay) => (
                                     <span key={delay} className="h-1 w-1 rounded-full bg-muted-foreground animate-bounce motion-reduce:animate-none"

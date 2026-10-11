@@ -683,6 +683,8 @@ export interface IdeaDraftJobStatusResponse {
   brainstorm_messages: IdeaDraftBrainstormMessage[]
   brainstorm_ready?: boolean
   brainstorm_remaining_gaps?: string[]
+  // The step the running brainstorm turn is in (reading_kb, checking_points, writing), or null.
+  brainstorm_phase?: string | null
   intake_checklist?: IdeaDraftChecklistItem[]
   evidence_progress?: IdeaDraftEvidenceProgress
   discovery_progress?: IdeaDraftDiscoveryProgress
@@ -2294,6 +2296,12 @@ export async function brainstormIdeaDraftJob(
   message: string,
   llmMode: 'normal' | 'thinking' = 'normal',
   diagramImage?: string | null,
+  workspaceAbbreviations: Array<{
+    abbr: string
+    expansion: string
+    domain?: string
+    not_confused_with?: string
+  }> = [],
 ): Promise<IdeaDraftBrainstormResponse> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm`,
@@ -2302,6 +2310,7 @@ export async function brainstormIdeaDraftJob(
       body: JSON.stringify({
         message,
         llm_mode: llmMode,
+        workspace_abbreviations: workspaceAbbreviations,
         ...(diagramImage ? { diagram_image: diagramImage } : {}),
       }),
     },
