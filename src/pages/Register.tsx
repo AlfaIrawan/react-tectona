@@ -82,6 +82,7 @@ export function RegisterPage() {
               <Input
                 id="register-email"
                 type="email"
+                placeholder="you@company.com"
                 value={email}
                 onChange={(e) => {
                   const nextEmail = e.target.value
@@ -102,6 +103,7 @@ export function RegisterPage() {
               <Label htmlFor="register-name">Display name (optional)</Label>
               <Input
                 id="register-name"
+                placeholder="How should we call you?"
                 className={authCardInputClass}
                 value={displayName}
                 onChange={(e) => {
@@ -120,6 +122,7 @@ export function RegisterPage() {
                   <Input
                     id="register-password"
                     type={showPassword ? 'text' : 'password'}
+                    placeholder="Create a strong password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     disabled={isSubmitting}
@@ -146,6 +149,7 @@ export function RegisterPage() {
                 <Input
                   id="register-confirm"
                   type="password"
+                  placeholder="Re-enter your password"
                   className={authCardInputClass}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
