@@ -2141,6 +2141,8 @@ export function IdeaBacklogManagementPage() {
   const [brainstormError, setBrainstormError] = useState('')
   const [brainstormReady, setBrainstormReady] = useState(false)
   const [brainstormRemainingGaps, setBrainstormRemainingGaps] = useState<string[]>([])
+  // Set from the server: the skip button shows only for a sub-question, never for a mandatory question.
+  const [brainstormLatestKind, setBrainstormLatestKind] = useState<string | null>(null)
   const [brainstormChecklist, setBrainstormChecklist] = useState<IdeaDraftChecklistItem[]>([])
   const [brainstormEvidenceProgress, setBrainstormEvidenceProgress] = useState<IdeaDraftEvidenceProgress | null>(null)
   const [brainstormAbbreviationEntry, setBrainstormAbbreviationEntry] = useState<{
@@ -2381,7 +2383,8 @@ export function IdeaBacklogManagementPage() {
     const items = brainstormChecklist.length > 0
       ? brainstormChecklist
       : brainstormEvidenceProgress?.items ?? []
-    return items.some((item) => item.required && item.status === 'pending')
+    // A required question still open: not answered and not skipped (asked counts as open too).
+    return items.some((item) => item.required && item.status !== 'answered' && item.status !== 'skipped')
   }, [brainstormChecklist, brainstormEvidenceProgress])
 
   const brainstormLatestAssistantIndex = useMemo(
@@ -3733,6 +3736,7 @@ export function IdeaBacklogManagementPage() {
     setBrainstormError('')
     setBrainstormReady(false)
     setBrainstormRemainingGaps([])
+    setBrainstormLatestKind(null)
     setBrainstormChecklist([])
     setBrainstormEvidenceProgress(null)
     setBrainstormDiscoveryProgress(null)
@@ -3933,6 +3937,7 @@ export function IdeaBacklogManagementPage() {
     ))
     setBrainstormReady(Boolean(status.brainstorm_ready))
     setBrainstormRemainingGaps(status.brainstorm_remaining_gaps ?? status.evidence_summary.gaps ?? [])
+    setBrainstormLatestKind(status.brainstorm_latest_kind ?? null)
     setBrainstormOfferGenerateAnyway(Boolean(status.offer_generate_anyway))
     syncBrainstormEvidenceState(status)
   }
@@ -3984,6 +3989,7 @@ export function IdeaBacklogManagementPage() {
       setBrainstormError('')
       setBrainstormReady(false)
       setBrainstormRemainingGaps([])
+      setBrainstormLatestKind(null)
       setBrainstormChecklist([])
       setBrainstormEvidenceProgress(null)
       setBrainstormAbbreviationEntry(null)
@@ -4249,6 +4255,7 @@ export function IdeaBacklogManagementPage() {
       // not-ready and pull the Generate draft button out from under the user.
       setBrainstormReady((current) => current || response.ready_to_continue)
       setBrainstormRemainingGaps(response.remaining_gaps)
+      setBrainstormLatestKind(response.latest_kind ?? null)
       setBrainstormOfferGenerateAnyway(Boolean(response.offer_generate_anyway) && !response.ready_to_continue)
       setBrainstormChecklist(response.intake_checklist ?? response.evidence_progress?.items ?? [])
       setBrainstormEvidenceProgress(response.evidence_progress ?? null)
@@ -4412,6 +4419,7 @@ export function IdeaBacklogManagementPage() {
     if (!inferBrainstormReadyFromMessages(brainstormMessages)) return
     setBrainstormReady(true)
     setBrainstormRemainingGaps([])
+    setBrainstormLatestKind(null)
     setBrainstormOfferGenerateAnyway(false)
     setBrainstormConfidencePercent((current) => Math.max(current, 85))
     setIdeaDraftJob((current) =>
@@ -4758,6 +4766,7 @@ export function IdeaBacklogManagementPage() {
   if (isLoading) {
     return (
       <PlatformDataLoadingState
+        className="min-h-[calc(100vh-3rem)]"
         title="Loading Idea & Backlog data"
         description="Retrieving ideas from the idea-backlog service."
       />
@@ -6855,12 +6864,11 @@ export function IdeaBacklogManagementPage() {
                               )}
                             {message.role === 'assistant'
                               && index === brainstormLatestAssistantIndex
-                              && Boolean(brainstormAskedItem)
-                              && !(brainstormAskedItem?.prompt && message.text.includes(brainstormAskedItem.prompt))
+                              && brainstormAnimatingAssistantIndex !== index
+                              && brainstormLatestKind === 'followup'
                               && hasPendingMandatoryQuestion
                               && !isBrainstormSending
-                              && !brainstormReady
-                              && ideaDraftJob?.status === 'awaiting_input' ? (
+                              && !brainstormReady ? (
                                 <div className="ml-10 mt-2 max-w-lg">
                                   <button
                                     type="button"

@@ -605,6 +605,8 @@ export interface IdeaDraftBrainstormResponse {
   messages: IdeaDraftBrainstormMessage[]
   ready_to_continue: boolean
   remaining_gaps: string[]
+  // Kind of the latest assistant turn: followup (a sub-question), mandatory, or confirm.
+  latest_kind?: string | null
   intake_checklist?: IdeaDraftChecklistItem[]
   evidence_progress?: IdeaDraftEvidenceProgress
   discovery_progress?: IdeaDraftDiscoveryProgress
@@ -685,6 +687,7 @@ export interface IdeaDraftJobStatusResponse {
   brainstorm_remaining_gaps?: string[]
   // The step the running brainstorm turn is in (reading_kb, checking_points, writing), or null.
   brainstorm_phase?: string | null
+  brainstorm_latest_kind?: string | null
   intake_checklist?: IdeaDraftChecklistItem[]
   evidence_progress?: IdeaDraftEvidenceProgress
   discovery_progress?: IdeaDraftDiscoveryProgress
