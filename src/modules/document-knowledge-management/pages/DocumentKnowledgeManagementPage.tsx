@@ -189,6 +189,10 @@ import { PersonalOneDrivePanel } from '@/modules/document-knowledge-management/c
 import { OneDriveZipDownload } from '@/modules/document-knowledge-management/components/OneDriveZipDownload'
 import { OneDriveMutationDialog } from '@/modules/document-knowledge-management/components/OneDriveMutationDialog'
 import { DocumentRepositoryUploadProgressOverlay } from '@/modules/document-knowledge-management/components/DocumentRepositoryUploadProgressOverlay'
+import {
+  SampleKindConflictDialog,
+  type SampleKindConflictChoice,
+} from '@/modules/document-knowledge-management/components/SampleKindConflictDialog'
 import { collectBrowserFiles } from '@/modules/document-knowledge-management/lib/collectBrowserFiles'
 import {
   collectUploadItemsFromDataTransfer,
