@@ -336,18 +336,15 @@ function formatBrainstormTimestamp(iso?: string): string {
 
 // The status line while a brainstorm turn runs. The server reports the step it is in (see
 // brainstorm_phase on the job status); this table only gives each step its display wording.
-const BRAINSTORM_PHASE_LABELS: Record<string, { id: string; en: string }> = {
-  reading_kb: {
-    id: 'Mengecek Abbreviation List dan Application Catalog',
-    en: 'Checking the Abbreviation List and Application Catalog',
-  },
-  checking_points: { id: 'Memeriksa poin yang belum jelas', en: 'Checking open points' },
-  writing: { id: 'Menyusun balasan', en: 'Writing a reply' },
+// Always English, whatever the conversation language (Alfa, 14-Oct).
+const BRAINSTORM_PHASE_LABELS: Record<string, string> = {
+  reading_kb: 'Checking the Abbreviation List and Application Catalog',
+  checking_points: 'Checking open points',
+  writing: 'Writing a reply',
 }
 
-function brainstormPhaseLabel(phase: string | null, indonesian: boolean): string {
-  const label = BRAINSTORM_PHASE_LABELS[phase ?? 'writing'] ?? BRAINSTORM_PHASE_LABELS.writing
-  return indonesian ? label.id : label.en
+function brainstormPhaseLabel(phase: string | null): string {
+  return BRAINSTORM_PHASE_LABELS[phase ?? 'writing'] ?? BRAINSTORM_PHASE_LABELS.writing
 }
 
 function formatBrainstormLatencyMs(sentAt?: string, respondedAt?: string): string {
@@ -6909,7 +6906,7 @@ export function IdeaBacklogManagementPage() {
                                 </span>
                               </div>
                               <span className="inline-flex items-baseline gap-1">
-                                {brainstormPhaseLabel(brainstormPhase, brainstormThreadIndonesian)}
+                                {brainstormPhaseLabel(brainstormPhase)}
                                 <span className="inline-flex gap-0.5" aria-hidden>
                                   {[0, 150, 300].map((delay) => (
                                     <span key={delay} className="h-1 w-1 rounded-full bg-muted-foreground animate-bounce motion-reduce:animate-none"
