@@ -599,6 +599,8 @@ export interface IdeaDraftDiscoveryProgress {
 export interface IdeaDraftBrainstormMessage {
   role: 'user' | 'assistant'
   text: string
+  /** Basis of a sub-question (the user's quoted words and the question they answered), set by the server. */
+  evidence?: string | null
 }
 
 export interface IdeaDraftBrainstormResponse {
