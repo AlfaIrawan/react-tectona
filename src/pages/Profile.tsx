@@ -34,7 +34,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { getSession, logoutAsync, requireAuth, registerPasskey, type Session } from '@/auth/authService'
-import { fetchTokenAuditHistory, fetchUserInfo, requestPartnerPasswordReset, updateUserProfile, type OidcUserInfo } from '@/lib/api/identityApi'
+import { fetchTokenAuditHistory, fetchUserInfo, requestPartnerPasswordReset, resendSecondaryEmailVerification, updateUserProfile, type OidcUserInfo } from '@/lib/api/identityApi'
 import { listAuthzAssignments, type AuthzAssignmentDto } from '@/lib/api/authzApi'
 import { passkeyErrorMessage } from '@/lib/api/webauthnApi'
 import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
@@ -634,6 +634,8 @@ export function ProfilePage() {
   const [profileSaveBusy, setProfileSaveBusy] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
   const [profileSaveNotice, setProfileSaveNotice] = useState<string | null>(null)
+  const [secondaryVerificationBusy, setSecondaryVerificationBusy] = useState(false)
+  const [secondaryVerificationMsg, setSecondaryVerificationMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [tokenEvents, setTokenEvents] = useState<TokenTelemetryEvent[]>([])
   const [tokenEventsLoading, setTokenEventsLoading] = useState(true)
   const [tokenEventsError, setTokenEventsError] = useState(false)
@@ -680,6 +682,28 @@ export function ProfilePage() {
       })
     } finally {
       setPartnerResetBusy(false)
+    }
+  }
+
+  const handleResendSecondaryVerification = async () => {
+    if (!session || secondaryVerificationBusy) return
+    setSecondaryVerificationBusy(true)
+    setSecondaryVerificationMsg(null)
+    try {
+      const result = await resendSecondaryEmailVerification(session.token)
+      setSecondaryVerificationMsg({
+        ok: result.sent,
+        text: result.sent
+          ? 'A new verification link was sent to your secondary email.'
+          : 'A new verification link was created, but email delivery is not available yet.',
+      })
+    } catch (error) {
+      setSecondaryVerificationMsg({
+        ok: false,
+        text: error instanceof Error ? error.message : 'Unable to resend the verification link.',
+      })
+    } finally {
+      setSecondaryVerificationBusy(false)
     }
   }
 
@@ -791,6 +815,7 @@ export function ProfilePage() {
     })
     setProfileSaveError(null)
     setProfileSaveNotice(null)
+    setSecondaryVerificationMsg(null)
     setEditOpen(true)
   }
 
@@ -961,17 +986,26 @@ export function ProfilePage() {
               <ProfileField
                 label="Secondary email"
                 value={identityProfile?.secondary_email ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <span>{identityProfile.secondary_email}</span>
-                    {identityProfile.secondary_email_verified ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-600" title="Verified">
-                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
-                        <span className="text-xs font-semibold">Verified</span>
-                      </span>
-                    ) : <span className="text-xs text-muted-foreground">· Pending verification</span>}
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{identityProfile.secondary_email}</span>
+                      {identityProfile.secondary_email_verified ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-600" title="Verified">
+                          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                          <span className="text-xs font-semibold">Verified</span>
+                        </span>
+                      ) : <span className="text-xs text-muted-foreground">· Pending verification</span>}
+                    </span>
+                    {!identityProfile.secondary_email_verified ? (
+                      <Button type="button" variant="outline" className="h-7 gap-1 px-2 text-[11px]" onClick={() => { void handleResendSecondaryVerification() }} disabled={secondaryVerificationBusy}>
+                        <RefreshCw className={cn('h-3 w-3', secondaryVerificationBusy && 'animate-spin')} aria-hidden />
+                        {secondaryVerificationBusy ? 'Sending…' : 'Resend verification'}
+                      </Button>
+                    ) : null}
                   </span>
                 ) : '-'}
               />
+              {secondaryVerificationMsg ? <p role="status" className={cn('mb-2 -mt-2 text-xs', secondaryVerificationMsg.ok ? 'text-emerald-600' : 'text-destructive')}>{secondaryVerificationMsg.text}</p> : null}
               {isMicrosoftSso ? (
                 <>
                   <ProfileField label="Job title" value={graphProfile?.job_title || identityProfile?.job_title || session.user.jobTitle || '-'} />

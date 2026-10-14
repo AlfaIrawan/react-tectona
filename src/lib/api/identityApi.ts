@@ -583,6 +583,30 @@ export async function verifySecondaryEmailToken(token: string): Promise<VerifySe
   return res.json() as Promise<VerifySecondaryEmailResponse>
 }
 
+export type ResendSecondaryEmailVerificationResponse = {
+  sent: boolean
+  message: string
+}
+
+export async function resendSecondaryEmailVerification(
+  accessToken: string,
+): Promise<ResendSecondaryEmailVerificationResponse> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/email/secondary-verification`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+  })
+  const raw = await res.text().catch(() => '')
+  if (!res.ok) {
+    const payload = extractErrorPayload(raw)
+    const detail = typeof payload?.error === 'string' ? payload.error : raw
+    if (/already_verified/i.test(detail)) throw new Error('This secondary email is already verified.')
+    if (/not_configured/i.test(detail)) throw new Error('Add a secondary email before requesting verification.')
+    if (/resend_throttled/i.test(detail)) throw new Error('Please wait a minute before requesting another verification email.')
+    throw new Error('Unable to resend the secondary email verification link.')
+  }
+  return JSON.parse(raw) as ResendSecondaryEmailVerificationResponse
+}
+
 export async function resendDomainOnboardingVerificationEmail(input: {
   email: string
   subjectId: string
