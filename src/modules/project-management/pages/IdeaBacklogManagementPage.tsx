@@ -6838,7 +6838,7 @@ export function IdeaBacklogManagementPage() {
                                       )}
                                     </div>
                                     {message.evidence && index !== brainstormAnimatingAssistantIndex ? (
-                                      <p className="mt-1.5 text-xs italic leading-5 text-muted-foreground">
+                                      <p className="mt-1.5 whitespace-pre-line text-xs italic leading-5 text-muted-foreground">
                                         {message.evidence}
                                       </p>
                                     ) : null}
