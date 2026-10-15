@@ -342,6 +342,8 @@ export type IdeaWorkflowRunDto = {
   decision_note?: string | null
   approver_labels: string[]
   requested_by?: string | null
+  /** Why the run stopped, when it failed (e.g. a step after the approval). */
+  error?: string | null
   /** Who the latest approval round emailed. via: primary | secondary. */
   email_deliveries?: ApprovalEmailDeliveryDto[]
 }

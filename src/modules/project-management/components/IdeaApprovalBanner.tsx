@@ -19,6 +19,8 @@ type Status = {
   canRequest: boolean
   requestedBy: string
   emailDeliveries: ApprovalEmailDeliveryDto[]
+  /** A step after the decision failed (the decision itself stands). */
+  failedAfterDecision: string
   approverText: string
   pending: WorkflowApprovalDto[]
   outcome: string | null
@@ -52,7 +54,14 @@ export function useIdeaApprovalStatus(ideaId: string, workspaceId: string | unde
 
   // A run that failed or was cancelled after the request (e.g. no approver matched) leaves
   // nothing to wait for, so the owner must be able to request approval again.
-  const requestedRun = runs.find((run) => run.approval_requested && run.status !== 'failed' && run.status !== 'cancelled')
+  // A run that failed or was cancelled before anyone decided (e.g. no approver matched) leaves
+  // nothing to wait for, so the owner may request again. One that failed AFTER a decision
+  // (a later step such as Generate BRD) still carries that decision.
+  const decidedRunIds = new Set(
+    approvals.filter((item) => item.status === 'approved' || item.status === 'rejected').map((item) => item.run_id),
+  )
+  const requestedRun = runs.find((run) => run.approval_requested
+    && ((run.status !== 'failed' && run.status !== 'cancelled') || decidedRunIds.has(run.id)))
   const pending = approvals.filter((item) => item.status === 'pending' && item.run_id === requestedRun?.id)
   const decided = approvals.find((item) => item.run_id === requestedRun?.id && (item.status === 'approved' || item.status === 'rejected'))
   const labels = (requestedRun?.approver_labels ?? []).map((label) => label.trim()).filter(Boolean)
@@ -97,6 +106,7 @@ export function useIdeaApprovalStatus(ideaId: string, workspaceId: string | unde
     canRequest: !requestedRun || (requestedRun.status === 'waiting_approval' && !answered && !requestedRun.approval_decision),
     requestedBy: requestedRun?.requested_by ?? '',
     emailDeliveries: requestedRun?.email_deliveries ?? [],
+    failedAfterDecision: requestedRun?.status === 'failed' && decidedRunIds.has(requestedRun.id) ? (requestedRun.error || 'a later step failed') : '',
     approverText,
     pending,
     outcome: requestedRun?.approval_decision ?? (decided?.status === 'approved' ? 'approved' : decided?.status === 'rejected' ? 'revision' : null),
@@ -194,14 +204,26 @@ export function IdeaApprovalBanner({
     )
   }
 
-  if (status.outcome === 'approved') {
-    return <p className={compact ? 'text-[11px] text-emerald-700' : 'rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900'}>Approved{status.comment ? `. ${status.comment}` : '.'}</p>
+  const outcomes: Record<string, { label: string; badge: string; box: string }> = {
+    approved: { label: 'Approved', badge: 'bg-emerald-100 text-emerald-800', box: 'border-emerald-200 bg-emerald-50 text-emerald-900' },
+    revision: { label: 'Revision', badge: 'bg-amber-100 text-amber-800', box: 'border-amber-200 bg-amber-50 text-amber-950' },
+    reject: { label: 'Rejected', badge: 'bg-rose-100 text-rose-800', box: 'border-rose-200 bg-rose-50 text-rose-900' },
   }
-  if (status.outcome === 'revision') {
-    return <p className={compact ? 'text-[11px] text-amber-700' : 'rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950'}>Revision{status.comment ? `: ${status.comment}` : '.'}</p>
-  }
-  if (status.outcome === 'reject') {
-    return <p className={compact ? 'text-[11px] text-rose-700' : 'rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900'}>Rejected{status.comment ? `: ${status.comment}` : '.'}</p>
+  const shown = status.outcome ? outcomes[status.outcome] : undefined
+  if (shown) {
+    return (
+      <div className={compact ? 'space-y-1 text-[11px]' : `space-y-1 rounded-lg border px-3 py-2 text-xs ${shown.box}`}>
+        <p className="flex flex-wrap items-center gap-1.5">
+          <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-semibold ${shown.badge}`}>{shown.label}</span>
+          {status.comment ? <span className="text-slate-700">{status.comment}</span> : null}
+        </p>
+        {status.failedAfterDecision ? (
+          <p className="text-rose-700" title={status.failedAfterDecision}>
+            The next step failed: {status.failedAfterDecision.slice(0, 160)}
+          </p>
+        ) : null}
+      </div>
+    )
   }
   return null
 }
