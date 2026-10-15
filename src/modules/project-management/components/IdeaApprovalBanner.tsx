@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Mail } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Loader2, Mail, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { enterpriseSecondaryButtonClass } from '@/lib/enterpriseButtonClasses'
+import { cn } from '@/lib/utils'
 import {
   approveWorkflowRun,
   listIdeaWorkflowRuns,
@@ -174,47 +176,97 @@ function ApprovalEmailButton({ runId }: { runId: string }) {
           event.stopPropagation()
           void show()
         }}
-        className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25 transition-colors hover:bg-blue-500/20"
         title="Show the approval email conversation"
         aria-label="Show the approval email conversation"
       >
-        <Mail className="h-3.5 w-3.5" />
+        <Mail className="h-4 w-4" aria-hidden />
       </button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-[min(100%,560px)]">
-          <DialogHeader>
-            <DialogTitle>Approval by email</DialogTitle>
-            <DialogDescription>What the approvers and Tectona wrote by email for this request.</DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1 text-xs">
-            {loading ? <p className="flex items-center gap-2 text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</p> : null}
-            {error ? <p className="text-rose-700">{error}</p> : null}
-            {!loading && !error && shown.length === 0 ? <p className="text-slate-500">No email conversation for this request.</p> : null}
-            {shown.map((conversation) => (
-              <div key={conversation.code} className="space-y-2">
-                <p className="font-semibold text-slate-700">
-                  {conversation.approver_name || 'Approver'}
-                  <span className="ml-2 font-normal text-slate-400">[APR-{conversation.code}] · {conversation.status}</span>
-                </p>
-                {conversation.messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={message.direction === 'in'
-                      ? 'mr-8 rounded-lg border border-slate-200 bg-white px-3 py-2'
-                      : 'ml-8 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2'}
-                  >
-                    <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">
-                      {message.direction === 'in' ? conversation.approver_name || 'Approver' : 'Tectona'}
-                      {message.created_at ? ` · ${new Date(message.created_at).toLocaleString()}` : ''}
+      {open
+        ? createPortal(
+          // Same frame as "Generate document from template": portal, dimmed backdrop, header, footer.
+          <div
+            className="z-[1400] flex items-center justify-center p-4 sm:p-6"
+            style={{ position: 'fixed', inset: 0, zIndex: 1400 }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+              aria-label="Close email conversation"
+              onClick={() => setOpen(false)}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="approval-email-title"
+              className="relative z-[1401] w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+            >
+              <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                <div className="flex items-start gap-4">
+                  <div className="mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
+                    <Mail className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="min-w-0 space-y-1">
+                    <h3 id="approval-email-title" className="text-base font-semibold tracking-tight text-foreground">
+                      Approval by email
+                    </h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      What the approvers and Tectona wrote by email for this request.
                     </p>
-                    <p className="whitespace-pre-wrap text-slate-800">{message.body}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="max-h-[60vh] space-y-5 overflow-y-auto px-6 py-5">
+                {loading ? (
+                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…
+                  </p>
+                ) : null}
+                {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+                {!loading && !error && shown.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No email conversation for this request.</p>
+                ) : null}
+                {shown.map((conversation) => (
+                  <div key={conversation.code} className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      {conversation.approver_name || 'Approver'}
+                    </p>
+                    {conversation.messages.map((message, index) => (
+                      <div
+                        key={index}
+                        className={message.direction === 'in'
+                          ? 'mr-8 rounded-xl border border-border bg-card px-4 py-3'
+                          : 'ml-8 rounded-xl border border-blue-500/20 bg-blue-500/[0.06] px-4 py-3'}
+                      >
+                        <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                          {message.direction === 'in' ? conversation.approver_name || 'Approver' : 'Tectona'}
+                          {message.created_at ? ` · ${new Date(message.created_at).toLocaleString()}` : ''}
+                        </p>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{message.body}</p>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+
+              <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                  onClick={() => setOpen(false)}
+                >
+                  <X className="h-4 w-4 shrink-0" aria-hidden />
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+        : null}
     </>
   )
 }
@@ -322,8 +374,10 @@ export function IdeaApprovalBanner({
       <div className={compact ? 'space-y-1 text-[11px]' : `space-y-1 rounded-lg border px-3 py-2 text-xs ${shown.box}`}>
         <p className="flex flex-wrap items-center gap-1.5">
           <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-semibold ${shown.badge}`}>{shown.label}</span>
-          {status.comment ? <span className="text-slate-700">{status.comment}</span> : null}
-          {status.requestedRunId && /^via email/i.test(status.comment) ? <ApprovalEmailButton runId={status.requestedRunId} /> : null}
+          {/* A decision made by email is read behind the mail icon, not repeated on the row. */}
+          {status.requestedRunId && /^via email/i.test(status.comment)
+            ? <ApprovalEmailButton runId={status.requestedRunId} />
+            : status.comment ? <span className="text-slate-700">{status.comment}</span> : null}
         </p>
         {failure && !(failure.kind && existingDocumentKinds.includes(failure.kind)) ? (
           <p className="text-rose-700" title={status.failedAfterDecision}>{failure.text}</p>
