@@ -731,9 +731,14 @@ export function ProfilePage() {
     }).catch(() => undefined)
     const graphController = new AbortController()
     let graphActive = true
-    void fetchMicrosoftProfileOrganization(graphController.signal)
-      .then((profile) => { if (graphActive) setMicrosoftProfile(profile) })
-      .catch(() => { if (graphActive) setMicrosoftProfile(null) })
+    if (readAuthMethod() === 'microsoft') {
+      void fetchMicrosoftProfileOrganization(graphController.signal)
+        .then((profile) => { if (graphActive) setMicrosoftProfile(profile) })
+        .catch(() => { if (graphActive) setMicrosoftProfile(null) })
+    } else {
+      setMicrosoftProfile(null)
+      setMicrosoftPhotoUrl(null)
+    }
     void listAuthzAssignments().then(setAuthzAssignments).catch(() => undefined)
     const localEvents = mergeTokenEvents([], readTokenTelemetry(currentSession.user.id))
     setTokenEvents(localEvents)
@@ -749,6 +754,10 @@ export function ProfilePage() {
 
   useEffect(() => {
     if (!session?.user.id) return
+    if (readAuthMethod() !== 'microsoft') {
+      setMicrosoftPhotoUrl(null)
+      return
+    }
     const controller = new AbortController()
     let active = true
     let objectUrl: string | null = null
@@ -921,7 +930,7 @@ export function ProfilePage() {
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
               <button type="button" className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-2xl bg-primary text-lg font-semibold text-primary-foreground shadow-md" onClick={() => avatarInputRef.current?.click()} aria-label="Change profile photo">
-                {profilePrefs.avatar || microsoftPhotoUrl ? <img src={profilePrefs.avatar || microsoftPhotoUrl || ''} alt="" className="h-full w-full object-cover" onError={() => setMicrosoftPhotoUrl(null)} /> : initials}
+                {profilePrefs.avatar || (isMicrosoftSso && microsoftPhotoUrl) ? <img src={profilePrefs.avatar || microsoftPhotoUrl || ''} alt="" className="h-full w-full object-cover" onError={() => setMicrosoftPhotoUrl(null)} /> : initials}
                 <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100"><Camera className="h-5 w-5" aria-hidden /></span>
               </button>
               <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
