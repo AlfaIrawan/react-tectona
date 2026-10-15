@@ -7,7 +7,7 @@
  * NOTE: the backend responds in snake_case (matching the idea-backlog convention).
  */
 
-import { apiFetch, tectonaServiceHeaders } from './httpClient'
+import { apiFetch, parseApiErrorMessage, tectonaServiceHeaders } from './httpClient'
 import { serviceApiBase } from './gatewayBase'
 
 const BASE_URL = (() => {
@@ -104,15 +104,8 @@ function defaultHeaders(extra?: Record<string, string>): HeadersInit {
 async function readJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    let message = text
-    try {
-      // FastAPI errors arrive as {"detail": "..."}; show the sentence, not the JSON.
-      const detail = (JSON.parse(text) as { detail?: unknown }).detail
-      if (typeof detail === 'string' && detail.trim()) message = detail
-    } catch {
-      // not JSON: keep the raw text
-    }
-    throw new Error(message || `HTTP ${res.status}`)
+    // Errors arrive as {"detail": ...} or, behind the error middleware, {"error": {"message": ...}}.
+    throw new Error(parseApiErrorMessage(text, `HTTP ${res.status}`))
   }
   return (await res.json()) as T
 }
