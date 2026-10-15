@@ -460,6 +460,8 @@ function withoutApprovalConfig(config: Record<string, string>): Record<string, s
     'emailBodyText',
     'emailIncludeCover',
     'emailDocumentKind',
+    'replyByEmail',
+    'replyMaxClarifications',
     'quorum',
     'allowSelfApproval',
     'subjectLabel',
@@ -2742,6 +2744,34 @@ function WorkflowBuilderCanvasInner({
                       includeCover={selectedNode.data.config.emailIncludeCover ?? 'no'}
                       onChange={(patch) => updateSelectedNode({ config: patch })}
                     />
+                    <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                      <label className={FIELD_LABEL_CLASS}>Reply by email</label>
+                      <Select
+                        value={selectedNode.data.config.replyByEmail === 'yes' ? 'yes' : 'no'}
+                        onChange={(event) => updateSelectedNode({ config: { replyByEmail: event.target.value } })}
+                        className="h-9 text-sm"
+                      >
+                        <SelectItem value="no">Off: decide in Tectona only</SelectItem>
+                        <SelectItem value="yes">On: approvers can approve, ask for revision or reject by replying</SelectItem>
+                      </Select>
+                      {selectedNode.data.config.replyByEmail === 'yes' ? (
+                        <>
+                          <label className={FIELD_LABEL_CLASS}>Questions back before pointing to Tectona</label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={selectedNode.data.config.replyMaxClarifications ?? '3'}
+                            onChange={(event) => updateSelectedNode({ config: { replyMaxClarifications: event.target.value } })}
+                            className="h-8"
+                          />
+                          <p className="text-[11px] leading-4 text-slate-500">
+                            Tectona reads each reply. A clear decision is recorded as the approver's; anything unclear gets a
+                            question back by email, up to this many times.
+                          </p>
+                        </>
+                      ) : null}
+                    </div>
                   </>
                 ) : null}
 
