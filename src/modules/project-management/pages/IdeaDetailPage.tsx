@@ -14953,7 +14953,8 @@ export function IdeaDetailPage() {
                                       <Button
                                         type="button"
                                         size="sm"
-                                        className="h-7 text-xs"
+                                        className="h-10 rounded-lg border-primary/30 bg-primary/10 px-4 text-sm font-semibold text-primary shadow-sm hover:bg-primary/15 hover:text-primary"
+                                        variant="outline"
                                         disabled={ideaApprovalStatus.busy}
                                         onClick={(event) => {
                                           event.stopPropagation()
