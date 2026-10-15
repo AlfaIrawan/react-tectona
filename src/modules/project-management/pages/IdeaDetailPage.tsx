@@ -11819,11 +11819,6 @@ export function IdeaDetailPage() {
                   </Badge>
                 ))}
               </div>
-              <IdeaApprovalBanner
-                status={ideaApprovalStatus}
-                currentUserId={currentUserId}
-                nameOf={resolveIdentityDisplayName}
-              />
               <IdeaTitleEditor
                 ideaId={idea.id}
                 title={idea.title}
@@ -14945,9 +14940,16 @@ export function IdeaDetailPage() {
                                   const matchesRequestedDocument = workflowRequestDocumentKinds.some((kind) => (
                                     new RegExp(`\\b${kind}\\b`, 'i').test(label)
                                   ))
-                                  if (!matchesRequestedDocument || !isIdeaCreator || !ideaApprovalStatus.canRequest) return null
+                                  if (!matchesRequestedDocument) return null
+                                  // The approval of this document lives on its row: the request
+                                  // button for the owner, then who it waits on (and, for an
+                                  // approver, the Approve / Revision / Reject controls).
+                                  const showRequest = isIdeaCreator && ideaApprovalStatus.canRequest
+                                  if (!showRequest && ideaApprovalStatus.awaitingRequest) return null
                                   return (
-                                    <div className="mt-2">
+                                    <div className="mt-2 space-y-1" onClick={(event) => event.stopPropagation()}>
+                                      {showRequest ? (
+                                      <>
                                       <Button
                                         type="button"
                                         size="sm"
@@ -14981,7 +14983,15 @@ export function IdeaDetailPage() {
                                           {ideaApprovalStatus.emailDeliveries.map((item) => `${item.name} ${item.ok ? '✓' : '✗'}`).join(' · ')}
                                         </p>
                                       ) : null}
-                                      {ideaApprovalStatus.error ? <p className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
+                                      {ideaApprovalStatus.error && ideaApprovalStatus.awaitingRequest ? <p className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
+                                      </>
+                                      ) : null}
+                                      <IdeaApprovalBanner
+                                        compact
+                                        status={ideaApprovalStatus}
+                                        currentUserId={currentUserId}
+                                        nameOf={resolveIdentityDisplayName}
+                                      />
                                     </div>
                                   )
                                 }}

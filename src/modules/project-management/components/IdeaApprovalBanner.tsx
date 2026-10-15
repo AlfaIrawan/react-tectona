@@ -132,10 +132,13 @@ export function IdeaApprovalBanner({
   status,
   currentUserId,
   nameOf,
+  compact = false,
 }: {
   status: Status
   currentUserId: string
   nameOf: (userId: string) => string
+  /** Inside a document table row: plain text lines instead of a boxed banner. */
+  compact?: boolean
 }) {
   const [note, setNote] = useState('')
   const [mode, setMode] = useState<'approve' | 'reject' | 'revision' | null>(null)
@@ -146,7 +149,7 @@ export function IdeaApprovalBanner({
   if (status.pending.length > 0) {
     const mine = status.pending.find((item) => item.subject_id === currentUserId) ?? null
     return (
-      <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950">
+      <div className={compact ? 'space-y-1.5 text-[11px] text-sky-900' : 'space-y-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950'}>
         <p>Pending approval{names ? ` from ${names}` : ''}.</p>
         {mine ? (
           <div className="space-y-2">
@@ -192,13 +195,13 @@ export function IdeaApprovalBanner({
   }
 
   if (status.outcome === 'approved') {
-    return <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">Approved{status.comment ? `. ${status.comment}` : '.'}</p>
+    return <p className={compact ? 'text-[11px] text-emerald-700' : 'rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900'}>Approved{status.comment ? `. ${status.comment}` : '.'}</p>
   }
   if (status.outcome === 'revision') {
-    return <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">Revision{status.comment ? `: ${status.comment}` : '.'}</p>
+    return <p className={compact ? 'text-[11px] text-amber-700' : 'rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950'}>Revision{status.comment ? `: ${status.comment}` : '.'}</p>
   }
   if (status.outcome === 'reject') {
-    return <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">Rejected{status.comment ? `: ${status.comment}` : '.'}</p>
+    return <p className={compact ? 'text-[11px] text-rose-700' : 'rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900'}>Rejected{status.comment ? `: ${status.comment}` : '.'}</p>
   }
   return null
 }
