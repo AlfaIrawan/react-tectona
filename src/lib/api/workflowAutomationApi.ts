@@ -104,7 +104,15 @@ function defaultHeaders(extra?: Record<string, string>): HeadersInit {
 async function readJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(text || `HTTP ${res.status}`)
+    let message = text
+    try {
+      // FastAPI errors arrive as {"detail": "..."}; show the sentence, not the JSON.
+      const detail = (JSON.parse(text) as { detail?: unknown }).detail
+      if (typeof detail === 'string' && detail.trim()) message = detail
+    } catch {
+      // not JSON: keep the raw text
+    }
+    throw new Error(message || `HTTP ${res.status}`)
   }
   return (await res.json()) as T
 }

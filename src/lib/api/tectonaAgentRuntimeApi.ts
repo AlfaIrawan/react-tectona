@@ -2417,6 +2417,11 @@ export interface IdeaSummaryJobStatusResponse {
   error_message: string | null
   warnings: string[]
   correlation_id: string
+  /** What the finished analysis did with the idea's approval workflow (server-side dispatch). */
+  approval_workflow?: {
+    status: 'queued' | 'already_started' | 'no_workflow' | 'failed' | string
+    detail?: string
+  } | null
 }
 
 export async function startIdeaSummaryJob(

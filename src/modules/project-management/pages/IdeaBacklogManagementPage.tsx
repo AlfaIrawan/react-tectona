@@ -139,7 +139,6 @@ import {
   type IdeaApi,
   type IdeaAiAssistanceMode,
 } from '@/lib/api/ideaBacklogApi'
-import { dispatchWorkflowEvent } from '@/lib/api/workflowAutomationApi'
 import {
   brainstormIdeaDraftJob,
   cancelIdeaDraftJob,
@@ -3519,6 +3518,7 @@ export function IdeaBacklogManagementPage() {
       let terminalStatus: 'done' | 'failed' | null = null
       let terminalError: string | null = null
       let runtimeSummary = null as Awaited<ReturnType<typeof getIdeaSummaryJob>>['result']
+      let approvalWorkflow = null as Awaited<ReturnType<typeof getIdeaSummaryJob>>['approval_workflow']
 
       for (let attempt = 0; attempt < 360; attempt += 1) {
         const status = await getIdeaSummaryJob(started.job_id)
@@ -3529,6 +3529,7 @@ export function IdeaBacklogManagementPage() {
 
         if (status.status === 'completed') {
           runtimeSummary = status.result
+          approvalWorkflow = status.approval_workflow ?? null
           terminalStatus = 'done'
           setIdeaAnalysisProgressById((prev) => ({
             ...prev,
@@ -3631,33 +3632,18 @@ export function IdeaBacklogManagementPage() {
         })
       }
 
-      // The approval workflow starts when AI analysis finishes, not when the
-      // draft row is inserted. A dispatch failure must not undo the saved idea.
-      try {
-        const runIds = await dispatchWorkflowEvent({
-          event_type: 'Scored',
-          domain: 'AI Idea & Prioritization',
-          entity: 'Idea',
-          context: {
-            workspace_id: idea.workspace ?? null,
-            idea_id: idea.id,
-            idea_title: idea.title,
-            idea_description: idea.description || idea.title,
-            requested_by: currentUserId || idea.submittedBy || null,
-            submitted_by: idea.submittedBy || null,
-          },
+      // The summary job starts the approval workflow on the server when the analysis
+      // finishes; this only reports what it did. A failure must not undo the saved idea.
+      if (approvalWorkflow?.status === 'queued') {
+        addToast({
+          title: 'Approval workflow started',
+          description: 'Summary, diagram, dan URD menunggu review.',
+          variant: 'success',
         })
-        if (runIds.length > 0) {
-          addToast({
-            title: 'Approval workflow started',
-            description: 'Summary, diagram, dan URD menunggu review.',
-            variant: 'success',
-          })
-        }
-      } catch (dispatchError) {
+      } else if (approvalWorkflow?.status === 'failed') {
         addToast({
           title: 'Approval workflow did not start',
-          description: dispatchError instanceof Error ? dispatchError.message.slice(0, 180) : 'The review workflow could not be started.',
+          description: (approvalWorkflow.detail || 'The review workflow could not be started.').slice(0, 180),
           variant: 'warning',
         })
       }
