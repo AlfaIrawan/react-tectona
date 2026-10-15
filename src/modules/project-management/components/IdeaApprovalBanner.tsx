@@ -43,7 +43,9 @@ export function useIdeaApprovalStatus(ideaId: string, workspaceId: string | unde
     void reload()
   }, [reload, reloadKey])
 
-  const requestedRun = runs.find((run) => run.approval_requested)
+  // A run that failed or was cancelled after the request (e.g. no approver matched) leaves
+  // nothing to wait for, so the owner must be able to request approval again.
+  const requestedRun = runs.find((run) => run.approval_requested && run.status !== 'failed' && run.status !== 'cancelled')
   const pending = approvals.filter((item) => item.status === 'pending' && item.run_id === requestedRun?.id)
   const decided = approvals.find((item) => item.run_id === requestedRun?.id && (item.status === 'approved' || item.status === 'rejected'))
   const labels = (requestedRun?.approver_labels ?? []).map((label) => label.trim()).filter(Boolean)
