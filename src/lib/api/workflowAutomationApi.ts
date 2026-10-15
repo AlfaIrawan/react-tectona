@@ -342,6 +342,17 @@ export type IdeaWorkflowRunDto = {
   decision_note?: string | null
   approver_labels: string[]
   requested_by?: string | null
+  /** Who the latest approval round emailed. via: primary | secondary. */
+  email_deliveries?: ApprovalEmailDeliveryDto[]
+}
+
+export type ApprovalEmailDeliveryDto = {
+  name: string
+  email: string
+  ok: boolean
+  via?: 'primary' | 'secondary'
+  verified?: boolean
+  reason?: string
 }
 
 export async function listIdeaWorkflowRuns(ideaId: string): Promise<IdeaWorkflowRunDto[]> {

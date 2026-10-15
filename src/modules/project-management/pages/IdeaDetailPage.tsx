@@ -14945,7 +14945,7 @@ export function IdeaDetailPage() {
                                   const matchesRequestedDocument = workflowRequestDocumentKinds.some((kind) => (
                                     new RegExp(`\\b${kind}\\b`, 'i').test(label)
                                   ))
-                                  if (!matchesRequestedDocument || !isIdeaCreator || !ideaApprovalStatus.awaitingRequest) return null
+                                  if (!matchesRequestedDocument || !isIdeaCreator || !ideaApprovalStatus.canRequest) return null
                                   return (
                                     <div className="mt-2">
                                       <Button

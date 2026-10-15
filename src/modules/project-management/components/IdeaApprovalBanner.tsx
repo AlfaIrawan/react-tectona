@@ -8,12 +8,17 @@ import {
   listWorkflowApprovals,
   rejectWorkflowRun,
   requestIdeaApproval,
+  type ApprovalEmailDeliveryDto,
   type IdeaWorkflowRunDto,
   type WorkflowApprovalDto,
 } from '@/lib/api/workflowAutomationApi'
 
 type Status = {
   awaitingRequest: boolean
+  /** No request yet, or requested and no approver has answered: the owner may (re)send it. */
+  canRequest: boolean
+  requestedBy: string
+  emailDeliveries: ApprovalEmailDeliveryDto[]
   approverText: string
   pending: WorkflowApprovalDto[]
   outcome: string | null
@@ -82,8 +87,12 @@ export function useIdeaApprovalStatus(ideaId: string, workspaceId: string | unde
     }
   }
 
+  const answered = approvals.some((item) => item.run_id === requestedRun?.id && (item.status === 'approved' || item.status === 'rejected'))
   return {
     awaitingRequest: !requestedRun,
+    canRequest: !requestedRun || (requestedRun.status === 'waiting_approval' && !answered && !requestedRun.approval_decision),
+    requestedBy: requestedRun?.requested_by ?? '',
+    emailDeliveries: requestedRun?.email_deliveries ?? [],
     approverText,
     pending,
     outcome: requestedRun?.approval_decision ?? (decided?.status === 'approved' ? 'approved' : decided?.status === 'rejected' ? 'revision' : null),
@@ -93,6 +102,13 @@ export function useIdeaApprovalStatus(ideaId: string, workspaceId: string | unde
     request,
     decide,
   }
+}
+
+/** "henry.halim@gmail.com" -> "he***@gmail.com": enough to recognise, not to copy. */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@')
+  if (!domain) return email
+  return `${local.slice(0, 2)}***@${domain}`
 }
 
 export function IdeaApprovalBanner({
@@ -109,12 +125,30 @@ export function IdeaApprovalBanner({
   const [localError, setLocalError] = useState('')
   if (status.awaitingRequest) return null
 
-  const names = status.approverText || status.pending.map((item) => nameOf(item.subject_id) || item.subject_id).filter(Boolean).join(', ')
+  const names = status.pending.map((item) => nameOf(item.subject_id) || item.subject_id).filter(Boolean).join(', ') || status.approverText
   if (status.pending.length > 0) {
     const mine = status.pending.find((item) => item.subject_id === currentUserId) ?? null
+    const isRequester = Boolean(currentUserId) && status.requestedBy === currentUserId
+    const sent = status.emailDeliveries.filter((item) => item.ok)
+    const failed = status.emailDeliveries.filter((item) => !item.ok)
     return (
       <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950">
         <p>Pending approval{names ? ` from ${names}` : ''}.</p>
+        {isRequester && status.emailDeliveries.length > 0 ? (
+          <div className="space-y-0.5">
+            {sent.length > 0 ? (
+              <p>
+                Email sent to{' '}
+                {sent.map((item) => `${item.name} (${maskEmail(item.email)}${item.via === 'secondary' ? `, secondary email${item.verified ? '' : ', not verified'}` : ''})`).join(', ')}.
+              </p>
+            ) : null}
+            {failed.length > 0 ? (
+              <p className="text-amber-800">
+                Email not delivered to {failed.map((item) => `${item.name}${item.reason ? `: ${item.reason}` : ''}`).join('; ')}.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {mine ? (
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
