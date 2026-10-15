@@ -247,7 +247,7 @@ import { IdeaReviewedSectionContent, ScoringNarrativeEcho } from '@/modules/proj
 import { IdeaScoringDraftEditor, PendingScoreProposalNote, usePendingScoreProposal } from '@/modules/project-management/components/IdeaScoringDraftEditor'
 import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-management/lib/reviewerDisplayName'
 import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
-import { IdeaApprovalBanner, useIdeaApprovalStatus } from '@/modules/project-management/components/IdeaApprovalBanner'
+import { describeEmailDeliveries, IdeaApprovalBanner, useIdeaApprovalStatus } from '@/modules/project-management/components/IdeaApprovalBanner'
 import { docApprovalState, useIdeaDocApprovals } from '@/modules/project-management/lib/ideaDocApprovals'
 import { approveWorkflowRun, getWorkflowRun, listWorkflowApprovals, rejectWorkflowRun, retryFailedDocumentActions } from '@/lib/api/workflowAutomationApi'
 import { NOTIFICATIONS_UPDATED_EVENT } from '@/lib/chat/chatRealtimeEvents'
@@ -14955,12 +14955,32 @@ export function IdeaDetailPage() {
                                         disabled={ideaApprovalStatus.busy}
                                         onClick={(event) => {
                                           event.stopPropagation()
-                                          void ideaApprovalStatus.request()
+                                          void ideaApprovalStatus.request().then((deliveries) => {
+                                            if (!deliveries) return
+                                            const { sent, failed } = describeEmailDeliveries(deliveries)
+                                            addToast({
+                                              variant: sent ? 'success' : 'warning',
+                                              title: 'Approval requested',
+                                              description: sent ? `Email sent to ${sent}.` : 'No approval email could be delivered.',
+                                            })
+                                            if (failed) {
+                                              addToast({ variant: 'warning', title: 'Email not delivered', description: failed })
+                                            }
+                                          })
                                         }}
                                       >
                                         {ideaApprovalStatus.busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                                         Request for Approval
                                       </Button>
+                                      {ideaApprovalStatus.emailDeliveries.length > 0 ? (
+                                        <p
+                                          className="mt-1 text-[11px] text-slate-500"
+                                          title={[describeEmailDeliveries(ideaApprovalStatus.emailDeliveries).sent, describeEmailDeliveries(ideaApprovalStatus.emailDeliveries).failed].filter(Boolean).join(' | ')}
+                                        >
+                                          Email:{' '}
+                                          {ideaApprovalStatus.emailDeliveries.map((item) => `${item.name} ${item.ok ? '✓' : '✗'}`).join(' · ')}
+                                        </p>
+                                      ) : null}
                                       {ideaApprovalStatus.error ? <p className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
                                     </div>
                                   )
