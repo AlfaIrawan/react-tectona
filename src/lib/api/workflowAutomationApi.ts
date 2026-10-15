@@ -357,6 +357,23 @@ export type ApprovalEmailDeliveryDto = {
   reason?: string
 }
 
+export type ApprovalEmailConversationDto = {
+  code: string
+  node_id: string
+  attempt: number
+  approver_name?: string | null
+  /** open: waiting for a reply; decided: a decision was recorded; closed: no longer usable. */
+  status: string
+  created_at?: string | null
+  messages: { direction: 'in' | 'out'; body: string; created_at?: string | null }[]
+}
+
+/** What approvers and Tectona wrote by email on one run (addresses left out). */
+export async function listRunApprovalEmails(runId: string): Promise<ApprovalEmailConversationDto[]> {
+  const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/approval-emails`, { headers: defaultHeaders() })
+  return readJson<ApprovalEmailConversationDto[]>(res)
+}
+
 export async function listIdeaWorkflowRuns(ideaId: string): Promise<IdeaWorkflowRunDto[]> {
   const res = await apiFetch(`${BASE_URL}/v1/runs?idea_id=${encodeURIComponent(ideaId)}`, { headers: defaultHeaders() })
   return readJson<IdeaWorkflowRunDto[]>(res)

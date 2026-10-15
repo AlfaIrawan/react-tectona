@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Mail } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   approveWorkflowRun,
   listIdeaWorkflowRuns,
+  listRunApprovalEmails,
   listWorkflowApprovals,
   rejectWorkflowRun,
   requestIdeaApproval,
+  type ApprovalEmailConversationDto,
   type ApprovalEmailDeliveryDto,
   type IdeaWorkflowRunDto,
   type WorkflowApprovalDto,
@@ -18,6 +21,8 @@ type Status = {
   /** No request yet, or requested and no approver has answered: the owner may (re)send it. */
   canRequest: boolean
   requestedBy: string
+  /** The run the latest request belongs to; its email conversation is behind the mail icon. */
+  requestedRunId: string
   emailDeliveries: ApprovalEmailDeliveryDto[]
   /** A step after the decision failed (the decision itself stands). */
   failedAfterDecision: string
@@ -105,6 +110,7 @@ export function useIdeaApprovalStatus(ideaId: string, workspaceId: string | unde
     awaitingRequest: !requestedRun,
     canRequest: !requestedRun || (requestedRun.status === 'waiting_approval' && !answered && !requestedRun.approval_decision),
     requestedBy: requestedRun?.requested_by ?? '',
+    requestedRunId: requestedRun?.id ?? '',
     emailDeliveries: requestedRun?.email_deliveries ?? [],
     failedAfterDecision: requestedRun?.status === 'failed' && decidedRunIds.has(requestedRun.id) ? (requestedRun.error || 'a later step failed') : '',
     approverText,
@@ -138,17 +144,114 @@ export function describeEmailDeliveries(deliveries: ApprovalEmailDeliveryDto[]):
   return { sent, failed }
 }
 
+/** Mail icon that opens what the approvers and Tectona wrote by email on this run. */
+function ApprovalEmailButton({ runId }: { runId: string }) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [conversations, setConversations] = useState<ApprovalEmailConversationDto[]>([])
+
+  const show = async () => {
+    setOpen(true)
+    setLoading(true)
+    setError('')
+    try {
+      setConversations(await listRunApprovalEmails(runId))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The email conversation could not be loaded.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const withReplies = conversations.filter((item) => item.messages.some((message) => message.direction === 'in'))
+  const shown = withReplies.length > 0 ? withReplies : conversations
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation()
+          void show()
+        }}
+        className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        title="Show the approval email conversation"
+        aria-label="Show the approval email conversation"
+      >
+        <Mail className="h-3.5 w-3.5" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-[min(100%,560px)]">
+          <DialogHeader>
+            <DialogTitle>Approval by email</DialogTitle>
+            <DialogDescription>What the approvers and Tectona wrote by email for this request.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1 text-xs">
+            {loading ? <p className="flex items-center gap-2 text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</p> : null}
+            {error ? <p className="text-rose-700">{error}</p> : null}
+            {!loading && !error && shown.length === 0 ? <p className="text-slate-500">No email conversation for this request.</p> : null}
+            {shown.map((conversation) => (
+              <div key={conversation.code} className="space-y-2">
+                <p className="font-semibold text-slate-700">
+                  {conversation.approver_name || 'Approver'}
+                  <span className="ml-2 font-normal text-slate-400">[APR-{conversation.code}] · {conversation.status}</span>
+                </p>
+                {conversation.messages.map((message, index) => (
+                  <div
+                    key={index}
+                    className={message.direction === 'in'
+                      ? 'mr-8 rounded-lg border border-slate-200 bg-white px-3 py-2'
+                      : 'ml-8 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2'}
+                  >
+                    <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">
+                      {message.direction === 'in' ? conversation.approver_name || 'Approver' : 'Tectona'}
+                      {message.created_at ? ` · ${new Date(message.created_at).toLocaleString()}` : ''}
+                    </p>
+                    <p className="whitespace-pre-wrap text-slate-800">{message.body}</p>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+/**
+ * A run's raw error as one readable sentence, plus the document kind it was making.
+ * The raw text (URLs, HTTP codes) stays available as a tooltip.
+ */
+export function describeRunFailure(error: string): { kind: string | null; text: string } {
+  const raw = (error || '').trim()
+  const generation = /^(URD|BRD|FSD)\s+generation failed/i.exec(raw)
+  if (generation) {
+    const kind = generation[1].toUpperCase()
+    return { kind, text: `Generate ${kind} failed. You can create it with Generate from template.` }
+  }
+  const template = /no active (URD|BRD|FSD) template/i.exec(raw)
+  if (template) {
+    const kind = template[1].toUpperCase()
+    return { kind, text: `No active ${kind} template was found for this workspace.` }
+  }
+  return { kind: null, text: 'A step after the approval failed.' }
+}
+
 export function IdeaApprovalBanner({
   status,
   currentUserId,
   nameOf,
   compact = false,
+  existingDocumentKinds = [],
 }: {
   status: Status
   currentUserId: string
   nameOf: (userId: string) => string
   /** Inside a document table row: plain text lines instead of a boxed banner. */
   compact?: boolean
+  /** Document kinds the idea already has; a failure to make one of them is no longer news. */
+  existingDocumentKinds?: string[]
 }) {
   const [note, setNote] = useState('')
   const [mode, setMode] = useState<'approve' | 'reject' | 'revision' | null>(null)
@@ -160,7 +263,10 @@ export function IdeaApprovalBanner({
     const mine = status.pending.find((item) => item.subject_id === currentUserId) ?? null
     return (
       <div className={compact ? 'space-y-1.5 text-[11px] text-sky-900' : 'space-y-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950'}>
-        <p>Pending approval{names ? ` from ${names}` : ''}.</p>
+        <p className="flex items-center gap-1.5">
+          <span>Pending approval{names ? ` from ${names}` : ''}.</span>
+          {status.requestedRunId && status.emailDeliveries.length > 0 ? <ApprovalEmailButton runId={status.requestedRunId} /> : null}
+        </p>
         {mine ? (
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
@@ -210,17 +316,17 @@ export function IdeaApprovalBanner({
     reject: { label: 'Rejected', badge: 'bg-rose-100 text-rose-800', box: 'border-rose-200 bg-rose-50 text-rose-900' },
   }
   const shown = status.outcome ? outcomes[status.outcome] : undefined
+  const failure = status.failedAfterDecision ? describeRunFailure(status.failedAfterDecision) : null
   if (shown) {
     return (
       <div className={compact ? 'space-y-1 text-[11px]' : `space-y-1 rounded-lg border px-3 py-2 text-xs ${shown.box}`}>
         <p className="flex flex-wrap items-center gap-1.5">
           <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-semibold ${shown.badge}`}>{shown.label}</span>
           {status.comment ? <span className="text-slate-700">{status.comment}</span> : null}
+          {status.requestedRunId && /^via email/i.test(status.comment) ? <ApprovalEmailButton runId={status.requestedRunId} /> : null}
         </p>
-        {status.failedAfterDecision ? (
-          <p className="text-rose-700" title={status.failedAfterDecision}>
-            The next step failed: {status.failedAfterDecision.slice(0, 160)}
-          </p>
+        {failure && !(failure.kind && existingDocumentKinds.includes(failure.kind)) ? (
+          <p className="text-rose-700" title={status.failedAfterDecision}>{failure.text}</p>
         ) : null}
       </div>
     )

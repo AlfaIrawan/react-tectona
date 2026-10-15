@@ -14992,6 +14992,9 @@ export function IdeaDetailPage() {
                                         status={ideaApprovalStatus}
                                         currentUserId={currentUserId}
                                         nameOf={resolveIdentityDisplayName}
+                                        existingDocumentKinds={ideaGeneratedDocs
+                                          .map((doc) => ideaDocumentType(doc))
+                                          .filter((kind): kind is string => Boolean(kind))}
                                       />
                                     </div>
                                   )
