@@ -63,6 +63,34 @@ export async function getDocumentRevisionText(
   return body.text ?? ''
 }
 
+/**
+ * What each template part held in one revision. "stored": everything it was generated with.
+ * "extracted": an older revision, read back from its file — table-cell fields only.
+ */
+export interface DocumentRevisionFillPayload {
+  source_document_id: string
+  version_no: number
+  source: 'stored' | 'extracted'
+  fills: Record<string, string>
+  sections: Record<string, string>
+  collections: Record<string, unknown>
+  diagrams: Record<string, string>
+}
+
+export async function getDocumentRevisionFillPayload(
+  documentId: string,
+  revision: Pick<DocumentRevision, 'source_document_id' | 'version_no'>,
+): Promise<DocumentRevisionFillPayload> {
+  const params = new URLSearchParams({
+    source_document_id: revision.source_document_id,
+    version_no: String(revision.version_no),
+  })
+  return handleJson(await apiFetch(
+    `${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions/fill-payload?${params}`,
+    { headers: { Accept: 'application/json' } },
+  ))
+}
+
 export async function restoreDocumentRevision(documentId: string, body: {
   source_document_id: string; version_no: number; version: number
 }): Promise<DocumentResponse> {

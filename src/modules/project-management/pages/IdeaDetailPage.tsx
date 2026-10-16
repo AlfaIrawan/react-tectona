@@ -140,16 +140,31 @@ import {
 import {
   createProjectDocument,
   deleteDocument,
+  getDocumentRevisionFillPayload,
   instantiateTemplateFromProject,
   listAllDocuments,
+  listDocumentRevisions,
   listTemplates,
   patchDocument,
   submitDocumentForReview,
   syncIdeaDocumentTitles,
   resolveLatestDocumentAttachmentBlob,
   type DocumentResponse,
+  type DocumentRevisionFillPayload,
   type DocumentTemplateResponse,
+  type TemplateAgentSchema,
 } from '@/lib/api/documentKnowledgeApi'
+import { TemplatePartChoices } from '@/modules/project-management/components/TemplatePartChoices'
+import {
+  defaultPartChoices,
+  keysToGenerate,
+  mergePartChoices,
+  partValue,
+  templateParts,
+  versionsNeeded,
+  type PartPayload,
+  type TemplatePartChoice,
+} from '@/modules/project-management/lib/templatePartSelection'
 import { belongsToDkmTemplateScope } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
 import { IdeaDocumentHistory } from '../components/IdeaDocumentHistory'
 import { IdeaTemplateLibrary } from '../components/IdeaTemplateLibrary'
@@ -3790,6 +3805,83 @@ export function IdeaDetailPage() {
   const [ideaDocFolderDeleteTarget, setIdeaDocFolderDeleteTarget] = useState<DocumentFolder | null>(null)
   const [ideaDocFolderDeleteBusy, setIdeaDocFolderDeleteBusy] = useState(false)
   const selectedIdeaDocGenerateTemplate = ideaDocTemplates.find((item) => item.id === ideaDocGenerateTemplateId) ?? null
+  // Regenerating part by part: the document this template would regenerate, its parts, and what
+  // the current and the chosen earlier versions held (see templatePartSelection).
+  const ideaDocRegenerateTarget = useMemo(() => {
+    if (!selectedIdeaDocGenerateTemplate) return null
+    const label = ideaDocTypeLabel(selectedIdeaDocGenerateTemplate.template_code)
+    return ideaGeneratedDocs
+      .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === label)
+      .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0] ?? null
+  }, [idea.id, ideaGeneratedDocs, selectedIdeaDocGenerateTemplate])
+  const ideaDocParts = useMemo(
+    () => templateParts(selectedIdeaDocGenerateTemplate?.metadata?.agent_schema as TemplateAgentSchema | undefined),
+    [selectedIdeaDocGenerateTemplate],
+  )
+  const ideaDocRegenerateVersion = ideaDocRegenerateTarget?.current_version_no || 1
+  const [ideaDocPartChoices, setIdeaDocPartChoices] = useState<Record<string, TemplatePartChoice>>({})
+  const [ideaDocPartPayloads, setIdeaDocPartPayloads] = useState<Record<number, DocumentRevisionFillPayload>>({})
+  const [ideaDocPartVersions, setIdeaDocPartVersions] = useState<number[]>([])
+  const [ideaDocPartsLoading, setIdeaDocPartsLoading] = useState(false)
+  const ideaDocKeepableParts = useMemo(() => new Set(
+    ideaDocParts
+      .filter((part) => partValue(part, ideaDocPartPayloads[ideaDocRegenerateVersion]) !== undefined)
+      .map((part) => part.key),
+  ), [ideaDocPartPayloads, ideaDocParts, ideaDocRegenerateVersion])
+  useEffect(() => {
+    const target = ideaDocRegenerateTarget
+    if (!ideaDocGenerateOpen || !target || ideaDocParts.length === 0) {
+      setIdeaDocPartPayloads({})
+      setIdeaDocPartVersions([])
+      setIdeaDocPartChoices({})
+      return
+    }
+    let cancelled = false
+    const current = target.current_version_no || 1
+    setIdeaDocPartsLoading(true)
+    void Promise.all([
+      listDocumentRevisions(target.id).catch(() => []),
+      getDocumentRevisionFillPayload(target.id, { source_document_id: target.id, version_no: current }).catch(() => null),
+    ])
+      .then(([revisions, payload]) => {
+        if (cancelled) return
+        setIdeaDocPartVersions(
+          revisions
+            .filter((revision) => revision.source_document_id === target.id && revision.version_no !== current && revision.can_restore)
+            .map((revision) => revision.version_no)
+            .sort((a, b) => b - a),
+        )
+        setIdeaDocPartPayloads(payload ? { [current]: payload } : {})
+        setIdeaDocPartChoices(defaultPartChoices(ideaDocParts, payload ?? undefined))
+      })
+      .finally(() => {
+        if (!cancelled) setIdeaDocPartsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ideaDocGenerateOpen, ideaDocParts, ideaDocRegenerateTarget])
+  useEffect(() => {
+    // "From V2": read that version when it is first picked.
+    const target = ideaDocRegenerateTarget
+    if (!target) return
+    const wanted = versionsNeeded(ideaDocParts, ideaDocPartChoices, target.current_version_no || 1)
+      .filter((version) => !ideaDocPartPayloads[version])
+    if (wanted.length === 0) return
+    let cancelled = false
+    void Promise.all(wanted.map((version) =>
+      getDocumentRevisionFillPayload(target.id, { source_document_id: target.id, version_no: version })
+        .then((payload) => [version, payload] as const)
+        .catch(() => null),
+    )).then((rows) => {
+      if (cancelled) return
+      const loaded = rows.filter((row): row is readonly [number, DocumentRevisionFillPayload] => row !== null)
+      if (loaded.length > 0) setIdeaDocPartPayloads((prev) => ({ ...prev, ...Object.fromEntries(loaded) }))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [ideaDocPartChoices, ideaDocPartPayloads, ideaDocParts, ideaDocRegenerateTarget])
   const ideaDocGenerateTemplates = ideaDocTemplates.filter((template) => templateAllowedByWorkflow(template, ideaDocWorkflowGate))
   const ideaDocGenerateSourceChars = ideaDocGenerateSource.trim().length
   const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
@@ -7262,6 +7354,36 @@ export function IdeaDetailPage() {
         )
         .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0]
 
+      // Regenerating part by part (TemplatePartChoices): the model writes only the parts marked
+      // Regenerate; every other part comes from the version chosen for it.
+      const partial = Boolean(existingDocument && ideaDocRegenerateTarget?.id === existingDocument.id && ideaDocParts.length > 0)
+      const partVersion = existingDocument?.current_version_no || 1
+      const partPayloads: Record<number, PartPayload | undefined> = { ...ideaDocPartPayloads }
+      if (partial && existingDocument) {
+        for (const version of versionsNeeded(ideaDocParts, ideaDocPartChoices, partVersion)) {
+          if (!partPayloads[version]) {
+            partPayloads[version] = await getDocumentRevisionFillPayload(existingDocument.id, {
+              source_document_id: existingDocument.id,
+              version_no: version,
+            })
+          }
+        }
+        // Checked before the model call: nothing is spent on a merge that cannot be written.
+        const unavailable = mergePartChoices({
+          parts: ideaDocParts,
+          choices: ideaDocPartChoices,
+          currentVersion: partVersion,
+          generated: { fills: {}, sections: {}, collections: {}, diagrams: {} },
+          payloads: partPayloads,
+        }).missing
+        if (unavailable.length > 0) {
+          throw new Error(
+            `Not in the chosen version: ${unavailable.map((part) => part.label).join(', ')}. Choose Regenerate for these parts.`,
+          )
+        }
+      }
+      const onlyKeys = partial ? keysToGenerate(ideaDocParts, ideaDocPartChoices) : undefined
+
       const filled = await fillDkmTemplate({
         template_id: template.id,
         source_text: sourceWithProvenance.slice(0, 12000),
@@ -7278,7 +7400,23 @@ export function IdeaDetailPage() {
         existing_document_number: String(existingDocument?.metadata?.document_number ?? '') || undefined,
         // The template's [Version]: regenerating saves the next version of the existing document.
         document_version_label: existingDocument ? `V${(existingDocument.current_version_no || 1) + 1}` : 'V1',
+        only_keys: onlyKeys,
       })
+      const generatedParts: PartPayload = {
+        fills: filled.payload.fills ?? {},
+        sections: filled.payload.sections ?? {},
+        collections: (filled.payload.collections ?? {}) as Record<string, unknown>,
+        diagrams: filled.rendered_diagrams ?? {},
+      }
+      const written = partial
+        ? mergePartChoices({
+          parts: ideaDocParts,
+          choices: ideaDocPartChoices,
+          currentVersion: partVersion,
+          generated: generatedParts,
+          payloads: partPayloads,
+        }).payload
+        : generatedParts
 
       const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
         title: idea.title.slice(0, 255),
@@ -7305,12 +7443,14 @@ export function IdeaDetailPage() {
           storage_project_id: targetProject.id,
           storage_project_name: targetProject.name,
         },
-        version_notes: `AI-generated from template ${template.template_code} for idea ${idea.id}`,
-        fills: filled.payload.fills ?? {},
-        sections: filled.payload.sections ?? {},
-        collections: filled.payload.collections ?? {},
+        version_notes: partial
+          ? `Regenerated ${onlyKeys?.length ?? 0} of ${ideaDocParts.length} parts from template ${template.template_code} for idea ${idea.id}`
+          : `AI-generated from template ${template.template_code} for idea ${idea.id}`,
+        fills: written.fills,
+        sections: written.sections,
+        collections: written.collections as typeof filled.payload.collections,
         agent_schema: filled.agent_schema,
-        diagrams: filled.rendered_diagrams ?? {},
+        diagrams: written.diagrams,
       })
 
       setIdeaGeneratedDocs((prev) => [created, ...prev.filter((doc) => doc.id !== created.id)])
@@ -7348,6 +7488,10 @@ export function IdeaDetailPage() {
     ideaDocGenerateBusy,
     ideaDocGenerateSource,
     ideaDocGenerateTemplateId,
+    ideaDocPartChoices,
+    ideaDocPartPayloads,
+    ideaDocParts,
+    ideaDocRegenerateTarget,
     ideaDocTemplates,
     ideaDocsLoading,
     refreshIdeaDocWorkflowGate,
@@ -15193,6 +15337,19 @@ export function IdeaDetailPage() {
                           </div>
                         ) : null}
                       </div>
+
+                      {ideaDocRegenerateTarget && ideaDocParts.length > 0 ? (
+                        <TemplatePartChoices
+                          parts={ideaDocParts}
+                          choices={ideaDocPartChoices}
+                          currentVersion={ideaDocRegenerateVersion}
+                          otherVersions={ideaDocPartVersions}
+                          keepable={ideaDocKeepableParts}
+                          loading={ideaDocPartsLoading}
+                          disabled={ideaDocGenerateBusy}
+                          onChange={setIdeaDocPartChoices}
+                        />
+                      ) : null}
 
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-3">

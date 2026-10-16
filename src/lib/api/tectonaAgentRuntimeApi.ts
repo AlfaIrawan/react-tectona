@@ -1636,6 +1636,8 @@ export interface FillDkmTemplateRequest {
   existing_document_number?: string
   /** The version the generated document will carry ("V3"); fills every [Version] placeholder. */
   document_version_label?: string
+  /** Regenerating some parts only: the placeholder keys, section ids and tables the model writes. */
+  only_keys?: string[]
 }
 
 export interface FillDkmTemplateResponse {
