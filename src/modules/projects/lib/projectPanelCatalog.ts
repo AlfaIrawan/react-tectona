@@ -8,6 +8,7 @@ import {
   GanttChart,
   Inbox,
   Kanban,
+  Lightbulb,
   List,
   ListChecks,
   Network,
@@ -18,6 +19,7 @@ import {
 
 export type ProjectPanelKey =
   | 'summary'
+  | 'ideas'
   | 'timeline'
   | 'board'
   | 'calendar'
@@ -52,6 +54,13 @@ export const PROJECT_PANEL_CATALOG: ProjectPanelCatalogEntry[] = [
     icon: ClipboardList,
     description: 'Delivery health, milestones, and executive snapshot for this project workspace.',
     pinned: true,
+  },
+  {
+    key: 'ideas',
+    label: 'Ideas',
+    icon: Lightbulb,
+    description:
+      'Every backlog idea this project delivers, with its stage and URD/BRD/FSD readiness. Link more ideas or start a new one here.',
   },
   {
     key: 'timeline',
@@ -147,6 +156,7 @@ export const PROJECT_PANEL_CATALOG: ProjectPanelCatalogEntry[] = [
 
 export const DEFAULT_PROJECT_NAV_SECTIONS: ProjectPanelKey[] = [
   'summary',
+  'ideas',
   'timeline',
   'board',
   'calendar',

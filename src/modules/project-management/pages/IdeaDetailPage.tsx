@@ -180,7 +180,7 @@ import {
   updateDocumentFolder,
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
-import { createProject, fetchProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { resolveIdeaDocsProject } from '@/modules/projects/lib/resolveIdeaDocsProject'
 import { ensureProjectDocumentFolder } from '@/modules/projects/lib/ensureProjectDocumentFolder'
 import { nextUntitledDocumentFolderName } from '@/modules/document-knowledge-management/lib/documentFolderUtils'
 import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
@@ -7011,34 +7011,17 @@ export function IdeaDetailPage() {
     return ideaRepositoryItems.slice(start, start + ideaDocsPageSize)
   }, [ideaRepositoryItems, ideaDocsPage, ideaDocsPageSize])
 
-  const resolveIdeaTargetProject = useCallback(async (createIfMissing = true) => {
-    const projectList = await fetchProjects({
-      page: 1,
-      page_size: 100,
-      app_id: TECTONA_PROJECT_APP_ID,
-      workspace_id: idea.workspace ?? null,
-    })
-
-    if (idea.project_id) {
-      const linkedProject = projectList.projects?.find((item) => item.id === idea.project_id)
-      if (linkedProject?.id) return linkedProject
-    }
-
-    const targetProject = projectList.projects?.[0]
-    if (targetProject?.id) return targetProject
-
-    // Ideas can be documented before they are converted into a user-created
-    // project. Create a workspace-scoped document container so Docs remains
-    // usable without requiring a separate conversion step first.
-    if (!createIfMissing) return null
-
-    return createProject({
-      name: idea.title.trim().slice(0, 255) || 'Idea workspace project',
-      description: `Document container for idea: ${idea.title.trim() || idea.id}`,
-      tags: ['idea-docs', idea.id],
-      workspace_id: idea.workspace ?? null,
-    })
-  }, [idea.id, idea.project_id, idea.title, idea.workspace])
+  const resolveIdeaTargetProject = useCallback(
+    async (createIfMissing = true) =>
+      resolveIdeaDocsProject({
+        ideaId: idea.id,
+        ideaTitle: idea.title,
+        ideaProjectId: idea.project_id,
+        workspaceId: idea.workspace ?? null,
+        createIfMissing,
+      }),
+    [idea.id, idea.project_id, idea.title, idea.workspace],
+  )
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -7422,6 +7405,7 @@ export function IdeaDetailPage() {
     }, IDEA_DOC_GENERATE_STEP_INTERVAL_MS)
     try {
       const targetProject = await resolveIdeaTargetProject(true)
+      if (!targetProject) throw new Error('No project available to store the idea document.')
       const targetFolderId = ideaDocCurrentFolder?.id ?? await ensureProjectDocumentFolder({
         id: targetProject.id,
         name: targetProject.name,

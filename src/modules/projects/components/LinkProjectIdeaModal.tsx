@@ -22,9 +22,12 @@ const LINKABLE_STATUSES = new Set<BackendIdeaStatus>([
   'converted',
 ])
 
+/**
+ * An idea belongs to one project at a time. Ideas already linked to another project stay
+ * eligible: linking moves them here (the row says so before the user clicks).
+ */
 function isEligibleIdea(idea: IdeaApi, projectId: string, linkedIdeaIds: Set<string>) {
   if (linkedIdeaIds.has(idea.id) || idea.project_id === projectId) return false
-  if (idea.project_id && idea.project_id !== projectId) return false
   return LINKABLE_STATUSES.has(idea.status_code)
 }
 
@@ -263,7 +266,7 @@ export function LinkProjectIdeaModal({
                 <div className="px-4 py-8 text-sm text-rose-600">{loadError}</div>
               ) : eligibleIdeas.length === 0 ? (
                 <div className="px-4 py-8 text-sm text-muted-foreground">
-                  No eligible ideas found. Ideas must be approved or submitted and not linked to another project.
+                  No eligible ideas found. Ideas must be submitted, approved, on hold, or converted.
                 </div>
               ) : (
                 <ul className="divide-y divide-border/50">
@@ -294,6 +297,11 @@ export function LinkProjectIdeaModal({
                                 <span className="text-[10px] text-muted-foreground">{idea.category}</span>
                               ) : null}
                             </div>
+                            {idea.project_id ? (
+                              <div className="mt-1 text-[11px] font-medium text-amber-700">
+                                Linked to another project — linking moves it here, with its documents.
+                              </div>
+                            ) : null}
                           </div>
                           {itemBusy ? (
                             <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-muted-foreground" />

@@ -748,6 +748,8 @@ export async function createIdea(body: {
   card_accent_color?: string
   tags?: string[]
   workspace_id?: string
+  /** Creates the idea already linked to this project (one project can hold many ideas). */
+  project_id?: string
   owner_id?: string
   assignee_id?: string
   folder_id?: string | null

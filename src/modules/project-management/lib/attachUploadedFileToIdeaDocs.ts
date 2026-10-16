@@ -1,42 +1,6 @@
-import { fetchProjects, createProject, TECTONA_PROJECT_APP_ID, type ProjectApi } from '@/lib/api/projectApi'
+import { resolveIdeaDocsProject } from '@/modules/projects/lib/resolveIdeaDocsProject'
 import { ensureProjectDocumentFolder } from '@/modules/projects/lib/ensureProjectDocumentFolder'
 import { createProjectDocument, deleteDocument, uploadDocumentAttachment } from '@/lib/api/documentKnowledgeApi'
-
-/**
- * Resolves the project used to store an idea's supporting documents — mirrors
- * `IdeaDetailPage.resolveIdeaTargetProject`: prefer the idea's own project, else the first
- * project in the workspace, else create a lightweight document-container project. Ideas are
- * commonly documented before they're converted into a project, so Docs must stay usable
- * without requiring conversion first.
- */
-async function resolveIdeaTargetProject(input: {
-  ideaId: string
-  ideaTitle: string
-  ideaProjectId?: string | null
-  workspaceId?: string | null
-}): Promise<ProjectApi> {
-  const projectList = await fetchProjects({
-    page: 1,
-    page_size: 100,
-    app_id: TECTONA_PROJECT_APP_ID,
-    workspace_id: input.workspaceId ?? null,
-  })
-
-  if (input.ideaProjectId) {
-    const linked = projectList.projects?.find((item) => item.id === input.ideaProjectId)
-    if (linked) return linked
-  }
-
-  const first = projectList.projects?.[0]
-  if (first) return first
-
-  return createProject({
-    name: input.ideaTitle.trim().slice(0, 255) || 'Idea workspace project',
-    description: `Document container for idea: ${input.ideaTitle.trim() || input.ideaId}`,
-    tags: ['idea-docs', input.ideaId],
-    workspace_id: input.workspaceId ?? null,
-  })
-}
 
 /**
  * Saves the raw file a user uploaded via "Upload Idea" as a supporting document under the
@@ -53,7 +17,13 @@ export async function attachUploadedFileToIdeaDocs(input: {
   documentType?: 'urd' | 'brd' | 'fsd'
   documentStatus?: 'draft' | 'in_progress' | 'final'
 }): Promise<void> {
-  const targetProject = await resolveIdeaTargetProject(input)
+  const targetProject = await resolveIdeaDocsProject({
+    ideaId: input.ideaId,
+    ideaTitle: input.ideaTitle,
+    ideaProjectId: input.ideaProjectId,
+    workspaceId: input.workspaceId,
+  })
+  if (!targetProject) throw new Error('No project available to store the idea document.')
   const folderId = await ensureProjectDocumentFolder({ id: targetProject.id, name: targetProject.name })
 
   const created = await createProjectDocument(targetProject.id, {
