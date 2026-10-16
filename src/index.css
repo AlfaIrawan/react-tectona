@@ -389,6 +389,19 @@
     background: transparent;
   }
 
+  /* Scroll areas inside dialogs: the thin scrollbar keeps its gutter (no reflow) but is invisible
+     until the pointer is over the area (or keyboard focus is inside it). */
+  .scroll-reveal {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: stable;
+  }
+  .scroll-reveal:hover,
+  .scroll-reveal:focus-visible,
+  .scroll-reveal:has(:focus-visible) {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+  }
+
   .abbreviation-scan-scroll {
     scrollbar-width: thin;
     scrollbar-color: transparent transparent;

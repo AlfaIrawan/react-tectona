@@ -15480,7 +15480,7 @@ export function IdeaDetailPage() {
                             <Textarea
                               id="idea-doc-source"
                               rows={9}
-                              className="min-h-[min(55dvh,520px)] w-full resize-y rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-sm lg:h-full lg:min-h-0 lg:max-h-full lg:resize-none"
+                              className="scroll-reveal min-h-[min(55dvh,520px)] w-full resize-y rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-sm lg:h-full lg:min-h-0 lg:max-h-full lg:resize-none"
                               value={ideaDocGenerateSource}
                               disabled={ideaDocGenerateBusy}
                               onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
@@ -15490,7 +15490,7 @@ export function IdeaDetailPage() {
                             <div
                               role="tabpanel"
                               aria-label="Formatted source context"
-                              className="min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 lg:min-h-0 lg:max-h-none lg:flex-1 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
+                              className="scroll-reveal min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 lg:min-h-0 lg:max-h-none lg:flex-1 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
                             >
                               <div className="space-y-5">
                                 {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeAnswers.length > 0 ? (

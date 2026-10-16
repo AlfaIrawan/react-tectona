@@ -17,7 +17,7 @@ const TABLE_PREVIEW_ROWS = 8
 function PreviewBody({ preview }: { preview: PartPreview }) {
   if (preview.kind === 'text') {
     return (
-      <div className="max-h-56 overflow-y-auto whitespace-pre-line break-words text-xs leading-relaxed">
+      <div className="scroll-reveal max-h-56 overflow-y-auto whitespace-pre-line break-words text-xs leading-relaxed">
         {preview.diagram ? <span className="mr-1 text-muted-foreground">Diagram ·</span> : null}
         {preview.text}
       </div>
@@ -25,7 +25,7 @@ function PreviewBody({ preview }: { preview: PartPreview }) {
   }
   const hidden = preview.rows.length - TABLE_PREVIEW_ROWS
   return (
-    <div className="max-h-56 overflow-auto">
+    <div className="scroll-reveal max-h-56 overflow-auto">
       <table className="w-full border-collapse text-left text-[11px]">
         <thead>
           <tr>
@@ -152,7 +152,7 @@ export function TemplatePartChoices({
           ? `Reading V${currentVersion}…`
           : `${regenerated} of ${parts.length} parts will be written again. Every other part stays as chosen. Title, owner, number and version are always updated.`}
       </p>
-      <ul className="divide-y divide-border/50 rounded-xl border border-border/70 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+      <ul className="scroll-reveal divide-y divide-border/50 rounded-xl border border-border/70 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {parts.map((part) => {
           const choice = choices[part.key] ?? 'generate'
           const value = choice === 'keep' ? 'keep' : choice === 'generate' ? 'generate' : `v${choice}`
