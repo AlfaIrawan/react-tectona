@@ -17,6 +17,7 @@ export function TemplatePartChoices({
   loading,
   disabled,
   onChange,
+  className,
 }: {
   parts: TemplatePart[]
   choices: Record<string, TemplatePartChoice>
@@ -28,6 +29,7 @@ export function TemplatePartChoices({
   loading: boolean
   disabled: boolean
   onChange: (next: Record<string, TemplatePartChoice>) => void
+  className?: string
 }) {
   const regenerated = parts.filter((part) => (choices[part.key] ?? 'generate') === 'generate').length
   const setAll = (choice: 'keep' | 'generate') => onChange(Object.fromEntries(parts.map((part) => [
@@ -35,7 +37,7 @@ export function TemplatePartChoices({
   ])))
 
   return (
-    <div className="space-y-2">
+    <div className={cn('space-y-2 lg:flex lg:min-h-0 lg:flex-col', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           Parts to regenerate
@@ -64,8 +66,7 @@ export function TemplatePartChoices({
           ? `Reading V${currentVersion}…`
           : `${regenerated} of ${parts.length} parts will be written again. Every other part stays as chosen. Title, owner, number and version are always updated.`}
       </p>
-      {/* No scroll of its own: the dialog body scrolls, a list scrolling inside it felt cramped. */}
-      <ul className="divide-y divide-border/50 rounded-xl border border-border/70">
+      <ul className="divide-y divide-border/50 rounded-xl border border-border/70 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {parts.map((part) => {
           const choice = choices[part.key] ?? 'generate'
           const value = choice === 'keep' ? 'keep' : choice === 'generate' ? 'generate' : `v${choice}`
