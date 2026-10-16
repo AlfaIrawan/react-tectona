@@ -112,11 +112,11 @@ export function enterpriseSecondaryButtonClass(): string {
   )
 }
 
-/** Inverse solid — uses the theme's foreground colour (dark on light themes, light on dark). */
-export function enterpriseInverseSolidButtonClass(): string {
+/** Soft primary — a tint of the theme's primary colour: light fill, primary text, hairline border. */
+export function enterprisePrimarySoftButtonClass(): string {
   return cn(
     'group relative inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
-    'bg-foreground text-background shadow-sm hover:bg-foreground/90',
+    'border border-primary/25 bg-primary/10 text-primary shadow-sm hover:bg-primary/15 hover:border-primary/35',
     'transition-colors duration-150',
     'disabled:pointer-events-none disabled:opacity-50',
     enterpriseControlFocusClass(),

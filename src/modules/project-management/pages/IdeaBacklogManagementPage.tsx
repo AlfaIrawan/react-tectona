@@ -103,7 +103,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import {
   enterpriseDestructiveOutlineButtonClass,
-  enterpriseInverseSolidButtonClass,
+  enterprisePrimarySoftButtonClass,
   enterprisePrimarySolidButtonClass,
   enterpriseSecondaryButtonClass,
   enterpriseSecondaryFilledButtonClass,
@@ -5432,7 +5432,7 @@ export function IdeaBacklogManagementPage() {
                 <button
                   type="button"
                   onClick={() => void handleCreateFolderWithDefaultName()}
-                  className={enterpriseInverseSolidButtonClass()}
+                  className={enterprisePrimarySoftButtonClass()}
                 >
                   <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
                   New folder
