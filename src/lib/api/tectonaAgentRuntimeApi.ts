@@ -2046,6 +2046,28 @@ export async function generateIdeaDraft(
   return handleResponse<GenerateIdeaDraftResponse>(res)
 }
 
+export type IdeaIntakeQuestion = {
+  id: string
+  prompt: string
+  required: boolean
+  answer_type: string
+  options: string[]
+}
+
+/**
+ * The Idea Intake Checklist for a workspace: the questions the brainstorm asks, read from the
+ * Knowledge Base by the backend. The Create Idea editor shows these as its guide.
+ */
+export async function fetchIdeaIntakeChecklist(workspaceId: string): Promise<IdeaIntakeQuestion[]> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-email/intake-checklist?workspace_id=${encodeURIComponent(workspaceId)}`,
+    { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ items: IdeaIntakeQuestion[] }>(res)
+  return body.items ?? []
+}
+
 export async function startIdeaDraftJob(
   payload: GenerateIdeaDraftRequest,
 ): Promise<CreateIdeaDraftJobResponse> {

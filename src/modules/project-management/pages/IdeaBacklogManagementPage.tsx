@@ -147,6 +147,7 @@ import {
   getIdeaSummaryJob,
   getIdeaDraftVersion,
   listIdeaDraftVersions,
+  fetchIdeaIntakeChecklist,
   reanalyzeIdeaDraftJob,
   prefetchProcessDiagramPlantUmlPng,
   restoreIdeaDraftBrainstormSession,
@@ -158,6 +159,7 @@ import {
   type IdeaDraftEvidenceProgress,
   type IdeaDraftJobStatusResponse,
   type IdeaDraftVersionDetail,
+  type IdeaIntakeQuestion,
   type ContextUsageReport,
 } from '@/lib/api/tectonaAgentRuntimeApi'
 import { ChatContextUsagePanel } from '@/modules/core-shell/components/chat/ChatContextUsagePanel'
@@ -1566,20 +1568,16 @@ function fromApiIdea(api: IdeaApi, projectNameById?: Record<string, string>): Id
   }
 }
 
-const IDEA_DESCRIPTION_TEMPLATE = `Objective
-What outcomes are desired? What are success indicators?
-
-Problem Statement
-Explain the user problem, why it's urgent, and business impact.
-
-Solution
-Summarize the proposed solution and initial validation status.
-
-Risk
-List key risks and mitigation strategies.
-
-Supporting Documents
-Attach relevant document links, designs, or PDF files.`
+// The editor's guide is the workspace's Idea Intake Checklist: the same questions the brainstorm asks.
+function intakeQuestionsToGuide(items: IdeaIntakeQuestion[]): string {
+  return items
+    .map((item) => {
+      const lines = [item.prompt.trim()]
+      if (item.options.length > 0) lines.push(`Pilihan: ${item.options.join(', ')}`)
+      return lines.join('\n')
+    })
+    .join('\n\n')
+}
 
 const IDEA_DESCRIPTION_HEADING_LABELS = new Set([
   'objective',
@@ -2184,6 +2182,8 @@ export function IdeaBacklogManagementPage() {
   const [createIdeaDescriptionHtml, setCreateIdeaDescriptionHtml] = useState('')
   const [createIdeaProcessDiagrams, setCreateIdeaProcessDiagrams] = useState<ExtractedProcessDiagram[]>([])
   const createIdeaDescriptionEditorRef = useRef<HTMLDivElement | null>(null)
+  // The Idea Intake Checklist of the chosen workspace, shown as the editor's guide.
+  const [createIdeaIntakeGuide, setCreateIdeaIntakeGuide] = useState('')
   const createIdeaTagInputRef = useRef<HTMLInputElement | null>(null)
   const [createIdeaError, setCreateIdeaError] = useState('')
   const [ideaAnalysisProgressById, setIdeaAnalysisProgressById] = useState<Record<string, IdeaAnalysisProgress>>(
@@ -3309,6 +3309,26 @@ export function IdeaBacklogManagementPage() {
       }
     })()
 
+    return () => {
+      cancelled = true
+    }
+  }, [isCreateIdeaDrawerOpen, createIdeaForm.workspaceId])
+
+  useEffect(() => {
+    if (!isCreateIdeaDrawerOpen) return
+    const workspaceId = createIdeaForm.workspaceId.trim()
+    if (!workspaceId) {
+      setCreateIdeaIntakeGuide('')
+      return
+    }
+    let cancelled = false
+    void fetchIdeaIntakeChecklist(workspaceId)
+      .then((items) => {
+        if (!cancelled) setCreateIdeaIntakeGuide(intakeQuestionsToGuide(items))
+      })
+      .catch(() => {
+        if (!cancelled) setCreateIdeaIntakeGuide('')
+      })
     return () => {
       cancelled = true
     }
@@ -6385,7 +6405,7 @@ export function IdeaBacklogManagementPage() {
                       <div className="relative min-h-[320px] rounded-md border border-input bg-background px-3 py-2">
                         {createIdeaDescriptionTextLength === 0 ? (
                           <p className="pointer-events-none select-none whitespace-pre-line text-sm leading-7 text-muted-foreground/70">
-                            {IDEA_DESCRIPTION_TEMPLATE}
+                            {createIdeaIntakeGuide || 'Tulis deskripsi ide di sini.'}
                           </p>
                         ) : null}
                         <div
