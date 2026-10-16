@@ -15284,67 +15284,69 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
 
-                    <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] lg:overflow-hidden">
-                      <div className="min-h-0 space-y-4 px-5 py-5 sm:px-6 lg:overflow-y-auto">
-                        <div className="space-y-2">
-                          <Label
-                            htmlFor="idea-doc-template"
-                            className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
-                          >
-                            Template
-                          </Label>
-                          <Select
-                            id="idea-doc-template"
-                            className="rounded-xl"
-                            value={ideaDocGenerateTemplateId}
-                            disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
-                            onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
-                          >
-                            <option value="" disabled>
-                              {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
-                                ? 'Loading templates…'
-                                : ideaDocGenerateTemplates.length === 0
-                                  ? 'No template is available at this stage'
-                                  : 'Select template…'}
+                    <div className="shrink-0 px-5 py-4 sm:px-6">
+                      <div className="mx-auto w-full max-w-5xl space-y-2 text-center">
+                        <Label
+                          htmlFor="idea-doc-template"
+                          className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                        >
+                          Template
+                        </Label>
+                        <Select
+                          id="idea-doc-template"
+                          className="rounded-xl text-left"
+                          value={ideaDocGenerateTemplateId}
+                          disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
+                          onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
+                        >
+                          <option value="" disabled>
+                            {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
+                              ? 'Loading templates…'
+                              : ideaDocGenerateTemplates.length === 0
+                                ? 'No template is available at this stage'
+                                : 'Select template…'}
+                          </option>
+                          {ideaDocGenerateTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name}
                             </option>
-                            {ideaDocGenerateTemplates.map((template) => (
-                              <option key={template.id} value={template.id}>
-                                {template.name}
-                              </option>
-                            ))}
-                          </Select>
-                          {ideaDocWorkflowGate.enforced ? (
-                            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                              {ideaDocWorkflowGate.unavailable
-                                ? 'The approval workflow could not be checked right now, so no document can be generated. Try again in a moment.'
-                                : ideaDocWorkflowGate.allowedKinds?.length
-                                  ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
-                                  : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
-                              {ideaDocWorkflowGate.unavailable ? null : ' Deleting that workflow makes every template available again.'}
-                            </p>
-                          ) : null}
-                          {selectedIdeaDocGenerateTemplate ? (
-                            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5">
-                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background text-blue-700 ring-1 ring-border">
-                                <FileText className="h-3.5 w-3.5" aria-hidden />
-                              </span>
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-medium text-foreground">
-                                  {selectedIdeaDocGenerateTemplate.name}
-                                </p>
-                                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                  {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
-                                  {' · '}
-                                  v{selectedIdeaDocGenerateTemplate.version}
-                                  {selectedIdeaDocGenerateTemplate.category_code
-                                    ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
-                                    : ''}
-                                </p>
-                              </div>
+                          ))}
+                        </Select>
+                        {ideaDocWorkflowGate.enforced ? (
+                          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs leading-relaxed text-amber-900">
+                            {ideaDocWorkflowGate.unavailable
+                              ? 'The approval workflow could not be checked right now, so no document can be generated. Try again in a moment.'
+                              : ideaDocWorkflowGate.allowedKinds?.length
+                                ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
+                                : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
+                            {ideaDocWorkflowGate.unavailable ? null : ' Deleting that workflow makes every template available again.'}
+                          </p>
+                        ) : null}
+                        {selectedIdeaDocGenerateTemplate ? (
+                          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-left">
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background text-blue-700 ring-1 ring-border">
+                              <FileText className="h-3.5 w-3.5" aria-hidden />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-foreground">
+                                {selectedIdeaDocGenerateTemplate.name}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
+                                {' · '}
+                                v{selectedIdeaDocGenerateTemplate.version}
+                                {selectedIdeaDocGenerateTemplate.category_code
+                                  ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
+                                  : ''}
+                              </p>
                             </div>
-                          ) : null}
-                        </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
 
+                    <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] lg:overflow-hidden">
+                      <div className="min-h-0 px-5 py-5 sm:px-6 lg:overflow-y-auto">
                         {ideaDocRegenerateTarget && ideaDocParts.length > 0 ? (
                           <TemplatePartChoices
                             parts={ideaDocParts}
