@@ -1628,6 +1628,8 @@ export interface FillDkmTemplateRequest {
   options?: { allow_llm?: boolean }
   /** The idea's title; the backend sets the document's title placeholders to it exactly. */
   document_title?: string
+  /** The idea owner's display name; the backend sets every [Idea Owner] placeholder to it exactly. */
+  idea_owner_name?: string
 }
 
 export interface FillDkmTemplateResponse {

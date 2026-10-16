@@ -3961,6 +3961,15 @@ export function IdeaDetailPage() {
     [idea.submittedBy, fromState?.idea?.submittedBy, resolveIdentityDisplayName]
   )
 
+  // The owner's name for the [Idea Owner] placeholder of generated documents. Unlike the header
+  // label it has no "Root" fallback, and an unresolved id or an email is not a name: send nothing then.
+  const ideaOwnerNameForDocs = useMemo(() => {
+    const raw = (idea.submittedBy ?? '').trim()
+    const resolved = resolveIdentityDisplayName(raw)
+    if (!resolved || resolved.includes('@') || (resolved === raw && /^[0-9a-f-]{16,}$/i.test(raw))) return ''
+    return resolved
+  }, [idea.submittedBy, resolveIdentityDisplayName])
+
   const currentUserId = useMemo(() => getSession()?.user.id?.trim() ?? '', [])
 
   const currentUserDisplayName = useMemo(() => {
@@ -7230,6 +7239,8 @@ export function IdeaDetailPage() {
         options: { allow_llm: true },
         // The idea's title is the document's title (URD/BRD/FSD stay on it; see idea-title-sync).
         document_title: idea.title,
+        // The template's [Idea Owner] placeholder (e.g. the Sign-Off "Created by" box).
+        idea_owner_name: ideaOwnerNameForDocs || undefined,
       })
 
       const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
@@ -7302,6 +7313,7 @@ export function IdeaDetailPage() {
     ideaDocsLoading,
     refreshIdeaDocWorkflowGate,
     ideaGeneratedDocs,
+    ideaOwnerNameForDocs,
     resolveIdeaTargetProject,
     submittedByDisplayName,
   ])
