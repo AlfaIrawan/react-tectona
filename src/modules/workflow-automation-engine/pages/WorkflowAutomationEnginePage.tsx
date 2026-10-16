@@ -124,6 +124,10 @@ import { fetchWorkspaceMembers, TECTONA_WAC_APP_ID } from '@/lib/api/workspaceAc
 import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import { UI_SCOPE_WORKFLOW_AUTOMATION, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
+// Recharts starts every chart at -1 x -1 until its container is measured and warns about it
+// on the first render; a positive start size keeps the console clean.
+const CHART_INITIAL_DIMENSION = { width: 1, height: 1 }
+
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused' | 'Needs Approval'
 type PanelId = 'overview' | 'catalog' | 'agentCatalog' | 'automation' | 'monitoring'
 
@@ -724,7 +728,7 @@ function WorkflowDonut({
         />
         <div className="pointer-events-none absolute inset-2 rounded-full border border-white/90 bg-gradient-to-br from-white/95 via-slate-50/95 to-slate-100/85 shadow-[0_14px_32px_rgba(15,23,42,0.10)]" />
         <div className="absolute inset-0">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer initialDimension={CHART_INITIAL_DIMENSION} width="100%" height="100%">
             <PieChart>
               <defs>
                 {data.map((entry, index) => (
@@ -789,7 +793,7 @@ function kpiCardChrome(cardId: string): string {
 function KpiSparkline({ data, color }: { data: number[]; color: string }) {
   const chartData = data.map((value, index) => ({ idx: index, value }))
   return (
-    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+    <ResponsiveContainer initialDimension={CHART_INITIAL_DIMENSION} width="100%" height="100%" minWidth={0} minHeight={0}>
       <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
         <defs>
           <linearGradient id={`workflow-kpi-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
@@ -2293,7 +2297,7 @@ export function WorkflowAutomationEnginePage() {
                     ]}
                   />
                   <div className="mt-3 h-56">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer initialDimension={CHART_INITIAL_DIMENSION} width="100%" height="100%">
                       <LineChart data={dashboard.trend} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                         <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -2336,7 +2340,7 @@ export function WorkflowAutomationEnginePage() {
                     ]}
                   />
                   <div className="mt-3 h-56">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer initialDimension={CHART_INITIAL_DIMENSION} width="100%" height="100%">
                       <AreaChart data={dashboard.reliability} margin={{ top: 4, right: 8, left: -16, bottom: 0 }} stackOffset="expand">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                         <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -2465,7 +2469,7 @@ export function WorkflowAutomationEnginePage() {
                 >
                   <div className="flex items-center justify-between gap-6">
                     <div className="relative h-40 w-40 shrink-0">
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer initialDimension={CHART_INITIAL_DIMENSION} width="100%" height="100%">
                         <PieChart>
                           <Pie data={dashboard.statusMix} dataKey="value" nameKey="label" cx="50%" cy="50%" innerRadius={48} outerRadius={70} stroke="white" strokeWidth={1.5} isAnimationActive={false}>
                             {dashboard.statusMix.map((entry) => (
