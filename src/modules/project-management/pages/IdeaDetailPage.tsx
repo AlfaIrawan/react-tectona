@@ -15245,7 +15245,7 @@ export function IdeaDetailPage() {
           {ideaDocGenerateOpen && typeof document !== 'undefined'
             ? createPortal(
                 <div
-                  className="z-[1400] flex items-center justify-center p-4 sm:p-6"
+                  className="z-[1400] flex items-stretch justify-stretch p-0"
                   style={{ position: 'fixed', inset: 0, zIndex: 1400 }}
                 >
                   <button
@@ -15262,7 +15262,7 @@ export function IdeaDetailPage() {
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="idea-doc-generate-title"
-                    className={cn('relative z-[1401] flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)] sm:max-h-[calc(100dvh-3rem)]', ideaDocRegenerateTarget && ideaDocParts.length > 0 ? 'max-w-2xl' : 'max-w-xl')}
+                    className="relative z-[1401] flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col overflow-hidden border-0 bg-card shadow-none"
                   >
                     <div className="shrink-0 border-b border-border/70 bg-muted/25 px-6 py-5">
                       <div className="flex items-start gap-4">
@@ -15284,147 +15284,151 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
 
-                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
-                      <div className="space-y-2">
-                        <Label
-                          htmlFor="idea-doc-template"
-                          className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
-                        >
-                          Template
-                        </Label>
-                        <Select
-                          id="idea-doc-template"
-                          className="rounded-xl"
-                          value={ideaDocGenerateTemplateId}
-                          disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
-                          onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
-                        >
-                          <option value="" disabled>
-                            {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
-                              ? 'Loading templates…'
-                              : ideaDocGenerateTemplates.length === 0
-                                ? 'No template is available at this stage'
-                                : 'Select template…'}
-                          </option>
-                          {ideaDocGenerateTemplates.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {template.name}
-                            </option>
-                          ))}
-                        </Select>
-                        {ideaDocWorkflowGate.enforced ? (
-                          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                            {ideaDocWorkflowGate.unavailable
-                              ? 'The approval workflow could not be checked right now, so no document can be generated. Try again in a moment.'
-                              : ideaDocWorkflowGate.allowedKinds?.length
-                                ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
-                                : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
-                            {ideaDocWorkflowGate.unavailable ? null : ' Deleting that workflow makes every template available again.'}
-                          </p>
-                        ) : null}
-                        {selectedIdeaDocGenerateTemplate ? (
-                          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5">
-                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background text-blue-700 ring-1 ring-border">
-                              <FileText className="h-3.5 w-3.5" aria-hidden />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium text-foreground">
-                                {selectedIdeaDocGenerateTemplate.name}
-                              </p>
-                              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
-                                {' · '}
-                                v{selectedIdeaDocGenerateTemplate.version}
-                                {selectedIdeaDocGenerateTemplate.category_code
-                                  ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
-                                  : ''}
-                              </p>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      {ideaDocRegenerateTarget && ideaDocParts.length > 0 ? (
-                        <TemplatePartChoices
-                          parts={ideaDocParts}
-                          choices={ideaDocPartChoices}
-                          currentVersion={ideaDocRegenerateVersion}
-                          otherVersions={ideaDocPartVersions}
-                          keepable={ideaDocKeepableParts}
-                          loading={ideaDocPartsLoading}
-                          disabled={ideaDocGenerateBusy}
-                          onChange={setIdeaDocPartChoices}
-                        />
-                      ) : null}
-
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-3">
+                    <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] lg:overflow-hidden">
+                      <div className="min-h-0 space-y-4 px-5 py-5 sm:px-6 lg:overflow-y-auto">
+                        <div className="space-y-2">
                           <Label
-                            htmlFor="idea-doc-source"
+                            htmlFor="idea-doc-template"
                             className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
                           >
-                            Source context
+                            Template
                           </Label>
-                          <span className="text-[11px] tabular-nums text-muted-foreground">
-                            {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars
-                          </span>
+                          <Select
+                            id="idea-doc-template"
+                            className="rounded-xl"
+                            value={ideaDocGenerateTemplateId}
+                            disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
+                            onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
+                          >
+                            <option value="" disabled>
+                              {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
+                                ? 'Loading templates…'
+                                : ideaDocGenerateTemplates.length === 0
+                                  ? 'No template is available at this stage'
+                                  : 'Select template…'}
+                            </option>
+                            {ideaDocGenerateTemplates.map((template) => (
+                              <option key={template.id} value={template.id}>
+                                {template.name}
+                              </option>
+                            ))}
+                          </Select>
+                          {ideaDocWorkflowGate.enforced ? (
+                            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                              {ideaDocWorkflowGate.unavailable
+                                ? 'The approval workflow could not be checked right now, so no document can be generated. Try again in a moment.'
+                                : ideaDocWorkflowGate.allowedKinds?.length
+                                  ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
+                                  : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
+                              {ideaDocWorkflowGate.unavailable ? null : ' Deleting that workflow makes every template available again.'}
+                            </p>
+                          ) : null}
+                          {selectedIdeaDocGenerateTemplate ? (
+                            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5">
+                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background text-blue-700 ring-1 ring-border">
+                                <FileText className="h-3.5 w-3.5" aria-hidden />
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium text-foreground">
+                                  {selectedIdeaDocGenerateTemplate.name}
+                                </p>
+                                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
+                                  {' · '}
+                                  v{selectedIdeaDocGenerateTemplate.version}
+                                  {selectedIdeaDocGenerateTemplate.category_code
+                                    ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
+                                    : ''}
+                                </p>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                        <Textarea
-                          id="idea-doc-source"
-                          rows={9}
-                          className="min-h-[180px] resize-none rounded-xl border-border/80 bg-muted/20 px-3.5 py-3 text-sm leading-relaxed shadow-none"
-                          value={ideaDocGenerateSource}
-                          disabled={ideaDocGenerateBusy}
-                          onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
-                          placeholder="Idea description / requirements used to fill the template"
-                        />
+
+                        {ideaDocRegenerateTarget && ideaDocParts.length > 0 ? (
+                          <TemplatePartChoices
+                            parts={ideaDocParts}
+                            choices={ideaDocPartChoices}
+                            currentVersion={ideaDocRegenerateVersion}
+                            otherVersions={ideaDocPartVersions}
+                            keepable={ideaDocKeepableParts}
+                            loading={ideaDocPartsLoading}
+                            disabled={ideaDocGenerateBusy}
+                            onChange={setIdeaDocPartChoices}
+                          />
+                        ) : null}
                       </div>
 
-                      {ideaDocGenerateBusy ? (
-                        <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                            Agent progress
-                          </p>
-                          <ul className="space-y-1.5">
-                            {IDEA_DOC_GENERATE_STEPS.map((step, index) => {
-                              const isDone = index < ideaDocGenerateStepIndex
-                              const isRunning = index === ideaDocGenerateStepIndex
-                              return (
-                                <li key={step.key} className="flex items-center gap-2.5 text-sm">
-                                  {isDone ? (
-                                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
-                                  ) : isRunning ? (
-                                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600" aria-hidden />
-                                  ) : (
-                                    <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" aria-hidden />
-                                  )}
-                                  <span
-                                    className={cn(
-                                      isDone && 'text-foreground',
-                                      isRunning && 'font-medium text-foreground',
-                                      !isDone && !isRunning && 'text-muted-foreground',
-                                    )}
-                                  >
-                                    {step.label}
-                                  </span>
-                                </li>
-                              )
-                            })}
-                          </ul>
+                      <div className="min-h-0 space-y-4 border-t border-border/70 bg-muted/10 px-5 py-5 sm:px-6 lg:overflow-y-auto lg:border-l lg:border-t-0">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <Label
+                              htmlFor="idea-doc-source"
+                              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                            >
+                              Source context
+                            </Label>
+                            <span className="text-[11px] tabular-nums text-muted-foreground">
+                              {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars
+                            </span>
+                          </div>
+                          <Textarea
+                            id="idea-doc-source"
+                            rows={9}
+                            className="min-h-[min(55dvh,520px)] w-full resize-y rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-none"
+                            value={ideaDocGenerateSource}
+                            disabled={ideaDocGenerateBusy}
+                            onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
+                            placeholder="Idea description / requirements used to fill the template"
+                          />
                         </div>
-                      ) : (
-                        <p className="text-xs leading-relaxed text-muted-foreground">
-                          Enterprise note: generated files are saved to Document repository and can be downloaded
-                          after the editor opens.
-                        </p>
-                      )}
+
+                        {ideaDocGenerateBusy ? (
+                          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                              Agent progress
+                            </p>
+                            <ul className="space-y-1.5">
+                              {IDEA_DOC_GENERATE_STEPS.map((step, index) => {
+                                const isDone = index < ideaDocGenerateStepIndex
+                                const isRunning = index === ideaDocGenerateStepIndex
+                                return (
+                                  <li key={step.key} className="flex items-center gap-2.5 text-sm">
+                                    {isDone ? (
+                                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                                    ) : isRunning ? (
+                                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600" aria-hidden />
+                                    ) : (
+                                      <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" aria-hidden />
+                                    )}
+                                    <span
+                                      className={cn(
+                                        isDone && 'text-foreground',
+                                        isRunning && 'font-medium text-foreground',
+                                        !isDone && !isRunning && 'text-muted-foreground',
+                                      )}
+                                    >
+                                      {step.label}
+                                    </span>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </div>
+                        ) : (
+                          <p className="text-xs leading-relaxed text-muted-foreground">
+                            Enterprise note: generated files are saved to Document repository and can be downloaded
+                            after the editor opens.
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex shrink-0 items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
                       <Button
                         type="button"
                         variant="outline"
-                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-[140px] justify-center gap-2')}
                         disabled={ideaDocGenerateBusy}
                         onClick={() => setIdeaDocGenerateOpen(false)}
                       >
@@ -15433,7 +15437,7 @@ export function IdeaDetailPage() {
                       </Button>
                       <Button
                         type="button"
-                        className={cn(registerServicePrimaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                        className={cn(registerServicePrimaryButtonClass(), 'min-w-[200px] justify-center gap-2')}
                         disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
                         onClick={() => { void handleIdeaDocGenerate() }}
                       >
