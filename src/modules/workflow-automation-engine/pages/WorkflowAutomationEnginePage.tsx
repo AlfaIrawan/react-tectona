@@ -1011,7 +1011,9 @@ export function WorkflowAutomationEnginePage() {
         if (cancelled) return
         setWorkflows(rows.map((row) => mapWorkflowDto(row, ownerOptions)))
         setWorkflowCatalogState('backend')
-      } catch {
+      } catch (error) {
+        // Logged, not only shown as "Backend unavailable": the reason is needed to fix the load.
+        console.error('Workflow catalog could not be loaded', error)
         if (!cancelled) {
           setWorkflows([])
           setWorkflowCatalogState('error')
