@@ -2486,7 +2486,9 @@ export function IdeaBacklogManagementPage() {
     if (!editor) return
     const normalized = sanitizeIdeaDescriptionRichHtml(createIdeaDescriptionHtml)
     if (editor.innerHTML !== normalized) editor.innerHTML = normalized
-  }, [createIdeaDescriptionHtml, isCreateIdeaDrawerOpen])
+    // The editor is mounted only in manual mode (or after an AI draft), so the text written while it
+    // was not on screen must be put into it when it mounts.
+  }, [createIdeaDescriptionHtml, isCreateIdeaDrawerOpen, createIdeaDraftMode, ideaDraftJob?.status])
 
   const selectedIdea = useMemo(
     () => ideas.find((idea) => idea.id === selectedIdeaId) ?? ideas[0],
