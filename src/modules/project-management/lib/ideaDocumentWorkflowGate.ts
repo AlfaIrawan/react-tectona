@@ -24,6 +24,8 @@ export type IdeaDocumentWorkflowGate = {
   enforced: boolean
   /** Kinds the current run has unlocked. Null means every template stays available. */
   allowedKinds: WorkflowDocumentKind[] | null
+  /** The workflow could not be checked, so nothing is generated until it can be. */
+  unavailable?: boolean
 }
 
 type GraphNode = {

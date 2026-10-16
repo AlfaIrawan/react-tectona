@@ -7095,9 +7095,11 @@ export function IdeaDetailPage() {
       setIdeaDocWorkflowGate(gate)
       return gate
     } catch {
-      const openGate: IdeaDocumentWorkflowGate = { enforced: false, allowedKinds: null }
-      setIdeaDocWorkflowGate(openGate)
-      return openGate
+      // Closed, not open: a BRD was generated before the URD approval while the workflow
+      // service could not be reached, because a failed check used to unlock every template.
+      const closedGate: IdeaDocumentWorkflowGate = { enforced: true, allowedKinds: [], unavailable: true }
+      setIdeaDocWorkflowGate(closedGate)
+      return closedGate
     } finally {
       setIdeaDocWorkflowGateLoading(false)
     }
@@ -7107,7 +7109,13 @@ export function IdeaDetailPage() {
     const gate = await refreshIdeaDocWorkflowGate()
     const selectable = ideaDocTemplates.filter((template) => templateAllowedByWorkflow(template, gate))
     const preferred = selectable.find((template) => template.id === preferredTemplateId)
-    if (preferredTemplateId && !preferred && gate.enforced) {
+    if (gate.unavailable) {
+      addToast({
+        title: 'Approval workflow could not be checked',
+        description: 'Documents cannot be generated until the approval workflow can be checked. Try again in a moment.',
+        variant: 'warning',
+      })
+    } else if (preferredTemplateId && !preferred && gate.enforced) {
       addToast({
         title: 'Template is locked by the approval workflow',
         description: gate.allowedKinds?.length
@@ -7142,6 +7150,14 @@ export function IdeaDetailPage() {
       return
     }
     const gate = await refreshIdeaDocWorkflowGate()
+    if (gate.unavailable) {
+      addToast({
+        title: 'Approval workflow could not be checked',
+        description: 'Nothing was generated. Try again in a moment.',
+        variant: 'warning',
+      })
+      return
+    }
     if (!templateAllowedByWorkflow(template, gate)) {
       addToast({
         title: 'Document is not available yet',
@@ -14773,7 +14789,9 @@ export function IdeaDetailPage() {
                         </button>
                       </>
                     ) : null}
-                    {showBpmnDiagrams ? (
+                    {/* The published workflow's URD approval already goes to these heads; the
+                        manual send stays only for workspaces without that workflow. */}
+                    {showBpmnDiagrams && !workflowRequestDocumentKinds.includes('URD') ? (
                       <button
                         type="button"
                         className={enterpriseSecondaryButtonClass()}
@@ -15131,10 +15149,12 @@ export function IdeaDetailPage() {
                         </Select>
                         {ideaDocWorkflowGate.enforced ? (
                           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                            {ideaDocWorkflowGate.allowedKinds?.length
-                              ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
-                              : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
-                            {' '}Deleting that workflow makes every template available again.
+                            {ideaDocWorkflowGate.unavailable
+                              ? 'The approval workflow could not be checked right now, so no document can be generated. Try again in a moment.'
+                              : ideaDocWorkflowGate.allowedKinds?.length
+                                ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
+                                : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
+                            {ideaDocWorkflowGate.unavailable ? null : ' Deleting that workflow makes every template available again.'}
                           </p>
                         ) : null}
                         {selectedIdeaDocGenerateTemplate ? (
