@@ -64,7 +64,8 @@ export function TemplatePartChoices({
           ? `Reading V${currentVersion}…`
           : `${regenerated} of ${parts.length} parts will be written again. Every other part stays as chosen. Title, owner, number and version are always updated.`}
       </p>
-      <ul className="max-h-72 space-y-1 overflow-y-auto rounded-xl border border-border/70 p-1.5">
+      {/* No scroll of its own: the dialog body scrolls, a list scrolling inside it felt cramped. */}
+      <ul className="divide-y divide-border/50 rounded-xl border border-border/70">
         {parts.map((part) => {
           const choice = choices[part.key] ?? 'generate'
           const value = choice === 'keep' ? 'keep' : choice === 'generate' ? 'generate' : `v${choice}`
@@ -72,13 +73,13 @@ export function TemplatePartChoices({
             <li
               key={part.key}
               className={cn(
-                'flex items-center justify-between gap-3 rounded-lg px-2 py-1.5',
+                'flex items-center justify-between gap-3 px-3 py-1.5',
                 choice === 'generate' ? 'bg-primary/5' : '',
               )}
             >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-foreground" title={part.label}>{part.label}</span>
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{KIND_LABEL[part.kind]}</span>
+              <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                <span className="truncate text-sm text-foreground" title={part.label}>{part.label}</span>
+                <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">{KIND_LABEL[part.kind]}</span>
               </span>
               <Select
                 aria-label={`What to do with ${part.label}`}

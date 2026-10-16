@@ -15256,9 +15256,9 @@ export function IdeaDetailPage() {
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="idea-doc-generate-title"
-                    className="relative z-[1401] w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+                    className={cn('relative z-[1401] flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)] sm:max-h-[calc(100dvh-3rem)]', ideaDocRegenerateTarget && ideaDocParts.length > 0 ? 'max-w-2xl' : 'max-w-xl')}
                   >
-                    <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                    <div className="shrink-0 border-b border-border/70 bg-muted/25 px-6 py-5">
                       <div className="flex items-start gap-4">
                         <div className="mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
                           <Sparkles className="h-5 w-5" aria-hidden />
@@ -15278,7 +15278,7 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-4 px-6 py-5">
+                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
                       <div className="space-y-2">
                         <Label
                           htmlFor="idea-doc-template"
@@ -15414,7 +15414,7 @@ export function IdeaDetailPage() {
                       )}
                     </div>
 
-                    <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                    <div className="flex shrink-0 items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
                       <Button
                         type="button"
                         variant="outline"
