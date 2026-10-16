@@ -379,6 +379,34 @@ export async function listIdeaWorkflowRuns(ideaId: string): Promise<IdeaWorkflow
   return readJson<IdeaWorkflowRunDto[]>(res)
 }
 
+/** What deleting an idea also removes: its documents and the KB entries generated from them. */
+export type IdeaGeneratedArtifactsDto = {
+  documents: { id: string; title: string; doc_type: string }[]
+  kb_entries: number
+}
+
+export type IdeaDeleteResultDto = {
+  documents_deleted: number
+  kb_entries_deleted: number
+  runs_cancelled: number
+  /** What could not be removed; the idea itself is deleted either way. */
+  failures: string[]
+}
+
+export async function fetchIdeaGeneratedArtifacts(ideaId: string): Promise<IdeaGeneratedArtifactsDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/generated-artifacts`, { headers: defaultHeaders() })
+  return readJson<IdeaGeneratedArtifactsDto>(res)
+}
+
+/** Deletes the idea in Idea Backlog, then its documents, their generated KB and its waiting runs. */
+export async function deleteIdeaWithArtifacts(ideaId: string, version: number): Promise<IdeaDeleteResultDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}?version=${version}`, {
+    method: 'DELETE',
+    headers: defaultHeaders(),
+  })
+  return readJson<IdeaDeleteResultDto>(res)
+}
+
 export async function requestIdeaApproval(ideaId: string, workspaceId?: string | null): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/request-approval`, {
     method: 'POST',

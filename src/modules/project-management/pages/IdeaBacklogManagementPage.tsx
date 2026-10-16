@@ -126,7 +126,11 @@ import {
   ideaBacklogLiquidGlassMetricCardClass,
 } from '@/components/enterprise/enterpriseFilterPanelClasses'
 import {
-  deleteIdea,
+  deleteIdeaWithArtifacts,
+  fetchIdeaGeneratedArtifacts,
+  type IdeaGeneratedArtifactsDto,
+} from '@/lib/api/workflowAutomationApi'
+import {
   fetchAllIdeas,
   createIdea as apiCreateIdea,
   patchIdea,
@@ -2129,6 +2133,11 @@ export function IdeaBacklogManagementPage() {
   const [moveIdeaError, setMoveIdeaError] = useState('')
   const [isDeletingIdea, setIsDeletingIdea] = useState(false)
   const [deleteIdeaError, setDeleteIdeaError] = useState('')
+  // What the delete also removes, shown in the confirmation: null while it is being looked up.
+  const [deleteIdeaArtifacts, setDeleteIdeaArtifacts] = useState<{
+    ideaId: string
+    found: IdeaGeneratedArtifactsDto | 'unknown'
+  } | null>(null)
   const [aiAssistanceLoading, setAiAssistanceLoading] = useState<IdeaAiAssistanceMode | null>(null)
   const [createIdeaDraftMode, setCreateIdeaDraftMode] = useState<'ai' | 'manual'>('ai')
   const [aiAssistanceResult, setAiAssistanceResult] = useState<{
@@ -3831,7 +3840,11 @@ export function IdeaBacklogManagementPage() {
   const openDeleteIdeaDialog = (idea: Idea) => {
     setDeleteIdeaTarget(idea)
     setDeleteIdeaError('')
+    setDeleteIdeaArtifacts(null)
     closeContextMenu()
+    fetchIdeaGeneratedArtifacts(idea.id)
+      .then((found) => setDeleteIdeaArtifacts({ ideaId: idea.id, found }))
+      .catch(() => setDeleteIdeaArtifacts({ ideaId: idea.id, found: 'unknown' }))
   }
 
   const openMoveIdeaDialog = (idea: Idea) => {
@@ -3884,7 +3897,14 @@ export function IdeaBacklogManagementPage() {
     setDeleteIdeaError('')
 
     try {
-      await deleteIdea(deleteIdeaTarget.id, deleteIdeaTarget.version)
+      const removed = await deleteIdeaWithArtifacts(deleteIdeaTarget.id, deleteIdeaTarget.version)
+      if (removed.failures.length > 0) {
+        addToast({
+          title: 'Idea deleted, some items remain',
+          description: `${removed.failures.length} related ${removed.failures.length === 1 ? 'item' : 'items'} could not be deleted. Remove them from Document Repository or Knowledge Base.`,
+          variant: 'warning',
+        })
+      }
       setIdeas((prev) => {
         const next = prev.filter((idea) => idea.id !== deleteIdeaTarget.id)
         const deletedWasSelected = selectedIdeaId === deleteIdeaTarget.id || selectedIdeaIds.has(deleteIdeaTarget.id)
@@ -7668,6 +7688,40 @@ export function IdeaBacklogManagementPage() {
                         <p className="text-xs text-muted-foreground">
                           This will permanently delete the selected idea and its related backlog records.
                         </p>
+                        {(() => {
+                          const found = deleteIdeaArtifacts?.ideaId === deleteIdeaTarget.id ? deleteIdeaArtifacts.found : null
+                          if (found === null) {
+                            return <p className="text-xs text-muted-foreground">Checking related documents and KB…</p>
+                          }
+                          if (found === 'unknown') {
+                            return (
+                              <p className="text-xs text-muted-foreground">
+                                Its documents and the KB entries generated from them are deleted too.
+                              </p>
+                            )
+                          }
+                          if (found.documents.length === 0 && found.kb_entries === 0) {
+                            return <p className="text-xs text-muted-foreground">This idea has no documents or generated KB.</p>
+                          }
+                          return (
+                            <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Also deleted</p>
+                              <ul className="mt-1 space-y-1 text-sm text-foreground">
+                                {found.documents.map((doc) => (
+                                  <li key={doc.id} className="break-words">
+                                    {doc.doc_type ? <span className="font-semibold">{doc.doc_type} · </span> : null}
+                                    {doc.title || 'Untitled document'}
+                                  </li>
+                                ))}
+                                {found.kb_entries > 0 && (
+                                  <li>
+                                    {found.kb_entries} KB {found.kb_entries === 1 ? 'entry' : 'entries'} generated from these documents
+                                  </li>
+                                )}
+                              </ul>
+                            </div>
+                          )
+                        })()}
                         {deleteIdeaError && <p className="text-xs text-destructive font-medium">{deleteIdeaError}</p>}
                       </div>
 
