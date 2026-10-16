@@ -108,8 +108,7 @@ export function ideaMenuForWorkflowAudience(
 ): IdeaPanelKey[] {
   const governed = Object.values(visibility ?? {}).some((value) => value === 'show' || value === 'hide')
   if (!governed) return visibleIdeaNavSections(saved, visibility)
-  const next: IdeaPanelKey[] = []
-  if (audience !== 'none') next.push('diagrams')
-  next.push('document')
-  return next
+  const allowed = new Set<IdeaPanelKey>(audience !== 'none' ? ['diagrams', 'document'] : ['document'])
+  // In the user's saved order: a fixed list here put a dragged section straight back.
+  return resolveIdeaNavSections(saved).filter((key) => allowed.has(key))
 }

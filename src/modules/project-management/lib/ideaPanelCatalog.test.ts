@@ -62,6 +62,12 @@ describe('ideaMenuForWorkflowAudience', () => {
     expect(ideaMenuForWorkflowAudience(undefined, docsOnly, 'architecture')).toEqual(['diagrams', 'document'])
     expect(ideaMenuForWorkflowAudience(undefined, docsOnly, 'business')).toEqual(['diagrams', 'document'])
   })
+
+  it('keeps the order the user dragged the sections into', () => {
+    const dragged = ['document', 'diagrams', 'summary', 'scoring', 'impact', 'costBenefit', 'conversion'] as const
+    expect(ideaMenuForWorkflowAudience([...dragged], docsOnly, 'business')).toEqual(['document', 'diagrams'])
+    expect(ideaMenuForWorkflowAudience([...dragged], docsOnly, 'none')).toEqual(['document'])
+  })
 })
 
 describe('ideaDiagramAudienceFromLabels', () => {
