@@ -4720,6 +4720,9 @@ export function IdeaDetailPage() {
   const [workflowSectionVisibility, setWorkflowSectionVisibility] = useState<IdeaSectionVisibilityMap>({})
   // Who still sees hidden sections and which diagram types, from the workflow's Idea trigger.
   const [workflowSectionAudience, setWorkflowSectionAudience] = useState<IdeaSectionAudience | null>(null)
+  // False until the workflow's section rules are read: showing the full menu first and then
+  // dropping the hidden sections looked like the page was hiding something.
+  const [ideaSectionPolicyReady, setIdeaSectionPolicyReady] = useState(false)
   const [workflowRequestDocumentKinds, setWorkflowRequestDocumentKinds] = useState<string[]>([])
   const ideaApprovalStatus = useIdeaApprovalStatus(idea.id, idea.workspace, ideaDocsReloadKey, () => {
     void ideaDocApprovals.reload()
@@ -4741,6 +4744,7 @@ export function IdeaDetailPage() {
         if (policy.audience.values.length === 0) {
           setWorkflowSectionVisibility(policy.map)
           setWorkflowSectionAudience(policy.sectionAudience)
+          setIdeaSectionPolicyReady(true)
           return
         }
         const user = currentUserId ? await fetchIdentityUser(currentUserId).catch(() => null) : null
@@ -4754,6 +4758,7 @@ export function IdeaDetailPage() {
         if (!cancelled) {
           setWorkflowSectionVisibility(matches ? policy.map : {})
           setWorkflowSectionAudience(matches ? policy.sectionAudience : null)
+          setIdeaSectionPolicyReady(true)
         }
       })
       .catch(() => {
@@ -4761,12 +4766,13 @@ export function IdeaDetailPage() {
           setWorkflowSectionVisibility({})
           setWorkflowSectionAudience(null)
           setWorkflowRequestDocumentKinds([])
+          setIdeaSectionPolicyReady(true)
         }
       })
     return () => {
       cancelled = true
     }
-  }, [currentUserId, idea.workspace, ideaWorkspaceLabels, isReviewerOptionsLoading, reviewerMemberships])
+  }, [currentUserId, idea.id, idea.workspace, ideaWorkspaceLabels, isReviewerOptionsLoading, reviewerMemberships])
   // The viewer's roles and operational teams in the workspace, matched against the team/role
   // names the workflow's Idea trigger sets for sections and diagram types.
   const viewerTeamLabels = useMemo<string[]>(() => {
@@ -4797,6 +4803,11 @@ export function IdeaDetailPage() {
     appliedInitialPanelForIdea.current = null
   }, [idea.id])
   useEffect(() => {
+    setIdeaSectionPolicyReady(false)
+    const timer = window.setTimeout(() => setIdeaSectionPolicyReady(true), 8_000)
+    return () => window.clearTimeout(timer)
+  }, [idea.id])
+  useEffect(() => {
     if (useIdeaNavSectionsStore.persist.hasHydrated()) {
       setNavStoreHydrated(true)
       return
@@ -4804,6 +4815,7 @@ export function IdeaDetailPage() {
     return useIdeaNavSectionsStore.persist.onFinishHydration(() => setNavStoreHydrated(true))
   }, [])
   useEffect(() => {
+    if (!ideaSectionPolicyReady) return
     const top = menuSections[0] ?? 'summary'
     if (!navStoreHydrated) {
       if (!menuSections.includes(activePanel)) setActivePanel(top)
@@ -4815,7 +4827,9 @@ export function IdeaDetailPage() {
     }
     appliedInitialPanelForIdea.current = idea.id
     if (activePanel !== top) setActivePanel(top)
-  }, [activePanel, idea.id, menuSections, navStoreHydrated])
+  }, [activePanel, idea.id, ideaSectionPolicyReady, menuSections, navStoreHydrated])
+  // Nothing is shown until the section rules are known (see ideaSectionPolicyReady).
+  const visiblePanel: PanelKey | null = ideaSectionPolicyReady ? activePanel : null
   const [actionControlStore, setActionControlStore] = useState<IdeaActionControlStore>(() => (
     readActionControlStore(initialIdea.id)
   ))
@@ -11956,7 +11970,7 @@ export function IdeaDetailPage() {
         onWidthChange={setRightDrawerWidth}
         activePanel={activePanel}
         onNavigatePanel={navigateToPanel}
-        menuSections={menuSections}
+        menuSections={ideaSectionPolicyReady ? menuSections : []}
         onReorderMenuSections={(orderedKeys) => {
           const hidden = resolveIdeaNavSections(savedMenuSections).filter((key) => !orderedKeys.includes(key))
           reorderIdeaMenuSections(idea.id, [...orderedKeys, ...hidden])
@@ -12067,7 +12081,7 @@ export function IdeaDetailPage() {
             </div>
 
             <div className="flex shrink-0 flex-col items-end gap-2">
-              {activePanel === 'summary' && (
+              {visiblePanel === 'summary' && (
                 <div className="self-end text-[11px] text-slate-600">
                   <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right">
                     <p>Latest AI Strategic Insight: {summaryRefreshLabel ?? '-'}</p>
@@ -12091,7 +12105,7 @@ export function IdeaDetailPage() {
                 </div>
               )}
 
-              {activePanel === 'scoring' && (
+              {visiblePanel === 'scoring' && (
                 <div className="self-end text-[11px] text-slate-600">
                   <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right">
                     <p>Latest AI Scoring Analysis: {scoringRefreshLabel ?? '-'}</p>
@@ -12120,7 +12134,15 @@ export function IdeaDetailPage() {
       </div>
 
       <div className="space-y-4">
-        {activePanel === 'summary' &&
+        {visiblePanel === null && (
+          <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-border/60 bg-card/60" aria-busy="true">
+            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              Loading idea…
+            </span>
+          </div>
+        )}
+        {visiblePanel === 'summary' &&
           renderIdeaPanelWithOptionalFullscreen(
             isSummaryPanelFullscreen,
             (
@@ -12594,7 +12616,7 @@ export function IdeaDetailPage() {
           )}
 
 
-        {activePanel === 'scoring' &&
+        {visiblePanel === 'scoring' &&
           renderIdeaPanelWithOptionalFullscreen(
             isScoringPanelFullscreen,
             (
@@ -12979,7 +13001,7 @@ export function IdeaDetailPage() {
             ),
           )}
 
-        {activePanel === 'impact' &&
+        {visiblePanel === 'impact' &&
           renderIdeaPanelWithOptionalFullscreen(
             isImpactPanelFullscreen,
             (
@@ -13353,7 +13375,7 @@ export function IdeaDetailPage() {
             ),
           )}
 
-        {activePanel === 'diagrams' && (
+        {visiblePanel === 'diagrams' && (
         <div id="panel-diagrams" className="scroll-mt-24">
         {renderIdeaPanelWithOptionalFullscreen(
           isDiagramsPanelFullscreen,
@@ -14297,7 +14319,7 @@ export function IdeaDetailPage() {
         </div>
         )}
 
-        {activePanel === 'costBenefit' && (
+        {visiblePanel === 'costBenefit' && (
         <div id="panel-costBenefit" className="scroll-mt-24">
           <div
             ref={ideaCostBenefitPanelRef}
@@ -14689,7 +14711,7 @@ export function IdeaDetailPage() {
         </div>
         )}
 
-        {activePanel === 'conversion' && (
+        {visiblePanel === 'conversion' && (
         <div id="panel-conversion" className="scroll-mt-24">
           <div
             ref={ideaConversionPanelRef}
@@ -14804,7 +14826,7 @@ export function IdeaDetailPage() {
         </div>
         )}
 
-        {activePanel === 'document' && (
+        {visiblePanel === 'document' && (
         <div id="panel-document" className="scroll-mt-24">
           <div
             ref={ideaDocsPanelRef}
