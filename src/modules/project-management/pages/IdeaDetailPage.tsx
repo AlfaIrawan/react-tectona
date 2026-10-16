@@ -166,6 +166,7 @@ import { ensureProjectDocumentFolder } from '@/modules/projects/lib/ensureProjec
 import { nextUntitledDocumentFolderName } from '@/modules/document-knowledge-management/lib/documentFolderUtils'
 import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
 import { findRepositoryTraceEntryByDocumentId } from '@/lib/kb/repositoryKbFromDocument'
+import { deleteDocumentGeneratedKb } from '@/lib/kb/deleteDocumentGeneratedKb'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/EnterpriseDeleteConfirmModal'
 import { DocumentOnlyOfficeEditor } from '@/modules/document-knowledge-management/components/DocumentOnlyOfficeEditor'
@@ -7549,6 +7550,11 @@ export function IdeaDetailPage() {
     setIdeaDocDeleteBusy(true)
     try {
       await deleteDocument(ideaDocDeleteTarget.id)
+      // The KB generated from the document goes with it, as on the Document Repository page.
+      const deletedKb = await deleteDocumentGeneratedKb({
+        documentId: ideaDocDeleteTarget.id,
+        documentTitle: ideaDocDeleteTarget.name,
+      })
       setIdeaGeneratedDocs((prev) => prev.filter((doc) => doc.id !== ideaDocDeleteTarget.id))
       setIdeaDocKbGeneratedIds((prev) => {
         const next = new Set(prev)
@@ -7556,7 +7562,13 @@ export function IdeaDetailPage() {
         return next
       })
       setIdeaDocDeleteTarget(null)
-      addToast({ title: 'Document deleted', description: ideaDocDeleteTarget.name, variant: 'success' })
+      addToast({
+        title: 'Document deleted',
+        description: deletedKb.size > 0
+          ? `${ideaDocDeleteTarget.name} and ${deletedKb.size} generated KB ${deletedKb.size === 1 ? 'entry' : 'entries'}`
+          : ideaDocDeleteTarget.name,
+        variant: 'success',
+      })
     } catch (error) {
       addToast({
         title: 'Delete failed',

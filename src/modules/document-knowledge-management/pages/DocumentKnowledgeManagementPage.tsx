@@ -413,6 +413,7 @@ import {
   buildNonBrdRepositoryKbHtml,
   type RepositoryKbSourceMeta,
 } from '@/lib/kb/repositoryKbFromDocument'
+import { deleteDocumentGeneratedKb } from '@/lib/kb/deleteDocumentGeneratedKb'
 import { extractSpreadsheetTablesHtml, isSpreadsheetFile } from '@/lib/kb/extractSpreadsheetText'
 import {
   buildRepositoryFolderPathNames,
@@ -7841,84 +7842,11 @@ export function DocumentKnowledgeManagementPage() {
     documentId: string
     documentTitle: string
   }): Promise<number> => {
-    const { documentId, documentTitle } = params
-    const documentIdNeedle = documentId.trim().toLowerCase()
-    if (!documentIdNeedle) return 0
-
-    let entriesSnapshot = kbApiItems
-    if (entriesSnapshot.length === 0) {
-      try {
-        const all = await listAllKbEntries()
-        entriesSnapshot = all.items
-      } catch {
-        // Keep best-effort behavior and continue with current in-memory snapshot.
-      }
+    const deleted = await deleteDocumentGeneratedKb({ ...params, entries: kbApiItems })
+    if (deleted.size > 0) {
+      setKbApiItems((prev) => prev.filter((entry) => !deleted.has(entry.id)))
     }
-
-    const traceTitleNeedle = repositoryTraceEntryTitle(documentTitle).trim().toLowerCase()
-    const traceCandidates = entriesSnapshot.filter((entry) => {
-      const title = entry.title.trim().toLowerCase()
-      const content = (entry.content ?? '').toLowerCase()
-      return title === traceTitleNeedle || content.includes(documentIdNeedle)
-    })
-    if (traceCandidates.length === 0) return 0
-
-    const relationIdsToDelete = new Set<string>()
-    const entryIdsToDelete = new Set<string>()
-
-    for (const traceEntry of traceCandidates) {
-      const traceContent = (traceEntry.content ?? '').toLowerCase()
-      if (traceContent.includes(documentIdNeedle)) {
-        entryIdsToDelete.add(traceEntry.id)
-      }
-
-      try {
-        const relationPage = await listKbRelations({
-          entry_id: traceEntry.id,
-          direction: 'any',
-          page: 1,
-          page_size: 200,
-        })
-
-        relationPage.items.forEach((relation) => {
-          const relationDocumentId = typeof relation.properties?.document_id === 'string'
-            ? relation.properties.document_id.trim().toLowerCase()
-            : ''
-          const relationKind = typeof relation.properties?.relation_kind === 'string'
-            ? relation.properties.relation_kind.trim().toLowerCase()
-            : ''
-
-          if (relationDocumentId !== documentIdNeedle) return
-          if (relationKind !== 'document_traceability') return
-
-          relationIdsToDelete.add(relation.id)
-          entryIdsToDelete.add(traceEntry.id)
-
-          if (relation.source_entry_id !== traceEntry.id) {
-            entryIdsToDelete.add(relation.source_entry_id)
-          }
-          if (relation.target_entry_id !== traceEntry.id) {
-            entryIdsToDelete.add(relation.target_entry_id)
-          }
-        })
-      } catch {
-        // Keep best-effort cleanup even if relation listing fails for one candidate.
-      }
-    }
-
-    if (relationIdsToDelete.size > 0) {
-      await Promise.allSettled(Array.from(relationIdsToDelete).map((id) => deleteKbRelation(id)))
-    }
-
-    if (entryIdsToDelete.size > 0) {
-      await Promise.allSettled(Array.from(entryIdsToDelete).map((id) => deleteKbEntry(id)))
-    }
-
-    if (entryIdsToDelete.size > 0) {
-      setKbApiItems((prev) => prev.filter((entry) => !entryIdsToDelete.has(entry.id)))
-    }
-
-    return entryIdsToDelete.size
+    return deleted.size
   }, [kbApiItems])
 
   const handleRepositoryDelete = useCallback((item: RepositoryItem) => {
