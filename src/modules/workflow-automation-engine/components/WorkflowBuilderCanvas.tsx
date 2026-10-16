@@ -24,7 +24,7 @@ import {
   type OnSelectionChangeFunc,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { AlertTriangle, ArrowLeft, Bell, BoxSelect, Bug, CalendarClock, CalendarDays, CheckCircle2, Clock3, Code2, Copy, Flag, Globe2, Info, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MousePointerClick, Pencil, Play, PlayCircle, PlugZap, Plus, Power, Save, Send, Settings2, ShieldCheck, Tag, Trash2, TriangleAlert, Unlink, UserRound, Users, Wand2, Webhook, Zap, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Bell, BoxSelect, Bug, CalendarClock, CalendarDays, CheckCircle2, Clock3, Code2, Copy, Flag, Globe2, Info, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MousePointerClick, Pencil, Play, PlayCircle, PlugZap, Plus, Power, Save, Send, Settings2, ShieldCheck, Tag, Trash2, TriangleAlert, Unlink, UserRound, Users, Wand2, Webhook, X, Zap, type LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
@@ -85,9 +85,14 @@ import {
   type WorkflowApprovalRoleDto,
 } from '@/lib/api/workflowAutomationApi'
 import {
+  DEFAULT_IDEA_SECTION_AUDIENCE,
+  IDEA_DIAGRAM_TYPES,
   IDEA_PANEL_CATALOG,
+  readIdeaSectionAudience,
   readIdeaSectionVisibility,
+  type IdeaDiagramType,
   type IdeaPanelKey,
+  type IdeaSectionAudience,
   type IdeaSectionVisibility,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
@@ -97,6 +102,7 @@ type WorkflowGraphRecord = {
   nodes: Node<WorkflowNodeData>[]
   edges: Edge[]
   ideaSections?: IdeaSectionVisibilityMap
+  ideaSectionAudience?: IdeaSectionAudience | null
   savedAt?: string
   /** Bumped when the pre-built templates change, so stale autosaves are re-seeded. */
   version?: number
@@ -532,6 +538,7 @@ function loadOrSeedWorkflowGraph(workflowId: string | null, workflowName?: strin
             nodes: parsed.nodes.map((node) => withWorkflowNodeSize(normalizeActionNode(normalizeTriggerNode(node)))),
             edges: parsed.edges,
             ideaSections: readIdeaSectionVisibility(parsed.ideaSections),
+            ideaSectionAudience: readIdeaSectionAudience(parsed.ideaSectionAudience),
             savedAt: parsed.savedAt,
             version: parsed.version,
           }
@@ -634,11 +641,14 @@ function buildRuntimeDefinition(
   nodes: Node<WorkflowNodeData>[],
   edges: Edge[],
   ideaSections: IdeaSectionVisibilityMap = {},
+  ideaSectionAudience: IdeaSectionAudience | null = null,
 ): WorkflowGraph {
   const sections = readIdeaSectionVisibility(ideaSections)
   return {
     schema_version: 2,
     ...(Object.keys(sections).length > 0 ? { ideaSections: sections } : {}),
+    // Only once someone set it on the Idea trigger; until then Idea Detail keeps the default rule.
+    ...(ideaSectionAudience ? { ideaSectionAudience } : {}),
     nodes: nodes.map((node) => ({
       id: node.id,
       type: node.type ?? node.data.kind,
@@ -696,6 +706,7 @@ function workflowRevision(
   nodes: Node<WorkflowNodeData>[],
   edges: Edge[],
   ideaSections: IdeaSectionVisibilityMap = {},
+  ideaSectionAudience: IdeaSectionAudience | null = null,
   meta: WorkflowRevisionMeta = { category: 'General', owner: '', scopeMode: 'organization', scopeWorkspaceIds: [] },
 ): string {
   return JSON.stringify({
@@ -705,7 +716,7 @@ function workflowRevision(
     scopeMode: meta.scopeMode,
     scopeWorkspaceIds: meta.scopeMode === 'organization' ? [] : [...meta.scopeWorkspaceIds].sort(),
     trigger: triggerTypeOf(nodes),
-    definition: buildRuntimeDefinition(nodes, edges, ideaSections),
+    definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience),
   })
 }
 
@@ -962,40 +973,129 @@ function showsIdeaSectionSettings(node: { data: { kind: string; config: Record<s
     && config.triggerEntity === 'Idea'
 }
 
+/** Team or role names as removable chips; Enter or a comma adds what was typed. */
+function TeamNamesInput({
+  names,
+  onChange,
+  placeholder,
+}: {
+  names: string[]
+  onChange: (next: string[]) => void
+  placeholder: string
+}) {
+  const [draft, setDraft] = useState('')
+  const add = (raw: string) => {
+    const typed = raw.split(',').map((part) => part.trim()).filter(Boolean)
+    if (typed.length === 0) return
+    onChange(Array.from(new Set([...names, ...typed])))
+    setDraft('')
+  }
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1">
+      {names.map((name) => (
+        <span key={name} className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">
+          {name}
+          <button
+            type="button"
+            aria-label={`Remove ${name}`}
+            className="text-slate-400 hover:text-slate-700"
+            onClick={() => onChange(names.filter((item) => item !== name))}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ',') {
+            event.preventDefault()
+            add(draft)
+          } else if (event.key === 'Backspace' && !draft && names.length > 0) {
+            onChange(names.slice(0, -1))
+          }
+        }}
+        onBlur={() => add(draft)}
+        placeholder={names.length > 0 ? '' : placeholder}
+        className="min-w-[6rem] flex-1 bg-transparent px-1 py-0.5 text-xs text-slate-800 outline-none placeholder:text-slate-400"
+      />
+    </div>
+  )
+}
+
 function IdeaSectionVisibilityEditor({
   value,
   onChange,
+  audience,
+  onAudienceChange,
 }: {
   value: IdeaSectionVisibilityMap
   onChange: (key: IdeaPanelKey, visibility: IdeaSectionVisibility) => void
+  audience: IdeaSectionAudience
+  onAudienceChange: (next: IdeaSectionAudience) => void
 }) {
+  const setAlsoShowTo = (key: IdeaPanelKey, names: string[]) =>
+    onAudienceChange({ ...audience, alsoShowTo: { ...audience.alsoShowTo, [key]: names } })
+  const setDiagramType = (key: IdeaDiagramType, names: string[]) =>
+    onAudienceChange({ ...audience, diagramTypes: { ...audience.diagramTypes, [key]: names } })
   return (
     <div>
       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Idea sections</p>
       <p className="mt-1 text-xs leading-relaxed text-slate-500">
         Show or hide each section on Idea Detail. A published Active workflow applies this to its workspace.
-        Diagrams stays hidden here: Architecture still sees C4, Sequence, ERD, Class, and ArchiMate, and Business Relationship or Business Partner still sees BPMN.
+        A hidden section can still be shown to the teams or roles named under it, matched against each
+        person&apos;s roles and operational teams.
       </p>
       <ul className="mt-3 space-y-1">
         {IDEA_PANEL_CATALOG.map((entry) => {
           const shown = value[entry.key] !== 'hide'
           const Icon = entry.icon
           return (
-            <li key={entry.key} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-2 py-1.5">
-              <span className={cn('flex min-w-0 items-center gap-2 text-sm', shown ? 'text-slate-800' : 'text-slate-400')}>
-                <Icon className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{entry.label}</span>
-              </span>
-              <button
-                type="button"
-                className={cn(
-                  'shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold',
-                  shown ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
-                )}
-                onClick={() => onChange(entry.key, shown ? 'hide' : 'show')}
-              >
-                {shown ? 'Show' : 'Hide'}
-              </button>
+            <li key={entry.key} className="rounded-lg border border-slate-100 px-2 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className={cn('flex min-w-0 items-center gap-2 text-sm', shown ? 'text-slate-800' : 'text-slate-400')}>
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{entry.label}</span>
+                </span>
+                <button
+                  type="button"
+                  className={cn(
+                    'shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold',
+                    shown ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
+                  )}
+                  onClick={() => onChange(entry.key, shown ? 'hide' : 'show')}
+                >
+                  {shown ? 'Show' : 'Hide'}
+                </button>
+              </div>
+              {!shown ? (
+                <div className="mt-1.5">
+                  <p className="text-[10px] font-medium text-slate-500">Still shown to (team or role)</p>
+                  <TeamNamesInput
+                    names={audience.alsoShowTo[entry.key] ?? []}
+                    onChange={(names) => setAlsoShowTo(entry.key, names)}
+                    placeholder="Nobody: type a team or role"
+                  />
+                </div>
+              ) : null}
+              {entry.key === 'diagrams' ? (
+                <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-1.5">
+                  <p className="text-[10px] font-medium text-slate-500">
+                    Diagram types: who sees each (empty: everyone who sees Diagrams)
+                  </p>
+                  {IDEA_DIAGRAM_TYPES.map((type) => (
+                    <div key={type.key}>
+                      <p className="text-[11px] text-slate-600">{type.label}</p>
+                      <TeamNamesInput
+                        names={audience.diagramTypes[type.key]}
+                        onChange={(names) => setDiagramType(type.key, names)}
+                        placeholder="Everyone who sees Diagrams"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </li>
           )
         })}
@@ -1070,6 +1170,10 @@ function WorkflowBuilderCanvasInner({
   const [ideaSections, setIdeaSections] = useState<IdeaSectionVisibilityMap>(
     () => readIdeaSectionVisibility(initial.ideaSections),
   )
+  // Null until someone edits it here: the workflow then keeps the default team rule.
+  const [ideaSectionAudience, setIdeaSectionAudience] = useState<IdeaSectionAudience | null>(
+    () => initial.ideaSectionAudience ?? null,
+  )
   const nodesRef = useRef(nodes)
   const edgesRef = useRef(edges)
   const resizeStartRef = useRef(new Map<string, NodeFrame>())
@@ -1116,8 +1220,8 @@ function WorkflowBuilderCanvasInner({
   }, [edges])
 
   const currentRevision = useMemo(
-    () => workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds }),
-    [edges, ideaSections, name, nodes, ownerId, scopeMode, scopeWorkspaceIds, workflowType],
+    () => workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds }),
+    [edges, ideaSectionAudience, ideaSections, name, nodes, ownerId, scopeMode, scopeWorkspaceIds, workflowType],
   )
   const latestRevisionRef = useRef(currentRevision)
 
@@ -1439,6 +1543,7 @@ function WorkflowBuilderCanvasInner({
       nodes,
       edges,
       ideaSections,
+      ideaSectionAudience,
       savedAt: new Date().toISOString(),
       version: WORKFLOW_TEMPLATE_VERSION,
     }
@@ -1447,7 +1552,7 @@ function WorkflowBuilderCanvasInner({
     } catch {
       // localStorage may be unavailable — this is a prototype persistence layer.
     }
-  }, [edges, ideaSections, name, nodes, workflowId])
+  }, [edges, ideaSectionAudience, ideaSections, name, nodes, workflowId])
 
   // Persist editing changes after the pointer/input settles. This keeps drag and
   // resize interactions responsive while ensuring positions and dimensions survive
@@ -1468,7 +1573,7 @@ function WorkflowBuilderCanvasInner({
         owner: ownerId,
         scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds,
         trigger: triggerTypeOf(nodes),
-        definition: buildRuntimeDefinition(nodes, edges, ideaSections),
+        definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience),
         })
         .then(() => {
           savedRevisionRef.current = revision
@@ -1519,11 +1624,11 @@ function WorkflowBuilderCanvasInner({
         // The backend matches events against the workflow row's own trigger, so it has to
         // mirror the Trigger node — otherwise an Event workflow can never fire.
         trigger: triggerTypeOf(nodes),
-        definition: buildRuntimeDefinition(nodes, edges, ideaSections),
+        definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience),
         workspace_id: activeWorkspaceId ?? undefined,
         })
         .then((created) => {
-          const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
+          const revision = workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
           savedRevisionRef.current = revision
           explicitRevisionRef.current = revision
           setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1540,9 +1645,9 @@ function WorkflowBuilderCanvasInner({
         })
       return
     }
-    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) })
       .then(() => {
-        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
+        const revision = workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1552,7 +1657,7 @@ function WorkflowBuilderCanvasInner({
         setDraftSaveState('unsaved')
         addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' })
       })
-  }, [activeWorkspaceId, addToast, edges, ideaSections, name, nodes, onWorkflowCreated, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+  }, [activeWorkspaceId, addToast, edges, ideaSectionAudience, ideaSections, name, nodes, onWorkflowCreated, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   const handlePublish = useCallback(() => {
     if (scopeMode !== 'organization' && scopeWorkspaceIds.length === 0) {
@@ -1568,10 +1673,10 @@ function WorkflowBuilderCanvasInner({
       addToast({ variant: 'info', title: 'Workflow published', description: `${name} published (prototype).` })
       return
     }
-    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) })
       .then(() => publishWorkflowApi(workflowId))
       .then((published) => {
-        const revision = workflowRevision(name, nodes, edges, ideaSections, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
+        const revision = workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
@@ -1580,7 +1685,7 @@ function WorkflowBuilderCanvasInner({
         addToast({ variant: 'success', title: 'Workflow published', description: `${name} published as v${published.version}.` })
       })
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
-  }, [addToast, edges, ideaSections, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+  }, [addToast, edges, ideaSectionAudience, ideaSections, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   const openVersions = useCallback(() => {
     setVersionsOpen((open) => {
@@ -1612,6 +1717,7 @@ function WorkflowBuilderCanvasInner({
         setNodes(loadedNodes)
         setEdges(loadedEdges)
         setIdeaSections(loadedSections)
+        setIdeaSectionAudience(readIdeaSectionAudience(def.ideaSectionAudience))
         setVersionsOpen(false)
         addToast({
           variant: 'success',
@@ -1650,7 +1756,9 @@ function WorkflowBuilderCanvasInner({
         setOwnerWorkspaceId(wf.workspace_id ?? activeWorkspaceId)
         const def = wf.definition
         const loadedSections = readIdeaSectionVisibility(def?.ideaSections)
+        const loadedAudience = readIdeaSectionAudience(def?.ideaSectionAudience)
         setIdeaSections(loadedSections)
+        setIdeaSectionAudience(loadedAudience)
         if (def && Array.isArray(def.nodes) && def.nodes.length > 0) {
           const loadedNodes = (def.nodes as Node<WorkflowNodeData>[]).map((node) => {
             const sized = withWorkflowNodeSize(node)
@@ -1658,7 +1766,7 @@ function WorkflowBuilderCanvasInner({
             return { ...sized, data: { ...sized.data, config: withoutApprovalConfig(sized.data.config ?? {}) } }
           })
           const loadedEdges = (Array.isArray(def.edges) ? def.edges : []) as Edge[]
-          const revision = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections, loadedMeta)
+          const revision = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections, loadedAudience, loadedMeta)
           savedRevisionRef.current = revision
           explicitRevisionRef.current = revision
           setPublishedRevision(wf.is_published ? revision : null)
@@ -1666,7 +1774,7 @@ function WorkflowBuilderCanvasInner({
           setNodes(loadedNodes)
           setEdges(loadedEdges)
         } else {
-          const revision = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections, loadedMeta)
+          const revision = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections, loadedAudience, loadedMeta)
           savedRevisionRef.current = revision
           explicitRevisionRef.current = revision
           setPublishedRevision(wf.is_published ? revision : null)
@@ -1709,7 +1817,7 @@ function WorkflowBuilderCanvasInner({
       setIsRunning(true)
       setTab('debug')
       try {
-        await updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges, ideaSections) })
+        await updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) })
         let context: Record<string, unknown> = {}
         if (runContextText.trim()) {
           try {
@@ -1737,7 +1845,7 @@ function WorkflowBuilderCanvasInner({
         setIsRunning(false)
       }
     },
-    [addToast, edges, ideaSections, name, nodes, refreshRuns, runContextText, workflowId],
+    [addToast, edges, ideaSectionAudience, ideaSections, name, nodes, refreshRuns, runContextText, workflowId],
   )
 
   const handleRun = useCallback(() => {
@@ -2871,7 +2979,12 @@ function WorkflowBuilderCanvasInner({
                       })}
                     />
                     <div className="border-t border-slate-100 pt-3">
-                      <IdeaSectionVisibilityEditor value={ideaSections} onChange={setIdeaSectionVisibility} />
+                      <IdeaSectionVisibilityEditor
+                        value={ideaSections}
+                        onChange={setIdeaSectionVisibility}
+                        audience={ideaSectionAudience ?? DEFAULT_IDEA_SECTION_AUDIENCE}
+                        onAudienceChange={setIdeaSectionAudience}
+                      />
                     </div>
                   </>
                 ) : null}

@@ -298,11 +298,11 @@ import { ManageActionControlListModal } from '@/modules/project-management/compo
 import {
   DEFAULT_IDEA_NAV_SECTIONS,
   getIdeaPanelCatalogEntry,
-  ideaDiagramAudienceFromLabels,
+  ideaDiagramTypesFor,
   ideaMenuForWorkflowAudience,
   resolveIdeaNavSections,
-  type IdeaDiagramAudience,
   type IdeaPanelKey,
+  type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
 import { ideaAudienceMatches, sendUrdForBusinessReview, urdReviewSummaryText } from '@/modules/project-management/lib/urdReviewHeads'
@@ -4625,6 +4625,8 @@ export function IdeaDetailPage() {
   const reorderIdeaMenuSections = useIdeaNavSectionsStore((state) => state.reorderSections)
   const savedMenuSections = useIdeaNavSectionsStore((state) => state.sectionsByIdea[idea.id])
   const [workflowSectionVisibility, setWorkflowSectionVisibility] = useState<IdeaSectionVisibilityMap>({})
+  // Who still sees hidden sections and which diagram types, from the workflow's Idea trigger.
+  const [workflowSectionAudience, setWorkflowSectionAudience] = useState<IdeaSectionAudience | null>(null)
   const [workflowRequestDocumentKinds, setWorkflowRequestDocumentKinds] = useState<string[]>([])
   const ideaApprovalStatus = useIdeaApprovalStatus(idea.id, idea.workspace, ideaDocsReloadKey, () => {
     void ideaDocApprovals.reload()
@@ -4645,6 +4647,7 @@ export function IdeaDetailPage() {
         setWorkflowRequestDocumentKinds(policy.requestDocumentKinds)
         if (policy.audience.values.length === 0) {
           setWorkflowSectionVisibility(policy.map)
+          setWorkflowSectionAudience(policy.sectionAudience)
           return
         }
         const user = currentUserId ? await fetchIdentityUser(currentUserId).catch(() => null) : null
@@ -4655,11 +4658,15 @@ export function IdeaDetailPage() {
           by: policy.audience.by,
           values: policy.audience.values,
         })
-        if (!cancelled) setWorkflowSectionVisibility(matches ? policy.map : {})
+        if (!cancelled) {
+          setWorkflowSectionVisibility(matches ? policy.map : {})
+          setWorkflowSectionAudience(matches ? policy.sectionAudience : null)
+        }
       })
       .catch(() => {
         if (!cancelled) {
           setWorkflowSectionVisibility({})
+          setWorkflowSectionAudience(null)
           setWorkflowRequestDocumentKinds([])
         }
       })
@@ -4667,9 +4674,11 @@ export function IdeaDetailPage() {
       cancelled = true
     }
   }, [currentUserId, idea.workspace, ideaWorkspaceLabels, isReviewerOptionsLoading, reviewerMemberships])
-  const ideaDiagramAudience = useMemo<IdeaDiagramAudience>(() => {
-    if (!currentUserId) return 'none'
-    const labels = reviewerMemberships
+  // The viewer's roles and operational teams in the workspace, matched against the team/role
+  // names the workflow's Idea trigger sets for sections and diagram types.
+  const viewerTeamLabels = useMemo<string[]>(() => {
+    if (!currentUserId) return []
+    return reviewerMemberships
       .filter((membership) => membership.subject_id === currentUserId)
       .flatMap((membership) => [
         membership.role_code,
@@ -4678,13 +4687,17 @@ export function IdeaDetailPage() {
         membership.operational_team_display_name,
         ...(membership.operational_teams ?? []).flatMap((team) => [team.team_code, team.display_name]),
       ])
-    return ideaDiagramAudienceFromLabels(labels)
+      .filter((label): label is string => Boolean(label))
   }, [currentUserId, reviewerMemberships])
-  const showTechnicalDiagrams = ideaDiagramAudience === 'architecture' || ideaDiagramAudience === 'both'
-  const showBpmnDiagrams = ideaDiagramAudience === 'business' || ideaDiagramAudience === 'both'
+  const diagramTypes = useMemo(
+    () => ideaDiagramTypesFor(viewerTeamLabels, workflowSectionAudience),
+    [viewerTeamLabels, workflowSectionAudience],
+  )
+  const showTechnicalDiagrams = diagramTypes.technical
+  const showBpmnDiagrams = diagramTypes.bpmn
   const menuSections = useMemo(
-    () => ideaMenuForWorkflowAudience(savedMenuSections, workflowSectionVisibility, ideaDiagramAudience),
-    [ideaDiagramAudience, savedMenuSections, workflowSectionVisibility],
+    () => ideaMenuForWorkflowAudience(savedMenuSections, workflowSectionVisibility, viewerTeamLabels, workflowSectionAudience),
+    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility],
   )
   useEffect(() => {
     userChosePanelRef.current = false

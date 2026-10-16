@@ -85,30 +85,100 @@ export function visibleIdeaNavSections(
   return visible.length > 0 ? visible : ['summary']
 }
 
-export type IdeaDiagramAudience = 'architecture' | 'business' | 'both' | 'none'
+export type IdeaDiagramType = 'technical' | 'bpmn'
 
-/** Architecture sees technical diagrams. Business Relationship / Business Partner sees BPMN. */
-export function ideaDiagramAudienceFromLabels(labels: Array<string | null | undefined>): IdeaDiagramAudience {
-  const architecture = labels.some((label) => /architecture|arsitektur/i.test(label ?? ''))
-  const business = labels.some((label) => /business\s*relationship|business\s*partner|business\s*relation/i.test(label ?? ''))
-  if (architecture && business) return 'both'
-  if (architecture) return 'architecture'
-  if (business) return 'business'
-  return 'none'
+export const IDEA_DIAGRAM_TYPES: { key: IdeaDiagramType; label: string }[] = [
+  { key: 'technical', label: 'C4, Sequence, ERD, Class, ArchiMate' },
+  { key: 'bpmn', label: 'BPMN' },
+]
+
+/**
+ * Who still sees what on Idea Detail, set on the workflow's Idea trigger node. Values are team or
+ * role names, matched against the viewer's roles and operational teams in the workspace.
+ */
+export type IdeaSectionAudience = {
+  /** Section → teams/roles that still see it while the workflow hides it. Empty: nobody. */
+  alsoShowTo: Partial<Record<IdeaPanelKey, string[]>>
+  /** Diagram type → teams/roles that see it inside Diagrams. Empty: everyone who sees Diagrams. */
+  diagramTypes: Record<IdeaDiagramType, string[]>
+}
+
+/** The rule from before it moved into the workflow: applies until a workflow sets its own. */
+export const DEFAULT_IDEA_SECTION_AUDIENCE: IdeaSectionAudience = {
+  alsoShowTo: { diagrams: ['Architecture', 'Arsitektur', 'Business Relation', 'Business Partner'] },
+  diagramTypes: {
+    technical: ['Architecture', 'Arsitektur'],
+    bpmn: ['Business Relation', 'Business Partner'],
+  },
+}
+
+function readNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return Array.from(new Set(value.map((item) => String(item ?? '').trim()).filter(Boolean)))
+}
+
+/** The audience a workflow stored, or null when it stored none (the default then applies). */
+export function readIdeaSectionAudience(value: unknown): IdeaSectionAudience | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as { alsoShowTo?: unknown; diagramTypes?: unknown }
+  const shown = (raw.alsoShowTo && typeof raw.alsoShowTo === 'object' ? raw.alsoShowTo : {}) as Record<string, unknown>
+  const types = (raw.diagramTypes && typeof raw.diagramTypes === 'object' ? raw.diagramTypes : {}) as Record<string, unknown>
+  const alsoShowTo: Partial<Record<IdeaPanelKey, string[]>> = {}
+  for (const entry of IDEA_PANEL_CATALOG) {
+    const names = readNames(shown[entry.key]) ?? DEFAULT_IDEA_SECTION_AUDIENCE.alsoShowTo[entry.key]
+    if (names) alsoShowTo[entry.key] = [...names]
+  }
+  return {
+    alsoShowTo,
+    diagramTypes: {
+      technical: readNames(types.technical) ?? [...DEFAULT_IDEA_SECTION_AUDIENCE.diagramTypes.technical],
+      bpmn: readNames(types.bpmn) ?? [...DEFAULT_IDEA_SECTION_AUDIENCE.diagramTypes.bpmn],
+    },
+  }
+}
+
+const compactName = (value: string) => value.toLowerCase().replace(/\s+/g, '')
+
+/** True when one of the viewer's role/team labels contains one of the names (case and spaces ignored). */
+export function audienceIncludes(viewerLabels: Array<string | null | undefined>, names: string[] | undefined): boolean {
+  const wanted = (names ?? []).map(compactName).filter(Boolean)
+  if (wanted.length === 0) return false
+  return viewerLabels.some((label) => {
+    const have = compactName(label ?? '')
+    return have !== '' && wanted.some((name) => have.includes(name))
+  })
+}
+
+/** Which diagram types the viewer sees inside Diagrams. */
+export function ideaDiagramTypesFor(
+  viewerLabels: Array<string | null | undefined>,
+  audience: IdeaSectionAudience | null,
+): Record<IdeaDiagramType, boolean> {
+  const types = (audience ?? DEFAULT_IDEA_SECTION_AUDIENCE).diagramTypes
+  return {
+    technical: types.technical.length === 0 || audienceIncludes(viewerLabels, types.technical),
+    bpmn: types.bpmn.length === 0 || audienceIncludes(viewerLabels, types.bpmn),
+  }
 }
 
 /**
- * A published section map means the Idea document workflow is in force:
- * everyone sees Docs, and Diagrams returns only for Architecture or Business Relationship / Partner.
+ * The Idea menu while a published workflow governs it: every section the workflow shows, plus a
+ * hidden section for the teams/roles the workflow still shows it to, in the user's saved order.
  */
 export function ideaMenuForWorkflowAudience(
   saved: IdeaPanelKey[] | undefined,
   visibility: IdeaSectionVisibilityMap | undefined,
-  audience: IdeaDiagramAudience,
+  viewerLabels: Array<string | null | undefined>,
+  audience: IdeaSectionAudience | null,
 ): IdeaPanelKey[] {
   const governed = Object.values(visibility ?? {}).some((value) => value === 'show' || value === 'hide')
   if (!governed) return visibleIdeaNavSections(saved, visibility)
-  const allowed = new Set<IdeaPanelKey>(audience !== 'none' ? ['diagrams', 'document'] : ['document'])
+  const rules = audience ?? DEFAULT_IDEA_SECTION_AUDIENCE
+  const diagramTypes = ideaDiagramTypesFor(viewerLabels, audience)
   // In the user's saved order: a fixed list here put a dragged section straight back.
-  return resolveIdeaNavSections(saved).filter((key) => allowed.has(key))
+  return resolveIdeaNavSections(saved).filter((key) => {
+    const seen = visibility?.[key] !== 'hide' || audienceIncludes(viewerLabels, rules.alsoShowTo[key])
+    // Diagrams without a diagram type this viewer may see would be an empty page.
+    return seen && (key !== 'diagrams' || diagramTypes.technical || diagramTypes.bpmn)
+  })
 }

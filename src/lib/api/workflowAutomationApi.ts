@@ -30,6 +30,11 @@ export type WorkflowGraph = {
   schema_version?: number
   /** Idea Detail sidebar visibility. The executor ignores this; the editor and Idea Detail read it. */
   ideaSections?: Partial<Record<string, 'show' | 'hide'>>
+  /** Teams/roles that still see a hidden section, and who sees each diagram type. Set on the Idea trigger. */
+  ideaSectionAudience?: {
+    alsoShowTo?: Partial<Record<string, string[]>>
+    diagramTypes?: Partial<Record<string, string[]>>
+  }
 }
 
 /** Row shape returned by GET /workflows (no heavy `definition`). */

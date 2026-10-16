@@ -6,7 +6,9 @@ import {
   type WorkflowGraph,
 } from '@/lib/api/workflowAutomationApi'
 import {
+  readIdeaSectionAudience,
   readIdeaSectionVisibility,
+  type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
 import {
@@ -230,6 +232,8 @@ export type IdeaWorkflowAudience = {
 
 export type PublishedIdeaSectionPolicy = {
   map: IdeaSectionVisibilityMap
+  /** Who still sees hidden sections and which diagram types; null keeps the default rule. */
+  sectionAudience: IdeaSectionAudience | null
   audience: IdeaWorkflowAudience
   requestsApproval: boolean
   /** Document kinds whose row shows Request for Approval. Empty parameter means URD. */
@@ -287,6 +291,7 @@ export async function loadPublishedIdeaSectionPolicy(
         const requestDocumentKinds = requestDocumentKindsFromGraph(published)
         return {
           map,
+          sectionAudience: readIdeaSectionAudience(published?.ideaSectionAudience),
           audience: ideaTriggerAudience(published),
           requestsApproval: requestDocumentKinds.length > 0,
           requestDocumentKinds,
@@ -296,7 +301,7 @@ export async function loadPublishedIdeaSectionPolicy(
       // A workflow that cannot be loaded does not decide the menu.
     }
   }
-  return { map: {}, audience: OPEN_AUDIENCE, requestsApproval: false, requestDocumentKinds: [] }
+  return { map: {}, sectionAudience: null, audience: OPEN_AUDIENCE, requestsApproval: false, requestDocumentKinds: [] }
 }
 
 export async function loadPublishedIdeaSectionVisibility(
