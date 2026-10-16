@@ -1632,6 +1632,8 @@ export interface FillDkmTemplateRequest {
   idea_owner_name?: string
   /** A numbered series ("URD"): the server issues the next number of the year into [DocNum]. */
   document_number_series?: string
+  /** The number the document already has; regenerating keeps it. */
+  existing_document_number?: string
 }
 
 export interface FillDkmTemplateResponse {

@@ -7243,8 +7243,10 @@ export function IdeaDetailPage() {
         document_title: idea.title,
         // The template's [Idea Owner] placeholder (e.g. the Sign-Off "Created by" box).
         idea_owner_name: ideaOwnerNameForDocs || undefined,
-        // URD documents are numbered per year (ITB2026-00001); the server issues the number.
+        // URD documents are numbered per year (ITB2026-00001); the server issues the number, or keeps
+        // the one an earlier generation of this document already has.
         document_number_series: docTypeLabel === 'URD' ? 'URD' : undefined,
+        existing_document_number: String(existingDocument?.metadata?.document_number ?? '') || undefined,
       })
 
       const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
@@ -7267,6 +7269,8 @@ export function IdeaDetailPage() {
           idea_title: idea.title,
           ai_generated: true,
           fill_correlation_id: filled.correlation_id,
+          // Kept on the document so a regeneration keeps the same number (URD only).
+          ...(filled.document_number ? { document_number: filled.document_number } : {}),
           storage_project_id: targetProject.id,
           storage_project_name: targetProject.name,
         },
