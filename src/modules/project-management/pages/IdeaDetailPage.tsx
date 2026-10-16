@@ -15245,8 +15245,8 @@ export function IdeaDetailPage() {
           {ideaDocGenerateOpen && typeof document !== 'undefined'
             ? createPortal(
                 <div
-                  className="z-[1400] flex items-stretch justify-stretch p-0"
-                  style={{ position: 'fixed', inset: 0, zIndex: 1400 }}
+                  className="fixed inset-x-0 bottom-0 top-12 z-[1400] flex items-stretch justify-stretch p-0"
+                  style={{ zIndex: 1400 }}
                 >
                   <button
                     type="button"
@@ -15262,7 +15262,7 @@ export function IdeaDetailPage() {
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="idea-doc-generate-title"
-                    className="relative z-[1401] flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col overflow-hidden border-0 bg-card shadow-none"
+                    className="relative z-[1401] flex h-full max-h-full w-full max-w-none flex-col overflow-hidden border-0 bg-card shadow-none"
                   >
                     <div className="shrink-0 border-b border-border/70 bg-muted/25 px-6 py-5">
                       <div className="flex items-start gap-4">
