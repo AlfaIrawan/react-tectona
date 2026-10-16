@@ -1634,6 +1634,8 @@ export interface FillDkmTemplateRequest {
   document_number_series?: string
   /** The number the document already has; regenerating keeps it. */
   existing_document_number?: string
+  /** The version the generated document will carry ("V3"); fills every [Version] placeholder. */
+  document_version_label?: string
 }
 
 export interface FillDkmTemplateResponse {

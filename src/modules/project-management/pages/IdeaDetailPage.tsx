@@ -7272,10 +7272,12 @@ export function IdeaDetailPage() {
         document_title: idea.title,
         // The template's [Idea Owner] placeholder (e.g. the Sign-Off "Created by" box).
         idea_owner_name: ideaOwnerNameForDocs || undefined,
-        // URD documents are numbered per year (ITB2026-00001); the server issues the number, or keeps
+        // URD documents are numbered per year (ITBP2026-00001); the server issues the number, or keeps
         // the one an earlier generation of this document already has.
         document_number_series: docTypeLabel === 'URD' ? 'URD' : undefined,
         existing_document_number: String(existingDocument?.metadata?.document_number ?? '') || undefined,
+        // The template's [Version]: regenerating saves the next version of the existing document.
+        document_version_label: existingDocument ? `V${(existingDocument.current_version_no || 1) + 1}` : 'V1',
       })
 
       const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
