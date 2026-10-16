@@ -102,10 +102,8 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
 import {
-  enterpriseCyanGradientActionButtonClass,
-  enterpriseEmeraldGradientActionButtonClass,
-  enterpriseIndigoGradientActionButtonClass,
-  enterpriseRoseGradientActionButtonClass,
+  enterpriseDestructiveOutlineButtonClass,
+  enterprisePrimarySolidButtonClass,
   enterpriseSecondaryButtonClass,
   registerServicePrimaryButtonClass,
 } from '@/lib/enterpriseButtonClasses'
@@ -148,6 +146,7 @@ import {
   getIdeaDraftVersion,
   listIdeaDraftVersions,
   fetchIdeaIntakeChecklist,
+  fetchIdeaIntakeHints,
   reanalyzeIdeaDraftJob,
   prefetchProcessDiagramPlantUmlPng,
   restoreIdeaDraftBrainstormSession,
@@ -3369,7 +3368,21 @@ export function IdeaBacklogManagementPage() {
     let cancelled = false
     void fetchIdeaIntakeChecklist(workspaceId)
       .then((items) => {
-        if (!cancelled) setCreateIdeaIntakeItems(items)
+        if (cancelled) return
+        setCreateIdeaIntakeItems(items)
+        // The example answers come after the questions, so the template is not held back by them.
+        if (items.length === 0) return
+        void fetchIdeaIntakeHints(items.map((item) => item.prompt))
+          .then((hints) => {
+            if (cancelled) return
+            const hintByPrompt = new Map(items.map((item, index) => [item.prompt, hints[index] ?? '']))
+            setCreateIdeaIntakeItems((prev) =>
+              prev.map((item) => (hintByPrompt.has(item.prompt) ? { ...item, hint: hintByPrompt.get(item.prompt) } : item))
+            )
+          })
+          .catch(() => {
+            // No examples: the boxes stay blank.
+          })
       })
       .catch(() => {
         if (!cancelled) setCreateIdeaIntakeItems([])
@@ -5097,7 +5110,7 @@ export function IdeaBacklogManagementPage() {
                   type="button"
                   onClick={() => decideIdea('Approved')}
                   className={cn(
-                    enterpriseCyanGradientActionButtonClass(),
+                    enterprisePrimarySolidButtonClass(),
                     'flex min-w-0 w-full basis-0 flex-1 justify-center',
                   )}
                 >
@@ -5108,7 +5121,7 @@ export function IdeaBacklogManagementPage() {
                   type="button"
                   onClick={() => decideIdea('Rejected')}
                   className={cn(
-                    enterpriseRoseGradientActionButtonClass(),
+                    enterpriseDestructiveOutlineButtonClass(),
                     'flex min-w-0 w-full basis-0 flex-1 justify-center',
                   )}
                 >
@@ -5417,19 +5430,19 @@ export function IdeaBacklogManagementPage() {
                 <button
                   type="button"
                   onClick={() => void handleCreateFolderWithDefaultName()}
-                  className={enterpriseIndigoGradientActionButtonClass()}
+                  className={enterpriseSecondaryButtonClass()}
                 >
                   <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
                   New folder
                 </button>
-                <button type="button" onClick={openCreateIdeaDrawer} className={enterpriseCyanGradientActionButtonClass()}>
+                <button type="button" onClick={openCreateIdeaDrawer} className={enterprisePrimarySolidButtonClass()}>
                   <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
                   Create Idea
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsUploadIdeaPanelOpen(true)}
-                  className={enterpriseEmeraldGradientActionButtonClass()}
+                  className={enterpriseSecondaryButtonClass()}
                 >
                   <Upload className="h-4 w-4" strokeWidth={2.5} />
                   Upload Idea
@@ -6544,6 +6557,7 @@ export function IdeaBacklogManagementPage() {
                               <Textarea
                                 id={`idea-intake-${item.id}`}
                                 rows={3}
+                                placeholder={item.hint || undefined}
                                 className="min-h-[76px] resize-y bg-background text-sm"
                                 value={createIdeaIntakeAnswers[item.id] ?? ''}
                                 onChange={(event) => {
@@ -6782,7 +6796,7 @@ export function IdeaBacklogManagementPage() {
                       type="submit"
                       disabled={!isCreateIdeaFormValid}
                       className={cn(
-                        enterpriseCyanGradientActionButtonClass(),
+                        enterprisePrimarySolidButtonClass(),
                         'w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
                       )}
                     >
@@ -6836,7 +6850,7 @@ export function IdeaBacklogManagementPage() {
                               type="button"
                               disabled={isBrainstormSending || isDraftContinuing}
                               className={cn(
-                                enterpriseCyanGradientActionButtonClass(),
+                                enterprisePrimarySolidButtonClass(),
                                 'hidden h-9 px-3 sm:inline-flex',
                                 'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
                               )}
@@ -7102,7 +7116,7 @@ export function IdeaBacklogManagementPage() {
                                   type="button"
                                   disabled={isBrainstormSending || isDraftContinuing}
                                   className={cn(
-                                    enterpriseCyanGradientActionButtonClass(),
+                                    enterprisePrimarySolidButtonClass(),
                                     'h-9 disabled:cursor-not-allowed disabled:opacity-60',
                                   )}
                                   onClick={() => void handleContinueIdeaDraft('use_brainstorm')}
@@ -7137,7 +7151,7 @@ export function IdeaBacklogManagementPage() {
                                 type="button"
                                 disabled={isReanalyzing || isBrainstormSending || isDraftContinuing}
                                 className={cn(
-                                  enterpriseCyanGradientActionButtonClass(),
+                                  enterprisePrimarySolidButtonClass(),
                                   'h-9',
                                   'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
                                 )}
@@ -7209,7 +7223,7 @@ export function IdeaBacklogManagementPage() {
                                 <div className="flex flex-wrap gap-2">
                                   <button
                                     type="button"
-                                    className={cn(enterpriseCyanGradientActionButtonClass(), 'h-9')}
+                                    className={cn(enterprisePrimarySolidButtonClass(), 'h-9')}
                                     onClick={() => applyDraftVersion(draftVersionCard)}
                                   >
                                     <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
@@ -7237,7 +7251,7 @@ export function IdeaBacklogManagementPage() {
                               type="button"
                               disabled={isBrainstormSending || isDraftContinuing}
                               className={cn(
-                                enterpriseCyanGradientActionButtonClass(),
+                                enterprisePrimarySolidButtonClass(),
                                 'h-11 w-full justify-center sm:hidden',
                                 'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
                               )}
@@ -7511,7 +7525,7 @@ export function IdeaBacklogManagementPage() {
                           )}
                           <button
                             type="button"
-                            className={cn(enterpriseCyanGradientActionButtonClass(), 'w-full justify-center')}
+                            className={cn(enterprisePrimarySolidButtonClass(), 'w-full justify-center')}
                             title={
                               ideaDraftJob.warnings.includes('VAGUE_IDEA_TITLE')
                                 ? 'Clarify the idea title and context with Tectona Assistant'

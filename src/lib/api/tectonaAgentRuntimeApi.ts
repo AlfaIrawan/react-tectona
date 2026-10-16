@@ -2052,12 +2052,28 @@ export type IdeaIntakeQuestion = {
   required: boolean
   answer_type: string
   options: string[]
+  /** An example answer shown in the empty answer box. Filled in after the questions load. */
+  hint?: string
 }
 
 /**
  * The Idea Intake Checklist for a workspace: the questions the brainstorm asks, read from the
  * Knowledge Base by the backend. The Create Idea editor shows these as its guide.
  */
+/** One example answer per question, written by the backend; an empty string where none could be made. */
+export async function fetchIdeaIntakeHints(questions: string[]): Promise<string[]> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-email/intake-hints`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ questions }),
+    },
+    90_000,
+  )
+  const body = await handleResponse<{ hints: string[] }>(res)
+  return body.hints ?? []
+}
+
 export async function fetchIdeaIntakeChecklist(workspaceId: string): Promise<IdeaIntakeQuestion[]> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/idea-email/intake-checklist?workspace_id=${encodeURIComponent(workspaceId)}`,
