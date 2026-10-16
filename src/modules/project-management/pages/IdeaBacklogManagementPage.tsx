@@ -3348,11 +3348,9 @@ export function IdeaBacklogManagementPage() {
 
   useEffect(() => {
     if (!isCreateIdeaDrawerOpen) return
+    // No workspace yet (the default is chosen after the workspace list loads): the global checklist
+    // is shown now, and the workspace's own one replaces it when the workspace is known.
     const workspaceId = createIdeaForm.workspaceId.trim()
-    if (!workspaceId) {
-      setCreateIdeaIntakeItems([])
-      return
-    }
     let cancelled = false
     void fetchIdeaIntakeChecklist(workspaceId)
       .then((items) => {
@@ -3366,11 +3364,16 @@ export function IdeaBacklogManagementPage() {
     }
   }, [isCreateIdeaDrawerOpen, createIdeaForm.workspaceId])
 
-  // A new idea starts with the questions as real text, not as a hint. Only an empty editor is filled.
+  // A new idea starts with the questions as real text, not as a hint. The guide is written into an
+  // empty editor, and replaced when the workspace changes while the editor still holds only the guide.
+  const intakeGuideWrittenRef = useRef('')
   useEffect(() => {
     if (!isCreateIdeaDrawerOpen || createIdeaIntakeItems.length === 0) return
-    if (createIdeaForm.description.trim()) return
-    setCreateIdeaDescriptionFromPlainText(intakeGuideText(createIdeaIntakeItems))
+    const guide = intakeGuideText(createIdeaIntakeItems).trim()
+    const current = createIdeaForm.description.trim()
+    if (current && current !== intakeGuideWrittenRef.current) return
+    intakeGuideWrittenRef.current = guide
+    if (current !== guide) setCreateIdeaDescriptionFromPlainText(intakeGuideText(createIdeaIntakeItems))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the checklist and the drawer trigger this
   }, [createIdeaIntakeItems, isCreateIdeaDrawerOpen])
 
@@ -6200,23 +6203,6 @@ export function IdeaBacklogManagementPage() {
                               {aiAssistanceLoading === 'suggest_structure' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
                               Make Structured
                             </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8 gap-1.5 px-2.5 text-[11px]"
-                              onClick={() => {
-                                // Entering the form reads the text as it is now; edits in the form write it back.
-                                if (!createIdeaFormMode) {
-                                  const parsed = parseIntakeText(createIdeaForm.description, createIdeaIntakeItems)
-                                  setCreateIdeaIntakeAnswers(parsed.answers)
-                                  setCreateIdeaIntakeExtra(parsed.extra)
-                                }
-                                setCreateIdeaFormMode(!createIdeaFormMode)
-                              }}
-                            >
-                              {createIdeaFormMode ? 'Kembali ke teks' : 'Bentuk form'}
-                            </Button>
                           </div>
                         )}
 
@@ -6456,6 +6442,23 @@ export function IdeaBacklogManagementPage() {
                           onClick={() => applyCreateIdeaDescriptionCommand('insertOrderedList')}
                         >
                           <ListOrdered className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="ml-auto h-8 px-2.5 text-xs"
+                          onClick={() => {
+                            // Entering the form reads the text as it is now; edits in the form write it back.
+                            if (!createIdeaFormMode) {
+                              const parsed = parseIntakeText(createIdeaForm.description, createIdeaIntakeItems)
+                              setCreateIdeaIntakeAnswers(parsed.answers)
+                              setCreateIdeaIntakeExtra(parsed.extra)
+                            }
+                            setCreateIdeaFormMode(!createIdeaFormMode)
+                          }}
+                        >
+                          {createIdeaFormMode ? 'Kembali ke teks' : 'Bentuk form'}
                         </Button>
                       </div>
 
