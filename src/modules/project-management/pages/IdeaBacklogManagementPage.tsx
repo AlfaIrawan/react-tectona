@@ -1568,15 +1568,48 @@ function fromApiIdea(api: IdeaApi, projectNameById?: Record<string, string>): Id
   }
 }
 
-// The editor's guide is the workspace's Idea Intake Checklist: the same questions the brainstorm asks.
-function intakeQuestionsToGuide(items: IdeaIntakeQuestion[]): string {
-  return items
-    .map((item) => {
-      const lines = [item.prompt.trim()]
-      if (item.options.length > 0) lines.push(`Pilihan: ${item.options.join(', ')}`)
-      return lines.join('\n')
-    })
-    .join('\n\n')
+// The editor starts with the workspace's Idea Intake Checklist: each question is a line, and the
+// answer goes under it. The form view edits the same text one question at a time.
+function intakeGuideText(items: IdeaIntakeQuestion[]): string {
+  return items.map((item) => item.prompt.trim()).join('\n\n')
+}
+
+function composeIntakeText(
+  items: IdeaIntakeQuestion[],
+  answers: Record<string, string>,
+  extra: string,
+): string {
+  const blocks = items.map((item) => {
+    const answer = (answers[item.id] ?? '').trim()
+    return answer ? `${item.prompt.trim()}\n${answer}` : item.prompt.trim()
+  })
+  // Notes go first: text above the first question is read back as notes, never as an answer.
+  const notes = extra.trim()
+  return [...(notes ? [notes] : []), ...blocks].join('\n\n')
+}
+
+// Reads the text back into answers. Text that is not under any question is kept as notes.
+function parseIntakeText(
+  text: string,
+  items: IdeaIntakeQuestion[],
+): { answers: Record<string, string>; extra: string } {
+  const byPrompt = new Map(items.map((item) => [item.prompt.trim(), item.id]))
+  const collected: Record<string, string[]> = {}
+  const extra: string[] = []
+  let current: string | null = null
+  for (const raw of (text || '').split('\n')) {
+    const id = byPrompt.get(raw.trim())
+    if (id !== undefined) {
+      current = id
+      collected[id] = collected[id] ?? []
+      continue
+    }
+    if (current) collected[current].push(raw)
+    else extra.push(raw)
+  }
+  const answers: Record<string, string> = {}
+  for (const [id, lines] of Object.entries(collected)) answers[id] = lines.join('\n').trim()
+  return { answers, extra: extra.join('\n').trim() }
 }
 
 const IDEA_DESCRIPTION_HEADING_LABELS = new Set([
@@ -2182,8 +2215,12 @@ export function IdeaBacklogManagementPage() {
   const [createIdeaDescriptionHtml, setCreateIdeaDescriptionHtml] = useState('')
   const [createIdeaProcessDiagrams, setCreateIdeaProcessDiagrams] = useState<ExtractedProcessDiagram[]>([])
   const createIdeaDescriptionEditorRef = useRef<HTMLDivElement | null>(null)
-  // The Idea Intake Checklist of the chosen workspace, shown as the editor's guide.
-  const [createIdeaIntakeGuide, setCreateIdeaIntakeGuide] = useState('')
+  // The Idea Intake Checklist of the chosen workspace: the editor starts with it, and the form view
+  // edits the answers to each question.
+  const [createIdeaIntakeItems, setCreateIdeaIntakeItems] = useState<IdeaIntakeQuestion[]>([])
+  const [createIdeaFormMode, setCreateIdeaFormMode] = useState(false)
+  const [createIdeaIntakeAnswers, setCreateIdeaIntakeAnswers] = useState<Record<string, string>>({})
+  const [createIdeaIntakeExtra, setCreateIdeaIntakeExtra] = useState('')
   const createIdeaTagInputRef = useRef<HTMLInputElement | null>(null)
   const [createIdeaError, setCreateIdeaError] = useState('')
   const [ideaAnalysisProgressById, setIdeaAnalysisProgressById] = useState<Record<string, IdeaAnalysisProgress>>(
@@ -2217,11 +2254,6 @@ export function IdeaBacklogManagementPage() {
     currentSession?.user.name.trim()
     || currentSession?.user.email.trim()
     || currentUserId
-
-  const createIdeaDescriptionTextLength = useMemo(
-    () => extractPlainTextFromIdeaRichHtml(createIdeaDescriptionHtml).length,
-    [createIdeaDescriptionHtml]
-  )
 
   const syncBrainstormEvidenceState = (status: Pick<
     IdeaDraftJobStatusResponse,
@@ -3318,21 +3350,29 @@ export function IdeaBacklogManagementPage() {
     if (!isCreateIdeaDrawerOpen) return
     const workspaceId = createIdeaForm.workspaceId.trim()
     if (!workspaceId) {
-      setCreateIdeaIntakeGuide('')
+      setCreateIdeaIntakeItems([])
       return
     }
     let cancelled = false
     void fetchIdeaIntakeChecklist(workspaceId)
       .then((items) => {
-        if (!cancelled) setCreateIdeaIntakeGuide(intakeQuestionsToGuide(items))
+        if (!cancelled) setCreateIdeaIntakeItems(items)
       })
       .catch(() => {
-        if (!cancelled) setCreateIdeaIntakeGuide('')
+        if (!cancelled) setCreateIdeaIntakeItems([])
       })
     return () => {
       cancelled = true
     }
   }, [isCreateIdeaDrawerOpen, createIdeaForm.workspaceId])
+
+  // A new idea starts with the questions as real text, not as a hint. Only an empty editor is filled.
+  useEffect(() => {
+    if (!isCreateIdeaDrawerOpen || createIdeaIntakeItems.length === 0) return
+    if (createIdeaForm.description.trim()) return
+    setCreateIdeaDescriptionFromPlainText(intakeGuideText(createIdeaIntakeItems))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the checklist and the drawer trigger this
+  }, [createIdeaIntakeItems, isCreateIdeaDrawerOpen])
 
   useEffect(() => {
     if (!isCreateIdeaDrawerOpen) return
@@ -6160,6 +6200,23 @@ export function IdeaBacklogManagementPage() {
                               {aiAssistanceLoading === 'suggest_structure' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
                               Make Structured
                             </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 gap-1.5 px-2.5 text-[11px]"
+                              onClick={() => {
+                                // Entering the form reads the text as it is now; edits in the form write it back.
+                                if (!createIdeaFormMode) {
+                                  const parsed = parseIntakeText(createIdeaForm.description, createIdeaIntakeItems)
+                                  setCreateIdeaIntakeAnswers(parsed.answers)
+                                  setCreateIdeaIntakeExtra(parsed.extra)
+                                }
+                                setCreateIdeaFormMode(!createIdeaFormMode)
+                              }}
+                            >
+                              {createIdeaFormMode ? 'Kembali ke teks' : 'Bentuk form'}
+                            </Button>
                           </div>
                         )}
 
@@ -6402,19 +6459,13 @@ export function IdeaBacklogManagementPage() {
                         </Button>
                       </div>
 
-                      <div className="relative min-h-[320px] rounded-md border border-input bg-background px-3 py-2">
-                        {createIdeaDescriptionTextLength === 0 ? (
-                          <p className="pointer-events-none select-none whitespace-pre-line text-sm leading-7 text-muted-foreground/70">
-                            {createIdeaIntakeGuide || 'Tulis deskripsi ide di sini.'}
-                          </p>
-                        ) : null}
+                      <div className={cn('relative min-h-[320px] rounded-md border border-input bg-background px-3 py-2', createIdeaFormMode ? 'hidden' : '')}>
                         <div
                           ref={createIdeaDescriptionEditorRef}
                           contentEditable
                           suppressContentEditableWarning
                           className={cn(
                             'outline-none whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 text-foreground [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:leading-tight [&_h3]:mb-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:leading-tight [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:mb-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-border/60 [&_pre]:bg-slate-950 [&_pre]:p-3 [&_pre]:text-xs [&_pre]:text-slate-100',
-                            createIdeaDescriptionTextLength === 0 ? 'absolute inset-0 px-3 py-2 opacity-0' : ''
                           )}
                           onInput={(event) => {
                             syncCreateIdeaDescriptionFromHtml(event.currentTarget.innerHTML)
@@ -6436,6 +6487,45 @@ export function IdeaBacklogManagementPage() {
                           }}
                         />
                       </div>
+
+                      {createIdeaFormMode ? (
+                        <div className="space-y-4 rounded-md border border-input bg-background px-4 py-4">
+                          {createIdeaIntakeItems.map((item) => (
+                            <div key={item.id} className="space-y-1.5">
+                              <label
+                                htmlFor={`idea-intake-${item.id}`}
+                                className="block text-sm font-medium text-foreground"
+                              >
+                                {item.prompt}
+                                {item.required ? <span className="ml-0.5 text-red-500">*</span> : null}
+                              </label>
+                              {item.options.length > 0 ? (
+                                <p className="text-xs text-muted-foreground">
+                                  Pilihan: {item.options.join(', ')}
+                                </p>
+                              ) : null}
+                              <Textarea
+                                id={`idea-intake-${item.id}`}
+                                rows={2}
+                                value={createIdeaIntakeAnswers[item.id] ?? ''}
+                                onChange={(event) => {
+                                  const nextAnswers = { ...createIdeaIntakeAnswers, [item.id]: event.target.value }
+                                  setCreateIdeaIntakeAnswers(nextAnswers)
+                                  setCreateIdeaDescriptionFromPlainText(
+                                    composeIntakeText(createIdeaIntakeItems, nextAnswers, createIdeaIntakeExtra),
+                                  )
+                                }}
+                              />
+                            </div>
+                          ))}
+                          {createIdeaIntakeExtra ? (
+                            <div className="space-y-1.5">
+                              <p className="text-sm font-medium text-foreground">Catatan lain</p>
+                              <p className="whitespace-pre-line text-sm text-muted-foreground">{createIdeaIntakeExtra}</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
 
                       {createIdeaProcessDiagrams.length > 0 ? (
                         <div className="space-y-3 rounded-xl border border-sky-200/70 bg-sky-50/40 p-3">
