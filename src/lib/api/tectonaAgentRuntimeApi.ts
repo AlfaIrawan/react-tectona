@@ -2096,6 +2096,44 @@ export async function fetchIdeaIntakeChecklist(workspaceId: string): Promise<Ide
   return body.items ?? []
 }
 
+/** A confirmed Idea Intake answer from the brainstorm an idea came from. */
+export interface IdeaIntakeAnswer {
+  id: string
+  question: string
+  answer: string
+}
+
+/** Remember the idea a brainstorm became, so documents for the idea read its intake answers. */
+export async function linkIdeaDraftJobToIdea(jobId: string, ideaId: string): Promise<boolean> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/idea`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea_id: ideaId }) },
+    15_000,
+  )
+  const body = await handleResponse<{ linked?: boolean }>(res)
+  return Boolean(body.linked)
+}
+
+/**
+ * The idea's confirmed Idea Intake answers, and the same as a source block. An idea created before
+ * brainstorms were linked is matched by title and workspace.
+ */
+export async function fetchIdeaIntakeAnswers(
+  ideaId: string,
+  options: { title?: string; workspaceId?: string | null } = {},
+): Promise<{ answers: IdeaIntakeAnswer[]; block: string }> {
+  const params = new URLSearchParams()
+  if (options.title) params.set('title', options.title)
+  if (options.workspaceId) params.set('workspace_id', options.workspaceId)
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/intake-answers?${params}`,
+    { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ answers?: IdeaIntakeAnswer[]; block?: string }>(res)
+  return { answers: body.answers ?? [], block: body.block ?? '' }
+}
+
 export async function startIdeaDraftJob(
   payload: GenerateIdeaDraftRequest,
 ): Promise<CreateIdeaDraftJobResponse> {

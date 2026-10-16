@@ -121,6 +121,7 @@ import {
   analyzeIdeaProcess,
   analyzeIdeaProcessDetail,
   type ProcessSubTask,
+  fetchIdeaIntakeAnswers,
   fillDkmTemplate,
   generateBenefitAnalysis,
   generateIdeaBrd,
@@ -7236,7 +7237,12 @@ export function IdeaDetailPage() {
       const sections = Object.entries(latest.approved_sections || {}).map(([key, revision]) =>
         `${key} (approved):\n${String(revision?.content_json.text || '')}`,
       )
-      setIdeaDocGenerateSource(sections.length ? sections.join('\n\n') : (idea.description || idea.title || '').trim())
+      const narrative = sections.length ? sections.join('\n\n') : (idea.description || idea.title || '').trim()
+      // The proposer's confirmed Idea Intake answers come first: the description is a summary in
+      // which facts such as the impacted business unit got buried, and fills picked something else.
+      const intake = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace })
+        .catch(() => ({ block: '' }))
+      setIdeaDocGenerateSource([intake.block, narrative].filter(Boolean).join('\n\n'))
       setIdeaDocGenerateOpen(true)
     } catch (error) {
       addToast({ title: 'Revisi approved belum dapat dimuat', description: error instanceof Error ? error.message : '', variant: 'error' })

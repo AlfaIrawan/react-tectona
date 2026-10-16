@@ -152,6 +152,7 @@ import {
   getIdeaDraftVersion,
   listIdeaDraftVersions,
   fetchIdeaIntakeChecklist,
+  linkIdeaDraftJobToIdea,
   fetchIdeaIntakeHints,
   reanalyzeIdeaDraftJob,
   prefetchProcessDiagramPlantUmlPng,
@@ -3981,6 +3982,10 @@ export function IdeaBacklogManagementPage() {
       setIdeas((prev) => [newIdea, ...prev])
       selectSingleIdea(newIdea.id)
       void runAgentAnalysisForIdea(newIdea)
+      // The brainstorm this idea came from: its confirmed intake answers ground the idea's documents.
+      if (ideaDraftJob?.job_id) {
+        void linkIdeaDraftJobToIdea(ideaDraftJob.job_id, newIdea.id).catch(() => undefined)
+      }
     } catch (err) {
       setCreateIdeaError(err instanceof Error ? err.message : 'Failed to create idea.')
       return
