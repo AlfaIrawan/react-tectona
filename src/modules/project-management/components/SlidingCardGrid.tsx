@@ -1,12 +1,18 @@
-import { useCallback, useLayoutEffect, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode, type WheelEvent } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 
 /** Space kept free under the grid so the page's bottom edge is never cut off. */
 export const SLIDING_GRID_BOTTOM_RESERVE_PX = 24
 /** Height assumed before the first card has been measured. */
 const FALLBACK_ROW_HEIGHT_PX = 220
+/** Movement of the two fingers' midpoint before a swipe is recognised as horizontal. */
+const SWIPE_START_PX = 8
+/** A swipe past this share of the viewport width (and at least a minimum) turns the page. */
+const SWIPE_COMMIT_RATIO = 0.15
+const SWIPE_COMMIT_MIN_PX = 60
+/** A trackpad flick turns one page; further flicks wait this long. */
+const WHEEL_PAGE_LOCK_MS = 450
 
 /** Columns at a viewport-based width, matching the grid breakpoints (md = 768px, lg = 1024px). */
 export function columnsForWidth(width: number, listView: boolean): number {
@@ -57,12 +63,24 @@ type SlidingCardGridProps<T> = {
   gap?: number
 }
 
+type Point = { x: number; y: number }
+type Gesture = { startMid: Point; active: boolean }
+
 export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = false, gap = 16 }: SlidingCardGridProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [availableHeight, setAvailableHeight] = useState(Number.POSITIVE_INFINITY)
   const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT_PX)
   const [page, setPage] = useState(0)
+  const [dragOffset, setDragOffset] = useState(0)
+  const [isSwiping, setIsSwiping] = useState(false)
+  const dragOffsetRef = useRef(0)
+  // Fingers currently on the viewport, by pointer id. A swipe is made by exactly two of them.
+  const pointersRef = useRef(new Map<number, Point>())
+  const gestureRef = useRef<Gesture | null>(null)
+  const swipeEndedRef = useRef(false)
+  const wheelLockedUntilRef = useRef(0)
 
   const measure = useCallback(() => {
     const element = containerRef.current
@@ -96,6 +114,88 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const currentPage = Math.min(page, Math.max(0, layout.pageCount - 1))
   const gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`
 
+  const goToPage = (next: number) => {
+    setPage(Math.min(Math.max(0, next), Math.max(0, layout.pageCount - 1)))
+  }
+
+  const midpoint = (): Point => {
+    const [first, second] = Array.from(pointersRef.current.values())
+    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }
+  }
+
+  // Two fingers start a swipe. A single finger keeps its normal job: a click, or a drag of the card.
+  // Mouse is left alone too, since a mouse drag belongs to drag-and-drop.
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse') return
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (pointersRef.current.size === 2) {
+      swipeEndedRef.current = false
+      gestureRef.current = { startMid: midpoint(), active: false }
+    } else if (pointersRef.current.size > 2) {
+      gestureRef.current = null
+    }
+  }
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(event.pointerId)) return
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const gesture = gestureRef.current
+    if (!gesture || pointersRef.current.size !== 2) return
+    const mid = midpoint()
+    const dx = mid.x - gesture.startMid.x
+    const dy = mid.y - gesture.startMid.y
+    if (!gesture.active) {
+      // Two fingers moving up or down is the page scrolling; leave it alone.
+      if (Math.abs(dy) > SWIPE_START_PX && Math.abs(dy) > Math.abs(dx)) {
+        gestureRef.current = null
+        return
+      }
+      if (Math.abs(dx) < SWIPE_START_PX || Math.abs(dx) < Math.abs(dy)) return
+      gesture.active = true
+      setIsSwiping(true)
+    }
+    // Resist at the first and last page, so the grid does not drag past its ends.
+    const atStart = currentPage === 0 && dx > 0
+    const atEnd = currentPage >= layout.pageCount - 1 && dx < 0
+    const offset = atStart || atEnd ? dx * 0.3 : dx
+    dragOffsetRef.current = offset
+    setDragOffset(offset)
+  }
+
+  const handlePointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    pointersRef.current.delete(event.pointerId)
+    const gesture = gestureRef.current
+    // The swipe ends as soon as one of its two fingers lifts.
+    if (!gesture || pointersRef.current.size >= 2) return
+    gestureRef.current = null
+    if (!gesture.active) return
+    swipeEndedRef.current = true
+    setIsSwiping(false)
+    const offset = dragOffsetRef.current
+    const threshold = Math.max(SWIPE_COMMIT_MIN_PX, (viewportRef.current?.clientWidth ?? 0) * SWIPE_COMMIT_RATIO)
+    if (offset <= -threshold) goToPage(currentPage + 1)
+    else if (offset >= threshold) goToPage(currentPage - 1)
+    dragOffsetRef.current = 0
+    setDragOffset(0)
+  }
+
+  // A two-finger swipe must not also click the card it started on.
+  const handleClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+    if (swipeEndedRef.current) {
+      swipeEndedRef.current = false
+      event.stopPropagation()
+      event.preventDefault()
+    }
+  }
+
+  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(event.deltaX) < 20 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
+    const now = Date.now()
+    if (now < wheelLockedUntilRef.current) return
+    wheelLockedUntilRef.current = now + WHEEL_PAGE_LOCK_MS
+    goToPage(currentPage + (event.deltaX > 0 ? 1 : -1))
+  }
+
   if (!layout.sliding) {
     return (
       <div ref={containerRef}>
@@ -119,12 +219,23 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
 
   return (
     <div ref={containerRef} className="space-y-3">
-      <div className="overflow-hidden">
+      <div
+        ref={viewportRef}
+        className="overflow-hidden"
+        // Vertical scrolling stays native; the two-finger horizontal swipe is handled here.
+        style={{ touchAction: 'pan-y' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+        onWheel={handleWheel}
+        onClickCapture={handleClickCapture}
+      >
         <div
-          className="flex transition-transform duration-300 ease-out motion-reduce:transition-none"
+          className={isSwiping ? 'flex' : 'flex transition-transform duration-300 ease-out motion-reduce:transition-none'}
           style={{
             width: `${layout.pageCount * 100}%`,
-            transform: `translateX(-${(currentPage * 100) / layout.pageCount}%)`,
+            transform: `translateX(calc(-${(currentPage * 100) / layout.pageCount}% + ${dragOffset}px))`,
           }}
         >
           {pages.map((pageItems, pageIndex) => (
@@ -156,9 +267,9 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
             className="h-8 w-8"
             aria-label="Previous page"
             disabled={currentPage === 0}
-            onClick={() => setPage(Math.max(0, currentPage - 1))}
+            onClick={() => goToPage(currentPage - 1)}
           >
-            <ChevronLeft className={cn('h-4 w-4')} />
+            <ChevronLeft className="h-4 w-4" />
           </Button>
           <Button
             type="button"
@@ -167,7 +278,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
             className="h-8 w-8"
             aria-label="Next page"
             disabled={currentPage >= layout.pageCount - 1}
-            onClick={() => setPage(Math.min(layout.pageCount - 1, currentPage + 1))}
+            onClick={() => goToPage(currentPage + 1)}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
