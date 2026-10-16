@@ -251,6 +251,7 @@ import {
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
+import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import {
   brainstormProcessPersistKey,
   extractProcessDiagramsFromText,
@@ -2541,24 +2542,13 @@ function DiagramGalleryCard({
 }
 
 function IdeaDocSourceDiagramPreview({ diagram }: { diagram: ExtractedProcessDiagram }) {
-  const preview = usePlantUmlPngPreview(diagram.source)
-
   return (
-    <figure className="overflow-hidden rounded-lg border border-border/70 bg-white">
-      <figcaption className="border-b border-border/60 bg-muted/30 px-3 py-2 text-xs font-medium text-foreground">
+    <figure className="overflow-hidden rounded-lg border border-border/70 bg-background">
+      <figcaption className="border-b border-border/70 bg-muted/30 px-3 py-2 text-xs font-semibold text-foreground">
         {diagram.label || 'Process diagram'}
       </figcaption>
-      <div className="flex min-h-36 items-center justify-center p-3">
-        {preview.objectUrl ? (
-          <img src={preview.objectUrl} alt={diagram.label || 'Process diagram'} className="max-h-[420px] w-full object-contain" />
-        ) : preview.isLoading ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            Rendering diagram…
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">{preview.error || 'Diagram preview is unavailable.'}</p>
-        )}
+      <div className="p-2">
+        <AssistantMermaidBlock source={diagram.source} className="my-0 shadow-none" />
       </div>
     </figure>
   )
@@ -15515,7 +15505,7 @@ export function IdeaDetailPage() {
                             <div
                               role="tabpanel"
                               aria-label="Formatted source context"
-                              className="min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 lg:min-h-0 lg:max-h-none lg:flex-1 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
+                              className="min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 lg:min-h-0 lg:max-h-none lg:flex-1 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
                             >
                               <div className="space-y-5">
                                 {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeAnswers.length > 0 ? (
@@ -15549,7 +15539,7 @@ export function IdeaDetailPage() {
                                     <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
                                       Diagrams
                                     </h3>
-                                    <div className="grid gap-3 lg:grid-cols-2">
+                                    <div className="grid gap-3">
                                       {ideaDocGenerateSourceDiagrams.map((diagram, index) => (
                                         <IdeaDocSourceDiagramPreview key={`${diagram.kind}-${index}-${diagram.source.slice(0, 24)}`} diagram={diagram} />
                                       ))}
