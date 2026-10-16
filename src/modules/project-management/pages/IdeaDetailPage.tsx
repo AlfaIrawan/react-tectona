@@ -134,6 +134,7 @@ import {
   shortMaasModelName,
   type GenerateBenefitAnalysisResponse,
   type GenerateIdeaConversionResponse,
+  type IdeaIntakeAnswer,
   type RuntimeSummaryDecisionSignal,
   type RuntimeSummaryKpiCard,
   type RuntimeSummaryReadinessSignal,
@@ -250,7 +251,14 @@ import {
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
-import { brainstormProcessPersistKey, latestRevisedProcessDiagrams, latestValidatedTechnicalDiagrams } from '@/lib/chat/extractProcessDiagrams'
+import {
+  brainstormProcessPersistKey,
+  extractProcessDiagramsFromText,
+  latestRevisedProcessDiagrams,
+  latestValidatedTechnicalDiagrams,
+  stripProcessDiagramsFromText,
+  type ExtractedProcessDiagram,
+} from '@/lib/chat/extractProcessDiagrams'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
 import { EditableDiagramCanvas, type C4DiagramDrilldownTarget } from '@/modules/project-management/components/EditableDiagramCanvas'
@@ -2532,6 +2540,30 @@ function DiagramGalleryCard({
   )
 }
 
+function IdeaDocSourceDiagramPreview({ diagram }: { diagram: ExtractedProcessDiagram }) {
+  const preview = usePlantUmlPngPreview(diagram.source)
+
+  return (
+    <figure className="overflow-hidden rounded-lg border border-border/70 bg-white">
+      <figcaption className="border-b border-border/60 bg-muted/30 px-3 py-2 text-xs font-medium text-foreground">
+        {diagram.label || 'Process diagram'}
+      </figcaption>
+      <div className="flex min-h-36 items-center justify-center p-3">
+        {preview.objectUrl ? (
+          <img src={preview.objectUrl} alt={diagram.label || 'Process diagram'} className="max-h-[420px] w-full object-contain" />
+        ) : preview.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            Rendering diagram…
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">{preview.error || 'Diagram preview is unavailable.'}</p>
+        )}
+      </div>
+    </figure>
+  )
+}
+
 function CollapsiblePanel({
   panelKey,
   title,
@@ -3788,6 +3820,8 @@ export function IdeaDetailPage() {
   const [ideaDocWorkflowGateLoading, setIdeaDocWorkflowGateLoading] = useState(false)
   const [ideaDocGenerateTemplateId, setIdeaDocGenerateTemplateId] = useState('')
   const [ideaDocGenerateSource, setIdeaDocGenerateSource] = useState('')
+  const [ideaDocGenerateIntakeBlock, setIdeaDocGenerateIntakeBlock] = useState('')
+  const [ideaDocGenerateIntakeAnswers, setIdeaDocGenerateIntakeAnswers] = useState<IdeaIntakeAnswer[]>([])
   const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
   const [urdSendBusy, setUrdSendBusy] = useState(false)
@@ -3888,11 +3922,19 @@ export function IdeaDetailPage() {
   }, [ideaDocPartChoices, ideaDocPartPayloads, ideaDocParts, ideaDocRegenerateTarget])
   const ideaDocGenerateTemplates = ideaDocTemplates.filter((template) => templateAllowedByWorkflow(template, ideaDocWorkflowGate))
   const ideaDocGenerateSourceChars = ideaDocGenerateSource.trim().length
+  const ideaDocGenerateSourceDiagrams = useMemo(
+    () => extractProcessDiagramsFromText(ideaDocGenerateSource),
+    [ideaDocGenerateSource],
+  )
+  const showIdeaDocIntakeAnswers = Boolean(
+    ideaDocGenerateIntakeBlock
+    && ideaDocGenerateSource.startsWith(ideaDocGenerateIntakeBlock),
+  )
   const ideaDocGenerateSourcePreview = useMemo(() => {
-    const cleanSource = ideaDocGenerateSource
-      .replace(/<!--\s*tectona-process-diagram[\s\S]*?-->/gi, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
+    const sourceWithoutIntake = showIdeaDocIntakeAnswers
+      ? ideaDocGenerateSource.slice(ideaDocGenerateIntakeBlock.length)
+      : ideaDocGenerateSource
+    const cleanSource = stripProcessDiagramsFromText(sourceWithoutIntake).replace(/\n{3,}/g, '\n\n').trim()
     return cleanSource
       .split(/\n\s*\n/)
       .map((block) => {
@@ -3909,7 +3951,7 @@ export function IdeaDetailPage() {
         return block
       })
       .join('\n\n')
-  }, [ideaDocGenerateSource])
+  }, [ideaDocGenerateIntakeBlock, ideaDocGenerateSource, showIdeaDocIntakeAnswers])
   const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
   const [ideaDocEditTitle, setIdeaDocEditTitle] = useState<string | null>(null)
   const brdPagesRef = useRef<string[]>([''])
@@ -7280,7 +7322,9 @@ export function IdeaDetailPage() {
       // The proposer's confirmed Idea Intake answers come first: the description is a summary in
       // which facts such as the impacted business unit got buried, and fills picked something else.
       const intake = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace })
-        .catch(() => ({ block: '' }))
+        .catch(() => ({ block: '', answers: [] as IdeaIntakeAnswer[] }))
+      setIdeaDocGenerateIntakeBlock(intake.block)
+      setIdeaDocGenerateIntakeAnswers(intake.answers)
       setIdeaDocGenerateSource([intake.block, narrative].filter(Boolean).join('\n\n'))
       setIdeaDocSourceMode('preview')
       setIdeaDocGenerateOpen(true)
@@ -15470,13 +15514,49 @@ export function IdeaDetailPage() {
                               aria-label="Formatted source context"
                               className="min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
                             >
-                              {ideaDocGenerateSourcePreview ? (
-                                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-                                  {ideaDocGenerateSourcePreview}
-                                </ReactMarkdown>
-                              ) : (
-                                <p className="text-sm text-muted-foreground">No source context is available.</p>
-                              )}
+                              <div className="space-y-5">
+                                {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeAnswers.length > 0 ? (
+                                  <section aria-label="Confirmed intake answers" className="space-y-2.5">
+                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
+                                      Confirmed intake answers
+                                    </h3>
+                                    <div className="space-y-2">
+                                      {ideaDocGenerateIntakeAnswers.map((item) => (
+                                        <article key={item.id} className="grid gap-2 rounded-lg border border-border/70 bg-muted/20 p-3 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] sm:gap-4">
+                                          <div>
+                                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Question</p>
+                                            <p className="text-sm leading-5 text-foreground">{item.question}</p>
+                                          </div>
+                                          <div className="sm:border-l sm:border-border/70 sm:pl-4">
+                                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">Answer</p>
+                                            <p className="whitespace-pre-wrap text-sm leading-5 text-foreground/90">{item.answer}</p>
+                                          </div>
+                                        </article>
+                                      ))}
+                                    </div>
+                                  </section>
+                                ) : null}
+                                {ideaDocGenerateSourcePreview ? (
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+                                    {ideaDocGenerateSourcePreview}
+                                  </ReactMarkdown>
+                                ) : null}
+                                {ideaDocGenerateSourceDiagrams.length > 0 ? (
+                                  <section aria-label="Source diagrams" className="space-y-2.5">
+                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
+                                      Diagrams
+                                    </h3>
+                                    <div className="grid gap-3 lg:grid-cols-2">
+                                      {ideaDocGenerateSourceDiagrams.map((diagram, index) => (
+                                        <IdeaDocSourceDiagramPreview key={`${diagram.kind}-${index}-${diagram.source.slice(0, 24)}`} diagram={diagram} />
+                                      ))}
+                                    </div>
+                                  </section>
+                                ) : null}
+                                {!ideaDocGenerateSourcePreview && !showIdeaDocIntakeAnswers && ideaDocGenerateSourceDiagrams.length === 0 ? (
+                                  <p className="text-sm text-muted-foreground">No source context is available.</p>
+                                ) : null}
+                              </div>
                             </div>
                           )}
                         </div>
