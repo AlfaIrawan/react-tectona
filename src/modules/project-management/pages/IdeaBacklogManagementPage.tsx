@@ -3367,7 +3367,7 @@ export function IdeaBacklogManagementPage() {
     // is shown now, and the workspace's own one replaces it when the workspace is known.
     const workspaceId = createIdeaForm.workspaceId.trim()
     let cancelled = false
-    void fetchIdeaIntakeChecklist(workspaceId, 'en')
+    void fetchIdeaIntakeChecklist(workspaceId)
       .then((items) => {
         if (!cancelled) setCreateIdeaIntakeItems(items)
       })

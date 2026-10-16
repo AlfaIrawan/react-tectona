@@ -2058,12 +2058,9 @@ export type IdeaIntakeQuestion = {
  * The Idea Intake Checklist for a workspace: the questions the brainstorm asks, read from the
  * Knowledge Base by the backend. The Create Idea editor shows these as its guide.
  */
-export async function fetchIdeaIntakeChecklist(
-  workspaceId: string,
-  lang: 'id' | 'en' = 'id',
-): Promise<IdeaIntakeQuestion[]> {
+export async function fetchIdeaIntakeChecklist(workspaceId: string): Promise<IdeaIntakeQuestion[]> {
   const res = await fetchWithTimeout(
-    `${BASE_URL}/v1/agent/idea-email/intake-checklist?workspace_id=${encodeURIComponent(workspaceId)}&lang=${lang}`,
+    `${BASE_URL}/v1/agent/idea-email/intake-checklist?workspace_id=${encodeURIComponent(workspaceId)}`,
     { method: 'GET' },
     15_000,
   )
