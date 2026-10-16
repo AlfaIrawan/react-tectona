@@ -1306,6 +1306,7 @@ import { AssistantChatMarkdown } from '@/modules/core-shell/components/Assistant
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import { IdeaUploadReviewPanel } from '@/modules/project-management/components/IdeaUploadReviewPanel'
 import { IdeaBacklogFoldersSection } from '@/modules/project-management/components/IdeaBacklogFoldersSection'
+import { SlidingCardGrid } from '@/modules/project-management/components/SlidingCardGrid'
 import { useIdeaFolderStore, type IdeaBacklogFolder } from '@/modules/project-management/store/ideaFolderStore'
 import { ProjectDragLayer } from '@/modules/projects/components/ProjectDragLayer'
 import { useToast } from '@/components/ui/toast'
@@ -5636,8 +5637,11 @@ export function IdeaBacklogManagementPage() {
           </div>
 
           <SortableContext items={orderedSortedFilteredIdeas.map((idea) => `idea-${idea.id}`)} strategy={rectSortingStrategy}>
-              <div className={cn('grid gap-4', isListView ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4')}>
-                {orderedSortedFilteredIdeas.map((idea) => (
+              <SlidingCardGrid
+                items={orderedSortedFilteredIdeas}
+                getKey={(idea) => idea.id}
+                isListView={isListView}
+                renderItem={(idea) => (
                   <SortableIdeaCard
                     key={idea.id}
                     idea={idea}
@@ -5672,8 +5676,8 @@ export function IdeaBacklogManagementPage() {
                       })
                     }}
                   />
-                ))}
-              </div>
+                )}
+              />
             </SortableContext>
         </div>
         )}
