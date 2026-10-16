@@ -111,3 +111,25 @@ export function enterpriseSecondaryButtonClass(): string {
     enterpriseControlFocusClass()
   )
 }
+
+/** Inverse solid — uses the theme's foreground colour (dark on light themes, light on dark). */
+export function enterpriseInverseSolidButtonClass(): string {
+  return cn(
+    'group relative inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
+    'bg-foreground text-background shadow-sm hover:bg-foreground/90',
+    'transition-colors duration-150',
+    'disabled:pointer-events-none disabled:opacity-50',
+    enterpriseControlFocusClass(),
+  )
+}
+
+/** Filled secondary — the theme's soft secondary fill, no border. */
+export function enterpriseSecondaryFilledButtonClass(): string {
+  return cn(
+    'group relative inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
+    'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+    'transition-colors duration-150',
+    'disabled:pointer-events-none disabled:opacity-50',
+    enterpriseControlFocusClass(),
+  )
+}

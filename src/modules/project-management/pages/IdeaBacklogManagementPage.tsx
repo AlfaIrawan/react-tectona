@@ -103,8 +103,10 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import {
   enterpriseDestructiveOutlineButtonClass,
+  enterpriseInverseSolidButtonClass,
   enterprisePrimarySolidButtonClass,
   enterpriseSecondaryButtonClass,
+  enterpriseSecondaryFilledButtonClass,
   registerServicePrimaryButtonClass,
 } from '@/lib/enterpriseButtonClasses'
 import {
@@ -5430,7 +5432,7 @@ export function IdeaBacklogManagementPage() {
                 <button
                   type="button"
                   onClick={() => void handleCreateFolderWithDefaultName()}
-                  className={enterpriseSecondaryButtonClass()}
+                  className={enterpriseInverseSolidButtonClass()}
                 >
                   <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
                   New folder
@@ -5442,7 +5444,7 @@ export function IdeaBacklogManagementPage() {
                 <button
                   type="button"
                   onClick={() => setIsUploadIdeaPanelOpen(true)}
-                  className={enterpriseSecondaryButtonClass()}
+                  className={enterpriseSecondaryFilledButtonClass()}
                 >
                   <Upload className="h-4 w-4" strokeWidth={2.5} />
                   Upload Idea
