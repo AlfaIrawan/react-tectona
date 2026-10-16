@@ -7241,6 +7241,8 @@ export function IdeaDetailPage() {
         document_title: idea.title,
         // The template's [Idea Owner] placeholder (e.g. the Sign-Off "Created by" box).
         idea_owner_name: ideaOwnerNameForDocs || undefined,
+        // URD documents are numbered per year (ITB2026-00001); the server issues the number.
+        document_number_series: docTypeLabel === 'URD' ? 'URD' : undefined,
       })
 
       const created = await instantiateTemplateFromProject(targetProject.id, template.id, {

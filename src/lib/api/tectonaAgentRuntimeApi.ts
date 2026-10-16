@@ -1630,6 +1630,8 @@ export interface FillDkmTemplateRequest {
   document_title?: string
   /** The idea owner's display name; the backend sets every [Idea Owner] placeholder to it exactly. */
   idea_owner_name?: string
+  /** A numbered series ("URD"): the server issues the next number of the year into [DocNum]. */
+  document_number_series?: string
 }
 
 export interface FillDkmTemplateResponse {
@@ -1644,6 +1646,8 @@ export interface FillDkmTemplateResponse {
   used_repair?: boolean
   /** Base64-encoded PNGs of any LLM-authored PlantUML diagrams, keyed by placeholder key. */
   rendered_diagrams?: Record<string, string>
+  /** The number issued for this document (e.g. "ITB2026-00001"); empty when no series was requested. */
+  document_number?: string
 }
 
 export async function fillDkmTemplate(
