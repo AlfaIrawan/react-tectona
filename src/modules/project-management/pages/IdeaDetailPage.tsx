@@ -4630,10 +4630,12 @@ export function IdeaDetailPage() {
     void ideaDocApprovals.reload()
     setIdeaDocsReloadKey((key) => key + 1)
   })
+  // The idea's own workspace, by name from the directory. The viewer's workspace list may not
+  // contain it, and "Applies to: By Workspace" must match the idea's workspace, not the viewer's.
   const ideaWorkspaceLabels = useMemo(() => {
     const option = userWorkspaceOptions.find((item) => item.workspaceId === idea.workspace || item.workspaceName === idea.workspace)
-    return [idea.workspace, option?.workspaceName, option?.slug]
-  }, [idea.workspace, userWorkspaceOptions])
+    return [idea.workspace, resolvedWorkspaceName || option?.workspaceName, option?.slug]
+  }, [idea.workspace, resolvedWorkspaceName, userWorkspaceOptions])
   useEffect(() => {
     if (isReviewerOptionsLoading) return
     let cancelled = false
