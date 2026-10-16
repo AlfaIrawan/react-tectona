@@ -4,6 +4,8 @@ import { createNotification, TECTONA_APP_ID } from '@/lib/api/notificationApi'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { LucideIcon } from 'lucide-react'
 import {
   AlignCenter,
@@ -3786,6 +3788,7 @@ export function IdeaDetailPage() {
   const [ideaDocWorkflowGateLoading, setIdeaDocWorkflowGateLoading] = useState(false)
   const [ideaDocGenerateTemplateId, setIdeaDocGenerateTemplateId] = useState('')
   const [ideaDocGenerateSource, setIdeaDocGenerateSource] = useState('')
+  const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
   const [urdSendBusy, setUrdSendBusy] = useState(false)
   const [ideaDocGenerateStepIndex, setIdeaDocGenerateStepIndex] = useState(0)
@@ -3885,6 +3888,28 @@ export function IdeaDetailPage() {
   }, [ideaDocPartChoices, ideaDocPartPayloads, ideaDocParts, ideaDocRegenerateTarget])
   const ideaDocGenerateTemplates = ideaDocTemplates.filter((template) => templateAllowedByWorkflow(template, ideaDocWorkflowGate))
   const ideaDocGenerateSourceChars = ideaDocGenerateSource.trim().length
+  const ideaDocGenerateSourcePreview = useMemo(() => {
+    const cleanSource = ideaDocGenerateSource
+      .replace(/<!--\s*tectona-process-diagram[\s\S]*?-->/gi, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    return cleanSource
+      .split(/\n\s*\n/)
+      .map((block) => {
+        const lines = block.split('\n')
+        const heading = lines[0]?.trim() ?? ''
+        const isPlainHeading = heading.length > 0
+          && heading.length <= 100
+          && !/[.!?]$/.test(heading)
+          && !/^(?:[-*+]|\d+[.)])\s/.test(heading)
+        if (lines.length === 1 && isPlainHeading) return `## ${heading}`
+        if (lines.length > 1 && heading.endsWith(':') && heading.length <= 100) {
+          return `## ${heading.slice(0, -1)}\n\n${lines.slice(1).join('\n')}`
+        }
+        return block
+      })
+      .join('\n\n')
+  }, [ideaDocGenerateSource])
   const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
   const [ideaDocEditTitle, setIdeaDocEditTitle] = useState<string | null>(null)
   const brdPagesRef = useRef<string[]>([''])
@@ -7257,6 +7282,7 @@ export function IdeaDetailPage() {
       const intake = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace })
         .catch(() => ({ block: '' }))
       setIdeaDocGenerateSource([intake.block, narrative].filter(Boolean).join('\n\n'))
+      setIdeaDocSourceMode('preview')
       setIdeaDocGenerateOpen(true)
     } catch (error) {
       addToast({ title: 'Revisi approved belum dapat dimuat', description: error instanceof Error ? error.message : '', variant: 'error' })
@@ -15394,15 +15420,65 @@ export function IdeaDetailPage() {
                               {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars
                             </span>
                           </div>
-                          <Textarea
-                            id="idea-doc-source"
-                            rows={9}
-                            className="min-h-[min(55dvh,520px)] w-full resize-y rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-none"
-                            value={ideaDocGenerateSource}
-                            disabled={ideaDocGenerateBusy}
-                            onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
-                            placeholder="Idea description / requirements used to fill the template"
-                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-xs text-muted-foreground">
+                              {ideaDocSourceMode === 'preview' ? 'Formatted source used to fill the template' : 'Edit the source text sent to the generator'}
+                            </p>
+                            <div className="inline-flex shrink-0 rounded-lg border border-border bg-muted/50 p-0.5" role="tablist" aria-label="Source context mode">
+                              <button
+                                type="button"
+                                role="tab"
+                                aria-selected={ideaDocSourceMode === 'preview'}
+                                className={cn(
+                                  'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+                                  ideaDocSourceMode === 'preview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                                )}
+                                onClick={() => setIdeaDocSourceMode('preview')}
+                              >
+                                <FileText className="h-3.5 w-3.5" aria-hidden />
+                                Preview
+                              </button>
+                              <button
+                                type="button"
+                                role="tab"
+                                aria-selected={ideaDocSourceMode === 'edit'}
+                                className={cn(
+                                  'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+                                  ideaDocSourceMode === 'edit' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                                )}
+                                disabled={ideaDocGenerateBusy}
+                                onClick={() => setIdeaDocSourceMode('edit')}
+                              >
+                                <PencilLine className="h-3.5 w-3.5" aria-hidden />
+                                Edit
+                              </button>
+                            </div>
+                          </div>
+                          {ideaDocSourceMode === 'edit' ? (
+                            <Textarea
+                              id="idea-doc-source"
+                              rows={9}
+                              className="min-h-[min(55dvh,520px)] w-full resize-y rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-sm"
+                              value={ideaDocGenerateSource}
+                              disabled={ideaDocGenerateBusy}
+                              onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
+                              placeholder="Idea description / requirements used to fill the template"
+                            />
+                          ) : (
+                            <div
+                              role="tabpanel"
+                              aria-label="Formatted source context"
+                              className="min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
+                            >
+                              {ideaDocGenerateSourcePreview ? (
+                                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+                                  {ideaDocGenerateSourcePreview}
+                                </ReactMarkdown>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">No source context is available.</p>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {ideaDocGenerateBusy ? (
