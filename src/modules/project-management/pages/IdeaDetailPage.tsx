@@ -15435,6 +15435,7 @@ export function IdeaDetailPage() {
                               currentVersion={ideaDocRegenerateVersion}
                               otherVersions={ideaDocPartVersions}
                               keepable={ideaDocKeepableParts}
+                              payloads={ideaDocPartPayloads}
                               loading={ideaDocPartsLoading}
                               disabled={ideaDocGenerateBusy}
                               onChange={setIdeaDocPartChoices}

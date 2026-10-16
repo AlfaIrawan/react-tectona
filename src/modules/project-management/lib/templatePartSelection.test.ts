@@ -4,6 +4,8 @@ import {
   isSystemFilledKey,
   keysToGenerate,
   mergePartChoices,
+  partPreview,
+  partPreviewSummary,
   templateParts,
   versionsNeeded,
   type PartPayload,
@@ -70,6 +72,25 @@ describe('part choices', () => {
     expect(payload.sections).toEqual({ background: '<p>Latar</p>' })
     expect(payload.collections).toEqual({ use_cases: [{ name: 'UC1' }] })
     expect(payload.diagrams).toEqual({ process_flow: 'png-v6' })
+  })
+
+  it('previews each part as text or table rows', () => {
+    const [deskripsi, , processFlow, background, useCases] = parts
+    const payload: PartPayload = {
+      ...v6,
+      sections: { background: '<p>Saat ini&nbsp;manual.</p><ul><li>Telepon</li><li>Email</li></ul>' },
+      collections: { use_cases: [{ name: 'UC1', actor: 'CLV', steps: [{ no: 1 }] }, { name: 'UC2', actor: '', steps: [] }] },
+    }
+    expect(partPreview(deskripsi, payload)).toEqual({ kind: 'text', text: 'V6 deskripsi', diagram: false })
+    expect(partPreview(processFlow, payload)).toEqual({ kind: 'text', text: 'Alur', diagram: true })
+    expect(partPreviewSummary(partPreview(processFlow, payload)!)).toBe('Diagram · Alur')
+    const section = partPreview(background, payload)
+    expect(section).toEqual({ kind: 'text', text: 'Saat ini manual.\nTelepon\nEmail', diagram: false })
+    expect(partPreviewSummary(section!)).toBe('Saat ini manual. · Telepon · Email')
+    const table = partPreview(useCases, payload)
+    expect(table).toEqual({ kind: 'table', columns: ['Name', 'Actor', 'Steps'], rows: [['UC1', 'CLV', '1 item'], ['UC2', '', '0 item']] })
+    expect(partPreviewSummary(table!)).toBe('2 baris · UC1')
+    expect(partPreview(background, v6)).toBeUndefined()
   })
 
   it('reports a part the chosen version does not have', () => {

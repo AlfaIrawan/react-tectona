@@ -71,6 +71,63 @@ export function partValue(part: TemplatePart, payload: PartPayload | undefined):
   return Array.isArray(rows) && rows.length > 0 ? rows : undefined
 }
 
+export type PartPreview =
+  | { kind: 'text'; text: string; diagram: boolean }
+  | { kind: 'table'; columns: string[]; rows: string[][] }
+
+function plainText(html: string): string {
+  return html
+    .replace(/<(?:br|\/p|\/li|\/h[1-6]|\/tr)\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .trim()
+}
+
+function cellText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return plainText(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return `${value.length} item`
+  return ''
+}
+
+/** What a version holds for the part, readable: text for fields and sections, rows for tables. */
+export function partPreview(part: TemplatePart, payload: PartPayload | undefined): PartPreview | undefined {
+  const value = partValue(part, payload)
+  if (value === undefined) return undefined
+  if (part.kind !== 'table') {
+    const text = plainText(String(value))
+    return text ? { kind: 'text', text, diagram: Boolean(part.kind === 'field' && payload?.diagrams?.[part.key]) } : undefined
+  }
+  const records = (value as unknown[]).filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object' && !Array.isArray(row))
+  const columns: string[] = []
+  for (const record of records) {
+    for (const [key, cell] of Object.entries(record)) {
+      // Nested tables (a use case's steps) are counted, not drawn.
+      if (!columns.includes(key) && !(Array.isArray(cell) && cell.length === 0)) columns.push(key)
+    }
+  }
+  return {
+    kind: 'table',
+    columns: columns.map(readableName),
+    rows: records.map((record) => columns.map((key) => cellText(record[key]))),
+  }
+}
+
+/** One line for the collapsed row. */
+export function partPreviewSummary(preview: PartPreview): string {
+  if (preview.kind === 'text') return `${preview.diagram ? 'Diagram · ' : ''}${preview.text.replace(/\n+/g, ' · ')}`
+  const first = preview.rows[0]?.find((cell) => cell.trim()) ?? ''
+  return `${preview.rows.length} baris${first ? ` · ${first}` : ''}`
+}
+
 /** Keep what the current version has; generate what it lacks. */
 export function defaultPartChoices(
   parts: TemplatePart[],
