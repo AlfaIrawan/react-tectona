@@ -124,6 +124,7 @@ import {
   analyzeIdeaProcessDetail,
   type ProcessSubTask,
   fetchIdeaIntakeAnswers,
+  correctIdeaIntakeAnswer,
   fillDkmTemplate,
   generateBenefitAnalysis,
   generateIdeaBrd,
@@ -159,6 +160,7 @@ import {
   type TemplateAgentSchema,
 } from '@/lib/api/documentKnowledgeApi'
 import { TemplatePartChoices } from '@/modules/project-management/components/TemplatePartChoices'
+import { IdeaIntakeAnswerList } from '@/modules/project-management/components/IdeaIntakeAnswerList'
 import {
   defaultPartChoices,
   keysToGenerate,
@@ -3916,12 +3918,30 @@ export function IdeaDetailPage() {
     () => extractProcessDiagramsFromText(ideaDocGenerateSource),
     [ideaDocGenerateSource],
   )
-  const showIdeaDocIntakeAnswers = Boolean(
+  const ideaDocIntakeBlockInSource = Boolean(
     ideaDocGenerateIntakeBlock
     && ideaDocGenerateSource.startsWith(ideaDocGenerateIntakeBlock),
   )
+  // Also shown when every answer is waiting for review (no block in the source yet), so the
+  // proposer can correct them.
+  const showIdeaDocIntakeAnswers = ideaDocGenerateIntakeAnswers.length > 0
+    && (ideaDocIntakeBlockInSource || !ideaDocGenerateIntakeBlock)
+  const saveIdeaDocIntakeAnswer = useCallback(async (itemId: string, answer: string) => {
+    const next = await correctIdeaIntakeAnswer(idea.id, itemId, { answer, title: idea.title, workspaceId: idea.workspace })
+    setIdeaDocGenerateIntakeAnswers(next.answers)
+    setIdeaDocGenerateIntakeBlock(next.block)
+    // The answers lead the source context: swap the old block for the new one, keeping the rest.
+    setIdeaDocGenerateSource((source) => {
+      const previous = ideaDocGenerateIntakeBlock
+      let rest: string
+      if (previous && source.startsWith(previous)) rest = source.slice(previous.length).replace(/^\n+/, '')
+      else if (!previous) rest = source
+      else return source
+      return [next.block, rest].filter(Boolean).join('\n\n')
+    })
+  }, [idea.id, idea.title, idea.workspace, ideaDocGenerateIntakeBlock])
   const ideaDocGenerateSourcePreview = useMemo(() => {
-    const sourceWithoutIntake = showIdeaDocIntakeAnswers
+    const sourceWithoutIntake = ideaDocIntakeBlockInSource
       ? ideaDocGenerateSource.slice(ideaDocGenerateIntakeBlock.length)
       : ideaDocGenerateSource
     const cleanSource = stripProcessDiagramsFromText(sourceWithoutIntake).replace(/\n{3,}/g, '\n\n').trim()
@@ -3941,7 +3961,7 @@ export function IdeaDetailPage() {
         return block
       })
       .join('\n\n')
-  }, [ideaDocGenerateIntakeBlock, ideaDocGenerateSource, showIdeaDocIntakeAnswers])
+  }, [ideaDocGenerateIntakeBlock, ideaDocGenerateSource, ideaDocIntakeBlockInSource])
   const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
   const [ideaDocEditTitle, setIdeaDocEditTitle] = useState<string | null>(null)
   const brdPagesRef = useRef<string[]>([''])
@@ -15519,25 +15539,16 @@ export function IdeaDetailPage() {
                               className="scroll-reveal min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 lg:min-h-0 lg:max-h-none lg:flex-1 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
                             >
                               <div className="space-y-5">
-                                {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeAnswers.length > 0 ? (
+                                {showIdeaDocIntakeAnswers ? (
                                   <section aria-label="Confirmed intake answers" className="space-y-2.5">
                                     <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
                                       Confirmed intake answers
                                     </h3>
-                                    <div className="space-y-2">
-                                      {ideaDocGenerateIntakeAnswers.map((item) => (
-                                        <article key={item.id} className="grid gap-2 rounded-lg border border-border/70 bg-muted/20 p-3 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] sm:gap-4">
-                                          <div>
-                                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Question</p>
-                                            <p className="text-sm leading-5 text-foreground">{item.question}</p>
-                                          </div>
-                                          <div className="sm:border-l sm:border-border/70 sm:pl-4">
-                                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">Answer</p>
-                                            <p className="whitespace-pre-wrap text-sm leading-5 text-foreground/90">{item.answer}</p>
-                                          </div>
-                                        </article>
-                                      ))}
-                                    </div>
+                                    <IdeaIntakeAnswerList
+                                      answers={ideaDocGenerateIntakeAnswers}
+                                      disabled={ideaDocGenerateBusy}
+                                      onSave={saveIdeaDocIntakeAnswer}
+                                    />
                                   </section>
                                 ) : null}
                                 {ideaDocGenerateSourcePreview ? (

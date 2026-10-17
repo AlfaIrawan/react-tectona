@@ -2101,6 +2101,11 @@ export interface IdeaIntakeAnswer {
   id: string
   question: string
   answer: string
+  /** The recorded text does not read as an answer to its question; not sent to the generator. */
+  needs_review?: boolean
+  review_reason?: string
+  /** The proposer rewrote this answer after the brainstorm. */
+  corrected?: boolean
 }
 
 /** Remember the idea a brainstorm became, so documents for the idea read its intake answers. */
@@ -2128,6 +2133,25 @@ export async function fetchIdeaIntakeAnswers(
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/intake-answers?${params}`,
     { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ answers?: IdeaIntakeAnswer[]; block?: string }>(res)
+  return { answers: body.answers ?? [], block: body.block ?? '' }
+}
+
+/** Replace a recorded Idea Intake answer with the proposer's own; returns the answers again. */
+export async function correctIdeaIntakeAnswer(
+  ideaId: string,
+  itemId: string,
+  input: { answer: string; title?: string; workspaceId?: string | null },
+): Promise<{ answers: IdeaIntakeAnswer[]; block: string }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/intake-answers/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer: input.answer, title: input.title ?? '', workspace_id: input.workspaceId ?? '' }),
+    },
     15_000,
   )
   const body = await handleResponse<{ answers?: IdeaIntakeAnswer[]; block?: string }>(res)
