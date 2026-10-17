@@ -7431,13 +7431,16 @@ export function IdeaDetailPage() {
         id: targetProject.id,
         name: targetProject.name,
       })
+      // The idea's URD/BRD/FSD is one document wherever it is stored: an idea linked to a project
+      // after its URD was written keeps that URD in the earlier project, and a regeneration must
+      // save its next version there (the document service requires the document's own project).
       const existingDocument = ideaGeneratedDocs
         .filter((document_) =>
-          document_.project_id === targetProject.id &&
           document_.metadata?.idea_id === idea.id &&
           ideaDocumentType(document_) === docTypeLabel,
         )
         .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0]
+      const storageProjectId = existingDocument?.project_id || targetProject.id
 
       // Regenerating part by part (TemplatePartChoices): the model writes only the parts marked
       // Regenerate; every other part comes from the version chosen for it.
@@ -7503,7 +7506,7 @@ export function IdeaDetailPage() {
         }).payload
         : generatedParts
 
-      const created = await instantiateTemplateFromProject(targetProject.id, template.id, {
+      const created = await instantiateTemplateFromProject(storageProjectId, template.id, {
         title: idea.title.slice(0, 255),
         existing_document_id: existingDocument?.id,
         attachment_file_name: ideaDocFileName(docTypeLabel, idea.title),
