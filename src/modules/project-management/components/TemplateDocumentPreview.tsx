@@ -74,6 +74,10 @@ const PAGE_CLASS = cn(
   'w-full',
   '[&_.tpl-docx-wrapper]:!bg-transparent [&_.tpl-docx-wrapper]:!p-0',
   '[&_.tpl-docx-wrapper>section.tpl-docx]:!mb-5 [&_.tpl-docx-wrapper>section.tpl-docx]:!shadow-md [&_.tpl-docx-wrapper>section.tpl-docx]:ring-1 [&_.tpl-docx-wrapper>section.tpl-docx]:ring-slate-200',
+  // Tailwind's preflight makes every img/svg a block, so an inline Word picture ignored its
+  // paragraph's alignment (the cover logo sat left instead of centred). In Word they flow as text.
+  '[&_section.tpl-docx_img]:inline-block [&_section.tpl-docx_img]:align-baseline',
+  '[&_section.tpl-docx_svg]:inline-block [&_section.tpl-docx_svg]:align-baseline',
   '[&_.tpl-part:hover]:bg-blue-50/60',
 )
 
