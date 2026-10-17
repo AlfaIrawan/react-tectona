@@ -3853,6 +3853,13 @@ export function IdeaDetailPage() {
   const [ideaDocPartPayloads, setIdeaDocPartPayloads] = useState<Record<number, DocumentRevisionFillPayload>>({})
   const [ideaDocPartVersions, setIdeaDocPartVersions] = useState<number[]>([])
   const [ideaDocPartsLoading, setIdeaDocPartsLoading] = useState(false)
+  // Versions whose content could not be read; not fetched again until the user retries.
+  const [ideaDocPartFailedVersions, setIdeaDocPartFailedVersions] = useState<number[]>([])
+  const [ideaDocPartsReload, setIdeaDocPartsReload] = useState(0)
+  const retryIdeaDocPartVersion = useCallback((version: number) => {
+    if (version === ideaDocRegenerateVersion) setIdeaDocPartsReload((count) => count + 1)
+    else setIdeaDocPartFailedVersions((prev) => prev.filter((item) => item !== version))
+  }, [ideaDocRegenerateVersion])
   const ideaDocKeepableParts = useMemo(() => new Set(
     ideaDocParts
       .filter((part) => partValue(part, ideaDocPartPayloads[ideaDocRegenerateVersion]) !== undefined)
@@ -3864,11 +3871,13 @@ export function IdeaDetailPage() {
       setIdeaDocPartPayloads({})
       setIdeaDocPartVersions([])
       setIdeaDocPartChoices({})
+      setIdeaDocPartFailedVersions([])
       return
     }
     let cancelled = false
     const current = target.current_version_no || 1
     setIdeaDocPartsLoading(true)
+    setIdeaDocPartFailedVersions([])
     void Promise.all([
       listDocumentRevisions(target.id).catch(() => []),
       getDocumentRevisionFillPayload(target.id, { source_document_id: target.id, version_no: current }).catch(() => null),
@@ -3883,6 +3892,7 @@ export function IdeaDetailPage() {
         )
         setIdeaDocPartPayloads(payload ? { [current]: payload } : {})
         setIdeaDocPartChoices(defaultPartChoices(ideaDocParts, payload ?? undefined))
+        if (!payload) setIdeaDocPartFailedVersions([current])
       })
       .finally(() => {
         if (!cancelled) setIdeaDocPartsLoading(false)
@@ -3890,28 +3900,30 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [ideaDocGenerateOpen, ideaDocParts, ideaDocRegenerateTarget])
+  }, [ideaDocGenerateOpen, ideaDocParts, ideaDocRegenerateTarget, ideaDocPartsReload])
   useEffect(() => {
-    // "From V2": read that version when it is first picked.
+    // "From V2": read that version when it is first picked. A version that failed waits for Retry.
     const target = ideaDocRegenerateTarget
     if (!target) return
     const wanted = versionsNeeded(ideaDocParts, ideaDocPartChoices, target.current_version_no || 1)
-      .filter((version) => !ideaDocPartPayloads[version])
+      .filter((version) => !ideaDocPartPayloads[version] && !ideaDocPartFailedVersions.includes(version))
     if (wanted.length === 0) return
     let cancelled = false
     void Promise.all(wanted.map((version) =>
       getDocumentRevisionFillPayload(target.id, { source_document_id: target.id, version_no: version })
         .then((payload) => [version, payload] as const)
-        .catch(() => null),
+        .catch(() => [version, null] as const),
     )).then((rows) => {
       if (cancelled) return
-      const loaded = rows.filter((row): row is readonly [number, DocumentRevisionFillPayload] => row !== null)
+      const loaded = rows.filter((row): row is readonly [number, DocumentRevisionFillPayload] => row[1] !== null)
+      const failed = rows.filter((row) => row[1] === null).map(([version]) => version)
       if (loaded.length > 0) setIdeaDocPartPayloads((prev) => ({ ...prev, ...Object.fromEntries(loaded) }))
+      if (failed.length > 0) setIdeaDocPartFailedVersions((prev) => [...new Set([...prev, ...failed])])
     })
     return () => {
       cancelled = true
     }
-  }, [ideaDocPartChoices, ideaDocPartPayloads, ideaDocParts, ideaDocRegenerateTarget])
+  }, [ideaDocPartChoices, ideaDocPartFailedVersions, ideaDocPartPayloads, ideaDocParts, ideaDocRegenerateTarget])
   const ideaDocGenerateTemplates = ideaDocTemplates.filter((template) => templateAllowedByWorkflow(template, ideaDocWorkflowGate))
   const ideaDocGenerateSourceChars = ideaDocGenerateSource.trim().length
   const ideaDocGenerateSourceDiagrams = useMemo(
@@ -15466,6 +15478,8 @@ export function IdeaDetailPage() {
                               otherVersions={ideaDocPartVersions}
                               keepable={ideaDocKeepableParts}
                               payloads={ideaDocPartPayloads}
+                              failedVersions={ideaDocPartFailedVersions}
+                              onRetry={retryIdeaDocPartVersion}
                               loading={ideaDocPartsLoading}
                               disabled={ideaDocGenerateBusy}
                               onChange={setIdeaDocPartChoices}

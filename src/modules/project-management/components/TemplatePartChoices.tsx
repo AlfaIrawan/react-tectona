@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, Sparkles } from 'lucide-react'
+import { AlertTriangle, ChevronRight, RotateCw, Sparkles } from 'lucide-react'
 import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import {
@@ -91,6 +91,8 @@ export function TemplatePartChoices({
   otherVersions,
   keepable,
   payloads,
+  failedVersions,
+  onRetry,
   loading,
   disabled,
   onChange,
@@ -105,6 +107,9 @@ export function TemplatePartChoices({
   keepable: Set<string>
   /** Version payloads read so far; an earlier version is read when it is first picked. */
   payloads: Record<number, PartPayload | undefined>
+  /** Versions whose content could not be read; each waits for `onRetry`. */
+  failedVersions: number[]
+  onRetry: (version: number) => void
   loading: boolean
   disabled: boolean
   onChange: (next: Record<string, TemplatePartChoice>) => void
@@ -121,6 +126,19 @@ export function TemplatePartChoices({
     else next.add(key)
     return next
   })
+  const currentFailed = !loading && failedVersions.includes(currentVersion) && !payloads[currentVersion]
+  const currentEmptyText = currentFailed ? `Couldn't read V${currentVersion}` : `Empty in V${currentVersion}`
+  const retryButton = (version: number) => (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-foreground underline-offset-2 hover:bg-muted hover:underline disabled:opacity-50"
+      disabled={disabled}
+      onClick={() => onRetry(version)}
+    >
+      <RotateCw className="h-3 w-3" aria-hidden="true" />
+      Retry
+    </button>
+  )
 
   return (
     <div className={cn('space-y-2 lg:flex lg:min-h-0 lg:flex-col', className)}>
@@ -152,6 +170,18 @@ export function TemplatePartChoices({
           ? `Reading V${currentVersion}…`
           : `${regenerated} of ${parts.length} parts will be written again. Every other part stays as chosen. Title, owner, number and version are always updated.`}
       </p>
+      {currentFailed ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs leading-5 text-destructive"
+        >
+          <span className="flex min-w-0 items-start gap-1.5">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Couldn't read V{currentVersion}, so no part can be kept and every part is set to Regenerate.
+          </span>
+          {retryButton(currentVersion)}
+        </div>
+      ) : null}
       <ul className="scroll-reveal divide-y divide-border/50 rounded-xl border border-border/70 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {parts.map((part) => {
           const choice = choices[part.key] ?? 'generate'
@@ -159,16 +189,18 @@ export function TemplatePartChoices({
           const current = loading ? undefined : partPreview(part, payloads[currentVersion])
           const pickedVersion = typeof choice === 'number' ? choice : null
           const pickedLoaded = pickedVersion !== null && payloads[pickedVersion] !== undefined
+          const pickedFailed = pickedVersion !== null && !pickedLoaded && failedVersions.includes(pickedVersion)
           const picked = pickedVersion !== null ? partPreview(part, payloads[pickedVersion]) : undefined
           const expanded = open.has(part.key)
           const panelId = `template-part-${part.key}`
 
-          let line: { text: string; tone: 'value' | 'empty' | 'generate' }
+          let line: { text: string; tone: 'value' | 'empty' | 'generate' | 'error' }
           if (loading) line = { text: `Reading V${currentVersion}…`, tone: 'empty' }
           else if (choice === 'generate') line = { text: 'Will be written again by AI', tone: 'generate' }
+          else if (pickedFailed) line = { text: `Couldn't read V${pickedVersion}`, tone: 'error' }
           else if (pickedVersion !== null && !pickedLoaded) line = { text: `Reading V${pickedVersion}…`, tone: 'empty' }
           else if (pickedVersion !== null) line = picked ? { text: partPreviewSummary(picked), tone: 'value' } : { text: `Empty in V${pickedVersion}`, tone: 'empty' }
-          else line = current ? { text: partPreviewSummary(current), tone: 'value' } : { text: `Empty in V${currentVersion}`, tone: 'empty' }
+          else line = current ? { text: partPreviewSummary(current), tone: 'value' } : { text: currentEmptyText, tone: currentFailed ? 'error' : 'empty' }
 
           return (
             <li key={part.key} className={cn(choice === 'generate' ? 'bg-primary/5' : '')}>
@@ -200,6 +232,7 @@ export function TemplatePartChoices({
                           line.tone === 'value' ? 'text-muted-foreground' : '',
                           line.tone === 'empty' ? 'italic text-muted-foreground/80' : '',
                           line.tone === 'generate' ? 'text-primary' : '',
+                          line.tone === 'error' ? 'text-destructive' : '',
                         )}
                       >
                         {line.tone === 'generate' ? <Sparkles aria-hidden="true" className="mr-1 inline h-3 w-3 align-[-2px]" /> : null}
@@ -220,7 +253,9 @@ export function TemplatePartChoices({
                   }}
                 >
                   <option value="keep" disabled={!keepable.has(part.key)}>
-                    {keepable.has(part.key) ? `Keep (V${currentVersion})` : `Keep (empty in V${currentVersion})`}
+                    {keepable.has(part.key)
+                      ? `Keep (V${currentVersion})`
+                      : currentFailed ? `Keep (couldn't read V${currentVersion})` : `Keep (empty in V${currentVersion})`}
                   </option>
                   <option value="generate">Regenerate</option>
                   {otherVersions.map((version) => (
@@ -228,15 +263,20 @@ export function TemplatePartChoices({
                   ))}
                 </Select>
               </div>
+              {pickedFailed && pickedVersion !== null ? (
+                <div className="-mt-1 flex items-center gap-1 px-3 pb-2 pl-9">{retryButton(pickedVersion)}</div>
+              ) : null}
               {expanded ? (
                 <div id={panelId} className="px-3 pb-3 pl-9">
                   {pickedVersion !== null ? (
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <PreviewBox title={`Now · V${currentVersion}`} preview={current} emptyText={`Empty in V${currentVersion}`} tone="current" />
+                      <PreviewBox title={`Now · V${currentVersion}`} preview={current} emptyText={currentEmptyText} tone="current" />
                       <PreviewBox
                         title={`Used · V${pickedVersion}`}
                         preview={picked}
-                        emptyText={pickedLoaded ? `Empty in V${pickedVersion}` : `Reading V${pickedVersion}…`}
+                        emptyText={pickedLoaded
+                          ? `Empty in V${pickedVersion}`
+                          : pickedFailed ? `Couldn't read V${pickedVersion}` : `Reading V${pickedVersion}…`}
                         tone="used"
                       />
                     </div>
@@ -244,11 +284,11 @@ export function TemplatePartChoices({
                     <PreviewBox
                       title={`Now · V${currentVersion} · replaced by AI`}
                       preview={current}
-                      emptyText={`Empty in V${currentVersion}`}
+                      emptyText={currentEmptyText}
                       tone="replaced"
                     />
                   ) : (
-                    <PreviewBox title={`Kept · V${currentVersion}`} preview={current} emptyText={`Empty in V${currentVersion}`} tone="used" />
+                    <PreviewBox title={`Kept · V${currentVersion}`} preview={current} emptyText={currentEmptyText} tone="used" />
                   )}
                 </div>
               ) : null}
