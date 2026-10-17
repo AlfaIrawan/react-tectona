@@ -51,15 +51,36 @@ function needle(line: string): string {
   return line.length > 60 ? line.slice(0, 60).replace(/\s\S*$/, '') : line
 }
 
+/** The body's tables in document order, as the document service counts them: not nested in another
+ * table, not in a page header or footer (docx-preview repeats those on every page). */
 function topLevelTables(root: HTMLElement): HTMLTableElement[] {
-  return Array.from(root.children).filter((el): el is HTMLTableElement => el.tagName === 'TABLE')
+  return Array.from(root.querySelectorAll('table')).filter(
+    (table) => !table.parentElement?.closest('table') && !table.closest('header, footer'),
+  )
+}
+
+function inPageFurniture(el: Element): boolean {
+  return Boolean(el.closest('header, footer'))
+}
+
+function rowMatchesLabel(row: HTMLTableRowElement, label: string): boolean {
+  const first = normText(row.cells[0]?.textContent)
+  return Boolean(label) && Boolean(first) && (first === label || first.startsWith(label) || label.startsWith(first))
 }
 
 function locateTableRow(root: HTMLElement, part: TemplatePart): LocatedPart | null {
   const tableIndex = part.location?.table_index
   const rowIndex = part.location?.row_index
   if (typeof tableIndex !== 'number' || typeof rowIndex !== 'number') return null
-  const row = topLevelTables(root)[tableIndex]?.rows[rowIndex]
+  const tables = topLevelTables(root)
+  const label = normText(part.label)
+  let row: HTMLTableRowElement | undefined = tables[tableIndex]?.rows[rowIndex]
+  // The schema's position is checked against the row's label cell, as the document service does
+  // when it reads a version back; a moved row is found by its label instead.
+  if (row && !rowMatchesLabel(row, label)) {
+    const byLabel = tables.flatMap((table) => Array.from(table.rows)).find((candidate) => rowMatchesLabel(candidate, label))
+    if (byLabel) row = byLabel
+  }
   if (!row) return null
   const cells = Array.from(row.cells) as HTMLElement[]
   const valueCell = cells.length >= 2 ? cells[cells.length - 1] : cells[0] ?? null
@@ -72,7 +93,7 @@ function locateByValue(root: HTMLElement, part: TemplatePart, value: unknown, cl
   if (lines.length === 0) return null
   const first = needle(lines[0])
   const candidates = (Array.from(root.querySelectorAll(BLOCK_SELECTOR)) as HTMLElement[])
-    .filter((el) => !claimed.has(el) && normText(el.textContent).includes(first))
+    .filter((el) => !claimed.has(el) && !inPageFurniture(el) && normText(el.textContent).includes(first))
   if (candidates.length === 0) return null
   // The most specific block holding the value's first line.
   const start = candidates.reduce((best, el) => ((el.textContent ?? '').length < (best.textContent ?? '').length ? el : best))
@@ -90,16 +111,25 @@ function locateByValue(root: HTMLElement, part: TemplatePart, value: unknown, cl
   return { key: part.key, elements, valueCell: start.tagName === 'TD' ? start : null, how: 'text' }
 }
 
+// docx-preview writes a Word heading as <p class="<prefix>_heading1">; mammoth as <h1>.
+const HEADING_CLASS_RE = /(?:^|\s)\S*_heading([1-6])(?:\s|$)/i
+
 function headingLevel(el: Element): number {
-  const match = HEADING_RE.exec(el.tagName)
-  return match ? Number(match[1]) : 7
+  const tag = HEADING_RE.exec(el.tagName)
+  if (tag) return Number(tag[1])
+  const styled = HEADING_CLASS_RE.exec(el.className || '')
+  return styled ? Number(styled[1]) : 7
+}
+
+function isHeading(el: Element): boolean {
+  return headingLevel(el) < 7
 }
 
 function locateSection(root: HTMLElement, part: TemplatePart, claimed: Set<Element>): LocatedPart | null {
   const label = normText(part.label).replace(/^\d+(?:\s\d+)*\s/, '')
   if (!label) return null
   const heading = (Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6, p')) as HTMLElement[]).find((el) => {
-    if (claimed.has(el)) return false
+    if (claimed.has(el) || inPageFurniture(el)) return false
     const text = normText(el.textContent).replace(/^\d+(?:\s\d+)*\s/, '')
     return text === label || (text.startsWith(label) && text.length <= label.length + 20)
   })
@@ -108,7 +138,7 @@ function locateSection(root: HTMLElement, part: TemplatePart, claimed: Set<Eleme
   const elements: HTMLElement[] = [heading]
   let sibling = heading.nextElementSibling as HTMLElement | null
   for (let step = 0; sibling && step < 80; step += 1) {
-    if (HEADING_RE.test(sibling.tagName) && headingLevel(sibling) <= level) break
+    if (isHeading(sibling) && headingLevel(sibling) <= level) break
     elements.push(sibling)
     sibling = sibling.nextElementSibling as HTMLElement | null
   }
@@ -124,7 +154,7 @@ function locateTable(root: HTMLElement, part: TemplatePart, claimed: Set<Element
   if (fields.length === 0) return null
   let best: { table: HTMLTableElement; score: number } | null = null
   for (const table of Array.from(root.querySelectorAll('table'))) {
-    if (claimed.has(table)) continue
+    if (claimed.has(table) || inPageFurniture(table)) continue
     const header = normText(table.rows[0]?.textContent)
     const score = fields.filter((field) => header.includes(field)).length
     if (score > (best?.score ?? 0)) best = { table, score }
@@ -195,19 +225,29 @@ function badge(text: string, tone: keyof typeof BADGE_TONE, block: boolean): HTM
   return el
 }
 
-function valueNodes(value: unknown, part: TemplatePart): Node[] {
+/** `paragraphClass`: the replaced paragraph's own class, so the new text keeps the document's style. */
+function valueNodes(value: unknown, part: TemplatePart, paragraphClass = ''): Node[] {
   if (part.kind === 'table') return []
   const text = String(value ?? '')
   if (/<[a-z][\s\S]*>/i.test(text)) {
     const holder = document.createElement('div')
     holder.innerHTML = DOMPurify.sanitize(text)
+    if (paragraphClass) holder.querySelectorAll('p').forEach((p) => p.classList.add(...paragraphClass.split(/\s+/).filter(Boolean)))
     return Array.from(holder.childNodes)
   }
   return text.split(/\n+/).filter((line) => line.trim()).map((line) => {
     const p = document.createElement('p')
+    if (paragraphClass) p.className = paragraphClass
     p.textContent = line
     return p
   })
+}
+
+function paragraphClassIn(el: Element | null | undefined): string {
+  if (!el) return ''
+  const p = el.tagName === 'P' ? el : el.querySelector('p')
+  // Only the document's own style classes ("<prefix>_<style>"), not the marks added here.
+  return (p?.className ?? '').split(/\s+/).filter((name) => /^[a-z][\w-]*_[\w-]+$/i.test(name)).join(' ')
 }
 
 function replaceTableRows(table: HTMLTableElement, rows: unknown, fields: string[]) {
@@ -265,9 +305,10 @@ export function annotatePart(found: LocatedPart, part: TemplatePart, state: Part
     addBadge(`From V${state.version} · empty in that version`, 'version')
     return
   }
+  const paragraphClass = paragraphClassIn(found.valueCell ?? found.elements[found.how === 'heading' ? 1 : 0])
   addBadge(`From V${state.version}`, 'version')
   const markedNodes = () => {
-    const nodes = valueNodes(state.value, part)
+    const nodes = valueNodes(state.value, part, paragraphClass)
     nodes.forEach((node) => {
       if (node instanceof HTMLElement) {
         node.dataset.partKey = found.key
@@ -281,7 +322,10 @@ export function annotatePart(found: LocatedPart, part: TemplatePart, state: Part
   } else if (found.valueCell) {
     const badgeEl = found.valueCell.querySelector('.tpl-part-badge')
     const lineBreak = badgeEl?.nextElementSibling?.tagName === 'BR' ? badgeEl.nextElementSibling : null
-    found.valueCell.replaceChildren(...[badgeEl, lineBreak].filter((node): node is Element => Boolean(node)), ...valueNodes(state.value, part))
+    found.valueCell.replaceChildren(
+      ...[badgeEl, lineBreak].filter((node): node is Element => Boolean(node)),
+      ...valueNodes(state.value, part, paragraphClass),
+    )
   } else if (found.how === 'heading') {
     // Keep the heading; what follows it becomes that version's text.
     for (const el of found.elements.slice(1)) el.remove()

@@ -38,21 +38,48 @@ async function loadSourceHtml(source: TemplateDocumentPreviewSource): Promise<st
   } else {
     blob = (await downloadTemplateAttachmentBlob(source.templateId)).blob
   }
-  const mammoth = await import('mammoth')
-  const result = await mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() })
-  return DOMPurify.sanitize(result.value ?? '')
+  // docx-preview lays the document out as Word pages (size, margins, header and footer, fonts,
+  // styles, page breaks); the same options as the Document repository preview.
+  const { renderAsync } = await import('docx-preview')
+  const holder = document.createElement('div')
+  await renderAsync(blob, holder, holder, {
+    className: DOCX_CLASS,
+    inWrapper: true,
+    ignoreWidth: false,
+    ignoreHeight: false,
+    breakPages: true,
+    ignoreLastRenderedPageBreak: false,
+    renderHeaders: true,
+    renderFooters: true,
+    renderFootnotes: true,
+    renderEndnotes: true,
+    // Images as data URLs: they survive the page being rebuilt and pass the sanitizer.
+    useBase64URL: true,
+  })
+  // The document's own <style> blocks are kept (scoped to DOCX_CLASS by docx-preview).
+  return DOMPurify.sanitize(holder.innerHTML, { ADD_TAGS: ['style'], FORCE_BODY: true })
 }
 
-// A Word-like page: mammoth gives plain HTML, so tables and headings get their look here.
+const DOCX_CLASS = 'tpl-docx'
+// docx-preview paints its wrapper gray with padding; here the pages sit on the panel itself.
 const PAGE_CLASS = cn(
-  'mx-auto w-full max-w-[860px] bg-white px-6 py-8 text-[13px] leading-6 text-slate-900 shadow-sm ring-1 ring-slate-200 sm:px-10',
-  '[&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-base [&_h2]:font-semibold',
-  '[&_h3]:mb-1.5 [&_h3]:mt-3 [&_h3]:text-sm [&_h3]:font-semibold [&_h4]:font-semibold [&_p]:my-1.5',
-  '[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-6 [&_img]:inline-block [&_img]:max-w-full',
-  '[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top',
-  '[&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-50 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_td_p]:my-0.5',
+  'w-full',
+  '[&_.tpl-docx-wrapper]:!bg-transparent [&_.tpl-docx-wrapper]:!p-0',
+  '[&_.tpl-docx-wrapper>section.tpl-docx]:!mb-5 [&_.tpl-docx-wrapper>section.tpl-docx]:!shadow-md [&_.tpl-docx-wrapper>section.tpl-docx]:ring-1 [&_.tpl-docx-wrapper>section.tpl-docx]:ring-slate-200',
   '[&_.tpl-part:hover]:bg-blue-50/60',
 )
+
+/** Pages wider than the panel are zoomed out to fit (a narrow workspace), never in. */
+function fitPagesToWidth(page: HTMLElement, scroller: HTMLElement) {
+  const wrapper = page.querySelector<HTMLElement>(`.${DOCX_CLASS}-wrapper`)
+  const firstPage = wrapper?.querySelector<HTMLElement>(`section.${DOCX_CLASS}`)
+  if (!wrapper || !firstPage) return
+  wrapper.style.zoom = ''
+  const style = getComputedStyle(scroller)
+  const available = scroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+  const pageWidth = firstPage.offsetWidth
+  if (pageWidth > 0 && available > 0 && pageWidth > available) wrapper.style.zoom = String(available / pageWidth)
+}
 
 /**
  * The document the generator will write, shown as a page: the current version (or the template for
@@ -144,6 +171,7 @@ export function TemplateDocumentPreview({
     const order = Array.from(located.values())
       .sort((a, b) => (a.elements[0].compareDocumentPosition(b.elements[0]) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
       .map((item) => item.key)
+    if (scrollRef.current) fitPagesToWidth(page, scrollRef.current)
     setLocatedCount(order.length)
     const orderKey = order.join('|')
     if (orderKey !== lastOrderRef.current) {
@@ -152,6 +180,16 @@ export function TemplateDocumentPreview({
     }
     setRebuilt((count) => count + 1)
   }, [html, parts, choices, payloads, currentVersion, onLocatedChange])
+
+  // Keep the pages fitted when the panel is resized (e.g. the workspace switches to tabs).
+  useEffect(() => {
+    const scroller = scrollRef.current
+    const page = pageRef.current
+    if (!scroller || !page || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => fitPagesToWidth(page, scroller))
+    observer.observe(scroller)
+    return () => observer.disconnect()
+  }, [html])
 
   // Light up the selected part; scroll to it unless it was clicked here.
   useEffect(() => {
