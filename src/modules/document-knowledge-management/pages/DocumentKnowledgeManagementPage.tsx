@@ -40,6 +40,7 @@ import {
 } from '@/lib/tenantWorkspaceScope'
 import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
+import { fixDocxPreviewCellDirection } from '@/lib/docxPreviewFixes'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
 import { getExplorerFileTypeLabel } from '@/modules/document-knowledge-management/fileTypeIcon'
@@ -10871,6 +10872,7 @@ export function DocumentKnowledgeManagementPage() {
         breakPages: true,
       })
       if (cancelled || !versionRevisionDocxRef.current) return
+      fixDocxPreviewCellDirection(target)
 
       // Fit A4-width docx pages into the narrow revision drawer (~560px).
       const wrapper = target.querySelector('.docx-wrapper') as HTMLElement | null

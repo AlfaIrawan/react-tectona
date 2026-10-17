@@ -6,6 +6,7 @@ import {
   downloadTemplateAttachmentBlob,
   fetchLatestAttachmentId,
 } from '@/lib/api/documentKnowledgeApi'
+import { fixDocxPreviewCellDirection } from '@/lib/docxPreviewFixes'
 import { visualPxToLayoutPx } from '@/lib/uiScale'
 import { cn } from '@/lib/utils'
 import {
@@ -56,15 +57,7 @@ async function loadSourceHtml(source: TemplateDocumentPreviewSource): Promise<st
     // Images as data URLs: they survive the page being rebuilt and pass the sanitizer.
     useBase64URL: true,
   })
-  // docx-preview 0.3.7 maps a cell's w:textDirection "lrTb" (ordinary horizontal text) to
-  // writing-mode: vertical-lr, so such cells turned into tall vertical columns. That mapping is
-  // the only source of vertical-lr; real vertical text (btLr, tbRl) uses vertical-rl and is kept.
-  holder.querySelectorAll<HTMLElement>('td, th').forEach((cell) => {
-    if (cell.style.writingMode === 'vertical-lr') {
-      cell.style.removeProperty('writing-mode')
-      cell.style.removeProperty('transform')
-    }
-  })
+  fixDocxPreviewCellDirection(holder)
   // The document's own <style> blocks are kept (scoped to DOCX_CLASS by docx-preview).
   return DOMPurify.sanitize(holder.innerHTML, { ADD_TAGS: ['style'], FORCE_BODY: true })
 }
