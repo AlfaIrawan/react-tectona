@@ -25,9 +25,9 @@ export function IdeaIntakeAnswerList({
   const [savingId, setSavingId] = useState<string | null>(null)
   const [error, setError] = useState<{ id: string; message: string } | null>(null)
 
-  const startEdit = (item: IdeaIntakeAnswer) => {
+  const startEdit = (item: IdeaIntakeAnswer, text?: string) => {
     setEditingId(item.id)
-    setDraft(item.needs_review ? '' : item.answer)
+    setDraft(text ?? (item.needs_review ? '' : item.answer))
     setError(null)
   }
   const save = async (itemId: string, text: string) => {
@@ -117,6 +117,11 @@ export function IdeaIntakeAnswerList({
                       if (error?.id === item.id) setError(null)
                     }}
                   />
+                  {item.suggestion && draft === item.suggestion ? (
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      Taken from the brainstorm as written. Fix any typo before saving.
+                    </p>
+                  ) : null}
                   {error?.id === item.id ? <p className="text-xs text-destructive">{error.message}</p> : null}
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" disabled={saving} onClick={() => setEditingId(null)}>
@@ -140,6 +145,21 @@ export function IdeaIntakeAnswerList({
                   {item.needs_review ? (
                     <div className="mt-2 space-y-1.5">
                       <p className="text-xs leading-5 text-amber-800 dark:text-amber-200">{item.review_reason}</p>
+                      {item.suggestion ? (
+                        <div className="rounded-md border border-border/70 bg-background px-2.5 py-2">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">From the brainstorm</p>
+                          <p className="text-sm leading-5 text-foreground">“{item.suggestion}”</p>
+                          <button
+                            type="button"
+                            className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                            disabled={disabled || savingId !== null}
+                            onClick={() => startEdit(item, item.suggestion)}
+                          >
+                            <PencilLine className="h-3 w-3" aria-hidden />
+                            Use this
+                          </button>
+                        </div>
+                      ) : null}
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"

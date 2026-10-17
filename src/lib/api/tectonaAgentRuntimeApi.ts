@@ -2106,6 +2106,8 @@ export interface IdeaIntakeAnswer {
   review_reason?: string
   /** The proposer rewrote this answer after the brainstorm. */
   corrected?: boolean
+  /** For an answer waiting for review: the proposer's own brainstorm message about this topic. */
+  suggestion?: string
 }
 
 /** Remember the idea a brainstorm became, so documents for the idea read its intake answers. */
