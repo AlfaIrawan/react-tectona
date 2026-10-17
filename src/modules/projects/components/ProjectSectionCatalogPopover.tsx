@@ -17,10 +17,13 @@ export function ProjectSectionCatalogPopover({
   onClose,
   onAddSection,
   onRemoveSection,
+  unavailableSections = [],
 }: {
   open: boolean
   anchorEl: HTMLElement | null
   navSections: ProjectPanelKey[]
+  /** Sections that do not apply to this project (e.g. Sub-projects on a sub-project). */
+  unavailableSections?: ProjectPanelKey[]
   onClose: () => void
   onAddSection: (key: ProjectPanelKey) => void
   onRemoveSection: (key: ProjectPanelKey) => void
@@ -30,8 +33,11 @@ export function ProjectSectionCatalogPopover({
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
 
   const availableEntries = useMemo(
-    () => PROJECT_PANEL_CATALOG.filter((entry) => !navSections.includes(entry.key)),
-    [navSections],
+    () =>
+      PROJECT_PANEL_CATALOG.filter(
+        (entry) => !navSections.includes(entry.key) && !unavailableSections.includes(entry.key),
+      ),
+    [navSections, unavailableSections],
   )
 
   const selectedEntry =

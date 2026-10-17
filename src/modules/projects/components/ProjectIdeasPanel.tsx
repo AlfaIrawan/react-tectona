@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { ExternalLink, Info, Lightbulb, Link2, Loader2, Plus, Unlink } from 'lucide-react'
+import { ExternalLink, FolderTree, Info, Lightbulb, Link2, Loader2, Lock, Plus, Unlink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
@@ -23,6 +23,7 @@ import { getProjectPanelCatalogEntry } from '../lib/projectPanelCatalog'
 import { measureProjectPanelHeight, PROJECT_PANEL_MIN_HEIGHT_PX } from '../lib/projectPanelLayout'
 import { fetchDocumentsGroupedByIdea } from '../lib/ideaLinkedDocuments'
 import { fetchIdentityDisplayNameMap } from '../lib/projectMemberIdentity'
+import type { SubProjectEntry } from '../lib/subProjects'
 import { LinkProjectIdeaModal } from './LinkProjectIdeaModal'
 
 type DocKind = 'URD' | 'BRD' | 'FSD'
@@ -196,17 +197,34 @@ function NewIdeaDialog({
   )
 }
 
+type IdeaRow = {
+  idea: IdeaApi
+  /** Set for an idea delivered by a sub-project: listed read-only here. */
+  via: { projectId: string; projectName: string } | null
+}
+
+type IdeaFilter = 'all' | 'direct' | 'via'
+
 export function ProjectIdeasPanel({
   project,
   linkedIdeas,
   loading,
   onIdeasChanged,
+  subProjectEntries = [],
+  lockedToSingleIdea = false,
+  onMakeSubProject,
 }: {
   project: Project
   linkedIdeas: IdeaApi[]
   loading?: boolean
   /** Reload the project's linked ideas (and anything derived from them, such as Docs). */
   onIdeasChanged: (change?: { linked?: IdeaApi }) => void
+  /** On a program: its sub-projects, whose ideas are listed read-only. */
+  subProjectEntries?: SubProjectEntry[]
+  /** A sub-project delivers exactly one idea. */
+  lockedToSingleIdea?: boolean
+  /** On a program: turn a direct idea into its own sub-project. */
+  onMakeSubProject?: (idea: IdeaApi) => void
 }) {
   const panel = getProjectPanelCatalogEntry('ideas')
   const PanelIcon = panel.icon
@@ -219,8 +237,25 @@ export function ProjectIdeasPanel({
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null)
   const [docsByIdea, setDocsByIdea] = useState<Map<string, DocumentResponse[]> | null>(null)
   const [ownerNames, setOwnerNames] = useState<Map<string, string>>(new Map())
+  const [filter, setFilter] = useState<IdeaFilter>('all')
 
-  const ideaIdsKey = linkedIdeas.map((idea) => idea.id).join(',')
+  const allRows = useMemo<IdeaRow[]>(
+    () => [
+      ...linkedIdeas.map((idea) => ({ idea, via: null })),
+      ...subProjectEntries
+        .filter((entry) => entry.idea)
+        .map((entry) => ({
+          idea: entry.idea as IdeaApi,
+          via: { projectId: entry.project.id, projectName: entry.project.name },
+        })),
+    ],
+    [linkedIdeas, subProjectEntries],
+  )
+  const viaCount = allRows.length - linkedIdeas.length
+  const rows = filter === 'direct' ? allRows.filter((row) => !row.via) : filter === 'via' ? allRows.filter((row) => row.via) : allRows
+  const canAddIdeas = !lockedToSingleIdea || linkedIdeas.length === 0
+
+  const ideaIdsKey = allRows.map((row) => row.idea.id).join(',')
 
   useLayoutEffect(() => {
     const panelEl = panelRef.current
@@ -271,19 +306,19 @@ export function ProjectIdeasPanel({
 
   const stageCounts = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const idea of linkedIdeas) {
+    for (const { idea } of allRows) {
       const label = toDisplayStatus(idea.status_code)
       counts.set(label, (counts.get(label) ?? 0) + 1)
     }
     return Array.from(counts, ([label, count]) => ({ label, count }))
-  }, [linkedIdeas])
+  }, [allRows])
 
   const docsReadyCount = useMemo(() => {
     if (!docsByIdea) return null
-    return linkedIdeas.filter((idea) =>
+    return allRows.filter(({ idea }) =>
       DOC_KINDS.every((kind) => readinessFor(docsByIdea.get(idea.id) ?? [], kind) === 'final'),
     ).length
-  }, [docsByIdea, linkedIdeas])
+  }, [docsByIdea, allRows])
 
   const handleUnlink = async (idea: IdeaApi) => {
     setUnlinkingId(idea.id)
@@ -331,32 +366,44 @@ export function ProjectIdeasPanel({
             </div>
             <p className="max-w-2xl text-[11px] leading-snug text-muted-foreground">{panel.description}</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className={cn(enterpriseSecondaryButtonClass(), 'gap-2')}
-              onClick={() => setLinkModalOpen(true)}
-            >
-              <Link2 className="h-4 w-4" aria-hidden />
-              Link existing idea
-            </Button>
-            <Button type="button" className={cn(enterprisePrimarySolidButtonClass(), 'gap-2')} onClick={() => setNewIdeaOpen(true)}>
-              <Plus className="h-4 w-4" aria-hidden />
-              New idea
-            </Button>
-          </div>
+          {canAddIdeas ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(enterpriseSecondaryButtonClass(), 'gap-2')}
+                onClick={() => setLinkModalOpen(true)}
+              >
+                <Link2 className="h-4 w-4" aria-hidden />
+                Link existing idea
+              </Button>
+              <Button type="button" className={cn(enterprisePrimarySolidButtonClass(), 'gap-2')} onClick={() => setNewIdeaOpen(true)}>
+                <Plus className="h-4 w-4" aria-hidden />
+                New idea
+              </Button>
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+              <Lock className="h-3.5 w-3.5" aria-hidden />
+              Sub-project · one idea
+            </span>
+          )}
         </div>
 
         <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-xl border border-border/50 bg-background/70 px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Ideas</p>
-            <p className="mt-1 text-2xl font-semibold text-foreground">{linkedIdeas.length}</p>
+            <p className="mt-1 text-2xl font-semibold text-foreground">{allRows.length}</p>
+            {viaCount > 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                {linkedIdeas.length} direct · {viaCount} via sub-projects
+              </p>
+            ) : null}
           </div>
           <div className="rounded-xl border border-border/50 bg-background/70 px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Docs ready</p>
             <p className="mt-1 text-2xl font-semibold text-foreground">
-              {docsReadyCount == null ? '…' : `${docsReadyCount} / ${linkedIdeas.length}`}
+              {docsReadyCount == null ? '…' : `${docsReadyCount} / ${allRows.length}`}
             </p>
             <p className="text-[11px] text-muted-foreground">URD + BRD + FSD final</p>
           </div>
@@ -376,13 +423,38 @@ export function ProjectIdeasPanel({
           </div>
         </div>
 
+        {viaCount > 0 ? (
+          <div role="group" aria-label="Filter ideas" className="inline-flex shrink-0 gap-1 self-start rounded-xl bg-muted/60 p-1">
+            {(
+              [
+                ['all', `All ${allRows.length}`],
+                ['direct', `Direct ${linkedIdeas.length}`],
+                ['via', `Via sub-projects ${viaCount}`],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={filter === value}
+                onClick={() => setFilter(value)}
+                className={cn(
+                  'min-h-9 rounded-lg px-3 text-xs font-semibold transition',
+                  filter === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border/40 bg-background/60">
           {loading ? (
             <div className="flex items-center justify-center gap-2 px-4 py-16 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               Loading ideas…
             </div>
-          ) : linkedIdeas.length === 0 ? (
+          ) : allRows.length === 0 ? (
             <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
               <Lightbulb className="h-10 w-10 text-muted-foreground/60" strokeWidth={1.5} aria-hidden />
               <div className="space-y-1">
@@ -398,13 +470,14 @@ export function ProjectIdeasPanel({
                 <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                   <th className="px-4 py-3">Idea</th>
                   <th className="px-4 py-3">Stage</th>
+                  {viaCount > 0 ? <th className="px-4 py-3">Linked via</th> : null}
                   <th className="px-4 py-3">URD · BRD · FSD</th>
                   <th className="px-4 py-3">Owner</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {linkedIdeas.map((idea) => {
+                {rows.map(({ idea, via }) => {
                   const docs = docsByIdea?.get(idea.id) ?? []
                   const ownerName = idea.owner_id ? ownerNames.get(idea.owner_id) ?? '—' : '—'
                   return (
@@ -425,6 +498,25 @@ export function ProjectIdeasPanel({
                           {toDisplayStatus(idea.status_code)}
                         </span>
                       </td>
+                      {viaCount > 0 ? (
+                        <td className="px-4 py-3">
+                          {via ? (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/projects/${via.projectId}`)}
+                              className="inline-flex max-w-[220px] items-center gap-1 truncate rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs font-semibold text-violet-700 hover:bg-violet-100"
+                              title={via.projectName}
+                            >
+                              <FolderTree className="h-3 w-3 shrink-0" aria-hidden />
+                              <span className="truncate">{via.projectName}</span>
+                            </button>
+                          ) : (
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                              Direct
+                            </span>
+                          )}
+                        </td>
+                      ) : null}
                       <td className="px-4 py-3">
                         {docsByIdea == null ? (
                           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading document status" />
@@ -458,6 +550,19 @@ export function ProjectIdeasPanel({
                             <ExternalLink className="h-3.5 w-3.5" aria-hidden />
                             Open
                           </Button>
+                          {!via && onMakeSubProject ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => onMakeSubProject(idea)}
+                            >
+                              <FolderTree className="h-3.5 w-3.5" aria-hidden />
+                              Make sub-project
+                            </Button>
+                          ) : null}
+                          {via ? null : (
                           <Button
                             type="button"
                             variant="outline"
@@ -474,6 +579,7 @@ export function ProjectIdeasPanel({
                             )}
                             Unlink
                           </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -486,7 +592,9 @@ export function ProjectIdeasPanel({
 
         <p className="flex shrink-0 items-start gap-1.5 text-[11px] text-muted-foreground">
           <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
-          An idea belongs to one project at a time. Linking an idea that lives in another project moves it here, and its documents follow it into this project's Docs.
+          {lockedToSingleIdea
+            ? 'A sub-project delivers exactly one idea. To deliver another idea, add a sub-project on the parent project.'
+            : "An idea belongs to one project at a time. Linking an idea that lives in another project moves it here, and its documents follow it into this project's Docs."}
         </p>
       </div>
 

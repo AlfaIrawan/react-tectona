@@ -13,6 +13,9 @@ import {
   type BackendIdeaStatus,
   type IdeaApi,
 } from '@/lib/api/ideaBacklogApi'
+import { fetchAllProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+
+type ProjectRef = { name: string; parentProjectId: string | null }
 
 const LINKABLE_STATUSES = new Set<BackendIdeaStatus>([
   'submitted',
@@ -54,6 +57,7 @@ export function LinkProjectIdeaModal({
   const [submittingId, setSubmittingId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [projectsById, setProjectsById] = useState<Map<string, ProjectRef>>(new Map())
 
   const busy = submittingId !== null
 
@@ -79,6 +83,17 @@ export function LinkProjectIdeaModal({
     let cancelled = false
     setLoading(true)
     setLoadError(null)
+
+    // Names of the projects ideas currently live in, and which of them are sub-projects
+    // (a sub-project's single idea is locked to it).
+    void fetchAllProjects({ app_id: TECTONA_PROJECT_APP_ID })
+      .then((projects) => {
+        if (cancelled) return
+        setProjectsById(
+          new Map(projects.map((item) => [item.id, { name: item.name, parentProjectId: item.parent_project_id ?? null }])),
+        )
+      })
+      .catch(() => undefined)
 
     void listIdeas({ page_size: 200 })
       .then((response) => {
@@ -272,16 +287,18 @@ export function LinkProjectIdeaModal({
                 <ul className="divide-y divide-border/50">
                   {eligibleIdeas.map((idea) => {
                     const itemBusy = submittingId === idea.id
+                    const currentProject = idea.project_id ? projectsById.get(idea.project_id) : undefined
+                    const lockedToSubProject = Boolean(currentProject?.parentProjectId)
                     return (
                       <li key={idea.id}>
                         <button
                           type="button"
                           className={cn(
-                            'flex w-full items-start gap-3 px-3 py-3 text-left transition',
+                            'flex w-full items-start gap-3 px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60',
                             'hover:bg-background/80 focus-visible:bg-background/80 focus-visible:outline-none',
                             itemBusy && 'bg-background/70',
                           )}
-                          disabled={busy}
+                          disabled={busy || lockedToSubProject}
                           onClick={() => void handleLink(idea)}
                         >
                           <div className="min-w-0 flex-1">
@@ -297,9 +314,15 @@ export function LinkProjectIdeaModal({
                                 <span className="text-[10px] text-muted-foreground">{idea.category}</span>
                               ) : null}
                             </div>
-                            {idea.project_id ? (
+                            {lockedToSubProject ? (
+                              <div className="mt-1 text-[11px] font-medium text-violet-700">
+                                Locked: the only idea of sub-project "{currentProject?.name}".
+                              </div>
+                            ) : idea.project_id ? (
                               <div className="mt-1 text-[11px] font-medium text-amber-700">
-                                Linked to another project — linking moves it here, with its documents.
+                                {currentProject
+                                  ? `Will move from "${currentProject.name}", with its documents.`
+                                  : 'Linked to another project — linking moves it here, with its documents.'}
                               </div>
                             ) : null}
                           </div>

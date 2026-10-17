@@ -36,6 +36,11 @@ export interface ProjectApi {
   border_color: string | null
   folder_id: string | null
   folder_name: string | null
+  /** Program (top-level project) this sub-project belongs to; null for a top-level project. */
+  parent_project_id?: string | null
+  parent_project_name?: string | null
+  /** Number of sub-projects under this project (0 for a sub-project). */
+  child_project_count?: number
   members: {
     user_id: string
     display_name: string
@@ -77,6 +82,8 @@ export async function fetchProjects(params?: {
   folder_id?: string | null
   app_id?: string
   workspace_id?: string | null
+  /** A program's sub-projects; `null` lists top-level projects only. Omit for every project. */
+  parent_project_id?: string | null
 }): Promise<ProjectListResponse> {
   const sp = new URLSearchParams()
   sp.set('page', String(params?.page ?? 1))
@@ -91,6 +98,9 @@ export async function fetchProjects(params?: {
   if (params?.folder_id !== undefined) {
     sp.set('folder_id', params.folder_id === null ? 'null' : params.folder_id)
   }
+  if (params?.parent_project_id !== undefined) {
+    sp.set('parent_project_id', params.parent_project_id === null ? 'null' : params.parent_project_id)
+  }
   const res = await apiFetch(`${BASE_URL}/v1/projects?${sp}`, {
     headers: scopedServiceHeaders(params?.workspace_id),
   })
@@ -103,6 +113,7 @@ export async function fetchAllProjects(params?: {
   folder_id?: string | null
   app_id?: string
   workspace_id?: string | null
+  parent_project_id?: string | null
 }): Promise<ProjectApi[]> {
   const page_size = PROJECT_LIST_MAX_PAGE_SIZE
   const all: ProjectApi[] = []
@@ -136,6 +147,8 @@ export interface CreateProjectPayload {
   border_color?: string
   folder_id?: string | null
   workspace_id?: string | null
+  /** Creates the project as a sub-project of this top-level project. */
+  parent_project_id?: string | null
 }
 
 export async function createProject(payload: CreateProjectPayload): Promise<ProjectApi> {
@@ -157,6 +170,7 @@ export async function createProject(payload: CreateProjectPayload): Promise<Proj
       icon_name: payload.icon_name ?? null,
       border_color: payload.border_color ?? null,
       folder_id: payload.folder_id ?? null,
+      ...(payload.parent_project_id ? { parent_project_id: payload.parent_project_id } : {}),
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
     }),
   })
@@ -172,6 +186,8 @@ export interface UpdateProjectPayload {
   border_color?: string
   folder_id?: string | null
   workspace_id?: string | null
+  /** Move under a program, or `null` to detach into a standalone project. */
+  parent_project_id?: string | null
 }
 
 export async function updateProject(id: string, payload: UpdateProjectPayload): Promise<ProjectApi> {

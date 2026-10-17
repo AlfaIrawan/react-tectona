@@ -1191,6 +1191,21 @@ export function ProjectCard({
         </div>
       </div>
 
+      {(project.childProjectCount ?? 0) > 0 || project.parentProjectId ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {(project.childProjectCount ?? 0) > 0 ? (
+            <span className="rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-xs font-semibold text-violet-700">
+              Program · {project.childProjectCount} sub-project{project.childProjectCount === 1 ? '' : 's'}
+            </span>
+          ) : null}
+          {project.parentProjectId ? (
+            <span className="max-w-full truncate rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-xs font-semibold text-violet-700">
+              Sub-project of {project.parentProjectName ?? 'a program'}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {(isEditingTags || (project.tags && project.tags.length > 0)) && (
         <div className="mt-2">
           {isEditingTags ? (
