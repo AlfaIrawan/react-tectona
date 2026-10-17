@@ -30,7 +30,12 @@ function sourceKey(source: TemplateDocumentPreviewSource | null): string {
     : `tpl:${source.templateId}`
 }
 
-async function loadSourceHtml(source: TemplateDocumentPreviewSource): Promise<string> {
+/**
+ * The rendered document as DOM, never as an HTML string: docx-preview puts some blocks inside a
+ * paragraph (a picture is a <div> in the centred <p>), which an HTML parser would move out of the
+ * paragraph — the cover logo lost its centring that way. The node is sanitized in place and cloned.
+ */
+async function loadSourceDom(source: TemplateDocumentPreviewSource): Promise<HTMLElement> {
   let blob: Blob
   if (source.kind === 'document') {
     const attachmentId = source.attachmentId || await fetchLatestAttachmentId(source.documentId, source.projectId)
@@ -59,7 +64,8 @@ async function loadSourceHtml(source: TemplateDocumentPreviewSource): Promise<st
   })
   fixDocxPreviewCellDirection(holder)
   // The document's own <style> blocks are kept (scoped to DOCX_CLASS by docx-preview).
-  return DOMPurify.sanitize(holder.innerHTML, { ADD_TAGS: ['style'], FORCE_BODY: true })
+  DOMPurify.sanitize(holder, { ADD_TAGS: ['style'], IN_PLACE: true })
+  return holder
 }
 
 const DOCX_CLASS = 'tpl-docx'
@@ -111,6 +117,7 @@ export function TemplateDocumentPreview({
   onLocatedChange?: (keys: string[]) => void
   className?: string
 }) {
+  // Changes each time a document is loaded; the rendered DOM itself is in templateRef.
   const [html, setHtml] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -119,7 +126,7 @@ export function TemplateDocumentPreview({
   const [rebuilt, setRebuilt] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const pageRef = useRef<HTMLDivElement | null>(null)
-  const templateRef = useRef<HTMLTemplateElement | null>(null)
+  const templateRef = useRef<HTMLElement | null>(null)
   const lastOrderRef = useRef('')
   const selectedFromPageRef = useRef(false)
   const key = sourceKey(source)
@@ -133,13 +140,11 @@ export function TemplateDocumentPreview({
     let cancelled = false
     setLoading(true)
     setError('')
-    loadSourceHtml(source)
-      .then((value) => {
+    loadSourceDom(source)
+      .then((rendered) => {
         if (cancelled) return
-        const template = document.createElement('template')
-        template.innerHTML = value
-        templateRef.current = template
-        setHtml(value)
+        templateRef.current = rendered
+        setHtml(`${key}:${Date.now()}`)
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Couldn't open the document.")
@@ -163,7 +168,7 @@ export function TemplateDocumentPreview({
       page.replaceChildren()
       return
     }
-    page.replaceChildren(template.content.cloneNode(true))
+    page.replaceChildren(...Array.from((template.cloneNode(true) as HTMLElement).childNodes))
     const current = currentVersion !== null ? payloads[currentVersion] : undefined
     const located = locateParts(page, parts, current)
     for (const part of parts) {
