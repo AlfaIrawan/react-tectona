@@ -6,6 +6,7 @@ import {
   downloadTemplateAttachmentBlob,
   fetchLatestAttachmentId,
 } from '@/lib/api/documentKnowledgeApi'
+import { visualPxToLayoutPx } from '@/lib/uiScale'
 import { cn } from '@/lib/utils'
 import {
   annotatePart,
@@ -173,7 +174,8 @@ export function TemplateDocumentPreview({
     }
     const first = targets[0]
     if (!first) return
-    const top = first.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+    // Rects are visual px; scrollTop is layout px (ui-scale-lock zooms <html>).
+    const top = visualPxToLayoutPx(first.getBoundingClientRect().top - scroller.getBoundingClientRect().top) + scroller.scrollTop
     scroller.scrollTo({ top: Math.max(0, top - scroller.clientHeight / 4), behavior: 'smooth' })
   }, [selectedKey, rebuilt])
 
