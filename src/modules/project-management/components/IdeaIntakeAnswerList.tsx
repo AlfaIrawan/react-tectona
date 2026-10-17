@@ -2,8 +2,50 @@ import { useState } from 'react'
 import { AlertTriangle, Check, Loader2, PencilLine } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { IdeaIntakeAnswer } from '@/lib/api/tectonaAgentRuntimeApi'
+import type { IdeaIntakeAnswer, IdeaIntakeFollowup } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
+
+/** The AI's own follow-up questions from the brainstorm that the proposer answered (read-only). */
+export function IdeaIntakeFollowupList({ followups }: { followups: IdeaIntakeFollowup[] }) {
+  return (
+    <div className="space-y-2">
+      {followups.map((item, index) => (
+        <article
+          key={`${index}-${item.question}`}
+          className="grid gap-2 rounded-lg border border-border/70 bg-muted/10 p-3 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] sm:gap-4"
+        >
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">AI question</p>
+            <p className="text-sm leading-5 text-foreground">{item.question}</p>
+          </div>
+          <div className="sm:border-l sm:border-border/70 sm:pl-4">
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">Answer</p>
+            <p className="whitespace-pre-wrap text-sm leading-5 text-foreground/90">{item.answer}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+  )
+}
+
+/** Follow-up questions skipped in the brainstorm: sent to the generator as "to be confirmed". */
+export function IdeaIntakeOpenPoints({ points }: { points: string[] }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs leading-5 text-muted-foreground">
+        Skipped in the brainstorm. The generator is told to mark these as to be confirmed, not to fill them in.
+      </p>
+      <ul className="space-y-1.5">
+        {points.map((point) => (
+          <li key={point} className="flex items-start gap-2 rounded-lg border border-dashed border-border/80 px-3 py-2 text-sm leading-5 text-foreground/90">
+            <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
+            {point}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 
 /**
  * The idea's Idea Intake answers in the Generate dialog. An answer the brainstorm recorded wrongly

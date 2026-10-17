@@ -136,6 +136,8 @@ import {
   type GenerateBenefitAnalysisResponse,
   type GenerateIdeaConversionResponse,
   type IdeaIntakeAnswer,
+  type IdeaIntakeAnswers,
+  type IdeaIntakeFollowup,
   type RuntimeSummaryDecisionSignal,
   type RuntimeSummaryKpiCard,
   type RuntimeSummaryReadinessSignal,
@@ -160,7 +162,11 @@ import {
   type TemplateAgentSchema,
 } from '@/lib/api/documentKnowledgeApi'
 import { TemplatePartChoices } from '@/modules/project-management/components/TemplatePartChoices'
-import { IdeaIntakeAnswerList } from '@/modules/project-management/components/IdeaIntakeAnswerList'
+import {
+  IdeaIntakeAnswerList,
+  IdeaIntakeFollowupList,
+  IdeaIntakeOpenPoints,
+} from '@/modules/project-management/components/IdeaIntakeAnswerList'
 import {
   defaultPartChoices,
   keysToGenerate,
@@ -3814,6 +3820,9 @@ export function IdeaDetailPage() {
   const [ideaDocGenerateSource, setIdeaDocGenerateSource] = useState('')
   const [ideaDocGenerateIntakeBlock, setIdeaDocGenerateIntakeBlock] = useState('')
   const [ideaDocGenerateIntakeAnswers, setIdeaDocGenerateIntakeAnswers] = useState<IdeaIntakeAnswer[]>([])
+  // The AI's own follow-up questions the proposer answered, and those skipped and still open.
+  const [ideaDocGenerateIntakeFollowups, setIdeaDocGenerateIntakeFollowups] = useState<IdeaIntakeFollowup[]>([])
+  const [ideaDocGenerateIntakeOpenPoints, setIdeaDocGenerateIntakeOpenPoints] = useState<string[]>([])
   const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
   const [urdSendBusy, setUrdSendBusy] = useState(false)
@@ -3936,11 +3945,16 @@ export function IdeaDetailPage() {
   )
   // Also shown when every answer is waiting for review (no block in the source yet), so the
   // proposer can correct them.
-  const showIdeaDocIntakeAnswers = ideaDocGenerateIntakeAnswers.length > 0
-    && (ideaDocIntakeBlockInSource || !ideaDocGenerateIntakeBlock)
+  const showIdeaDocIntakeAnswers = (
+    ideaDocGenerateIntakeAnswers.length > 0
+    || ideaDocGenerateIntakeFollowups.length > 0
+    || ideaDocGenerateIntakeOpenPoints.length > 0
+  ) && (ideaDocIntakeBlockInSource || !ideaDocGenerateIntakeBlock)
   const saveIdeaDocIntakeAnswer = useCallback(async (itemId: string, answer: string) => {
     const next = await correctIdeaIntakeAnswer(idea.id, itemId, { answer, title: idea.title, workspaceId: idea.workspace })
     setIdeaDocGenerateIntakeAnswers(next.answers)
+    setIdeaDocGenerateIntakeFollowups(next.followups)
+    setIdeaDocGenerateIntakeOpenPoints(next.openPoints)
     setIdeaDocGenerateIntakeBlock(next.block)
     // The answers lead the source context: swap the old block for the new one, keeping the rest.
     setIdeaDocGenerateSource((source) => {
@@ -7348,9 +7362,11 @@ export function IdeaDetailPage() {
       // The proposer's confirmed Idea Intake answers come first: the description is a summary in
       // which facts such as the impacted business unit got buried, and fills picked something else.
       const intake = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace })
-        .catch(() => ({ block: '', answers: [] as IdeaIntakeAnswer[] }))
+        .catch((): IdeaIntakeAnswers => ({ block: '', answers: [], followups: [], openPoints: [] }))
       setIdeaDocGenerateIntakeBlock(intake.block)
       setIdeaDocGenerateIntakeAnswers(intake.answers)
+      setIdeaDocGenerateIntakeFollowups(intake.followups)
+      setIdeaDocGenerateIntakeOpenPoints(intake.openPoints)
       setIdeaDocGenerateSource([intake.block, narrative].filter(Boolean).join('\n\n'))
       setIdeaDocSourceMode('preview')
       setIdeaDocGenerateOpen(true)
@@ -15563,6 +15579,22 @@ export function IdeaDetailPage() {
                                       disabled={ideaDocGenerateBusy}
                                       onSave={saveIdeaDocIntakeAnswer}
                                     />
+                                  </section>
+                                ) : null}
+                                {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeFollowups.length > 0 ? (
+                                  <section aria-label="AI follow-up questions" className="space-y-2.5">
+                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
+                                      AI follow-up questions
+                                    </h3>
+                                    <IdeaIntakeFollowupList followups={ideaDocGenerateIntakeFollowups} />
+                                  </section>
+                                ) : null}
+                                {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeOpenPoints.length > 0 ? (
+                                  <section aria-label="Not answered yet" className="space-y-2.5">
+                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
+                                      Not answered yet
+                                    </h3>
+                                    <IdeaIntakeOpenPoints points={ideaDocGenerateIntakeOpenPoints} />
                                   </section>
                                 ) : null}
                                 {ideaDocGenerateSourcePreview ? (

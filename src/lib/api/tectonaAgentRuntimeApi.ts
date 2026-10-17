@@ -2110,6 +2110,36 @@ export interface IdeaIntakeAnswer {
   suggestion?: string
 }
 
+/** One of the AI's own follow-up (non-mandatory) questions, with the proposer's answer. */
+export interface IdeaIntakeFollowup {
+  question: string
+  answer: string
+}
+
+export interface IdeaIntakeAnswers {
+  answers: IdeaIntakeAnswer[]
+  followups: IdeaIntakeFollowup[]
+  /** Follow-up questions skipped in the brainstorm and never answered. */
+  openPoints: string[]
+  block: string
+}
+
+type IdeaIntakeAnswersBody = {
+  answers?: IdeaIntakeAnswer[]
+  followups?: IdeaIntakeFollowup[]
+  open_points?: string[]
+  block?: string
+}
+
+function toIdeaIntakeAnswers(body: IdeaIntakeAnswersBody): IdeaIntakeAnswers {
+  return {
+    answers: body.answers ?? [],
+    followups: body.followups ?? [],
+    openPoints: body.open_points ?? [],
+    block: body.block ?? '',
+  }
+}
+
 /** Remember the idea a brainstorm became, so documents for the idea read its intake answers. */
 export async function linkIdeaDraftJobToIdea(jobId: string, ideaId: string): Promise<boolean> {
   const res = await fetchWithTimeout(
@@ -2128,7 +2158,7 @@ export async function linkIdeaDraftJobToIdea(jobId: string, ideaId: string): Pro
 export async function fetchIdeaIntakeAnswers(
   ideaId: string,
   options: { title?: string; workspaceId?: string | null } = {},
-): Promise<{ answers: IdeaIntakeAnswer[]; block: string }> {
+): Promise<IdeaIntakeAnswers> {
   const params = new URLSearchParams()
   if (options.title) params.set('title', options.title)
   if (options.workspaceId) params.set('workspace_id', options.workspaceId)
@@ -2137,8 +2167,7 @@ export async function fetchIdeaIntakeAnswers(
     { method: 'GET' },
     15_000,
   )
-  const body = await handleResponse<{ answers?: IdeaIntakeAnswer[]; block?: string }>(res)
-  return { answers: body.answers ?? [], block: body.block ?? '' }
+  return toIdeaIntakeAnswers(await handleResponse<IdeaIntakeAnswersBody>(res))
 }
 
 /** Replace a recorded Idea Intake answer with the proposer's own; returns the answers again. */
@@ -2146,7 +2175,7 @@ export async function correctIdeaIntakeAnswer(
   ideaId: string,
   itemId: string,
   input: { answer: string; title?: string; workspaceId?: string | null },
-): Promise<{ answers: IdeaIntakeAnswer[]; block: string }> {
+): Promise<IdeaIntakeAnswers> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/intake-answers/${encodeURIComponent(itemId)}`,
     {
@@ -2156,8 +2185,7 @@ export async function correctIdeaIntakeAnswer(
     },
     15_000,
   )
-  const body = await handleResponse<{ answers?: IdeaIntakeAnswer[]; block?: string }>(res)
-  return { answers: body.answers ?? [], block: body.block ?? '' }
+  return toIdeaIntakeAnswers(await handleResponse<IdeaIntakeAnswersBody>(res))
 }
 
 export async function startIdeaDraftJob(
