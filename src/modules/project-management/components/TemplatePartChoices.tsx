@@ -125,9 +125,15 @@ export function TemplatePartChoices({
 }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set())
   const rowRefs = useRef(new Map<string, HTMLLIElement>())
-  // A part selected in the preview is brought into view here.
+  // A part selected in the preview is brought into view here. Only when it is out of view: a second
+  // smooth scroll started at the same time cancels the preview's own scroll to the part.
   useEffect(() => {
-    if (selectedKey) rowRefs.current.get(selectedKey)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    const row = selectedKey ? rowRefs.current.get(selectedKey) : undefined
+    const list = row?.parentElement
+    if (!row || !list) return
+    const rowBox = row.getBoundingClientRect()
+    const listBox = list.getBoundingClientRect()
+    if (rowBox.top < listBox.top || rowBox.bottom > listBox.bottom) row.scrollIntoView({ block: 'nearest' })
   }, [selectedKey])
   const regenerated = parts.filter((part) => (choices[part.key] ?? 'generate') === 'generate').length
   const setAll = (choice: 'keep' | 'generate') => onChange(Object.fromEntries(parts.map((part) => [

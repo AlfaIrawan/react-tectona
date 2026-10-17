@@ -162,6 +162,7 @@ import {
   type TemplateAgentSchema,
 } from '@/lib/api/documentKnowledgeApi'
 import { TemplatePartChoices } from '@/modules/project-management/components/TemplatePartChoices'
+import { useLayoutWidthBelow } from '@/lib/useLayoutWidthBelow'
 import {
   TemplateDocumentPreview,
   type TemplateDocumentPreviewSource,
@@ -3875,6 +3876,9 @@ export function IdeaDetailPage() {
   const [ideaDocSourceOpen, setIdeaDocSourceOpen] = useState(false)
   const [ideaDocWorkView, setIdeaDocWorkView] = useState<'parts' | 'preview'>('parts')
   const [ideaDocLocatedOrder, setIdeaDocLocatedOrder] = useState<string[]>([])
+  // Below this layout width the parts and the document take turns instead of sharing the row.
+  const [ideaDocWorkspaceEl, setIdeaDocWorkspaceEl] = useState<HTMLDivElement | null>(null)
+  const ideaDocWorkspaceNarrow = useLayoutWidthBelow(ideaDocWorkspaceEl, 1024)
   useEffect(() => {
     if (!ideaDocGenerateOpen) return
     setIdeaDocSelectedPartKey(null)
@@ -3890,9 +3894,9 @@ export function IdeaDetailPage() {
   }, [ideaDocLocatedOrder, ideaDocParts])
   const selectIdeaDocPart = useCallback((key: string) => {
     setIdeaDocSelectedPartKey(key)
-    // On a narrow screen the parts and the document take turns: show where the part is.
-    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) setIdeaDocWorkView('preview')
-  }, [])
+    // When the parts and the document take turns, show where the part is.
+    if (ideaDocWorkspaceNarrow) setIdeaDocWorkView('preview')
+  }, [ideaDocWorkspaceNarrow])
   const ideaDocPreviewSource = useMemo<TemplateDocumentPreviewSource | null>(() => {
     const target = ideaDocRegenerateTarget
     if (target) {
@@ -15466,9 +15470,9 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
 
-                    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <div ref={setIdeaDocWorkspaceEl} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                       <div className="shrink-0 space-y-2 border-b border-border/70 px-5 py-3 sm:px-6">
-                        <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:gap-4">
+                        <div className={cn('flex gap-2', ideaDocWorkspaceNarrow ? 'flex-col' : 'flex-row items-end gap-4')}>
                           <div className="min-w-0 flex-1 space-y-1.5">
                             <Label
                               htmlFor="idea-doc-template"
@@ -15540,7 +15544,7 @@ export function IdeaDetailPage() {
                       </div>
 
                       <div
-                        className="flex shrink-0 items-center gap-1 border-b border-border/70 px-5 py-2 sm:px-6 lg:hidden"
+                        className={cn('shrink-0 items-center gap-1 border-b border-border/70 px-5 py-2 sm:px-6', ideaDocWorkspaceNarrow ? 'flex' : 'hidden')}
                         role="tablist"
                         aria-label="Generate workspace view"
                       >
@@ -15561,11 +15565,11 @@ export function IdeaDetailPage() {
                         ))}
                       </div>
 
-                      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)]">
+                      <div className={cn('grid min-h-0 flex-1', ideaDocWorkspaceNarrow ? 'grid-cols-1' : 'grid-cols-[minmax(0,35fr)_minmax(0,65fr)]')}>
                         <div
                           className={cn(
-                            'min-h-0 flex-col px-5 py-4 sm:px-6 lg:flex lg:border-r lg:border-border/70',
-                            ideaDocWorkView === 'parts' ? 'flex' : 'hidden',
+                            'min-h-0 flex-col px-5 py-4 sm:px-6',
+                            ideaDocWorkspaceNarrow ? (ideaDocWorkView === 'parts' ? 'flex' : 'hidden') : 'flex border-r border-border/70',
                           )}
                         >
                           {ideaDocParts.length > 0 ? (
@@ -15596,8 +15600,8 @@ export function IdeaDetailPage() {
                         </div>
                         <div
                           className={cn(
-                            'min-h-0 flex-col bg-muted/10 px-5 py-4 sm:px-6 lg:flex',
-                            ideaDocWorkView === 'preview' ? 'flex' : 'hidden',
+                            'min-h-0 flex-col bg-muted/10 px-5 py-4 sm:px-6',
+                            !ideaDocWorkspaceNarrow || ideaDocWorkView === 'preview' ? 'flex' : 'hidden',
                           )}
                         >
                           <TemplateDocumentPreview
