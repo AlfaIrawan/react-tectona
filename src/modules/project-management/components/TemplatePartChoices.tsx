@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ChevronRight, RotateCw, Sparkles } from 'lucide-react'
 import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
@@ -96,6 +96,9 @@ export function TemplatePartChoices({
   loading,
   disabled,
   onChange,
+  selectedKey = null,
+  onSelect,
+  newDocument = false,
   className,
 }: {
   parts: TemplatePart[]
@@ -113,9 +116,19 @@ export function TemplatePartChoices({
   loading: boolean
   disabled: boolean
   onChange: (next: Record<string, TemplatePartChoice>) => void
+  /** The part shown in the document preview. */
+  selectedKey?: string | null
+  onSelect?: (key: string) => void
+  /** No document yet: every part is written, so there is nothing to choose per part. */
+  newDocument?: boolean
   className?: string
 }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set())
+  const rowRefs = useRef(new Map<string, HTMLLIElement>())
+  // A part selected in the preview is brought into view here.
+  useEffect(() => {
+    if (selectedKey) rowRefs.current.get(selectedKey)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selectedKey])
   const regenerated = parts.filter((part) => (choices[part.key] ?? 'generate') === 'generate').length
   const setAll = (choice: 'keep' | 'generate') => onChange(Object.fromEntries(parts.map((part) => [
     part.key, choice === 'keep' && !keepable.has(part.key) ? 'generate' : choice,
@@ -141,12 +154,12 @@ export function TemplatePartChoices({
   )
 
   return (
-    <div className={cn('space-y-2 lg:flex lg:min-h-0 lg:flex-col', className)}>
+    <div className={cn('flex min-h-0 flex-col gap-2', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          Parts to regenerate
+          {newDocument ? 'Parts' : 'Parts to regenerate'}
         </p>
-        <div className="flex items-center gap-1.5">
+        <div className={cn('flex items-center gap-1.5', newDocument && 'hidden')}>
           <button
             type="button"
             className="rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
@@ -166,9 +179,11 @@ export function TemplatePartChoices({
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        {loading
-          ? `Reading V${currentVersion}…`
-          : `${regenerated} of ${parts.length} parts will be written again. Every other part stays as chosen. Title, owner, number and version are always updated.`}
+        {newDocument
+          ? `New document: the agent writes all ${parts.length} parts. Select one to find it in the template.`
+          : loading
+            ? `Reading V${currentVersion}…`
+            : `${regenerated} of ${parts.length} parts will be written again. Every other part stays as chosen. Title, owner, number and version are always updated.`}
       </p>
       {currentFailed ? (
         <div
@@ -182,7 +197,7 @@ export function TemplatePartChoices({
           {retryButton(currentVersion)}
         </div>
       ) : null}
-      <ul className="scroll-reveal divide-y divide-border/50 rounded-xl border border-border/70 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+      <ul className="scroll-reveal min-h-0 flex-1 divide-y divide-border/50 overflow-y-auto rounded-xl border border-border/70">
         {parts.map((part) => {
           const choice = choices[part.key] ?? 'generate'
           const value = choice === 'keep' ? 'keep' : choice === 'generate' ? 'generate' : `v${choice}`
@@ -195,28 +210,53 @@ export function TemplatePartChoices({
           const panelId = `template-part-${part.key}`
 
           let line: { text: string; tone: 'value' | 'empty' | 'generate' | 'error' }
-          if (loading) line = { text: `Reading V${currentVersion}…`, tone: 'empty' }
+          if (newDocument) line = { text: 'Written by AI', tone: 'generate' }
+          else if (loading) line = { text: `Reading V${currentVersion}…`, tone: 'empty' }
           else if (choice === 'generate') line = { text: 'Will be written again by AI', tone: 'generate' }
           else if (pickedFailed) line = { text: `Couldn't read V${pickedVersion}`, tone: 'error' }
           else if (pickedVersion !== null && !pickedLoaded) line = { text: `Reading V${pickedVersion}…`, tone: 'empty' }
           else if (pickedVersion !== null) line = picked ? { text: partPreviewSummary(picked), tone: 'value' } : { text: `Empty in V${pickedVersion}`, tone: 'empty' }
           else line = current ? { text: partPreviewSummary(current), tone: 'value' } : { text: currentEmptyText, tone: currentFailed ? 'error' : 'empty' }
 
+          const selected = selectedKey === part.key
           return (
-            <li key={part.key} className={cn(choice === 'generate' ? 'bg-primary/5' : '')}>
-              <div className="flex items-start justify-between gap-3 px-3 py-2">
+            <li
+              key={part.key}
+              ref={(el) => {
+                if (el) rowRefs.current.set(part.key, el)
+                else rowRefs.current.delete(part.key)
+              }}
+              className={cn(
+                choice === 'generate' && !newDocument ? 'bg-primary/5' : '',
+                selected && 'bg-primary/10 shadow-[inset_3px_0_0_0_hsl(var(--primary))]',
+              )}
+            >
+              <div className="flex items-start justify-between gap-2 px-3 py-2">
+                {newDocument ? (
+                  <span className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                ) : (
+                  <button
+                    type="button"
+                    className="group mt-0.5 shrink-0 rounded text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    aria-label={expanded ? `Hide ${part.label} content` : `Show ${part.label} content`}
+                    aria-expanded={expanded}
+                    aria-controls={panelId}
+                    disabled={loading}
+                    onClick={() => toggle(part.key)}
+                  >
+                    <ChevronRight
+                      aria-hidden="true"
+                      className={cn('h-4 w-4 transition-transform', expanded ? 'rotate-90' : '')}
+                    />
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="group flex min-w-0 flex-1 items-start gap-1.5 text-left"
-                  aria-expanded={expanded}
-                  aria-controls={panelId}
-                  disabled={loading}
-                  onClick={() => toggle(part.key)}
+                  className="flex min-w-0 flex-1 items-start text-left"
+                  aria-pressed={selected}
+                  title="Show in the document preview"
+                  onClick={() => onSelect?.(part.key)}
                 >
-                  <ChevronRight
-                    aria-hidden="true"
-                    className={cn('mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:text-foreground', expanded ? 'rotate-90' : '')}
-                  />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-2">
                       <span className="truncate text-sm text-foreground" title={part.label}>{part.label}</span>
@@ -241,7 +281,7 @@ export function TemplatePartChoices({
                     ) : null}
                   </span>
                 </button>
-                <Select
+                {newDocument ? null : <Select
                   aria-label={`What to do with ${part.label}`}
                   className="h-8 w-40 shrink-0 rounded-lg text-xs"
                   value={value}
@@ -261,7 +301,7 @@ export function TemplatePartChoices({
                   {otherVersions.map((version) => (
                     <option key={version} value={`v${version}`}>From V{version}</option>
                   ))}
-                </Select>
+                </Select>}
               </div>
               {pickedFailed && pickedVersion !== null ? (
                 <div className="-mt-1 flex items-center gap-1 px-3 pb-2 pl-9">{retryButton(pickedVersion)}</div>

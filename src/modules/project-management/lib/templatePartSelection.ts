@@ -22,7 +22,15 @@ export function isSystemFilledKey(key: string): boolean {
 }
 
 export type TemplatePartKind = 'field' | 'section' | 'table'
-export type TemplatePart = { key: string; label: string; kind: TemplatePartKind }
+export type TemplatePart = {
+  key: string
+  label: string
+  kind: TemplatePartKind
+  /** Where the template puts it, when the schema knows (a field's table row, a repeater's table). */
+  location?: { table_index?: number; row_index?: number } | null
+  /** A table part's column fields, in order. */
+  fields?: string[]
+}
 /** 'keep': the current version's value. A number: that version's value. */
 export type TemplatePartChoice = 'keep' | 'generate' | number
 
@@ -43,7 +51,10 @@ export function templateParts(schema: TemplateAgentSchema | null | undefined): T
   }
   for (const item of schema?.placeholders ?? []) {
     const key = String(item?.key ?? '').trim()
-    if (key && !isSystemFilledKey(key)) add({ key, label: String(item.label || readableName(key)), kind: 'field' })
+    if (key && !isSystemFilledKey(key)) {
+      const location = item.location && typeof item.location.table_index === 'number' ? item.location : null
+      add({ key, label: String(item.label || readableName(key)), kind: 'field', location })
+    }
   }
   for (const item of schema?.sections ?? []) {
     const key = String(item?.id ?? '').trim()
@@ -51,7 +62,9 @@ export function templateParts(schema: TemplateAgentSchema | null | undefined): T
   }
   for (const item of schema?.repeaters ?? []) {
     const key = String(item?.collection || item?.id || '').trim()
-    if (key && !item.parent_collection) add({ key, label: readableName(key), kind: 'table' })
+    if (key && !item.parent_collection) {
+      add({ key, label: readableName(key), kind: 'table', location: item.location ?? null, fields: item.fields ?? [] })
+    }
   }
   return parts
 }

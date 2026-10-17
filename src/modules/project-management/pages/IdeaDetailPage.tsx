@@ -163,6 +163,10 @@ import {
 } from '@/lib/api/documentKnowledgeApi'
 import { TemplatePartChoices } from '@/modules/project-management/components/TemplatePartChoices'
 import {
+  TemplateDocumentPreview,
+  type TemplateDocumentPreviewSource,
+} from '@/modules/project-management/components/TemplateDocumentPreview'
+import {
   IdeaIntakeAnswerList,
   IdeaIntakeFollowupList,
   IdeaIntakeOpenPoints,
@@ -3865,6 +3869,44 @@ export function IdeaDetailPage() {
   // Versions whose content could not be read; not fetched again until the user retries.
   const [ideaDocPartFailedVersions, setIdeaDocPartFailedVersions] = useState<number[]>([])
   const [ideaDocPartsReload, setIdeaDocPartsReload] = useState(0)
+  // Generate dialog workspace: the part shown in the document preview, the source context drawer,
+  // which pane a narrow screen shows, and the parts' order in the document.
+  const [ideaDocSelectedPartKey, setIdeaDocSelectedPartKey] = useState<string | null>(null)
+  const [ideaDocSourceOpen, setIdeaDocSourceOpen] = useState(false)
+  const [ideaDocWorkView, setIdeaDocWorkView] = useState<'parts' | 'preview'>('parts')
+  const [ideaDocLocatedOrder, setIdeaDocLocatedOrder] = useState<string[]>([])
+  useEffect(() => {
+    if (!ideaDocGenerateOpen) return
+    setIdeaDocSelectedPartKey(null)
+    setIdeaDocSourceOpen(false)
+    setIdeaDocWorkView('parts')
+  }, [ideaDocGenerateOpen, ideaDocGenerateTemplateId])
+  const ideaDocPartsInDocumentOrder = useMemo(() => {
+    const position = new Map(ideaDocLocatedOrder.map((key, index) => [key, index]))
+    return ideaDocParts
+      .map((part, index) => ({ part, index }))
+      .sort((a, b) => (position.get(a.part.key) ?? 10_000 + a.index) - (position.get(b.part.key) ?? 10_000 + b.index))
+      .map(({ part }) => part)
+  }, [ideaDocLocatedOrder, ideaDocParts])
+  const selectIdeaDocPart = useCallback((key: string) => {
+    setIdeaDocSelectedPartKey(key)
+    // On a narrow screen the parts and the document take turns: show where the part is.
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) setIdeaDocWorkView('preview')
+  }, [])
+  const ideaDocPreviewSource = useMemo<TemplateDocumentPreviewSource | null>(() => {
+    const target = ideaDocRegenerateTarget
+    if (target) {
+      return {
+        kind: 'document',
+        documentId: target.id,
+        projectId: target.project_id ?? null,
+        label: `${ideaDocumentType(target) || 'Document'} V${target.current_version_no || 1} with your choices`,
+      }
+    }
+    return selectedIdeaDocGenerateTemplate
+      ? { kind: 'template', templateId: selectedIdeaDocGenerateTemplate.id, label: `Template ${selectedIdeaDocGenerateTemplate.name}` }
+      : null
+  }, [ideaDocRegenerateTarget, selectedIdeaDocGenerateTemplate])
   const retryIdeaDocPartVersion = useCallback((version: number) => {
     if (version === ideaDocRegenerateVersion) setIdeaDocPartsReload((count) => count + 1)
     else setIdeaDocPartFailedVersions((prev) => prev.filter((item) => item !== version))
@@ -15424,71 +15466,111 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
 
-                    <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] lg:overflow-hidden">
-                      <div className="min-h-0 space-y-4 px-5 py-5 sm:px-6 lg:flex lg:flex-col lg:overflow-hidden">
-                        <div className="space-y-2 lg:shrink-0">
-                          <Label
-                            htmlFor="idea-doc-template"
-                            className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
-                          >
-                            Template
-                          </Label>
-                          <Select
-                            id="idea-doc-template"
-                            className="rounded-xl"
-                            value={ideaDocGenerateTemplateId}
-                            disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
-                            onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
-                          >
-                            <option value="" disabled>
-                              {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
-                                ? 'Loading templates…'
-                                : ideaDocGenerateTemplates.length === 0
-                                  ? 'No template is available at this stage'
-                                  : 'Select template…'}
-                            </option>
-                            {ideaDocGenerateTemplates.map((template) => (
-                              <option key={template.id} value={template.id}>
-                                {template.name}
-                              </option>
-                            ))}
-                          </Select>
-                          {ideaDocWorkflowGate.enforced ? (
-                            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                              {ideaDocWorkflowGate.unavailable
-                                ? 'The approval workflow could not be checked right now, so no document can be generated. Try again in a moment.'
-                                : ideaDocWorkflowGate.allowedKinds?.length
-                                  ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
-                                  : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
-                              {ideaDocWorkflowGate.unavailable ? null : ' Deleting that workflow makes every template available again.'}
-                            </p>
-                          ) : null}
-                          {selectedIdeaDocGenerateTemplate ? (
-                            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5">
-                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background text-blue-700 ring-1 ring-border">
-                                <FileText className="h-3.5 w-3.5" aria-hidden />
-                              </span>
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-medium text-foreground">
-                                  {selectedIdeaDocGenerateTemplate.name}
-                                </p>
-                                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                      <div className="shrink-0 space-y-2 border-b border-border/70 px-5 py-3 sm:px-6">
+                        <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:gap-4">
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            <Label
+                              htmlFor="idea-doc-template"
+                              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                            >
+                              Template
+                            </Label>
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Select
+                                id="idea-doc-template"
+                                className="min-w-0 flex-1 rounded-xl"
+                                value={ideaDocGenerateTemplateId}
+                                disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
+                                onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
+                              >
+                                <option value="" disabled>
+                                  {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
+                                    ? 'Loading templates…'
+                                    : ideaDocGenerateTemplates.length === 0
+                                      ? 'No template is available at this stage'
+                                      : 'Select template…'}
+                                </option>
+                                {ideaDocGenerateTemplates.map((template) => (
+                                  <option key={template.id} value={template.id}>
+                                    {template.name}
+                                  </option>
+                                ))}
+                              </Select>
+                              {selectedIdeaDocGenerateTemplate ? (
+                                <span className="hidden shrink-0 text-[11px] text-muted-foreground xl:inline">
                                   {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
                                   {' · '}
                                   v{selectedIdeaDocGenerateTemplate.version}
                                   {selectedIdeaDocGenerateTemplate.category_code
                                     ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
                                     : ''}
-                                </p>
-                              </div>
+                                </span>
+                              ) : null}
                             </div>
-                          ) : null}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(enterpriseSecondaryButtonClass(), 'shrink-0 justify-center gap-2')}
+                            aria-haspopup="dialog"
+                            aria-expanded={ideaDocSourceOpen}
+                            aria-controls="idea-doc-source-drawer"
+                            onClick={() => setIdeaDocSourceOpen(true)}
+                          >
+                            <FileText className="h-4 w-4 shrink-0" aria-hidden />
+                            View source context
+                            {ideaDocGenerateSourceChars > 0 ? (
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars
+                              </span>
+                            ) : null}
+                          </Button>
                         </div>
+                        {ideaDocWorkflowGate.enforced ? (
+                          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                            {ideaDocWorkflowGate.unavailable
+                              ? 'The approval workflow could not be checked right now, so no document can be generated. Try again in a moment.'
+                              : ideaDocWorkflowGate.allowedKinds?.length
+                                ? `This idea follows an approval workflow. You can generate ${ideaDocWorkflowGate.allowedKinds.join(', ')} now. Later documents stay locked until the earlier approvals finish.`
+                                : 'This idea follows an approval workflow. No document can be generated until the current approval step is finished.'}
+                            {ideaDocWorkflowGate.unavailable ? null : ' Deleting that workflow makes every template available again.'}
+                          </p>
+                        ) : null}
+                      </div>
 
-                        {ideaDocRegenerateTarget && ideaDocParts.length > 0 ? (
-                          <div className="lg:min-h-0 lg:flex-1">
+                      <div
+                        className="flex shrink-0 items-center gap-1 border-b border-border/70 px-5 py-2 sm:px-6 lg:hidden"
+                        role="tablist"
+                        aria-label="Generate workspace view"
+                      >
+                        {([['parts', 'Parts'], ['preview', 'Document preview']] as const).map(([view, label]) => (
+                          <button
+                            key={view}
+                            type="button"
+                            role="tab"
+                            aria-selected={ideaDocWorkView === view}
+                            className={cn(
+                              'inline-flex h-8 flex-1 items-center justify-center rounded-lg px-3 text-xs font-medium transition-colors',
+                              ideaDocWorkView === view ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                            )}
+                            onClick={() => setIdeaDocWorkView(view)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)]">
+                        <div
+                          className={cn(
+                            'min-h-0 flex-col px-5 py-4 sm:px-6 lg:flex lg:border-r lg:border-border/70',
+                            ideaDocWorkView === 'parts' ? 'flex' : 'hidden',
+                          )}
+                        >
+                          {ideaDocParts.length > 0 ? (
                             <TemplatePartChoices
-                              parts={ideaDocParts}
+                              parts={ideaDocPartsInDocumentOrder}
                               choices={ideaDocPartChoices}
                               currentVersion={ideaDocRegenerateVersion}
                               otherVersions={ideaDocPartVersions}
@@ -15499,25 +15581,87 @@ export function IdeaDetailPage() {
                               loading={ideaDocPartsLoading}
                               disabled={ideaDocGenerateBusy}
                               onChange={setIdeaDocPartChoices}
-                              className="lg:h-full"
+                              selectedKey={ideaDocSelectedPartKey}
+                              onSelect={selectIdeaDocPart}
+                              newDocument={!ideaDocRegenerateTarget}
+                              className="min-h-0 flex-1"
                             />
-                          </div>
-                        ) : null}
+                          ) : (
+                            <p className="text-sm text-muted-foreground">
+                              {selectedIdeaDocGenerateTemplate
+                                ? 'This template lists no parts to choose from. The agent writes the whole document.'
+                                : 'Select a template to see its parts.'}
+                            </p>
+                          )}
+                        </div>
+                        <div
+                          className={cn(
+                            'min-h-0 flex-col bg-muted/10 px-5 py-4 sm:px-6 lg:flex',
+                            ideaDocWorkView === 'preview' ? 'flex' : 'hidden',
+                          )}
+                        >
+                          <TemplateDocumentPreview
+                            source={ideaDocPreviewSource}
+                            parts={ideaDocParts}
+                            choices={ideaDocPartChoices}
+                            payloads={ideaDocPartPayloads}
+                            currentVersion={ideaDocRegenerateTarget ? ideaDocRegenerateVersion : null}
+                            selectedKey={ideaDocSelectedPartKey}
+                            onSelect={setIdeaDocSelectedPartKey}
+                            onLocatedChange={setIdeaDocLocatedOrder}
+                            className="min-h-0 flex-1"
+                          />
+                        </div>
                       </div>
 
-                      <div className="min-h-0 space-y-4 border-t border-border/70 bg-muted/10 px-5 py-5 sm:px-6 lg:flex lg:flex-col lg:overflow-hidden lg:border-l lg:border-t-0">
-                        <div className="space-y-2 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
-                          <div className="flex items-center justify-between gap-3">
-                            <Label
-                              htmlFor="idea-doc-source"
-                              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
-                            >
+                      {/* Source context: a drawer over the workspace. It stays mounted, so closing it keeps
+                          the part choices, the preview position and the source being edited. */}
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        aria-hidden
+                        className={cn(
+                          'absolute inset-0 z-20 bg-slate-950/30 transition-opacity',
+                          ideaDocSourceOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+                        )}
+                        onClick={() => setIdeaDocSourceOpen(false)}
+                      />
+                      <div
+                        id="idea-doc-source-drawer"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="idea-doc-source-title"
+                        aria-hidden={!ideaDocSourceOpen}
+                        className={cn(
+                          'absolute inset-y-0 right-0 z-30 flex w-[min(760px,100%)] flex-col border-l border-border bg-background shadow-2xl transition-[transform,visibility] duration-200',
+                          ideaDocSourceOpen ? 'visible translate-x-0' : 'invisible translate-x-full',
+                        )}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            event.stopPropagation()
+                            setIdeaDocSourceOpen(false)
+                          }
+                        }}
+                      >
+                        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 px-5 py-3">
+                          <div className="min-w-0">
+                            <h4 id="idea-doc-source-title" className="text-sm font-semibold text-foreground">
                               Source context
-                            </Label>
-                            <span className="text-[11px] tabular-nums text-muted-foreground">
-                              {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars
-                            </span>
+                            </h4>
+                            <p className="text-[11px] tabular-nums text-muted-foreground">
+                              {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars sent to the generator
+                            </p>
                           </div>
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+                            aria-label="Close source context"
+                            onClick={() => setIdeaDocSourceOpen(false)}
+                          >
+                            <X className="h-4 w-4" aria-hidden />
+                          </button>
+                        </div>
+                        <div className="flex min-h-0 flex-1 flex-col gap-2 px-5 py-4">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="text-xs text-muted-foreground">
                               {ideaDocSourceMode === 'preview' ? 'Formatted source used to fill the template' : 'Edit the source text sent to the generator'}
@@ -15556,7 +15700,7 @@ export function IdeaDetailPage() {
                             <Textarea
                               id="idea-doc-source"
                               rows={9}
-                              className="scroll-reveal min-h-[min(55dvh,520px)] w-full resize-y rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-sm lg:h-full lg:min-h-0 lg:max-h-full lg:resize-none"
+                              className="scroll-reveal min-h-0 w-full flex-1 resize-none rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-sm"
                               value={ideaDocGenerateSource}
                               disabled={ideaDocGenerateBusy}
                               onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
@@ -15566,7 +15710,7 @@ export function IdeaDetailPage() {
                             <div
                               role="tabpanel"
                               aria-label="Formatted source context"
-                              className="scroll-reveal min-h-[min(55dvh,520px)] max-h-[calc(100dvh-16rem)] overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 lg:min-h-0 lg:max-h-none lg:flex-1 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
+                              className="scroll-reveal min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
                             >
                               <div className="space-y-5">
                                 {showIdeaDocIntakeAnswers ? (
@@ -15621,72 +15765,70 @@ export function IdeaDetailPage() {
                             </div>
                           )}
                         </div>
+                      </div>
+                    </div>
 
+                    <div className="flex shrink-0 flex-col gap-3 border-t border-border/70 bg-muted/20 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
                         {ideaDocGenerateBusy ? (
-                          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 px-4 py-3 lg:shrink-0">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                              Agent progress
-                            </p>
-                            <ul className="space-y-1.5">
-                              {IDEA_DOC_GENERATE_STEPS.map((step, index) => {
-                                const isDone = index < ideaDocGenerateStepIndex
-                                const isRunning = index === ideaDocGenerateStepIndex
-                                return (
-                                  <li key={step.key} className="flex items-center gap-2.5 text-sm">
-                                    {isDone ? (
-                                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
-                                    ) : isRunning ? (
-                                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600" aria-hidden />
-                                    ) : (
-                                      <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" aria-hidden />
+                          <ul className="flex flex-wrap items-center gap-x-4 gap-y-1" aria-label="Agent progress">
+                            {IDEA_DOC_GENERATE_STEPS.map((step, index) => {
+                              const isDone = index < ideaDocGenerateStepIndex
+                              const isRunning = index === ideaDocGenerateStepIndex
+                              return (
+                                <li key={step.key} className="flex items-center gap-1.5 text-xs">
+                                  {isDone ? (
+                                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                                  ) : isRunning ? (
+                                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-600" aria-hidden />
+                                  ) : (
+                                    <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" aria-hidden />
+                                  )}
+                                  <span
+                                    className={cn(
+                                      isDone && 'text-foreground',
+                                      isRunning && 'font-medium text-foreground',
+                                      !isDone && !isRunning && 'text-muted-foreground',
                                     )}
-                                    <span
-                                      className={cn(
-                                        isDone && 'text-foreground',
-                                        isRunning && 'font-medium text-foreground',
-                                        !isDone && !isRunning && 'text-muted-foreground',
-                                      )}
-                                    >
-                                      {step.label}
-                                    </span>
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          </div>
+                                  >
+                                    {step.label}
+                                  </span>
+                                </li>
+                              )
+                            })}
+                          </ul>
                         ) : (
-                          <p className="text-xs leading-relaxed text-muted-foreground lg:shrink-0">
+                          <p className="text-xs leading-relaxed text-muted-foreground">
                             Enterprise note: generated files are saved to Document repository and can be downloaded
                             after the editor opens.
                           </p>
                         )}
                       </div>
-                    </div>
-
-                    <div className="flex shrink-0 items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={cn(enterpriseSecondaryButtonClass(), 'min-w-[140px] justify-center gap-2')}
-                        disabled={ideaDocGenerateBusy}
-                        onClick={() => setIdeaDocGenerateOpen(false)}
-                      >
-                        <X className="h-4 w-4 shrink-0" aria-hidden />
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        className={cn(registerServicePrimaryButtonClass(), 'min-w-[200px] justify-center gap-2')}
-                        disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
-                        onClick={() => { void handleIdeaDocGenerate() }}
-                      >
-                        {ideaDocGenerateBusy ? (
-                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-                        ) : (
-                          <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
-                        )}
-                        {ideaDocGenerateBusy ? 'Generating…' : 'Generate & open'}
-                      </Button>
+                      <div className="flex shrink-0 items-center justify-end gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(enterpriseSecondaryButtonClass(), 'min-w-[140px] justify-center gap-2')}
+                            disabled={ideaDocGenerateBusy}
+                            onClick={() => setIdeaDocGenerateOpen(false)}
+                          >
+                            <X className="h-4 w-4 shrink-0" aria-hidden />
+                            Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            className={cn(registerServicePrimaryButtonClass(), 'min-w-[200px] justify-center gap-2')}
+                            disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
+                            onClick={() => { void handleIdeaDocGenerate() }}
+                          >
+                            {ideaDocGenerateBusy ? (
+                              <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                            ) : (
+                              <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                            )}
+                            {ideaDocGenerateBusy ? 'Generating…' : 'Generate & open'}
+                          </Button>
+                      </div>
                     </div>
                   </div>
                 </div>,
