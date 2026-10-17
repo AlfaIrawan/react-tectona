@@ -124,6 +124,10 @@ import {
   analyzeIdeaProcessDetail,
   type ProcessSubTask,
   fetchIdeaIntakeAnswers,
+  listPartComments,
+  postPartComment,
+  resolvePartComment,
+  type PartCommentThread,
   correctIdeaIntakeAnswer,
   fillDkmTemplate,
   generateBenefitAnalysis,
@@ -180,8 +184,10 @@ import {
   templateParts,
   versionsNeeded,
   type PartPayload,
+  type TemplatePart,
   type TemplatePartChoice,
 } from '@/modules/project-management/lib/templatePartSelection'
+import { PartCommentRail } from '@/modules/project-management/components/PartCommentRail'
 import { belongsToDkmTemplateScope } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
 import { IdeaDocumentHistory } from '../components/IdeaDocumentHistory'
 import { IdeaTemplateLibrary } from '../components/IdeaTemplateLibrary'
@@ -3996,8 +4002,7 @@ export function IdeaDetailPage() {
     || ideaDocGenerateIntakeFollowups.length > 0
     || ideaDocGenerateIntakeOpenPoints.length > 0
   ) && (ideaDocIntakeBlockInSource || !ideaDocGenerateIntakeBlock)
-  const saveIdeaDocIntakeAnswer = useCallback(async (itemId: string, answer: string) => {
-    const next = await correctIdeaIntakeAnswer(idea.id, itemId, { answer, title: idea.title, workspaceId: idea.workspace })
+  const applyIdeaDocIntake = useCallback((next: IdeaIntakeAnswers) => {
     setIdeaDocGenerateIntakeAnswers(next.answers)
     setIdeaDocGenerateIntakeFollowups(next.followups)
     setIdeaDocGenerateIntakeOpenPoints(next.openPoints)
@@ -4011,7 +4016,10 @@ export function IdeaDetailPage() {
       else return source
       return [next.block, rest].filter(Boolean).join('\n\n')
     })
-  }, [idea.id, idea.title, idea.workspace, ideaDocGenerateIntakeBlock])
+  }, [ideaDocGenerateIntakeBlock])
+  const saveIdeaDocIntakeAnswer = useCallback(async (itemId: string, answer: string) => {
+    applyIdeaDocIntake(await correctIdeaIntakeAnswer(idea.id, itemId, { answer, title: idea.title, workspaceId: idea.workspace }))
+  }, [applyIdeaDocIntake, idea.id, idea.title, idea.workspace])
   const ideaDocGenerateSourcePreview = useMemo(() => {
     const sourceWithoutIntake = ideaDocIntakeBlockInSource
       ? ideaDocGenerateSource.slice(ideaDocGenerateIntakeBlock.length)
@@ -4222,6 +4230,106 @@ export function IdeaDetailPage() {
     const session = getSession()
     return session?.user.email?.split('@')[0]?.trim() ?? ''
   }, [currentUserId, resolveIdentityDisplayName])
+
+  // --- Reviewer comments on parts, before generating (PartCommentRail) ---------------------------
+  // One thread per part of this document (or of the template, for a new document).
+  const ideaDocCommentScope = ideaDocRegenerateTarget
+    ? `doc:${ideaDocRegenerateTarget.id}`
+    : selectedIdeaDocGenerateTemplate ? `tpl:${selectedIdeaDocGenerateTemplate.id}` : ''
+  const [ideaDocPartComments, setIdeaDocPartComments] = useState<PartCommentThread[]>([])
+  useEffect(() => {
+    if (!ideaDocGenerateOpen || !ideaDocCommentScope) {
+      setIdeaDocPartComments([])
+      return
+    }
+    let cancelled = false
+    listPartComments(idea.id, ideaDocCommentScope)
+      .then((threads) => {
+        if (!cancelled) setIdeaDocPartComments(threads)
+      })
+      .catch(() => {
+        if (!cancelled) setIdeaDocPartComments([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [idea.id, ideaDocCommentScope, ideaDocGenerateOpen])
+  const ideaDocCommentDrafts = useMemo(() => Object.fromEntries(
+    ideaDocPartComments
+      .filter((thread) => thread.status === 'accepted' && thread.accepted_value?.trim())
+      .map((thread) => [thread.part_key, thread.accepted_value as string]),
+  ), [ideaDocPartComments])
+  const ideaDocCommentProposals = useMemo(() => Object.fromEntries(
+    ideaDocPartComments
+      .filter((thread) => thread.status === 'open' && thread.proposal?.value?.trim())
+      .map((thread) => [thread.part_key, thread.proposal?.value as string]),
+  ), [ideaDocPartComments])
+  // An accepted comment text is what the part gets: its choice becomes 'draft' (the reviewer can
+  // still pick Keep, Regenerate or an earlier version for it).
+  const ideaDocDraftKeysRef = useRef('')
+  useEffect(() => {
+    // Opening the dialog sets every part's default choice once the version is read; the drafts are
+    // laid over those defaults afterwards, so they are applied again after each load.
+    if (!ideaDocGenerateOpen || ideaDocPartsLoading) {
+      ideaDocDraftKeysRef.current = ''
+      return
+    }
+    const keys = Object.keys(ideaDocCommentDrafts).sort().join('|')
+    if (keys === ideaDocDraftKeysRef.current) return
+    const previous = new Set(ideaDocDraftKeysRef.current ? ideaDocDraftKeysRef.current.split('|') : [])
+    ideaDocDraftKeysRef.current = keys
+    setIdeaDocPartChoices((choices) => {
+      const next = { ...choices }
+      for (const key of Object.keys(ideaDocCommentDrafts)) if (!previous.has(key)) next[key] = 'draft'
+      // A draft taken back (Undo, a new proposal) falls back to keeping the part.
+      for (const key of previous) if (!(key in ideaDocCommentDrafts) && next[key] === 'draft') next[key] = 'keep'
+      return next
+    })
+  }, [ideaDocCommentDrafts, ideaDocGenerateOpen, ideaDocPartsLoading])
+  const ideaDocPartCurrentText = useCallback((part: TemplatePart): string => {
+    const choice = ideaDocPartChoices[part.key]
+    if (choice === 'draft' && ideaDocCommentDrafts[part.key]) return ideaDocCommentDrafts[part.key]
+    const version = typeof choice === 'number' ? choice : ideaDocRegenerateVersion
+    const value = partValue(part, ideaDocPartPayloads[version])
+    return typeof value === 'string' ? value : ''
+  }, [ideaDocCommentDrafts, ideaDocPartChoices, ideaDocPartPayloads, ideaDocRegenerateVersion])
+  const postIdeaDocPartComment = useCallback(async (part: TemplatePart, message: string, thread?: PartCommentThread) => {
+    try {
+      const saved = await postPartComment(idea.id, {
+        threadId: thread?.id,
+        scopeKey: ideaDocCommentScope,
+        templateId: selectedIdeaDocGenerateTemplate?.id,
+        documentKind: selectedIdeaDocGenerateTemplate ? ideaDocTypeLabel(selectedIdeaDocGenerateTemplate.template_code) : '',
+        partKey: part.key,
+        partLabel: part.label,
+        currentValue: ideaDocPartCurrentText(part),
+        message,
+        // The same source context the generator gets, so the proposal stays grounded in it.
+        sourceText: ideaDocGenerateSource,
+        authorId: currentUserId,
+        authorName: currentUserDisplayName,
+      })
+      setIdeaDocPartComments((threads) => [...threads.filter((item) => item.id !== saved.id), saved])
+    } catch (error) {
+      throw new Error(
+        error instanceof Error && /PART_REVISION_FAILED/.test(error.message)
+          ? "Tectona couldn't draft a proposal this time. Send the comment again."
+          : "Couldn't post the comment. Try again.",
+      )
+    }
+  }, [currentUserDisplayName, currentUserId, idea.id, ideaDocCommentScope, ideaDocGenerateSource, ideaDocPartCurrentText, selectedIdeaDocGenerateTemplate])
+  const resolveIdeaDocPartComment = useCallback(async (thread: PartCommentThread, action: 'accept' | 'discard' | 'reopen') => {
+    const saved = await resolvePartComment(idea.id, thread.id, action, { id: currentUserId, name: currentUserDisplayName })
+    setIdeaDocPartComments((threads) => threads.map((item) => (item.id === saved.id ? saved : item)))
+    // The reviewer's own facts in an accepted text become reviewer input: the source context gets them.
+    const factsChanged = action === 'accept'
+      ? saved.user_facts.length > 0
+      : thread.status === 'accepted' && thread.user_facts.length > 0
+    if (factsChanged) {
+      const next = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace }).catch(() => null)
+      if (next) applyIdeaDocIntake(next)
+    }
+  }, [applyIdeaDocIntake, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.workspace])
 
   const isIdeaCreator = useMemo(() => {
     const ownerRaw = (idea.submittedBy ?? '').trim()
@@ -7408,7 +7516,7 @@ export function IdeaDetailPage() {
       // The proposer's confirmed Idea Intake answers come first: the description is a summary in
       // which facts such as the impacted business unit got buried, and fills picked something else.
       const intake = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace })
-        .catch((): IdeaIntakeAnswers => ({ block: '', answers: [], followups: [], openPoints: [] }))
+        .catch((): IdeaIntakeAnswers => ({ block: '', answers: [], followups: [], openPoints: [], reviewerInputs: [] }))
       setIdeaDocGenerateIntakeBlock(intake.block)
       setIdeaDocGenerateIntakeAnswers(intake.answers)
       setIdeaDocGenerateIntakeFollowups(intake.followups)
@@ -7537,17 +7645,25 @@ export function IdeaDetailPage() {
       const storageProjectId = existingDocument?.project_id || targetProject.id
 
       // Regenerating part by part (TemplatePartChoices): the model writes only the parts marked
-      // Regenerate; every other part comes from the version chosen for it.
-      const partial = Boolean(existingDocument && ideaDocRegenerateTarget?.id === existingDocument.id && ideaDocParts.length > 0)
+      // Regenerate; every other part comes from the version chosen for it, or from the text a
+      // reviewer accepted in a comment ('draft') — also for a new document.
+      const draftKeys = ideaDocParts
+        .filter((part) => ideaDocPartChoices[part.key] === 'draft' && ideaDocCommentDrafts[part.key])
+        .map((part) => part.key)
+      const partial = ideaDocParts.length > 0 && (
+        Boolean(existingDocument && ideaDocRegenerateTarget?.id === existingDocument.id) || draftKeys.length > 0
+      )
       const partVersion = existingDocument?.current_version_no || 1
       const partPayloads: Record<number, PartPayload | undefined> = { ...ideaDocPartPayloads }
-      if (partial && existingDocument) {
-        for (const version of versionsNeeded(ideaDocParts, ideaDocPartChoices, partVersion)) {
-          if (!partPayloads[version]) {
-            partPayloads[version] = await getDocumentRevisionFillPayload(existingDocument.id, {
-              source_document_id: existingDocument.id,
-              version_no: version,
-            })
+      if (partial) {
+        if (existingDocument) {
+          for (const version of versionsNeeded(ideaDocParts, ideaDocPartChoices, partVersion)) {
+            if (!partPayloads[version]) {
+              partPayloads[version] = await getDocumentRevisionFillPayload(existingDocument.id, {
+                source_document_id: existingDocument.id,
+                version_no: version,
+              })
+            }
           }
         }
         // Checked before the model call: nothing is spent on a merge that cannot be written.
@@ -7557,6 +7673,7 @@ export function IdeaDetailPage() {
           currentVersion: partVersion,
           generated: { fills: {}, sections: {}, collections: {}, diagrams: {} },
           payloads: partPayloads,
+          drafts: ideaDocCommentDrafts,
         }).missing
         if (unavailable.length > 0) {
           throw new Error(
@@ -7597,6 +7714,7 @@ export function IdeaDetailPage() {
           currentVersion: partVersion,
           generated: generatedParts,
           payloads: partPayloads,
+          drafts: ideaDocCommentDrafts,
         }).payload
         : generatedParts
 
@@ -7626,7 +7744,9 @@ export function IdeaDetailPage() {
           storage_project_name: targetProject.name,
         },
         version_notes: partial
-          ? `Regenerated ${onlyKeys?.length ?? 0} of ${ideaDocParts.length} parts from template ${template.template_code} for idea ${idea.id}`
+          ? `Regenerated ${onlyKeys?.length ?? 0} of ${ideaDocParts.length} parts`
+            + (draftKeys.length ? `, ${draftKeys.length} revised by reviewer comment` : '')
+            + ` from template ${template.template_code} for idea ${idea.id}`
           : `AI-generated from template ${template.template_code} for idea ${idea.id}`,
         fills: written.fills,
         sections: written.sections,
@@ -7636,6 +7756,11 @@ export function IdeaDetailPage() {
       })
 
       setIdeaGeneratedDocs((prev) => [created, ...prev.filter((doc) => doc.id !== created.id)])
+      // The accepted comment texts are in this version now: their threads become history.
+      const appliedThreads = ideaDocPartComments.filter((thread) => thread.status === 'accepted' && draftKeys.includes(thread.part_key))
+      void Promise.allSettled(appliedThreads.map((thread) =>
+        resolvePartComment(idea.id, thread.id, 'applied', { id: currentUserId, name: currentUserDisplayName }),
+      ))
       setIdeaDocsPage(1)
       setIdeaDocGenerateOpen(false)
       setIdeaDocEditId(created.id)
@@ -7670,7 +7795,9 @@ export function IdeaDetailPage() {
     ideaDocGenerateBusy,
     ideaDocGenerateSource,
     ideaDocGenerateTemplateId,
+    ideaDocCommentDrafts,
     ideaDocPartChoices,
+    ideaDocPartComments,
     ideaDocPartPayloads,
     ideaDocParts,
     ideaDocRegenerateTarget,
@@ -15588,6 +15715,7 @@ export function IdeaDetailPage() {
                               selectedKey={ideaDocSelectedPartKey}
                               onSelect={selectIdeaDocPart}
                               newDocument={!ideaDocRegenerateTarget}
+                              drafts={ideaDocCommentDrafts}
                               className="min-h-0 flex-1"
                             />
                           ) : (
@@ -15613,6 +15741,21 @@ export function IdeaDetailPage() {
                             selectedKey={ideaDocSelectedPartKey}
                             onSelect={setIdeaDocSelectedPartKey}
                             onLocatedChange={setIdeaDocLocatedOrder}
+                            drafts={ideaDocCommentDrafts}
+                            proposals={ideaDocCommentProposals}
+                            renderRail={ideaDocCommentScope ? (anchors) => (
+                              <PartCommentRail
+                                anchors={anchors}
+                                parts={ideaDocParts}
+                                threads={ideaDocPartComments}
+                                selectedKey={ideaDocSelectedPartKey}
+                                onSelect={setIdeaDocSelectedPartKey}
+                                currentUserName={currentUserDisplayName || 'You'}
+                                disabled={ideaDocGenerateBusy}
+                                onPost={postIdeaDocPartComment}
+                                onResolve={resolveIdeaDocPartComment}
+                              />
+                            ) : undefined}
                             className="min-h-0 flex-1"
                           />
                         </div>

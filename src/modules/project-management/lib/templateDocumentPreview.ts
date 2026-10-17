@@ -191,13 +191,20 @@ export type PartPreviewState =
   | { kind: 'keep' }
   | { kind: 'generate' }
   | { kind: 'version'; version: number; value: unknown; loaded: boolean }
+  /** A reviewer accepted this text from a comment; it is written as is. */
+  | { kind: 'draft'; value: string }
+  /** A comment proposal waiting for the reviewer: shown, not applied. */
+  | { kind: 'proposal'; value: string }
 
 export function partPreviewState(
   part: TemplatePart,
   choice: TemplatePartChoice | undefined,
   payloads: Record<number, PartPayload | undefined>,
+  comment: { draft?: string; proposal?: string } = {},
 ): PartPreviewState {
-  if (choice === undefined || choice === 'keep') return { kind: 'keep' }
+  if (choice === 'draft' && comment.draft) return { kind: 'draft', value: comment.draft }
+  if (comment.proposal) return { kind: 'proposal', value: comment.proposal }
+  if (choice === undefined || choice === 'keep' || choice === 'draft') return { kind: 'keep' }
   if (choice === 'generate') return { kind: 'generate' }
   const payload = payloads[choice]
   return { kind: 'version', version: choice, value: partValue(part, payload), loaded: payload !== undefined }
@@ -206,6 +213,8 @@ export function partPreviewState(
 /** A regenerated part shows its current text dimmed; one from an earlier version is tinted. */
 const GENERATE_CLASSES = ['text-slate-400']
 const VERSION_CLASSES = ['bg-amber-50']
+const COMMENT_CLASSES = ['bg-emerald-50']
+const PROPOSAL_CLASSES = ['bg-sky-50']
 /** The selected part (cells for a table row). */
 export const SELECTED_CLASSES = ['outline', 'outline-2', '-outline-offset-2', 'outline-blue-500/70', 'bg-blue-50/80']
 
@@ -214,6 +223,8 @@ const BADGE_BASE ='tpl-part-badge pointer-events-none mb-1 inline-flex w-fit ite
 const BADGE_TONE = {
   generate: 'bg-blue-100 text-blue-800',
   version: 'bg-amber-100 text-amber-900',
+  comment: 'bg-emerald-100 text-emerald-800',
+  proposal: 'bg-sky-100 text-sky-800',
   muted: 'bg-slate-100 text-slate-600',
 }
 
@@ -296,36 +307,51 @@ export function annotatePart(found: LocatedPart, part: TemplatePart, state: Part
     addBadge('Regenerate · written again by AI', 'generate')
     return
   }
-  if (!state.loaded) {
-    addBadge(`Reading V${state.version}…`, 'muted')
-    return
+  let replacement: { value: unknown; label: string; tone: keyof typeof BADGE_TONE; tint: string[]; strikeOld: boolean }
+  if (state.kind === 'version') {
+    if (!state.loaded) {
+      addBadge(`Reading V${state.version}…`, 'muted')
+      return
+    }
+    if (state.value === undefined) {
+      for (const el of found.elements) el.classList.add(...VERSION_CLASSES)
+      addBadge(`From V${state.version} · empty in that version`, 'version')
+      return
+    }
+    replacement = { value: state.value, label: `From V${state.version}`, tone: 'version', tint: VERSION_CLASSES, strikeOld: false }
+  } else if (state.kind === 'draft') {
+    replacement = { value: state.value, label: 'Revised by comment', tone: 'comment', tint: COMMENT_CLASSES, strikeOld: false }
+  } else {
+    replacement = { value: state.value, label: 'Proposed · not applied yet', tone: 'proposal', tint: PROPOSAL_CLASSES, strikeOld: true }
   }
-  for (const el of found.elements) el.classList.add(...VERSION_CLASSES)
-  if (state.value === undefined) {
-    addBadge(`From V${state.version} · empty in that version`, 'version')
-    return
-  }
+  for (const el of found.elements) el.classList.add(...replacement.tint)
   const paragraphClass = paragraphClassIn(found.valueCell ?? found.elements[found.how === 'heading' ? 1 : 0])
-  addBadge(`From V${state.version}`, 'version')
+  addBadge(replacement.label, replacement.tone)
   const markedNodes = () => {
-    const nodes = valueNodes(state.value, part, paragraphClass)
+    const nodes = valueNodes(replacement.value, part, paragraphClass)
     nodes.forEach((node) => {
       if (node instanceof HTMLElement) {
         node.dataset.partKey = found.key
-        node.classList.add('tpl-part', 'cursor-pointer', ...VERSION_CLASSES)
+        node.classList.add('tpl-part', 'cursor-pointer', ...replacement.tint)
       }
     })
     return nodes
   }
   if (found.how === 'table' && first.tagName === 'TABLE') {
-    replaceTableRows(first as HTMLTableElement, state.value, part.fields ?? [])
+    replaceTableRows(first as HTMLTableElement, replacement.value, part.fields ?? [])
   } else if (found.valueCell) {
     const badgeEl = found.valueCell.querySelector('.tpl-part-badge')
     const lineBreak = badgeEl?.nextElementSibling?.tagName === 'BR' ? badgeEl.nextElementSibling : null
-    found.valueCell.replaceChildren(
-      ...[badgeEl, lineBreak].filter((node): node is Element => Boolean(node)),
-      ...valueNodes(state.value, part, paragraphClass),
-    )
+    const kept = [badgeEl, lineBreak].filter((node): node is Element => Boolean(node))
+    // A proposal shows the text it would replace, struck through, above it.
+    const old: Node[] = []
+    if (replacement.strikeOld) {
+      const struck = document.createElement('del')
+      struck.className = 'block text-slate-400'
+      struck.append(...Array.from(found.valueCell.childNodes).filter((node) => !kept.includes(node as Element)))
+      if (struck.textContent?.trim()) old.push(struck)
+    }
+    found.valueCell.replaceChildren(...kept, ...old, ...valueNodes(replacement.value, part, paragraphClass))
   } else if (found.how === 'heading') {
     // Keep the heading; what follows it becomes that version's text.
     for (const el of found.elements.slice(1)) el.remove()

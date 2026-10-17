@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import DOMPurify from 'dompurify'
 import { FileText, Loader2, RotateCw } from 'lucide-react'
 import {
@@ -81,16 +81,37 @@ const PAGE_CLASS = cn(
   '[&_.tpl-part:hover]:bg-blue-50/60',
 )
 
-/** Pages wider than the panel are zoomed out to fit (a narrow workspace), never in. */
-function fitPagesToWidth(page: HTMLElement, scroller: HTMLElement) {
+/** Pages wider than their column are zoomed out to fit (a narrow workspace, or the comment rail
+ * taking room), never in. */
+function fitPagesToWidth(page: HTMLElement) {
   const wrapper = page.querySelector<HTMLElement>(`.${DOCX_CLASS}-wrapper`)
   const firstPage = wrapper?.querySelector<HTMLElement>(`section.${DOCX_CLASS}`)
-  if (!wrapper || !firstPage) return
+  const column = page.parentElement
+  if (!wrapper || !firstPage || !column) return
   wrapper.style.zoom = ''
-  const style = getComputedStyle(scroller)
-  const available = scroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+  const available = column.clientWidth
   const pageWidth = firstPage.offsetWidth
   if (pageWidth > 0 && available > 0 && pageWidth > available) wrapper.style.zoom = String(available / pageWidth)
+}
+
+/** Where each marked part starts, in layout px from the top of the scrolled content. */
+export type PartAnchors = Record<string, number>
+
+function partAnchors(page: HTMLElement, content: HTMLElement): PartAnchors {
+  const origin = content.getBoundingClientRect().top
+  const anchors: PartAnchors = {}
+  page.querySelectorAll<HTMLElement>('[data-part-key]').forEach((el) => {
+    const key = el.dataset.partKey
+    if (!key || key in anchors) return
+    // Rects are visual px (ui-scale-lock zooms <html>); the rail is positioned in layout px.
+    anchors[key] = Math.max(0, Math.round(visualPxToLayoutPx(el.getBoundingClientRect().top - origin)))
+  })
+  return anchors
+}
+
+function sameAnchors(a: PartAnchors, b: PartAnchors): boolean {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key])
 }
 
 /**
@@ -107,6 +128,9 @@ export function TemplateDocumentPreview({
   selectedKey,
   onSelect,
   onLocatedChange,
+  drafts,
+  proposals,
+  renderRail,
   className,
 }: {
   source: TemplateDocumentPreviewSource | null
@@ -119,8 +143,23 @@ export function TemplateDocumentPreview({
   onSelect: (key: string) => void
   /** The keys found in the document, in document order. */
   onLocatedChange?: (keys: string[]) => void
+  /** Accepted comment texts by part key (shown for parts set to 'draft'). */
+  drafts?: Record<string, string>
+  /** Open comment proposals by part key (shown, not applied). */
+  proposals?: Record<string, string>
+  /** A column beside the pages (the comment rail), given where each part starts. */
+  renderRail?: (anchors: PartAnchors) => ReactNode
   className?: string
 }) {
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const [anchors, setAnchors] = useState<PartAnchors>({})
+  const measureAnchors = useCallback(() => {
+    const page = pageRef.current
+    const content = contentRef.current
+    if (!page || !content) return
+    const next = partAnchors(page, content)
+    setAnchors((prev) => (sameAnchors(prev, next) ? prev : next))
+  }, [])
   // Changes each time a document is loaded; the rendered DOM itself is in templateRef.
   const [html, setHtml] = useState('')
   const [loading, setLoading] = useState(false)
@@ -177,12 +216,16 @@ export function TemplateDocumentPreview({
     const located = locateParts(page, parts, current)
     for (const part of parts) {
       const found = located.get(part.key)
-      if (found) annotatePart(found, part, partPreviewState(part, choices[part.key], payloads))
+      if (found) {
+        const comment = { draft: drafts?.[part.key], proposal: proposals?.[part.key] }
+        annotatePart(found, part, partPreviewState(part, choices[part.key], payloads, comment))
+      }
     }
     const order = Array.from(located.values())
       .sort((a, b) => (a.elements[0].compareDocumentPosition(b.elements[0]) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
       .map((item) => item.key)
-    if (scrollRef.current) fitPagesToWidth(page, scrollRef.current)
+    fitPagesToWidth(page)
+    measureAnchors()
     setLocatedCount(order.length)
     const orderKey = order.join('|')
     if (orderKey !== lastOrderRef.current) {
@@ -190,17 +233,22 @@ export function TemplateDocumentPreview({
       onLocatedChange?.(order)
     }
     setRebuilt((count) => count + 1)
-  }, [html, parts, choices, payloads, currentVersion, onLocatedChange])
+  }, [html, parts, choices, payloads, currentVersion, onLocatedChange, drafts, proposals, measureAnchors])
 
-  // Keep the pages fitted when the panel is resized (e.g. the workspace switches to tabs).
+  // Keep the pages fitted and the rail aligned when the panel or the pages resize (the workspace
+  // switches to tabs, the rail appears, pictures finish loading).
   useEffect(() => {
     const scroller = scrollRef.current
     const page = pageRef.current
     if (!scroller || !page || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => fitPagesToWidth(page, scroller))
+    const observer = new ResizeObserver(() => {
+      fitPagesToWidth(page)
+      measureAnchors()
+    })
     observer.observe(scroller)
+    observer.observe(page)
     return () => observer.disconnect()
-  }, [html])
+  }, [html, measureAnchors])
 
   // Light up the selected part; scroll to it unless it was clicked here.
   useEffect(() => {
@@ -279,10 +327,14 @@ export function TemplateDocumentPreview({
           </div>
         ) : null}
         <div
-          ref={pageRef}
-          className={cn(PAGE_CLASS, (loading || error || !source || !html) && 'hidden')}
-          onClick={handlePageClick}
-        />
+          ref={contentRef}
+          className={cn('relative flex min-w-0 items-start gap-4', (loading || error || !source || !html) && 'hidden')}
+        >
+          <div className="min-w-0 flex-1">
+            <div ref={pageRef} className={PAGE_CLASS} onClick={handlePageClick} />
+          </div>
+          {renderRail ? <div className="relative w-[300px] shrink-0 self-stretch">{renderRail(anchors)}</div> : null}
+        </div>
       </div>
     </div>
   )

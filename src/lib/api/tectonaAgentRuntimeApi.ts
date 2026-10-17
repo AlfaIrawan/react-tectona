@@ -2116,11 +2116,19 @@ export interface IdeaIntakeFollowup {
   answer: string
 }
 
+/** A fact a reviewer gave in an accepted document comment (part, who gave it). */
+export interface IdeaReviewerInput {
+  part: string
+  fact: string
+  by: string
+}
+
 export interface IdeaIntakeAnswers {
   answers: IdeaIntakeAnswer[]
   followups: IdeaIntakeFollowup[]
   /** Follow-up questions skipped in the brainstorm and never answered. */
   openPoints: string[]
+  reviewerInputs: IdeaReviewerInput[]
   block: string
 }
 
@@ -2128,6 +2136,7 @@ type IdeaIntakeAnswersBody = {
   answers?: IdeaIntakeAnswer[]
   followups?: IdeaIntakeFollowup[]
   open_points?: string[]
+  reviewer_inputs?: IdeaReviewerInput[]
   block?: string
 }
 
@@ -2136,8 +2145,116 @@ function toIdeaIntakeAnswers(body: IdeaIntakeAnswersBody): IdeaIntakeAnswers {
     answers: body.answers ?? [],
     followups: body.followups ?? [],
     openPoints: body.open_points ?? [],
+    reviewerInputs: body.reviewer_inputs ?? [],
     block: body.block ?? '',
   }
+}
+
+/** Tectona's proposal for a part's new text, from a reviewer's comment. */
+export interface PartProposal {
+  value: string
+  reply: string
+  /** Phrases from the source context that support it (checked to be in the source). */
+  source_quotes: string[]
+  /** The reviewer's facts the source does not contain; recorded as reviewer input when accepted. */
+  user_facts: string[]
+}
+
+export interface PartCommentMessage {
+  role: 'user' | 'assistant' | 'event'
+  text: string
+  author_id?: string
+  author_name?: string
+  created_at?: string
+  proposal?: PartProposal
+}
+
+export interface PartCommentThread {
+  id: string
+  idea_id: string
+  scope_key: string
+  part_key: string
+  part_label: string
+  /** open: proposal waits · accepted: used when generating · applied: in a generated version. */
+  status: 'open' | 'accepted' | 'applied' | 'discarded'
+  messages: PartCommentMessage[]
+  proposal: PartProposal | null
+  accepted_value: string | null
+  user_facts: string[]
+  created_by_name?: string | null
+  created_date?: string
+  updated_date?: string
+}
+
+export async function listPartComments(ideaId: string, scopeKey: string): Promise<PartCommentThread[]> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments?scope_key=${encodeURIComponent(scopeKey)}`,
+    { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ threads?: PartCommentThread[] }>(res)
+  return body.threads ?? []
+}
+
+/** A comment on one part; resolves with the thread holding Tectona's new proposal. */
+export async function postPartComment(
+  ideaId: string,
+  input: {
+    threadId?: string
+    scopeKey: string
+    templateId?: string
+    documentKind?: string
+    partKey: string
+    partLabel: string
+    currentValue: string
+    message: string
+    sourceText: string
+    authorId?: string
+    authorName?: string
+  },
+): Promise<PartCommentThread> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        thread_id: input.threadId ?? '',
+        scope_key: input.scopeKey,
+        template_id: input.templateId ?? '',
+        document_kind: input.documentKind ?? '',
+        part_key: input.partKey,
+        part_label: input.partLabel,
+        current_value: input.currentValue.slice(0, 20000),
+        message: input.message,
+        source_text: input.sourceText.slice(0, 60000),
+        author_id: input.authorId ?? '',
+        author_name: input.authorName ?? '',
+      }),
+    },
+    120_000,
+  )
+  const body = await handleResponse<{ thread: PartCommentThread }>(res)
+  return body.thread
+}
+
+export async function resolvePartComment(
+  ideaId: string,
+  threadId: string,
+  action: 'accept' | 'discard' | 'reopen' | 'applied',
+  author: { id?: string; name?: string } = {},
+): Promise<PartCommentThread> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments/${encodeURIComponent(threadId)}/resolve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, author_id: author.id ?? '', author_name: author.name ?? '' }),
+    },
+    15_000,
+  )
+  const body = await handleResponse<{ thread: PartCommentThread }>(res)
+  return body.thread
 }
 
 /** Remember the idea a brainstorm became, so documents for the idea read its intake answers. */

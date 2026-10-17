@@ -99,6 +99,7 @@ export function TemplatePartChoices({
   selectedKey = null,
   onSelect,
   newDocument = false,
+  drafts = {},
   className,
 }: {
   parts: TemplatePart[]
@@ -121,6 +122,8 @@ export function TemplatePartChoices({
   onSelect?: (key: string) => void
   /** No document yet: every part is written, so there is nothing to choose per part. */
   newDocument?: boolean
+  /** Text a reviewer accepted from a comment, by part key: offered as "Revised by comment". */
+  drafts?: Record<string, string>
   className?: string
 }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set())
@@ -206,7 +209,8 @@ export function TemplatePartChoices({
       <ul className="scroll-reveal min-h-0 flex-1 divide-y divide-border/50 overflow-y-auto rounded-xl border border-border/70">
         {parts.map((part) => {
           const choice = choices[part.key] ?? 'generate'
-          const value = choice === 'keep' ? 'keep' : choice === 'generate' ? 'generate' : `v${choice}`
+          const value = choice === 'keep' || choice === 'generate' || choice === 'draft' ? choice : `v${choice}`
+          const draftText = choice === 'draft' ? drafts[part.key] : undefined
           const current = loading ? undefined : partPreview(part, payloads[currentVersion])
           const pickedVersion = typeof choice === 'number' ? choice : null
           const pickedLoaded = pickedVersion !== null && payloads[pickedVersion] !== undefined
@@ -216,7 +220,8 @@ export function TemplatePartChoices({
           const panelId = `template-part-${part.key}`
 
           let line: { text: string; tone: 'value' | 'empty' | 'generate' | 'error' }
-          if (newDocument) line = { text: 'Written by AI', tone: 'generate' }
+          if (draftText) line = { text: draftText.replace(/\s*\n+\s*/g, ' · '), tone: 'value' }
+          else if (newDocument) line = { text: 'Written by AI', tone: 'generate' }
           else if (loading) line = { text: `Reading V${currentVersion}…`, tone: 'empty' }
           else if (choice === 'generate') line = { text: 'Will be written again by AI', tone: 'generate' }
           else if (pickedFailed) line = { text: `Couldn't read V${pickedVersion}`, tone: 'error' }
@@ -270,6 +275,11 @@ export function TemplatePartChoices({
                       {pickedVersion !== null ? (
                         <span className="shrink-0 rounded bg-primary/10 px-1 text-[10px] font-medium text-primary">V{pickedVersion}</span>
                       ) : null}
+                      {draftText ? (
+                        <span className="shrink-0 rounded bg-emerald-100 px-1 text-[10px] font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">
+                          Comment
+                        </span>
+                      ) : null}
                     </span>
                     {!expanded ? (
                       <span
@@ -294,7 +304,9 @@ export function TemplatePartChoices({
                   disabled={disabled || loading}
                   onChange={(event) => {
                     const next = event.target.value
-                    const pickedChoice: TemplatePartChoice = next === 'keep' || next === 'generate' ? next : Number(next.slice(1))
+                    const pickedChoice: TemplatePartChoice = next === 'keep' || next === 'generate' || next === 'draft'
+                      ? next
+                      : Number(next.slice(1))
                     onChange({ ...choices, [part.key]: pickedChoice })
                   }}
                 >
@@ -304,6 +316,7 @@ export function TemplatePartChoices({
                       : currentFailed ? `Keep (couldn't read V${currentVersion})` : `Keep (empty in V${currentVersion})`}
                   </option>
                   <option value="generate">Regenerate</option>
+                  {drafts[part.key] ? <option value="draft">Revised by comment</option> : null}
                   {otherVersions.map((version) => (
                     <option key={version} value={`v${version}`}>From V{version}</option>
                   ))}
@@ -314,7 +327,17 @@ export function TemplatePartChoices({
               ) : null}
               {expanded ? (
                 <div id={panelId} className="px-3 pb-3 pl-9">
-                  {pickedVersion !== null ? (
+                  {draftText ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <PreviewBox title={`Now · V${currentVersion}`} preview={current} emptyText={currentEmptyText} tone="current" />
+                      <PreviewBox
+                        title="Used · revised by comment"
+                        preview={{ kind: 'text', text: draftText, diagram: false }}
+                        emptyText=""
+                        tone="used"
+                      />
+                    </div>
+                  ) : pickedVersion !== null ? (
                     <div className="grid gap-2 sm:grid-cols-2">
                       <PreviewBox title={`Now · V${currentVersion}`} preview={current} emptyText={currentEmptyText} tone="current" />
                       <PreviewBox

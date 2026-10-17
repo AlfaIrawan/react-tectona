@@ -31,8 +31,14 @@ export type TemplatePart = {
   /** A table part's column fields, in order. */
   fields?: string[]
 }
-/** 'keep': the current version's value. A number: that version's value. */
-export type TemplatePartChoice = 'keep' | 'generate' | number
+/** 'keep': the current version's value. A number: that version's value. 'draft': the text a reviewer
+ * accepted from a comment proposal (see PartCommentRail), written as is. */
+export type TemplatePartChoice = 'keep' | 'generate' | 'draft' | number
+
+/** Parts a comment proposal can rewrite: text parts. A table's rows are not revised by comment yet. */
+export function partTakesComments(part: TemplatePart): boolean {
+  return part.kind === 'field' || part.kind === 'section'
+}
 
 export type PartPayload = Pick<DocumentRevisionFillPayload, 'fills' | 'sections' | 'collections' | 'diagrams'>
 
@@ -178,6 +184,8 @@ export function mergePartChoices(input: {
   currentVersion: number
   generated: PartPayload
   payloads: Record<number, PartPayload | undefined>
+  /** Accepted comment texts, by part key (for choice 'draft'). */
+  drafts?: Record<string, string>
 }): { payload: PartPayload; missing: TemplatePart[] } {
   const fills = { ...(input.generated.fills ?? {}) }
   const sections = { ...(input.generated.sections ?? {}) }
@@ -187,6 +195,19 @@ export function mergePartChoices(input: {
   for (const part of input.parts) {
     const choice = input.choices[part.key] ?? 'generate'
     if (choice === 'generate') continue
+    if (choice === 'draft') {
+      const draft = input.drafts?.[part.key]
+      if (!draft?.trim() || !partTakesComments(part)) {
+        missing.push(part)
+      } else if (part.kind === 'field') {
+        fills[part.key] = draft
+        // The reviewed text replaces any picture the field had.
+        delete diagrams[part.key]
+      } else {
+        sections[part.key] = draft
+      }
+      continue
+    }
     const version = choice === 'keep' ? input.currentVersion : choice
     const source = input.payloads[version]
     const value = partValue(part, source)

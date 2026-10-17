@@ -93,6 +93,23 @@ describe('part choices', () => {
     expect(partPreview(background, v6)).toBeUndefined()
   })
 
+  it('writes an accepted comment text as is and never sends it to the model', () => {
+    const choices = { deskripsi_proyek: 'draft', unit_bisnis: 'keep', process_flow: 'draft', background: 'generate', use_cases: 'draft' } as const
+    expect(keysToGenerate(parts, choices)).toEqual(['background'])
+    expect(versionsNeeded(parts, choices, 6)).toEqual([6])
+
+    const { payload, missing } = mergePartChoices({
+      parts, choices, currentVersion: 6, generated: empty, payloads: { 6: v6 },
+      drafts: { deskripsi_proyek: 'Teks hasil review', process_flow: 'Alur hasil review', use_cases: 'x' },
+    })
+
+    expect(payload.fills).toEqual({ deskripsi_proyek: 'Teks hasil review', unit_bisnis: 'Digital Banking', process_flow: 'Alur hasil review' })
+    // The reviewed text replaces the field's old picture.
+    expect(payload.diagrams).toEqual({})
+    // A table cannot take a comment text: reported, not written.
+    expect(missing.map((part) => part.key)).toEqual(['use_cases'])
+  })
+
   it('reports a part the chosen version does not have', () => {
     const choices = { deskripsi_proyek: 'keep', unit_bisnis: 'generate', process_flow: 'generate', background: 'keep', use_cases: 'generate' } as const
     const { missing } = mergePartChoices({ parts, choices, currentVersion: 6, generated: empty, payloads: { 6: v6 } })
