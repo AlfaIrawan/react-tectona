@@ -7011,16 +7011,28 @@ export function IdeaDetailPage() {
     return ideaRepositoryItems.slice(start, start + ideaDocsPageSize)
   }, [ideaRepositoryItems, ideaDocsPage, ideaDocsPageSize])
 
+  // Where this idea's documents already live (the latest generated URD/BRD/FSD first), so an
+  // unlinked idea keeps writing next to them.
+  const ideaDocsHoldingProjectId = useMemo(() => {
+    const own = ideaGeneratedDocs
+      .filter((document_) => document_.metadata?.idea_id === idea.id && document_.project_id)
+      .sort((a, b) =>
+        Number(Boolean(ideaDocumentType(b))) - Number(Boolean(ideaDocumentType(a))) ||
+        new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())
+    return own[0]?.project_id ?? null
+  }, [idea.id, ideaGeneratedDocs])
+
   const resolveIdeaTargetProject = useCallback(
     async (createIfMissing = true) =>
       resolveIdeaDocsProject({
         ideaId: idea.id,
         ideaTitle: idea.title,
         ideaProjectId: idea.project_id,
+        documentsProjectId: ideaDocsHoldingProjectId,
         workspaceId: idea.workspace ?? null,
         createIfMissing,
       }),
-    [idea.id, idea.project_id, idea.title, idea.workspace],
+    [idea.id, idea.project_id, idea.title, idea.workspace, ideaDocsHoldingProjectId],
   )
 
   useEffect(() => {
@@ -7103,21 +7115,30 @@ export function IdeaDetailPage() {
   }, [])
 
   const handleIdeaDocCreateFolder = useCallback(async () => {
-    if (!ideaDocCurrentFolder || ideaDocFolderCreateBusy) return
+    if (ideaDocFolderCreateBusy) return
 
     setIdeaDocFolderCreateBusy(true)
     try {
+      let parentFolder = ideaDocCurrentFolder
+      if (!parentFolder) {
+        // An idea with no project and no documents yet gets its document container now.
+        const targetProject = await resolveIdeaTargetProject(true)
+        if (!targetProject) throw new Error('No project available to store the idea folder.')
+        const rootId = await ensureProjectDocumentFolder({ id: targetProject.id, name: targetProject.name })
+        parentFolder = { id: rootId, name: targetProject.name }
+        setIdeaDocFolderStack([parentFolder])
+      }
       const session = getSession()
       const name = nextUntitledDocumentFolderName(ideaDocSubfolders)
       await createDocumentFolder({
         name,
         description: null,
-        parent_id: ideaDocCurrentFolder.id,
+        parent_id: parentFolder.id,
         owner_id: session?.user.id || session?.user.email || idea.submittedBy || null,
       })
 
       const folderResponse = await fetchDocumentFolders({
-        parent_id: ideaDocCurrentFolder.id,
+        parent_id: parentFolder.id,
         page: 1,
         page_size: 100,
       })
@@ -7137,7 +7158,7 @@ export function IdeaDetailPage() {
     } finally {
       setIdeaDocFolderCreateBusy(false)
     }
-  }, [addToast, idea.submittedBy, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders])
+  }, [addToast, idea.submittedBy, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders, resolveIdeaTargetProject])
 
   const handleIdeaDocCreateSubfolder = useCallback(async (parentFolder: DocumentFolder) => {
     if (ideaDocFolderCreateBusy) return
@@ -14988,7 +15009,9 @@ export function IdeaDetailPage() {
                 ) : null}
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    {ideaDocCurrentFolder ? (
+                    {/* Shown without a folder too: generating or adding a folder creates the
+                        idea's document container when it has none yet. */}
+                    {ideaDocCurrentFolder || !ideaDocFolderInitBusy ? (
                       <>
                         <button
                           type="button"
