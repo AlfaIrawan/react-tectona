@@ -3244,6 +3244,27 @@ function WorkflowBuilderCanvasInner({
                       onChange={(patch) => updateSelectedNode({ config: patch })}
                     />
                     <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                      <label className={FIELD_LABEL_CLASS} htmlFor={`approval-ai-summary-${selectedNode.id}`}>AI summary at the top</label>
+                      <Select
+                        id={`approval-ai-summary-${selectedNode.id}`}
+                        value={selectedNode.data.config.emailAiSummary ?? ''}
+                        onChange={(event) => updateSelectedNode({ config: { emailAiSummary: event.target.value } })}
+                        className="h-9 text-sm"
+                      >
+                        <SelectItem value="">None</SelectItem>
+                        {nodes
+                          .filter((node) => node.data.kind === 'aiProcess' && !isAiChoiceMode(node.data.config) && !isAiFieldsMode(node.data.config))
+                          .map((node) => {
+                            const key = aiOutputKey(node.data.config.outputKey, node.data.label, node.id)
+                            return <SelectItem key={node.id} value={key}>{`${node.data.label} (ai.${key})`}</SelectItem>
+                          })}
+                      </Select>
+                      <p className="text-[11px] leading-4 text-slate-500">
+                        The email starts with this AI Process answer under &quot;Ringkasan (dibuat oleh Tectona AI)&quot;, then the
+                        body above. Put the AI Process before this approval; if it has no answer, the email is sent without it.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5 border-t border-slate-100 pt-3">
                       <label className={FIELD_LABEL_CLASS}>Reply by email</label>
                       <Select
                         value={selectedNode.data.config.replyByEmail === 'yes' ? 'yes' : 'no'}
