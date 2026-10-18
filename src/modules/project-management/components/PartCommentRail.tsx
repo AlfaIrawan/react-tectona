@@ -3,6 +3,7 @@ import { Check, Loader2, Quote, RotateCcw, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { PartCommentThread } from '@/lib/api/tectonaAgentRuntimeApi'
+import { fetchMicrosoftProfilePhoto } from '@/lib/api/microsoftGraphApi'
 import { cn } from '@/lib/utils'
 import type { PartAnchors } from '@/modules/project-management/components/TemplateDocumentPreview'
 import { partTakesComments, type TemplatePart } from '@/modules/project-management/lib/templatePartSelection'
@@ -27,7 +28,9 @@ const EVENT_TEXT: Record<string, string> = {
   applied: 'The accepted text is in the generated version.',
 }
 
-function Avatar({ name, tectona = false }: { name: string; tectona?: boolean }) {
+function Avatar({ name, tectona = false, photoUrl }: { name: string; tectona?: boolean; photoUrl?: string | null }) {
+  const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null)
+
   return (
     <span
       aria-hidden
@@ -36,7 +39,14 @@ function Avatar({ name, tectona = false }: { name: string; tectona?: boolean }) 
         tectona ? 'bg-primary/10 text-primary' : 'bg-muted text-foreground',
       )}
     >
-      {tectona ? <Sparkles className="h-3.5 w-3.5" /> : initials(name)}
+      {tectona ? <Sparkles className="h-3.5 w-3.5" /> : photoUrl && photoUrl !== failedPhotoUrl ? (
+        <img
+          src={photoUrl}
+          alt=""
+          className="h-full w-full rounded-full object-cover"
+          onError={() => setFailedPhotoUrl(photoUrl)}
+        />
+      ) : initials(name)}
     </span>
   )
 }
@@ -128,11 +138,30 @@ export function PartCommentRail({
   onResolve: (thread: PartCommentThread, action: 'accept' | 'discard' | 'reopen') => Promise<void>
 }) {
   const [dismissedComposer, setDismissedComposer] = useState<string | null>(null)
+  const [currentUserPhotoUrl, setCurrentUserPhotoUrl] = useState<string | null>(null)
   const [pendingKey, setPendingKey] = useState<string | null>(null)
   const [pendingText, setPendingText] = useState('')
   const [errorKey, setErrorKey] = useState<{ key: string; message: string } | null>(null)
   const [resolving, setResolving] = useState<string | null>(null)
   const cardRefs = useRef(new Map<string, HTMLDivElement>())
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+    let objectUrl: string | null = null
+    void fetchMicrosoftProfilePhoto(controller.signal)
+      .then((photo) => {
+        if (!active || !photo) return
+        objectUrl = URL.createObjectURL(photo)
+        setCurrentUserPhotoUrl(objectUrl)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [])
   // A composer closed with Cancel comes back when another part is selected.
   useEffect(() => {
     setDismissedComposer((prev) => (prev === selectedKey ? prev : null))
@@ -224,7 +253,7 @@ export function PartCommentRail({
               partTakesComments(part) ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <Avatar name={currentUserName} />
+                    <Avatar name={currentUserName} photoUrl={currentUserPhotoUrl} />
                     <span className="font-medium text-foreground">{currentUserName}</span>
                   </div>
                   {pending ? (
