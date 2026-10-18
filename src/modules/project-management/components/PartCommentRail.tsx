@@ -1,14 +1,28 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, Loader2, Quote, RotateCcw, Sparkles, X } from 'lucide-react'
+import { Check, Eye, Loader2, Quote, RotateCcw, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import type { PartCommentThread } from '@/lib/api/tectonaAgentRuntimeApi'
+import type { PartCommentAccess, PartCommentThread } from '@/lib/api/tectonaAgentRuntimeApi'
 import { fetchMicrosoftProfilePhoto } from '@/lib/api/microsoftGraphApi'
 import { cn } from '@/lib/utils'
+import {
+  CommentBody,
+  MentionTextarea,
+  encodeMentions,
+  plainText,
+  type ThreadPerson,
+} from '@/modules/project-management/components/IdeaSectionThreads'
 import type { PartAnchors } from '@/modules/project-management/components/TemplateDocumentPreview'
 import { partTakesComments, type TemplatePart } from '@/modules/project-management/lib/templatePartSelection'
 
 const CARD_GAP = 10
+
+/** The id the comment boxes use for Tectona in mention markup (agent-runtime part_comment_people.py). */
+export const TECTONA_MENTION: ThreadPerson = { id: 'tectona', name: 'Tectona' }
+
+/** Whether a comment asks Tectona for a proposal (only then Tectona answers). */
+export function asksTectona(text: string): boolean {
+  return /@\[[^\]\n]{1,80}\]\(tectona\)/i.test(text) || /(^|[^\w@])@tectona\b/i.test(text)
+}
 
 function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean)
@@ -53,6 +67,7 @@ function Avatar({ name, tectona = false, photoUrl }: { name: string; tectona?: b
 
 function Composer({
   placeholder,
+  people,
   busy,
   error,
   autoFocus,
@@ -61,39 +76,43 @@ function Composer({
   onSubmit,
 }: {
   placeholder: string
+  people: ThreadPerson[]
   busy: boolean
   error: string
   autoFocus?: boolean
   submitLabel: string
   onCancel?: () => void
+  /** Gets the comment with mentions as @[Name](id) markup; resolves true when it was posted. */
   onSubmit: (text: string) => Promise<boolean>
 }) {
   const [text, setText] = useState('')
+  const [picked, setPicked] = useState<ThreadPerson[]>([])
   const submit = async () => {
     if (!text.trim() || busy) return
-    if (await onSubmit(text.trim())) setText('')
+    if (await onSubmit(encodeMentions(text.trim(), picked))) {
+      setText('')
+      setPicked([])
+    }
   }
   return (
     <div className="space-y-1.5">
-      <Textarea
+      <MentionTextarea
         autoFocus={autoFocus}
         rows={2}
         value={text}
         disabled={busy}
+        people={people}
+        picked={picked}
+        onPick={(person) => setPicked((prev) => (prev.some((p) => p.id === person.id) ? prev : [...prev, person]))}
+        onChange={setText}
+        onSubmitShortcut={() => void submit()}
         placeholder={placeholder}
         aria-label={placeholder}
         className="min-h-[56px] w-full resize-y rounded-lg text-xs"
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-            event.preventDefault()
-            void submit()
-          }
-        }}
       />
       {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground">Ctrl+Enter to post</span>
+        <span className="text-[10px] leading-4 text-muted-foreground">@Tectona for a proposal · Ctrl+Enter to post</span>
         <div className="flex items-center gap-1.5">
           {onCancel ? (
             <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy} onClick={onCancel}>
@@ -112,8 +131,9 @@ function Composer({
 
 /**
  * Comments beside the document preview, like Word's: one thread per part, at the height of the part.
- * A comment asks Tectona to change the part; Tectona answers with a proposal grounded in the source
- * context, which the reviewer accepts (written as is when generating) or discards.
+ * A comment that mentions @Tectona asks it to change the part; Tectona answers with a proposal
+ * grounded in the source context, which the idea owner or the thread's creator accepts (written as
+ * is when generating) or discards. Other mentions bring people into the discussion.
  */
 export function PartCommentRail({
   anchors,
@@ -122,6 +142,10 @@ export function PartCommentRail({
   selectedKey,
   onSelect,
   currentUserName,
+  currentUserId,
+  people,
+  access,
+  accessLoading = false,
   disabled,
   onPost,
   onResolve,
@@ -132,9 +156,15 @@ export function PartCommentRail({
   selectedKey: string | null
   onSelect: (key: string) => void
   currentUserName: string
+  currentUserId: string
+  /** Who can be mentioned (Tectona first). */
+  people: ThreadPerson[]
+  /** What the current user may do; null while it loads (nothing is offered then). */
+  access: PartCommentAccess | null
+  accessLoading?: boolean
   disabled: boolean
-  /** Posts a comment; rejects with a readable error. */
-  onPost: (part: TemplatePart, message: string, thread?: PartCommentThread) => Promise<void>
+  /** Posts a comment; resolves false when the user stepped back (nothing posted); rejects with a readable error. */
+  onPost: (part: TemplatePart, message: string, thread?: PartCommentThread) => Promise<boolean>
   onResolve: (thread: PartCommentThread, action: 'accept' | 'discard' | 'reopen') => Promise<void>
 }) {
   const [dismissedComposer, setDismissedComposer] = useState<string | null>(null)
@@ -196,13 +226,16 @@ export function PartCommentRail({
     }
   })
 
+  const canComment = Boolean(access?.can_comment)
+  const mayDecide = (thread: PartCommentThread) =>
+    Boolean(access?.is_owner) || (Boolean(currentUserId) && thread.created_by === currentUserId)
+
   const post = async (part: TemplatePart, text: string, thread?: PartCommentThread): Promise<boolean> => {
     setPendingKey(part.key)
     setPendingText(text)
     setErrorKey(null)
     try {
-      await onPost(part, text, thread)
-      return true
+      return await onPost(part, text, thread)
     } catch (error) {
       setErrorKey({ key: part.key, message: error instanceof Error ? error.message : "Couldn't draft a proposal. Try again." })
       return false
@@ -250,7 +283,15 @@ export function PartCommentRail({
             }}
           >
             {!thread ? (
-              partTakesComments(part) ? (
+              !partTakesComments(part) ? (
+                <p className="text-muted-foreground">Comments on table parts aren't available yet.</p>
+              ) : !canComment ? (
+                <p className="text-muted-foreground">
+                  {accessLoading ? 'Loading comments…' : access === null ? "Comments aren't available right now." : access.can_read
+                    ? 'You can read this discussion. The idea owner can let you reply.'
+                    : "You don't have access to this idea's comments. The idea owner can let you in."}
+                </p>
+              ) : (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Avatar name={currentUserName} photoUrl={currentUserPhotoUrl} />
@@ -261,7 +302,8 @@ export function PartCommentRail({
                   ) : (
                     <Composer
                       autoFocus
-                      placeholder={`Ask for a change to ${part.label}`}
+                      placeholder={`Comment on ${part.label}, @ to mention`}
+                      people={people}
                       submitLabel="Comment"
                       busy={disabled || pending}
                       error={error}
@@ -270,14 +312,12 @@ export function PartCommentRail({
                     />
                   )}
                 </div>
-              ) : (
-                <p className="text-muted-foreground">Comments on table parts aren't available yet.</p>
               )
             ) : (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-medium text-foreground" title={thread.part_label}>{thread.part_label || part.label}</span>
-                  <StatusChip status={thread.status} />
+                  <StatusChip status={thread.status} discussion={!thread.proposal} />
                 </div>
                 {selected ? (
                   <>
@@ -302,7 +342,7 @@ export function PartCommentRail({
                               {message.created_at ? <p className="text-[10px] text-muted-foreground">{when(message.created_at)}</p> : null}
                             </div>
                           </div>
-                          <p className="whitespace-pre-wrap leading-5 text-foreground/90">{message.text}</p>
+                          <p className="whitespace-pre-wrap leading-5 text-foreground/90"><CommentBody body={message.text} /></p>
                           {isTectona && message.proposal ? (
                             <div className={cn('space-y-1.5 rounded-lg border px-2.5 py-2', isLatest ? 'border-sky-200 bg-sky-50/60 dark:border-sky-500/30 dark:bg-sky-500/10' : 'border-border/70 bg-muted/20 opacity-80')}>
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{isLatest ? 'Proposed text' : 'Earlier proposal'}</p>
@@ -326,7 +366,7 @@ export function PartCommentRail({
                                   <p className="mt-0.5">Accepting records it as reviewer input for this idea's documents.</p>
                                 </div>
                               ) : null}
-                              {isLatest && thread.status === 'open' ? (
+                              {isLatest && thread.status === 'open' && mayDecide(thread) ? (
                                 <div className="flex items-center gap-1.5 pt-0.5">
                                   <Button
                                     type="button"
@@ -365,6 +405,7 @@ export function PartCommentRail({
                     {thread.status === 'accepted' ? (
                       <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[11px] text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200">
                         <span>Accepted · written as is when you generate.</span>
+                        {mayDecide(thread) ? (
                         <button
                           type="button"
                           className="inline-flex items-center gap-1 font-medium hover:underline disabled:opacity-50"
@@ -377,24 +418,34 @@ export function PartCommentRail({
                           <RotateCcw className="h-3 w-3" aria-hidden />
                           Undo
                         </button>
+                        ) : null}
                       </div>
                     ) : null}
                     {pending ? <PendingComment text={pendingText} author={currentUserName} /> : null}
-                    {partTakesComments(part) && !pending ? (
+                    {partTakesComments(part) && !pending && canComment ? (
                       <Composer
-                        placeholder="Reply or ask for another change"
+                        placeholder="Reply, @ to mention"
+                        people={people}
                         submitLabel="Reply"
                         busy={disabled}
                         error={error}
                         onSubmit={(text) => post(part, text, thread)}
                       />
                     ) : null}
+                    {!canComment && access?.can_read ? (
+                      <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <Eye className="h-3 w-3" aria-hidden />
+                        Read only. The idea owner can let you reply.
+                      </p>
+                    ) : null}
+                    {error && !canComment ? <p className="text-[11px] text-destructive">{error}</p> : null}
                   </>
                 ) : (
                   <p className="line-clamp-2 leading-5 text-muted-foreground">
                     {thread.status === 'accepted' || thread.status === 'applied'
                       ? thread.accepted_value
-                      : latestAssistant?.proposal?.value ?? latestAssistant?.text ?? ''}
+                      : latestAssistant?.proposal?.value
+                        ?? plainText([...thread.messages].reverse().find((m) => m.role !== 'event')?.text ?? '')}
                   </p>
                 )}
               </div>
@@ -411,13 +462,16 @@ export function PartCommentRail({
   )
 }
 
-function StatusChip({ status }: { status: PartCommentThread['status'] }) {
-  const label = { open: 'Proposal', accepted: 'Accepted', applied: 'Applied', discarded: 'Discarded' }[status]
+function StatusChip({ status, discussion }: { status: PartCommentThread['status']; discussion: boolean }) {
+  // A thread nobody asked Tectona in is a discussion between people, not a proposal.
+  const label = status === 'open' && discussion
+    ? 'Discussion'
+    : { open: 'Proposal', accepted: 'Accepted', applied: 'Applied', discarded: 'Discarded' }[status]
   return (
     <span
       className={cn(
         'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-        status === 'open' && 'bg-sky-100 text-sky-800',
+        status === 'open' && (discussion ? 'bg-muted text-foreground' : 'bg-sky-100 text-sky-800'),
         status === 'accepted' && 'bg-emerald-100 text-emerald-800',
         status === 'applied' && 'bg-muted text-muted-foreground',
         status === 'discarded' && 'bg-muted text-muted-foreground line-through',
@@ -435,10 +489,10 @@ function PendingComment({ text, author }: { text: string; author: string }) {
         <Avatar name={author} />
         <span className="font-medium text-foreground">{author}</span>
       </div>
-      <p className="whitespace-pre-wrap leading-5 text-foreground/90">{text}</p>
+      <p className="whitespace-pre-wrap leading-5 text-foreground/90"><CommentBody body={text} /></p>
       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-        Tectona is drafting a proposal from the source context…
+        {asksTectona(text) ? 'Tectona is drafting a proposal from the source context…' : 'Posting…'}
       </p>
     </div>
   )

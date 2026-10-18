@@ -127,6 +127,12 @@ import {
   listPartComments,
   postPartComment,
   resolvePartComment,
+  listCommentAccess,
+  decideCommentAccess,
+  failedDeliveries,
+  type CommentAccessEntry,
+  type PartCommentAccess,
+  type PartCommentDelivery,
   type PartCommentThread,
   correctIdeaIntakeAnswer,
   fillDkmTemplate,
@@ -187,7 +193,15 @@ import {
   type TemplatePart,
   type TemplatePartChoice,
 } from '@/modules/project-management/lib/templatePartSelection'
-import { PartCommentRail } from '@/modules/project-management/components/PartCommentRail'
+import { PartCommentRail, TECTONA_MENTION } from '@/modules/project-management/components/PartCommentRail'
+import {
+  CommentAccessPrompt,
+  type CommentAccessLevel,
+  type CommentAccessPerson,
+} from '@/modules/project-management/components/CommentAccessPrompt'
+import { mentionIdsOf, type ThreadPerson } from '@/modules/project-management/components/IdeaSectionThreads'
+import { activeMemberIds, organizationHomeWorkspaceId } from '@/modules/project-management/lib/commentMentionPeople'
+import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
 import { belongsToDkmTemplateScope } from '@/modules/document-knowledge-management/lib/templateWorkspaceScope'
 import { IdeaDocumentHistory } from '../components/IdeaDocumentHistory'
 import { IdeaTemplateLibrary } from '../components/IdeaTemplateLibrary'
@@ -4237,23 +4251,104 @@ export function IdeaDetailPage() {
     ? `doc:${ideaDocRegenerateTarget.id}`
     : selectedIdeaDocGenerateTemplate ? `tpl:${selectedIdeaDocGenerateTemplate.id}` : ''
   const [ideaDocPartComments, setIdeaDocPartComments] = useState<PartCommentThread[]>([])
+  // What the current user may do with the comments (the idea owner, or access given by the owner),
+  // and everyone's access as far as the user may see it (the owner sees all, with the requests).
+  const [ideaDocCommentAccess, setIdeaDocCommentAccess] = useState<PartCommentAccess | null>(null)
+  const [ideaDocCommentAccessLoading, setIdeaDocCommentAccessLoading] = useState(false)
+  const [ideaDocCommentAccessEntries, setIdeaDocCommentAccessEntries] = useState<CommentAccessEntry[]>([])
   useEffect(() => {
     if (!ideaDocGenerateOpen || !ideaDocCommentScope) {
       setIdeaDocPartComments([])
+      setIdeaDocCommentAccess(null)
       return
     }
     let cancelled = false
+    setIdeaDocCommentAccessLoading(true)
     listPartComments(idea.id, ideaDocCommentScope)
-      .then((threads) => {
-        if (!cancelled) setIdeaDocPartComments(threads)
+      .then(({ threads, access }) => {
+        if (cancelled) return
+        setIdeaDocPartComments(threads)
+        setIdeaDocCommentAccess(access)
       })
       .catch(() => {
-        if (!cancelled) setIdeaDocPartComments([])
+        if (cancelled) return
+        setIdeaDocPartComments([])
+        setIdeaDocCommentAccess(null)
+      })
+      .finally(() => {
+        if (!cancelled) setIdeaDocCommentAccessLoading(false)
       })
     return () => {
       cancelled = true
     }
   }, [idea.id, ideaDocCommentScope, ideaDocGenerateOpen])
+  const refreshIdeaDocCommentAccess = useCallback(async () => {
+    const next = await listCommentAccess(idea.id).catch(() => null)
+    if (next) setIdeaDocCommentAccessEntries(next.entries)
+  }, [idea.id])
+  useEffect(() => {
+    if (!ideaDocGenerateOpen) {
+      setIdeaDocCommentAccessEntries([])
+      return
+    }
+    void refreshIdeaDocCommentAccess()
+  }, [ideaDocGenerateOpen, refreshIdeaDocCommentAccess])
+  // Who can be mentioned: Tectona, and the members of the idea's workspace and of its organization home.
+  const [ideaDocMentionMemberIds, setIdeaDocMentionMemberIds] = useState<string[]>([])
+  useEffect(() => {
+    if (!ideaDocGenerateOpen) return
+    let cancelled = false
+    void (async () => {
+      const ideaWorkspaceId = isWorkspaceUuid(idea.workspace) ? idea.workspace.trim() : resolveWorkspaceApiId(tenant?.workspaceId)
+      if (!ideaWorkspaceId) return
+      const directory = await fetchAllWorkspaceOrgWorkspacesCached().catch(() => [])
+      const homeId = organizationHomeWorkspaceId(ideaWorkspaceId, directory)
+      const workspaceIds = [...new Set([ideaWorkspaceId, homeId].filter((id): id is string => Boolean(id)))]
+      const rows = await Promise.all(workspaceIds.map((workspaceId) =>
+        fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspaceId).then((res) => res.items).catch(() => []),
+      ))
+      if (!cancelled) setIdeaDocMentionMemberIds(activeMemberIds(rows.flat()))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [idea.workspace, ideaDocGenerateOpen, tenant?.workspaceId])
+  const ideaDocPersonName = useCallback((userId: string, fallback = '') =>
+    (identityUserNameById[userId] ?? '').trim() || fallback || `User ${userId.slice(0, 8)}`,
+  [identityUserNameById])
+  const ideaDocMentionPeople = useMemo<ThreadPerson[]>(() => [
+    TECTONA_MENTION,
+    ...ideaDocMentionMemberIds
+      .filter((id) => id !== currentUserId && identityUserNameById[id]?.trim())
+      .map((id) => ({ id, name: identityUserNameById[id].trim() }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  ], [currentUserId, identityUserNameById, ideaDocMentionMemberIds])
+  // Where a notification or email about a part's comment opens: this idea, the dialog on that part.
+  const ideaDocCommentLink = useCallback((partKey: string) => {
+    const path = workspaceScopedPath(tenant?.slug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+    const query = new URLSearchParams({ generate: ideaDocGenerateTemplateId, ...(partKey ? { part: partKey } : {}) })
+    return `${window.location.origin}${path}?${query.toString()}`
+  }, [idea.id, ideaDocGenerateTemplateId, tenant?.slug, tenant?.workspaceId])
+  // The idea owner's pop-up: what mentioned people without access may do (before the comment is
+  // posted), or the requests from other participants' mentions.
+  const [ideaDocAccessPrompt, setIdeaDocAccessPrompt] = useState<
+    | { kind: 'grant'; people: CommentAccessPerson[]; resolve: (levels: Record<string, CommentAccessLevel> | null) => void }
+    | { kind: 'requests'; people: CommentAccessPerson[] }
+    | null
+  >(null)
+  const [ideaDocAccessBusy, setIdeaDocAccessBusy] = useState(false)
+  const reportIdeaDocDeliveries = useCallback((deliveries: PartCommentDelivery[]) => {
+    const failed = failedDeliveries(deliveries)
+    if (!failed.length) return
+    addToast({
+      title: "Some notifications didn't go out",
+      description: failed
+        .map((d) => d.message || d.email?.message || d.notified?.find((n) => !n.ok)?.message || 'unknown error')
+        .join(' · ')
+        .slice(0, 300),
+      variant: 'warning',
+    })
+  }, [addToast])
   const ideaDocCommentDrafts = useMemo(() => Object.fromEntries(
     ideaDocPartComments
       .filter((thread) => thread.status === 'accepted' && thread.accepted_value?.trim())
@@ -4293,9 +4388,29 @@ export function IdeaDetailPage() {
     const value = partValue(part, ideaDocPartPayloads[version])
     return typeof value === 'string' ? value : ''
   }, [ideaDocCommentDrafts, ideaDocPartChoices, ideaDocPartPayloads, ideaDocRegenerateVersion])
-  const postIdeaDocPartComment = useCallback(async (part: TemplatePart, message: string, thread?: PartCommentThread) => {
+  const postIdeaDocPartComment = useCallback(async (part: TemplatePart, message: string, thread?: PartCommentThread): Promise<boolean> => {
+    // The owner decides first what mentioned people without access may do.
+    const ownerId = ideaDocCommentAccess?.owner_id ?? ''
+    const granted = new Set(ideaDocCommentAccessEntries.filter((entry) => entry.status === 'granted').map((entry) => entry.user_id))
+    const mentioned = mentionIdsOf(message).filter((id) => id !== TECTONA_MENTION.id && id !== currentUserId && id !== ownerId)
+    let grants: Array<{ userId: string; userName: string; level: 'read' | 'comment' }> = []
+    if (ideaDocCommentAccess?.is_owner) {
+      const newcomers = mentioned.filter((id) => !granted.has(id))
+      if (newcomers.length) {
+        const levels = await new Promise<Record<string, CommentAccessLevel> | null>((resolve) => {
+          setIdeaDocAccessPrompt({
+            kind: 'grant',
+            people: newcomers.map((id) => ({ id, name: ideaDocPersonName(id) })),
+            resolve,
+          })
+        })
+        setIdeaDocAccessPrompt(null)
+        if (!levels) return false
+        grants = newcomers.map((id) => ({ userId: id, userName: ideaDocPersonName(id), level: levels[id] === 'read' ? 'read' : 'comment' }))
+      }
+    }
     try {
-      const saved = await postPartComment(idea.id, {
+      const { thread: saved, deliveries, pendingAccess } = await postPartComment(idea.id, {
         threadId: thread?.id,
         scopeKey: ideaDocCommentScope,
         templateId: selectedIdeaDocGenerateTemplate?.id,
@@ -4308,19 +4423,44 @@ export function IdeaDetailPage() {
         sourceText: ideaDocGenerateSource,
         authorId: currentUserId,
         authorName: currentUserDisplayName,
+        ideaTitle: idea.title,
+        linkUrl: ideaDocCommentLink(part.key),
+        grants,
       })
       setIdeaDocPartComments((threads) => [...threads.filter((item) => item.id !== saved.id), saved])
+      if (grants.length || pendingAccess.length) void refreshIdeaDocCommentAccess()
+      const mentionSent = deliveries.find((d) => d.kind === 'mention' && failedDeliveries([d]).length === 0)
+      if (mentionSent) {
+        const names = (mentionSent.notified ?? []).map((n) => ideaDocPersonName(n.user_id)).join(', ')
+        addToast({ title: `Mentioned ${names}`, description: 'They get a notification and an email with a link to this comment.', variant: 'success' })
+      }
+      if (pendingAccess.length) {
+        addToast({
+          title: 'Waiting for the idea owner',
+          description: `${pendingAccess.join(', ')} can join once the idea owner lets them in; they are notified then.`,
+          variant: 'info',
+        })
+      }
+      reportIdeaDocDeliveries(deliveries)
+      return true
     } catch (error) {
+      const text = error instanceof Error ? error.message : ''
       throw new Error(
-        error instanceof Error && /PART_REVISION_FAILED/.test(error.message)
+        /PART_REVISION_FAILED/.test(text)
           ? "Tectona couldn't draft a proposal this time. Send the comment again."
-          : "Couldn't post the comment. Try again.",
+          : /PART_COMMENT_NOT_ALLOWED|403/.test(text)
+            ? "You can't comment on this idea. The idea owner can let you in."
+            : "Couldn't post the comment. Try again.",
       )
     }
-  }, [currentUserDisplayName, currentUserId, idea.id, ideaDocCommentScope, ideaDocGenerateSource, ideaDocPartCurrentText, selectedIdeaDocGenerateTemplate])
+  }, [addToast, currentUserDisplayName, currentUserId, idea.id, idea.title, ideaDocCommentAccess, ideaDocCommentAccessEntries, ideaDocCommentLink, ideaDocCommentScope, ideaDocGenerateSource, ideaDocPartCurrentText, ideaDocPersonName, refreshIdeaDocCommentAccess, reportIdeaDocDeliveries, selectedIdeaDocGenerateTemplate])
   const resolveIdeaDocPartComment = useCallback(async (thread: PartCommentThread, action: 'accept' | 'discard' | 'reopen') => {
-    const saved = await resolvePartComment(idea.id, thread.id, action, { id: currentUserId, name: currentUserDisplayName })
+    const { thread: saved, deliveries } = await resolvePartComment(
+      idea.id, thread.id, action, { id: currentUserId, name: currentUserDisplayName },
+      { ideaTitle: idea.title, linkUrl: ideaDocCommentLink(thread.part_key) },
+    )
     setIdeaDocPartComments((threads) => threads.map((item) => (item.id === saved.id ? saved : item)))
+    reportIdeaDocDeliveries(deliveries)
     // The reviewer's own facts in an accepted text become reviewer input: the source context gets them.
     const factsChanged = action === 'accept'
       ? saved.user_facts.length > 0
@@ -4329,7 +4469,62 @@ export function IdeaDetailPage() {
       const next = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace }).catch(() => null)
       if (next) applyIdeaDocIntake(next)
     }
-  }, [applyIdeaDocIntake, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.workspace])
+  }, [applyIdeaDocIntake, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.workspace, ideaDocCommentLink, reportIdeaDocDeliveries])
+  // Requests from other participants' mentions: the owner's pop-up opens when new ones are waiting.
+  const ideaDocPendingRequests = useMemo(
+    () => (ideaDocCommentAccess?.is_owner ? ideaDocCommentAccessEntries.filter((entry) => entry.status === 'pending') : []),
+    [ideaDocCommentAccess?.is_owner, ideaDocCommentAccessEntries],
+  )
+  const ideaDocRequestsShownRef = useRef('')
+  useEffect(() => {
+    if (!ideaDocGenerateOpen) {
+      ideaDocRequestsShownRef.current = ''
+      return
+    }
+    const key = ideaDocPendingRequests.map((entry) => entry.user_id).sort().join('|')
+    if (!key || key === ideaDocRequestsShownRef.current || ideaDocAccessPrompt) return
+    ideaDocRequestsShownRef.current = key
+    setIdeaDocAccessPrompt({
+      kind: 'requests',
+      people: ideaDocPendingRequests.map((entry) => ({
+        id: entry.user_id,
+        name: ideaDocPersonName(entry.user_id, entry.user_name),
+        note: entry.requested_by_name ? `Mentioned by ${entry.requested_by_name}` : 'Mentioned in a comment',
+      })),
+    })
+  }, [ideaDocAccessPrompt, ideaDocGenerateOpen, ideaDocPendingRequests, ideaDocPersonName])
+  const decideIdeaDocCommentRequests = useCallback(async (people: CommentAccessPerson[], levels: Record<string, CommentAccessLevel>) => {
+    setIdeaDocAccessBusy(true)
+    try {
+      const results = await Promise.allSettled(people.map((person) => {
+        const entry = ideaDocPendingRequests.find((item) => item.user_id === person.id)
+        const partKey = ideaDocPartComments.find((item) => item.id === entry?.pending_thread_id)?.part_key ?? ''
+        return decideCommentAccess(idea.id, {
+          userId: person.id,
+          userName: person.name,
+          level: levels[person.id] ?? 'comment',
+          ideaTitle: idea.title,
+          linkUrl: ideaDocCommentLink(partKey),
+        })
+      }))
+      const deliveries = results.flatMap((result) => (result.status === 'fulfilled' ? result.value.deliveries : []))
+      const failed = results.filter((result) => result.status === 'rejected').length
+      const letIn = people.filter((person, index) => results[index].status === 'fulfilled' && levels[person.id] !== 'deny')
+      if (letIn.length) {
+        addToast({
+          title: `${letIn.map((person) => person.name).join(', ')} can join the discussion`,
+          description: 'They get the mention as a notification and an email now.',
+          variant: 'success',
+        })
+      }
+      if (failed) addToast({ title: "Couldn't save every choice", description: 'Open the comments again to retry.', variant: 'error' })
+      reportIdeaDocDeliveries(deliveries)
+      await refreshIdeaDocCommentAccess()
+    } finally {
+      setIdeaDocAccessBusy(false)
+      setIdeaDocAccessPrompt(null)
+    }
+  }, [addToast, idea.id, idea.title, ideaDocCommentLink, ideaDocPartComments, ideaDocPendingRequests, refreshIdeaDocCommentAccess, reportIdeaDocDeliveries])
 
   const isIdeaCreator = useMemo(() => {
     const ownerRaw = (idea.submittedBy ?? '').trim()
@@ -7529,6 +7724,27 @@ export function IdeaDetailPage() {
     }
   }, [addToast, idea.description, idea.id, idea.title, ideaDocTemplates, refreshIdeaDocWorkflowGate])
 
+  // A notification or email about a comment links here with ?generate=<template>&part=<key>: open
+  // the Generate dialog on that template and select the part (its comments show beside it).
+  const ideaDocDeepLinkPartRef = useRef<string | null>(null)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const templateId = params.get('generate')
+    if (!templateId || ideaDocTemplates.length === 0) return
+    ideaDocDeepLinkPartRef.current = params.get('part')
+    params.delete('generate')
+    params.delete('part')
+    const rest = params.toString()
+    navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true, state: location.state })
+    void openIdeaDocGenerateDialog(templateId)
+  }, [ideaDocTemplates.length, location.pathname, location.search, location.state, navigate, openIdeaDocGenerateDialog])
+  useEffect(() => {
+    const key = ideaDocDeepLinkPartRef.current
+    if (!ideaDocGenerateOpen || !key || !ideaDocParts.some((part) => part.key === key)) return
+    ideaDocDeepLinkPartRef.current = null
+    selectIdeaDocPart(key)
+  }, [ideaDocGenerateOpen, ideaDocParts, selectIdeaDocPart])
+
   const openTemplateManagementAction = useCallback((action: 'upload' | 'new-template' | 'new-folder') => {
     const workspacePrefix = location.pathname.match(/^\/w\/[^/]+/)?.[0] ?? ''
     navigate(`${workspacePrefix}/document-knowledge-management?view=templates&action=${action}`)
@@ -7759,7 +7975,7 @@ export function IdeaDetailPage() {
       // The accepted comment texts are in this version now: their threads become history.
       const appliedThreads = ideaDocPartComments.filter((thread) => thread.status === 'accepted' && draftKeys.includes(thread.part_key))
       void Promise.allSettled(appliedThreads.map((thread) =>
-        resolvePartComment(idea.id, thread.id, 'applied', { id: currentUserId, name: currentUserDisplayName }),
+        resolvePartComment(idea.id, thread.id, 'applied', { id: currentUserId, name: currentUserDisplayName }, { ideaTitle: idea.title }),
       ))
       setIdeaDocsPage(1)
       setIdeaDocGenerateOpen(false)
@@ -15577,6 +15793,29 @@ export function IdeaDetailPage() {
                     aria-labelledby="idea-doc-generate-title"
                     className="relative z-[1401] flex h-full max-h-full w-full max-w-none flex-col overflow-hidden border-0 bg-card shadow-none"
                   >
+                    {ideaDocAccessPrompt ? (
+                      <CommentAccessPrompt
+                        title={ideaDocAccessPrompt.kind === 'grant' ? 'Let them see this discussion?' : 'Requests to join the discussion'}
+                        description={ideaDocAccessPrompt.kind === 'grant'
+                          ? "You mentioned people who don't have access to this idea's comments yet. Choose what they may do; they get a notification and an email."
+                          : "Participants mentioned people who don't have access yet. They hear about the mention once you let them in."}
+                        people={ideaDocAccessPrompt.people}
+                        allowDecline={ideaDocAccessPrompt.kind === 'requests'}
+                        confirmLabel={ideaDocAccessPrompt.kind === 'grant' ? 'Post comment' : 'Save'}
+                        cancelLabel={ideaDocAccessPrompt.kind === 'grant' ? 'Back to comment' : 'Later'}
+                        busy={ideaDocAccessBusy}
+                        onConfirm={(levels) => {
+                          const prompt = ideaDocAccessPrompt
+                          if (prompt.kind === 'grant') prompt.resolve(levels)
+                          else void decideIdeaDocCommentRequests(prompt.people, levels)
+                        }}
+                        onCancel={() => {
+                          const prompt = ideaDocAccessPrompt
+                          if (prompt.kind === 'grant') prompt.resolve(null)
+                          else setIdeaDocAccessPrompt(null)
+                        }}
+                      />
+                    ) : null}
                     <div className="shrink-0 border-b border-border/70 bg-muted/25 px-6 py-5">
                       <div className="flex items-start gap-4">
                         <div className="mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/12 text-blue-700 ring-1 ring-blue-500/25">
@@ -15754,6 +15993,10 @@ export function IdeaDetailPage() {
                                 selectedKey={ideaDocSelectedPartKey}
                                 onSelect={setIdeaDocSelectedPartKey}
                                 currentUserName={currentUserDisplayName || 'You'}
+                                currentUserId={currentUserId}
+                                people={ideaDocMentionPeople}
+                                access={ideaDocCommentAccess}
+                                accessLoading={ideaDocCommentAccessLoading}
                                 disabled={ideaDocGenerateBusy}
                                 onPost={postIdeaDocPartComment}
                                 onResolve={resolveIdeaDocPartComment}

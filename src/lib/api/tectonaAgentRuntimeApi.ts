@@ -2181,19 +2181,96 @@ export interface PartCommentThread {
   proposal: PartProposal | null
   accepted_value: string | null
   user_facts: string[]
+  created_by?: string | null
   created_by_name?: string | null
   created_date?: string
   updated_date?: string
 }
 
-export async function listPartComments(ideaId: string, scopeKey: string): Promise<PartCommentThread[]> {
+/** What the caller may do with an idea's comments: the owner always; others when given access. */
+export interface PartCommentAccess {
+  user_id: string
+  owner_id: string
+  is_owner: boolean
+  can_read: boolean
+  can_comment: boolean
+}
+
+/** One person's access to an idea's comments (read: sees the discussion; comment: may also reply). */
+export interface CommentAccessEntry {
+  idea_id: string
+  user_id: string
+  user_name: string
+  level: 'read' | 'comment'
+  status: 'granted' | 'pending' | 'denied'
+  requested_by?: string | null
+  requested_by_name?: string | null
+  granted_by?: string | null
+  pending_thread_id?: string | null
+}
+
+/** How a notification + email went out (Workflow Automation's answer, or why the call failed). */
+export interface PartCommentDelivery {
+  ok: boolean
+  kind?: string
+  message?: string
+  notified?: Array<{ user_id: string; ok: boolean; message?: string }>
+  email?: { ok?: boolean; message?: string; to?: string[]; cc?: string[]; missing?: string[] }
+}
+
+/** Deliveries where the notification or the email did not go out. */
+export function failedDeliveries(deliveries: PartCommentDelivery[]): PartCommentDelivery[] {
+  return deliveries.filter((d) => !d.ok || (d.notified ?? []).some((n) => !n.ok) || d.email?.ok === false)
+}
+
+export async function listPartComments(
+  ideaId: string,
+  scopeKey: string,
+): Promise<{ threads: PartCommentThread[]; access: PartCommentAccess | null }> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments?scope_key=${encodeURIComponent(scopeKey)}`,
     { method: 'GET' },
     15_000,
   )
-  const body = await handleResponse<{ threads?: PartCommentThread[] }>(res)
-  return body.threads ?? []
+  const body = await handleResponse<{ threads?: PartCommentThread[]; access?: PartCommentAccess }>(res)
+  return { threads: body.threads ?? [], access: body.access ?? null }
+}
+
+/** Who may see or join the idea's comments (the owner gets everyone, others their own entry). */
+export async function listCommentAccess(
+  ideaId: string,
+): Promise<{ access: PartCommentAccess | null; entries: CommentAccessEntry[] }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/comment-access`,
+    { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ access?: PartCommentAccess; entries?: CommentAccessEntry[] }>(res)
+  return { access: body.access ?? null, entries: body.entries ?? [] }
+}
+
+/** The idea owner lets someone in (read only or comment) or declines a request. */
+export async function decideCommentAccess(
+  ideaId: string,
+  input: { userId: string; userName?: string; level: 'read' | 'comment' | 'deny'; ideaTitle?: string; linkUrl?: string },
+): Promise<{ entry: CommentAccessEntry; deliveries: PartCommentDelivery[] }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/comment-access`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: input.userId,
+        user_name: input.userName ?? '',
+        level: input.level,
+        idea_title: input.ideaTitle ?? '',
+        link_url: input.linkUrl ?? '',
+      }),
+    },
+    90_000,
+  )
+  const body = await handleResponse<{ entry: CommentAccessEntry; deliveries?: PartCommentDelivery[] }>(res)
+  return { entry: body.entry, deliveries: body.deliveries ?? [] }
 }
 
 /** A comment on one part; resolves with the thread holding Tectona's new proposal. */
@@ -2211,8 +2288,12 @@ export async function postPartComment(
     sourceText: string
     authorId?: string
     authorName?: string
+    ideaTitle?: string
+    linkUrl?: string
+    /** The owner's choices for mentioned people without access. */
+    grants?: Array<{ userId: string; userName: string; level: 'read' | 'comment' }>
   },
-): Promise<PartCommentThread> {
+): Promise<{ thread: PartCommentThread; deliveries: PartCommentDelivery[]; pendingAccess: string[] }> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments`,
     {
@@ -2230,12 +2311,15 @@ export async function postPartComment(
         source_text: input.sourceText.slice(0, 60000),
         author_id: input.authorId ?? '',
         author_name: input.authorName ?? '',
+        idea_title: input.ideaTitle ?? '',
+        link_url: input.linkUrl ?? '',
+        grants: (input.grants ?? []).map((g) => ({ user_id: g.userId, user_name: g.userName, level: g.level })),
       }),
     },
-    120_000,
+    150_000,
   )
-  const body = await handleResponse<{ thread: PartCommentThread }>(res)
-  return body.thread
+  const body = await handleResponse<{ thread: PartCommentThread; deliveries?: PartCommentDelivery[]; pending_access?: string[] }>(res)
+  return { thread: body.thread, deliveries: body.deliveries ?? [], pendingAccess: body.pending_access ?? [] }
 }
 
 export async function resolvePartComment(
@@ -2243,18 +2327,25 @@ export async function resolvePartComment(
   threadId: string,
   action: 'accept' | 'discard' | 'reopen' | 'applied',
   author: { id?: string; name?: string } = {},
-): Promise<PartCommentThread> {
+  context: { ideaTitle?: string; linkUrl?: string } = {},
+): Promise<{ thread: PartCommentThread; deliveries: PartCommentDelivery[] }> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments/${encodeURIComponent(threadId)}/resolve`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, author_id: author.id ?? '', author_name: author.name ?? '' }),
+      body: JSON.stringify({
+        action,
+        author_id: author.id ?? '',
+        author_name: author.name ?? '',
+        idea_title: context.ideaTitle ?? '',
+        link_url: context.linkUrl ?? '',
+      }),
     },
-    15_000,
+    90_000,
   )
-  const body = await handleResponse<{ thread: PartCommentThread }>(res)
-  return body.thread
+  const body = await handleResponse<{ thread: PartCommentThread; deliveries?: PartCommentDelivery[] }>(res)
+  return { thread: body.thread, deliveries: body.deliveries ?? [] }
 }
 
 /** Remember the idea a brainstorm became, so documents for the idea read its intake answers. */
