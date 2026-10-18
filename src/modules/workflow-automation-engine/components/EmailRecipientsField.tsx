@@ -27,6 +27,8 @@ type Props = {
   label?: string
   hint?: string
   modes?: EmailRecipientBy[]
+  /** By Workspace offers group workspaces only (no personal ones). */
+  groupWorkspacesOnly?: boolean
   onChange: (patch: { emailRecipientBy: string; emailRecipients: string; jobTitles: string }) => void
 }
 
@@ -36,6 +38,7 @@ export function EmailRecipientsField({
   label = 'Email recipients',
   hint,
   modes = ['name', 'jobTitle', 'department', 'role'],
+  groupWorkspacesOnly = false,
   onChange,
 }: Props) {
   const choices = MODES.filter((item) => !modes || modes.includes(item.value))
@@ -49,13 +52,14 @@ export function EmailRecipientsField({
     const seen = new Set<string>()
     return workspaceOptions
       .filter((option) => {
+        if (groupWorkspacesOnly && option.tenantMode === 'personal') return false
         const key = normalizeJobTitle(option.workspaceName)
         if (!key || seen.has(key)) return false
         seen.add(key)
         return true
       })
       .sort((left, right) => left.workspaceName.localeCompare(right.workspaceName))
-  }, [workspaceOptions])
+  }, [groupWorkspacesOnly, workspaceOptions])
   const selectedWorkspaceKeys = new Set(badges.map((badge) => normalizeJobTitle(badge)))
   const remainingWorkspaces = workspaceChoices.filter((option) => !selectedWorkspaceKeys.has(normalizeJobTitle(option.workspaceName)))
 
@@ -150,7 +154,7 @@ export function EmailRecipientsField({
         </div>
       )}
       <p className="text-xs leading-5 text-slate-500">
-        {current === 'workspace'
+        {current === 'workspace' && !hint
           ? 'Select one or more workspaces. Leave empty to include everyone.'
           : (hint ?? 'Type and press Enter. Each badge represents one recipient.')}
       </p>

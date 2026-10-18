@@ -1176,14 +1176,17 @@ function IdeaSectionNodeFields({
           ))}
         </div>
       </div>
-      <div className="space-y-1.5">
-        <label className={FIELD_LABEL_CLASS}>{show ? 'Only to (team or role)' : 'Still shown to (team or role)'}</label>
-        <TeamNamesInput
-          names={splitNames(config.sectionAudience)}
-          onChange={(names) => onChange({ sectionAudience: joinNames(names) })}
-          placeholder={show ? 'Everyone who can open the idea' : 'Nobody: type a team or role'}
-        />
-      </div>
+      <EmailRecipientsField
+        label={show ? 'Only to' : 'Still shown to'}
+        hint={show
+          ? 'Leave empty to show it to everyone who can open the idea. By Workspace: members of that group workspace.'
+          : 'Leave empty to hide it from everyone. By Workspace: members of that group workspace.'}
+        modes={['name', 'jobTitle', 'department', 'team', 'role', 'workspace']}
+        groupWorkspacesOnly
+        mode={config.sectionAudienceBy || 'team'}
+        values={config.sectionAudience || ''}
+        onChange={(patch) => onChange({ sectionAudienceBy: patch.emailRecipientBy, sectionAudience: patch.emailRecipients })}
+      />
       {section === 'diagrams' && show ? (
         <div className="space-y-1.5">
           <p className="text-[10px] font-medium text-slate-500">Diagram types: who sees each (empty: everyone who sees Diagrams)</p>

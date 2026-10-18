@@ -272,6 +272,7 @@ import { resolveWorkspaceApiId } from '@/lib/tenantWorkspaceScope'
 import {
   loadIdeaDocumentWorkflowGate,
   loadPublishedIdeaSectionPolicy,
+  loadViewerGroupWorkspaceNames,
   templateAllowedByWorkflow,
   type IdeaDocumentWorkflowGate,
 } from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
@@ -316,6 +317,7 @@ import {
   getWorkflowRun,
   listIdeaWorkflowRuns,
   listWorkflowApprovals,
+  type IdeaSectionOverrideDto,
   rejectWorkflowRun,
   retryFailedDocumentActions,
 } from '@/lib/api/workflowAutomationApi'
@@ -374,7 +376,7 @@ import {
   type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
-import { ideaAudienceMatches, sendUrdForBusinessReview, urdReviewSummaryText } from '@/modules/project-management/lib/urdReviewHeads'
+import { ideaAudienceMatches, parseEmailRecipientBy, sendUrdForBusinessReview, urdReviewSummaryText } from '@/modules/project-management/lib/urdReviewHeads'
 import { readPersistedIdeaNavTop, useIdeaNavSectionsStore } from '@/modules/project-management/store/ideaNavSectionsStore'
 import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 
@@ -5197,7 +5199,27 @@ export function IdeaDetailPage() {
         // The idea's own changes: "Set Section Visibility" nodes its newest run of that workflow passed.
         const runs = policy.workflowId ? await listIdeaWorkflowRuns(idea.id).catch(() => []) : []
         const overrides = runs.find((run) => run.workflow_id === policy.workflowId)?.idea_sections
-        const sections = applyIdeaSectionOverrides(policy.map, policy.sectionAudience, overrides)
+        // A node's audience by name, job title, department, team, role or group workspace is
+        // matched against this viewer's profile, memberships and group workspaces.
+        const overrideList: IdeaSectionOverrideDto[] = overrides ? Object.values(overrides) : []
+        const needsViewer = overrideList.some((item) => Boolean(item.audience_by) && (item.audience?.length ?? 0) > 0)
+        const [viewer, viewerWorkspaces] = needsViewer
+          ? await Promise.all([
+            currentUserId ? fetchIdentityUser(currentUserId).catch(() => null) : Promise.resolve(null),
+            loadViewerGroupWorkspaceNames(currentUserId).catch(() => []),
+          ])
+          : [null, []]
+        const viewerMemberships = reviewerMemberships.filter((membership) => membership.subject_id === currentUserId)
+        const sections = applyIdeaSectionOverrides(
+          policy.map, policy.sectionAudience, overrides,
+          (by, names) => ideaAudienceMatches({
+            user: viewer,
+            memberships: viewerMemberships,
+            workspaces: viewerWorkspaces,
+            by: parseEmailRecipientBy(by),
+            values: names,
+          }),
+        )
         if (cancelled) return
         if (policy.audience.values.length === 0) {
           setWorkflowSectionVisibility(sections.visibility)

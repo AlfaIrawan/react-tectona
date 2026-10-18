@@ -378,6 +378,8 @@ export type IdeaSectionOverrideDto = {
   visibility: 'show' | 'hide'
   /** show: only these teams/roles (empty: everyone) · hide: these still see it (empty: nobody). */
   audience?: string[]
+  /** How audience is matched: name, jobTitle, department, team, role, workspace (group); empty: team/role names. */
+  audience_by?: string
   /** Diagrams only: who sees each diagram type inside it (empty: everyone who sees Diagrams). */
   diagram_types?: { technical?: string[]; bpmn?: string[] }
   node_id?: string

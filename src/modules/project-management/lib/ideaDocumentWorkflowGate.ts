@@ -11,6 +11,10 @@ import {
   type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
+import type { WacMembershipDto } from '@/lib/api/workspaceAccessControlApi'
+import type { WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
+import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
+import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
 import {
   emailDocumentKindFromTemplateCode,
   parseEmailRecipientBy,
@@ -305,6 +309,26 @@ export async function loadPublishedIdeaSectionPolicy(
     }
   }
   return { map: {}, sectionAudience: null, audience: OPEN_AUDIENCE, requestsApproval: false, requestDocumentKinds: [], workflowId: '' }
+}
+
+/**
+ * The group (non-personal) workspaces the viewer is an active member of, by name: what a
+ * "Set Section Visibility" audience "By Workspace" is matched against.
+ */
+export async function loadViewerGroupWorkspaceNames(subjectId: string | null | undefined): Promise<string[]> {
+  if (!subjectId) return []
+  const [memberships, directory] = await Promise.all([
+    fetchSubjectMembershipsCached(subjectId, { activeOnly: true }).catch((): { items: WacMembershipDto[] } => ({ items: [] })),
+    fetchAllWorkspaceOrgWorkspacesCached().catch((): WorkspaceOrgWorkspaceDto[] => []),
+  ])
+  const byId = new Map(directory.map((workspace) => [workspace.id, workspace]))
+  const names = new Set<string>()
+  for (const row of memberships.items ?? []) {
+    const workspace = byId.get(row.workspace_id)
+    if (!workspace || workspace.tenant_mode === 'personal') continue
+    if (workspace.name?.trim()) names.add(workspace.name.trim())
+  }
+  return [...names]
 }
 
 export async function loadPublishedIdeaSectionVisibility(

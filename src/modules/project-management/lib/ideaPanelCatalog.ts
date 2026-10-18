@@ -141,6 +141,8 @@ export function readIdeaSectionAudience(value: unknown): IdeaSectionAudience | n
 export type IdeaSectionOverride = {
   visibility: IdeaSectionVisibility
   audience?: string[]
+  /** How audience is matched: name, jobTitle, department, team, role, workspace; empty: team/role names. */
+  audience_by?: string
   diagram_types?: { technical?: string[]; bpmn?: string[] }
 }
 
@@ -153,6 +155,8 @@ export function applyIdeaSectionOverrides(
   visibility: IdeaSectionVisibilityMap,
   audience: IdeaSectionAudience | null,
   overrides: Record<string, IdeaSectionOverride | undefined> | null | undefined,
+  /** For an audience matched by name, job title, department, team, role or workspace: the viewer's match. */
+  viewerMatches?: (by: string, names: string[]) => boolean,
 ): { visibility: IdeaSectionVisibilityMap; audience: IdeaSectionAudience | null } {
   const entries = Object.entries(overrides ?? {}).filter(
     (entry): entry is [IdeaPanelKey, IdeaSectionOverride] =>
@@ -166,7 +170,21 @@ export function applyIdeaSectionOverrides(
   const diagramTypes: Record<IdeaDiagramType, string[]> = { ...base.diagramTypes }
   for (const [key, change] of entries) {
     const names = readNames(change.audience) ?? []
-    if (change.visibility === 'show' && names.length === 0) {
+    const by = (change.audience_by ?? '').trim()
+    const decidedForViewer = Boolean(by) && names.length > 0
+    const matched = decidedForViewer && viewerMatches ? viewerMatches(by, names) : false
+    if (decidedForViewer) {
+      // Decided for this viewer: Show only to / Hide but still show to the people matched.
+      if (change.visibility === 'show') {
+        if (matched) nextVisibility[key] = 'show'
+        // Not matched: a section the workflow showed to everyone is limited to the matched people;
+        // one it hid stays as the workflow set it.
+        else if (visibility[key] !== 'hide') { nextVisibility[key] = 'hide'; alsoShowTo[key] = [] }
+      } else {
+        nextVisibility[key] = matched ? 'show' : 'hide'
+        if (!matched) alsoShowTo[key] = []
+      }
+    } else if (change.visibility === 'show' && names.length === 0) {
       nextVisibility[key] = 'show'
     } else if (change.visibility === 'show') {
       nextVisibility[key] = 'hide'
@@ -175,7 +193,8 @@ export function applyIdeaSectionOverrides(
       nextVisibility[key] = 'hide'
       alsoShowTo[key] = names
     }
-    if (key === 'diagrams' && change.diagram_types) {
+    // A node limited to some people changes the diagram types for them only.
+    if (key === 'diagrams' && change.diagram_types && (!decidedForViewer || matched)) {
       diagramTypes.technical = readNames(change.diagram_types.technical) ?? diagramTypes.technical
       diagramTypes.bpmn = readNames(change.diagram_types.bpmn) ?? diagramTypes.bpmn
     }

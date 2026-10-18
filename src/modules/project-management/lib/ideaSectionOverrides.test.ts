@@ -38,6 +38,31 @@ describe('applyIdeaSectionOverrides', () => {
     expect(hidden.audience?.alsoShowTo.document).toEqual([])
   })
 
+  it('decides an audience by department, job title or group workspace for the viewer', () => {
+    const change = { diagrams: { visibility: 'show' as const, audience: ['IT Business Partner WS'], audience_by: 'workspace', diagram_types: { technical: [], bpmn: [] } } }
+    const member = applyIdeaSectionOverrides({ ...map }, audience, change, (by, names) => by === 'workspace' && names.includes('IT Business Partner WS'))
+    expect(member.visibility.diagrams).toBe('show')
+    expect(ideaMenuForWorkflowAudience(undefined, member.visibility, [], member.audience)).toContain('diagrams')
+
+    // Someone else keeps what the workflow set: hidden, still shown to its teams.
+    const other = applyIdeaSectionOverrides({ ...map }, audience, change, () => false)
+    expect(other.visibility.diagrams).toBe('hide')
+    expect(other.audience?.alsoShowTo.diagrams).toEqual(['Architecture', 'Business Partner'])
+    expect(other.audience?.diagramTypes).toEqual(audience.diagramTypes)
+
+    // A section the workflow showed to everyone is limited to the matched people.
+    const limited = applyIdeaSectionOverrides({ ...map }, audience, {
+      document: { visibility: 'show', audience: ['PMO'], audience_by: 'department' },
+    }, () => false)
+    expect(limited.visibility.document).toBe('hide')
+
+    // Hide, still shown to a job title.
+    const hidden = applyIdeaSectionOverrides({ ...map }, audience, {
+      document: { visibility: 'hide', audience: ['Head of PMO'], audience_by: 'jobTitle' },
+    }, (by) => by === 'jobTitle')
+    expect(hidden.visibility.document).toBe('show')
+  })
+
   it('ignores unknown sections and values', () => {
     const next = applyIdeaSectionOverrides({ ...map }, audience, {
       nope: { visibility: 'show' },
