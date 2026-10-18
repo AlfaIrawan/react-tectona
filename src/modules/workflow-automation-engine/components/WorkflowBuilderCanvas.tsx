@@ -3229,6 +3229,7 @@ function WorkflowBuilderCanvasInner({
                   <>
                     <EmailRecipientsField
                       key={`${selectedNode.id}:email-recipients`}
+                      modes={['name', 'jobTitle', 'department', 'role', 'team']}
                       mode={selectedNode.data.config.emailRecipientBy || 'jobTitle'}
                       values={selectedNode.data.config.emailRecipients || selectedNode.data.config.jobTitles || ''}
                       onChange={(patch) => updateSelectedNode({ config: patch })}
