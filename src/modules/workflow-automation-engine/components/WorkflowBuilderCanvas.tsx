@@ -977,6 +977,26 @@ function isIdeaSectionNode(node: { data: { kind: string; config: Record<string, 
     && config.actionOperation === 'Set Section Visibility'
 }
 
+/** The name an AI Process output is kept under (workflow-automation context_values.output_key). */
+function aiOutputKey(outputKey: string | undefined, label: string | undefined, id: string): string {
+  for (const raw of [outputKey, label, id]) {
+    const key = (raw ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    if (key) return key.slice(0, 64)
+  }
+  return 'ai_output'
+}
+
+/** Run values an AI Process node can read or insert; the engine reads the first five when none is chosen. */
+const AI_RUN_VALUES: Array<{ key: string; label: string }> = [
+  { key: 'idea_title', label: 'Idea title' },
+  { key: 'idea_description', label: 'Idea description' },
+  { key: 'document_title', label: 'Document title' },
+  { key: 'approval_decision', label: 'Approval decision' },
+  { key: 'decision_note', label: "Approver's note" },
+  { key: 'origin_teams', label: 'Origin teams' },
+  { key: 'requested_by', label: 'Requested by' },
+]
+
 const splitNames = (value: string | undefined) => (value ?? '').split('\n').map((name) => name.trim()).filter(Boolean)
 const joinNames = (names: string[]) => names.join('\n')
 
@@ -1123,6 +1143,106 @@ function IdeaSectionVisibilityEditor({
           )
         })}
       </ul>
+    </div>
+  )
+}
+
+/**
+ * AI Process, Tahap 1 of the AI workflow plan: the node's answer is kept for later nodes as
+ * {{ai.<output name>.answer}}; the task may use run values and earlier AI outputs; the node reads
+ * only the run values chosen here (or the usual idea and approval ones), and optionally the text
+ * of the idea's current URD/BRD/FSD.
+ */
+function AiProcessFields({
+  node,
+  otherAiNodes,
+  onChange,
+}: {
+  node: Node<WorkflowNodeData>
+  otherAiNodes: Node<WorkflowNodeData>[]
+  onChange: (patch: Record<string, string>) => void
+}) {
+  const config = node.data.config
+  const key = aiOutputKey(config.outputKey, node.data.label, node.id)
+  const chosen = splitNames(config.inputKeys)
+  const earlier = otherAiNodes.map((other) => ({
+    key: `ai.${aiOutputKey(other.data.config.outputKey, other.data.label, other.id)}.answer`,
+    label: `AI: ${other.data.label}`,
+  }))
+  const readable = [...AI_RUN_VALUES, ...earlier]
+  const toggle = (value: string) => {
+    const next = chosen.includes(value) ? chosen.filter((item) => item !== value) : [...chosen, value]
+    onChange({ inputKeys: joinNames(next) })
+  }
+  const insert = (value: string) => {
+    const prompt = config.prompt ?? ''
+    onChange({ prompt: `${prompt}${prompt && !/\s$/.test(prompt) ? ' ' : ''}{{${value}}}` })
+  }
+  return (
+    <div className="space-y-3 border-t border-slate-100 pt-3">
+      <div className="space-y-1.5">
+        <label className={FIELD_LABEL_CLASS} htmlFor={`ai-output-${node.id}`}>Output name</label>
+        <Input
+          id={`ai-output-${node.id}`}
+          value={config.outputKey ?? ''}
+          placeholder={key}
+          onChange={(event) => onChange({ outputKey: event.target.value })}
+          className="h-8"
+        />
+        <p className="text-[11px] leading-4 text-slate-500">
+          Later nodes use the answer as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.answer}}`}</code>, in a
+          message, another AI task, or an If / Else condition.
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        <p className={FIELD_LABEL_CLASS}>Insert a value into the task</p>
+        <div className="flex flex-wrap gap-1">
+          {readable.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className="rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:border-purple-300 hover:text-purple-700"
+              title={`{{${item.key}}}`}
+              onClick={() => insert(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <p className={FIELD_LABEL_CLASS}>Data the AI reads</p>
+        <div className="space-y-1">
+          {readable.map((item) => (
+            <label key={item.key} className="flex items-center gap-2 text-xs text-slate-700">
+              <input type="checkbox" checked={chosen.includes(item.key)} onChange={() => toggle(item.key)} />
+              {item.label}
+            </label>
+          ))}
+        </div>
+        <p className="text-[11px] leading-4 text-slate-500">
+          {chosen.length === 0
+            ? 'None chosen: it reads the idea title and description, the document title and the latest approval decision and note.'
+            : 'Only these values are sent to the AI, as data it reads, never as instructions.'}
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        <label className={FIELD_LABEL_CLASS} htmlFor={`ai-document-${node.id}`}>Document content</label>
+        <Select
+          id={`ai-document-${node.id}`}
+          value={config.inputDocument ?? ''}
+          onChange={(event) => onChange({ inputDocument: event.target.value })}
+          className="h-9 text-sm"
+        >
+          <SelectItem value="">None</SelectItem>
+          <SelectItem value="URD">Text of the idea's latest URD</SelectItem>
+          <SelectItem value="BRD">Text of the idea's latest BRD</SelectItem>
+          <SelectItem value="FSD">Text of the idea's latest FSD</SelectItem>
+        </Select>
+        {config.inputDocument ? (
+          <p className="text-[11px] leading-4 text-slate-500">The step fails if the idea has no {config.inputDocument} yet.</p>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -3023,6 +3143,14 @@ function WorkflowBuilderCanvasInner({
                       ? 'The Request for Approval button is shown on this document.'
                       : undefined}
                     onChange={(kind) => updateSelectedNode({ config: { parameter: kind } })}
+                  />
+                ) : null}
+
+                {selectedNode.data.kind === 'aiProcess' ? (
+                  <AiProcessFields
+                    node={selectedNode}
+                    otherAiNodes={nodes.filter((node) => node.data.kind === 'aiProcess' && node.id !== selectedNode.id)}
+                    onChange={(patch) => updateSelectedNode({ config: patch })}
                   />
                 ) : null}
 

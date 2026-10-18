@@ -380,8 +380,8 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     icon: Sparkles,
     accent: '#a855f7',
     chipClass: 'bg-purple-50 text-purple-600 ring-purple-100',
-    fields: [{ key: 'prompt', label: 'Prompt / Task', type: 'textarea', placeholder: 'Describe the AI task…' }],
-    defaultConfig: { prompt: '' },
+    fields: [{ key: 'prompt', label: 'Prompt / Task', type: 'textarea', placeholder: 'e.g. Summarise {{decision_note}} as a list of fixes for the idea owner' }],
+    defaultConfig: { prompt: '', outputKey: '', inputKeys: '', inputDocument: '' },
   },
   delay: {
     kind: 'delay',
