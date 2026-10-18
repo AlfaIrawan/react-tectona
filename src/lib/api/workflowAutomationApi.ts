@@ -369,6 +369,38 @@ export type IdeaWorkflowRunDto = {
   error?: string | null
   /** Who the latest approval round emailed. via: primary | secondary. */
   email_deliveries?: ApprovalEmailDeliveryDto[]
+  /** Sections the run's "Set Section Visibility" nodes showed or hid, laid over the workflow's map. */
+  idea_sections?: Record<string, IdeaSectionOverrideDto>
+}
+
+/** One "Set Section Visibility" change on a run (workflow-automation engine/idea_sections.py). */
+export type IdeaSectionOverrideDto = {
+  visibility: 'show' | 'hide'
+  /** show: only these teams/roles (empty: everyone) · hide: these still see it (empty: nobody). */
+  audience?: string[]
+  /** Diagrams only: who sees each diagram type inside it (empty: everyone who sees Diagrams). */
+  diagram_types?: { technical?: string[]; bpmn?: string[] }
+  node_id?: string
+  label?: string
+  at?: string
+  retroactive?: boolean
+}
+
+export type SectionNodeApplication = {
+  applied: boolean
+  ideas: Array<{ idea_id: string; idea_title: string; run_id: string; changes: Array<{ section: string; visibility: string; label: string }> }>
+}
+
+/**
+ * "Set Section Visibility" nodes that ideas' runs went past before the node was published: which
+ * ideas they change (dryRun) or apply the change.
+ */
+export async function applyWorkflowSectionNodes(workflowId: string, dryRun: boolean): Promise<SectionNodeApplication> {
+  const res = await apiFetch(
+    `${BASE_URL}/v1/workflows/${encodeURIComponent(workflowId)}/apply-section-nodes?dry_run=${dryRun ? 'true' : 'false'}`,
+    { method: 'POST', headers: defaultHeaders() },
+  )
+  return readJson<SectionNodeApplication>(res)
 }
 
 export type ApprovalEmailDeliveryDto = {

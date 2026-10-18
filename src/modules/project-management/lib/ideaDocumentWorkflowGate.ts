@@ -238,6 +238,8 @@ export type PublishedIdeaSectionPolicy = {
   requestsApproval: boolean
   /** Document kinds whose row shows Request for Approval. Empty parameter means URD. */
   requestDocumentKinds: string[]
+  /** The workflow the map comes from: its run for an idea may change sections (Set Section Visibility). */
+  workflowId: string
 }
 
 export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | undefined): string[] {
@@ -295,13 +297,14 @@ export async function loadPublishedIdeaSectionPolicy(
           audience: ideaTriggerAudience(published),
           requestsApproval: requestDocumentKinds.length > 0,
           requestDocumentKinds,
+          workflowId: summary.id,
         }
       }
     } catch {
       // A workflow that cannot be loaded does not decide the menu.
     }
   }
-  return { map: {}, sectionAudience: null, audience: OPEN_AUDIENCE, requestsApproval: false, requestDocumentKinds: [] }
+  return { map: {}, sectionAudience: null, audience: OPEN_AUDIENCE, requestsApproval: false, requestDocumentKinds: [], workflowId: '' }
 }
 
 export async function loadPublishedIdeaSectionVisibility(

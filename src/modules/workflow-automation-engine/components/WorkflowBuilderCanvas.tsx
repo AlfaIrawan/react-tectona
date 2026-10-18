@@ -62,6 +62,7 @@ import {
   type WorkflowNodeKind,
 } from '@/modules/workflow-automation-engine/components/workflowNodeKinds'
 import {
+  applyWorkflowSectionNodes,
   approveWorkflowRun,
   createWorkflow as createWorkflowApi,
   getWorkflow,
@@ -83,7 +84,9 @@ import {
   type WorkflowDto,
   type WorkflowVersionDto,
   type WorkflowApprovalRoleDto,
+  type SectionNodeApplication,
 } from '@/lib/api/workflowAutomationApi'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   DEFAULT_IDEA_SECTION_AUDIENCE,
   IDEA_DIAGRAM_TYPES,
@@ -965,6 +968,18 @@ function showsReviewEmailSettings(node: { data: { kind: string; config: Record<s
   return hasTitles || Boolean(config.emailBodySource) || Boolean(config.emailRecipientBy)
 }
 
+/** The Action that shows or hides an Idea Detail section for the idea whose run reaches it. */
+function isIdeaSectionNode(node: { data: { kind: string; config: Record<string, string> } }): boolean {
+  const config = node.data.config
+  return node.data.kind === 'action'
+    && config.actionDomain === 'AI Idea & Prioritization'
+    && config.actionEntity === 'Idea'
+    && config.actionOperation === 'Set Section Visibility'
+}
+
+const splitNames = (value: string | undefined) => (value ?? '').split('\n').map((name) => name.trim()).filter(Boolean)
+const joinNames = (names: string[]) => names.join('\n')
+
 function showsIdeaSectionSettings(node: { data: { kind: string; config: Record<string, string> } }): boolean {
   const config = node.data.config
   return node.data.kind === 'trigger'
@@ -1029,11 +1044,14 @@ function IdeaSectionVisibilityEditor({
   onChange,
   audience,
   onAudienceChange,
+  changedBy = {},
 }: {
   value: IdeaSectionVisibilityMap
   onChange: (key: IdeaPanelKey, visibility: IdeaSectionVisibility) => void
   audience: IdeaSectionAudience
   onAudienceChange: (next: IdeaSectionAudience) => void
+  /** Section → "Show"/"Hide" + node label, for the Set Section Visibility nodes on the canvas. */
+  changedBy?: Partial<Record<IdeaPanelKey, string[]>>
 }) {
   const setAlsoShowTo = (key: IdeaPanelKey, names: string[]) =>
     onAudienceChange({ ...audience, alsoShowTo: { ...audience.alsoShowTo, [key]: names } })
@@ -1069,6 +1087,11 @@ function IdeaSectionVisibilityEditor({
                   {shown ? 'Show' : 'Hide'}
                 </button>
               </div>
+              {changedBy[entry.key]?.length ? (
+                <p className="mt-1 text-[10px] leading-4 text-violet-700">
+                  Starts here, then changed for each idea by: {changedBy[entry.key]?.join(' · ')}
+                </p>
+              ) : null}
               {!shown ? (
                 <div className="mt-1.5">
                   <p className="text-[10px] font-medium text-slate-500">Still shown to (team or role)</p>
@@ -1100,6 +1123,85 @@ function IdeaSectionVisibilityEditor({
           )
         })}
       </ul>
+    </div>
+  )
+}
+
+/**
+ * Configuration of the Action "AI Idea & Prioritization / Idea / Set Section Visibility": which
+ * Idea Detail section it shows or hides from its point in the flow on, for the idea whose run
+ * reaches it, and for whom. The trigger's section map is where every idea starts.
+ */
+function IdeaSectionNodeFields({
+  config,
+  onChange,
+}: {
+  config: Record<string, string>
+  onChange: (patch: Record<string, string>) => void
+}) {
+  const section = config.ideaSection ?? ''
+  const show = config.sectionVisibility !== 'hide'
+  return (
+    <div className="space-y-3 border-t border-slate-100 pt-3">
+      <p className="text-xs leading-relaxed text-slate-500">
+        When a run reaches this node, the section is shown or hidden on that idea&apos;s Idea Detail, from here on.
+        The trigger&apos;s Idea sections are where every idea starts.
+      </p>
+      <div className="space-y-1.5">
+        <label className={FIELD_LABEL_CLASS}>Section *</label>
+        <Select value={section} onChange={(event) => onChange({ ideaSection: event.target.value })} className="h-9 text-sm">
+          <SelectItem value="" disabled>Select a section</SelectItem>
+          {IDEA_PANEL_CATALOG.map((entry) => <SelectItem key={entry.key} value={entry.key}>{entry.label}</SelectItem>)}
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <label className={FIELD_LABEL_CLASS}>Visibility *</label>
+        <div className="flex gap-1 rounded-lg border border-slate-200 p-0.5" role="radiogroup" aria-label="Visibility">
+          {(['show', 'hide'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={(value === 'show') === show}
+              className={cn(
+                'flex-1 rounded-md px-2 py-1 text-xs font-semibold',
+                (value === 'show') === show
+                  ? value === 'show' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200 text-slate-700'
+                  : 'text-slate-500 hover:text-slate-700',
+              )}
+              onClick={() => onChange({ sectionVisibility: value })}
+            >
+              {value === 'show' ? 'Show' : 'Hide'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <label className={FIELD_LABEL_CLASS}>{show ? 'Only to (team or role)' : 'Still shown to (team or role)'}</label>
+        <TeamNamesInput
+          names={splitNames(config.sectionAudience)}
+          onChange={(names) => onChange({ sectionAudience: joinNames(names) })}
+          placeholder={show ? 'Everyone who can open the idea' : 'Nobody: type a team or role'}
+        />
+      </div>
+      {section === 'diagrams' && show ? (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-slate-500">Diagram types: who sees each (empty: everyone who sees Diagrams)</p>
+          {IDEA_DIAGRAM_TYPES.map((type) => {
+            const key = type.key === 'technical' ? 'sectionDiagramTechnical' : 'sectionDiagramBpmn'
+            return (
+              <div key={type.key}>
+                <p className="text-[11px] text-slate-600">{type.label}</p>
+                <TeamNamesInput
+                  names={splitNames(config[key])}
+                  onChange={(names) => onChange({ [key]: joinNames(names) })}
+                  placeholder="Everyone who sees Diagrams"
+                />
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1174,6 +1276,21 @@ function WorkflowBuilderCanvasInner({
   const [ideaSectionAudience, setIdeaSectionAudience] = useState<IdeaSectionAudience | null>(
     () => initial.ideaSectionAudience ?? null,
   )
+  // After publishing: ideas whose runs went past a Set Section Visibility node before it existed.
+  const [sectionApplyPrompt, setSectionApplyPrompt] = useState<SectionNodeApplication | null>(null)
+  const [sectionApplyBusy, setSectionApplyBusy] = useState(false)
+  // Which Set Section Visibility nodes change each section, for the note on the trigger's map.
+  const sectionChangedBy = useMemo(() => {
+    const byKey: Partial<Record<IdeaPanelKey, string[]>> = {}
+    for (const node of nodes) {
+      if (!isIdeaSectionNode(node)) continue
+      const key = node.data.config.ideaSection as IdeaPanelKey
+      if (!IDEA_PANEL_CATALOG.some((entry) => entry.key === key)) continue
+      const verb = node.data.config.sectionVisibility === 'hide' ? 'Hide' : 'Show'
+      byKey[key] = [...(byKey[key] ?? []), `${verb} — “${node.data.label}”`]
+    }
+    return byKey
+  }, [nodes])
   const nodesRef = useRef(nodes)
   const edgesRef = useRef(edges)
   const resizeStartRef = useRef(new Map<string, NodeFrame>())
@@ -1683,6 +1800,14 @@ function WorkflowBuilderCanvasInner({
         setPublishedRevision(revision)
         setPublishedVersion(published.version)
         addToast({ variant: 'success', title: 'Workflow published', description: `${name} published as v${published.version}.` })
+        // Ideas whose runs went past a Set Section Visibility node before it existed: ask first.
+        if (nodes.some(isIdeaSectionNode)) {
+          applyWorkflowSectionNodes(workflowId, true)
+            .then((preview) => {
+              if (preview.ideas.length > 0) setSectionApplyPrompt(preview)
+            })
+            .catch(() => undefined)
+        }
       })
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
   }, [addToast, edges, ideaSectionAudience, ideaSections, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
@@ -2898,6 +3023,13 @@ function WorkflowBuilderCanvasInner({
                   />
                 ) : null}
 
+                {isIdeaSectionNode(selectedNode) ? (
+                  <IdeaSectionNodeFields
+                    config={selectedNode.data.config}
+                    onChange={(patch) => updateSelectedNode({ config: patch })}
+                  />
+                ) : null}
+
                 {selectedNode.data.kind === 'action' && actionPropertyControls(selectedNode.data.config).length > 0 ? (
                   <div className="space-y-3 border-t border-slate-100 pt-3">
                     {actionPropertyControls(selectedNode.data.config).map((control) => {
@@ -2984,6 +3116,7 @@ function WorkflowBuilderCanvasInner({
                         onChange={setIdeaSectionVisibility}
                         audience={ideaSectionAudience ?? DEFAULT_IDEA_SECTION_AUDIENCE}
                         onAudienceChange={setIdeaSectionAudience}
+                        changedBy={sectionChangedBy}
                       />
                     </div>
                   </>
@@ -3220,6 +3353,61 @@ function WorkflowBuilderCanvasInner({
           </>
         ) : null}
       </ContextMenu>
+
+      <Dialog
+        open={Boolean(sectionApplyPrompt)}
+        onOpenChange={(open) => {
+          if (!open && !sectionApplyBusy) setSectionApplyPrompt(null)
+        }}
+      >
+        <DialogContent surface="solid" className="w-[min(560px,calc(100vw-2rem))] rounded-2xl p-5">
+          <DialogHeader>
+            <DialogTitle>Apply section changes to ideas already past them?</DialogTitle>
+            <DialogDescription>
+              These ideas&apos; runs went past a Set Section Visibility node before it was published, so it will not run for
+              them. Apply its change now?
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-[40vh] space-y-1.5 overflow-y-auto text-sm">
+            {(sectionApplyPrompt?.ideas ?? []).map((idea) => (
+              <li key={idea.run_id} className="rounded-lg border border-slate-200 px-3 py-2">
+                <p className="truncate font-medium text-slate-800">{idea.idea_title || idea.idea_id}</p>
+                <p className="text-xs text-slate-500">
+                  {idea.changes.map((change) => `${change.visibility === 'show' ? 'Show' : 'Hide'} ${IDEA_PANEL_CATALOG.find((entry) => entry.key === change.section)?.label ?? change.section}`).join(' · ')}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button type="button" variant="ghost" size="sm" disabled={sectionApplyBusy} onClick={() => setSectionApplyPrompt(null)}>
+              Not now
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={sectionApplyBusy || !workflowId}
+              onClick={() => {
+                if (!workflowId) return
+                setSectionApplyBusy(true)
+                applyWorkflowSectionNodes(workflowId, false)
+                  .then((result) => {
+                    addToast({
+                      variant: 'success',
+                      title: 'Section changes applied',
+                      description: `${result.ideas.length} idea${result.ideas.length === 1 ? '' : 's'} updated.`,
+                    })
+                    setSectionApplyPrompt(null)
+                  })
+                  .catch(() => addToast({ variant: 'error', title: 'Could not apply the section changes', description: 'Try publishing again.' }))
+                  .finally(() => setSectionApplyBusy(false))
+              }}
+            >
+              {sectionApplyBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+              Apply to {sectionApplyPrompt?.ideas.length ?? 0} idea{(sectionApplyPrompt?.ideas.length ?? 0) === 1 ? '' : 's'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

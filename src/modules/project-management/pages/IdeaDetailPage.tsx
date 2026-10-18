@@ -314,6 +314,7 @@ import {
   approveWorkflowRun,
   continueWorkflowAfterGeneratedDocument,
   getWorkflowRun,
+  listIdeaWorkflowRuns,
   listWorkflowApprovals,
   rejectWorkflowRun,
   retryFailedDocumentActions,
@@ -365,6 +366,7 @@ import { ManageActionControlListModal } from '@/modules/project-management/compo
 import {
   DEFAULT_IDEA_NAV_SECTIONS,
   getIdeaPanelCatalogEntry,
+  applyIdeaSectionOverrides,
   ideaDiagramTypesFor,
   ideaMenuForWorkflowAudience,
   resolveIdeaNavSections,
@@ -5192,9 +5194,14 @@ export function IdeaDetailPage() {
       .then(async (policy) => {
         if (cancelled) return
         setWorkflowRequestDocumentKinds(policy.requestDocumentKinds)
+        // The idea's own changes: "Set Section Visibility" nodes its newest run of that workflow passed.
+        const runs = policy.workflowId ? await listIdeaWorkflowRuns(idea.id).catch(() => []) : []
+        const overrides = runs.find((run) => run.workflow_id === policy.workflowId)?.idea_sections
+        const sections = applyIdeaSectionOverrides(policy.map, policy.sectionAudience, overrides)
+        if (cancelled) return
         if (policy.audience.values.length === 0) {
-          setWorkflowSectionVisibility(policy.map)
-          setWorkflowSectionAudience(policy.sectionAudience)
+          setWorkflowSectionVisibility(sections.visibility)
+          setWorkflowSectionAudience(sections.audience)
           setIdeaSectionPolicyReady(true)
           return
         }
@@ -5207,8 +5214,8 @@ export function IdeaDetailPage() {
           values: policy.audience.values,
         })
         if (!cancelled) {
-          setWorkflowSectionVisibility(matches ? policy.map : {})
-          setWorkflowSectionAudience(matches ? policy.sectionAudience : null)
+          setWorkflowSectionVisibility(matches ? sections.visibility : {})
+          setWorkflowSectionAudience(matches ? sections.audience : null)
           setIdeaSectionPolicyReady(true)
         }
       })
@@ -5223,7 +5230,7 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [currentUserId, idea.id, idea.workspace, ideaWorkspaceLabels, isReviewerOptionsLoading, reviewerMemberships])
+  }, [currentUserId, idea.id, idea.workspace, ideaDocsReloadKey, ideaWorkspaceLabels, isReviewerOptionsLoading, reviewerMemberships])
   // The viewer's roles and operational teams in the workspace, matched against the team/role
   // names the workflow's Idea trigger sets for sections and diagram types.
   const viewerTeamLabels = useMemo<string[]>(() => {

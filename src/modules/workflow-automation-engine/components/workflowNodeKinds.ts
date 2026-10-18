@@ -214,7 +214,7 @@ export const WORKFLOW_ACTION_CATALOG = {
     'AI-generated Task': ['Approve', 'Reject', 'Create Task'],
   },
   'AI Idea & Prioritization': {
-    Idea: ['Score', 'Prioritize', 'Approve', 'Convert to Project', 'Archive'],
+    Idea: ['Score', 'Prioritize', 'Approve', 'Convert to Project', 'Archive', 'Set Section Visibility'],
     Recommendation: ['Approve', 'Reject', 'Execute'],
     'Decision Matrix': ['Update', 'Publish'],
   },

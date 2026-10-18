@@ -137,6 +137,52 @@ export function readIdeaSectionAudience(value: unknown): IdeaSectionAudience | n
   }
 }
 
+/** A "Set Section Visibility" change from the idea's workflow run (workflowAutomationApi.ts). */
+export type IdeaSectionOverride = {
+  visibility: IdeaSectionVisibility
+  audience?: string[]
+  diagram_types?: { technical?: string[]; bpmn?: string[] }
+}
+
+/**
+ * The workflow's section map and audience with the idea's own changes laid over them: the run's
+ * "Set Section Visibility" nodes. Show to everyone → shown; show to some teams → still hidden for
+ * the rest, those teams added; hide → hidden, shown only to the teams the node names.
+ */
+export function applyIdeaSectionOverrides(
+  visibility: IdeaSectionVisibilityMap,
+  audience: IdeaSectionAudience | null,
+  overrides: Record<string, IdeaSectionOverride | undefined> | null | undefined,
+): { visibility: IdeaSectionVisibilityMap; audience: IdeaSectionAudience | null } {
+  const entries = Object.entries(overrides ?? {}).filter(
+    (entry): entry is [IdeaPanelKey, IdeaSectionOverride] =>
+      Boolean(entry[1]) && IDEA_PANEL_CATALOG.some((item) => item.key === entry[0])
+      && (entry[1]?.visibility === 'show' || entry[1]?.visibility === 'hide'),
+  )
+  if (entries.length === 0) return { visibility, audience }
+  const base = audience ?? DEFAULT_IDEA_SECTION_AUDIENCE
+  const nextVisibility: IdeaSectionVisibilityMap = { ...visibility }
+  const alsoShowTo: Partial<Record<IdeaPanelKey, string[]>> = { ...base.alsoShowTo }
+  const diagramTypes: Record<IdeaDiagramType, string[]> = { ...base.diagramTypes }
+  for (const [key, change] of entries) {
+    const names = readNames(change.audience) ?? []
+    if (change.visibility === 'show' && names.length === 0) {
+      nextVisibility[key] = 'show'
+    } else if (change.visibility === 'show') {
+      nextVisibility[key] = 'hide'
+      alsoShowTo[key] = Array.from(new Set([...(visibility[key] === 'hide' ? alsoShowTo[key] ?? [] : []), ...names]))
+    } else {
+      nextVisibility[key] = 'hide'
+      alsoShowTo[key] = names
+    }
+    if (key === 'diagrams' && change.diagram_types) {
+      diagramTypes.technical = readNames(change.diagram_types.technical) ?? diagramTypes.technical
+      diagramTypes.bpmn = readNames(change.diagram_types.bpmn) ?? diagramTypes.bpmn
+    }
+  }
+  return { visibility: nextVisibility, audience: { alsoShowTo, diagramTypes } }
+}
+
 const compactName = (value: string) => value.toLowerCase().replace(/\s+/g, '')
 
 /** True when one of the viewer's role/team labels contains one of the names (case and spaces ignored). */
