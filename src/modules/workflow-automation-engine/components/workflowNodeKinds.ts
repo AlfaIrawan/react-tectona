@@ -484,6 +484,10 @@ export function workflowNodeSummary(data: WorkflowNodeData): string {
     case 'assignOwner':
       return c.ownerId ? `Assign to ${c.ownerId}` : 'Select a workspace member'
     case 'aiProcess':
+      if (isAiChoiceMode(c)) {
+        const options = aiChoiceOptions(c)
+        return options.length ? `Picks: ${options.join(' / ')}` : 'Add the options to pick from'
+      }
       return c.prompt ? c.prompt.slice(0, 60) : 'Configure AI task'
     case 'delay':
       return c.duration ? `Wait ${c.duration}` : 'Set a duration'
@@ -496,4 +500,48 @@ export function workflowNodeSummary(data: WorkflowNodeData): string {
     case 'end':
       return c.outcome || 'Stop'
   }
+}
+
+
+// --- AI Process -----------------------------------------------------------------------------------
+// Mirrors workflow-automation engine/context_values.py: output_key, ai_choices, choice_handle.
+
+/** The name an AI Process output is kept under (ai.<name>): from its Output name, label or id. */
+export function aiOutputKey(outputKey: string | undefined, label: string | undefined, id: string): string {
+  for (const raw of [outputKey, label, id]) {
+    const key = (raw ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    if (key) return key.slice(0, 64)
+  }
+  return 'ai_output'
+}
+
+/** Pick a branch (Tahap 2): the AI chooses one of the node's options and the run follows it. */
+export function isAiChoiceMode(config: Record<string, string> | undefined): boolean {
+  return (config?.outputFormat ?? '').trim() === 'choice'
+}
+
+/** The node's options, as written, each once (case and spacing ignored), at most six. */
+export function aiChoiceOptions(config: Record<string, string> | undefined): string[] {
+  const options: string[] = []
+  for (const raw of (config?.choices ?? '').split('\n')) {
+    const option = raw.split(/\s+/).filter(Boolean).join(' ')
+    if (option && !options.some((item) => item.toLowerCase() === option.toLowerCase())) options.push(option)
+  }
+  return options.slice(0, 6)
+}
+
+export const AI_UNCERTAIN_HANDLE = 'uncertain'
+export const AI_UNCERTAIN_LABEL = 'Not sure'
+
+/** The edge handle of one option. */
+export function aiChoiceHandle(option: string): string {
+  return `choice-${aiOutputKey(option, '', 'option')}`
+}
+
+/** Every branch handle of a Pick a branch node: one per option, then Not sure. */
+export function aiChoiceBranches(config: Record<string, string> | undefined): Array<{ id: string; label: string }> {
+  return [
+    ...aiChoiceOptions(config).map((option) => ({ id: aiChoiceHandle(option), label: option })),
+    { id: AI_UNCERTAIN_HANDLE, label: AI_UNCERTAIN_LABEL },
+  ]
 }

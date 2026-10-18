@@ -58,6 +58,10 @@ import {
   WORKFLOW_TRIGGER_DOMAINS,
   workflowTriggerEntities,
   workflowTriggerEvents,
+  aiChoiceBranches,
+  aiChoiceOptions,
+  aiOutputKey,
+  isAiChoiceMode,
   type WorkflowNodeData,
   type WorkflowNodeKind,
 } from '@/modules/workflow-automation-engine/components/workflowNodeKinds'
@@ -626,6 +630,16 @@ function validateWorkflowGraph(
     }
     if (kind === 'assignOwner' && !config.ownerId?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no workspace member assigned.` })
     if (kind === 'aiProcess' && !config.prompt?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has an empty AI prompt.` })
+    if (kind === 'aiProcess' && isAiChoiceMode(config)) {
+      if (aiChoiceOptions(config).length < 2) {
+        issues.push({ level: 'error', nodeId: n.id, message: `"${label}" needs at least two options to pick from.` })
+      } else {
+        const handles = branchHandles.get(n.id) ?? new Set<string>()
+        for (const branch of aiChoiceBranches(config)) {
+          if (!handles.has(branch.id)) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no connection for "${branch.label}"; the run stops there.` })
+        }
+      }
+    }
     const catalogAction = Boolean(config.actionDomain?.trim() && config.actionEntity?.trim() && (config.actionOperation?.trim() || config.actionType?.trim()))
     if (kind === 'action' && !catalogAction && !config.target?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no target set.` })
     if (kind === 'action' && (!config.actionDomain?.trim() || !config.actionEntity?.trim() || (!config.actionOperation?.trim() && !config.actionType?.trim()))) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" needs a module, entity, and operation.` })
@@ -977,15 +991,6 @@ function isIdeaSectionNode(node: { data: { kind: string; config: Record<string, 
     && config.actionOperation === 'Set Section Visibility'
 }
 
-/** The name an AI Process output is kept under (workflow-automation context_values.output_key). */
-function aiOutputKey(outputKey: string | undefined, label: string | undefined, id: string): string {
-  for (const raw of [outputKey, label, id]) {
-    const key = (raw ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-    if (key) return key.slice(0, 64)
-  }
-  return 'ai_output'
-}
-
 /** Run values an AI Process node can read or insert; the engine reads the first five when none is chosen. */
 const AI_RUN_VALUES: Array<{ key: string; label: string }> = [
   { key: 'idea_title', label: 'Idea title' },
@@ -1165,10 +1170,16 @@ function AiProcessFields({
   const config = node.data.config
   const key = aiOutputKey(config.outputKey, node.data.label, node.id)
   const chosen = splitNames(config.inputKeys)
-  const earlier = otherAiNodes.map((other) => ({
-    key: `ai.${aiOutputKey(other.data.config.outputKey, other.data.label, other.id)}.answer`,
-    label: `AI: ${other.data.label}`,
-  }))
+  const choiceMode = isAiChoiceMode(config)
+  const earlier = otherAiNodes.flatMap((other) => {
+    const otherKey = aiOutputKey(other.data.config.outputKey, other.data.label, other.id)
+    return isAiChoiceMode(other.data.config)
+      ? [
+          { key: `ai.${otherKey}.choice`, label: `AI: ${other.data.label} (choice)` },
+          { key: `ai.${otherKey}.answer`, label: `AI: ${other.data.label} (reason)` },
+        ]
+      : [{ key: `ai.${otherKey}.answer`, label: `AI: ${other.data.label}` }]
+  })
   const readable = [...AI_RUN_VALUES, ...earlier]
   const toggle = (value: string) => {
     const next = chosen.includes(value) ? chosen.filter((item) => item !== value) : [...chosen, value]
@@ -1190,10 +1201,57 @@ function AiProcessFields({
           className="h-8"
         />
         <p className="text-[11px] leading-4 text-slate-500">
-          Later nodes use the answer as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.answer}}`}</code>, in a
-          message, another AI task, or an If / Else condition.
+          {choiceMode ? (
+            <>
+              Later nodes can use the choice as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.choice}}`}</code> and
+              the AI&apos;s reason as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.answer}}`}</code>.
+            </>
+          ) : (
+            <>
+              Later nodes use the answer as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.answer}}`}</code>, in a
+              message, another AI task, or an If / Else condition.
+            </>
+          )}
         </p>
       </div>
+      <div className="space-y-1.5">
+        <label className={FIELD_LABEL_CLASS} htmlFor={`ai-format-${node.id}`}>Output</label>
+        <Select
+          id={`ai-format-${node.id}`}
+          value={choiceMode ? 'choice' : 'text'}
+          onChange={(event) => onChange({ outputFormat: event.target.value === 'choice' ? 'choice' : '' })}
+          className="h-9 text-sm"
+        >
+          <SelectItem value="text">Text answer</SelectItem>
+          <SelectItem value="choice">Pick a branch</SelectItem>
+        </Select>
+      </div>
+      {choiceMode ? (
+        <div className="space-y-1.5 rounded-lg border border-purple-100 bg-purple-50/40 p-2">
+          <p className={FIELD_LABEL_CLASS}>Options (2 to 6)</p>
+          <TeamNamesInput
+            names={aiChoiceOptions(config)}
+            onChange={(names) => onChange({ choices: joinNames(names.slice(0, 6)) })}
+            placeholder="Type an option, then Enter"
+          />
+          <label className={FIELD_LABEL_CLASS} htmlFor={`ai-threshold-${node.id}`}>Minimum confidence</label>
+          <Select
+            id={`ai-threshold-${node.id}`}
+            value={config.confidenceThreshold || '0.7'}
+            onChange={(event) => onChange({ confidenceThreshold: event.target.value })}
+            className="h-9 text-sm"
+          >
+            {['0.5', '0.6', '0.7', '0.8', '0.9'].map((value) => (
+              <SelectItem key={value} value={value}>{`${Math.round(Number(value) * 100)}%`}</SelectItem>
+            ))}
+          </Select>
+          <p className="text-[11px] leading-4 text-slate-500">
+            Each option and <strong>Not sure</strong> gets its own connection on the node. The run takes Not sure when
+            the AI is below this confidence, picks nothing that fits, or cannot answer; connect it to an Approval so a
+            person decides.
+          </p>
+        </div>
+      ) : null}
       <div className="space-y-1.5">
         <p className={FIELD_LABEL_CLASS}>Insert a value into the task</p>
         <div className="flex flex-wrap gap-1">
@@ -3150,7 +3208,17 @@ function WorkflowBuilderCanvasInner({
                   <AiProcessFields
                     node={selectedNode}
                     otherAiNodes={nodes.filter((node) => node.data.kind === 'aiProcess' && node.id !== selectedNode.id)}
-                    onChange={(patch) => updateSelectedNode({ config: patch })}
+                    onChange={(patch) => {
+                      updateSelectedNode({ config: patch })
+                      // Changing the options or the format: drop connections whose handle is gone.
+                      if ('choices' in patch || 'outputFormat' in patch) {
+                        const next = { ...selectedNode.data.config, ...patch }
+                        const handles = new Set(isAiChoiceMode(next) ? aiChoiceBranches(next).map((branch) => branch.id) : ['out'])
+                        setEdges((current) => current.filter((edge) => (
+                          edge.source !== selectedNode.id || handles.has(edge.sourceHandle ?? 'out')
+                        )))
+                      }
+                    }}
                   />
                 ) : null}
 

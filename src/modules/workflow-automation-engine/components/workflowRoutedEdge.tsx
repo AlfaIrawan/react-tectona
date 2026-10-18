@@ -3,6 +3,7 @@ import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, Position, useReactFlow,
 import { X } from 'lucide-react'
 import { useWorkflowCanvasActions, type WorkflowWaypoint } from '@/modules/workflow-automation-engine/components/workflowCanvasActions'
 import { nearestPortHandle, workflowEdgeEndpoints } from '@/modules/workflow-automation-engine/components/workflowEdgeGeometry'
+import { AI_UNCERTAIN_HANDLE, aiChoiceBranches } from '@/modules/workflow-automation-engine/components/workflowNodeKinds'
 
 function isWaypoint(value: unknown): value is WorkflowWaypoint {
   return typeof value === 'object'
@@ -42,8 +43,16 @@ function waypointPath(
     : `${path} L ${currentX},${toY} L ${toX},${toY}`
 }
 
-function branchLabel(kind: unknown, sourceHandle: string | null | undefined, explicitLabel: unknown): string {
+function branchLabel(
+  kind: unknown,
+  sourceHandle: string | null | undefined,
+  explicitLabel: unknown,
+  config?: Record<string, string>,
+): string {
   if (typeof explicitLabel === 'string' && explicitLabel.trim()) return explicitLabel.trim()
+  if (kind === 'aiProcess' && sourceHandle && (sourceHandle === AI_UNCERTAIN_HANDLE || sourceHandle.startsWith('choice-'))) {
+    return aiChoiceBranches(config).find((branch) => branch.id === sourceHandle)?.label ?? ''
+  }
   if (kind === 'approval') return sourceHandle === 'false' ? 'Rejected' : sourceHandle === 'true' ? 'Approved' : ''
   if (kind === 'ifElse') return sourceHandle === 'false' ? 'No' : sourceHandle === 'true' ? 'Yes' : ''
   if (kind === 'parallel') {
@@ -113,8 +122,9 @@ export function WorkflowRoutedEdge({
   const storedHandle = sourceHandleId ?? edges.find((edge) => edge.id === id)?.sourceHandle
   const stroke = branchStroke(storedHandle, selected, String(style?.stroke ?? '#94a3b8'))
   const markerId = `wf-edge-arrow-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`
-  const sourceKind = (nodeInternals.get(source)?.data as { kind?: string } | undefined)?.kind
-  const resolvedLabel = branchLabel(sourceKind, storedHandle, label)
+  const sourceData = nodeInternals.get(source)?.data as { kind?: string; config?: Record<string, string> } | undefined
+  const sourceKind = sourceData?.kind
+  const resolvedLabel = branchLabel(sourceKind, storedHandle, label, sourceData?.config)
   const storedWaypoints = Array.isArray((edge.data as { waypoints?: unknown } | undefined)?.waypoints)
     ? (edge.data as { waypoints: unknown[] }).waypoints.filter(isWaypoint).slice(-1)
     : []
@@ -285,5 +295,7 @@ function branchStroke(sourceHandle: string | null | undefined, selected: boolean
   if (sourceHandle === 'branchB') return selected ? '#4338ca' : '#4f46e5'
   if (sourceHandle === 'branchC') return selected ? '#6d28d9' : '#7c3aed'
   if (sourceHandle === 'branchD') return selected ? '#0e7490' : '#0891b2'
+  if (sourceHandle === AI_UNCERTAIN_HANDLE) return selected ? '#b45309' : '#d97706'
+  if (sourceHandle?.startsWith('choice-')) return selected ? '#7e22ce' : '#9333ea'
   return selected ? '#0f172a' : fallback
 }

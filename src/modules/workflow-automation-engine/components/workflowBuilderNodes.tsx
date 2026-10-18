@@ -4,7 +4,10 @@ import { NodeResizer } from '@reactflow/node-resizer'
 import '@reactflow/node-resizer/dist/style.css'
 import { cn } from '@/lib/utils'
 import {
+  AI_UNCERTAIN_HANDLE,
   WORKFLOW_KIND_META,
+  aiChoiceBranches,
+  isAiChoiceMode,
   workflowNodeSummary,
   type WorkflowNodeData,
 } from '@/modules/workflow-automation-engine/components/workflowNodeKinds'
@@ -54,8 +57,10 @@ export function WorkflowBuilderNode({ id, data, selected, width, height }: NodeP
   const isApproval = data.kind === 'approval'
   const isParallel = data.kind === 'parallel'
   const isLoop = data.kind === 'loop'
+  // AI Process in Pick a branch mode: one handle per option, then Not sure.
+  const aiBranches = data.kind === 'aiProcess' && isAiChoiceMode(data.config) ? aiChoiceBranches(data.config) : null
   const isDisabled = data.disabled === true
-  const minHeight = isBranch || isParallel || isLoop ? 104 : 78
+  const minHeight = isBranch || isParallel || isLoop || aiBranches ? 104 : 78
   const handleClass = cn(HANDLE_BASE_CLASS, selected && '!opacity-100')
   const perimeterPortClass = cn(
     '!z-30 !h-2 !w-2 !rounded-full !border !border-white !bg-sky-500 !opacity-0 transition-opacity group-hover:!opacity-100',
@@ -194,7 +199,47 @@ export function WorkflowBuilderNode({ id, data, selected, width, height }: NodeP
           </div>
         ) : null}
 
-        {isBranch ? (
+        {aiBranches ? (
+          <div className="relative h-6 pb-2 text-[9px] font-semibold">
+            {aiBranches.map((branch, index) => (hasRelation(branch.id) ? null : (
+              <span
+                key={branch.id}
+                className={cn(
+                  'absolute max-w-[30%] -translate-x-1/2 truncate whitespace-nowrap uppercase',
+                  branch.id === AI_UNCERTAIN_HANDLE ? 'text-amber-600' : 'text-purple-600',
+                )}
+                style={{ left: `${((index + 1) / (aiBranches.length + 1)) * 100}%` }}
+                title={branch.label}
+              >
+                {branch.label}
+              </span>
+            )))}
+          </div>
+        ) : null}
+
+        {aiBranches ? (
+          <>
+            {aiBranches.map((branch, index) => {
+              const endpoint = sourceEndpoint(branch.id)
+              return (
+                <Handle
+                  key={branch.id}
+                  id={branch.id}
+                  type="source"
+                  position={endpoint?.position ?? Position.Bottom}
+                  className={handleClass}
+                  title={branch.label}
+                  style={connectedHandleStyle(
+                    branch.id === AI_UNCERTAIN_HANDLE ? '#d97706' : '#9333ea',
+                    endpoint,
+                    currentNode,
+                    ((index + 1) / (aiBranches.length + 1)) * 100,
+                  )}
+                />
+              )
+            })}
+          </>
+        ) : isBranch ? (
           <>
             <Handle
               id="true"
