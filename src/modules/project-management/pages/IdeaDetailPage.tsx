@@ -179,9 +179,9 @@ import {
 } from '@/modules/project-management/components/TemplateDocumentPreview'
 import {
   IdeaIntakeAnswerList,
-  IdeaIntakeFollowupList,
-  IdeaIntakeOpenPoints,
 } from '@/modules/project-management/components/IdeaIntakeAnswerList'
+import { formatSourceSummaryMarkdown } from '@/modules/project-management/lib/sourceSummaryMarkdown'
+import { isTechnicalViewSource } from '@/lib/chat/brainstormDiagramDisplay'
 import {
   defaultPartChoices,
   keysToGenerate,
@@ -2581,7 +2581,11 @@ function IdeaDocSourceDiagramPreview({ diagram }: { diagram: ExtractedProcessDia
         {diagram.label || 'Process diagram'}
       </figcaption>
       <div className="p-2">
-        <AssistantMermaidBlock source={diagram.source} className="my-0 shadow-none" />
+        <AssistantMermaidBlock
+          source={diagram.source}
+          notation={isTechnicalViewSource(diagram.source) ? 'plantuml' : 'bpmn'}
+          className="my-0 shadow-none"
+        />
       </div>
     </figure>
   )
@@ -3848,6 +3852,9 @@ export function IdeaDetailPage() {
   // The AI's own follow-up questions the proposer answered, and those skipped and still open.
   const [ideaDocGenerateIntakeFollowups, setIdeaDocGenerateIntakeFollowups] = useState<IdeaIntakeFollowup[]>([])
   const [ideaDocGenerateIntakeOpenPoints, setIdeaDocGenerateIntakeOpenPoints] = useState<string[]>([])
+  const [ideaDocGenerateIntakeOpenPointTurns, setIdeaDocGenerateIntakeOpenPointTurns] = useState<Array<number | null>>([])
+  // The source preview's tabs: the brainstorm (questions and answers) and the AI summary.
+  const [ideaDocSourceTab, setIdeaDocSourceTab] = useState<'brainstorm' | 'summary'>('brainstorm')
   const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
   const [urdSendBusy, setUrdSendBusy] = useState(false)
@@ -4020,6 +4027,7 @@ export function IdeaDetailPage() {
     setIdeaDocGenerateIntakeAnswers(next.answers)
     setIdeaDocGenerateIntakeFollowups(next.followups)
     setIdeaDocGenerateIntakeOpenPoints(next.openPoints)
+    setIdeaDocGenerateIntakeOpenPointTurns(next.openPointTurns)
     setIdeaDocGenerateIntakeBlock(next.block)
     // The answers lead the source context: swap the old block for the new one, keeping the rest.
     setIdeaDocGenerateSource((source) => {
@@ -4038,23 +4046,7 @@ export function IdeaDetailPage() {
     const sourceWithoutIntake = ideaDocIntakeBlockInSource
       ? ideaDocGenerateSource.slice(ideaDocGenerateIntakeBlock.length)
       : ideaDocGenerateSource
-    const cleanSource = stripProcessDiagramsFromText(sourceWithoutIntake).replace(/\n{3,}/g, '\n\n').trim()
-    return cleanSource
-      .split(/\n\s*\n/)
-      .map((block) => {
-        const lines = block.split('\n')
-        const heading = lines[0]?.trim() ?? ''
-        const isPlainHeading = heading.length > 0
-          && heading.length <= 100
-          && !/[.!?]$/.test(heading)
-          && !/^(?:[-*+]|\d+[.)])\s/.test(heading)
-        if (lines.length === 1 && isPlainHeading) return `## ${heading}`
-        if (lines.length > 1 && heading.endsWith(':') && heading.length <= 100) {
-          return `## ${heading.slice(0, -1)}\n\n${lines.slice(1).join('\n')}`
-        }
-        return block
-      })
-      .join('\n\n')
+    return formatSourceSummaryMarkdown(stripProcessDiagramsFromText(sourceWithoutIntake))
   }, [ideaDocGenerateIntakeBlock, ideaDocGenerateSource, ideaDocIntakeBlockInSource])
   const [ideaDocEditId, setIdeaDocEditId] = useState<string | null>(null)
   const [ideaDocEditTitle, setIdeaDocEditTitle] = useState<string | null>(null)
@@ -7711,11 +7703,13 @@ export function IdeaDetailPage() {
       // The proposer's confirmed Idea Intake answers come first: the description is a summary in
       // which facts such as the impacted business unit got buried, and fills picked something else.
       const intake = await fetchIdeaIntakeAnswers(idea.id, { title: idea.title, workspaceId: idea.workspace })
-        .catch((): IdeaIntakeAnswers => ({ block: '', answers: [], followups: [], openPoints: [], reviewerInputs: [] }))
+        .catch((): IdeaIntakeAnswers => ({ block: '', answers: [], followups: [], openPoints: [], openPointTurns: [], reviewerInputs: [] }))
       setIdeaDocGenerateIntakeBlock(intake.block)
       setIdeaDocGenerateIntakeAnswers(intake.answers)
       setIdeaDocGenerateIntakeFollowups(intake.followups)
       setIdeaDocGenerateIntakeOpenPoints(intake.openPoints)
+      setIdeaDocGenerateIntakeOpenPointTurns(intake.openPointTurns)
+      setIdeaDocSourceTab('brainstorm')
       setIdeaDocGenerateSource([intake.block, narrative].filter(Boolean).join('\n\n'))
       setIdeaDocSourceMode('preview')
       setIdeaDocGenerateOpen(true)
@@ -16111,58 +16105,78 @@ export function IdeaDetailPage() {
                             <div
                               role="tabpanel"
                               aria-label="Formatted source context"
-                              className="scroll-reveal min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/70 [&_h2]:pb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
+                              className="scroll-reveal min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-6 [&_h2]:border-b [&_h2]:border-l-[3px] [&_h2]:border-b-border/70 [&_h2]:border-l-primary [&_h2]:pb-1.5 [&_h2]:pl-2.5 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground/90 [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
                             >
-                              <div className="space-y-5">
-                                {showIdeaDocIntakeAnswers ? (
-                                  <section aria-label="Confirmed intake answers" className="space-y-2.5">
-                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
-                                      Confirmed intake answers
-                                    </h3>
-                                    <IdeaIntakeAnswerList
-                                      answers={ideaDocGenerateIntakeAnswers}
-                                      disabled={ideaDocGenerateBusy}
-                                      onSave={saveIdeaDocIntakeAnswer}
-                                    />
-                                  </section>
-                                ) : null}
-                                {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeFollowups.length > 0 ? (
-                                  <section aria-label="AI follow-up questions" className="space-y-2.5">
-                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
-                                      AI follow-up questions
-                                    </h3>
-                                    <IdeaIntakeFollowupList followups={ideaDocGenerateIntakeFollowups} />
-                                  </section>
-                                ) : null}
-                                {showIdeaDocIntakeAnswers && ideaDocGenerateIntakeOpenPoints.length > 0 ? (
-                                  <section aria-label="Not answered yet" className="space-y-2.5">
-                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
-                                      Not answered yet
-                                    </h3>
-                                    <IdeaIntakeOpenPoints points={ideaDocGenerateIntakeOpenPoints} />
-                                  </section>
-                                ) : null}
-                                {ideaDocGenerateSourcePreview ? (
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-                                    {ideaDocGenerateSourcePreview}
-                                  </ReactMarkdown>
-                                ) : null}
-                                {ideaDocGenerateSourceDiagrams.length > 0 ? (
-                                  <section aria-label="Source diagrams" className="space-y-2.5">
-                                    <h3 className="border-b border-border/70 pb-2 text-sm font-semibold text-foreground">
-                                      Diagrams
-                                    </h3>
-                                    <div className="grid gap-3">
-                                      {ideaDocGenerateSourceDiagrams.map((diagram, index) => (
-                                        <IdeaDocSourceDiagramPreview key={`${diagram.kind}-${index}-${diagram.source.slice(0, 24)}`} diagram={diagram} />
-                                      ))}
-                                    </div>
-                                  </section>
-                                ) : null}
-                                {!ideaDocGenerateSourcePreview && !showIdeaDocIntakeAnswers && ideaDocGenerateSourceDiagrams.length === 0 ? (
-                                  <p className="text-sm text-muted-foreground">No source context is available.</p>
-                                ) : null}
-                              </div>
+                              {(() => {
+                                const hasSummary = Boolean(ideaDocGenerateSourcePreview) || ideaDocGenerateSourceDiagrams.length > 0
+                                const tab = showIdeaDocIntakeAnswers && (ideaDocSourceTab === 'brainstorm' || !hasSummary) ? 'brainstorm' : 'summary'
+                                if (!hasSummary && !showIdeaDocIntakeAnswers) {
+                                  return <p className="text-sm text-muted-foreground">No source context is available.</p>
+                                }
+                                return (
+                                  <div className="space-y-4">
+                                    {showIdeaDocIntakeAnswers && hasSummary ? (
+                                      <div className="flex gap-1 border-b border-border/70" role="tablist" aria-label="Source context part">
+                                        {([['brainstorm', 'Brainstorming'], ['summary', 'AI Summary']] as const).map(([key, label]) => (
+                                          <button
+                                            key={key}
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={tab === key}
+                                            className={cn(
+                                              '-mb-px border-b-2 px-3 pb-2 pt-1 text-sm font-semibold transition-colors',
+                                              tab === key ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+                                            )}
+                                            onClick={() => setIdeaDocSourceTab(key)}
+                                          >
+                                            {label}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                    {tab === 'brainstorm' ? (
+                                      <section aria-label="Brainstorming" className="space-y-3">
+                                        <div>
+                                          <h3 className="!mt-0 !text-base font-semibold text-foreground">Brainstorming</h3>
+                                          <p className="text-xs text-muted-foreground">
+                                            The proposer's confirmed answers and the AI's follow-up questions, in the order they were asked.
+                                          </p>
+                                        </div>
+                                        <IdeaIntakeAnswerList
+                                          answers={ideaDocGenerateIntakeAnswers}
+                                          followups={ideaDocGenerateIntakeFollowups}
+                                          openPoints={ideaDocGenerateIntakeOpenPoints}
+                                          openPointTurns={ideaDocGenerateIntakeOpenPointTurns}
+                                          disabled={ideaDocGenerateBusy}
+                                          onSave={saveIdeaDocIntakeAnswer}
+                                        />
+                                      </section>
+                                    ) : (
+                                      <section aria-label="AI Summary" className="space-y-1">
+                                        <div className="mb-2">
+                                          <h3 className="!mt-0 !text-base font-semibold text-foreground">AI Summary</h3>
+                                          <p className="text-xs text-muted-foreground">The idea summary written from the brainstorm.</p>
+                                        </div>
+                                        {ideaDocGenerateSourcePreview ? (
+                                          <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+                                            {ideaDocGenerateSourcePreview}
+                                          </ReactMarkdown>
+                                        ) : null}
+                                        {ideaDocGenerateSourceDiagrams.length > 0 ? (
+                                          <section aria-label="Process diagrams" className="space-y-2.5 pt-2">
+                                            <h2>Diagrams</h2>
+                                            <div className="grid gap-3">
+                                              {ideaDocGenerateSourceDiagrams.map((diagram, index) => (
+                                                <IdeaDocSourceDiagramPreview key={`${diagram.kind}-${index}-${diagram.source.slice(0, 24)}`} diagram={diagram} />
+                                              ))}
+                                            </div>
+                                          </section>
+                                        ) : null}
+                                      </section>
+                                    )}
+                                  </div>
+                                )
+                              })()}
                             </div>
                           )}
                         </div>

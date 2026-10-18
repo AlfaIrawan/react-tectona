@@ -1,63 +1,69 @@
 import { useState } from 'react'
-import { AlertTriangle, Check, Loader2, PencilLine } from 'lucide-react'
+import { AlertTriangle, Check, Loader2, PencilLine, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { IdeaIntakeAnswer, IdeaIntakeFollowup } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
+import { brainstormIntakeOrder } from '@/modules/project-management/lib/brainstormIntakeOrder'
 
-/** The AI's own follow-up questions from the brainstorm that the proposer answered (read-only). */
-export function IdeaIntakeFollowupList({ followups }: { followups: IdeaIntakeFollowup[] }) {
-  return (
-    <div className="space-y-2">
-      {followups.map((item, index) => (
-        <article
-          key={`${index}-${item.question}`}
-          className="grid gap-2 rounded-lg border border-border/70 bg-muted/10 p-3 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] sm:gap-4"
-        >
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">AI question</p>
-            <p className="text-sm leading-5 text-foreground">{item.question}</p>
-          </div>
-          <div className="sm:border-l sm:border-border/70 sm:pl-4">
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">Answer</p>
-            <p className="whitespace-pre-wrap text-sm leading-5 text-foreground/90">{item.answer}</p>
-          </div>
-        </article>
-      ))}
-    </div>
-  )
-}
+// The AI's follow-ups are told apart from the mandatory questions by colour (and an indent).
+const FOLLOWUP_CARD = 'border-violet-200/80 bg-violet-50/50 dark:border-violet-500/30 dark:bg-violet-500/[0.07]'
+const FOLLOWUP_LABEL = 'text-violet-700 dark:text-violet-300'
 
-/** Follow-up questions skipped in the brainstorm: sent to the generator as "to be confirmed". */
-export function IdeaIntakeOpenPoints({ points }: { points: string[] }) {
+function FollowupCard({ question, answer }: { question: string; answer: string | null }) {
   return (
-    <div className="space-y-2">
-      <p className="text-xs leading-5 text-muted-foreground">
-        Skipped in the brainstorm. The generator is told to mark these as to be confirmed, not to fill them in.
-      </p>
-      <ul className="space-y-1.5">
-        {points.map((point) => (
-          <li key={point} className="flex items-start gap-2 rounded-lg border border-dashed border-border/80 px-3 py-2 text-sm leading-5 text-foreground/90">
-            <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
-            {point}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <article
+      className={cn(
+        'grid gap-2 rounded-lg border p-3 sm:ml-5 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] sm:gap-4',
+        answer === null ? 'border-dashed border-violet-300/80 bg-background dark:border-violet-500/40' : FOLLOWUP_CARD,
+      )}
+    >
+      <div>
+        <p className={cn('mb-1 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em]', FOLLOWUP_LABEL)}>
+          <Sparkles className="h-3 w-3" aria-hidden />
+          AI follow-up
+        </p>
+        <p className="text-sm leading-5 text-foreground">{question}</p>
+      </div>
+      <div className="sm:border-l sm:border-border/70 sm:pl-4">
+        {answer === null ? (
+          <>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Not answered</p>
+            <p className="text-xs leading-5 text-muted-foreground">
+              Skipped in the brainstorm. The generator is told to mark it as to be confirmed, not to fill it in.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className={cn('mb-1 text-[10px] font-semibold uppercase tracking-[0.12em]', FOLLOWUP_LABEL)}>Answer</p>
+            <p className="whitespace-pre-wrap text-sm leading-5 text-foreground/90">{answer}</p>
+          </>
+        )}
+      </div>
+    </article>
   )
 }
 
 /**
- * The idea's Idea Intake answers in the Generate dialog. An answer the brainstorm recorded wrongly
- * (needs_review) is shown with the reason and is not sent to the generator until the proposer
- * corrects it — or keeps it as written, which also confirms it.
+ * The idea's brainstorm in the Generate dialog, in the order it was asked: the Idea Intake answers
+ * with the AI's follow-up questions after the question they followed (answered, or skipped).
+ * An answer the brainstorm recorded wrongly (needs_review) is shown with the reason and is not
+ * sent to the generator until the proposer corrects it — or keeps it as written, which also
+ * confirms it.
  */
 export function IdeaIntakeAnswerList({
   answers,
+  followups = [],
+  openPoints = [],
+  openPointTurns = [],
   disabled,
   onSave,
 }: {
   answers: IdeaIntakeAnswer[]
+  followups?: IdeaIntakeFollowup[]
+  /** Follow-ups skipped in the brainstorm, and the message that asked each. */
+  openPoints?: string[]
+  openPointTurns?: Array<number | null>
   disabled: boolean
   /** Saves the answer; rejects with a readable error. */
   onSave: (itemId: string, answer: string) => Promise<void>
@@ -91,6 +97,7 @@ export function IdeaIntakeAnswerList({
   }
 
   const pending = answers.filter((item) => item.needs_review).length
+  const entries = brainstormIntakeOrder(answers, followups, openPoints, openPointTurns)
 
   return (
     <div className="space-y-2">
@@ -103,7 +110,27 @@ export function IdeaIntakeAnswerList({
           </span>
         </div>
       ) : null}
-      {answers.map((item) => {
+      {followups.length + openPoints.length > 0 ? (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="h-2.5 w-2.5 rounded-sm border border-border bg-muted/40" />
+            Mandatory question
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="h-2.5 w-2.5 rounded-sm border border-violet-300 bg-violet-100 dark:border-violet-500/50 dark:bg-violet-500/20" />
+            AI follow-up
+          </span>
+          <span>In the order the brainstorm asked them.</span>
+        </p>
+      ) : null}
+      {entries.map((entry, entryIndex) => {
+        if (entry.kind === 'followup') {
+          return <FollowupCard key={`f-${entryIndex}-${entry.item.question}`} question={entry.item.question} answer={entry.item.answer} />
+        }
+        if (entry.kind === 'skipped') {
+          return <FollowupCard key={`s-${entryIndex}-${entry.question}`} question={entry.question} answer={null} />
+        }
+        const item = entry.item
         const editing = editingId === item.id
         const saving = savingId === item.id
         return (

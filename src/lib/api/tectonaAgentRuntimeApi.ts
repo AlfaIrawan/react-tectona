@@ -2108,12 +2108,16 @@ export interface IdeaIntakeAnswer {
   corrected?: boolean
   /** For an answer waiting for review: the proposer's own brainstorm message about this topic. */
   suggestion?: string
+  /** The brainstorm message it was answered in (orders it among the AI's follow-ups). */
+  turn?: number
 }
 
 /** One of the AI's own follow-up (non-mandatory) questions, with the proposer's answer. */
 export interface IdeaIntakeFollowup {
   question: string
   answer: string
+  /** The brainstorm message that asked it. */
+  turn?: number
 }
 
 /** A fact a reviewer gave in an accepted document comment (part, who gave it). */
@@ -2128,6 +2132,8 @@ export interface IdeaIntakeAnswers {
   followups: IdeaIntakeFollowup[]
   /** Follow-up questions skipped in the brainstorm and never answered. */
   openPoints: string[]
+  /** Per open point, the brainstorm message that asked it (null when not found). */
+  openPointTurns: Array<number | null>
   reviewerInputs: IdeaReviewerInput[]
   block: string
 }
@@ -2136,6 +2142,7 @@ type IdeaIntakeAnswersBody = {
   answers?: IdeaIntakeAnswer[]
   followups?: IdeaIntakeFollowup[]
   open_points?: string[]
+  open_point_turns?: Array<number | null>
   reviewer_inputs?: IdeaReviewerInput[]
   block?: string
 }
@@ -2145,6 +2152,7 @@ function toIdeaIntakeAnswers(body: IdeaIntakeAnswersBody): IdeaIntakeAnswers {
     answers: body.answers ?? [],
     followups: body.followups ?? [],
     openPoints: body.open_points ?? [],
+    openPointTurns: body.open_point_turns ?? [],
     reviewerInputs: body.reviewer_inputs ?? [],
     block: body.block ?? '',
   }
