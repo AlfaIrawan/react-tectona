@@ -488,6 +488,10 @@ export function workflowNodeSummary(data: WorkflowNodeData): string {
         const options = aiChoiceOptions(c)
         return options.length ? `Picks: ${options.join(' / ')}` : 'Add the options to pick from'
       }
+      if (isAiFieldsMode(c)) {
+        const fields = aiFieldsOf(c).filter((field) => field.name.trim())
+        return fields.length ? `Fills: ${fields.map((field) => aiOutputKey(field.name, '', 'field')).join(', ')}` : 'Add the fields to fill'
+      }
       return c.prompt ? c.prompt.slice(0, 60) : 'Configure AI task'
     case 'delay':
       return c.duration ? `Wait ${c.duration}` : 'Set a duration'
@@ -544,4 +548,67 @@ export function aiChoiceBranches(config: Record<string, string> | undefined): Ar
     ...aiChoiceOptions(config).map((option) => ({ id: aiChoiceHandle(option), label: option })),
     { id: AI_UNCERTAIN_HANDLE, label: AI_UNCERTAIN_LABEL },
   ]
+}
+
+/** Fields (Tahap 3): the AI fills named, typed fields; later nodes read ai.<name>.data.<field>. */
+export type AiFieldType = 'text' | 'number' | 'boolean' | 'options' | 'list'
+
+export type AiField = {
+  name: string
+  type: AiFieldType
+  /** For options: the allowed values, comma separated. */
+  options?: string
+  required?: boolean
+  description?: string
+}
+
+export const AI_FIELD_TYPES: Array<{ value: AiFieldType; label: string }> = [
+  { value: 'text', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'boolean', label: 'Yes / No' },
+  { value: 'options', label: 'One of' },
+  { value: 'list', label: 'List' },
+]
+
+export function isAiFieldsMode(config: Record<string, string> | undefined): boolean {
+  return (config?.outputFormat ?? '').trim() === 'fields'
+}
+
+/** The fields as the builder stores them (config.fields, a JSON list). */
+export function aiFieldsOf(config: Record<string, string> | undefined): AiField[] {
+  try {
+    const parsed = JSON.parse(config?.fields || '[]') as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+      .map((item) => ({
+        name: String(item.name ?? ''),
+        type: (AI_FIELD_TYPES.some((type) => type.value === item.type) ? item.type : 'text') as AiFieldType,
+        options: typeof item.options === 'string' ? item.options : Array.isArray(item.options) ? item.options.join(', ') : '',
+        required: Boolean(item.required),
+        description: String(item.description ?? ''),
+      }))
+  } catch {
+    return []
+  }
+}
+
+/** What later nodes can read from an AI Process node, by path under the run (ai.<name>...). */
+export function aiOutputPaths(node: { id: string; data: { label: string; config: Record<string, string> } }): Array<{ path: string; label: string }> {
+  const key = aiOutputKey(node.data.config.outputKey, node.data.label, node.id)
+  if (isAiChoiceMode(node.data.config)) {
+    return [
+      { path: `ai.${key}.choice`, label: `${node.data.label}: choice` },
+      { path: `ai.${key}.answer`, label: `${node.data.label}: reason` },
+    ]
+  }
+  if (isAiFieldsMode(node.data.config)) {
+    return aiFieldsOf(node.data.config)
+      .filter((field) => field.name.trim())
+      .map((field) => {
+        const name = aiOutputKey(field.name, '', 'field')
+        return { path: `ai.${key}.data.${name}`, label: `${node.data.label}: ${name}` }
+      })
+  }
+  return [{ path: `ai.${key}.answer`, label: node.data.label }]
 }

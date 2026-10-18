@@ -58,10 +58,16 @@ import {
   WORKFLOW_TRIGGER_DOMAINS,
   workflowTriggerEntities,
   workflowTriggerEvents,
+  AI_FIELD_TYPES,
   aiChoiceBranches,
   aiChoiceOptions,
+  aiFieldsOf,
   aiOutputKey,
+  aiOutputPaths,
   isAiChoiceMode,
+  isAiFieldsMode,
+  type AiField,
+  type AiFieldType,
   type WorkflowNodeData,
   type WorkflowNodeKind,
 } from '@/modules/workflow-automation-engine/components/workflowNodeKinds'
@@ -630,6 +636,17 @@ function validateWorkflowGraph(
     }
     if (kind === 'assignOwner' && !config.ownerId?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has no workspace member assigned.` })
     if (kind === 'aiProcess' && !config.prompt?.trim()) issues.push({ level: 'warning', nodeId: n.id, message: `"${label}" has an empty AI prompt.` })
+    if (kind === 'aiProcess' && isAiFieldsMode(config)) {
+      const fields = aiFieldsOf(config).filter((field) => field.name.trim())
+      if (fields.length === 0) issues.push({ level: 'error', nodeId: n.id, message: `"${label}" needs at least one field to fill.` })
+      const names = fields.map((field) => aiOutputKey(field.name, '', 'field'))
+      if (new Set(names).size !== names.length) issues.push({ level: 'error', nodeId: n.id, message: `"${label}" has two fields with the same name.` })
+      for (const field of fields) {
+        if (field.type === 'options' && (field.options ?? '').split(',').filter((item) => item.trim()).length < 2) {
+          issues.push({ level: 'error', nodeId: n.id, message: `"${label}": field "${field.name}" needs at least two options.` })
+        }
+      }
+    }
     if (kind === 'aiProcess' && isAiChoiceMode(config)) {
       if (aiChoiceOptions(config).length < 2) {
         issues.push({ level: 'error', nodeId: n.id, message: `"${label}" needs at least two options to pick from.` })
@@ -1171,15 +1188,10 @@ function AiProcessFields({
   const key = aiOutputKey(config.outputKey, node.data.label, node.id)
   const chosen = splitNames(config.inputKeys)
   const choiceMode = isAiChoiceMode(config)
-  const earlier = otherAiNodes.flatMap((other) => {
-    const otherKey = aiOutputKey(other.data.config.outputKey, other.data.label, other.id)
-    return isAiChoiceMode(other.data.config)
-      ? [
-          { key: `ai.${otherKey}.choice`, label: `AI: ${other.data.label} (choice)` },
-          { key: `ai.${otherKey}.answer`, label: `AI: ${other.data.label} (reason)` },
-        ]
-      : [{ key: `ai.${otherKey}.answer`, label: `AI: ${other.data.label}` }]
-  })
+  const fieldsMode = isAiFieldsMode(config)
+  const fields = aiFieldsOf(config)
+  const setFields = (next: AiField[]) => onChange({ fields: JSON.stringify(next) })
+  const earlier = otherAiNodes.flatMap((other) => aiOutputPaths(other).map((item) => ({ key: item.path, label: `AI: ${item.label}` })))
   const readable = [...AI_RUN_VALUES, ...earlier]
   const toggle = (value: string) => {
     const next = chosen.includes(value) ? chosen.filter((item) => item !== value) : [...chosen, value]
@@ -1201,7 +1213,12 @@ function AiProcessFields({
           className="h-8"
         />
         <p className="text-[11px] leading-4 text-slate-500">
-          {choiceMode ? (
+          {fieldsMode ? (
+            <>
+              Later nodes read each field as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.data.<field>}}`}</code>,
+              for example in an If / Else condition <code className="rounded bg-slate-100 px-1">{`ai.${key}.data.lengkap == false`}</code>.
+            </>
+          ) : choiceMode ? (
             <>
               Later nodes can use the choice as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.choice}}`}</code> and
               the AI&apos;s reason as <code className="rounded bg-slate-100 px-1">{`{{ai.${key}.answer}}`}</code>.
@@ -1218,14 +1235,82 @@ function AiProcessFields({
         <label className={FIELD_LABEL_CLASS} htmlFor={`ai-format-${node.id}`}>Output</label>
         <Select
           id={`ai-format-${node.id}`}
-          value={choiceMode ? 'choice' : 'text'}
-          onChange={(event) => onChange({ outputFormat: event.target.value === 'choice' ? 'choice' : '' })}
+          value={choiceMode ? 'choice' : fieldsMode ? 'fields' : 'text'}
+          onChange={(event) => onChange({ outputFormat: event.target.value === 'text' ? '' : event.target.value })}
           className="h-9 text-sm"
         >
           <SelectItem value="text">Text answer</SelectItem>
+          <SelectItem value="fields">Fields</SelectItem>
           <SelectItem value="choice">Pick a branch</SelectItem>
         </Select>
       </div>
+      {fieldsMode ? (
+        <div className="space-y-2 rounded-lg border border-purple-100 bg-purple-50/40 p-2">
+          <p className={FIELD_LABEL_CLASS}>Fields the AI fills</p>
+          {fields.map((field, index) => {
+            const update = (patch: Partial<AiField>) => setFields(fields.map((item, at) => (at === index ? { ...item, ...patch } : item)))
+            return (
+              <div key={index} className="space-y-1 rounded-md border border-slate-200 bg-white p-1.5">
+                <div className="flex items-center gap-1">
+                  <Input
+                    aria-label="Field name"
+                    value={field.name}
+                    placeholder="e.g. lengkap"
+                    onChange={(event) => update({ name: event.target.value })}
+                    className="h-7 min-w-0 flex-1 text-xs"
+                  />
+                  <Select
+                    aria-label="Field type"
+                    value={field.type}
+                    onChange={(event) => update({ type: event.target.value as AiFieldType })}
+                    className="h-7 w-24 text-xs"
+                  >
+                    {AI_FIELD_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                  </Select>
+                  <button
+                    type="button"
+                    aria-label={`Remove field ${field.name || index + 1}`}
+                    className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                    onClick={() => setFields(fields.filter((_, at) => at !== index))}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {field.type === 'options' ? (
+                  <Input
+                    aria-label="Allowed values"
+                    value={field.options ?? ''}
+                    placeholder="Allowed values, comma separated: Tinggi, Sedang, Rendah"
+                    onChange={(event) => update({ options: event.target.value })}
+                    className="h-7 text-xs"
+                  />
+                ) : null}
+                <Input
+                  aria-label="What the AI should put here"
+                  value={field.description ?? ''}
+                  placeholder="What the AI should put here (optional)"
+                  onChange={(event) => update({ description: event.target.value })}
+                  className="h-7 text-xs"
+                />
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                  <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => update({ required: event.target.checked })} />
+                  Required: the step fails if the AI cannot fill it
+                </label>
+              </div>
+            )
+          })}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 w-full text-xs"
+            disabled={fields.length >= 12}
+            onClick={() => setFields([...fields, { name: '', type: 'text', required: false }])}
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" /> Add field
+          </Button>
+        </div>
+      ) : null}
       {choiceMode ? (
         <div className="space-y-1.5 rounded-lg border border-purple-100 bg-purple-50/40 p-2">
           <p className={FIELD_LABEL_CLASS}>Options (2 to 6)</p>
@@ -3202,6 +3287,28 @@ function WorkflowBuilderCanvasInner({
                       : undefined}
                     onChange={(kind) => updateSelectedNode({ config: { parameter: kind } })}
                   />
+                ) : null}
+
+                {selectedNode.data.kind === 'ifElse' && nodes.some((node) => node.data.kind === 'aiProcess') ? (
+                  <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                    <p className={FIELD_LABEL_CLASS}>Use an AI result in the condition</p>
+                    <div className="flex flex-wrap gap-1">
+                      {nodes.filter((node) => node.data.kind === 'aiProcess').flatMap((node) => aiOutputPaths(node)).map((item) => (
+                        <button
+                          key={item.path}
+                          type="button"
+                          title={item.path}
+                          className="rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:border-purple-300 hover:text-purple-700"
+                          onClick={() => updateSelectedNode({ config: { condition: `${item.path} == ` } })}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] leading-4 text-slate-500">
+                      Puts the path in the condition; add the value, e.g. <code className="rounded bg-slate-100 px-1">== false</code> or <code className="rounded bg-slate-100 px-1">== &apos;Tinggi&apos;</code>.
+                    </p>
+                  </div>
                 ) : null}
 
                 {selectedNode.data.kind === 'aiProcess' ? (
