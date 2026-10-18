@@ -313,6 +313,24 @@ export async function retryFailedDocumentActions(runId: string): Promise<Workflo
   return readJson<WorkflowRunDto>(res)
 }
 
+/**
+ * Tell the idea's approval workflow that the Generate dialog made a URD/BRD/FSD. When the workflow
+ * had stopped because generating that document failed, it continues with this one (its approval
+ * is requested next); otherwise nothing changes.
+ */
+export async function continueWorkflowAfterGeneratedDocument(
+  ideaId: string,
+  documentKind: 'URD' | 'BRD' | 'FSD',
+  documentId: string,
+): Promise<{ continued: boolean; run_id?: string | null; reason?: string | null }> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/document-generated`, {
+    method: 'POST',
+    headers: { ...defaultHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ document_kind: documentKind, document_id: documentId }),
+  })
+  return readJson<{ continued: boolean; run_id?: string | null; reason?: string | null }>(res)
+}
+
 export async function getWorkflowRun(runId: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}`, { headers: defaultHeaders() })
   return readJson<WorkflowRunDto>(res)

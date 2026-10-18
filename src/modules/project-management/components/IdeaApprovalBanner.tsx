@@ -280,7 +280,7 @@ export function describeRunFailure(error: string): { kind: string | null; text: 
   const generation = /^(URD|BRD|FSD)\s+generation failed/i.exec(raw)
   if (generation) {
     const kind = generation[1].toUpperCase()
-    return { kind, text: `Generate ${kind} failed. You can create it with Generate from template.` }
+    return { kind, text: `Generate ${kind} failed. Generate it from the template to continue the approval.` }
   }
   const template = /no active (URD|BRD|FSD) template/i.exec(raw)
   if (template) {

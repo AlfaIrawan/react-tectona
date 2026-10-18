@@ -310,7 +310,14 @@ import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-mana
 import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
 import { describeEmailDeliveries, IdeaApprovalBanner, useIdeaApprovalStatus } from '@/modules/project-management/components/IdeaApprovalBanner'
 import { docApprovalState, useIdeaDocApprovals } from '@/modules/project-management/lib/ideaDocApprovals'
-import { approveWorkflowRun, getWorkflowRun, listWorkflowApprovals, rejectWorkflowRun, retryFailedDocumentActions } from '@/lib/api/workflowAutomationApi'
+import {
+  approveWorkflowRun,
+  continueWorkflowAfterGeneratedDocument,
+  getWorkflowRun,
+  listWorkflowApprovals,
+  rejectWorkflowRun,
+  retryFailedDocumentActions,
+} from '@/lib/api/workflowAutomationApi'
 import { NOTIFICATIONS_UPDATED_EVENT } from '@/lib/chat/chatRealtimeEvents'
 import { dispatchIdeaSectionRevisionUpdated } from '@/lib/chat/ideaSectionRevisionFromChat'
 import {
@@ -7988,6 +7995,27 @@ export function IdeaDetailPage() {
         description: `${created.title} opened in the document editor. Download remains available from the Docs list.`,
         variant: 'success',
       })
+      // An approval workflow that stopped because generating this document failed goes on with it.
+      if (docTypeLabel === 'URD' || docTypeLabel === 'BRD' || docTypeLabel === 'FSD') {
+        void continueWorkflowAfterGeneratedDocument(idea.id, docTypeLabel, created.id)
+          .then((result) => {
+            if (!result.continued) return
+            addToast({
+              title: 'Approval workflow continued',
+              description: `${docTypeLabel} is in the workflow now; its approvers are asked next.`,
+              variant: 'success',
+            })
+            setIdeaDocsReloadKey((key) => key + 1)
+            void refreshIdeaDocWorkflowGate()
+          })
+          .catch(() => {
+            addToast({
+              title: "The approval workflow didn't continue",
+              description: `${docTypeLabel} was saved, but the approval workflow could not be updated. Ask an admin to check the workflow run.`,
+              variant: 'warning',
+            })
+          })
+      }
     } catch (error) {
       addToast({
         title: 'Failed to generate document',
