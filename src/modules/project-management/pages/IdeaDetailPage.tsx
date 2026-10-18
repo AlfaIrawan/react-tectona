@@ -15597,7 +15597,10 @@ export function IdeaDetailPage() {
                       </div>
                     </div>
 
-                    <div ref={setIdeaDocWorkspaceEl} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                    {/* overflow: clip, not hidden: the closed source drawer waits off the right edge, and an
+                        overflow-hidden box can still be scrolled — focusing a comment box scrolled the whole
+                        workspace 740px sideways. A clipped box is not a scroll container. */}
+                    <div ref={setIdeaDocWorkspaceEl} className="relative flex min-h-0 flex-1 flex-col [overflow:clip]">
                       <div className="shrink-0 space-y-2 border-b border-border/70 px-5 py-3 sm:px-6">
                         <div className={cn('flex gap-2', ideaDocWorkspaceNarrow ? 'flex-col' : 'flex-row items-end gap-4')}>
                           <div className="min-w-0 flex-1 space-y-1.5">
