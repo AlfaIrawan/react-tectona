@@ -16105,7 +16105,7 @@ export function IdeaDetailPage() {
                             <div
                               role="tabpanel"
                               aria-label="Formatted source context"
-                              className="scroll-reveal min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-2 [&_h2]:mt-6 [&_h2]:border-b [&_h2]:border-l-[3px] [&_h2]:border-b-border/70 [&_h2]:border-l-primary [&_h2]:pb-1.5 [&_h2]:pl-2.5 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground/90 [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
+                              className="scroll-reveal min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-background px-4 py-4 shadow-sm sm:px-5 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_h1]:mb-2 [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:mb-3 [&_h2]:mt-9 [&_h2]:border-b [&_h2]:border-l-[3px] [&_h2]:border-b-border/70 [&_h2]:border-l-primary [&_h2]:pb-1.5 [&_h2]:pl-2.5 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:mb-1 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground/90 [&_li]:pl-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p]:my-2.5 [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foreground/90 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"
                             >
                               {(() => {
                                 const hasSummary = Boolean(ideaDocGenerateSourcePreview) || ideaDocGenerateSourceDiagrams.length > 0
@@ -16152,18 +16152,20 @@ export function IdeaDetailPage() {
                                         />
                                       </section>
                                     ) : (
-                                      <section aria-label="AI Summary" className="space-y-1">
+                                      <section aria-label="AI Summary">
                                         <div className="mb-2">
                                           <h3 className="!mt-0 !text-base font-semibold text-foreground">AI Summary</h3>
                                           <p className="text-xs text-muted-foreground">The idea summary written from the brainstorm.</p>
                                         </div>
                                         {ideaDocGenerateSourcePreview ? (
-                                          <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-                                            {ideaDocGenerateSourcePreview}
-                                          </ReactMarkdown>
+                                          <div className="[&>h2:first-child]:mt-4">
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+                                              {ideaDocGenerateSourcePreview}
+                                            </ReactMarkdown>
+                                          </div>
                                         ) : null}
                                         {ideaDocGenerateSourceDiagrams.length > 0 ? (
-                                          <section aria-label="Process diagrams" className="space-y-2.5 pt-2">
+                                          <section aria-label="Process diagrams" className="space-y-2.5">
                                             <h2>Diagrams</h2>
                                             <div className="grid gap-3">
                                               {ideaDocGenerateSourceDiagrams.map((diagram, index) => (
