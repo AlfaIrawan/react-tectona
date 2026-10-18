@@ -7726,11 +7726,13 @@ export function IdeaDetailPage() {
 
   // A notification or email about a comment links here with ?generate=<template>&part=<key>: open
   // the Generate dialog on that template and select the part (its comments show beside it).
-  // The link stays in the address bar until the dialog is open: the page can mount twice on a fresh
-  // load (workspace checks), and a mount that had already removed it lost the dialog with it.
+  // The link stays in the address bar until the dialog is open, and is then removed without the
+  // router: AppErrorBoundary is keyed by pathname+search, so a router navigation would remount the
+  // page and close the dialog again (the section deep links do the same).
   const ideaDocDeepLinkRef = useRef<{ templateId: string; partKey: string | null } | null>(null)
   useEffect(() => {
-    const params = new URLSearchParams(location.search)
+    // The address bar, not the router's location: that one keeps the link after it was removed.
+    const params = new URLSearchParams(window.location.search)
     const templateId = params.get('generate')
     if (!templateId || ideaDocTemplates.length === 0 || ideaDocDeepLinkRef.current) return
     ideaDocDeepLinkRef.current = { templateId, partKey: params.get('part') }
@@ -7744,12 +7746,12 @@ export function IdeaDetailPage() {
       selectIdeaDocPart(link.partKey)
     }
     ideaDocDeepLinkRef.current = null
-    const params = new URLSearchParams(location.search)
+    const params = new URLSearchParams(window.location.search)
     params.delete('generate')
     params.delete('part')
-    const rest = params.toString()
-    navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true, state: location.state })
-  }, [ideaDocGenerateOpen, ideaDocGenerateTemplateId, ideaDocParts, location.pathname, location.search, location.state, navigate, selectIdeaDocPart])
+    const query = params.toString()
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+  }, [ideaDocGenerateOpen, ideaDocGenerateTemplateId, ideaDocParts, selectIdeaDocPart])
 
   const openTemplateManagementAction = useCallback((action: 'upload' | 'new-template' | 'new-folder') => {
     const workspacePrefix = location.pathname.match(/^\/w\/[^/]+/)?.[0] ?? ''
