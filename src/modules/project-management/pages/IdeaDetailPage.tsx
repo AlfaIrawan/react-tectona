@@ -7726,24 +7726,30 @@ export function IdeaDetailPage() {
 
   // A notification or email about a comment links here with ?generate=<template>&part=<key>: open
   // the Generate dialog on that template and select the part (its comments show beside it).
-  const ideaDocDeepLinkPartRef = useRef<string | null>(null)
+  // The link stays in the address bar until the dialog is open: the page can mount twice on a fresh
+  // load (workspace checks), and a mount that had already removed it lost the dialog with it.
+  const ideaDocDeepLinkRef = useRef<{ templateId: string; partKey: string | null } | null>(null)
   useEffect(() => {
     const params = new URLSearchParams(location.search)
     const templateId = params.get('generate')
-    if (!templateId || ideaDocTemplates.length === 0) return
-    ideaDocDeepLinkPartRef.current = params.get('part')
+    if (!templateId || ideaDocTemplates.length === 0 || ideaDocDeepLinkRef.current) return
+    ideaDocDeepLinkRef.current = { templateId, partKey: params.get('part') }
+    void openIdeaDocGenerateDialog(templateId)
+  }, [ideaDocTemplates.length, location.search, openIdeaDocGenerateDialog])
+  useEffect(() => {
+    const link = ideaDocDeepLinkRef.current
+    if (!ideaDocGenerateOpen || !link) return
+    // A template the approval workflow locks opens another one: then no part is selected.
+    if (ideaDocGenerateTemplateId === link.templateId && link.partKey && ideaDocParts.some((part) => part.key === link.partKey)) {
+      selectIdeaDocPart(link.partKey)
+    }
+    ideaDocDeepLinkRef.current = null
+    const params = new URLSearchParams(location.search)
     params.delete('generate')
     params.delete('part')
     const rest = params.toString()
     navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true, state: location.state })
-    void openIdeaDocGenerateDialog(templateId)
-  }, [ideaDocTemplates.length, location.pathname, location.search, location.state, navigate, openIdeaDocGenerateDialog])
-  useEffect(() => {
-    const key = ideaDocDeepLinkPartRef.current
-    if (!ideaDocGenerateOpen || !key || !ideaDocParts.some((part) => part.key === key)) return
-    ideaDocDeepLinkPartRef.current = null
-    selectIdeaDocPart(key)
-  }, [ideaDocGenerateOpen, ideaDocParts, selectIdeaDocPart])
+  }, [ideaDocGenerateOpen, ideaDocGenerateTemplateId, ideaDocParts, location.pathname, location.search, location.state, navigate, selectIdeaDocPart])
 
   const openTemplateManagementAction = useCallback((action: 'upload' | 'new-template' | 'new-folder') => {
     const workspacePrefix = location.pathname.match(/^\/w\/[^/]+/)?.[0] ?? ''
