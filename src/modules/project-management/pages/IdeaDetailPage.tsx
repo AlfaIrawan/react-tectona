@@ -4773,6 +4773,37 @@ export function IdeaDetailPage() {
   // canvas autosave, which saved again — a PUT loop of ~3/s while the page was open (dev, 21 Oct).
   const [integrationLatestGraph, setIntegrationLatestGraph] = useState<IntegrationGraphRecord | null>(null)
   const integrationLatestGraphRef = useRef<IntegrationGraphRecord | null>(null)
+  // The stored integration version this page last read or wrote. Saves send it, so a page that
+  // loaded an older view (another tab, before a regeneration) cannot silently overwrite a newer
+  // one; saves run one after another so each sends the version the previous one returned.
+  const integrationStoredVersionRef = useRef<number | null>(null)
+  const integrationSaveChainRef = useRef<Promise<unknown>>(Promise.resolve())
+  const integrationSaveConflictRef = useRef(false)
+  const [integrationSaveConflict, setIntegrationSaveConflict] = useState(false)
+  const saveIntegration = useCallback(
+    (ideaId: string, body: Parameters<typeof upsertPersistentIdeaIntegration>[1]) => {
+      const run = integrationSaveChainRef.current.catch(() => undefined).then(async () => {
+        if (integrationSaveConflictRef.current) throw new Error('INTEGRATION_VERSION_CONFLICT')
+        try {
+          const saved = await upsertPersistentIdeaIntegration(ideaId, {
+            ...body,
+            integration_version: integrationStoredVersionRef.current ?? undefined,
+          })
+          integrationStoredVersionRef.current = saved.version
+          return saved
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('INTEGRATION_VERSION_CONFLICT')) {
+            integrationSaveConflictRef.current = true
+            setIntegrationSaveConflict(true)
+          }
+          throw error
+        }
+      })
+      integrationSaveChainRef.current = run
+      return run
+    },
+    [],
+  )
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
   const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
   // What the integration view still misses: elements without a relation, read live from the canvas,
@@ -4813,7 +4844,7 @@ export function IdeaDetailPage() {
       setRuntimeIntegrationAnalysis(nextAnalysis)
       integrationLatestGraphRef.current = graph
       setIntegrationLatestGraph(graph)
-      void upsertPersistentIdeaIntegration(idea.id, {
+      void saveIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(
           nextAnalysis,
           graph,
@@ -4821,12 +4852,13 @@ export function IdeaDetailPage() {
         ),
         version: idea.version,
       }).catch((error) => {
+        if (integrationSaveConflictRef.current) return
         setIntegrationGenerationError(
           error instanceof Error ? error.message : 'INTEGRATION_GRAPH_PERSIST_FAILED',
         )
       })
     },
-    [idea.id, idea.version, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId],
+    [idea.id, idea.version, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId, saveIntegration],
   )
   const [c4Level1Analysis, setC4Level1Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L1'))
   const [c4Level1Loaded, setC4Level1Loaded] = useState(false)
@@ -5033,7 +5065,7 @@ export function IdeaDetailPage() {
     if (target === 'integration') {
       const next = { ...runtimeIntegrationAnalysisRef.current, architectureReview: review }
       setRuntimeIntegrationAnalysis(next)
-      await upsertPersistentIdeaIntegration(idea.id, {
+      await saveIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(next, integrationLatestGraphRef.current ?? graphRecordFromIntegrationAnalysis(next), actor.id),
         version: idea.version,
       })
@@ -6003,7 +6035,7 @@ export function IdeaDetailPage() {
       const analysis = runtimeIntegrationFromAgentResponse(response)
       const record = graphRecordFromIntegrationAnalysis(analysis, { userCustomized: false })
       try {
-        await upsertPersistentIdeaIntegration(sourceIdea.id, {
+        await saveIntegration(sourceIdea.id, {
           ...buildPersistentIntegrationPayload(analysis, record, runtimeUserId || 'tectona-agent'),
           version: sourceIdea.version,
         })
@@ -6015,7 +6047,7 @@ export function IdeaDetailPage() {
       }
       applyIntegrationState(analysis, record, sourceIdea.id)
     },
-    [applyIntegrationState, runtimeUserId],
+    [applyIntegrationState, runtimeUserId, saveIntegration],
   )
 
   const loadRuntimeIntegration = useCallback(
@@ -6028,6 +6060,7 @@ export function IdeaDetailPage() {
       if (!options.forceRefresh) {
         try {
           const persistent = await getPersistentIdeaIntegration(sourceIdea.id)
+          integrationStoredVersionRef.current = persistent?.version ?? null
           if (persistent) {
             const analysis = runtimeIntegrationFromPersistent(persistent)
             const record = graphRecordFromPersistentIntegration(persistent)
@@ -14934,7 +14967,13 @@ export function IdeaDetailPage() {
                       isGenerating={isIntegrationRefreshing}
                       fillHeight
                       hideStudioHeader
-                      studioOverlay={integrationChecks.length > 0 ? (
+                      studioOverlay={integrationSaveConflict ? (
+                        <div className="max-w-xl rounded-lg border border-rose-200 bg-rose-50/95 px-3 py-2 text-xs text-rose-900 shadow-sm">
+                          <p className="font-semibold">Perubahan tidak disimpan</p>
+                          <p className="mt-1">Diagram ini sudah diubah di tab atau sesi lain. Muat ulang untuk melihat versi terbaru.</p>
+                          <button type="button" className="mt-1 font-semibold underline" onClick={() => window.location.reload()}>Muat ulang</button>
+                        </div>
+                      ) : integrationChecks.length > 0 ? (
                         <div className="max-w-xl rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow-sm">
                           <p className="font-semibold">Perlu dicek ({integrationChecks.length})</p>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">

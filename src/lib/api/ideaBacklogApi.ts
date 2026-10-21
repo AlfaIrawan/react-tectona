@@ -580,6 +580,8 @@ export async function upsertPersistentIdeaIntegration(
     generated_by: string
     source_correlation_id?: string | null
     version: number
+    /** The stored integration version this save is based on; a newer stored one gives 409. */
+    integration_version?: number
   },
 ): Promise<IdeaIntegrationPersistent> {
   const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/integration`, {
