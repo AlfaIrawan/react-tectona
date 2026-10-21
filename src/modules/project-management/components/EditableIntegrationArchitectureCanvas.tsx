@@ -1501,9 +1501,22 @@ function EditableIntegrationArchitectureCanvasInner({
         const typed = resolveArchimateFromLabel(action.notation)
         if (!typed || usedNodeIds.has(action.id)) return
         const boundary = layerBoundary(typed.layer)
-        const slot = boundary ? nextNodes.filter((node) => node.parentNode === boundary.id).length : index
+        // The first grid slot in the layer that no element (moved by hand or just added) covers.
+        const occupied = boundary
+          ? nextNodes.filter((node) => node.parentNode === boundary.id).map((node) => ({
+            x: node.position.x,
+            y: node.position.y,
+            width: Number(node.width ?? node.style?.width ?? 210),
+            height: Number(node.height ?? node.style?.height ?? 90),
+          }))
+          : []
+        const slotPosition = (candidate: number) => ({ x: 40 + (candidate % 5) * 240, y: 60 + Math.floor(candidate / 5) * 120 })
+        const isFree = (spot: { x: number; y: number }) => !occupied.some((rect) =>
+          spot.x < rect.x + rect.width + 16 && rect.x < spot.x + 210 + 16 && spot.y < rect.y + rect.height + 16 && rect.y < spot.y + 90 + 16)
+        let slot = 0
+        while (boundary && slot < 200 && !isFree(slotPosition(slot))) slot += 1
         const position = boundary
-          ? { x: 40 + (slot % 5) * 240, y: 60 + Math.floor(slot / 5) * 120 }
+          ? slotPosition(slot)
           : { x: origin.x + (index % 3) * 260, y: origin.y + Math.floor(index / 3) * 140 }
         const node: Node<ArchimateNodeData> = applyDefaultElementStyle({
           id: action.id,
