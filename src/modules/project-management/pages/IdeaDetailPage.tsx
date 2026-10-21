@@ -4760,6 +4760,12 @@ export function IdeaDetailPage() {
   const [integrationWarnings, setIntegrationWarnings] = useState<string[]>([])
   const [integrationGenerationError, setIntegrationGenerationError] = useState<string | null>(null)
   const [integrationBootstrapRecord, setIntegrationBootstrapRecord] = useState<IntegrationGraphRecord | null>(null)
+  // The integration canvas's latest saved graph (card preview, review submit, the next edit's
+  // baseline). Kept apart from integrationBootstrapRecord: that one is the canvas's bootstrap
+  // prop, and setting it on every save re-created persistIntegrationGraph, which re-ran the
+  // canvas autosave, which saved again — a PUT loop of ~3/s while the page was open (dev, 21 Oct).
+  const [integrationLatestGraph, setIntegrationLatestGraph] = useState<IntegrationGraphRecord | null>(null)
+  const integrationLatestGraphRef = useRef<IntegrationGraphRecord | null>(null)
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
   const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
   const persistIntegrationGraph = useCallback(
@@ -4773,13 +4779,14 @@ export function IdeaDetailPage() {
       }
       const architectureReview = architectureReviewAfterDiagramEdit(
         currentReview,
-        integrationBootstrapRecord ?? { nodes: [], edges: [], plantumlSource: current.plantumlSource },
+        integrationLatestGraphRef.current ?? { nodes: [], edges: [], plantumlSource: current.plantumlSource },
         graph,
         actor,
       )
       const nextAnalysis = { ...current, architectureReview }
       setRuntimeIntegrationAnalysis(nextAnalysis)
-      setIntegrationBootstrapRecord(graph)
+      integrationLatestGraphRef.current = graph
+      setIntegrationLatestGraph(graph)
       void upsertPersistentIdeaIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(
           nextAnalysis,
@@ -4793,7 +4800,7 @@ export function IdeaDetailPage() {
         )
       })
     },
-    [idea.id, idea.version, integrationBootstrapRecord, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId],
+    [idea.id, idea.version, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId],
   )
   const [c4Level1Analysis, setC4Level1Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L1'))
   const [c4Level1Loaded, setC4Level1Loaded] = useState(false)
@@ -5001,7 +5008,7 @@ export function IdeaDetailPage() {
       const next = { ...runtimeIntegrationAnalysisRef.current, architectureReview: review }
       setRuntimeIntegrationAnalysis(next)
       await upsertPersistentIdeaIntegration(idea.id, {
-        ...buildPersistentIntegrationPayload(next, integrationBootstrapRecord ?? graphRecordFromIntegrationAnalysis(next), actor.id),
+        ...buildPersistentIntegrationPayload(next, integrationLatestGraphRef.current ?? graphRecordFromIntegrationAnalysis(next), actor.id),
         version: idea.version,
       })
     } else {
@@ -5031,7 +5038,7 @@ export function IdeaDetailPage() {
       created_by: actor.id,
       created_from: 'tectona-architecture-review',
     })))
-  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, integrationBootstrapRecord, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
+  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
   const c4Level1Preview = usePlantUmlPngPreview(
     c4Level1Analysis.plantumlSource ? normalizeC4PlantUml(c4Level1Analysis.plantumlSource, 'L1') : null,
   )
@@ -5955,6 +5962,8 @@ export function IdeaDetailPage() {
       }))
       if (record) {
         setIntegrationBootstrapRecord(record)
+        integrationLatestGraphRef.current = record
+        setIntegrationLatestGraph(record)
         setIntegrationBootstrapKey((current) => current + 1)
         saveIntegrationGraph(ideaId, record)
       }
@@ -6035,6 +6044,8 @@ export function IdeaDetailPage() {
         setIntegrationLoaded(false)
         setIntegrationMissing(false)
         setIntegrationBootstrapRecord(null)
+        integrationLatestGraphRef.current = null
+        setIntegrationLatestGraph(null)
         setIntegrationGenerationError(
           error instanceof Error ? error.message : 'AI integration analysis failed.',
         )
@@ -14004,7 +14015,7 @@ export function IdeaDetailPage() {
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
-              {(showTechnicalDiagrams && (isIntegrationRefreshing || !integrationLoaded || (integrationBootstrapRecord?.nodes.length ?? 0) > 0)) ? (
+              {(showTechnicalDiagrams && (isIntegrationRefreshing || !integrationLoaded || (integrationLatestGraph?.nodes.length ?? 0) > 0)) ? (
               <div className="order-5 flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -14031,7 +14042,7 @@ export function IdeaDetailPage() {
                     // diagram from a previous (possibly pre-bugfix, possibly unrelated) session can
                     // silently outlive a fresh "insufficient_data" or parse-failed result, which is
                     // exactly the "still showing a mockup" confusion this was causing.
-                    const graph = integrationBootstrapRecord ?? (integrationLoaded ? null : loadIntegrationGraph(idea.id))
+                    const graph = integrationLatestGraph ?? (integrationLoaded ? null : loadIntegrationGraph(idea.id))
                     if (graph && graph.nodes.length > 0) {
                       return <IntegrationArchitecturePreview nodes={graph.nodes} edges={graph.edges} />
                     }
