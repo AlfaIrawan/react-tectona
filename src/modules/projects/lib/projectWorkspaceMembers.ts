@@ -1,7 +1,10 @@
 import { fetchIdentityUsers } from '@/lib/api/identityAdminApi'
+import { getSession } from '@/auth/authService'
+import { hasOrganizationAdminAccess, isPlatformAdminJwtRole } from '@/lib/auth/platformAccess'
 import { fetchAllWorkspaceOrgWorkspaces } from '@/lib/api/workspaceOrgApi'
 import {
   fetchWorkspaceMembers,
+  fetchSubjectMemberships,
   TECTONA_WAC_APP_ID,
   type WacMembershipDto,
 } from '@/lib/api/workspaceAccessControlApi'
@@ -35,18 +38,37 @@ export async function fetchProjectWorkspaceDirectoryUsers(): Promise<{
   users: ProjectWorkspaceDirectoryUser[]
   displayNameByUserId: Map<string, string>
 }> {
-  const [identityResponse, workspaces] = await Promise.all([
+  const session = getSession()
+  const [identityResponse, workspaces, ownMemberships] = await Promise.all([
     fetchIdentityUsers({ limit: 500, offset: 0 }),
     fetchAllWorkspaceOrgWorkspaces({ status: 'active' }),
+    session
+      ? fetchSubjectMemberships(TECTONA_WAC_APP_ID, session.user.id, { activeOnly: true })
+      : Promise.resolve({ items: [], total: 0 }),
   ])
 
   const identityUsers = identityResponse.items ?? []
   const identityById = new Map(identityUsers.map((user) => [user.id, user]))
   const displayNameByUserId = buildIdentityDisplayNameMap(identityUsers)
   const workspaceNamesBySubjectId = new Map<string, Set<string>>()
+  const ownWorkspaceIds = new Set(
+    resolveActiveWorkspaceMembershipRows(ownMemberships.items).map((membership) => membership.workspace_id),
+  )
+  const roles = session?.user.roles ?? []
+  const canReadAllWorkspaceMembers =
+    isPlatformAdminJwtRole(roles)
+    || roles.includes('admin')
+    || roles.includes('workspace_access_control_read')
+    || roles.includes('workspace_access_control_admin')
+  const canReadOrganizationWorkspaceMembers = hasOrganizationAdminAccess(roles)
+  const readableWorkspaces = workspaces.filter((workspace) =>
+    canReadAllWorkspaceMembers
+    || ownWorkspaceIds.has(workspace.id)
+    || (canReadOrganizationWorkspaceMembers && workspace.tenant_mode === 'organization'),
+  )
 
   await Promise.all(
-    workspaces.map(async (workspace) => {
+    readableWorkspaces.map(async (workspace) => {
       try {
         const response = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspace.id)
         collectWorkspaceMemberRows(response.items, workspace.name, workspaceNamesBySubjectId)
