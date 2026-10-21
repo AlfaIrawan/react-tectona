@@ -328,10 +328,17 @@ export function ProjectListPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isSelectionMode])
 
+  // Sub-projects live under their program (Sub-projects section on its page), so the list shows
+  // them only while searching — that keeps them findable by name.
+  const isListedHere = useCallback(
+    (project: Project) => !project.parentProjectId || searchQuery.trim().length > 0,
+    [searchQuery],
+  )
+
   // Get root projects (not in any folder)
   const rootProjects = useMemo(() => {
-    return projects.filter((p) => !p.folderId)
-  }, [projects])
+    return projects.filter((p) => !p.folderId && isListedHere(p))
+  }, [projects, isListedHere])
 
   // Helper function to get project count for a folder
   const getProjectCount = useCallback((folderId: string) => {
@@ -389,8 +396,8 @@ export function ProjectListPage() {
   // Filter folder projects (saat di dalam folder) — logic sama dengan root
   const folderProjects = useMemo(() => {
     if (!currentFolderId) return []
-    return getProjectsByFolder(currentFolderId)
-  }, [currentFolderId, getProjectsByFolder])
+    return getProjectsByFolder(currentFolderId).filter(isListedHere)
+  }, [currentFolderId, getProjectsByFolder, isListedHere])
 
   const filteredFolderProjects = useMemo(() => {
     if (folderProjects.length === 0) return []

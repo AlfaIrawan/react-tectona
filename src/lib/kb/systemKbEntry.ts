@@ -178,6 +178,10 @@ export function isIdeaIntakeChecklistTitle(title: string): boolean {
   return CHECKLIST_TITLE_PATTERN.test(title.trim())
 }
 
+export function isAbbreviationListTitle(title: string): boolean {
+  return LIST_SINGKATAN_TITLE_PATTERN.test(title.trim())
+}
+
 export function isKbNamingStandardTitle(title: string): boolean {
   return KB_NAMING_STANDARD_TITLE_PATTERN.test(title.trim())
 }

@@ -172,7 +172,7 @@ export function buildPersistentIntegrationPayload(
       edges: graph.edges,
       user_customized: graph.userCustomized,
       viewport: graph.viewport,
-      snap_to_grid: graph.snapToGrid ?? true,
+      snap_to_grid: graph.snapToGrid ?? false,
       architecture_review: analysis.architectureReview,
     },
     status: analysis.status,
@@ -211,4 +211,18 @@ export function runtimeIntegrationFromPersistent(
     correlationId: persistent.source_correlation_id ?? '',
     architectureReview: readArchitectureReview(json.architecture_review),
   }
+}
+
+/**
+ * A stored integration view that should be generated again on load: the AI said "ok" but the
+ * graph has no element at all (dev, 21 Oct 2026: two empty "Business/Technology Boundary"
+ * packages, left by the old prompt and the parser that dropped untyped lines). An
+ * insufficient_data result is kept: the AI already tried.
+ */
+export function storedIntegrationNeedsRegeneration(
+  analysis: Pick<RuntimeIntegrationAnalysis, 'status'>,
+  record: Pick<IntegrationGraphRecord, 'nodes'>,
+): boolean {
+  if (analysis.status !== 'ok') return false
+  return !record.nodes.some((node) => node.type === 'archimateElement')
 }

@@ -6,8 +6,8 @@ import {
   enterpriseFilterTagClass,
 } from '@/components/enterprise/enterpriseFilterPanelClasses'
 import {
-  enterpriseCyanGradientActionButtonClass,
-  enterpriseIndigoGradientActionButtonClass,
+  enterprisePrimarySoftButtonClass,
+  enterprisePrimarySolidButtonClass,
 } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
 
@@ -86,13 +86,13 @@ export function FiltersBar({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             {!folderMode && onCreateFolder && (
-              <button type="button" onClick={onCreateFolder} className={enterpriseIndigoGradientActionButtonClass()}>
+              <button type="button" onClick={onCreateFolder} className={enterprisePrimarySoftButtonClass()}>
                 <FolderPlus className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
                 New folder
               </button>
             )}
             {onCreateProject && (
-              <button type="button" onClick={onCreateProject} className={enterpriseCyanGradientActionButtonClass()}>
+              <button type="button" onClick={onCreateProject} className={enterprisePrimarySolidButtonClass()}>
                 <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" strokeWidth={2.5} />
                 Create Project
               </button>

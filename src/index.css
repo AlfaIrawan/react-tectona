@@ -389,6 +389,39 @@
     background: transparent;
   }
 
+  /* Scroll areas inside dialogs: the thin scrollbar keeps its gutter (no reflow) but is invisible
+     until the pointer is over the area (or keyboard focus is inside it). */
+  .scroll-reveal {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: stable;
+  }
+  .scroll-reveal:hover,
+  .scroll-reveal:focus-visible,
+  .scroll-reveal:has(:focus-visible) {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+  }
+
+  .abbreviation-scan-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: stable;
+  }
+  .abbreviation-scan-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .abbreviation-scan-scroll::-webkit-scrollbar-track,
+  .abbreviation-scan-scroll::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+  .abbreviation-scan-dialog:hover .abbreviation-scan-scroll {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.55) transparent;
+  }
+  .abbreviation-scan-dialog:hover .abbreviation-scan-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.55);
+    border-radius: 9999px;
+  }
+
   /* Source editors retain wheel and trackpad scrolling, but only expose native scrollbars while
      the pointer is within the editor. */
   .source-editor-scroll {
@@ -1628,6 +1661,53 @@
 :is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle-bottom,
 :is(.integration-flow-canvas, .diagram-flow-canvas) .react-flow__handle-left {
   transform: none !important;
+}
+
+/* Workflow builder edges: React Flow makes the whole .react-flow__edges SVG
+   pointer-events:none, and its invisible interaction path carries no stroke paint,
+   so `visibleStroke` on the edge group never produces a hit region. Without these
+   rules a connection cannot be clicked, selected or right-clicked, which made the
+   edge context menu (insert step / relabel / delete connection) unreachable. */
+.workflow-builder-canvas .react-flow__edges {
+  pointer-events: none;
+}
+.workflow-builder-canvas .react-flow__edge {
+  pointer-events: visibleStroke;
+  cursor: pointer;
+}
+.workflow-builder-canvas .react-flow__edge-path,
+.workflow-builder-canvas .react-flow__edge-interaction {
+  pointer-events: stroke !important;
+  cursor: pointer;
+}
+/* A stroke region only exists when the stroke is actually painted -- `transparent`
+   still paints, `none` does not. This is what makes the 20px interaction path hittable. */
+.workflow-builder-canvas .react-flow__edge-interaction {
+  stroke: transparent !important;
+}
+.workflow-builder-canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke: #0284c7 !important;
+  stroke-width: 3 !important;
+}
+.workflow-builder-canvas .workflow-routed-edge-endpoint {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.workflow-builder-canvas .react-flow__edge:hover .workflow-routed-edge-endpoint,
+.workflow-builder-canvas .react-flow__edge.selected .workflow-routed-edge-endpoint {
+  opacity: 1;
+}
+.workflow-builder-canvas .workflow-routed-edge-anchor {
+  pointer-events: all;
+  cursor: grab;
+}
+.workflow-builder-canvas .workflow-routed-edge-anchor:active {
+  cursor: grabbing;
+}
+.workflow-builder-canvas .workflow-routed-edge-waypoint {
+  cursor: move;
+  pointer-events: all;
 }
 
 .integration-flow-canvas .react-flow__edge {

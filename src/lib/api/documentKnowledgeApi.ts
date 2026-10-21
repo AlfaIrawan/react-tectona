@@ -29,6 +29,76 @@ export interface DocumentResponse {
   content?: string | null
 }
 
+export interface DocumentRevision {
+  source_document_id: string
+  version_no: number
+  created_date: string
+  created_by: string
+  version_notes?: string | null
+  attachment_id?: string | null
+  is_current: boolean
+  can_restore: boolean
+}
+
+export async function listDocumentRevisions(documentId: string): Promise<DocumentRevision[]> {
+  return handleJson(await apiFetch(`${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions`, {
+    headers: { Accept: 'application/json' },
+  }))
+}
+
+/** Plain text of one saved revision, read from that revision's file. */
+export async function getDocumentRevisionText(
+  documentId: string,
+  revision: Pick<DocumentRevision, 'source_document_id' | 'version_no'>,
+): Promise<string> {
+  const params = new URLSearchParams({
+    source_document_id: revision.source_document_id,
+    version_no: String(revision.version_no),
+  })
+  const res = await apiFetch(
+    `${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions/text?${params}`,
+    { headers: { Accept: 'application/json' } },
+  )
+  const body = await handleJson<{ text?: string | null }>(res)
+  return body.text ?? ''
+}
+
+/**
+ * What each template part held in one revision. "stored": everything it was generated with.
+ * "extracted": an older revision, read back from its file — table-cell fields only.
+ */
+export interface DocumentRevisionFillPayload {
+  source_document_id: string
+  version_no: number
+  source: 'stored' | 'extracted'
+  fills: Record<string, string>
+  sections: Record<string, string>
+  collections: Record<string, unknown>
+  diagrams: Record<string, string>
+}
+
+export async function getDocumentRevisionFillPayload(
+  documentId: string,
+  revision: Pick<DocumentRevision, 'source_document_id' | 'version_no'>,
+): Promise<DocumentRevisionFillPayload> {
+  const params = new URLSearchParams({
+    source_document_id: revision.source_document_id,
+    version_no: String(revision.version_no),
+  })
+  return handleJson(await apiFetch(
+    `${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions/fill-payload?${params}`,
+    { headers: { Accept: 'application/json' } },
+  ))
+}
+
+export async function restoreDocumentRevision(documentId: string, body: {
+  source_document_id: string; version_no: number; version: number
+}): Promise<DocumentResponse> {
+  return handleJson(await apiFetch(`${getV1Base()}/documents/${encodeURIComponent(documentId)}/versions:restore`, {
+    method: 'POST', headers: tectonaServiceHeaders({ Accept: 'application/json' }), body: JSON.stringify(body),
+  }))
+}
+
 export interface DocumentIndexSnapshotResponse {
   id: string
   project_id: string
@@ -309,6 +379,7 @@ export async function listProjectDocuments(
  */
 export async function listAllDocuments(params?: {
   workspace_id?: string
+  idea_id?: string
   status?: string
   document_type?: string
   category?: string
@@ -322,6 +393,7 @@ export async function listAllDocuments(params?: {
   const base = getV1Base()
   const sp = new URLSearchParams()
   if (params?.workspace_id) sp.set('workspace_id', params.workspace_id)
+  if (params?.idea_id) sp.set('idea_id', params.idea_id)
   if (params?.status) sp.set('status', params.status)
   if (params?.document_type) sp.set('document_type', params.document_type)
   if (params?.category) sp.set('category', params.category)
@@ -395,6 +467,62 @@ export async function patchDocument(
     body: JSON.stringify(body),
   })
   return handleJson<DocumentResponse>(res)
+}
+
+export interface IdeaTitleSyncResult {
+  idea_id: string
+  title: string
+  updated: number
+  documents: Array<{
+    document_id: string
+    previous_title: string
+    title: string
+    title_changed: boolean
+    version_no: number | null
+    docx: { attachment_id?: string; file_name?: string; replacements?: number; error?: string } | null
+  }>
+}
+
+/**
+ * Put every document generated from the idea (URD/BRD/FSD) on the idea's title: new title,
+ * a document version recording the change, and a new .docx version with the old title replaced.
+ */
+export async function syncIdeaDocumentTitles(body: {
+  idea_id: string
+  title: string
+  previous_title?: string
+}): Promise<IdeaTitleSyncResult> {
+  const base = getV1Base()
+  const res = await apiFetch(`${base}/documents/idea-title-sync`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  return handleJson<IdeaTitleSyncResult>(res)
+}
+
+export type SubmitDocumentReviewResult = {
+  document: DocumentResponse
+  /** started | no_workflow | failed | disabled — "no_workflow" means nothing listens yet. */
+  workflow_status: 'started' | 'no_workflow' | 'failed' | 'disabled'
+  run_ids: string[]
+}
+
+/**
+ * Ask for approval of a document. The document goes to In Review and Workflow Automation
+ * runs the approval gates — who approves is decided by the published workflow, not here.
+ */
+export async function submitDocumentForReview(
+  documentId: string,
+  body: { version: number; note?: string; event_type?: string },
+): Promise<SubmitDocumentReviewResult> {
+  const base = getV1Base()
+  const res = await apiFetch(`${base}/documents/${encodeURIComponent(documentId)}:submit-review`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders({ Accept: 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  return handleJson<SubmitDocumentReviewResult>(res)
 }
 
 export async function getDocument(documentId: string): Promise<DocumentResponse> {
@@ -727,10 +855,12 @@ export interface TemplateAgentSchema {
     label?: string
     type?: string
     required?: boolean
-    /** Table cell this placeholder maps to (table_index/row_index) — enables precise write-back. */
-    location?: { table_index: number; row_index: number } | null
+    /** Table cell (table_index/row_index) or Word checkbox group (checkbox_group) this maps to. */
+    location?: { table_index?: number; row_index?: number; checkbox_group?: number } | null
     /** Literal instructional/prompt text from the source cell (e.g. "Provide the project name…"). */
     instruction?: string | null
+    /** multi_choice (checkbox group): option labels the agent picks from. */
+    options?: string[] | null
   }>
   sections?: Array<{
     id: string
@@ -795,6 +925,7 @@ export interface DocumentTemplatePatchRequest {
 
 export interface TemplateInstantiateRequest {
   title?: string
+  existing_document_id?: string
   summary?: string | null
   workspace_id?: string | null
   folder_id?: string | null

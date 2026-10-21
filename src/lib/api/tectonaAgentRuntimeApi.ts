@@ -599,12 +599,16 @@ export interface IdeaDraftDiscoveryProgress {
 export interface IdeaDraftBrainstormMessage {
   role: 'user' | 'assistant'
   text: string
+  /** Basis of a sub-question (the user's quoted words and the question they answered), set by the server. */
+  evidence?: string | null
 }
 
 export interface IdeaDraftBrainstormResponse {
   messages: IdeaDraftBrainstormMessage[]
   ready_to_continue: boolean
   remaining_gaps: string[]
+  // Kind of the latest assistant turn: followup (a sub-question), mandatory, or confirm.
+  latest_kind?: string | null
   intake_checklist?: IdeaDraftChecklistItem[]
   evidence_progress?: IdeaDraftEvidenceProgress
   discovery_progress?: IdeaDraftDiscoveryProgress
@@ -683,6 +687,9 @@ export interface IdeaDraftJobStatusResponse {
   brainstorm_messages: IdeaDraftBrainstormMessage[]
   brainstorm_ready?: boolean
   brainstorm_remaining_gaps?: string[]
+  // The step the running brainstorm turn is in (reading_kb, checking_points, writing), or null.
+  brainstorm_phase?: string | null
+  brainstorm_latest_kind?: string | null
   intake_checklist?: IdeaDraftChecklistItem[]
   evidence_progress?: IdeaDraftEvidenceProgress
   discovery_progress?: IdeaDraftDiscoveryProgress
@@ -1165,7 +1172,7 @@ function parseRuntimeErrorBody(text: string, status: number): string {
     /gateway time-?out/i.test(trimmed) ||
     (trimmed.includes('<html') && /504|502|503/.test(trimmed) && /nginx/i.test(trimmed))
   if (status === 504 || looksLikeGatewayHtml) {
-    return 'Generate dokumen melewati batas waktu gateway (504). Template URD butuh beberapa menit — coba lagi, atau generate saat LLM tidak sedang antri.'
+    return 'Permintaan ke layanan AI melewati batas waktu gateway (504). Periksa status layanan, lalu coba lagi.'
   }
   if (status === 502 || status === 503) {
     if (looksLikeGatewayHtml || /bad gateway|service unavailable/i.test(trimmed)) {
@@ -1619,6 +1626,18 @@ export interface FillDkmTemplateRequest {
     session_id?: string | null
   }
   options?: { allow_llm?: boolean }
+  /** The idea's title; the backend sets the document's title placeholders to it exactly. */
+  document_title?: string
+  /** The idea owner's display name; the backend sets every [Idea Owner] placeholder to it exactly. */
+  idea_owner_name?: string
+  /** A numbered series ("URD"): the server issues the next number of the year into [DocNum]. */
+  document_number_series?: string
+  /** The number the document already has; regenerating keeps it. */
+  existing_document_number?: string
+  /** The version the generated document will carry ("V3"); fills every [Version] placeholder. */
+  document_version_label?: string
+  /** Regenerating some parts only: the placeholder keys, section ids and tables the model writes. */
+  only_keys?: string[]
 }
 
 export interface FillDkmTemplateResponse {
@@ -1633,6 +1652,8 @@ export interface FillDkmTemplateResponse {
   used_repair?: boolean
   /** Base64-encoded PNGs of any LLM-authored PlantUML diagrams, keyed by placeholder key. */
   rendered_diagrams?: Record<string, string>
+  /** The number issued for this document (e.g. "ITB2026-00001"); empty when no series was requested. */
+  document_number?: string
 }
 
 export async function fillDkmTemplate(
@@ -1658,10 +1679,12 @@ export interface TemplateSchemaPlaceholderRecommendation {
   source?: string
   confidence?: number
   reason?: string
-  /** Table cell this placeholder maps to (table_index/row_index) — enables precise write-back. */
-  location?: { table_index: number; row_index: number } | null
+  /** Table cell (table_index/row_index) or Word checkbox group (checkbox_group) this maps to. */
+  location?: { table_index?: number; row_index?: number; checkbox_group?: number } | null
   /** Literal instructional/prompt text from the source cell (e.g. "Provide the project name…"). */
   instruction?: string | null
+  /** multi_choice (checkbox group): option labels the agent picks from. */
+  options?: string[] | null
 }
 
 export interface TemplateSchemaSectionRecommendation {
@@ -2035,6 +2058,352 @@ export async function generateIdeaDraft(
   return handleResponse<GenerateIdeaDraftResponse>(res)
 }
 
+export type IdeaIntakeQuestion = {
+  id: string
+  prompt: string
+  required: boolean
+  answer_type: string
+  options: string[]
+  /** An example answer shown in the empty answer box. Filled in after the questions load. */
+  hint?: string
+}
+
+/**
+ * The Idea Intake Checklist for a workspace: the questions the brainstorm asks, read from the
+ * Knowledge Base by the backend. The Create Idea editor shows these as its guide.
+ */
+/** One example answer per question, written by the backend; an empty string where none could be made. */
+export async function fetchIdeaIntakeHints(questions: string[]): Promise<string[]> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-email/intake-hints`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ questions }),
+    },
+    90_000,
+  )
+  const body = await handleResponse<{ hints: string[] }>(res)
+  return body.hints ?? []
+}
+
+export async function fetchIdeaIntakeChecklist(workspaceId: string): Promise<IdeaIntakeQuestion[]> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-email/intake-checklist?workspace_id=${encodeURIComponent(workspaceId)}`,
+    { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ items: IdeaIntakeQuestion[] }>(res)
+  return body.items ?? []
+}
+
+/** A confirmed Idea Intake answer from the brainstorm an idea came from. */
+export interface IdeaIntakeAnswer {
+  id: string
+  question: string
+  answer: string
+  /** The recorded text does not read as an answer to its question; not sent to the generator. */
+  needs_review?: boolean
+  review_reason?: string
+  /** The proposer rewrote this answer after the brainstorm. */
+  corrected?: boolean
+  /** For an answer waiting for review: the proposer's own brainstorm message about this topic. */
+  suggestion?: string
+  /** The brainstorm message it was answered in (orders it among the AI's follow-ups). */
+  turn?: number
+}
+
+/** One of the AI's own follow-up (non-mandatory) questions, with the proposer's answer. */
+export interface IdeaIntakeFollowup {
+  question: string
+  answer: string
+  /** The brainstorm message that asked it. */
+  turn?: number
+}
+
+/** A fact a reviewer gave in an accepted document comment (part, who gave it). */
+export interface IdeaReviewerInput {
+  part: string
+  fact: string
+  by: string
+}
+
+export interface IdeaIntakeAnswers {
+  answers: IdeaIntakeAnswer[]
+  followups: IdeaIntakeFollowup[]
+  /** Follow-up questions skipped in the brainstorm and never answered. */
+  openPoints: string[]
+  /** Per open point, the brainstorm message that asked it (null when not found). */
+  openPointTurns: Array<number | null>
+  reviewerInputs: IdeaReviewerInput[]
+  block: string
+}
+
+type IdeaIntakeAnswersBody = {
+  answers?: IdeaIntakeAnswer[]
+  followups?: IdeaIntakeFollowup[]
+  open_points?: string[]
+  open_point_turns?: Array<number | null>
+  reviewer_inputs?: IdeaReviewerInput[]
+  block?: string
+}
+
+function toIdeaIntakeAnswers(body: IdeaIntakeAnswersBody): IdeaIntakeAnswers {
+  return {
+    answers: body.answers ?? [],
+    followups: body.followups ?? [],
+    openPoints: body.open_points ?? [],
+    openPointTurns: body.open_point_turns ?? [],
+    reviewerInputs: body.reviewer_inputs ?? [],
+    block: body.block ?? '',
+  }
+}
+
+/** Tectona's proposal for a part's new text, from a reviewer's comment. */
+export interface PartProposal {
+  value: string
+  reply: string
+  /** Phrases from the source context that support it (checked to be in the source). */
+  source_quotes: string[]
+  /** The reviewer's facts the source does not contain; recorded as reviewer input when accepted. */
+  user_facts: string[]
+}
+
+export interface PartCommentMessage {
+  role: 'user' | 'assistant' | 'event'
+  text: string
+  author_id?: string
+  author_name?: string
+  created_at?: string
+  proposal?: PartProposal
+}
+
+export interface PartCommentThread {
+  id: string
+  idea_id: string
+  scope_key: string
+  part_key: string
+  part_label: string
+  /** open: proposal waits · accepted: used when generating · applied: in a generated version. */
+  status: 'open' | 'accepted' | 'applied' | 'discarded'
+  messages: PartCommentMessage[]
+  proposal: PartProposal | null
+  accepted_value: string | null
+  user_facts: string[]
+  created_by?: string | null
+  created_by_name?: string | null
+  created_date?: string
+  updated_date?: string
+}
+
+/** What the caller may do with an idea's comments: the owner always; others when given access. */
+export interface PartCommentAccess {
+  user_id: string
+  owner_id: string
+  is_owner: boolean
+  can_read: boolean
+  can_comment: boolean
+}
+
+/** One person's access to an idea's comments (read: sees the discussion; comment: may also reply). */
+export interface CommentAccessEntry {
+  idea_id: string
+  user_id: string
+  user_name: string
+  level: 'read' | 'comment'
+  status: 'granted' | 'pending' | 'denied'
+  requested_by?: string | null
+  requested_by_name?: string | null
+  granted_by?: string | null
+  pending_thread_id?: string | null
+}
+
+/** How a notification + email went out (Workflow Automation's answer, or why the call failed). */
+export interface PartCommentDelivery {
+  ok: boolean
+  kind?: string
+  message?: string
+  notified?: Array<{ user_id: string; ok: boolean; message?: string }>
+  email?: { ok?: boolean; message?: string; to?: string[]; cc?: string[]; missing?: string[] }
+}
+
+/** Deliveries where the notification or the email did not go out. */
+export function failedDeliveries(deliveries: PartCommentDelivery[]): PartCommentDelivery[] {
+  return deliveries.filter((d) => !d.ok || (d.notified ?? []).some((n) => !n.ok) || d.email?.ok === false)
+}
+
+export async function listPartComments(
+  ideaId: string,
+  scopeKey: string,
+): Promise<{ threads: PartCommentThread[]; access: PartCommentAccess | null }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments?scope_key=${encodeURIComponent(scopeKey)}`,
+    { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ threads?: PartCommentThread[]; access?: PartCommentAccess }>(res)
+  return { threads: body.threads ?? [], access: body.access ?? null }
+}
+
+/** Who may see or join the idea's comments (the owner gets everyone, others their own entry). */
+export async function listCommentAccess(
+  ideaId: string,
+): Promise<{ access: PartCommentAccess | null; entries: CommentAccessEntry[] }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/comment-access`,
+    { method: 'GET' },
+    15_000,
+  )
+  const body = await handleResponse<{ access?: PartCommentAccess; entries?: CommentAccessEntry[] }>(res)
+  return { access: body.access ?? null, entries: body.entries ?? [] }
+}
+
+/** The idea owner lets someone in (read only or comment) or declines a request. */
+export async function decideCommentAccess(
+  ideaId: string,
+  input: { userId: string; userName?: string; level: 'read' | 'comment' | 'deny'; ideaTitle?: string; linkUrl?: string },
+): Promise<{ entry: CommentAccessEntry; deliveries: PartCommentDelivery[] }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/comment-access`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: input.userId,
+        user_name: input.userName ?? '',
+        level: input.level,
+        idea_title: input.ideaTitle ?? '',
+        link_url: input.linkUrl ?? '',
+      }),
+    },
+    90_000,
+  )
+  const body = await handleResponse<{ entry: CommentAccessEntry; deliveries?: PartCommentDelivery[] }>(res)
+  return { entry: body.entry, deliveries: body.deliveries ?? [] }
+}
+
+/** A comment on one part; resolves with the thread holding Tectona's new proposal. */
+export async function postPartComment(
+  ideaId: string,
+  input: {
+    threadId?: string
+    scopeKey: string
+    templateId?: string
+    documentKind?: string
+    partKey: string
+    partLabel: string
+    currentValue: string
+    message: string
+    sourceText: string
+    authorId?: string
+    authorName?: string
+    ideaTitle?: string
+    linkUrl?: string
+    /** The owner's choices for mentioned people without access. */
+    grants?: Array<{ userId: string; userName: string; level: 'read' | 'comment' }>
+  },
+): Promise<{ thread: PartCommentThread; deliveries: PartCommentDelivery[]; pendingAccess: string[] }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        thread_id: input.threadId ?? '',
+        scope_key: input.scopeKey,
+        template_id: input.templateId ?? '',
+        document_kind: input.documentKind ?? '',
+        part_key: input.partKey,
+        part_label: input.partLabel,
+        current_value: input.currentValue.slice(0, 20000),
+        message: input.message,
+        source_text: input.sourceText.slice(0, 60000),
+        author_id: input.authorId ?? '',
+        author_name: input.authorName ?? '',
+        idea_title: input.ideaTitle ?? '',
+        link_url: input.linkUrl ?? '',
+        grants: (input.grants ?? []).map((g) => ({ user_id: g.userId, user_name: g.userName, level: g.level })),
+      }),
+    },
+    150_000,
+  )
+  const body = await handleResponse<{ thread: PartCommentThread; deliveries?: PartCommentDelivery[]; pending_access?: string[] }>(res)
+  return { thread: body.thread, deliveries: body.deliveries ?? [], pendingAccess: body.pending_access ?? [] }
+}
+
+export async function resolvePartComment(
+  ideaId: string,
+  threadId: string,
+  action: 'accept' | 'discard' | 'reopen' | 'applied',
+  author: { id?: string; name?: string } = {},
+  context: { ideaTitle?: string; linkUrl?: string } = {},
+): Promise<{ thread: PartCommentThread; deliveries: PartCommentDelivery[] }> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/part-comments/${encodeURIComponent(threadId)}/resolve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action,
+        author_id: author.id ?? '',
+        author_name: author.name ?? '',
+        idea_title: context.ideaTitle ?? '',
+        link_url: context.linkUrl ?? '',
+      }),
+    },
+    90_000,
+  )
+  const body = await handleResponse<{ thread: PartCommentThread; deliveries?: PartCommentDelivery[] }>(res)
+  return { thread: body.thread, deliveries: body.deliveries ?? [] }
+}
+
+/** Remember the idea a brainstorm became, so documents for the idea read its intake answers. */
+export async function linkIdeaDraftJobToIdea(jobId: string, ideaId: string): Promise<boolean> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/idea`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea_id: ideaId }) },
+    15_000,
+  )
+  const body = await handleResponse<{ linked?: boolean }>(res)
+  return Boolean(body.linked)
+}
+
+/**
+ * The idea's confirmed Idea Intake answers, and the same as a source block. An idea created before
+ * brainstorms were linked is matched by title and workspace.
+ */
+export async function fetchIdeaIntakeAnswers(
+  ideaId: string,
+  options: { title?: string; workspaceId?: string | null } = {},
+): Promise<IdeaIntakeAnswers> {
+  const params = new URLSearchParams()
+  if (options.title) params.set('title', options.title)
+  if (options.workspaceId) params.set('workspace_id', options.workspaceId)
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/intake-answers?${params}`,
+    { method: 'GET' },
+    15_000,
+  )
+  return toIdeaIntakeAnswers(await handleResponse<IdeaIntakeAnswersBody>(res))
+}
+
+/** Replace a recorded Idea Intake answer with the proposer's own; returns the answers again. */
+export async function correctIdeaIntakeAnswer(
+  ideaId: string,
+  itemId: string,
+  input: { answer: string; title?: string; workspaceId?: string | null },
+): Promise<IdeaIntakeAnswers> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/intake-answers/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer: input.answer, title: input.title ?? '', workspace_id: input.workspaceId ?? '' }),
+    },
+    15_000,
+  )
+  return toIdeaIntakeAnswers(await handleResponse<IdeaIntakeAnswersBody>(res))
+}
+
 export async function startIdeaDraftJob(
   payload: GenerateIdeaDraftRequest,
 ): Promise<CreateIdeaDraftJobResponse> {
@@ -2187,12 +2556,87 @@ export async function renderMermaidFlowchartAsBpmnPng(
 }
 
 /** Render legacy Mermaid or canonical PlantUML through the shared process renderer. */
+// Rendered process diagrams by source. A chat re-renders its messages often (and remounts
+// them); without this every remount asked PlantUML again. The Blob is cached — each caller
+// gets its own object URL, which it may revoke.
+const plantUmlPngCache = new Map<string, Promise<RenderedProcessDiagram>>()
+const PLANTUML_CACHE_MAX = 40
+
+/**
+ * How a process graph is drawn. `bpmn` is BPMN 2.0 notation from the renderer of the Idea
+ * Diagram section (the backend falls back to PlantUML when the graph cannot be converted).
+ */
+export type ProcessDiagramNotation = 'plantuml' | 'bpmn'
+
+function plantUmlCacheKey(source: string, language: string, notation: ProcessDiagramNotation): string {
+  return `${notation}|${language}|${source}`
+}
+
+/**
+ * Start rendering a diagram before it is shown (e.g. as soon as a brainstorm reply arrives,
+ * while its text is still being typed). Failures are dropped so a later render retries.
+ */
+export function prefetchProcessDiagramPlantUmlPng(
+  source: string,
+  language: 'id' | 'en' = 'id',
+  notation: ProcessDiagramNotation = 'plantuml',
+): void {
+  void renderProcessDiagramPlantUmlBlob(source, language, notation).catch(() => undefined)
+}
+
+/** A rendered process diagram and the notation it was actually drawn in. */
+type RenderedProcessDiagram = { blob: Blob; notation: ProcessDiagramNotation }
+
+function renderProcessDiagramPlantUmlBlob(
+  source: string,
+  language: 'id' | 'en',
+  notation: ProcessDiagramNotation,
+): Promise<RenderedProcessDiagram> {
+  const key = plantUmlCacheKey(source, language, notation)
+  const cached = plantUmlPngCache.get(key)
+  if (cached) return cached
+  const pending = fetchProcessDiagramPlantUmlBlob(source, language, notation)
+  plantUmlPngCache.set(key, pending)
+  pending.then(
+    (rendered) => {
+      // A PlantUML fallback for a BPMN request (renderer down or restarting) is not kept:
+      // the next render asks for BPMN again instead of showing the fallback until a reload.
+      if (rendered.notation !== notation) plantUmlPngCache.delete(key)
+    },
+    () => plantUmlPngCache.delete(key),
+  )
+  if (plantUmlPngCache.size > PLANTUML_CACHE_MAX) {
+    const oldest = plantUmlPngCache.keys().next().value
+    if (oldest !== undefined) plantUmlPngCache.delete(oldest)
+  }
+  return pending
+}
+
 export async function renderProcessDiagramAsPlantUmlPng(
   source: string,
   language: 'id' | 'en' = 'id',
+  notation: ProcessDiagramNotation = 'plantuml',
 ): Promise<string> {
+  return (await renderProcessDiagram(source, language, notation)).url
+}
+
+/** Object URL of the rendered diagram, and the notation the server actually used. */
+export async function renderProcessDiagram(
+  source: string,
+  language: 'id' | 'en' = 'id',
+  notation: ProcessDiagramNotation = 'plantuml',
+): Promise<{ url: string; notation: ProcessDiagramNotation }> {
+  const rendered = await renderProcessDiagramPlantUmlBlob(source, language, notation)
+  return { url: URL.createObjectURL(rendered.blob), notation: rendered.notation }
+}
+
+async function fetchProcessDiagramPlantUmlBlob(
+  source: string,
+  language: 'id' | 'en',
+  notation: ProcessDiagramNotation,
+): Promise<RenderedProcessDiagram> {
   const res = await fetchWithTimeout(
-    `${BASE_URL}/v1/agent/render-process-plantuml`,
+    `${BASE_URL}/v1/agent/${notation === 'bpmn' ? 'render-process-bpmn' : 'render-process-plantuml'}`,
     {
       method: 'POST',
       body: JSON.stringify({ source, language }),
@@ -2206,18 +2650,32 @@ export async function renderProcessDiagramAsPlantUmlPng(
   if (!blob.size || !/^image\//i.test(blob.type || 'image/png')) {
     throw new Error('PlantUML process render returned an empty image')
   }
-  return URL.createObjectURL(blob)
+  const drawnAs = res.headers.get('X-Diagram-Notation')
+  return { blob, notation: drawnAs === 'bpmn' || drawnAs === 'plantuml' ? drawnAs : notation }
 }
 
 export async function brainstormIdeaDraftJob(
   jobId: string,
   message: string,
+  llmMode: 'normal' | 'thinking' = 'normal',
+  diagramImage?: string | null,
+  workspaceAbbreviations: Array<{
+    abbr: string
+    expansion: string
+    domain?: string
+    not_confused_with?: string
+  }> = [],
 ): Promise<IdeaDraftBrainstormResponse> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm`,
     {
       method: 'POST',
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        message,
+        llm_mode: llmMode,
+        workspace_abbreviations: workspaceAbbreviations,
+        ...(diagramImage ? { diagram_image: diagramImage } : {}),
+      }),
     },
     MULTI_ROLE_SUMMARY_TIMEOUT_MS,
   )
@@ -2317,6 +2775,11 @@ export interface IdeaSummaryJobStatusResponse {
   error_message: string | null
   warnings: string[]
   correlation_id: string
+  /** What the finished analysis did with the idea's approval workflow (server-side dispatch). */
+  approval_workflow?: {
+    status: 'queued' | 'already_started' | 'no_workflow' | 'failed' | string
+    detail?: string
+  } | null
 }
 
 export async function startIdeaSummaryJob(

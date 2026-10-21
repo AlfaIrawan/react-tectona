@@ -5,9 +5,11 @@ import {
   ClipboardList,
   FileText,
   FolderGit2,
+  FolderTree,
   GanttChart,
   Inbox,
   Kanban,
+  Lightbulb,
   List,
   ListChecks,
   Network,
@@ -18,6 +20,8 @@ import {
 
 export type ProjectPanelKey =
   | 'summary'
+  | 'ideas'
+  | 'subprojects'
   | 'timeline'
   | 'board'
   | 'calendar'
@@ -52,6 +56,20 @@ export const PROJECT_PANEL_CATALOG: ProjectPanelCatalogEntry[] = [
     icon: ClipboardList,
     description: 'Delivery health, milestones, and executive snapshot for this project workspace.',
     pinned: true,
+  },
+  {
+    key: 'ideas',
+    label: 'Ideas',
+    icon: Lightbulb,
+    description:
+      'Every backlog idea this project delivers, with its stage and URD/BRD/FSD readiness. Link more ideas or start a new one here.',
+  },
+  {
+    key: 'subprojects',
+    label: 'Sub-projects',
+    icon: FolderTree,
+    description:
+      'Split this project into sub-projects, each delivering one idea with its own board and Docs. Their progress rolls up into this Summary.',
   },
   {
     key: 'timeline',
@@ -147,6 +165,7 @@ export const PROJECT_PANEL_CATALOG: ProjectPanelCatalogEntry[] = [
 
 export const DEFAULT_PROJECT_NAV_SECTIONS: ProjectPanelKey[] = [
   'summary',
+  'ideas',
   'timeline',
   'board',
   'calendar',

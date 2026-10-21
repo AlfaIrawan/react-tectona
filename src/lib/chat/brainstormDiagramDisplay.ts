@@ -51,6 +51,11 @@ export function splitBrainstormDisplayParts(text: string): BrainstormDisplayPart
   return filtered.filter((part) => part.type !== 'mermaid' && part.type !== 'plantuml')
 }
 
+/** Sequence, C4, and ArchiMate stay PlantUML. Process fences are still drawn as BPMN. */
+export function isTechnicalViewSource(source: string): boolean {
+  return /tectona-view:|!include\s*<C4\/|!include\s*<archimate\//i.test(source || '')
+}
+
 export function brainstormTypingCutoff(text: string): number {
   const markers = ['```mermaid', '```plantuml', '![Diagram', 'data:image/', '```bpmn', '<!--tectona-mermaid']
   let cut = text.length

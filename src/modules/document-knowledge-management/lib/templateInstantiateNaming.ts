@@ -1,6 +1,7 @@
 import type { DocumentTemplateResponse } from '@/lib/api/documentKnowledgeApi'
 import {
   buildAutoRenamedStructuredFileName,
+  detectDocumentTypeFromFileName,
   deriveBrdModuleNameFromFileName,
   prefixForTemplateDocumentKind,
   testFileNameAgainstRegex,
@@ -133,9 +134,8 @@ export function buildTemplateInstantiateNamingPlan(params: {
 function detectTemplateDocumentKind(fileName: string, documentText = ''): TemplateDocumentKind {
   const base = fileName.replace(/\.[^/.]+$/, '').toLowerCase()
   if (/memo|surat|internal/i.test(base)) return 'memo_internal'
-  if (/\bfsd\b|functional[\s_-]*spec/i.test(base)) return 'fsd'
-  if (/\burd\b|user[\s_-]*requirement/i.test(base)) return 'urd'
-  if (/\bbrd\b|business[\s_-]*requirement/i.test(base)) return 'brd'
+  const fromFileName = detectDocumentTypeFromFileName(fileName)
+  if (fromFileName) return fromFileName
   const content = documentText.slice(0, 12000).toLowerCase()
   if (/\bfunctional\s+specification\s+design\b|\bfunctional\s+specification\b|\bfsd\b/i.test(content)) return 'fsd'
   if (/\buser\s+requirement(?:s|\s+document)?\b|\burd\b/i.test(content)) return 'urd'

@@ -38,7 +38,7 @@ export function TenantDeepLinkPage() {
           tenantMode: result.slug.tenant_mode,
           displayName: result.slug.display_name,
         })
-        navigate(workspaceScopedPath(result.slug.slug, '/projects', result.slug.workspace_id), {
+        navigate(workspaceScopedPath(result.slug.slug, '/idea-backlog', result.slug.workspace_id), {
           replace: true,
         })
       })

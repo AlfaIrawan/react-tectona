@@ -1,9 +1,24 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import {
+  visibleIdeaNavSections,
   type IdeaPanelKey,
   resolveIdeaNavSections,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
+
+const IDEA_NAV_SECTIONS_STORAGE_KEY = 'idea-nav-sections'
+
+/** Top saved section for this idea, read before the store finishes hydrating. */
+export function readPersistedIdeaNavTop(ideaId: string): IdeaPanelKey {
+  try {
+    const raw = localStorage.getItem(IDEA_NAV_SECTIONS_STORAGE_KEY)
+    if (!raw) return 'summary'
+    const parsed = JSON.parse(raw) as { state?: { sectionsByIdea?: Record<string, IdeaPanelKey[]> } }
+    return visibleIdeaNavSections(parsed.state?.sectionsByIdea?.[ideaId], {})[0] ?? 'summary'
+  } catch {
+    return 'summary'
+  }
+}
 
 interface IdeaNavSectionsState {
   sectionsByIdea: Record<string, IdeaPanelKey[]>
@@ -33,6 +48,6 @@ export const useIdeaNavSectionsStore = create<IdeaNavSectionsState>()(
         })
       },
     }),
-    { name: 'idea-nav-sections' },
+    { name: IDEA_NAV_SECTIONS_STORAGE_KEY },
   ),
 )

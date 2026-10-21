@@ -1,4 +1,4 @@
-const DEFAULT_POST_LOGIN_PATH = '/projects'
+const DEFAULT_POST_LOGIN_PATH = '/idea-backlog'
 
 export type LoginAuthNotice =
   | 'session_expired'

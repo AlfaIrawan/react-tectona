@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsLeft, ChevronsRight, Circle, Copy, Crosshair, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Settings2, Sparkles, Waypoints } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Scissors, Settings2, Sparkles, Trash2, Unlink, Waypoints, History, RotateCcw } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
@@ -26,6 +26,17 @@ import {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { createDiagramAiDraftAudit, listDiagramAiDraftAudit, type DiagramAiDraftAuditApi } from '@/lib/api/ideaBacklogApi'
+import { requestOpenIdeaDiscussChat } from '@/stores/chat-navigation-store'
+import {
+  chatAuditDraftSummary,
+  chatAuditLabel,
+  chatAuditSnapshotSummary,
+  type DiagramChatDraft,
+} from '@/modules/project-management/lib/diagramChatDraft'
+import { archimateCounterpartType, normalizeArchimateElementData, resolveArchimateFromLabel } from '@/modules/project-management/lib/integrationArchimateNotationCatalog'
+import { layerOfPackageTitle } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import { Textarea } from '@/components/ui/textarea'
 import { enterpriseIndigoGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
@@ -58,19 +69,34 @@ import {
   createNodeFromPaletteItem,
   type ArchimatePaletteItem,
 } from '@/modules/project-management/lib/integrationArchimatePalette'
-import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
+import type { ArchimateElementNodeData, ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
+import {
+  copyDiagramImage,
+  renderDiagramCanvasImage,
+  runDiagramExportAction,
+  type DiagramExportAction,
+} from '@/modules/project-management/lib/diagramCanvasExport'
 
 type IntegrationViewMode = 'canvas' | 'source' | 'notations'
 type StudioSidebarPanel = 'source' | 'notations'
-type CanvasMenuSubmenu = 'options' | 'layout' | null
+type CanvasMenuSubmenu = 'options' | 'layout' | 'order' | null
 type CanvasContextMenuState = {
   x: number
   y: number
   flowPosition: { x: number; y: number }
   submenu: CanvasMenuSubmenu
+  nodeId?: string
+}
+type EdgeContextMenuState = {
+  x: number
+  y: number
+  edgeId: string
 }
 
 const STUDIO_PANEL_MARGIN_PX = 12
+const PANEL_MIN_WIDTH_PX = 240
+const PANEL_MIN_HEIGHT_PX = 160
+type PanelResizeEdge = 'e' | 's' | 'se' | 'w' | 'sw'
 const STUDIO_PANEL_DEFAULT_POSITION = { x: STUDIO_PANEL_MARGIN_PX, y: STUDIO_PANEL_MARGIN_PX }
 const STUDIO_PANEL_SCROLL_CLASS =
   'overflow-y-auto overscroll-y-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
@@ -97,6 +123,29 @@ type EditableIntegrationArchitectureCanvasProps = {
   hideStudioHeader?: boolean
   /** Persists user edits to the idea record after the local canvas cache is updated. */
   onPersistGraph?: (graph: IntegrationGraphRecord) => void
+  /** Key for the Idea page's Export menu and the AI diagram drafts ("integration"). */
+  diagramKey?: string
+}
+
+/** An ArchiMate relation drawn as the parser draws it: solid for Assignment/Serving/Realization,
+ * dashed for Triggering/Flow, dotted for Access (parsePlantUmlToIntegrationGraph.ts). */
+function archimateRelationEdge(id: string, source: string, target: string, label?: string): Edge {
+  const kind = (label ?? '').trim().toLowerCase()
+  const style: 'serving' | 'flow' | 'access' = kind.startsWith('access') ? 'access'
+    : kind.startsWith('triggering') || kind.startsWith('flow') ? 'flow' : 'serving'
+  const color = style === 'serving' ? '#0f172a' : '#475569'
+  return {
+    id,
+    source,
+    target,
+    type: 'smoothstep',
+    ...(label ? { label } : {}),
+    labelStyle: { fill: style === 'serving' ? '#334155' : '#475569', fontSize: 10, fontWeight: 500 },
+    labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+    labelBgPadding: [4, 2],
+    markerEnd: { type: MarkerType.ArrowClosed, color },
+    style: { stroke: color, strokeWidth: 2, strokeDasharray: style === 'serving' ? undefined : style === 'access' ? '3 5' : '6 6' },
+  }
 }
 
 function EditableIntegrationArchitectureCanvasInner({
@@ -110,7 +159,9 @@ function EditableIntegrationArchitectureCanvasInner({
   studioTitle = 'Integration diagram',
   hideStudioHeader = false,
   onPersistGraph,
+  diagramKey = 'integration',
 }: EditableIntegrationArchitectureCanvasProps) {
+  const exportName = `archimate-${diagramKey}`
   const defaultGraph = useMemo(() => cloneDefaultIntegrationArchitecture(), [])
   const saveTimerRef = useRef<number | null>(null)
   const sourceApplyTimerRef = useRef<number | null>(null)
@@ -146,7 +197,7 @@ function EditableIntegrationArchitectureCanvasInner({
         plantumlSource: stored.plantumlSource ?? DEFAULT_INTEGRATION_PLANTUML,
         userCustomized: stored.userCustomized,
         viewport: isCanvasViewport(stored.viewport) ? stored.viewport : undefined,
-        snapToGrid: stored.snapToGrid,
+        snapToGrid: false,
       }
     }
     return {
@@ -172,10 +223,37 @@ function EditableIntegrationArchitectureCanvasInner({
   const [viewMode, setViewMode] = useState<IntegrationViewMode>('canvas')
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>('source')
   const [canvasMenu, setCanvasMenu] = useState<CanvasContextMenuState | null>(null)
+  const [edgeMenu, setEdgeMenu] = useState<EdgeContextMenuState | null>(null)
   const [hasPasteableContent, setHasPasteableContent] = useState(false)
+  // Same canvas commands as the BPMN/C4 studio (EditableDiagramCanvas): node clipboard, default
+  // element style, text and image nodes from the footer.
+  const nodeClipboardRef = useRef<Node<ArchimateNodeData> | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const [defaultElementStyle, setDefaultElementStyle] = useState<Pick<ArchimateElementNodeData, 'visual' | 'textStyle'> | null>(null)
+  const [studioPanelWidth, setStudioPanelWidth] = useState(0)
+  // An element dropped into another layer: its counterpart type there is offered, never applied silently.
+  const [layerTypeSuggestion, setLayerTypeSuggestion] = useState<{
+    nodeId: string
+    title: string
+    from: string
+    to: string
+    layerTitle: string
+  } | null>(null)
+  const applyDefaultElementStyle = useCallback((node: Node<ArchimateNodeData>): Node<ArchimateNodeData> => {
+    if (!defaultElementStyle || node.data.kind !== 'element') return node
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        visual: defaultElementStyle.visual ? { ...defaultElementStyle.visual } : node.data.visual,
+        textStyle: defaultElementStyle.textStyle ? { ...defaultElementStyle.textStyle } : node.data.textStyle,
+      },
+    }
+  }, [defaultElementStyle])
+
   const [showGrid, setShowGrid] = useState(true)
   const [showGuides, setShowGuides] = useState(true)
-  const [snapToGrid, setSnapToGrid] = useState(initialState.snapToGrid ?? true)
+  const [snapToGrid, setSnapToGrid] = useState(false)
   const [showRuler, setShowRuler] = useState(true)
   const [showConnectionArrows, setShowConnectionArrows] = useState(true)
   const [showConnectionPoints, setShowConnectionPoints] = useState(true)
@@ -247,7 +325,7 @@ function EditableIntegrationArchitectureCanvasInner({
       setUserCustomized(stored.userCustomized)
       viewportRef.current = isCanvasViewport(stored.viewport) ? stored.viewport : undefined
       setSavedViewport(viewportRef.current)
-      setSnapToGrid(stored.snapToGrid ?? true)
+      setSnapToGrid(false)
     } else {
       setNodes(defaultGraph.nodes)
       setEdges(defaultGraph.edges)
@@ -255,7 +333,7 @@ function EditableIntegrationArchitectureCanvasInner({
       setUserCustomized(false)
       viewportRef.current = undefined
       setSavedViewport(undefined)
-      setSnapToGrid(true)
+      setSnapToGrid(false)
     }
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
@@ -283,7 +361,7 @@ function EditableIntegrationArchitectureCanvasInner({
       setUserCustomized(true)
       viewportRef.current = isCanvasViewport(localGraph.viewport) ? localGraph.viewport : viewportRef.current
       setSavedViewport(viewportRef.current)
-      setSnapToGrid(localGraph.snapToGrid ?? true)
+      setSnapToGrid(false)
       onPersistGraph?.(localGraph)
       return
     }
@@ -302,7 +380,7 @@ function EditableIntegrationArchitectureCanvasInner({
       viewportRef.current = nextViewport
       setSavedViewport(nextViewport)
     }
-    setSnapToGrid(bootstrapRecord.snapToGrid ?? true)
+    setSnapToGrid(false)
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
     setApplyError(null)
@@ -595,6 +673,74 @@ function EditableIntegrationArchitectureCanvasInner({
     }
   }, [])
 
+  // Panels resize from their edges, as in the BPMN/C4 studio (EditableDiagramCanvas).
+  const [studioPanelSize, setStudioPanelSize] = useState<{ width: number; height: number } | null>(null)
+  const [propertiesPanelSize, setPropertiesPanelSize] = useState<{ width: number; height: number } | null>(null)
+  const panelResizeRef = useRef<{
+    pointerId: number
+    panel: 'studio' | 'properties'
+    edge: PanelResizeEdge
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+    originWidth: number
+    originHeight: number
+    scale: number
+  } | null>(null)
+
+  const startPanelResize = (panel: 'studio' | 'properties', edge: PanelResizeEdge) => (event: ReactPointerEvent<HTMLDivElement>) => {
+    const shell = panel === 'studio' ? studioPanelShellRef.current : propertiesPanelShellRef.current
+    if (!shell || event.button !== 0) return
+    event.stopPropagation()
+    event.preventDefault()
+    panelResizeRef.current = {
+      pointerId: event.pointerId,
+      panel,
+      edge,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: shell.offsetLeft,
+      originY: shell.offsetTop,
+      originWidth: shell.offsetWidth,
+      originHeight: shell.offsetHeight,
+      // The page is zoomed to a fixed width: pointer deltas are screen px, sizes are layout px.
+      scale: shell.getBoundingClientRect().width / Math.max(1, shell.offsetWidth) || 1,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handlePanelResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const resize = panelResizeRef.current
+    if (!resize || resize.pointerId !== event.pointerId) return
+    const zone = canvasZoneRef.current
+    const dx = (event.clientX - resize.startX) / resize.scale
+    const dy = (event.clientY - resize.startY) / resize.scale
+    const fromWest = resize.edge === 'w' || resize.edge === 'sw'
+    const fromEast = resize.edge === 'e' || resize.edge === 'se'
+    const fromSouth = resize.edge === 's' || resize.edge === 'se' || resize.edge === 'sw'
+    const maxWidth = zone
+      ? Math.max(PANEL_MIN_WIDTH_PX, fromWest
+        ? resize.originX + resize.originWidth - STUDIO_PANEL_MARGIN_PX
+        : zone.clientWidth - resize.originX - STUDIO_PANEL_MARGIN_PX)
+      : 640
+    const maxHeight = zone ? Math.max(PANEL_MIN_HEIGHT_PX, zone.clientHeight - resize.originY - STUDIO_PANEL_MARGIN_PX) : 720
+    const rawWidth = fromWest ? resize.originWidth - dx : fromEast ? resize.originWidth + dx : resize.originWidth
+    const width = Math.min(Math.max(PANEL_MIN_WIDTH_PX, rawWidth), maxWidth)
+    const height = Math.min(Math.max(PANEL_MIN_HEIGHT_PX, fromSouth ? resize.originHeight + dy : resize.originHeight), maxHeight)
+    if (resize.panel === 'studio') {
+      setStudioPanelSize({ width, height })
+      return
+    }
+    setPropertiesPanelSize({ width, height })
+    setPropertiesPanelPosition({ x: fromWest ? resize.originX + resize.originWidth - width : resize.originX, y: resize.originY })
+  }
+
+  const handlePanelResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panelResizeRef.current?.pointerId !== event.pointerId) return
+    panelResizeRef.current = null
+  }
+
   const clampStudioPanelPosition = useCallback(
     (x: number, y: number) => clampFloatingPanelPosition(x, y, studioPanelShellRef.current),
     [clampFloatingPanelPosition],
@@ -779,6 +925,15 @@ function EditableIntegrationArchitectureCanvasInner({
         }
 
         const targetAbsolute = absolutePosition(target)
+        if (currentNode.data.kind === 'element' && target.data.kind === 'boundary') {
+          const element = currentNode.data
+          const targetLayer = layerOfPackageTitle(target.data.title)
+          const counterpart = targetLayer ? archimateCounterpartType(element.stereotype, targetLayer) : null
+          const suggestion = counterpart
+            ? { nodeId: currentNode.id, title: element.title, from: element.stereotype, to: counterpart, layerTitle: target.data.title }
+            : null
+          queueMicrotask(() => setLayerTypeSuggestion(suggestion))
+        }
         nextNodes = current.map((node) =>
             node.id === currentNode.id
             ? {
@@ -829,6 +984,25 @@ function EditableIntegrationArchitectureCanvasInner({
     [markCustomized, setNodes, setEdges],
   )
 
+  const acceptLayerTypeSuggestion = useCallback(() => {
+    const suggestion = layerTypeSuggestion
+    setLayerTypeSuggestion(null)
+    const typed = suggestion ? resolveArchimateFromLabel(suggestion.to) : null
+    if (!suggestion || !typed) return
+    markCustomized()
+    setNodes((current) => current.map((node) => node.id === suggestion.nodeId && node.data.kind === 'element'
+      ? {
+          ...node,
+          data: normalizeArchimateElementData({
+            ...node.data,
+            layer: typed.layer,
+            stereotype: typed.stereotype,
+            notationId: typed.notationId,
+          }),
+        }
+      : node))
+  }, [layerTypeSuggestion, markCustomized, setNodes])
+
   const applyPlantUmlSourceToCanvas = useCallback(
     (source: string) => {
       try {
@@ -838,7 +1012,8 @@ function EditableIntegrationArchitectureCanvasInner({
         setNodes((current) => {
           mergedNodes = normalizeIntegrationNodesForCanvas([
             ...current.filter(
-              (node) => node.type === 'archimateLegend' || PRESERVED_SOURCE_SYNC_NODE_IDS.has(node.id),
+              (node) => node.type === 'archimateLegend' || node.type === 'archimateNote' || node.type === 'archimateImage'
+                || PRESERVED_SOURCE_SYNC_NODE_IDS.has(node.id),
             ),
             ...parsed.nodes,
           ])
@@ -920,11 +1095,11 @@ function EditableIntegrationArchitectureCanvasInner({
         y: event.clientY - bounds.top,
       })
 
-      const newNode = createNodeFromPaletteItem(
+      const newNode = applyDefaultElementStyle(createNodeFromPaletteItem(
         item,
         position,
         nodes.map((node) => node.id),
-      )
+      ))
 
       markCustomized()
       setNodes((current) => {
@@ -977,10 +1152,14 @@ function EditableIntegrationArchitectureCanvasInner({
       if (fillHeight) setSidebarPanel('source')
       else setViewMode('canvas')
     },
-    [fillHeight, markCustomized, nodes, screenToFlowPosition, setNodes],
+    [applyDefaultElementStyle, fillHeight, markCustomized, nodes, screenToFlowPosition, setNodes],
   )
 
   const refreshPasteAvailability = useCallback(async () => {
+    if (nodeClipboardRef.current) {
+      setHasPasteableContent(true)
+      return
+    }
     if (!navigator.clipboard?.readText) {
       setHasPasteableContent(false)
       return
@@ -1000,6 +1179,7 @@ function EditableIntegrationArchitectureCanvasInner({
       const wrapper = reactFlowWrapperRef.current
       if (!wrapper) return
       const bounds = wrapper.getBoundingClientRect()
+      setEdgeMenu(null)
       setCanvasMenu({
         x: Math.min(event.clientX - bounds.left, bounds.width - 280),
         y: Math.min(event.clientY - bounds.top, bounds.height - 280),
@@ -1019,8 +1199,32 @@ function EditableIntegrationArchitectureCanvasInner({
     setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
     setSelectedNodeId(node.id)
     setSelectedEdgeId(null)
-    setCanvasMenu({ x: Math.min(event.clientX - bounds.left, bounds.width - 280), y: Math.min(event.clientY - bounds.top, bounds.height - 280), flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }), submenu: null })
+    setEdgeMenu(null)
+    setCanvasMenu({
+      x: Math.min(event.clientX - bounds.left, bounds.width - 280),
+      y: Math.min(event.clientY - bounds.top, bounds.height - 360),
+      flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+      submenu: null,
+      nodeId: node.id,
+    })
   }, [screenToFlowPosition, setEdges, setNodes])
+
+  const handleEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.preventDefault()
+    const wrapper = reactFlowWrapperRef.current
+    if (!wrapper) return
+    const bounds = wrapper.getBoundingClientRect()
+    setCanvasMenu(null)
+    setNodes((current) => current.map((item) => ({ ...item, selected: false })))
+    setEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
+    setSelectedNodeId(null)
+    setSelectedEdgeId(edge.id)
+    setEdgeMenu({
+      x: Math.min(event.clientX - bounds.left, bounds.width - 260),
+      y: Math.min(event.clientY - bounds.top, bounds.height - 220),
+      edgeId: edge.id,
+    })
+  }, [setEdges, setNodes])
 
   const selectCanvasElements = useCallback(
     (kind: 'nodes' | 'edges' | 'all') => {
@@ -1034,6 +1238,126 @@ function EditableIntegrationArchitectureCanvasInner({
     },
     [edges, nodes, setEdges, setNodes],
   )
+
+  const canvasCenterPosition = useCallback(() => {
+    const bounds = reactFlowWrapperRef.current?.getBoundingClientRect()
+    return bounds
+      ? screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 })
+      : { x: 360, y: 240 }
+  }, [screenToFlowPosition])
+
+  const addCanvasNode = useCallback((node: Node<ArchimateNodeData>) => {
+    markCustomized()
+    setNodes((current) => [...current.map((item) => ({ ...item, selected: false })), { ...node, selected: true }])
+    setSelectedNodeId(node.id)
+    setSelectedEdgeId(null)
+  }, [markCustomized, setNodes])
+
+  const addCanvasText = useCallback(() => {
+    addCanvasNode({
+      id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: 'archimateNote',
+      position: canvasCenterPosition(),
+      style: { width: 220, height: 100 },
+      data: { kind: 'note', title: 'Text', lines: ['Edit this text in the properties panel.'] },
+    })
+  }, [addCanvasNode, canvasCenterPosition])
+
+  const requestImageInsert = useCallback(() => imageInputRef.current?.click(), [])
+
+  const handleImageInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || !file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      addCanvasNode({
+        id: `image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type: 'archimateImage',
+        position: canvasCenterPosition(),
+        style: { width: 260, height: 180 },
+        data: { kind: 'image', src: String(reader.result), alt: file.name },
+      })
+    }
+    reader.readAsDataURL(file)
+  }, [addCanvasNode, canvasCenterPosition])
+
+  const copyNodeToClipboard = useCallback((nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId)
+    if (!node) return
+    nodeClipboardRef.current = structuredClone(node)
+    setHasPasteableContent(true)
+    setCanvasMenu(null)
+  }, [nodes])
+
+  const deleteNode = useCallback((nodeId: string) => {
+    markCustomized()
+    setNodes((current) => current.filter((node) => node.id !== nodeId))
+    setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId))
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setCanvasMenu(null)
+  }, [markCustomized, setEdges, setNodes])
+
+  const cutNode = useCallback((nodeId: string) => {
+    copyNodeToClipboard(nodeId)
+    deleteNode(nodeId)
+  }, [copyNodeToClipboard, deleteNode])
+
+  const duplicateNode = useCallback((nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId)
+    if (!node) return
+    addCanvasNode({
+      ...structuredClone(node),
+      id: `${node.id}-copy-${crypto.randomUUID()}`,
+      position: { x: node.position.x + 32, y: node.position.y + 32 },
+    })
+    setCanvasMenu(null)
+  }, [addCanvasNode, nodes])
+
+  const pasteCopiedNode = useCallback((at?: { x: number; y: number }) => {
+    const copied = nodeClipboardRef.current
+    if (!copied) return
+    addCanvasNode({
+      ...structuredClone(copied),
+      id: `${copied.id}-copy-${crypto.randomUUID()}`,
+      // At the cursor (pasted from the pane menu) the node lands on the canvas root.
+      ...(at ? { position: at, parentNode: undefined, extent: undefined } : { position: { x: copied.position.x + 32, y: copied.position.y + 32 } }),
+    })
+  }, [addCanvasNode])
+
+  const setNodeAsDefaultStyle = useCallback((nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId)
+    if (!node || node.data.kind !== 'element') return
+    setDefaultElementStyle({
+      visual: node.data.visual ? { ...node.data.visual } : undefined,
+      textStyle: node.data.textStyle ? { ...node.data.textStyle } : undefined,
+    })
+    setCanvasMenu(null)
+  }, [nodes])
+
+  // Menus close on any click outside them, as in the BPMN/C4 studio.
+  useEffect(() => {
+    if (!canvasMenu && !edgeMenu) return
+    const close = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-diagram-context-menu]')) return
+      setCanvasMenu(null)
+      setEdgeMenu(null)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [canvasMenu, edgeMenu])
+
+  // The footer toolbar sits right of the floating Source/ArchiMate panel, as in the BPMN studio.
+  useEffect(() => {
+    const panel = studioPanelShellRef.current
+    if (!panel || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => setStudioPanelWidth(panel.offsetWidth))
+    observer.observe(panel)
+    setStudioPanelWidth(panel.offsetWidth)
+    return () => observer.disconnect()
+  }, [fillHeight])
 
   const clearDefaultStyle = useCallback(() => {
     const selectedIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id))
@@ -1052,6 +1376,11 @@ function EditableIntegrationArchitectureCanvasInner({
   }, [markCustomized, nodes, setNodes])
 
   const pastePlantUmlAtCursor = useCallback(async () => {
+    if (canvasMenu && nodeClipboardRef.current) {
+      pasteCopiedNode(canvasMenu.flowPosition)
+      setCanvasMenu(null)
+      return
+    }
     if (!canvasMenu || !navigator.clipboard?.readText) return
     try {
       const source = await navigator.clipboard.readText()
@@ -1088,69 +1417,252 @@ function EditableIntegrationArchitectureCanvasInner({
     } finally {
       setCanvasMenu(null)
     }
-  }, [canvasMenu, markCustomized, setEdges, setNodes])
+  }, [canvasMenu, markCustomized, pasteCopiedNode, setEdges, setNodes])
 
-  const copyCanvasAsImage = useCallback(async (nodeIds: string[]) => {
-    const selectedIds = new Set(nodeIds)
-    const drawableNodes = nodes.filter((node) => selectedIds.has(node.id) && node.type !== 'archimateLegend')
-    if (drawableNodes.length === 0) return
-    const dimensions = (node: Node<ArchimateNodeData>) => ({
-      width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 180),
-      height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 72),
-    })
-    const minX = Math.min(...drawableNodes.map((node) => node.position.x)) - 40
-    const minY = Math.min(...drawableNodes.map((node) => node.position.y)) - 40
-    const maxX = Math.max(...drawableNodes.map((node) => node.position.x + dimensions(node).width)) + 40
-    const maxY = Math.max(...drawableNodes.map((node) => node.position.y + dimensions(node).height)) + 40
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.min(2400, Math.max(640, Math.ceil(maxX - minX)))
-    canvas.height = Math.min(1800, Math.max(420, Math.ceil(maxY - minY)))
-    const context = canvas.getContext('2d')
-    if (!context) return
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    context.strokeStyle = '#475569'
-    context.lineWidth = 2
-    edges.forEach((edge) => {
-      const source = drawableNodes.find((node) => node.id === edge.source)
-      const target = drawableNodes.find((node) => node.id === edge.target)
-      if (!source || !target) return
-      const sourceSize = dimensions(source)
-      const targetSize = dimensions(target)
-      context.beginPath()
-      context.moveTo(source.position.x - minX + sourceSize.width / 2, source.position.y - minY + sourceSize.height / 2)
-      context.lineTo(target.position.x - minX + targetSize.width / 2, target.position.y - minY + targetSize.height / 2)
-      context.stroke()
-    })
-    drawableNodes.forEach((node) => {
-      const { width, height } = dimensions(node)
-      const x = node.position.x - minX
-      const y = node.position.y - minY
-      context.fillStyle = '#e0f2fe'
-      context.strokeStyle = '#334155'
-      context.lineWidth = 1.5
-      context.fillRect(x, y, width, height)
-      context.strokeRect(x, y, width, height)
-      context.fillStyle = '#0f172a'
-      context.font = '14px Arial'
-      context.textAlign = 'center'
-      context.textBaseline = 'middle'
-      context.fillText(node.data.label ?? node.id, x + width / 2, y + height / 2, Math.max(40, width - 14))
-    })
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-    if (!blob) return
+  const copyCanvasAsImage = useCallback(async (nodeIds?: string[]) => {
+    const canvas = renderDiagramCanvasImage(nodes, edges, nodeIds)
     try {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-    } catch {
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = 'integration-diagram.png'
-      link.click()
-      URL.revokeObjectURL(link.href)
+      if (canvas) await copyDiagramImage(canvas, exportName)
     } finally {
       setCanvasMenu(null)
     }
-  }, [edges, nodes])
+  }, [edges, exportName, nodes])
+
+  // The Idea page's Export menu (PNG, JPEG, SVG, PDF, copy, print), as for the BPMN/C4 studio.
+  useEffect(() => {
+    if (!fillHeight) return
+    const handleExport = (event: Event) => {
+      const detail = (event as CustomEvent<{ diagramKey?: string; action?: DiagramExportAction }>).detail
+      if (detail?.diagramKey !== diagramKey || !detail.action) return
+      void runDiagramExportAction(detail.action, nodes, edges, exportName)
+    }
+    window.addEventListener('tectona-diagram-export', handleExport)
+    return () => window.removeEventListener('tectona-diagram-export', handleExport)
+  }, [diagramKey, edges, exportName, fillHeight, nodes])
+
+  // "Ask Gen AI" as in the BPMN/C4 studio: the chat gets this view's elements and connections by
+  // ID; a reply carrying a ```tectona-diagram-draft block (agent-runtime idea_section_discussion)
+  // comes back as a draft to apply, discard or undo, recorded in the AI diagram history.
+  const [pendingChatDraft, setPendingChatDraft] = useState<DiagramChatDraft | null>(null)
+  const [lastAppliedChatDraft, setLastAppliedChatDraft] = useState<{
+    draft: DiagramChatDraft
+    before: { nodes: Node<ArchimateNodeData>[]; edges: Edge[] }
+  } | null>(null)
+  const [chatAudit, setChatAudit] = useState<DiagramAiDraftAuditApi[]>([])
+  const [chatAuditLoading, setChatAuditLoading] = useState(false)
+  const [isChatAuditOpen, setIsChatAuditOpen] = useState(false)
+  const [chatAuditWriteError, setChatAuditWriteError] = useState<string | null>(null)
+
+  const recordChatAudit = useCallback(async (payload: Parameters<typeof createDiagramAiDraftAudit>[2]) => {
+    try {
+      await createDiagramAiDraftAudit(ideaId, diagramKey, payload)
+      setChatAuditWriteError(null)
+    } catch {
+      setChatAuditWriteError('AI activity could not be saved to the audit trail.')
+    }
+  }, [diagramKey, ideaId])
+
+  const loadChatAudit = useCallback(async () => {
+    setChatAuditLoading(true)
+    try {
+      setChatAudit(await listDiagramAiDraftAudit(ideaId, diagramKey))
+    } catch {
+      setChatAudit([])
+    } finally {
+      setChatAuditLoading(false)
+    }
+  }, [diagramKey, ideaId])
+
+  useEffect(() => {
+    if (isChatAuditOpen) void loadChatAudit()
+  }, [isChatAuditOpen, loadChatAudit])
+
+  const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>) => {
+    const titleOf = (item: Node<ArchimateNodeData> | undefined) =>
+      item && (item.data.kind === 'element' || item.data.kind === 'boundary' || item.data.kind === 'note') ? item.data.title : item?.id ?? ''
+    const elementLines = nodes
+      .filter((item) => item.data.kind === 'element')
+      .map((item) => {
+        const data = item.data as ArchimateElementNodeData
+        const layer = item.parentNode ? titleOf(nodes.find((candidate) => candidate.id === item.parentNode)) : ''
+        return `- ${item.id} | ${data.stereotype} | ${data.title}${layer ? ` | ${layer}` : ''}`
+      })
+    const connectionLines = edges.map((edge) => `- ${edge.id} | ${edge.source} -> ${edge.target}${edge.label ? ` | ${String(edge.label)}` : ''}`)
+    const selected = node ?? nodes.find((item) => item.selected && item.data.kind === 'element')
+    const selectedEdge = edges.find((item) => item.selected)
+    requestOpenIdeaDiscussChat({
+      ideaId,
+      ideaTitle: 'ArchiMate integration diagram',
+      sectionKey: `diagram:${diagramKey}`,
+      sectionLabel: 'ArchiMate diagram',
+      ideaDescription: 'Architecture diagram editing session.',
+      currentSectionContent: [
+        `Target diagram key: ${diagramKey}`,
+        selected ? `Selected notation ID: ${selected.id} (${titleOf(selected)}).` : 'No notation is selected.',
+        selectedEdge ? `Selected connection ID: ${selectedEdge.id}; source: ${selectedEdge.source}; target: ${selectedEdge.target}.` : '',
+        `Elements (ID | type | title | layer):\n${elementLines.join('\n') || '(none)'}`,
+        `Connections (ID | source -> target | label):\n${connectionLines.join('\n') || '(none)'}`,
+        `Current ArchiMate PlantUML source:\n${plantumlSourceRef.current.slice(0, 8000)}`,
+      ].filter(Boolean).join('\n\n'),
+    })
+    setCanvasMenu(null)
+  }, [diagramKey, edges, ideaId, nodes])
+
+  useEffect(() => {
+    const receiveDraft = (event: Event) => {
+      const draft = (event as CustomEvent<DiagramChatDraft>).detail
+      if (draft?.diagramKey !== diagramKey) return
+      setPendingChatDraft(draft)
+      void recordChatAudit({ action: 'requested', draft_json: { ...draft } })
+    }
+    window.addEventListener('tectona:diagram-chat-draft', receiveDraft)
+    return () => window.removeEventListener('tectona:diagram-chat-draft', receiveDraft)
+  }, [diagramKey, recordChatAudit])
+
+  const applyChatDraft = useCallback(() => {
+    if (!pendingChatDraft) return
+    let nextNodes = nodes.map((node) => ({ ...node }))
+    let nextEdges = [...edges]
+    const usedNodeIds = new Set(nextNodes.map((node) => node.id))
+    const usedEdgeIds = new Set(nextEdges.map((edge) => edge.id))
+    const origin = canvasCenterPosition()
+    // A new element goes into the layer of its type (Business, Application, Technology).
+    const layerBoundary = (layer: string) => nextNodes.find((node) => {
+      if (node.data.kind !== 'boundary') return false
+      const boundaryLayer = layerOfPackageTitle(node.data.title)
+      return boundaryLayer === layer || (layer === 'data' && boundaryLayer === 'application')
+    })
+    pendingChatDraft.actions.forEach((action, index) => {
+      if (action.type === 'add_node') {
+        const typed = resolveArchimateFromLabel(action.notation)
+        if (!typed || usedNodeIds.has(action.id)) return
+        const boundary = layerBoundary(typed.layer)
+        // The first grid slot in the layer that no element (moved by hand or just added) covers.
+        const occupied = boundary
+          ? nextNodes.filter((node) => node.parentNode === boundary.id).map((node) => ({
+            x: node.position.x,
+            y: node.position.y,
+            width: Number(node.width ?? node.style?.width ?? 210),
+            height: Number(node.height ?? node.style?.height ?? 90),
+          }))
+          : []
+        const slotPosition = (candidate: number) => ({ x: 40 + (candidate % 5) * 240, y: 60 + Math.floor(candidate / 5) * 120 })
+        const isFree = (spot: { x: number; y: number }) => !occupied.some((rect) =>
+          spot.x < rect.x + rect.width + 16 && rect.x < spot.x + 210 + 16 && spot.y < rect.y + rect.height + 16 && rect.y < spot.y + 90 + 16)
+        let slot = 0
+        while (boundary && slot < 200 && !isFree(slotPosition(slot))) slot += 1
+        const position = boundary
+          ? slotPosition(slot)
+          : { x: origin.x + (index % 3) * 260, y: origin.y + Math.floor(index / 3) * 140 }
+        const node: Node<ArchimateNodeData> = applyDefaultElementStyle({
+          id: action.id,
+          type: 'archimateElement',
+          position,
+          ...(boundary ? { parentNode: boundary.id } : {}),
+          style: { width: 210 },
+          data: normalizeArchimateElementData({
+            kind: 'element',
+            layer: typed.layer,
+            stereotype: typed.stereotype,
+            title: action.title,
+            description: action.description ? [action.description] : [],
+            notationId: typed.notationId,
+          }),
+        })
+        if (boundary) {
+          // The layer grows to hold the new row.
+          const needed = 60 + (Math.floor(slot / 5) + 1) * 120 + 40
+          nextNodes = nextNodes.map((item) => item.id === boundary.id && Number(item.style?.height ?? 0) < needed
+            ? { ...item, style: { ...item.style, height: needed } }
+            : item)
+        }
+        nextNodes.push(node)
+        usedNodeIds.add(action.id)
+      } else if (action.type === 'update_node') {
+        const typed = action.notation ? resolveArchimateFromLabel(action.notation) : null
+        nextNodes = nextNodes.map((node) => {
+          if (node.id !== action.nodeId || node.data.kind !== 'element') return node
+          return {
+            ...node,
+            data: normalizeArchimateElementData({
+              ...node.data,
+              ...(action.title ? { title: action.title } : {}),
+              ...(action.description ? { description: [action.description] } : {}),
+              ...(typed ? { layer: typed.layer, stereotype: typed.stereotype, notationId: typed.notationId } : {}),
+            }),
+          }
+        })
+      } else if (action.type === 'delete_node') {
+        nextNodes = nextNodes.filter((node) => node.id !== action.nodeId)
+        nextEdges = nextEdges.filter((edge) => edge.source !== action.nodeId && edge.target !== action.nodeId)
+        usedNodeIds.delete(action.nodeId)
+      } else if (action.type === 'add_edge') {
+        if (usedEdgeIds.has(action.id) || !usedNodeIds.has(action.source) || !usedNodeIds.has(action.target)) return
+        nextEdges.push(archimateRelationEdge(action.id, action.source, action.target, action.label))
+        usedEdgeIds.add(action.id)
+      } else if (action.type === 'delete_edge') {
+        nextEdges = nextEdges.filter((edge) => edge.id !== action.edgeId)
+      }
+    })
+    const before = { nodes, edges }
+    const appliedNodes = nextNodes.map((node) => ({ ...node, selected: false }))
+    const appliedEdges = nextEdges.map((edge) => ({ ...edge, selected: false }))
+    markCustomized()
+    setNodes(appliedNodes)
+    setEdges(appliedEdges)
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setLastAppliedChatDraft({ draft: pendingChatDraft, before })
+    void recordChatAudit({
+      action: 'applied',
+      draft_json: { ...pendingChatDraft },
+      before_graph_json: before,
+      after_graph_json: { nodes: appliedNodes, edges: appliedEdges },
+    })
+    setPendingChatDraft(null)
+  }, [applyDefaultElementStyle, canvasCenterPosition, edges, markCustomized, nodes, pendingChatDraft, recordChatAudit, setEdges, setNodes])
+
+  const discardChatDraft = useCallback(() => {
+    if (pendingChatDraft) void recordChatAudit({ action: 'discarded', draft_json: { ...pendingChatDraft } })
+    setPendingChatDraft(null)
+  }, [pendingChatDraft, recordChatAudit])
+
+  const undoLastChatDraft = useCallback(() => {
+    if (!lastAppliedChatDraft) return
+    markCustomized()
+    setNodes(lastAppliedChatDraft.before.nodes)
+    setEdges(lastAppliedChatDraft.before.edges)
+    void recordChatAudit({
+      action: 'undone',
+      draft_json: { ...lastAppliedChatDraft.draft },
+      after_graph_json: lastAppliedChatDraft.before,
+    })
+    setLastAppliedChatDraft(null)
+  }, [lastAppliedChatDraft, markCustomized, recordChatAudit, setEdges, setNodes])
+
+  // While a draft waits, the elements it changes or removes are outlined on the canvas.
+  const previewNodes = useMemo(() => {
+    if (!pendingChatDraft) return nodes
+    const marks = new Map<string, 'update' | 'delete'>()
+    pendingChatDraft.actions.forEach((action) => {
+      if (action.type === 'update_node') marks.set(action.nodeId, 'update')
+      if (action.type === 'delete_node') marks.set(action.nodeId, 'delete')
+    })
+    if (marks.size === 0) return nodes
+    return nodes.map((node) => {
+      const mark = marks.get(node.id)
+      if (!mark) return node
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          outline: mark === 'delete' ? '2px solid #dc2626' : '2px solid #2563eb',
+          opacity: mark === 'delete' ? 0.48 : 1,
+          boxShadow: mark === 'delete' ? '0 0 0 4px rgba(220,38,38,.14)' : '0 0 0 4px rgba(37,99,235,.14)',
+        },
+      }
+    })
+  }, [nodes, pendingChatDraft])
 
   const applyCanvasLayout = useCallback((layout: 'horizontal' | 'vertical' | 'circle') => {
     const selected = nodes.filter((node) => node.selected && !node.parentNode)
@@ -1195,15 +1707,39 @@ function EditableIntegrationArchitectureCanvasInner({
         clearDefaultStyle()
         return
       }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'd') {
+        if (!selectedNodeId) return
+        event.preventDefault()
+        setNodeAsDefaultStyle(selectedNodeId)
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'c' && selectedNodeId) { event.preventDefault(); copyNodeToClipboard(selectedNodeId); return }
+        if (key === 'x' && selectedNodeId) { event.preventDefault(); cutNode(selectedNodeId); return }
+        if (key === 'd' && selectedNodeId) { event.preventDefault(); duplicateNode(selectedNodeId); return }
+        if (key === 'v' && nodeClipboardRef.current) { event.preventDefault(); pasteCopiedNode(); return }
+      }
+      if (event.key === 'Escape') {
+        setCanvasMenu(null)
+        setEdgeMenu(null)
+        return
+      }
       if (event.key !== 'Delete' && event.key !== 'Backspace') return
       if (selectedEdgeId) {
         event.preventDefault()
         deleteSelectedEdge()
+        return
+      }
+      const node = selectedNodeId ? nodes.find((item) => item.id === selectedNodeId) : undefined
+      if (node && node.type !== 'archimateLegend') {
+        event.preventDefault()
+        deleteNode(node.id)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [clearDefaultStyle, deleteSelectedEdge, fillHeight, selectCanvasElements, selectedEdgeId, viewMode])
+  }, [clearDefaultStyle, copyNodeToClipboard, cutNode, deleteNode, deleteSelectedEdge, duplicateNode, fillHeight, nodes, pasteCopiedNode, selectCanvasElements, selectedEdgeId, selectedNodeId, setNodeAsDefaultStyle, viewMode])
 
   const viewTabs: Array<{ id: IntegrationViewMode; label: string; icon: typeof Layers }> = [
     { id: 'canvas', label: 'Canvas', icon: Layers },
@@ -1267,7 +1803,7 @@ function EditableIntegrationArchitectureCanvasInner({
   const flowCanvas = (
     <IntegrationArchitectureFlow
       key={ideaId}
-      nodes={nodes}
+      nodes={previewNodes}
       edges={edges}
       onNodesChange={handleNodesChange}
       onNodeDragStop={handleNodeDragStop}
@@ -1275,9 +1811,10 @@ function EditableIntegrationArchitectureCanvasInner({
       onConnect={onConnect}
       onEdgeUpdate={onEdgeUpdate}
       onSelectionChange={handleSelectionChange}
-      onPaneClick={() => setCanvasMenu(null)}
+      onPaneClick={() => { setCanvasMenu(null); setEdgeMenu(null) }}
       onPaneContextMenu={handlePaneContextMenu}
       onNodeContextMenu={handleNodeContextMenu}
+      onEdgeContextMenu={handleEdgeContextMenu}
       showGrid={showGrid}
       showGuides={showGuides}
       snapToGrid={snapToGrid}
@@ -1285,23 +1822,88 @@ function EditableIntegrationArchitectureCanvasInner({
       showConnectionArrows={showConnectionArrows}
       showConnectionPoints={showConnectionPoints}
       defaultViewport={savedViewport}
+      controlsStyle={studioMode ? {
+        left: studioPanelPosition.x + (isStudioPanelCollapsed ? 140 : studioPanelWidth) + STUDIO_PANEL_MARGIN_PX,
+        bottom: STUDIO_PANEL_MARGIN_PX,
+        zIndex: 40,
+      } : undefined}
+      onAddText={studioMode ? addCanvasText : undefined}
+      onInsertImage={studioMode ? requestImageInsert : undefined}
       onMoveEnd={(_event, viewport) => persistViewport(viewport)}
     />
   )
 
+  const contextMenuNode = canvasMenu?.nodeId ? nodes.find((item) => item.id === canvasMenu.nodeId) : undefined
   const canvasContextMenu = canvasMenu ? (
     <div
       className="absolute z-50 w-64 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+      data-diagram-context-menu=""
       style={{ left: Math.max(8, canvasMenu.x), top: Math.max(8, canvasMenu.y) }}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      {selectedNodeId ? <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setCanvasMenu(null) }}><Paintbrush className="h-4 w-4" /> Styles &amp; formatting</button> : null}
+      {canvasMenu.nodeId && contextMenuNode ? (
+        <>
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => copyNodeToClipboard(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Copy className="h-4 w-4" /> Copy</span><span className="text-xs text-slate-400">Ctrl+C</span>
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
+            onClick={() => {
+              void copyCanvasAsImage([contextMenuNode.id])
+              setCanvasMenu(null)
+            }}
+          >
+            <ImageDown className="h-4 w-4" /> Copy as image
+          </button>
+          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => openDiagramChat(contextMenuNode)}>
+            <Sparkles className="h-4 w-4" /> Ask Gen AI about this notation
+          </button>
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => cutNode(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Scissors className="h-4 w-4" /> Cut</span><span className="text-xs text-slate-400">Ctrl+X</span>
+          </button>
+          <div className="my-1 border-t border-slate-200" />
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => duplicateNode(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Copy className="h-4 w-4" /> Duplicate</span><span className="text-xs text-slate-400">Ctrl+D</span>
+          </button>
+          <div className="my-1 border-t border-slate-200" />
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => deleteNode(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Trash2 className="h-4 w-4" /> Delete</span><span className="text-xs text-slate-400">Delete</span>
+          </button>
+          <div className="my-1 border-t border-slate-200" />
+          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setCanvasMenu(null) }}>
+            <Paintbrush className="h-4 w-4" /> Styles &amp; formatting
+          </button>
+          {contextMenuNode.data.kind === 'element' ? (
+            <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setNodeAsDefaultStyle(contextMenuNode.id)}>
+              <span className="flex items-center gap-2"><Paintbrush className="h-4 w-4" /> Set as default style</span><span className="text-xs text-slate-400">Ctrl+Shift+D</span>
+            </button>
+          ) : null}
+          <div className="my-1 border-t border-slate-200" />
+          <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'order' } : current)}>
+            <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
+              <span className="flex items-center gap-2"><Layers className="h-4 w-4" /> Order</span><ChevronRight className="h-4 w-4" />
+            </button>
+            {canvasMenu.submenu === 'order' ? (
+              <div className="absolute left-full top-0 w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('front'); setCanvasMenu(null) }}><ChevronsUp className="h-4 w-4" />Bring to front</button>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('forward'); setCanvasMenu(null) }}><ArrowRight className="h-4 w-4" />Bring forward</button>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('backward'); setCanvasMenu(null) }}><ArrowDown className="h-4 w-4" />Send backward</button>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('back'); setCanvasMenu(null) }}><ChevronsDown className="h-4 w-4" />Send to back</button>
+              </div>
+            ) : null}
+          </div>
+        </>
+      ) : <>
       <button type="button" disabled={!hasPasteableContent} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', hasPasteableContent ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={pastePlantUmlAtCursor}>
         <Copy className="h-4 w-4" /> Paste here
       </button>
       <button type="button" disabled={!canCopySelectedNodesAsImage} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', canCopySelectedNodesAsImage ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={() => void copyCanvasAsImage(selectedImageNodeIds)}>
         <ImageDown className="h-4 w-4" /> Copy as image
+      </button>
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => openDiagramChat()}>
+        <Sparkles className="h-4 w-4" /> Ask Gen AI
       </button>
       <div className="my-1 border-t border-slate-200" />
       <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={clearDefaultStyle}>
@@ -1357,6 +1959,59 @@ function EditableIntegrationArchitectureCanvasInner({
           </div>
         ) : null}
       </div>
+      </>}
+    </div>
+  ) : null
+
+  const edgeContextMenu = edgeMenu ? (
+    <div
+      className="absolute z-50 w-60 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+      data-diagram-context-menu=""
+      style={{ left: Math.max(8, edgeMenu.x), top: Math.max(8, edgeMenu.y) }}
+      onContextMenu={(event) => event.preventDefault()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="px-3 py-2 text-xs font-semibold text-slate-500">Line</div>
+      <div className="my-1 border-t border-slate-200" />
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setEdgeMenu(null) }}>
+        <Settings2 className="h-4 w-4" /> Format...
+      </button>
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
+        onClick={() => {
+          const edgeId = edgeMenu.edgeId
+          markCustomized()
+          setEdges((current) => current.map((edge) => (
+            edge.id === edgeId
+              ? { ...edge, source: edge.target, target: edge.source, sourceHandle: edge.targetHandle, targetHandle: edge.sourceHandle }
+              : edge
+          )))
+          setEdgeMenu(null)
+        }}
+      >
+        <ArrowRightLeft className="h-4 w-4" /> Reverse
+      </button>
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeMenu(null) }}>
+        <Waypoints className="h-4 w-4" /> Clear Waypoints
+      </button>
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeMenu(null) }}>
+        <Unlink className="h-4 w-4" /> Unpin Connector Ends
+      </button>
+      <div className="my-1 border-t border-slate-200" />
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50"
+        onClick={() => {
+          const edgeId = edgeMenu.edgeId
+          markCustomized()
+          setEdges((current) => current.filter((edge) => edge.id !== edgeId))
+          setSelectedEdgeId(null)
+          setEdgeMenu(null)
+        }}
+      >
+        <Trash2 className="h-4 w-4" /> Delete
+      </button>
     </div>
   ) : null
 
@@ -1442,6 +2097,101 @@ function EditableIntegrationArchitectureCanvasInner({
         !studioMode && fillHeight && 'flex h-full min-h-0 flex-col',
       )}
     >
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageInputChange} />
+      {studioMode ? (
+        <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-2">
+          {chatAuditWriteError ? (
+            <span className="pointer-events-auto rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">{chatAuditWriteError}</span>
+          ) : null}
+          <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={() => setIsChatAuditOpen(true)}>
+            <History className="h-3.5 w-3.5" /> AI history
+          </Button>
+          {lastAppliedChatDraft ? (
+            <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={undoLastChatDraft}>
+              <RotateCcw className="h-3.5 w-3.5" /> Undo AI batch
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {studioMode && layerTypeSuggestion ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-16 z-40 flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-xl">
+            <span>
+              <b>{layerTypeSuggestion.title}</b> is a {layerTypeSuggestion.from} in the {layerTypeSuggestion.layerTitle}. Change it to <b>{layerTypeSuggestion.to}</b>?
+            </span>
+            <Button type="button" size="sm" className="h-7 shrink-0 text-xs" onClick={acceptLayerTypeSuggestion}>Change to {layerTypeSuggestion.to}</Button>
+            <Button type="button" size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setLayerTypeSuggestion(null)}>Keep</Button>
+          </div>
+        </div>
+      ) : null}
+      <Dialog open={Boolean(pendingChatDraft)} onOpenChange={(open) => { if (!open) setPendingChatDraft(null) }}>
+        <DialogContent className="w-[min(36rem,calc(100vw-2rem))] p-0">
+          <DialogHeader className="border-b border-slate-200 px-5 py-4">
+            <DialogTitle className="text-base">Apply AI diagram draft</DialogTitle>
+            <DialogDescription>Review the proposed ArchiMate changes before they are applied to this canvas.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[52vh] space-y-3 overflow-y-auto p-5">
+            {pendingChatDraft?.summary ? <p className="text-sm leading-6 text-slate-600">{pendingChatDraft.summary}</p> : null}
+            <div className="overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-3">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Visual preview</p>
+              <div className="grid grid-cols-2 gap-2">
+                {pendingChatDraft?.actions.filter((action) => action.type === 'add_node' || action.type === 'update_node' || action.type === 'delete_node').map((action, index) => (
+                  <div key={`preview-${index}`} className={cn('min-h-14 rounded border px-2 py-2 text-xs', action.type === 'delete_node' ? 'border-rose-200 bg-rose-50 text-rose-800 line-through' : action.type === 'add_node' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-sky-200 bg-sky-50 text-sky-800')}>
+                    <span className="block font-semibold">{action.type === 'add_node' ? action.title : action.nodeId}</span>
+                    <span className="mt-1 block opacity-80">{action.type === 'add_node' ? action.notation : action.type === 'delete_node' ? 'Removed from canvas' : 'Updated on canvas'}</span>
+                  </div>
+                ))}
+              </div>
+              {pendingChatDraft?.actions.some((action) => action.type === 'add_edge' || action.type === 'delete_edge') ? <div className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-xs text-slate-600">{pendingChatDraft.actions.filter((action) => action.type === 'add_edge' || action.type === 'delete_edge').map((action, index) => <p key={`edge-preview-${index}`}>{action.type === 'add_edge' ? `${action.source} -> ${action.target}${action.label ? ` (${action.label})` : ''}` : `Remove connection ${action.edgeId}`}</p>)}</div> : null}
+            </div>
+            <ol className="space-y-2 text-sm text-slate-700">
+              {pendingChatDraft?.actions.map((action, index) => (
+                <li key={`${action.type}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  {action.type === 'add_node' ? `Add ${action.notation}: ${action.title}` : null}
+                  {action.type === 'update_node' ? `Update notation: ${action.nodeId}` : null}
+                  {action.type === 'delete_node' ? `Delete notation: ${action.nodeId}` : null}
+                  {action.type === 'add_edge' ? `Connect ${action.source} to ${action.target}${action.label ? `: ${action.label}` : ''}` : null}
+                  {action.type === 'delete_edge' ? `Delete connection: ${action.edgeId}` : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <DialogFooter className="border-t border-slate-200 px-5 py-4">
+            <Button type="button" variant="outline" onClick={discardChatDraft}>Discard</Button>
+            <Button type="button" onClick={applyChatDraft}>Apply draft</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isChatAuditOpen} onOpenChange={setIsChatAuditOpen}>
+        <DialogContent className="w-[min(40rem,calc(100vw-2rem))] p-0">
+          <DialogHeader className="border-b border-slate-200 px-5 py-4">
+            <DialogTitle className="text-base">AI diagram history</DialogTitle>
+            <DialogDescription>Draft activity recorded for this diagram.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto p-5">
+            {chatAuditLoading ? <p className="text-sm text-slate-500">Loading history...</p> : null}
+            {!chatAuditLoading && chatAudit.length === 0 ? <p className="text-sm text-slate-500">No AI draft activity has been recorded.</p> : null}
+            <ol className="space-y-3">
+              {chatAudit.map((entry) => (
+                <li key={entry.id} className="rounded-md border border-slate-200 bg-white p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800">{chatAuditLabel(entry.action)}</p>
+                    <time className="shrink-0 text-xs text-slate-500">{new Date(entry.created_at).toLocaleString()}</time>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">{entry.actor_id}</p>
+                  {chatAuditDraftSummary(entry.draft_json) ? <p className="mt-2 text-sm text-slate-700">{chatAuditDraftSummary(entry.draft_json)}</p> : null}
+                  {chatAuditSnapshotSummary(entry.before_graph_json) ? <p className="mt-2 text-xs text-slate-500">Before: {chatAuditSnapshotSummary(entry.before_graph_json)}</p> : null}
+                  {chatAuditSnapshotSummary(entry.after_graph_json) ? <p className="mt-1 text-xs text-slate-500">After: {chatAuditSnapshotSummary(entry.after_graph_json)}</p> : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <DialogFooter className="border-t border-slate-200 px-5 py-4">
+            <Button type="button" variant="outline" onClick={() => void loadChatAudit()}>Refresh</Button>
+            <Button type="button" onClick={() => setIsChatAuditOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {!studioMode && (
         <>
           <div className={cn('flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/50 bg-slate-50/80 px-3 py-2', fillHeight && 'shrink-0')}>
@@ -1486,10 +2236,12 @@ function EditableIntegrationArchitectureCanvasInner({
             >
               {flowCanvas}
               {canvasContextMenu}
+              {edgeContextMenu}
             </div>
 
             {studioOverlay ? (
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 max-h-28 overflow-y-auto px-3 py-2">
+              // Top right, under the AI history button: the floating Source/ArchiMate panel covers the left.
+              <div className="pointer-events-none absolute right-3 top-12 z-30 flex max-h-60 max-w-[min(28rem,45%)] justify-end overflow-y-auto">
                 <div className="pointer-events-auto space-y-2">{studioOverlay}</div>
               </div>
             ) : null}
@@ -1500,10 +2252,10 @@ function EditableIntegrationArchitectureCanvasInner({
               style={{
                 left: studioPanelPosition.x,
                 top: studioPanelPosition.y,
-                height: isStudioPanelCollapsed ? 44 : `calc(100% - ${STUDIO_PANEL_MARGIN_PX * 2}px)`,
+                height: isStudioPanelCollapsed ? 44 : studioPanelSize?.height ?? `calc(100% - ${STUDIO_PANEL_MARGIN_PX * 2}px)`,
                 maxHeight: isStudioPanelCollapsed ? 44 : undefined,
-                width: isStudioPanelCollapsed ? 140 : undefined,
-                maxWidth: isStudioPanelCollapsed ? 140 : undefined,
+                width: isStudioPanelCollapsed ? 140 : studioPanelSize?.width,
+                maxWidth: isStudioPanelCollapsed ? 140 : studioPanelSize ? 'none' : undefined,
               }}
             >
               <aside className={cn(studioFloatingPanelClass, 'transition-[width] duration-200 ease-out')}>
@@ -1582,29 +2334,99 @@ function EditableIntegrationArchitectureCanvasInner({
                   <div className={STUDIO_FOOTER_ACTIONS_CLASS}>{toolbarExtra}</div>
                 ) : null}
               </aside>
+              {!isStudioPanelCollapsed ? (
+                <>
+                <div
+                  role="separator"
+                  aria-label="Ubah lebar panel" aria-orientation="vertical"
+                  className="pointer-events-auto absolute inset-y-3 right-0 z-40 w-1.5 cursor-ew-resize rounded-full hover:bg-sky-400/40"
+                  onPointerDown={startPanelResize('studio', 'e')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
+                <div
+                  role="separator"
+                  aria-label="Ubah tinggi panel" aria-orientation="horizontal"
+                  className="pointer-events-auto absolute inset-x-3 bottom-0 z-40 h-1.5 cursor-ns-resize rounded-full hover:bg-sky-400/40"
+                  onPointerDown={startPanelResize('studio', 's')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
+                <div
+                  role="separator"
+                  aria-label="Ubah ukuran panel"
+                  className="pointer-events-auto absolute bottom-0 right-0 z-40 h-3.5 w-3.5 cursor-nwse-resize"
+                  onPointerDown={startPanelResize('studio', 'se')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
+                </>
+              ) : null}
             </div>
 
             {hasSelectionInspector ? (
               <div
                 ref={propertiesPanelShellRef}
                 className={studioPropertiesShellClass}
-                style={
-                  propertiesPanelPosition
-                    ? {
-                        left: propertiesPanelPosition.x,
-                        top: propertiesPanelPosition.y,
-                        height: `calc(100% - ${STUDIO_PANEL_MARGIN_PX * 2}px)`,
-                      }
-                    : {
-                        right: STUDIO_PANEL_MARGIN_PX,
-                        top: STUDIO_PANEL_MARGIN_PX,
-                        height: `calc(100% - ${STUDIO_PANEL_MARGIN_PX * 2}px)`,
-                      }
-                }
+                style={{
+                  ...(propertiesPanelPosition
+                    ? { left: propertiesPanelPosition.x, top: propertiesPanelPosition.y }
+                    : { right: STUDIO_PANEL_MARGIN_PX, top: STUDIO_PANEL_MARGIN_PX }),
+                  height: propertiesPanelSize?.height ?? `calc(100% - ${STUDIO_PANEL_MARGIN_PX * 2}px)`,
+                  ...(propertiesPanelSize ? { width: propertiesPanelSize.width, maxWidth: 'none' } : {}),
+                }}
               >
                 <aside className={studioPropertiesPanelClass}>
                   <div className="min-h-0 flex-1">{selectionInspector}</div>
                 </aside>
+                <div
+                  role="separator"
+                  aria-label="Ubah lebar panel" aria-orientation="vertical"
+                  className="pointer-events-auto absolute inset-y-3 left-0 z-40 w-1.5 cursor-ew-resize rounded-full hover:bg-sky-400/40"
+                  onPointerDown={startPanelResize('properties', 'w')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
+                <div
+                  role="separator"
+                  aria-label="Ubah lebar panel" aria-orientation="vertical"
+                  className="pointer-events-auto absolute inset-y-3 right-0 z-40 w-1.5 cursor-ew-resize rounded-full hover:bg-sky-400/40"
+                  onPointerDown={startPanelResize('properties', 'e')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
+                <div
+                  role="separator"
+                  aria-label="Ubah tinggi panel" aria-orientation="horizontal"
+                  className="pointer-events-auto absolute inset-x-3 bottom-0 z-40 h-1.5 cursor-ns-resize rounded-full hover:bg-sky-400/40"
+                  onPointerDown={startPanelResize('properties', 's')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
+                <div
+                  role="separator"
+                  aria-label="Ubah ukuran panel"
+                  className="pointer-events-auto absolute bottom-0 left-0 z-40 h-3.5 w-3.5 cursor-nesw-resize"
+                  onPointerDown={startPanelResize('properties', 'sw')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
+                <div
+                  role="separator"
+                  aria-label="Ubah ukuran panel"
+                  className="pointer-events-auto absolute bottom-0 right-0 z-40 h-3.5 w-3.5 cursor-nwse-resize"
+                  onPointerDown={startPanelResize('properties', 'se')}
+                  onPointerMove={handlePanelResizeMove}
+                  onPointerUp={handlePanelResizeEnd}
+                  onPointerCancel={handlePanelResizeEnd}
+                />
               </div>
             ) : null}
           </div>
@@ -1664,6 +2486,7 @@ function EditableIntegrationArchitectureCanvasInner({
           >
             {flowCanvas}
             {canvasContextMenu}
+              {edgeContextMenu}
           </div>
         </div>
       )}

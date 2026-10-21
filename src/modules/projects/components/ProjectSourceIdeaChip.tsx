@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ExternalLink, Lightbulb, Link2, Loader2, Unlink } from 'lucide-react'
+import { ExternalLink, LayoutList, Lightbulb, Link2, Loader2, Unlink } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
   DropdownMenu,
@@ -22,6 +22,7 @@ export function ProjectSourceIdeaChip({
   loading,
   onLinked,
   onUnlinked,
+  onOpenIdeasSection,
 }: {
   projectId: string
   projectName: string
@@ -30,6 +31,8 @@ export function ProjectSourceIdeaChip({
   loading?: boolean
   onLinked: (idea: IdeaApi) => void
   onUnlinked: () => void
+  /** Opens the project's Ideas section (adding it to the menu when it was removed). */
+  onOpenIdeasSection?: () => void
 }) {
   const navigate = useNavigate()
   const { addToast } = useToast()
@@ -124,15 +127,23 @@ export function ProjectSourceIdeaChip({
               <span className="truncate">{idea.title}</span>
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          {onOpenIdeasSection ? (
+            <DropdownMenuItem onClick={onOpenIdeasSection}>
+              <LayoutList className="mr-2 h-4 w-4" />
+              Manage ideas
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem onClick={() => setLinkModalOpen(true)}>
             <Link2 className="mr-2 h-4 w-4" />
-            Change linked idea
+            Link another idea
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem disabled={unlinking} onClick={() => void handleUnlink()}>
-            <Unlink className="mr-2 h-4 w-4" />
-            Unlink idea
-          </DropdownMenuItem>
+          {linkedIdeas.length === 1 ? (
+            <DropdownMenuItem disabled={unlinking} onClick={() => void handleUnlink()}>
+              <Unlink className="mr-2 h-4 w-4" />
+              Unlink idea
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
 

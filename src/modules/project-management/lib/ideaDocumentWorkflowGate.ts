@@ -1,0 +1,374 @@
+import {
+  getWorkflow,
+  listWorkflowApprovals,
+  listWorkflows,
+  type WorkflowApprovalDto,
+  type WorkflowGraph,
+} from '@/lib/api/workflowAutomationApi'
+import {
+  readIdeaSectionAudience,
+  readIdeaSectionVisibility,
+  type IdeaSectionAudience,
+  type IdeaSectionVisibilityMap,
+} from '@/modules/project-management/lib/ideaPanelCatalog'
+import type { WacMembershipDto } from '@/lib/api/workspaceAccessControlApi'
+import type { WorkspaceOrgWorkspaceDto } from '@/lib/api/workspaceOrgApi'
+import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
+import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
+import {
+  emailDocumentKindFromTemplateCode,
+  parseEmailRecipientBy,
+  parseJobTitles,
+  type EmailRecipientBy,
+} from '@/modules/project-management/lib/urdReviewHeads'
+
+export const WORKFLOW_DOCUMENT_KINDS = ['URD', 'BRD', 'FSD'] as const
+export type WorkflowDocumentKind = (typeof WORKFLOW_DOCUMENT_KINDS)[number]
+
+export type IdeaDocumentWorkflowGate = {
+  /** True only while a published, active workflow still generates these documents. */
+  enforced: boolean
+  /** Kinds the current run has unlocked. Null means every template stays available. */
+  allowedKinds: WorkflowDocumentKind[] | null
+  /** The workflow could not be checked, so nothing is generated until it can be. */
+  unavailable?: boolean
+}
+
+type GraphNode = {
+  id: string
+  data?: {
+    kind?: string
+    label?: string
+    disabled?: boolean
+    config?: Record<string, string>
+  }
+}
+
+type GraphEdge = {
+  source: string
+  target: string
+  sourceHandle?: string | null
+}
+
+export type DocumentStage = {
+  kind: WorkflowDocumentKind
+  requiredApprovalIds: string[]
+}
+
+function asNodes(graph: WorkflowGraph): GraphNode[] {
+  return (graph.nodes ?? []).filter((node): node is GraphNode => {
+    return Boolean(node && typeof node === 'object' && typeof (node as GraphNode).id === 'string')
+  })
+}
+
+function asEdges(graph: WorkflowGraph): GraphEdge[] {
+  return (graph.edges ?? []).filter((edge): edge is GraphEdge => {
+    const row = edge as GraphEdge
+    return Boolean(row && typeof row.source === 'string' && typeof row.target === 'string')
+  })
+}
+
+function isSuccessEdge(edge: GraphEdge): boolean {
+  const handle = (edge.sourceHandle || 'out').trim()
+  return handle !== 'false' && handle !== 'body'
+}
+
+function successEdgesFrom(edges: GraphEdge[], sourceId: string): GraphEdge[] {
+  return edges.filter((edge) => edge.source === sourceId && isSuccessEdge(edge))
+}
+
+export function documentKindFromNode(node: GraphNode): WorkflowDocumentKind | null {
+  const config = node.data?.config ?? {}
+  const parameter = (config.parameter || '').trim().toUpperCase()
+  if (parameter === 'URD' || parameter === 'BRD' || parameter === 'FSD') return parameter
+  const operation = (config.actionOperation || '').trim().toLowerCase()
+  if (operation !== 'upload') return null
+  const label = (node.data?.label || '').toUpperCase()
+  if (label.includes('URD')) return 'URD'
+  if (label.includes('FSD')) return 'FSD'
+  if (label.includes('BRD')) return 'BRD'
+  return null
+}
+
+/** Name wins over the code prefix so an SRD stored as `brd-…` is not treated as a BRD. */
+export function templateDocumentKind(template: { name?: string | null; template_code?: string | null }): string {
+  const name = (template.name || '').trim().toUpperCase()
+  if (name.startsWith('URD')) return 'URD'
+  if (name.startsWith('FSD')) return 'FSD'
+  if (name.startsWith('SRD')) return 'SRD'
+  if (name.startsWith('BRD')) return 'BRD'
+  const code = (template.template_code || '').split('-', 1)[0]?.trim().toUpperCase()
+  return code || 'DOC'
+}
+
+function reachableFrom(startId: string, edges: GraphEdge[]): Set<string> {
+  const seen = new Set<string>()
+  const stack = [startId]
+  while (stack.length > 0) {
+    const id = stack.pop()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    for (const edge of successEdgesFrom(edges, id)) stack.push(edge.target)
+  }
+  return seen
+}
+
+function earliestJoin(branchStarts: string[], edges: GraphEdge[]): string | null {
+  if (branchStarts.length === 0) return null
+  const reaches = branchStarts.map((start) => reachableFrom(start, edges))
+  const seen = new Set<string>()
+  const queue = [branchStarts[0]]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || seen.has(current)) continue
+    seen.add(current)
+    if (reaches.every((reach) => reach.has(current))) return current
+    for (const edge of successEdgesFrom(edges, current)) queue.push(edge.target)
+  }
+  return null
+}
+
+/**
+ * Happy-path document order. A later document lists every approval that must
+ * succeed before it, including approvals sitting on parallel branches that join
+ * in front of it. The first document (URD) has none.
+ */
+export function documentStagesFromGraph(graph: WorkflowGraph): DocumentStage[] {
+  const nodes = asNodes(graph)
+  const edges = asEdges(graph)
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const trigger = nodes.find((node) => node.data?.kind === 'trigger') ?? nodes[0]
+  if (!trigger) return []
+  const stages: DocumentStage[] = []
+  const seen = new Set<string>()
+
+  function walk(id: string, required: string[], stop: Set<string>): string[] {
+    if (seen.has(id) || stop.has(id)) return []
+    seen.add(id)
+    const node = byId.get(id)
+    if (!node || node.data?.disabled) {
+      return successEdgesFrom(edges, id).flatMap((edge) => walk(edge.target, required, stop))
+    }
+    if (node.data?.kind === 'parallel') {
+      const branches = successEdgesFrom(edges, id)
+      if (branches.length <= 1) {
+        return branches.flatMap((edge) => walk(edge.target, required, stop))
+      }
+      const join = earliestJoin(branches.map((edge) => edge.target), edges)
+      const joinStop = new Set(join ? [join] : [])
+      const branchApprovals = branches.flatMap((edge) => walk(edge.target, required, joinStop))
+      const afterJoin = join ? walk(join, [...required, ...branchApprovals], stop) : []
+      return [...branchApprovals, ...afterJoin]
+    }
+    const kind = documentKindFromNode(node)
+    if (kind && !stages.some((stage) => stage.kind === kind)) {
+      stages.push({ kind, requiredApprovalIds: [...required] })
+    }
+    const nextRequired = node.data?.kind === 'approval' ? [...required, id] : required
+    const found = node.data?.kind === 'approval' ? [id] : []
+    return [
+      ...found,
+      ...successEdgesFrom(edges, id).flatMap((edge) => walk(edge.target, nextRequired, stop)),
+    ]
+  }
+
+  walk(trigger.id, [], new Set())
+  return stages
+}
+
+/** Documents a published workflow allows before it has asked this idea for anything. */
+export function standingDocumentKinds(stages: DocumentStage[]): WorkflowDocumentKind[] | null {
+  const openers = stages
+    .filter((stage) => stage.requiredApprovalIds.length === 0)
+    .map((stage) => stage.kind)
+  return openers.length > 0 ? openers : null
+}
+
+export function documentKindsAllowedByWorkflows(
+  gates: { id: string; stages: DocumentStage[] }[],
+  approvals: WorkflowApprovalDto[],
+): IdeaDocumentWorkflowGate {
+  if (gates.length === 0) return { enforced: false, allowedKinds: null }
+  let allowed: WorkflowDocumentKind[] | null = null
+  for (const gate of gates) {
+    const hasAsked = approvals.some((row) => row.workflow_id === gate.id)
+    // A team branch that starts with its own approval does not block other ideas
+    // until that branch has actually asked. A workflow whose first document needs
+    // no prior approval (URD) applies as soon as it is published.
+    const kinds = hasAsked
+      ? allowedDocumentKinds(gate.stages, approvals, gate.id)
+      : standingDocumentKinds(gate.stages)
+    if (kinds === null) continue
+    allowed = allowed === null ? kinds : allowed.filter((kind) => kinds.includes(kind))
+  }
+  if (allowed === null) return { enforced: false, allowedKinds: null }
+  return { enforced: true, allowedKinds: allowed }
+}
+
+export function allowedDocumentKinds(
+  stages: DocumentStage[],
+  approvals: WorkflowApprovalDto[],
+  workflowId: string,
+): WorkflowDocumentKind[] | null {
+  const rows = approvals.filter((row) => row.workflow_id === workflowId)
+  // No rows yet: the caller decides whether the published stages still apply.
+  if (rows.length === 0) return null
+  const latestRunId = rows.reduce<{ id: string | null; at: string }>((latest, row) => {
+    const at = row.requested_at ?? ''
+    return !latest.id || at > latest.at ? { id: row.run_id, at } : latest
+  }, { id: null, at: '' }).id
+  const runRows = latestRunId ? rows.filter((row) => row.run_id === latestRunId) : []
+  const approved = new Set(
+    runRows.filter((row) => row.status === 'approved').map((row) => row.node_id),
+  )
+  const allowed: WorkflowDocumentKind[] = []
+  for (const stage of stages) {
+    if (!stage.requiredApprovalIds.every((id) => approved.has(id))) break
+    allowed.push(stage.kind)
+  }
+  return allowed
+}
+
+export type IdeaWorkflowAudience = {
+  by: EmailRecipientBy
+  values: string[]
+}
+
+export type PublishedIdeaSectionPolicy = {
+  map: IdeaSectionVisibilityMap
+  /** Who still sees hidden sections and which diagram types; null keeps the default rule. */
+  sectionAudience: IdeaSectionAudience | null
+  audience: IdeaWorkflowAudience
+  requestsApproval: boolean
+  /** Document kinds whose row shows Request for Approval. Empty parameter means URD. */
+  requestDocumentKinds: string[]
+  /** The workflow the map comes from: its run for an idea may change sections (Set Section Visibility). */
+  workflowId: string
+}
+
+export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | undefined): string[] {
+  const kinds: string[] = []
+  for (const node of asNodes(graph ?? {})) {
+    const config = node.data?.config ?? {}
+    if (config.actionOperation !== 'Request for Approval') continue
+    const fromParameter = emailDocumentKindFromTemplateCode(config.parameter)
+    const label = (node.data?.label || '').toUpperCase()
+    const fromLabel = (['URD', 'BRD', 'FSD', 'SRD'] as const).find((kind) => label.includes(kind))
+    const kind = fromParameter || fromLabel || 'URD'
+    if (!kinds.includes(kind)) kinds.push(kind)
+  }
+  return kinds
+}
+
+const OPEN_AUDIENCE: IdeaWorkflowAudience = { by: 'jobTitle', values: [] }
+
+function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkflowAudience {
+  const trigger = asNodes(graph ?? {}).find((node) => {
+    const config = node.data?.config ?? {}
+    return node.data?.kind === 'trigger'
+      && config.triggerType === 'Event'
+      && config.triggerDomain === 'AI Idea & Prioritization'
+      && config.triggerEntity === 'Idea'
+  })
+  const config = trigger?.data?.config ?? {}
+  return {
+    by: parseEmailRecipientBy(config.audienceBy),
+    values: parseJobTitles(config.audienceValues),
+  }
+}
+
+/**
+ * Newest published Active workflow that stored an Idea section map.
+ * Workflows with no map are skipped, so a team branch cannot wipe the page.
+ * Missing map means every section stays visible.
+ * An empty audience includes everyone. Badges limit the map to matching people.
+ */
+export async function loadPublishedIdeaSectionPolicy(
+  workspaceId: string | null | undefined,
+): Promise<PublishedIdeaSectionPolicy> {
+  const workflows = await listWorkflows(workspaceId?.trim() || undefined)
+  const active = workflows.filter((workflow) => workflow.is_published && workflow.status === 'Active')
+  for (const summary of active) {
+    try {
+      const full = await getWorkflow(summary.id)
+      const published = full.published_definition ?? full.definition
+      const map = readIdeaSectionVisibility(published?.ideaSections)
+      if (Object.keys(map).length > 0) {
+        const requestDocumentKinds = requestDocumentKindsFromGraph(published)
+        return {
+          map,
+          sectionAudience: readIdeaSectionAudience(published?.ideaSectionAudience),
+          audience: ideaTriggerAudience(published),
+          requestsApproval: requestDocumentKinds.length > 0,
+          requestDocumentKinds,
+          workflowId: summary.id,
+        }
+      }
+    } catch {
+      // A workflow that cannot be loaded does not decide the menu.
+    }
+  }
+  return { map: {}, sectionAudience: null, audience: OPEN_AUDIENCE, requestsApproval: false, requestDocumentKinds: [], workflowId: '' }
+}
+
+/**
+ * The group (non-personal) workspaces the viewer is an active member of, by name: what a
+ * "Set Section Visibility" audience "By Workspace" is matched against.
+ */
+export async function loadViewerGroupWorkspaceNames(subjectId: string | null | undefined): Promise<string[]> {
+  if (!subjectId) return []
+  const [memberships, directory] = await Promise.all([
+    fetchSubjectMembershipsCached(subjectId, { activeOnly: true }).catch((): { items: WacMembershipDto[] } => ({ items: [] })),
+    fetchAllWorkspaceOrgWorkspacesCached().catch((): WorkspaceOrgWorkspaceDto[] => []),
+  ])
+  const byId = new Map(directory.map((workspace) => [workspace.id, workspace]))
+  const names = new Set<string>()
+  for (const row of memberships.items ?? []) {
+    const workspace = byId.get(row.workspace_id)
+    if (!workspace || workspace.tenant_mode === 'personal') continue
+    if (workspace.name?.trim()) names.add(workspace.name.trim())
+  }
+  return [...names]
+}
+
+export async function loadPublishedIdeaSectionVisibility(
+  workspaceId: string | null | undefined,
+): Promise<IdeaSectionVisibilityMap> {
+  const policy = await loadPublishedIdeaSectionPolicy(workspaceId)
+  return policy.map
+}
+
+export async function loadIdeaDocumentWorkflowGate(
+  workspaceId: string | null | undefined,
+  ideaId: string,
+): Promise<IdeaDocumentWorkflowGate> {
+  const workflows = await listWorkflows(workspaceId?.trim() || undefined)
+  const active = workflows.filter((workflow) => workflow.is_published && workflow.status === 'Active')
+  const definitions = await Promise.all(active.map(async (workflow) => {
+    try {
+      return await getWorkflow(workflow.id)
+    } catch {
+      return null
+    }
+  }))
+  const gates = definitions.flatMap((workflow) => {
+    if (!workflow) return []
+    const stages = documentStagesFromGraph(workflow.published_definition ?? workflow.definition)
+    return stages.length > 0 ? [{ id: workflow.id, stages }] : []
+  })
+  if (gates.length === 0) return { enforced: false, allowedKinds: null }
+  const approvals = await listWorkflowApprovals({
+    subjectContextKey: 'idea_id',
+    subjectContextValue: ideaId,
+    limit: 200,
+  })
+  return documentKindsAllowedByWorkflows(gates, approvals)
+}
+
+export function templateAllowedByWorkflow(
+  template: { name?: string | null; template_code?: string | null },
+  gate: IdeaDocumentWorkflowGate,
+): boolean {
+  if (!gate.enforced || gate.allowedKinds === null) return true
+  return gate.allowedKinds.includes(templateDocumentKind(template) as WorkflowDocumentKind)
+}

@@ -22,6 +22,7 @@ import { OAuthCallbackPage } from './pages/OAuthCallbackPage'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { OnboardingStatusPage } from './pages/OnboardingStatusPage'
 import { VerifyEmailPage } from './pages/VerifyEmailPage'
+import { VerifySecondaryEmailPage } from './pages/VerifySecondaryEmailPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { TenantDeepLinkPage } from './pages/TenantDeepLinkPage'
 import { AccessDeniedPage } from './pages/AccessDeniedPage'
@@ -45,24 +46,39 @@ function readStoredTenantForRouting(): StoredTenantSelection | null {
   }
 }
 
+const DEFAULT_HOME_PATH = '/idea-backlog'
+
+/** Projects used to be the app home. Treat that list route as the new home. */
+function isLegacyProjectsHome(route: string): boolean {
+  const bare = route.split('?')[0]?.split('#')[0]?.replace(/\/$/, '') ?? ''
+  const unscoped = bare.replace(/^\/w\/[^/]+/, '') || '/'
+  return unscoped === '/projects'
+}
+
 function resolveDefaultHomePath(): string {
-  if (typeof window === 'undefined') return '/projects'
+  if (typeof window === 'undefined') return DEFAULT_HOME_PATH
 
   const tenant = readStoredTenantForRouting()
-  const scopedProjects = workspaceScopedPath(
+  const scopedHome = workspaceScopedPath(
     tenant?.slug,
-    '/projects',
+    DEFAULT_HOME_PATH,
     tenant?.workspaceId,
   )
 
   try {
     const stored = localStorage.getItem(LAST_ROUTE_STORAGE_KEY)?.trim()
-    if (stored && stored.startsWith('/') && stored !== '/' && !stored.startsWith('/login')) {
+    if (
+      stored &&
+      stored.startsWith('/') &&
+      stored !== '/' &&
+      !stored.startsWith('/login') &&
+      !isLegacyProjectsHome(stored)
+    ) {
       const path = stored.startsWith('/w/')
-        ? stored.replace(/^\/w\/[^/]+/, '') || '/projects'
+        ? stored.replace(/^\/w\/[^/]+/, '') || DEFAULT_HOME_PATH
         : stored
       if (path.startsWith('/workspace-management')) {
-        return scopedProjects
+        return scopedHome
       }
       return workspaceScopedPath(tenant?.slug, path, tenant?.workspaceId)
     }
@@ -71,10 +87,10 @@ function resolveDefaultHomePath(): string {
   }
 
   if (tenant?.tenantMode === 'organization' && tenant.slug && !isAllWorkspacesRouteScope(tenant.workspaceId)) {
-    return scopedProjects
+    return scopedHome
   }
 
-  return scopedProjects
+  return scopedHome
 }
 
 const queryClient = new QueryClient({
@@ -103,6 +119,7 @@ function App() {
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/verify-email" element={<VerifyEmailPage />} />
                 <Route path="/verify_email" element={<VerifyEmailPage />} />
+                <Route path="/verify-secondary-email" element={<VerifySecondaryEmailPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
 
                 <Route element={<ProtectedRoute />}>

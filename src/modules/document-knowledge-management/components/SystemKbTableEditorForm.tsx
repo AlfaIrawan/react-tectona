@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { AbbreviationTableEditor } from './AbbreviationTableEditor'
 import { Switch } from '@/components/ui/switch'
 import {
   addSystemKbTableRow,
@@ -34,6 +35,8 @@ export type ApplicationCatalogScanProgress = {
 }
 
 type SystemKbTableEditorFormProps = {
+  workspaceId?: string
+  entryId?: string | null
   model: SystemKbTableEditModel
   onChange: (next: SystemKbTableEditModel) => void
   onScanApplications?: (
@@ -66,7 +69,7 @@ function parseApplicationTags(value: string | undefined): string[] {
     })
 }
 
-export function SystemKbTableEditorForm({ model, onChange, onScanApplications }: SystemKbTableEditorFormProps) {
+export function SystemKbTableEditorForm({ model, onChange, onScanApplications, workspaceId, entryId }: SystemKbTableEditorFormProps) {
   const spec = getSystemKbTableSpec(model.specId)
   const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null)
   const [rowDraft, setRowDraft] = useState<Record<string, string> | null>(null)
@@ -185,6 +188,10 @@ export function SystemKbTableEditorForm({ model, onChange, onScanApplications }:
     && APPLICATION_REQUIRED_FIELDS.has(field)
     && !rowDraft?.[field]?.trim()
   )
+
+  if (model.specId === 'singkatan') {
+    return <AbbreviationTableEditor model={model} onChange={onChange} workspaceId={workspaceId} entryId={entryId} />
+  }
 
   return (
     <div className="space-y-3 rounded-xl border border-border bg-background/80 p-3">

@@ -152,6 +152,54 @@ export async function fetchDocumentsLinkedToIdea(input: {
   return Array.from(byId.values())
 }
 
+/**
+ * Like `fetchDocumentsLinkedToIdea`, but for several ideas at once: one pass over the
+ * workspace document list plus the project's own documents, grouped by idea id. Used where a
+ * project carries many ideas, so the cost does not grow with the number of ideas.
+ */
+export async function fetchDocumentsGroupedByIdea(input: {
+  ideaIds: string[]
+  projectId?: string | null
+  workspaceId?: string | null
+}): Promise<Map<string, DocumentResponse[]>> {
+  const grouped = new Map<string, Map<string, DocumentResponse>>()
+  for (const ideaId of input.ideaIds) grouped.set(ideaId, new Map())
+  if (input.ideaIds.length === 0) return new Map()
+
+  const absorb = (doc: DocumentResponse) => {
+    for (const ideaId of input.ideaIds) {
+      if (isDocumentLinkedToIdea(doc, ideaId)) grouped.get(ideaId)?.set(doc.id, doc)
+    }
+  }
+
+  let page = 1
+  try {
+    while (true) {
+      const response = await listAllDocuments({
+        workspace_id: input.workspaceId ?? undefined,
+        page,
+        page_size: DOCUMENTS_PAGE_SIZE,
+      })
+      response.items.forEach(absorb)
+      const total = response.total ?? response.items.length
+      if (page * DOCUMENTS_PAGE_SIZE >= total || response.items.length < DOCUMENTS_PAGE_SIZE) break
+      page += 1
+    }
+  } catch {
+    // Global list may be unavailable for this workspace filter; the project pass below still runs.
+  }
+
+  if (input.projectId) {
+    try {
+      ;(await paginateProjectDocuments(input.projectId)).forEach(absorb)
+    } catch {
+      // Best-effort enrichment for the project's own documents.
+    }
+  }
+
+  return new Map(Array.from(grouped, ([ideaId, docs]) => [ideaId, Array.from(docs.values())]))
+}
+
 export async function syncIdeaDocumentsToProjectFolder(input: {
   project: { id: string; name: string }
   ideaId: string

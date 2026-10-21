@@ -22,7 +22,7 @@ import {
   type RepositoryItem,
 } from '@/modules/document-knowledge-management/lib/documentRepositoryPresentation'
 import { DocumentOnlyOfficeEditor } from '@/modules/document-knowledge-management/components/DocumentOnlyOfficeEditor'
-import { fetchDocumentsLinkedToIdea } from '../lib/ideaLinkedDocuments'
+import { fetchDocumentsGroupedByIdea } from '../lib/ideaLinkedDocuments'
 import { ensureProjectDocumentFolder } from '../lib/ensureProjectDocumentFolder'
 import { fetchIdentityDisplayNameMap, resolveActorDisplayName } from '../lib/projectMemberIdentity'
 import { archiveDocumentManual, filterActiveRepositoryItems } from '../lib/projectArchivedDocuments'
@@ -58,6 +58,8 @@ const listToolbarFocusClass =
 interface ProjectDocsPanelProps {
   project: Project
   linkedIdeaId?: string | null
+  /** Every idea linked to the project; their documents are merged at the Docs root. */
+  linkedIdeaIds?: string[]
   linkedIdeaTitle?: string | null
   linkedIdeaDescription?: string | null
   linkedIdeaWorkspaceId?: string | null
@@ -75,6 +77,7 @@ type FolderStackEntry = {
 export function ProjectDocsPanel({
   project,
   linkedIdeaId,
+  linkedIdeaIds,
   linkedIdeaTitle,
   linkedIdeaDescription,
   linkedIdeaWorkspaceId,
@@ -85,6 +88,8 @@ export function ProjectDocsPanel({
 }: ProjectDocsPanelProps) {
   const panelMeta = getProjectPanelCatalogEntry('docs')
   const PanelIcon = panelMeta.icon
+  // Stable string key so the loader only re-runs when the set of linked ideas changes.
+  const linkedIdeaIdsKey = (linkedIdeaIds?.length ? linkedIdeaIds : linkedIdeaId ? [linkedIdeaId] : []).join(',')
   const { addToast } = useToast()
   const bumpDocsRefresh = useProjectDocsStore((state) => state.bumpRefresh)
   const refreshVersion = useProjectDocsStore((state) => state.refreshVersion)
@@ -253,13 +258,15 @@ export function ProjectDocsPanel({
       const items = allDocumentItems.map((doc) => mapDocumentToRepositoryItem(doc, project.name))
       let activeItems = filterActiveRepositoryItems(items, project.id)
 
-      if (linkedIdeaId && isAtProjectRoot) {
+      const ideaIdsToMerge = linkedIdeaIdsKey ? linkedIdeaIdsKey.split(',') : []
+      if (ideaIdsToMerge.length > 0 && isAtProjectRoot) {
         try {
-          const ideaLinkedDocs = await fetchDocumentsLinkedToIdea({
-            ideaId: linkedIdeaId,
+          const grouped = await fetchDocumentsGroupedByIdea({
+            ideaIds: ideaIdsToMerge,
             projectId: project.id,
             workspaceId: linkedIdeaWorkspaceId ?? project.workspaceId,
           })
+          const ideaLinkedDocs = Array.from(grouped.values()).flat()
           const existingIds = new Set(activeItems.map((item) => item.id))
           for (const doc of ideaLinkedDocs) {
             if (existingIds.has(doc.id)) continue
@@ -304,7 +311,7 @@ export function ProjectDocsPanel({
     } finally {
       setLoading(false)
     }
-  }, [addToast, archiveRevision, currentFolder, isAtProjectRoot, linkedIdeaId, linkedIdeaWorkspaceId, project.id, project.name, project.workspaceId])
+  }, [addToast, archiveRevision, currentFolder, isAtProjectRoot, linkedIdeaIdsKey, linkedIdeaWorkspaceId, project.id, project.name, project.workspaceId])
 
   useEffect(() => {
     if (!currentFolder) return

@@ -43,7 +43,7 @@ export type WorkflowNodeData = {
   _issue?: 'error' | 'warning'
 }
 
-export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
+export type WorkflowFieldType = 'text' | 'textarea' | 'select' | 'member' | 'actionTarget' | 'approvalTarget' | 'approvalMembers' | 'emailRecipients' | 'emailBody' | 'triggerDomain' | 'triggerEntity' | 'triggerEvent' | 'actionDomain' | 'actionEntity' | 'actionOperation'
 
 export type WorkflowFieldDef = {
   key: string
@@ -111,7 +111,7 @@ export const WORKFLOW_TRIGGER_EVENT_CATALOG = {
     Compliance: ['Exception Created', 'Evidence Missing', 'Status Changed'],
   },
   'Document & Knowledge': {
-    Document: ['Uploaded', 'Updated', 'Version Published', 'Archived'],
+    Document: ['Review Requested', 'Uploaded', 'Updated', 'Version Published', 'Archived'],
     'Knowledge Article': ['Created', 'Updated', 'Published', 'Review Due'],
     'Meeting Note': ['Created', 'Decision Captured', 'Follow-up Created'],
     'Artifact Link': ['Created', 'Removed', 'Target Changed'],
@@ -202,7 +202,7 @@ export const WORKFLOW_ACTION_CATALOG = {
     Compliance: ['Create Exception', 'Request Evidence', 'Escalate'],
   },
   'Document & Knowledge': {
-    Document: ['Upload', 'Update Metadata', 'Publish Version', 'Archive'],
+    Document: ['Set Status', 'Upload', 'Request for Approval', 'Update Metadata', 'Publish Version', 'Archive'],
     'Knowledge Article': ['Create', 'Update', 'Publish', 'Request Review'],
     'Meeting Note': ['Create', 'Add Decision', 'Create Follow-up'],
     'Artifact Link': ['Link', 'Unlink', 'Update Target'],
@@ -214,7 +214,7 @@ export const WORKFLOW_ACTION_CATALOG = {
     'AI-generated Task': ['Approve', 'Reject', 'Create Task'],
   },
   'AI Idea & Prioritization': {
-    Idea: ['Score', 'Prioritize', 'Approve', 'Convert to Project', 'Archive'],
+    Idea: ['Score', 'Prioritize', 'Approve', 'Convert to Project', 'Archive', 'Set Section Visibility'],
     Recommendation: ['Approve', 'Reject', 'Execute'],
     'Decision Matrix': ['Update', 'Publish'],
   },
@@ -245,6 +245,9 @@ export const WORKFLOW_ACTION_CATALOG = {
     'Alert Rule': ['Create', 'Update', 'Enable', 'Disable'],
   },
 } as const
+
+/** Document statuses a workflow may set (lookup_document_status in Document & Knowledge). */
+export const WORKFLOW_DOCUMENT_STATUSES = ['draft', 'in_review', 'approved', 'published', 'archived'] as const
 
 export const WORKFLOW_ACTION_DOMAINS = Object.keys(WORKFLOW_ACTION_CATALOG) as Array<keyof typeof WORKFLOW_ACTION_CATALOG>
 
@@ -326,6 +329,7 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     accent: '#f59e0b',
     chipClass: 'bg-amber-50 text-amber-600 ring-amber-100',
     fields: [
+      { key: 'condition', label: 'Condition', type: 'text', placeholder: "origin_teams == 'operations'" },
       { key: 'field', label: 'Field', type: 'select', options: WORKFLOW_CONDITION_FIELDS },
       { key: 'operator', label: 'Operator', type: 'select', options: WORKFLOW_CONDITION_OPERATORS },
       { key: 'value', label: 'Value', type: 'text', placeholder: 'e.g. High, 80, or Today' },
@@ -339,8 +343,25 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     icon: ShieldCheck,
     accent: '#f97316',
     chipClass: 'bg-orange-50 text-orange-600 ring-orange-100',
-    fields: [{ key: 'approver', label: 'Approver', type: 'text', placeholder: 'e.g. Finance Manager' }],
-    defaultConfig: { approver: '' },
+    // Approvers use the same badge list as email recipients: name, job title,
+    // department, team, or role. Older nodes still store approverRole / approverTeam.
+    fields: [
+      { key: 'approverRole', label: 'Approver', type: 'approvalTarget' },
+      { key: 'approver', label: 'Named approver (optional)', type: 'approvalMembers' },
+      { key: 'quorum', label: 'When there are several', type: 'select', options: ['all', 'any'] },
+      { key: 'allowSelfApproval', label: 'Requester may approve', type: 'select', options: ['no', 'yes'] },
+      { key: 'subjectLabel', label: 'What is being approved', type: 'text', placeholder: 'e.g. URD {{idea_title}}' },
+      { key: 'jobTitles', label: 'Email recipients', type: 'emailRecipients' },
+      { key: 'emailBodySource', label: 'Email content', type: 'emailBody' },
+    ],
+    defaultConfig: {
+      approverRole: '',
+      approverTeam: '',
+      approver: '',
+      quorum: 'all',
+      allowSelfApproval: 'no',
+      subjectLabel: '',
+    },
   },
   assignOwner: {
     kind: 'assignOwner',
@@ -359,8 +380,8 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
     icon: Sparkles,
     accent: '#a855f7',
     chipClass: 'bg-purple-50 text-purple-600 ring-purple-100',
-    fields: [{ key: 'prompt', label: 'Prompt / Task', type: 'textarea', placeholder: 'Describe the AI task…' }],
-    defaultConfig: { prompt: '' },
+    fields: [{ key: 'prompt', label: 'Prompt / Task', type: 'textarea', placeholder: 'e.g. Summarise {{decision_note}} as a list of fixes for the idea owner' }],
+    defaultConfig: { prompt: '', outputKey: '', inputKeys: '', inputDocument: '' },
   },
   delay: {
     kind: 'delay',
@@ -446,17 +467,31 @@ export function workflowNodeSummary(data: WorkflowNodeData): string {
       if (c.triggerType === 'Webhook') return `${c.triggerType} · ${c.webhookEvent || 'Select source'}`
       return 'Manual trigger'
     case 'action':
+      if (c.actionOperation === 'Request for Approval') {
+        const kind = (c.parameter || '').trim()
+        return kind ? `Waits for the idea owner · ${kind}` : 'Waits for the idea owner'
+      }
       if (c.actionDomain && c.actionEntity && c.actionOperation) return `${c.actionDomain} · ${c.actionEntity} · ${c.actionOperation}`
       return c.target ? `${c.actionType} → ${ACTION_TARGET_LABELS[c.target] ?? c.target}` : c.actionType || 'Configure action'
     case 'ifElse':
       return c.field && c.operator && c.value
         ? `${c.field} ${c.operator} ${c.value}`
         : c.condition || 'Set a condition'
-    case 'approval':
-      return c.approver ? `Approver: ${c.approver}` : 'Assign an approver'
+    case 'approval': {
+      const who = (c.approverValues || c.approverTeam || c.approverRole || c.approver || '').split('\n').filter(Boolean)[0]
+      return who ? who : 'Assign an approver'
+    }
     case 'assignOwner':
       return c.ownerId ? `Assign to ${c.ownerId}` : 'Select a workspace member'
     case 'aiProcess':
+      if (isAiChoiceMode(c)) {
+        const options = aiChoiceOptions(c)
+        return options.length ? `Picks: ${options.join(' / ')}` : 'Add the options to pick from'
+      }
+      if (isAiFieldsMode(c)) {
+        const fields = aiFieldsOf(c).filter((field) => field.name.trim())
+        return fields.length ? `Fills: ${fields.map((field) => aiOutputKey(field.name, '', 'field')).join(', ')}` : 'Add the fields to fill'
+      }
       return c.prompt ? c.prompt.slice(0, 60) : 'Configure AI task'
     case 'delay':
       return c.duration ? `Wait ${c.duration}` : 'Set a duration'
@@ -469,4 +504,111 @@ export function workflowNodeSummary(data: WorkflowNodeData): string {
     case 'end':
       return c.outcome || 'Stop'
   }
+}
+
+
+// --- AI Process -----------------------------------------------------------------------------------
+// Mirrors workflow-automation engine/context_values.py: output_key, ai_choices, choice_handle.
+
+/** The name an AI Process output is kept under (ai.<name>): from its Output name, label or id. */
+export function aiOutputKey(outputKey: string | undefined, label: string | undefined, id: string): string {
+  for (const raw of [outputKey, label, id]) {
+    const key = (raw ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    if (key) return key.slice(0, 64)
+  }
+  return 'ai_output'
+}
+
+/** Pick a branch (Tahap 2): the AI chooses one of the node's options and the run follows it. */
+export function isAiChoiceMode(config: Record<string, string> | undefined): boolean {
+  return (config?.outputFormat ?? '').trim() === 'choice'
+}
+
+/** The node's options, as written, each once (case and spacing ignored), at most six. */
+export function aiChoiceOptions(config: Record<string, string> | undefined): string[] {
+  const options: string[] = []
+  for (const raw of (config?.choices ?? '').split('\n')) {
+    const option = raw.split(/\s+/).filter(Boolean).join(' ')
+    if (option && !options.some((item) => item.toLowerCase() === option.toLowerCase())) options.push(option)
+  }
+  return options.slice(0, 6)
+}
+
+export const AI_UNCERTAIN_HANDLE = 'uncertain'
+export const AI_UNCERTAIN_LABEL = 'Not sure'
+
+/** The edge handle of one option. */
+export function aiChoiceHandle(option: string): string {
+  return `choice-${aiOutputKey(option, '', 'option')}`
+}
+
+/** Every branch handle of a Pick a branch node: one per option, then Not sure. */
+export function aiChoiceBranches(config: Record<string, string> | undefined): Array<{ id: string; label: string }> {
+  return [
+    ...aiChoiceOptions(config).map((option) => ({ id: aiChoiceHandle(option), label: option })),
+    { id: AI_UNCERTAIN_HANDLE, label: AI_UNCERTAIN_LABEL },
+  ]
+}
+
+/** Fields (Tahap 3): the AI fills named, typed fields; later nodes read ai.<name>.data.<field>. */
+export type AiFieldType = 'text' | 'number' | 'boolean' | 'options' | 'list'
+
+export type AiField = {
+  name: string
+  type: AiFieldType
+  /** For options: the allowed values, comma separated. */
+  options?: string
+  required?: boolean
+  description?: string
+}
+
+export const AI_FIELD_TYPES: Array<{ value: AiFieldType; label: string }> = [
+  { value: 'text', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'boolean', label: 'Yes / No' },
+  { value: 'options', label: 'One of' },
+  { value: 'list', label: 'List' },
+]
+
+export function isAiFieldsMode(config: Record<string, string> | undefined): boolean {
+  return (config?.outputFormat ?? '').trim() === 'fields'
+}
+
+/** The fields as the builder stores them (config.fields, a JSON list). */
+export function aiFieldsOf(config: Record<string, string> | undefined): AiField[] {
+  try {
+    const parsed = JSON.parse(config?.fields || '[]') as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+      .map((item) => ({
+        name: String(item.name ?? ''),
+        type: (AI_FIELD_TYPES.some((type) => type.value === item.type) ? item.type : 'text') as AiFieldType,
+        options: typeof item.options === 'string' ? item.options : Array.isArray(item.options) ? item.options.join(', ') : '',
+        required: Boolean(item.required),
+        description: String(item.description ?? ''),
+      }))
+  } catch {
+    return []
+  }
+}
+
+/** What later nodes can read from an AI Process node, by path under the run (ai.<name>...). */
+export function aiOutputPaths(node: { id: string; data: { label: string; config: Record<string, string> } }): Array<{ path: string; label: string }> {
+  const key = aiOutputKey(node.data.config.outputKey, node.data.label, node.id)
+  if (isAiChoiceMode(node.data.config)) {
+    return [
+      { path: `ai.${key}.choice`, label: `${node.data.label}: choice` },
+      { path: `ai.${key}.answer`, label: `${node.data.label}: reason` },
+    ]
+  }
+  if (isAiFieldsMode(node.data.config)) {
+    return aiFieldsOf(node.data.config)
+      .filter((field) => field.name.trim())
+      .map((field) => {
+        const name = aiOutputKey(field.name, '', 'field')
+        return { path: `ai.${key}.data.${name}`, label: `${node.data.label}: ${name}` }
+      })
+  }
+  return [{ path: `ai.${key}.answer`, label: node.data.label }]
 }

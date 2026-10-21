@@ -47,12 +47,12 @@ export interface SsoBootstrapTokenResponse {
   refresh_token?: string
 }
 
-export async function fetchTokenAudit(accessToken: string, limit = 80, userId?: string): Promise<TokenTelemetryEvent[]> {
+export async function fetchTokenAudit(accessToken: string, limit = 500, userId?: string, offset = 0): Promise<TokenTelemetryEvent[]> {
   const runtimeBase = tectonaAgentRuntimeApiBase(
     import.meta.env.VITE_TECTONA_AGENT_RUNTIME_API_URL as string | undefined,
   )
   const res = await identityFetch(
-    `${runtimeBase}/v1/agent/llm-usage?limit=${encodeURIComponent(String(limit))}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`,
+    `${runtimeBase}/v1/agent/llm-usage?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`,
     { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } },
   )
   if (!res.ok) throw new Error(`LLM usage audit failed (${res.status})`)
@@ -97,6 +97,21 @@ export async function fetchTokenAudit(accessToken: string, limit = 80, userId?: 
     occurredAt: entry.occurred_at,
     tokenPreview: `${entry.total_tokens ?? 0} LLM tokens`,
   }))
+}
+
+/** Retrieve the complete personal audit history for date filters and the heatmap. */
+export async function fetchTokenAuditHistory(accessToken: string, userId: string): Promise<TokenTelemetryEvent[]> {
+  const pageSize = 500
+  const history: TokenTelemetryEvent[] = []
+  const seenIds = new Set<string>()
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await fetchTokenAudit(accessToken, pageSize, userId, offset)
+    if (page.length && page.every((event) => seenIds.has(event.id))) break
+    page.forEach((event) => seenIds.add(event.id))
+    history.push(...page)
+    if (page.length < pageSize) break
+  }
+  return history
 }
 
 /**
@@ -157,11 +172,18 @@ export interface OidcUserInfo {
   email?: string
   display_name?: string | null
   job_title?: string | null
+  department?: string | null
+  employee_number?: string | null
   organizational_unit?: string | null
+  office_location?: string | null
+  secondary_email?: string | null
+  secondary_email_verified?: boolean
+  secondary_email_verification_sent?: boolean
   account_status?: string | null
   created_at?: string | null
   email_verified?: boolean
   roles?: string[]
+  microsoft_sso?: boolean
 }
 
 export function normalizeLoginEmail(input: string): string {
@@ -351,6 +373,42 @@ export async function fetchUserInfo(accessToken: string): Promise<OidcUserInfo> 
   return res.json() as Promise<OidcUserInfo>
 }
 
+export async function updateUserProfile(input: {
+  accessToken: string
+  displayName: string
+  jobTitle?: string
+  department?: string
+  employeeNumber?: string
+  organizationalUnit?: string
+  officeLocation?: string
+  secondaryEmail?: string
+}): Promise<OidcUserInfo> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/userinfo`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      display_name: input.displayName.trim(),
+      job_title: input.jobTitle?.trim() || null,
+      department: input.department?.trim() || null,
+      employee_number: input.employeeNumber?.trim() || null,
+      organizational_unit: input.organizationalUnit?.trim() || null,
+      office_location: input.officeLocation?.trim() || null,
+      secondary_email: input.secondaryEmail?.trim() || null,
+    }),
+  })
+  const raw = await res.text().catch(() => '')
+  if (!res.ok) {
+    try {
+      const payload = JSON.parse(raw) as { error?: { message?: string; error_description?: string }; detail?: string }
+      throw new Error(payload.error?.error_description || payload.error?.message || payload.detail || 'Unable to save profile changes.')
+    } catch (error) {
+      if (error instanceof Error && error.message !== 'Unable to save profile changes.') throw error
+      throw new Error('Unable to save profile changes.')
+    }
+  }
+  return JSON.parse(raw) as OidcUserInfo
+}
+
 export type RegisterResponse = {
   subject_id: string
   email: string
@@ -501,6 +559,52 @@ export async function verifyEmailToken(token: string): Promise<VerifyEmailRespon
     throw new Error('Email verification failed. Try the latest confirmation link, or sign in and resend the email.')
   }
   return res.json() as Promise<VerifyEmailResponse>
+}
+
+export type VerifySecondaryEmailResponse = {
+  verified: boolean
+  email: string
+}
+
+export async function verifySecondaryEmailToken(token: string): Promise<VerifySecondaryEmailResponse> {
+  const q = new URLSearchParams({ token })
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/verify-secondary-email?${q}`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    const payload = extractErrorPayload(text)
+    const code = typeof payload?.error === 'string' ? payload.error : typeof payload?.detail === 'string' ? payload.detail : ''
+    if (res.status === 400 || /invalid_or_expired_token|secondary_email_no_longer_current/i.test(code)) {
+      throw new Error('This secondary email link is invalid, expired, or no longer current. Save the address again to request a new link.')
+    }
+    throw new Error('Secondary email verification failed. Please request a new verification link.')
+  }
+  return res.json() as Promise<VerifySecondaryEmailResponse>
+}
+
+export type ResendSecondaryEmailVerificationResponse = {
+  sent: boolean
+  message: string
+}
+
+export async function resendSecondaryEmailVerification(
+  accessToken: string,
+): Promise<ResendSecondaryEmailVerificationResponse> {
+  const res = await identityFetch(`${IDENTITY_API_BASE}/v1/email/secondary-verification`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+  })
+  const raw = await res.text().catch(() => '')
+  if (!res.ok) {
+    const payload = extractErrorPayload(raw)
+    const detail = typeof payload?.error === 'string' ? payload.error : raw
+    if (/already_verified/i.test(detail)) throw new Error('This secondary email is already verified.')
+    if (/not_configured/i.test(detail)) throw new Error('Add a secondary email before requesting verification.')
+    if (/resend_throttled/i.test(detail)) throw new Error('Please wait a minute before requesting another verification email.')
+    throw new Error('Unable to resend the secondary email verification link.')
+  }
+  return JSON.parse(raw) as ResendSecondaryEmailVerificationResponse
 }
 
 export async function resendDomainOnboardingVerificationEmail(input: {

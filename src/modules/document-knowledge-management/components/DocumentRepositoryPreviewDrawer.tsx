@@ -5,6 +5,7 @@ import { renderAsync } from 'docx-preview'
 import { ChevronLeft, ChevronRight, Eye, Loader2, Pencil, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { fixDocxPreviewCellDirection } from '@/lib/docxPreviewFixes'
 import { fetchDocumentPreviewPdfBlob } from '@/lib/api/documentKnowledgeApi'
 import { DocumentOnlyOfficeEditor } from './DocumentOnlyOfficeEditor'
 import {
@@ -376,6 +377,7 @@ export function DocumentRepositoryPreviewDrawer({
           renderEndnotes: true,
         })
         if (cancelled) return
+        fixDocxPreviewCellDirection(bodyContainer)
 
         const pages = bodyContainer.querySelectorAll(DOCX_PAGE_SELECTOR)
         const pageCount = pages.length > 0 ? pages.length : 1

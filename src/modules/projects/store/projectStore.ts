@@ -41,6 +41,13 @@ export interface Project {
   }[]
   status: ProjectStatus
   folderId?: string | null
+  /** Program this sub-project belongs to (one level only); null/undefined for a top-level project. */
+  parentProjectId?: string | null
+  parentProjectName?: string | null
+  /** Sub-projects under this project; > 0 makes it a program. */
+  childProjectCount?: number
+  /** False when the project service predates sub-projects (it never sends child_project_count). */
+  hierarchySupported?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -55,6 +62,10 @@ export function mapApiToProject(api: ProjectApi): Project {
     iconName: api.icon_name ?? undefined,
     borderColor: api.border_color ?? undefined,
     folderId: api.folder_id ?? undefined,
+    parentProjectId: api.parent_project_id ?? null,
+    parentProjectName: api.parent_project_name ?? null,
+    childProjectCount: api.child_project_count ?? 0,
+    hierarchySupported: api.child_project_count !== undefined,
     ownerId: api.owner_id,
     ownerName: api.owner_name ?? 'Admin User',
     members: (api.members ?? []).map((m) => ({
@@ -74,7 +85,7 @@ interface ProjectState {
   projectsLoading: boolean
   projectsError: string | null
   fetchProjects: () => Promise<void>
-  addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt' | 'status'> & { tags?: string[]; iconName?: string; borderColor?: string; folderId?: string | null }) => Promise<Project>
+  addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt' | 'status'> & { tags?: string[]; iconName?: string; borderColor?: string; folderId?: string | null; parentProjectId?: string | null }) => Promise<Project>
   updateProject: (id: string, updates: Partial<Project>) => Promise<void>
   archiveProject: (id: string) => Promise<void>
   archiveProjects: (ids: string[]) => Promise<void>
@@ -131,6 +142,7 @@ export const useProjectStore = create<ProjectState>()(
           icon_name: projectData.iconName,
           border_color: projectData.borderColor,
           folder_id: projectData.folderId ?? null,
+          parent_project_id: projectData.parentProjectId ?? null,
           workspace_id,
         })
         await get().fetchProjects()

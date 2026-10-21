@@ -40,6 +40,7 @@ import {
 } from '@/lib/tenantWorkspaceScope'
 import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
+import { fixDocxPreviewCellDirection } from '@/lib/docxPreviewFixes'
 import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
 import { getExplorerFileTypeLabel } from '@/modules/document-knowledge-management/fileTypeIcon'
@@ -189,6 +190,10 @@ import { PersonalOneDrivePanel } from '@/modules/document-knowledge-management/c
 import { OneDriveZipDownload } from '@/modules/document-knowledge-management/components/OneDriveZipDownload'
 import { OneDriveMutationDialog } from '@/modules/document-knowledge-management/components/OneDriveMutationDialog'
 import { DocumentRepositoryUploadProgressOverlay } from '@/modules/document-knowledge-management/components/DocumentRepositoryUploadProgressOverlay'
+import {
+  SampleKindConflictDialog,
+  type SampleKindConflictChoice,
+} from '@/modules/document-knowledge-management/components/SampleKindConflictDialog'
 import { collectBrowserFiles } from '@/modules/document-knowledge-management/lib/collectBrowserFiles'
 import {
   collectUploadItemsFromDataTransfer,
@@ -409,6 +414,7 @@ import {
   buildNonBrdRepositoryKbHtml,
   type RepositoryKbSourceMeta,
 } from '@/lib/kb/repositoryKbFromDocument'
+import { deleteDocumentGeneratedKb } from '@/lib/kb/deleteDocumentGeneratedKb'
 import { extractSpreadsheetTablesHtml, isSpreadsheetFile } from '@/lib/kb/extractSpreadsheetText'
 import {
   buildRepositoryFolderPathNames,
@@ -521,10 +527,13 @@ import {
 import {
   createDocumentFolder,
   deleteDocumentFolder,
+  ensureDocumentGovernanceFolders,
   fetchAllDocumentFolders,
   updateDocumentFolder,
   type DocumentFolder,
 } from '@/lib/api/documentFolderApi'
+import { isOrganizationHomeWorkspace } from '@/lib/workspaceOwnershipVisibility'
+import { isGovernanceRootFolder } from '@/modules/document-knowledge-management/lib/governanceFolder'
 import { bootstrapSamplesLibraryIfMissing, pruneEmptySeededSampleCategoryFolders } from '@/modules/document-knowledge-management/lib/ensureSamplesLibrary'
 import { isFolderInSamplesTree, isSamplesRootFolder, isSamplesSystemFolder } from '@/modules/document-knowledge-management/lib/samplesFolder'
 import { isDocumentFolderDescendant } from '@/modules/document-knowledge-management/lib/repositoryFolderNav'
@@ -1881,7 +1890,7 @@ function parseKbStructuredJson(content: string): unknown | null {
 
 type KbQuestionEditModel = {
   version: number
-  questions: Array<{ id: string; prompt: string; required: boolean }>
+  questions: Array<{ id: string; prompt: string; required: boolean; type: 'text' | 'option' | 'check'; options: string[] }>
 }
 
 function parseKbQuestionEditModel(content: string): KbQuestionEditModel | null {
@@ -1900,12 +1909,16 @@ function parseKbQuestionEditModel(content: string): KbQuestionEditModel | null {
       id: typeof question.id === 'string' && question.id.trim() ? question.id : `question_${index + 1}`,
       prompt,
       required: question.required === true,
+      type: question.type === 'option' || question.type === 'check' ? question.type : 'text',
+      options: Array.isArray(question.options)
+        ? question.options.filter((option): option is string => typeof option === 'string')
+        : [],
     }
   })
   if (questions.some((question): question is null => question === null)) return null
   return {
     version: typeof record.version === 'number' ? record.version : 1,
-    questions: questions as Array<{ id: string; prompt: string; required: boolean }>,
+    questions: questions as KbQuestionEditModel['questions'],
   }
 }
 
@@ -5776,6 +5789,8 @@ export function DocumentKnowledgeManagementPage() {
   const [templateSharingBusyId, setTemplateSharingBusyId] = useState<string | null>(null)
   const [templateDeleteBusyId, setTemplateDeleteBusyId] = useState<string | null>(null)
   const [templateDeleteTarget, setTemplateDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [templateRenameTarget, setTemplateRenameTarget] = useState<{ id: string; name: string } | null>(null)
+  const [templateRenameValue, setTemplateRenameValue] = useState('')
   const kbEditorTableMenuPos = useFlippedMenuPosition(
     kbEditorTableMenuRef,
     !!kbEditorTableMenu,
@@ -5797,6 +5812,10 @@ export function DocumentKnowledgeManagementPage() {
     }
     return 'repository'
   })
+
+  useEffect(() => {
+    setSearchQuery('')
+  }, [activePanel])
 
   // Layout choices persist per user (identity-lite), hydrated from localStorage on
   // first paint so the page never flashes its default layout before restoring.
@@ -6799,6 +6818,26 @@ export function DocumentKnowledgeManagementPage() {
           /* keep listing without Samples if folder create is unavailable */
         }
       }
+      // Governance is an organization-only system folder: only the organization-home workspace
+      // (classification 'Organization', no parent) gets it, so it never appears in child/personal
+      // workspaces. Best-effort — listing still works if the folder cannot be created.
+      const activeWorkspaceOption = resolveKbWorkspaceOption(
+        activeWorkspaceApiId ?? tenant?.workspaceId,
+        kbWorkspaceOptions,
+      )
+      if (
+        activeWorkspaceApiId
+        && activeWorkspaceOption
+        && isOrganizationHomeWorkspace(activeWorkspaceOption)
+        && !folders.some((folder) => isGovernanceRootFolder(folder))
+      ) {
+        try {
+          await ensureDocumentGovernanceFolders([activeWorkspaceApiId])
+          folders = await fetchAllDocumentFolders(activeWorkspaceApiId)
+        } catch {
+          /* keep listing without Governance if folder create is unavailable */
+        }
+      }
       const occupiedFolderIds = new Set(
         repositoryItems
           .map((item) => item.folderId)
@@ -6815,7 +6854,11 @@ export function DocumentKnowledgeManagementPage() {
         repositoryItems.map((item) => item.folderId),
         currentOwnerId,
         {
-          alwaysRetain: (folder) => isFolderInSamplesTree(folder.id, folders),
+          // System folders are owned by 'system' (not the current user) and hold no
+          // documents, so they'd be filtered out without an explicit retain. Samples keeps
+          // its whole tree; Governance is a root-only locked folder.
+          alwaysRetain: (folder) =>
+            isFolderInSamplesTree(folder.id, folders) || isGovernanceRootFolder(folder),
         },
       )
       const activeProjectIds = new Set(repositoryProjects.map((project) => project.id))
@@ -6834,7 +6877,7 @@ export function DocumentKnowledgeManagementPage() {
     } catch {
       setRepositoryFolders([])
     }
-  }, [repositoryItems, repositoryProjects, activeWorkspaceApiId])
+  }, [repositoryItems, repositoryProjects, activeWorkspaceApiId, kbWorkspaceOptions, tenant?.workspaceId])
 
   useEffect(() => {
     void loadRepositoryFolders()
@@ -7800,84 +7843,11 @@ export function DocumentKnowledgeManagementPage() {
     documentId: string
     documentTitle: string
   }): Promise<number> => {
-    const { documentId, documentTitle } = params
-    const documentIdNeedle = documentId.trim().toLowerCase()
-    if (!documentIdNeedle) return 0
-
-    let entriesSnapshot = kbApiItems
-    if (entriesSnapshot.length === 0) {
-      try {
-        const all = await listAllKbEntries()
-        entriesSnapshot = all.items
-      } catch {
-        // Keep best-effort behavior and continue with current in-memory snapshot.
-      }
+    const deleted = await deleteDocumentGeneratedKb({ ...params, entries: kbApiItems })
+    if (deleted.size > 0) {
+      setKbApiItems((prev) => prev.filter((entry) => !deleted.has(entry.id)))
     }
-
-    const traceTitleNeedle = repositoryTraceEntryTitle(documentTitle).trim().toLowerCase()
-    const traceCandidates = entriesSnapshot.filter((entry) => {
-      const title = entry.title.trim().toLowerCase()
-      const content = (entry.content ?? '').toLowerCase()
-      return title === traceTitleNeedle || content.includes(documentIdNeedle)
-    })
-    if (traceCandidates.length === 0) return 0
-
-    const relationIdsToDelete = new Set<string>()
-    const entryIdsToDelete = new Set<string>()
-
-    for (const traceEntry of traceCandidates) {
-      const traceContent = (traceEntry.content ?? '').toLowerCase()
-      if (traceContent.includes(documentIdNeedle)) {
-        entryIdsToDelete.add(traceEntry.id)
-      }
-
-      try {
-        const relationPage = await listKbRelations({
-          entry_id: traceEntry.id,
-          direction: 'any',
-          page: 1,
-          page_size: 200,
-        })
-
-        relationPage.items.forEach((relation) => {
-          const relationDocumentId = typeof relation.properties?.document_id === 'string'
-            ? relation.properties.document_id.trim().toLowerCase()
-            : ''
-          const relationKind = typeof relation.properties?.relation_kind === 'string'
-            ? relation.properties.relation_kind.trim().toLowerCase()
-            : ''
-
-          if (relationDocumentId !== documentIdNeedle) return
-          if (relationKind !== 'document_traceability') return
-
-          relationIdsToDelete.add(relation.id)
-          entryIdsToDelete.add(traceEntry.id)
-
-          if (relation.source_entry_id !== traceEntry.id) {
-            entryIdsToDelete.add(relation.source_entry_id)
-          }
-          if (relation.target_entry_id !== traceEntry.id) {
-            entryIdsToDelete.add(relation.target_entry_id)
-          }
-        })
-      } catch {
-        // Keep best-effort cleanup even if relation listing fails for one candidate.
-      }
-    }
-
-    if (relationIdsToDelete.size > 0) {
-      await Promise.allSettled(Array.from(relationIdsToDelete).map((id) => deleteKbRelation(id)))
-    }
-
-    if (entryIdsToDelete.size > 0) {
-      await Promise.allSettled(Array.from(entryIdsToDelete).map((id) => deleteKbEntry(id)))
-    }
-
-    if (entryIdsToDelete.size > 0) {
-      setKbApiItems((prev) => prev.filter((entry) => !entryIdsToDelete.has(entry.id)))
-    }
-
-    return entryIdsToDelete.size
+    return deleted.size
   }, [kbApiItems])
 
   const handleRepositoryDelete = useCallback((item: RepositoryItem) => {
@@ -10304,6 +10274,22 @@ export function DocumentKnowledgeManagementPage() {
   }, [templateDeleteTarget, templateDeleteBusyId])
 
   useEffect(() => {
+    if (!templateRenameTarget) return
+
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (templateStatusBusyId === templateRenameTarget.id) return
+      event.preventDefault()
+      setTemplateRenameTarget(null)
+    }
+
+    window.addEventListener('keydown', onWindowKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown)
+    }
+  }, [templateRenameTarget, templateStatusBusyId])
+
+  useEffect(() => {
     if (!kbAddOpen) return
 
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -10886,6 +10872,7 @@ export function DocumentKnowledgeManagementPage() {
         breakPages: true,
       })
       if (cancelled || !versionRevisionDocxRef.current) return
+      fixDocxPreviewCellDirection(target)
 
       // Fit A4-width docx pages into the narrow revision drawer (~560px).
       const wrapper = target.querySelector('.docx-wrapper') as HTMLElement | null
@@ -11431,7 +11418,7 @@ export function DocumentKnowledgeManagementPage() {
     if (kbSystemTableEdit) return systemKbTablePlainLength(kbSystemTableEdit)
     return kbExtractPlainText(kbFormContent).length
   }, [kbFormContent, kbStructuredEdit, kbSystemTableEdit])
-  const kbContentMaxLength = kbSystemTableEdit?.specId === 'aplikasi' ? 20_000 : 8_000
+  const kbContentMaxLength = ['aplikasi', 'singkatan'].includes(kbSystemTableEdit?.specId || '') ? 20_000 : 8_000
 
   const runKbAiAction = useCallback((action: KbAiActionKey, task: () => void | Promise<void>) => {
     if (kbAiActionLoading) return
@@ -13458,6 +13445,10 @@ export function DocumentKnowledgeManagementPage() {
     // Read once — calling readKbEditorContentForSave twice used to overwrite the editor DOM
     // with a rebuilt copy that lost column widths before the PATCH body was built.
     const contentForSave = readKbEditorContentForSave()
+    if (kbSystemTableEdit?.specId === 'singkatan' && contentForSave.length > 50_000) {
+      addToast({ title: 'Content is too long', description: 'Maximum 50,000 characters including table markup. Reduce the selected rows before saving.', variant: 'error' })
+      return
+    }
     const plainContent = kbExtractPlainText(contentForSave).trim()
     if (!kbFormCategory) {
       addToast({
@@ -13493,7 +13484,6 @@ export function DocumentKnowledgeManagementPage() {
     }
     const isApplicationCatalogEntry = kbSystemTableEdit?.specId === 'aplikasi'
     const normalizedWorkspaceId = canonicalizeKbWorkspaceId(kbFormWorkspace)
-    const workspaceForSave = resolveWorkspaceIdForKbSave(kbFormWorkspace, kbWorkspaceOptions)
     if (
       isApplicationCatalogEntry
       && !resolveKbWorkspaceOption(kbFormWorkspace, kbApplicationCatalogWorkspaceOptions)
@@ -13541,6 +13531,9 @@ export function DocumentKnowledgeManagementPage() {
         return
       }
       const contentToSave = contentForSave
+      const workspaceForSave = isPlatformWideSystemKbEntry({ title: normalizedTitle })
+        ? null
+        : resolveWorkspaceIdForKbSave(kbFormWorkspace, kbWorkspaceOptions)
       const payload = {
         category: kbFormCategory,
         title: normalizedTitle,
@@ -14853,25 +14846,33 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [addToast, templateById])
 
-  const handleTemplateRename = useCallback(async (templateId: string) => {
+  const handleTemplateRename = useCallback((templateId: string) => {
     const template = templateById.get(templateId)
     if (!template) {
       addToast({ title: 'Template not found', description: 'Reload the library and try again.', variant: 'error' })
       return
     }
-    const nextName = window.prompt('Rename template', template.name)
-    if (nextName === null) return
-    const trimmed = nextName.trim()
+    setTemplateRenameValue(template.name)
+    setTemplateRenameTarget({ id: template.id, name: template.name })
+  }, [addToast, templateById])
+
+  const handleTemplateRenameConfirm = useCallback(async () => {
+    if (!templateRenameTarget) return
+    const trimmed = templateRenameValue.trim()
     if (trimmed.length < 3) {
       addToast({ title: 'Name too short', description: 'Template name must be at least 3 characters.', variant: 'error' })
       return
     }
-    if (trimmed === template.name) return
+    if (trimmed === templateRenameTarget.name) {
+      setTemplateRenameTarget(null)
+      return
+    }
     if (templateStatusBusyId) return
-    setTemplateStatusBusyId(templateId)
+    setTemplateStatusBusyId(templateRenameTarget.id)
     try {
-      await patchTemplate(templateId, { name: trimmed })
+      await patchTemplate(templateRenameTarget.id, { name: trimmed })
       await loadMasterTemplates()
+      setTemplateRenameTarget(null)
       addToast({ title: 'Template renamed', description: trimmed, variant: 'success' })
     } catch (error) {
       addToast({
@@ -14882,7 +14883,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setTemplateStatusBusyId(null)
     }
-  }, [addToast, loadMasterTemplates, templateById, templateStatusBusyId])
+  }, [addToast, loadMasterTemplates, templateRenameTarget, templateRenameValue, templateStatusBusyId])
 
   const handleTemplateDelete = useCallback((templateId: string, templateName: string) => {
     setTemplateDeleteTarget({ id: templateId, name: templateName })
@@ -15173,30 +15174,50 @@ export function DocumentKnowledgeManagementPage() {
     userWorkspaceOptions,
   ])
 
-  const queueTemplateUploadFile = useCallback((
-    file: File,
+  // Several templates dropped/picked at once are uploaded one after another: each upload can stop
+  // for a duplicate/revision prompt, so they must not run concurrently.
+  const templateUploadBatchRunningRef = useRef(false)
+  const runTemplateUploadBatch = useCallback(async (
+    files: File[],
+    workspaceId: string | null,
+    options?: { category_code?: string; document_type_code?: string; workspaceName?: string },
+  ) => {
+    if (templateUploadBatchRunningRef.current) return
+    templateUploadBatchRunningRef.current = true
+    try {
+      for (const file of files) {
+        await processUploadMasterTemplateFile(file, workspaceId, options)
+      }
+    } finally {
+      templateUploadBatchRunningRef.current = false
+    }
+  }, [processUploadMasterTemplateFile])
+
+  const queueTemplateUploadFiles = useCallback((
+    files: File[],
     options?: { category_code?: string; document_type_code?: string },
   ) => {
-    if (templateBusy) return
+    if (templateBusy || templateUploadBatchRunningRef.current || files.length === 0) return
     const resolved = resolveRepositoryUploadWorkspaceCandidates()
     if (resolved.mode === 'choose') {
       setUploadWorkspacePicker({
         purpose: 'template-upload',
         candidates: resolved.candidates,
-        pendingFile: file,
+        pendingFile: files[0],
+        pendingFiles: files,
         templateUploadOptions: options,
       })
       return
     }
-    void processUploadMasterTemplateFile(file, resolved.workspaceId, options)
-  }, [processUploadMasterTemplateFile, resolveRepositoryUploadWorkspaceCandidates, templateBusy])
+    void runTemplateUploadBatch(files, resolved.workspaceId, options)
+  }, [resolveRepositoryUploadWorkspaceCandidates, runTemplateUploadBatch, templateBusy])
 
   const handleUploadMasterTemplateFile = useCallback(async (
     file: File,
     options?: { category_code?: string; document_type_code?: string },
   ) => {
-    queueTemplateUploadFile(file, options)
-  }, [queueTemplateUploadFile])
+    queueTemplateUploadFiles([file], options)
+  }, [queueTemplateUploadFiles])
 
   const processCreateMasterTemplate = useCallback(async (workspaceId: string | null) => {
     if (!workspaceId?.trim()) {
@@ -15288,11 +15309,9 @@ export function DocumentKnowledgeManagementPage() {
     event.stopPropagation()
     setIsTemplateDragActive(false)
 
-    const files = event.dataTransfer.files
-    if (files && files.length > 0) {
-      void handleUploadMasterTemplateFile(files[0])
-    }
-  }, [handleUploadMasterTemplateFile])
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) queueTemplateUploadFiles(files)
+  }, [queueTemplateUploadFiles])
 
   const filteredMasterTemplates = useMemo(() => {
     return masterTemplateRows.filter((row) => {
@@ -17573,7 +17592,7 @@ export function DocumentKnowledgeManagementPage() {
                     className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   >
                     {!kbLoading && !kbLive ? (
-                      <motion.div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
                         Knowledge Base Graph is empty because the API failed
                         {kbLoadError ? `: ${kbLoadError}` : ''}. Fix the connection to{' '}
                         <code className="rounded bg-white/90 px-1">/api/gateway-runtime/api/tectona-kb/v1</code>{' '}
@@ -17585,7 +17604,7 @@ export function DocumentKnowledgeManagementPage() {
                           Platform Settings → Knowledge Base
                         </Link>
                         , then reload the page.
-                      </motion.div>
+                      </div>
                     ) : null}
                     {/* ROW 1 — Knowledge Base Graph */}
                     {(() => {
@@ -18586,7 +18605,12 @@ export function DocumentKnowledgeManagementPage() {
               ) : null}
               <div
                 className={cn(
-                  'relative flex h-full min-h-0 flex-col gap-3 overflow-visible transition-all duration-200',
+                  // This repository panel is content-height (its DocPanelSection has no computed
+                  // viewport height in this view), so flex-1 alone can't stretch an empty/short
+                  // folder. Give it a viewport-relative min-height so the drop zone fills down to
+                  // near the bottom of the screen; real content taller than this still grows/scrolls.
+                  'relative flex h-full min-h-0 flex-1 flex-col gap-3 overflow-visible transition-all duration-200',
+                  !repositorySplitActive && 'min-h-[calc(100vh-27rem)]',
                   repositoryViewMode === 'split'
                     && !repositorySplitActive
                     && cn(
@@ -20446,7 +20470,7 @@ export function DocumentKnowledgeManagementPage() {
                   <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-blue-500/5">
                     <div className="text-center">
                       <Upload className="mx-auto mb-2 h-8 w-8 text-blue-500" />
-                      <p className="text-sm font-semibold text-blue-700">Drop Word template to upload</p>
+                      <p className="text-sm font-semibold text-blue-700">Drop Word template(s) to upload</p>
                     </div>
                   </div>
                 ) : null}
@@ -22761,12 +22785,13 @@ export function DocumentKnowledgeManagementPage() {
         id="dkm-master-template-upload"
         name="dkm-master-template-upload"
         type="file"
+        multiple
         accept=".doc,.docx,.dot,.dotx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="hidden"
         onChange={(event) => {
-          const file = event.target.files?.[0]
+          const files = Array.from(event.target.files ?? [])
           event.target.value = ''
-          if (file) void handleUploadMasterTemplateFile(file)
+          if (files.length > 0) queueTemplateUploadFiles(files)
         }}
       />
 
@@ -23393,9 +23418,10 @@ export function DocumentKnowledgeManagementPage() {
                             return
                           }
                           if (pending.purpose === 'template-upload') {
-                            if (!pending.pendingFile) return
-                            void processUploadMasterTemplateFile(
-                              pending.pendingFile,
+                            const files = pending.pendingFiles?.length ? pending.pendingFiles : pending.pendingFile ? [pending.pendingFile] : []
+                            if (files.length === 0) return
+                            void runTemplateUploadBatch(
+                              files,
                               candidate.id,
                               {
                                 ...pending.templateUploadOptions,
@@ -23573,7 +23599,7 @@ export function DocumentKnowledgeManagementPage() {
                       </Label>
                       <div ref={kbAiStickySentinelRef} className="h-px w-full" aria-hidden="true" />
                       <div className="sticky top-1 z-20 space-y-2">
-                      {kbSystemTableEdit?.specId !== 'aplikasi' ? (
+                      {!['aplikasi', 'singkatan'].includes(kbSystemTableEdit?.specId || '') ? (
                       <div
                         className={cn(
                           'rounded-xl border p-2.5 backdrop-blur transition-all duration-300 ease-out supports-[backdrop-filter]:bg-background/85',
@@ -23680,8 +23706,8 @@ export function DocumentKnowledgeManagementPage() {
                                     Required
                                   </label>
                                 </div>
-                                <textarea
-                                  id={`kb-question-${index}`}
+                              <textarea
+                                id={`kb-question-${index}`}
                                   value={question.prompt}
                                   onChange={(event) => setKbStructuredEdit((current) => current
                                     ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, prompt: event.target.value } : item) }
@@ -23689,6 +23715,34 @@ export function DocumentKnowledgeManagementPage() {
                                   rows={2}
                                   className="w-full resize-y rounded-md border border-border/70 bg-background px-2.5 py-2 text-sm leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 />
+                                <label htmlFor={`kb-question-type-${index}`} className="mt-2 block text-[11px] font-medium text-muted-foreground">Answer type</label>
+                                <select
+                                  id={`kb-question-type-${index}`}
+                                  value={question.type}
+                                  onChange={(event) => setKbStructuredEdit((current) => current
+                                    ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value as 'text' | 'option' | 'check' } : item) }
+                                    : current)}
+                                  className="mt-1 h-9 w-full rounded-md border border-border/70 bg-background px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  <option value="text">Input Text</option>
+                                  <option value="option">Option Button (pilih satu)</option>
+                                  <option value="check">Check Button (pilih beberapa)</option>
+                                </select>
+                                {question.type !== 'text' ? (
+                                  <div className="mt-2">
+                                    <label htmlFor={`kb-question-options-${index}`} className="block text-[11px] font-medium text-muted-foreground">Options (satu pilihan per baris)</label>
+                                    <textarea
+                                      id={`kb-question-options-${index}`}
+                                      value={question.options.join('\n')}
+                                      onChange={(event) => setKbStructuredEdit((current) => current
+                                        ? { ...current, questions: current.questions.map((item, itemIndex) => itemIndex === index ? { ...item, options: event.target.value.split('\n') } : item) }
+                                        : current)}
+                                      rows={3}
+                                      placeholder={'Contoh:\nYa\nTidak'}
+                                      className="mt-1 w-full resize-y rounded-md border border-border/70 bg-background px-2.5 py-2 text-sm leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                    />
+                                  </div>
+                                ) : null}
                               </div>
                             ))}
                           </div>
@@ -23706,6 +23760,8 @@ export function DocumentKnowledgeManagementPage() {
                                       id: `question_${current.questions.length + 1}`,
                                       prompt: '',
                                       required: false,
+                                      type: 'text',
+                                      options: [],
                                     },
                                   ],
                                 }
@@ -23721,6 +23777,8 @@ export function DocumentKnowledgeManagementPage() {
                           <SystemKbTableEditorForm
                             model={kbSystemTableEdit}
                             onChange={setKbSystemTableEdit}
+                            workspaceId={canonicalizeKbWorkspaceId(kbFormWorkspace) || activeWorkspaceApiId || undefined}
+                            entryId={kbEditingEntryId}
                             onScanApplications={kbSystemTableEdit.specId === 'aplikasi' ? handleApplicationCatalogScan : undefined}
                           />
                           <div className="flex justify-end px-1">
@@ -26195,6 +26253,93 @@ export function DocumentKnowledgeManagementPage() {
         ) : null}
       </ContextMenu>
 
+      {templateRenameTarget && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+                aria-label="Close template rename dialog"
+                disabled={templateStatusBusyId === templateRenameTarget.id}
+                onClick={() => {
+                  if (templateStatusBusyId !== templateRenameTarget.id) setTemplateRenameTarget(null)
+                }}
+              />
+
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-rename-dialog-title"
+                className="relative z-[1401] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+              >
+                <div className="border-b border-border/70 bg-muted/25 px-6 py-5">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary ring-1 ring-primary/25">
+                      <CaseSensitive className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 id="template-rename-dialog-title" className="text-base font-semibold tracking-tight text-foreground">
+                        Rename template
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        Update the master template name shown in the library.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void handleTemplateRenameConfirm()
+                  }}
+                >
+                  <div className="space-y-3 px-6 py-5">
+                    <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Template</p>
+                      <p className="mt-1 break-words text-sm font-semibold text-foreground">{templateRenameTarget.name}</p>
+                    </div>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-foreground">New name</span>
+                      <Input
+                        autoFocus
+                        value={templateRenameValue}
+                        onChange={(event) => setTemplateRenameValue(event.target.value)}
+                        disabled={templateStatusBusyId === templateRenameTarget.id}
+                        aria-label="New template name"
+                      />
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      The name must be at least 3 characters. Documents already created from this template keep their current titles.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                      disabled={templateStatusBusyId === templateRenameTarget.id}
+                      onClick={() => setTemplateRenameTarget(null)}
+                    >
+                      <X className="h-4 w-4 shrink-0" aria-hidden />
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      className={cn(enterprisePrimarySolidButtonClass(), 'min-w-0 basis-0 flex-1 justify-center gap-2')}
+                      disabled={templateStatusBusyId === templateRenameTarget.id || templateRenameValue.trim().length < 3}
+                    >
+                      <CaseSensitive className="h-4 w-4 shrink-0" aria-hidden />
+                      {templateStatusBusyId === templateRenameTarget.id ? 'Renaming...' : 'Rename template'}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
       {templateDeleteTarget && typeof document !== 'undefined'
         ? createPortal(
             <div className="fixed inset-0 z-[1400] flex items-center justify-center p-4 sm:p-6">
@@ -26386,7 +26531,7 @@ export function DocumentKnowledgeManagementPage() {
                 onClick={() => {
                   const target = templateContextMenuItem
                   setTemplateRowContextMenu(null)
-                  void handleTemplateRename(target.id)
+                  handleTemplateRename(target.id)
                 }}
               >
                 <CaseSensitive className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />

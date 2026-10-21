@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { AppWindow, ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, ExternalLink, Grid3X3, GripVertical, History, ImageDown, Layers, LayoutTemplate, Link2, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, RotateCcw, Ruler, Scissors, Settings2, Trash2, Unlink, Waypoints } from 'lucide-react'
+import { AppWindow, ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, ExternalLink, Grid3X3, GripVertical, History, ImageDown, Layers, LayoutTemplate, Link2, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, RotateCcw, Ruler, Scissors, Settings2, Sparkles, Trash2, Unlink, Waypoints } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { BpmnNotationPalette } from '@/modules/project-management/components/BpmnNotationPalette'
 import { C4ApplicationCatalogPalette } from '@/modules/project-management/components/C4ApplicationCatalogPalette'
 import { C4NotationPalette } from '@/modules/project-management/components/C4NotationPalette'
+import { UML_PALETTE_MIME, UmlNotationPalette, type UmlPaletteItem, type UmlPaletteRelation } from '@/modules/project-management/components/UmlNotationPalette'
 import { DiagramEdgePropertiesPanel } from '@/modules/project-management/components/DiagramEdgePropertiesPanel'
 import { IntegrationArchitectureFlow } from '@/modules/project-management/components/IntegrationArchitectureFlow'
 import { IntegrationNodePropertiesPanel } from '@/modules/project-management/components/IntegrationNodePropertiesPanel'
@@ -30,8 +31,8 @@ import { C4_APPLICATION_CATALOG_MIME, C4_PALETTE_MIME, C4_PALETTE_ITEMS, createC
 import { type DiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
 import { isArchimateElementData, type ArchimateElementNodeData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, parseC4Graph, serializeC4Graph, type C4ElementKind, type C4ParsedGraph } from '@/modules/project-management/lib/c4PlantUml'
+import { parseUmlDiagram, serializeUmlDiagram, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
 import { isCanvasViewport, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
-import { resolveEdgeTextStyle } from '@/modules/project-management/lib/integrationEdgeAppearance'
 import { defaultIntegrationNodeTextStyle, defaultIntegrationNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
 import { pickCenteredAnchoredHandles, type NodeGeometry } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import { parseBpmnSource, serializeBpmnCanvasToPlantUml, toBpmnEditorSource } from '@/modules/project-management/lib/bpmnPlantUml'
@@ -44,11 +45,19 @@ import { belongsToActiveWorkspaceScope, buildWorkspaceScopeFromTenant } from '@/
 import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
 import { requestOpenIdeaDiscussChat } from '@/stores/chat-navigation-store'
 import { createDiagramAiDraftAudit, listDiagramAiDraftAudit, type DiagramAiDraftAuditApi } from '@/lib/api/ideaBacklogApi'
-import { jsPDF } from 'jspdf'
+import { chatAuditDraftSummary, chatAuditLabel, chatAuditSnapshotSummary } from '@/modules/project-management/lib/diagramChatDraft'
+import {
+  copyDiagramImage,
+  downloadDiagramImage,
+  downloadDiagramPdf,
+  downloadDiagramSvg,
+  printDiagram,
+  renderDiagramCanvasImage,
+} from '@/modules/project-management/lib/diagramCanvasExport'
 
-type DiagramFormat = 'plantuml' | 'bpmn' | 'c4'
+type DiagramFormat = 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
 type ParsedKind = 'activity' | 'decision' | 'start' | 'end'
-type ParsedNode = { id: string; label: string; kind: ParsedKind; bpmnType?: string }
+type ParsedNode = { id: string; label: string; kind: ParsedKind; bpmnType?: string; lane?: string }
 type ParsedGraph = { nodes: ParsedNode[]; edges: Array<{ id: string; source: string; target: string; label?: string }> }
 type DiagramStore = Record<string, { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source?: string; viewport?: CanvasViewport; snapToGrid?: boolean }>
 
@@ -66,23 +75,6 @@ type StudioPanelResizeEdge = 'e' | 's' | 'se'
 type PropertiesPanelResizeEdge = 'e' | 's' | 'se' | 'w' | 'sw'
 const NODE_WIDTH = 210
 const NODE_HEIGHT = 78
-
-function chatAuditLabel(action: DiagramAiDraftAuditApi['action']): string {
-  return { requested: 'Draft requested', applied: 'Draft applied', discarded: 'Draft discarded', undone: 'Batch undone' }[action]
-}
-
-function chatAuditSnapshotSummary(snapshot: Record<string, unknown> | null | undefined): string | null {
-  if (!snapshot) return null
-  const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes.length : null
-  const edges = Array.isArray(snapshot.edges) ? snapshot.edges.length : null
-  return nodes !== null && edges !== null ? `${nodes} notation, ${edges} connection` : null
-}
-
-function chatAuditDraftSummary(draft: Record<string, unknown>): string | null {
-  if (typeof draft.summary === 'string' && draft.summary.trim()) return draft.summary.trim()
-  const actions = Array.isArray(draft.actions) ? draft.actions.length : 0
-  return actions ? `${actions} proposed change${actions === 1 ? '' : 's'}` : null
-}
 
 function bpmnStereotype(type: string): string {
   if (type === 'startEvent') return 'Start Event'
@@ -120,6 +112,68 @@ function bpmnConnectEdgeStyle(flowType: string): Pick<Edge, 'style' | 'markerEnd
       strokeDasharray: isMessage ? '6 4' : undefined,
     },
     data: { bpmnFlowType: flowType },
+  }
+}
+
+function umlConnectionStyle(format: DiagramFormat, relation: string): Pick<Edge, 'type' | 'style' | 'markerEnd' | 'markerStart' | 'data'> {
+  if (format === 'c4') return { type: 'smoothstep', ...c4RelationEdgeStyle() }
+  if (format === 'bpmn') return { type: 'smoothstep', ...bpmnConnectEdgeStyle(relation) }
+  if (format === 'erd') {
+    const sourceMany = relation === 'many-to-many'
+    const targetMany = relation !== 'one-to-one'
+    return {
+      type: 'erd',
+      style: { stroke: '#C4A35A', strokeWidth: 1.5 },
+      data: { sourceMany, targetMany, sourceOptional: sourceMany, targetOptional: false },
+    }
+  }
+  const stroke = '#4B5563'
+  const line = { stroke, strokeWidth: 1.15, strokeDasharray: relation === 'dependency' ? '5 4' : undefined }
+  if (relation === 'aggregation') {
+    return { type: 'smoothstep', style: line, markerStart: { type: MarkerType.ArrowClosed, color: '#ffffff', width: 14, height: 14 } }
+  }
+  if (relation === 'composition') {
+    return { type: 'smoothstep', style: line, markerStart: { type: MarkerType.ArrowClosed, color: stroke, width: 14, height: 14 } }
+  }
+  if (relation === 'generalization') {
+    return { type: 'smoothstep', style: line, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff', width: 14, height: 14 } }
+  }
+  if (relation === 'dependency') {
+    return { type: 'smoothstep', style: line, markerEnd: { type: MarkerType.Arrow, color: stroke, width: 12, height: 12 } }
+  }
+  return { type: 'smoothstep', style: line }
+}
+
+function createUmlPaletteNode(item: UmlPaletteItem, position: { x: number; y: number }, existingIds: string[]): Node<ArchimateNodeData> {
+  const kind = item.nodeKind ?? 'class'
+  const base = kind === 'entity' ? 'Entity' : kind === 'interface' ? 'Interface' : kind === 'enumeration' ? 'Enumeration' : 'Class'
+  let index = existingIds.length + 1
+  let id = `${kind}-${index}`
+  while (existingIds.includes(id)) {
+    index += 1
+    id = `${kind}-${index}`
+  }
+  const title = `New${base}`
+  const description = kind === 'enumeration' ? ['VALUE'] : kind === 'entity' ? ['* id'] : []
+  const height = kind === 'entity' ? 72 : kind === 'enumeration' ? 58 : kind === 'interface' ? 48 : 34
+  return {
+    id,
+    type: kind === 'entity' ? 'erdEntity' : 'umlClass',
+    position,
+    style: { width: kind === 'entity' ? 168 : 160, height },
+    data: {
+      kind: 'element',
+      layer: 'application',
+      notationId: kind,
+      stereotype: kind,
+      title,
+      description,
+      visual: {
+        fillColor: kind === 'entity' ? '#FFF4CC' : '#FFFFFF',
+        lineColor: kind === 'entity' ? '#C4A35A' : '#7F8C9B',
+        lineWidth: kind === 'entity' ? 1.5 : 1,
+      },
+    },
   }
 }
 
@@ -167,7 +221,17 @@ function squareSize(width: number, height: number): number {
   return Math.max(width, height)
 }
 
+const BPMN_LANE_BAND = 36
+const BPMN_LANE_HEIGHT = 188
+const BPMN_COLUMN_PITCH = 248
+const BPMN_LANE_PAD_TOP = 32
+const BPMN_LANE_PAD_BOTTOM = 56
+const BPMN_STACK_GAP = 20
+const BPMN_LAYOUT_MARK = 'swimlane-layout-2'
+
 function layoutBpmnPositions(nodes: ParsedNode[], edges: ParsedGraph['edges']): Map<string, { x: number; y: number }> {
+  const lanes = swimlaneOrder(nodes)
+  if (lanes.length >= 2) return layoutBpmnSwimlanes(nodes, edges, lanes)
   const outgoing = new Map<string, string[]>()
   const indegree = new Map(nodes.map((node) => [node.id, 0]))
   for (const edge of edges) {
@@ -214,6 +278,119 @@ function layoutBpmnPositions(nodes: ParsedNode[], edges: ParsedGraph['edges']): 
   return positions
 }
 
+function swimlaneOrder(nodes: ParsedNode[]): string[] {
+  const order: string[] = []
+  for (const node of nodes) {
+    if (node.lane && !order.includes(node.lane)) order.push(node.lane)
+  }
+  return order
+}
+
+function bpmnColumnRank(nodes: ParsedNode[], edges: ParsedGraph['edges']): Map<string, number> {
+  const outgoing = new Map<string, string[]>()
+  const indegree = new Map(nodes.map((node) => [node.id, 0]))
+  for (const edge of edges) {
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target])
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
+  }
+  const rank = new Map<string, number>()
+  const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id)
+  if (!queue.length && nodes[0]) queue.push(nodes[0].id)
+  const seen = new Set<string>()
+  while (queue.length) {
+    const id = queue.shift()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const current = rank.get(id) ?? 0
+    for (const target of outgoing.get(id) ?? []) {
+      rank.set(target, Math.max(rank.get(target) ?? 0, current + 1))
+      queue.push(target)
+    }
+    if (!rank.has(id)) rank.set(id, current)
+  }
+  return rank
+}
+
+function swimlaneFrames(nodes: ParsedNode[], edges: ParsedGraph['edges'], lanes: string[]) {
+  const rank = bpmnColumnRank(nodes, edges)
+  const slot = new Map<string, number>()
+  const used = new Map<string, number>()
+  for (const node of nodes) {
+    const key = `${node.lane ?? lanes[0]}:${rank.get(node.id) ?? 0}`
+    slot.set(node.id, used.get(key) ?? 0)
+    used.set(key, (used.get(key) ?? 0) + 1)
+  }
+  const heights = lanes.map((lane) => {
+    const members = nodes.filter((node) => (node.lane ?? lanes[0]) === lane)
+    const rows = Math.max(1, ...members.map((node) => (slot.get(node.id) ?? 0) + 1))
+    const tallest = Math.max(BPMN_LANE_HEIGHT - BPMN_LANE_PAD_TOP - BPMN_LANE_PAD_BOTTOM, ...members.map((node) => bpmnNodeSize(node.bpmnType ?? 'task').height))
+    return Math.max(BPMN_LANE_HEIGHT, BPMN_LANE_PAD_TOP + rows * tallest + Math.max(0, rows - 1) * BPMN_STACK_GAP + BPMN_LANE_PAD_BOTTOM)
+  })
+  const tops: number[] = []
+  let cursor = 0
+  for (const height of heights) {
+    tops.push(cursor)
+    cursor += height
+  }
+  return { rank, slot, heights, tops }
+}
+
+function layoutBpmnSwimlanes(
+  nodes: ParsedNode[],
+  edges: ParsedGraph['edges'],
+  lanes: string[],
+): Map<string, { x: number; y: number }> {
+  const { rank, slot, tops } = swimlaneFrames(nodes, edges, lanes)
+  const positions = new Map<string, { x: number; y: number }>()
+  for (const node of nodes) {
+    const size = bpmnNodeSize(node.bpmnType ?? 'task')
+    const column = rank.get(node.id) ?? 0
+    const laneIndex = Math.max(0, lanes.indexOf(node.lane ?? lanes[0]))
+    const stack = slot.get(node.id) ?? 0
+    positions.set(node.id, {
+      x: BPMN_LANE_BAND + 16 + column * BPMN_COLUMN_PITCH + (BPMN_COLUMN_PITCH - size.width) / 2,
+      y: (tops[laneIndex] ?? 0) + BPMN_LANE_PAD_TOP + stack * (size.height + BPMN_STACK_GAP),
+    })
+  }
+  return positions
+}
+
+function bpmnSwimlaneNodes(nodes: ParsedNode[], edges: ParsedGraph['edges']): Node<ArchimateNodeData>[] {
+  const lanes = swimlaneOrder(nodes)
+  if (lanes.length < 2) return []
+  const { rank, heights, tops } = swimlaneFrames(nodes, edges, lanes)
+  const columns = Math.max(1, ...nodes.map((node) => (rank.get(node.id) ?? 0) + 1))
+  const width = BPMN_LANE_BAND + 16 + columns * BPMN_COLUMN_PITCH
+  return lanes.map((lane, index) => ({
+    id: `bpmn-lane-${index}`,
+    type: 'bpmnElement',
+    position: { x: 0, y: tops[index] ?? 0 },
+    zIndex: 0,
+    draggable: false,
+    selectable: false,
+    connectable: false,
+    focusable: false,
+    style: { width, height: heights[index] ?? BPMN_LANE_HEIGHT, zIndex: 0 },
+    data: {
+      kind: 'element',
+      layer: 'business',
+      stereotype: 'Lane',
+      title: lane,
+      description: [BPMN_LAYOUT_MARK],
+      notationId: 'lane',
+      visual: {
+        fillEnabled: true,
+        fillColor: index % 2 === 0 ? '#f8fafc' : '#ffffff',
+        lineEnabled: true,
+        lineColor: '#0284c7',
+        lineWidth: 2,
+        lineStyle: 'solid',
+        rounded: false,
+      },
+    },
+  }))
+}
+
 function toBpmnNode(item: ParsedNode, position: { x: number; y: number }): Node<ArchimateNodeData> {
   const bpmnType = item.bpmnType ?? 'task'
   const size = bpmnNodeSize(bpmnType)
@@ -221,7 +398,8 @@ function toBpmnNode(item: ParsedNode, position: { x: number; y: number }): Node<
     id: item.id,
     type: 'bpmnElement',
     position,
-    style: { width: size.width, height: size.height },
+    zIndex: 2,
+    style: { width: size.width, height: size.height, zIndex: 2 },
     data: {
       kind: 'element',
       layer: 'business',
@@ -427,12 +605,29 @@ const ELEMENT_KIND_SET = new Set([
   'Person', 'Person_Ext', 'System', 'System_Ext', 'SystemDb', 'Container', 'Container_Ext', 'ContainerDb', 'Component',
 ])
 
+function isStoredUmlGraph(nodes: Node<ArchimateNodeData>[]): boolean {
+  return nodes.some((node) => node.type === 'umlClass')
+}
+
 function isStoredC4Graph(nodes: Node<ArchimateNodeData>[]): boolean {
   return nodes.some((node) => node.type === 'c4Element')
 }
 
 function isStoredBpmnGraph(nodes: Node<ArchimateNodeData>[]): boolean {
   return nodes.some((node) => node.type === 'bpmnElement')
+}
+
+function graphHasSwimlanes(nodes: Node<ArchimateNodeData>[]): boolean {
+  return nodes.some((node) => node.type === 'bpmnElement' && node.data.kind === 'element' && node.data.notationId === 'lane')
+}
+
+function graphHasFittedSwimlanes(nodes: Node<ArchimateNodeData>[]): boolean {
+  return nodes.some((node) => (
+    node.type === 'bpmnElement'
+    && node.data.kind === 'element'
+    && node.data.notationId === 'lane'
+    && node.data.description?.includes(BPMN_LAYOUT_MARK)
+  ))
 }
 
 function nodeStyleSize(node: Node): { width: number; height: number } {
@@ -560,12 +755,121 @@ function graphFromPlantUml(source: string): ParsedGraph {
   return { nodes, edges }
 }
 
+const ERD_FILLS = ['#EDE4F7', '#E5F4E0', '#FFF4CC', '#F4F4F4', '#FDE8D8', '#DCEBFA']
+const ERD_LINES = ['#8E6BB0', '#6B9B63', '#C4A35A', '#8A8A8A', '#C4895A', '#6A94C4']
+
+function erdMemberName(raw: string): string {
+  return raw.replace(/^\*\s*/, '').replace(/<<[^>]+>>/g, '').replace(/\s*:\s*.+$/, '').trim().toLowerCase()
+}
+
+function entityReferences(fromMembers: string[], toId: string, toTitle: string): boolean {
+  const keys = new Set([toId, toTitle, `${toId}_id`, `${toTitle}_id`].map((value) => value.toLowerCase()))
+  return fromMembers.some((member) => keys.has(erdMemberName(member)))
+}
+
+function graphFromUml(source: string, view: UmlView): { nodes: Node<ArchimateNodeData>[]; edges: Edge[] } {
+  const parsed = parseUmlDiagram(source, view)
+  const erd = view === 'erd'
+  const stroke = erd ? '#C4A35A' : '#4B5563'
+  const placed: Node<ArchimateNodeData>[] = []
+  let x = 48
+  let y = 48
+  let column = 0
+  let rowHeight = 0
+  const columns = 3
+  for (const box of parsed.boxes) {
+    const attributes = box.members.filter((line) => !line.includes('('))
+    const methods = box.members.filter((line) => line.includes('('))
+    const rowCount = erd ? Math.max(1, box.members.length) : attributes.length
+    const boxKind = erd ? 'entity' : box.kind === 'interface' || box.kind === 'enumeration' ? box.kind : 'class'
+    const stereotypeExtra = boxKind === 'interface' || boxKind === 'enumeration' ? 14 : 0
+    const height = erd
+      ? 34 + rowCount * 18 + 10
+      : 32 + stereotypeExtra + (attributes.length ? attributes.length * 16 + 8 : 0) + (methods.length ? methods.length * 16 + 8 : 0)
+    const longest = Math.max(box.title.length + 2, ...box.members.map((line) => erdMemberName(line).length + (erd ? 0 : 10)))
+    const width = Math.min(280, Math.max(erd ? 168 : 148, longest * 6.6 + (erd ? 28 : 40)))
+    if (column === columns) {
+      column = 0
+      x = 48
+      y += rowHeight + 72
+      rowHeight = 0
+    }
+    const fill = ERD_FILLS[placed.length % ERD_FILLS.length]
+    const line = ERD_LINES[placed.length % ERD_LINES.length]
+    placed.push({
+      id: box.id,
+      type: erd ? 'erdEntity' : 'umlClass',
+      position: { x, y },
+      style: { width, height },
+      data: {
+        kind: 'element',
+        layer: 'application',
+        stereotype: boxKind,
+        title: box.title,
+        description: box.members,
+        notationId: boxKind,
+        visual: {
+          fillEnabled: true,
+          fillColor: erd ? fill : '#ffffff',
+          lineEnabled: true,
+          lineColor: erd ? line : stroke,
+          lineWidth: erd ? 1.5 : 1,
+          lineStyle: 'solid',
+          rounded: false,
+          shadow: false,
+        },
+      },
+    })
+    rowHeight = Math.max(rowHeight, height)
+    x += width + 80
+    column += 1
+  }
+  const boxesById = new Map(parsed.boxes.map((box) => [box.id, box]))
+  const edges = withFacingHandles(placed, parsed.links.map((link, index) => {
+    const from = boxesById.get(link.source)
+    const to = boxesById.get(link.target)
+    const sourceFk = from && to ? entityReferences(from.members, to.id, to.title) : false
+    const targetFk = from && to ? entityReferences(to.members, from.id, from.title) : false
+    const sourceEnd = link.sourceEnd ?? (sourceFk && !targetFk ? { many: true, optional: false } : { many: false, optional: false })
+    const targetEnd = link.targetEnd ?? (targetFk && !sourceFk ? { many: true, optional: false } : sourceFk ? { many: false, optional: false } : { many: true, optional: false })
+    if (erd) {
+      return {
+        id: `uml-${link.source}-${link.target}-${index}`,
+        source: link.source,
+        target: link.target,
+        label: link.label || undefined,
+        type: 'erd' as const,
+        data: {
+          sourceMany: sourceEnd.many,
+          sourceOptional: sourceEnd.optional,
+          targetMany: targetEnd.many,
+          targetOptional: targetEnd.optional,
+        },
+      }
+    }
+    return {
+      id: `uml-${link.source}-${link.target}-${index}`,
+      source: link.source,
+      target: link.target,
+      label: link.label || undefined,
+      type: 'smoothstep' as const,
+      markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 12, height: 12 },
+      style: { stroke, strokeWidth: 1.75 },
+    }
+  }))
+  return { nodes: placed, edges }
+}
+
 function parseSource(source: string, format: DiagramFormat) {
+  if (format === 'class' || format === 'erd') return graphFromUml(source, format)
   if (format === 'c4') return graphFromC4(source)
   if (format === 'bpmn') {
     const parsed = parseBpmnSource(source)
     const positions = layoutBpmnPositions(parsed.nodes, parsed.edges)
-    const nodes = parsed.nodes.map((item) => toBpmnNode(item, positions.get(item.id) ?? { x: 48, y: 48 }))
+    const nodes = [
+      ...bpmnSwimlaneNodes(parsed.nodes, parsed.edges),
+      ...parsed.nodes.map((item) => toBpmnNode(item, positions.get(item.id) ?? { x: 48, y: 48 })),
+    ]
     return { nodes, edges: withFacingHandles(nodes, toArchimateEdges(parsed)) }
   }
   const parsed = graphFromPlantUml(source)
@@ -670,14 +974,17 @@ function EditableDiagramCanvasInner({
     [c4Source, format],
   )
   const imported = useMemo(() => parseSource(bpmnEditorSource, format), [bpmnEditorSource, format])
-  const shouldMigrateStoredBpmnGraph = format === 'bpmn' && c4Source.trim() !== bpmnEditorSource
+  const shouldMigrateStoredBpmnGraph = format === 'bpmn' && (
+    c4Source.trim() !== bpmnEditorSource
+    || (graphHasSwimlanes(imported.nodes) && Boolean(savedGraph?.nodes?.length) && !graphHasFittedSwimlanes(savedGraph.nodes))
+  )
   const initial = useMemo(() => {
     if (savedGraph?.nodes?.length) {
       if (format === 'bpmn' && (!isStoredBpmnGraph(savedGraph.nodes) || shouldMigrateStoredBpmnGraph)) {
         return {
           ...imported,
           viewport: savedGraph.viewport,
-          snapToGrid: savedGraph.snapToGrid,
+          snapToGrid: false,
           edges: withFacingHandles(imported.nodes, imported.edges),
         }
       }
@@ -690,15 +997,31 @@ function EditableDiagramCanvasInner({
       return {
         ...imported,
         viewport: stored.viewport,
-        snapToGrid: stored.snapToGrid,
+        snapToGrid: false,
         edges: withFacingHandles(imported.nodes, imported.edges),
       }
     }
-    if (format === 'bpmn' && (!isStoredBpmnGraph(stored.nodes) || shouldMigrateStoredBpmnGraph)) {
+    if (format === 'class' && !isStoredUmlGraph(stored.nodes)) {
       return {
         ...imported,
         viewport: stored.viewport,
-        snapToGrid: stored.snapToGrid,
+        snapToGrid: false,
+        edges: withFacingHandles(imported.nodes, imported.edges),
+      }
+    }
+    if (format === 'erd' && !stored.nodes.some((node) => node.type === 'erdEntity')) {
+      return {
+        ...imported,
+        viewport: stored.viewport,
+        snapToGrid: false,
+        edges: withFacingHandles(imported.nodes, imported.edges),
+      }
+    }
+    if (format === 'bpmn' && (!isStoredBpmnGraph(stored.nodes) || shouldMigrateStoredBpmnGraph || (graphHasSwimlanes(imported.nodes) && !graphHasFittedSwimlanes(stored.nodes)))) {
+      return {
+        ...imported,
+        viewport: stored.viewport,
+        snapToGrid: false,
         edges: withFacingHandles(imported.nodes, imported.edges),
       }
     }
@@ -709,7 +1032,9 @@ function EditableDiagramCanvasInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
-  const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(format === 'c4' ? 'diagram' : 'source')
+  const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(
+    format === 'c4' || format === 'class' || format === 'erd' ? 'diagram' : 'source',
+  )
   const [sourceDraft, setSourceDraft] = useState(() => bpmnEditorSource)
   const c4Level = c4LevelFromDiagramKey(diagramKey)
   const applicationCatalogScope = useMemo(() => tenant ? buildWorkspaceScopeFromTenant(tenant) : null, [tenant])
@@ -744,8 +1069,9 @@ function EditableDiagramCanvasInner({
   const [defaultElementStyle, setDefaultElementStyle] = useState<Pick<ArchimateElementNodeData, 'visual' | 'textStyle'> | null>(null)
   const [showGrid, setShowGrid] = useState(true)
   const [showGuides, setShowGuides] = useState(true)
-  const [snapToGrid, setSnapToGrid] = useState(initial.snapToGrid ?? true)
+  const [snapToGrid, setSnapToGrid] = useState(false)
   const [bpmnFlowType, setBpmnFlowType] = useState('sequenceFlow')
+  const [umlRelation, setUmlRelation] = useState<UmlPaletteRelation>(format === 'erd' ? 'one-to-many' : 'association')
   const [showRuler, setShowRuler] = useState(true)
   const [showConnectionArrows, setShowConnectionArrows] = useState(true)
   const [showConnectionPoints, setShowConnectionPoints] = useState(true)
@@ -885,9 +1211,39 @@ function EditableDiagramCanvasInner({
     setEdges(initial.edges)
     viewportRef.current = initial.viewport
     setSavedViewport(initial.viewport)
-    setSnapToGrid(initial.snapToGrid ?? true)
+    setSnapToGrid(false)
     setSourceDraft(bpmnEditorSource)
   }, [bpmnEditorSource, initial.edges, initial.nodes, initial.snapToGrid, initial.viewport, savedGraph, setEdges, setNodes, storageKey])
+  useEffect(() => {
+    if (format !== 'class') return
+    setNodes((current) => {
+      let changed = false
+      const next = current.map((node) => {
+        if (node.type !== 'umlClass' || node.data.kind !== 'element') return node
+        const attributes = node.data.description.filter((line) => !line.includes('('))
+        const methods = node.data.description.filter((line) => line.includes('('))
+        const stereotypeExtra = node.data.stereotype === 'interface' || node.data.stereotype === 'enumeration' ? 14 : 0
+        const height = 32 + stereotypeExtra + (attributes.length ? attributes.length * 16 + 8 : 0) + (methods.length ? methods.length * 16 + 8 : 0)
+        const currentHeight = Number(node.style?.height ?? node.height ?? 0)
+        if (Math.abs(currentHeight - height) < 4) return node
+        changed = true
+        return { ...node, style: { ...node.style, height }, height }
+      })
+      return changed ? next : current
+    })
+  }, [format, nodes, setNodes])
+  useEffect(() => {
+    if (!canvasMenu && !c4NodeMenu && !edgeContextMenu) return
+    const close = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-diagram-context-menu]')) return
+      setCanvasMenu(null)
+      setC4NodeMenu(null)
+      setEdgeContextMenu(null)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [canvasMenu, c4NodeMenu, edgeContextMenu])
   useEffect(() => {
     if (format !== 'c4' || c4Level !== 'L1' || c4DrilldownTargets.length === 0) return
     const normalizeTitle = (value: string) => value.trim().toLocaleLowerCase()
@@ -930,6 +1286,28 @@ function EditableDiagramCanvasInner({
       return next === current ? current : next
     })
   }, [c4Level, edges, format, nodes])
+  useEffect(() => {
+    if (format !== 'class' && format !== 'erd') return
+    setSourceDraft((current) => {
+      const boxes = nodes
+        .filter((node) => (node.type === 'umlClass' || node.type === 'erdEntity') && node.data.kind === 'element')
+        .map((node) => ({
+          id: node.id,
+          title: node.data.title,
+          members: node.data.description,
+          kind: node.data.stereotype === 'interface' || node.data.stereotype === 'enumeration' || node.data.stereotype === 'entity' || node.data.stereotype === 'class'
+            ? node.data.stereotype
+            : undefined,
+        }))
+      const links = edges.map((edge) => ({
+        source: edge.source,
+        target: edge.target,
+        label: String(edge.label ?? ''),
+      }))
+      const next = serializeUmlDiagram({ view: format, boxes, links })
+      return next === current ? current : next
+    })
+  }, [edges, format, nodes])
   useEffect(() => {
     if (format !== 'bpmn') return
     setSourceDraft((current) => {
@@ -981,12 +1359,9 @@ function EditableDiagramCanvasInner({
   const onConnect = useCallback(
     (connection: Connection) => setEdges((current) => withFacingHandles(nodes, addEdge({
       ...connection,
-      type: 'smoothstep',
-      ...(format === 'c4'
-        ? c4RelationEdgeStyle()
-        : bpmnConnectEdgeStyle(format === 'bpmn' ? bpmnFlowType : 'sequenceFlow')),
+      ...umlConnectionStyle(format, format === 'bpmn' ? bpmnFlowType : umlRelation),
     }, current))),
-    [bpmnFlowType, format, nodes, setEdges],
+    [bpmnFlowType, format, nodes, setEdges, umlRelation],
   )
 
   const onEdgeUpdate = useCallback(
@@ -1130,6 +1505,23 @@ function EditableDiagramCanvasInner({
     event.dataTransfer.effectAllowed = 'copyMove'
   }, [])
 
+  const handleUmlPaletteDragStart = useCallback((event: DragEvent<HTMLButtonElement>, item: UmlPaletteItem) => {
+    event.dataTransfer.setData(UML_PALETTE_MIME, JSON.stringify(item))
+    event.dataTransfer.effectAllowed = 'copy'
+  }, [])
+
+  const addUmlPaletteNode = useCallback((item: UmlPaletteItem) => {
+    if (!item.nodeKind) return
+    const bounds = reactFlowWrapperRef.current?.getBoundingClientRect()
+    const spot = bounds
+      ? screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + Math.min(180, bounds.height / 3) })
+      : { x: 80, y: 80 }
+    const newNode = createUmlPaletteNode(item, spot, nodes.map((node) => node.id))
+    setNodes((current) => [...current, newNode])
+    setSelectedNodeId(newNode.id)
+    setSelectedEdgeId(null)
+  }, [nodes, reactFlowWrapperRef, screenToFlowPosition, setNodes])
+
   const handleCanvasDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'copy'
@@ -1138,6 +1530,22 @@ function EditableDiagramCanvasInner({
   const handleCanvasDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
+      const umlRaw = event.dataTransfer.getData(UML_PALETTE_MIME)
+      if (umlRaw) {
+        let item: UmlPaletteItem
+        try {
+          item = JSON.parse(umlRaw) as UmlPaletteItem
+        } catch {
+          return
+        }
+        if (!item.nodeKind) return
+        const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        const newNode = createUmlPaletteNode(item, position, nodes.map((node) => node.id))
+        setNodes((current) => [...current, newNode])
+        setSelectedNodeId(newNode.id)
+        setSelectedEdgeId(null)
+        return
+      }
       const bpmnRaw = event.dataTransfer.getData(BPMN_PALETTE_MIME)
       if (bpmnRaw) {
         let item: BpmnPaletteItem
@@ -1620,8 +2028,19 @@ function EditableDiagramCanvasInner({
   }, [nodes, pendingChatDraft])
 
   const previewEdges = useMemo(() => {
-    if (!pendingChatDraft) return edges
-    const next = edges.map((edge) => ({ ...edge }))
+    const sourceEdges = format === 'class'
+      ? edges.map((edge) => {
+        const stroke = String((edge.style as { stroke?: string } | undefined)?.stroke ?? '').toLowerCase()
+        if (stroke && stroke !== '#e07a3d') return edge
+        return {
+          ...edge,
+          style: { ...edge.style, stroke: '#4B5563', strokeWidth: 1.15 },
+          markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed, color: '#4B5563', width: 10, height: 10 },
+        }
+      })
+      : edges
+    if (!pendingChatDraft) return sourceEdges
+    const next = sourceEdges.map((edge) => ({ ...edge }))
     pendingChatDraft.actions.forEach((action) => {
       if (action.type === 'delete_edge') {
         const index = next.findIndex((edge) => edge.id === action.edgeId)
@@ -1630,7 +2049,7 @@ function EditableDiagramCanvasInner({
       if (action.type === 'add_edge' && !next.some((edge) => edge.id === action.id)) next.push({ id: action.id, source: action.source, target: action.target, type: 'smoothstep', label: action.label, ...c4RelationEdgeStyle(), style: { stroke: '#16a34a', strokeWidth: 2, strokeDasharray: '6 4' }, animated: true })
     })
     return withFacingHandles(previewNodes, next)
-  }, [edges, pendingChatDraft, previewNodes])
+  }, [edges, format, pendingChatDraft, previewNodes])
 
   const loadChatAudit = useCallback(async () => {
     if (format !== 'c4') return
@@ -1749,243 +2168,35 @@ function EditableDiagramCanvasInner({
     }
   }, [c4Level, canvasMenu, format, setEdges, setNodes])
 
-  const renderCanvasImage = useCallback((nodeIds?: string[]) => {
-    const selectedIds = nodeIds ? new Set(nodeIds) : null
-    const drawableNodes = nodes.filter((node) => node.type !== 'archimateLegend' && (!selectedIds || selectedIds.has(node.id)))
-    if (drawableNodes.length === 0) return null
-    const dimensions = (node: Node<ArchimateNodeData>) => ({
-      width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 180),
-      height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 72),
-    })
-    const minX = Math.min(...drawableNodes.map((node) => node.position.x)) - 40
-    const minY = Math.min(...drawableNodes.map((node) => node.position.y)) - 40
-    const maxX = Math.max(...drawableNodes.map((node) => node.position.x + dimensions(node).width)) + 40
-    const maxY = Math.max(...drawableNodes.map((node) => node.position.y + dimensions(node).height)) + 40
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.min(2400, Math.max(640, Math.ceil(maxX - minX)))
-    canvas.height = Math.min(1800, Math.max(420, Math.ceil(maxY - minY)))
-    const context = canvas.getContext('2d')
-    if (!context) return null
-    const roundedRect = (x: number, y: number, width: number, height: number, radius: number) => {
-      const safeRadius = Math.min(radius, width / 2, height / 2)
-      context.beginPath()
-      context.moveTo(x + safeRadius, y)
-      context.lineTo(x + width - safeRadius, y)
-      context.quadraticCurveTo(x + width, y, x + width, y + safeRadius)
-      context.lineTo(x + width, y + height - safeRadius)
-      context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height)
-      context.lineTo(x + safeRadius, y + height)
-      context.quadraticCurveTo(x, y + height, x, y + height - safeRadius)
-      context.lineTo(x, y + safeRadius)
-      context.quadraticCurveTo(x, y, x + safeRadius, y)
-      context.closePath()
-    }
-    const wrapText = (text: string, maxWidth: number) => {
-      const words = text.trim().split(/\s+/).filter(Boolean)
-      const lines: string[] = []
-      let line = ''
-      words.forEach((word) => {
-        const next = line ? `${line} ${word}` : word
-        if (line && context.measureText(next).width > maxWidth) {
-          lines.push(line)
-          line = word
-        } else line = next
-      })
-      if (line) lines.push(line)
-      return lines
-    }
-    const isDarkColor = (color: string) => {
-      const match = /^#([\da-f]{6})$/i.exec(color)
-      if (!match) return false
-      const value = Number.parseInt(match[1], 16)
-      const red = value >> 16
-      const green = (value >> 8) & 255
-      const blue = value & 255
-      return (red * 299 + green * 587 + blue * 114) / 1000 < 145
-    }
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    edges.forEach((edge) => {
-      const sourceNode = drawableNodes.find((node) => node.id === edge.source)
-      const targetNode = drawableNodes.find((node) => node.id === edge.target)
-      if (!sourceNode || !targetNode) return
-      const sourceSize = dimensions(sourceNode)
-      const targetSize = dimensions(targetNode)
-      const sourceCenter = { x: sourceNode.position.x - minX + sourceSize.width / 2, y: sourceNode.position.y - minY + sourceSize.height / 2 }
-      const targetCenter = { x: targetNode.position.x - minX + targetSize.width / 2, y: targetNode.position.y - minY + targetSize.height / 2 }
-      const horizontal = Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y)
-      const start = horizontal
-        ? { x: sourceCenter.x + (targetCenter.x >= sourceCenter.x ? sourceSize.width / 2 : -sourceSize.width / 2), y: sourceCenter.y }
-        : { x: sourceCenter.x, y: sourceCenter.y + (targetCenter.y >= sourceCenter.y ? sourceSize.height / 2 : -sourceSize.height / 2) }
-      const end = horizontal
-        ? { x: targetCenter.x + (targetCenter.x >= sourceCenter.x ? -targetSize.width / 2 : targetSize.width / 2), y: targetCenter.y }
-        : { x: targetCenter.x, y: targetCenter.y + (targetCenter.y >= sourceCenter.y ? -targetSize.height / 2 : targetSize.height / 2) }
-      const stroke = typeof edge.style?.stroke === 'string' ? edge.style.stroke : '#64748b'
-      const width = typeof edge.style?.strokeWidth === 'number' ? edge.style.strokeWidth : 1.5
-      context.beginPath()
-      context.strokeStyle = stroke
-      context.lineWidth = width
-      context.setLineDash(typeof edge.style?.strokeDasharray === 'string' ? edge.style.strokeDasharray.split(/[ ,]+/).map(Number).filter(Boolean) : [])
-      context.moveTo(start.x, start.y)
-      context.lineTo(end.x, end.y)
-      context.stroke()
-      context.setLineDash([])
-      const angle = Math.atan2(end.y - start.y, end.x - start.x)
-      context.fillStyle = stroke
-      context.beginPath()
-      context.moveTo(end.x, end.y)
-      context.lineTo(end.x - 9 * Math.cos(angle - Math.PI / 6), end.y - 9 * Math.sin(angle - Math.PI / 6))
-      context.lineTo(end.x - 9 * Math.cos(angle + Math.PI / 6), end.y - 9 * Math.sin(angle + Math.PI / 6))
-      context.closePath()
-      context.fill()
-      if (edge.label) {
-        const label = String(edge.label)
-        const textStyle = resolveEdgeTextStyle(edge)
-        context.font = `${textStyle.italic ? 'italic ' : ''}${textStyle.bold ? 700 : 400} ${textStyle.fontSize}px ${textStyle.fontFamily}`
-        const labelWidth = Math.min(Math.max(88, context.measureText(label).width + 18), 420)
-        const labelX = (start.x + end.x) / 2 - labelWidth / 2
-        const labelY = (start.y + end.y) / 2 + 12
-        roundedRect(labelX, labelY, labelWidth, 24, 5)
-        context.fillStyle = '#ffffff'
-        context.fill()
-        context.strokeStyle = '#cbd5e1'
-        context.lineWidth = 1
-        context.stroke()
-        context.fillStyle = '#0f172a'
-        context.textAlign = 'center'
-        context.textBaseline = 'middle'
-        context.fillText(label, labelX + labelWidth / 2, labelY + 12, labelWidth - 12)
-      }
-    })
-    drawableNodes.forEach((node) => {
-      const { width, height } = dimensions(node)
-      const x = node.position.x - minX
-      const y = node.position.y - minY
-      const visual = node.data.visual
-      const fillColor = visual?.fillEnabled === false ? '#ffffff' : visual?.fillColor ?? '#ffffff'
-      const lineColor = visual?.lineEnabled === false ? 'transparent' : visual?.lineColor ?? '#334155'
-      const textColor = node.data.textStyle?.fontColorEnabled
-        ? node.data.textStyle.fontColor ?? '#0f172a'
-        : isDarkColor(fillColor) ? '#ffffff' : '#0f172a'
-      if (visual?.shadow) {
-        context.shadowColor = 'rgba(15,23,42,0.2)'
-        context.shadowBlur = 10
-        context.shadowOffsetY = 4
-      }
-      roundedRect(x, y, width, height, visual?.rounded === false ? 3 : 12)
-      context.globalAlpha = (visual?.opacity ?? 100) / 100
-      context.fillStyle = fillColor
-      context.fill()
-      context.shadowColor = 'transparent'
-      context.globalAlpha = 1
-      if (lineColor !== 'transparent') {
-        context.strokeStyle = lineColor
-        context.lineWidth = visual?.lineWidth ?? 1.5
-        context.setLineDash(visual?.lineStyle === 'dashed' ? [7, 4] : visual?.lineStyle === 'dotted' ? [2, 3] : [])
-        context.stroke()
-        context.setLineDash([])
-      }
-      const elementData = node.data.kind === 'element' ? node.data : null
-      if (elementData?.notationId.includes('Person')) {
-        const personColor = lineColor === 'transparent' ? '#0f5d9d' : lineColor
-        const centerX = x + width / 2
-        context.strokeStyle = personColor
-        context.fillStyle = fillColor
-        context.lineWidth = 1.5
-        context.beginPath()
-        context.arc(centerX, y - 6, 6, 0, Math.PI * 2)
-        context.fill()
-        context.stroke()
-        context.beginPath()
-        context.moveTo(centerX - 14, y + 14)
-        context.bezierCurveTo(centerX - 12, y + 4, centerX - 4, y, centerX, y)
-        context.bezierCurveTo(centerX + 4, y, centerX + 12, y + 4, centerX + 14, y + 14)
-        context.closePath()
-        context.fill()
-        context.stroke()
-      }
-      const fontFamily = node.data.textStyle?.fontFamily ?? 'Arial'
-      context.textAlign = 'center'
-      context.textBaseline = 'middle'
-      if (elementData?.stereotype) {
-        context.fillStyle = textColor
-        context.font = `italic ${Math.max(9, (node.data.textStyle?.fontSize ?? 12) - 2)}px ${fontFamily}`
-        context.fillText(`<<${elementData.stereotype.toLowerCase()}>>`, x + width / 2, y + 23, width - 20)
-      }
-      const title = node.data.kind === 'element' || node.data.kind === 'boundary' || node.data.kind === 'note' ? node.data.title : node.id
-      context.fillStyle = textColor
-      context.font = `${node.data.textStyle?.bold === false ? 500 : 700} ${Math.max(11, node.data.textStyle?.fontSize ?? 14)}px ${fontFamily}`
-      const titleLines = wrapText(title, Math.max(40, width - 20)).slice(0, 2)
-      const titleY = elementData?.stereotype ? y + 46 : y + height / 2 - 8
-      titleLines.forEach((line, index) => context.fillText(line, x + width / 2, titleY + index * 16, width - 20))
-      const description = elementData?.description.filter((line) => !/^\[.*\]$/.test(line)) ?? (node.data.kind === 'note' ? node.data.lines : [])
-      if (description.length) {
-        context.font = `${Math.max(9, (node.data.textStyle?.fontSize ?? 12) - 2)}px ${fontFamily}`
-        const descriptionLines = description.flatMap((line) => wrapText(line, Math.max(40, width - 24))).slice(0, 3)
-        const descriptionY = titleY + titleLines.length * 16 + 12
-        descriptionLines.forEach((line, index) => context.fillText(line, x + width / 2, descriptionY + index * 12, width - 24))
-      }
-    })
-    return canvas
-  }, [edges, nodes])
+  const renderCanvasImage = useCallback(
+    (nodeIds?: string[]) => renderDiagramCanvasImage(nodes, edges, nodeIds),
+    [edges, nodes],
+  )
 
   const downloadCanvasImage = useCallback(async (mimeType: 'image/png' | 'image/jpeg') => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const extension = mimeType === 'image/png' ? 'png' : 'jpeg'
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, 0.95))
-    if (!blob) return
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `${diagramKey}.${extension}`
-    link.click()
-    URL.revokeObjectURL(link.href)
+    if (canvas) await downloadDiagramImage(canvas, diagramKey, mimeType)
   }, [diagramKey, renderCanvasImage])
 
   const downloadCanvasSvg = useCallback(() => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}"><image href="${canvas.toDataURL('image/png')}" width="${canvas.width}" height="${canvas.height}" /></svg>`
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
-    link.download = `${diagramKey}.svg`
-    link.click()
-    URL.revokeObjectURL(link.href)
+    if (canvas) downloadDiagramSvg(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
   const downloadCanvasPdf = useCallback(() => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait'
-    const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] })
-    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height)
-    pdf.save(`${diagramKey}.pdf`)
+    if (canvas) downloadDiagramPdf(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
   const printCanvas = useCallback(() => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const printWindow = window.open('', '_blank', 'width=1200,height=900')
-    if (!printWindow) return
-    printWindow.opener = null
-    printWindow.document.write(`<!doctype html><html><head><title>${diagramKey}</title><style>body{margin:24px;background:#fff}img{display:block;max-width:100%;height:auto}</style></head><body><img src="${canvas.toDataURL('image/png')}" alt="${diagramKey}" /></body></html>`)
-    printWindow.document.close()
-    printWindow.addEventListener('load', () => printWindow.print(), { once: true })
+    if (canvas) printDiagram(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
   const copyCanvasAsImage = useCallback(async (nodeIds?: string[]) => {
     const canvas = renderCanvasImage(nodeIds)
-    if (!canvas) return
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-    if (!blob) return
     try {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-    } catch {
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = `${diagramKey}.png`
-      link.click()
-      URL.revokeObjectURL(link.href)
+      if (canvas) await copyDiagramImage(canvas, diagramKey)
     } finally {
       setCanvasMenu(null)
     }
@@ -2309,10 +2520,10 @@ function EditableDiagramCanvasInner({
       onSelectionChange={editable ? handleSelectionChange : () => undefined}
       onEdgeClick={editable ? handleEdgeClick : undefined}
       onPaneClick={editable ? clearCanvasSelection : undefined}
-      onPaneContextMenu={editable ? handlePaneContextMenu : undefined}
-      onNodeContextMenu={editable ? handleNodeContextMenu : undefined}
+      onPaneContextMenu={handlePaneContextMenu}
+      onNodeContextMenu={handleNodeContextMenu}
       onNodeDoubleClick={format === 'c4' ? handleNodeDoubleClick : undefined}
-      onEdgeContextMenu={editable ? handleEdgeContextMenu : undefined}
+      onEdgeContextMenu={handleEdgeContextMenu}
       showGrid={studioMode && showGrid}
       showGuides={studioMode && showGuides}
       snapToGrid={studioMode && snapToGrid}
@@ -2352,7 +2563,7 @@ function EditableDiagramCanvasInner({
 
   const studioSidebarTabs = [
     { id: 'source' as const, label: 'Source', icon: PencilLine },
-    { id: 'diagram' as const, label: 'Diagram', icon: Layers },
+    { id: 'diagram' as const, label: format === 'class' || format === 'erd' ? 'Notation' : 'Diagram', icon: Layers },
     ...(isC4 && c4Level === 'L1' ? [{ id: 'catalog' as const, label: 'Catalog', icon: AppWindow }] : []),
   ]
   const selectedImageNodeIds = nodes
@@ -2422,9 +2633,11 @@ function EditableDiagramCanvasInner({
           {canvasMenu ? (
             <div
               className="absolute z-50 w-64 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+              data-diagram-context-menu=""
               style={{ left: Math.max(8, canvasMenu.x), top: Math.max(8, canvasMenu.y) }}
               onContextMenu={(event) => event.preventDefault()}
               onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
             >
               <button type="button" disabled={!hasPasteableContent} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', hasPasteableContent ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={() => void pasteSourceAtCursor()}>
                 <Copy className="h-4 w-4" /> Paste here
@@ -2492,9 +2705,11 @@ function EditableDiagramCanvasInner({
           {edgeContextMenu ? (
             <div
               className="absolute z-50 w-60 overflow-hidden rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+              data-diagram-context-menu=""
               style={{ left: Math.max(8, edgeContextMenu.x), top: Math.max(8, edgeContextMenu.y) }}
               onContextMenu={(event) => event.preventDefault()}
               onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
             >
               <div className="px-3 py-2 text-xs font-semibold text-slate-500">Line</div>
               <div className="my-1 border-t border-slate-200" />
@@ -2519,9 +2734,11 @@ function EditableDiagramCanvasInner({
           {c4NodeMenu && c4MenuNode && c4MenuNode.data.kind !== 'legend' ? (
             <div
               className="absolute z-50 w-60 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+              data-diagram-context-menu=""
               style={{ left: Math.max(8, c4NodeMenu.x), top: Math.max(8, c4NodeMenu.y) }}
               onContextMenu={(event) => event.preventDefault()}
               onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
             >
               <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => copyNodeToClipboard(c4MenuNode.id)}>
                 <span className="flex items-center gap-2"><Copy className="h-4 w-4" /> Copy</span><span className="text-xs text-slate-400">Ctrl+C</span>
@@ -2704,7 +2921,13 @@ function EditableDiagramCanvasInner({
                     value={sourceDraft}
                     onChange={setSourceDraft}
                     onBlur={applySource}
-                    languageLabel={format === 'bpmn' ? 'BPMN PlantUML' : format === 'c4' ? 'C4 PlantUML' : 'PlantUML'}
+                    languageLabel={
+                      format === 'bpmn' ? 'BPMN PlantUML'
+                        : format === 'c4' ? 'C4 PlantUML'
+                          : format === 'class' ? 'Class PlantUML'
+                            : format === 'erd' ? 'ERD PlantUML'
+                              : 'PlantUML'
+                    }
                   />
                 ) : isC4 && sidebarPanel === 'catalog' ? (
                   <C4ApplicationCatalogPalette
@@ -2721,6 +2944,14 @@ function EditableDiagramCanvasInner({
                     onDragStart={handleBpmnPaletteDragStart}
                     selectedFlowType={bpmnFlowType}
                     onSelectFlow={(item) => setBpmnFlowType(item.bpmnType)}
+                  />
+                ) : format === 'class' || format === 'erd' ? (
+                  <UmlNotationPalette
+                    view={format}
+                    selectedRelation={umlRelation}
+                    onDragStart={handleUmlPaletteDragStart}
+                    onSelectRelation={setUmlRelation}
+                    onAddNode={addUmlPaletteNode}
                   />
                 ) : (
                   <div className="flex flex-1 items-center justify-center px-6 text-center text-xs leading-5 text-slate-500">

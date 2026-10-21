@@ -671,7 +671,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         </div>
       ) : (
         <div
-          className="relative flex h-full min-h-0 w-full min-w-0 flex-col justify-center overflow-visible rounded-[10px] border-2 px-3 py-2 text-center"
+          className="relative flex h-full min-h-0 w-full min-w-0 flex-col justify-center overflow-hidden rounded-[10px] border-2 px-3 py-2 text-center"
           style={{
             borderColor: stroke,
             background: fill,
@@ -688,7 +688,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
             <span className="absolute bottom-1.5 left-1/2 flex h-3.5 w-3.5 -translate-x-1/2 items-center justify-center border border-slate-800 text-[10px] leading-none">+</span>
           ) : null}
           <p
-            className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words text-[12px] font-medium leading-4 text-slate-900 [line-clamp:unset] [-webkit-line-clamp:unset]"
+            className="min-h-0 min-w-0 w-full max-h-full overflow-hidden break-words text-[12px] font-medium leading-4 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:4]"
             style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
           >
             {data.title}
@@ -727,6 +727,118 @@ export function ArchimateLegendNode() {
   )
 }
 
+function classMember(raw: string): { label: string; isMethod: boolean } {
+  const text = raw.trim().replace(/^[+\-#~]\s*/, '')
+  if (text.includes('(')) return { label: text, isMethod: true }
+  const typed = text.match(/^([^:]+):\s*(.+)$/)
+  if (typed) return { label: `${typed[1].trim()} : ${typed[2].trim()}`, isMethod: false }
+  const typeName = /(?:^id|_id)$/i.test(text) ? 'Id' : 'String'
+  return { label: `${text} : ${typeName}`, isMethod: false }
+}
+
+function UmlClassGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden className="shrink-0">
+      <rect x="1" y="1" width="12" height="12" rx="1.5" fill="#F8E7A0" stroke="#8A7340" strokeWidth="1" />
+      <path d="M1 5.2h12" stroke="#8A7340" strokeWidth="1" />
+      <path d="M3 8h8M3 10.2h6" stroke="#5C6B7A" strokeWidth="0.8" />
+    </svg>
+  )
+}
+
+export function UmlClassNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+  const layoutKey = `${width ?? 0}x${height ?? 0}`
+  const members = data.description.map(classMember).filter((member) => member.label)
+  const attributes = members.filter((member) => !member.isMethod)
+  const methods = members.filter((member) => member.isMethod)
+  const border = selected ? '#2E86C1' : '#7F8C9B'
+  const fill = selected ? '#E8F4FC' : '#FFFFFF'
+  return (
+    <div className="group relative h-full w-full overflow-visible">
+      <SelectionResizer selected={selected} minWidth={140} minHeight={34} />
+      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <div
+        className="flex h-full w-full flex-col overflow-hidden text-slate-900"
+        style={{ background: fill, border: `1px solid ${border}`, borderRadius: 7, fontFamily: 'Segoe UI, Arial, sans-serif' }}
+      >
+        <div className="flex items-center gap-1.5 px-2 py-1.5" style={{ borderBottom: members.length ? '1px solid #C5CED6' : undefined }}>
+          <UmlClassGlyph />
+          <div className="min-w-0 flex-1 text-center">
+            {data.stereotype === 'interface' || data.stereotype === 'enumeration' ? (
+              <div className="text-[10px] font-normal leading-3 text-slate-500">«{data.stereotype}»</div>
+            ) : null}
+            <div className="text-[12px] font-bold leading-4">{data.title}</div>
+          </div>
+          <span className="w-3.5 shrink-0" />
+        </div>
+        {attributes.length > 0 ? (
+          <div className="px-2 py-1 text-[11px] leading-[16px]" style={{ borderBottom: methods.length ? '1px solid #C5CED6' : undefined }}>
+            {attributes.map((member, index) => (
+              <p key={`${member.label}-${index}`} className="flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 shrink-0 rounded-[2px] bg-sky-500" />
+                <span>{member.label}</span>
+              </p>
+            ))}
+          </div>
+        ) : null}
+        {methods.length > 0 ? (
+          <div className="px-2 py-1 text-[11px] leading-[16px]">
+            {methods.map((member, index) => (
+              <p key={`${member.label}-${index}`} className="flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                <span>{member.label}</span>
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function erdColumn(raw: string): { name: string; label: string; pk: boolean; fk: boolean } {
+  const pk = /^\*/.test(raw.trim()) || /<<\s*PK\s*>>/i.test(raw)
+  const markedFk = /<<\s*FK\s*>>/i.test(raw)
+  const cleaned = raw.replace(/^\*\s*/, '').replace(/<<[^>]+>>/g, '').trim()
+  const typed = cleaned.match(/^([^:]+):\s*(.+)$/)
+  const name = (typed ? typed[1] : cleaned).trim()
+  const typeName = typed ? typed[2].trim() : ''
+  const fk = markedFk || (!pk && /_id$/i.test(name) && !/^id$/i.test(name))
+  return { name, label: typeName ? `${name} : ${typeName}` : name, pk, fk }
+}
+
+export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+  const layoutKey = `${width ?? 0}x${height ?? 0}`
+  const fill = data.visual?.fillColor || '#FFF4CC'
+  const stroke = data.visual?.lineColor || '#C4A35A'
+  const columns = data.description.map(erdColumn).filter((column) => column.name)
+  return (
+    <div className="group relative h-full w-full overflow-visible">
+      <SelectionResizer selected={selected} minWidth={150} minHeight={64} />
+      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <div
+        className="flex h-full w-full flex-col text-left text-slate-800"
+        style={{ background: fill, border: `1.5px solid ${stroke}`, fontFamily: 'Arial, Helvetica, sans-serif' }}
+      >
+        <div className="px-2 py-1.5 text-center text-[13px] font-bold" style={{ borderBottom: `1.5px solid ${stroke}` }}>
+          {data.title}
+        </div>
+        <div className="px-2 py-1 text-[11px] leading-[18px]">
+          {columns.map((column, index) => (
+            <p
+              key={`${column.name}-${index}`}
+              className={column.fk ? 'font-bold' : undefined}
+              style={{ textDecoration: column.pk ? 'underline' : undefined }}
+            >
+              {column.label}
+            </p>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export const integrationArchimateNodeTypes: NodeTypes = {
   archimateElement: ArchimateElementNode,
   archimateBoundary: ArchimateBoundaryNode,
@@ -734,5 +846,7 @@ export const integrationArchimateNodeTypes: NodeTypes = {
   archimateImage: ArchimateImageNode,
   archimateLegend: ArchimateLegendNode,
   c4Element: C4ElementNode,
+  umlClass: UmlClassNode,
+  erdEntity: ErdEntityNode,
   bpmnElement: BpmnElementNode,
 }

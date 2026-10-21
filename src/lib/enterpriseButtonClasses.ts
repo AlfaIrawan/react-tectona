@@ -111,3 +111,25 @@ export function enterpriseSecondaryButtonClass(): string {
     enterpriseControlFocusClass()
   )
 }
+
+/** Soft primary — a tint of the theme's primary colour: light fill, primary text, hairline border. */
+export function enterprisePrimarySoftButtonClass(): string {
+  return cn(
+    'group relative inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
+    'border border-primary/25 bg-primary/10 text-primary shadow-sm hover:bg-primary/15 hover:border-primary/35',
+    'transition-colors duration-150',
+    'disabled:pointer-events-none disabled:opacity-50',
+    enterpriseControlFocusClass(),
+  )
+}
+
+/** Filled secondary — the theme's soft secondary fill, no border. */
+export function enterpriseSecondaryFilledButtonClass(): string {
+  return cn(
+    'group relative inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
+    'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+    'transition-colors duration-150',
+    'disabled:pointer-events-none disabled:opacity-50',
+    enterpriseControlFocusClass(),
+  )
+}

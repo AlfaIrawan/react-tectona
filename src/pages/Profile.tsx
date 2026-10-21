@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import {
@@ -34,10 +34,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { getSession, logoutAsync, requireAuth, registerPasskey, type Session } from '@/auth/authService'
-import { fetchTokenAudit, fetchUserInfo, requestPartnerPasswordReset, type OidcUserInfo } from '@/lib/api/identityApi'
+import { fetchTokenAuditHistory, fetchUserInfo, requestPartnerPasswordReset, resendSecondaryEmailVerification, updateUserProfile, type OidcUserInfo } from '@/lib/api/identityApi'
 import { listAuthzAssignments, type AuthzAssignmentDto } from '@/lib/api/authzApi'
 import { passkeyErrorMessage } from '@/lib/api/webauthnApi'
 import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
+import { readAuthMethod } from '@/lib/authMethodSession'
 import { authCardButtonClass } from '@/lib/authUiClasses'
 import { enterpriseCyanGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
@@ -46,12 +47,26 @@ import { fetchModelCatalog, catalogPrice, type CatalogModel, type ModelCatalog }
 import { maskToken, readTokenTelemetry, type TokenTelemetryEvent } from '@/lib/tokenTelemetry'
 import { normalizeUserDisplayName } from '@/lib/userDisplayName'
 import { applyCatalogPricing, usageCost } from '@/lib/usageCost'
+import {
+  fetchMicrosoftProfileOrganization,
+  fetchMicrosoftProfilePhoto,
+  type MicrosoftProfileOrganization,
+} from '@/lib/api/microsoftGraphApi'
 
 type ProfilePreferences = {
   displayName?: string
   timezone: string
   avatar?: string
   notifications: Record<string, boolean>
+}
+
+type EditableProfile = {
+  jobTitle: string
+  department: string
+  employeeNumber: string
+  organizationalUnit: string
+  officeLocation: string
+  secondaryEmail: string
 }
 
 const PROFILE_PREFS_PREFIX = 'tectona_profile_preferences:'
@@ -91,7 +106,6 @@ function mergeTokenEvents(primary: TokenTelemetryEvent[], secondary: TokenTeleme
   return merged
     .filter((event, index, all) => all.findIndex((candidate) => `${candidate.event}|${candidate.trigger ?? ''}|${candidate.occurredAt}` === `${event.event}|${event.trigger ?? ''}|${event.occurredAt}`) === index)
     .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt))
-    .slice(0, 120)
 }
 
 function profileInitials(name: string, email: string): string {
@@ -109,7 +123,7 @@ function ProfileField({
   mono,
 }: {
   label: string
-  value: string
+  value: ReactNode
   mono?: boolean
 }) {
   return (
@@ -440,11 +454,13 @@ function AIProviderModelsCard({ onViewPerformance, onViewUsage }: { onViewPerfor
   </>
 }
 
-const usageCapabilities = ['AI Assistant', 'Agent Tool Call', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation', 'Application Catalog Scan']
+const usageCapabilities = ['AI Assistant', 'Agent Tool Call', 'Document Generation', 'Requirement Analysis', 'Knowledge Assistant', 'Workflow Automation', 'Application Catalog Scan', 'Abbreviation Scan']
 
 function interactionName(event: TokenTelemetryEvent): string {
   if (event.interactionType) return event.interactionType
   const source = `${event.trigger ?? ''} ${event.context ?? ''}`.toLowerCase()
+  if (/abbreviation scan/.test(source)) return 'Abbreviation Scan'
+  if (/application catalog scan/.test(source)) return 'Application Catalog Scan'
   if (/agent tool call|chat tools|tool.call|tool calling/.test(source)) return 'Agent Tool Call'
   if (/document|template|generate/.test(source)) return 'Document Generation'
   if (/requirement|idea|analysis|analyz/.test(source)) return 'Requirement Analysis'
@@ -456,7 +472,11 @@ function interactionName(event: TokenTelemetryEvent): string {
 type UsageRange = '7d' | '30d' | '90d' | 'year' | 'custom'
 
 function catalogModelLabel(model?: string): string {
-  return model || 'Unknown model'
+  const value = (model || '').trim()
+  if (!value) return 'Unknown model'
+  if (/gpt-4\.1/i.test(value)) return 'ChatGPT · GPT-4.1'
+  if (/gpt-5/i.test(value)) return 'ChatGPT · Thinking'
+  return value
 }
 
 function usagePeriod(range: UsageRange, now: Date, customFrom: string, customTo: string): { start: Date; end: Date; label: string } {
@@ -516,7 +536,7 @@ function AIActivityListDrawer({ events, onClose, onSelect }: { events: TokenTele
 function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders }: { events: TokenTelemetryEvent[]; loading: boolean; error: boolean; onRetry: () => void; onViewProviders: () => void }) {
   const [range, setRange] = useState<UsageRange>('30d')
   const [updatedAt, setUpdatedAt] = useState(() => new Date())
-  const [now] = useState(() => new Date())
+  const [now, setNow] = useState(() => new Date())
   const defaultFrom = new Date(now); defaultFrom.setDate(now.getDate() - 29)
   const [customFrom, setCustomFrom] = useState(defaultFrom.toISOString().slice(0, 10))
   const [customTo, setCustomTo] = useState(now.toISOString().slice(0, 10))
@@ -538,7 +558,7 @@ function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders 
   const period = usagePeriod(range, now, customFrom, customTo)
   const filteredRawEvents = events.filter((event) => { const timestamp = new Date(event.occurredAt); return timestamp >= period.start && timestamp <= period.end })
   const filteredEvents = filteredRawEvents.map((event) => applyCatalogPricing(event, pricingCatalog))
-  const periodDuration = Math.max(period.end.getTime() - period.start.getTime(), 86400000)
+  const periodDuration = Math.max(Math.ceil((period.end.getTime() - period.start.getTime()) / 86400000), 1) * 86400000
   const previousStart = new Date(period.start.getTime() - periodDuration)
   const previousRawEvents = events.filter((event) => { const timestamp = new Date(event.occurredAt); return timestamp >= previousStart && timestamp < period.start })
   const previousEvents = previousRawEvents.map((event) => applyCatalogPricing(event, pricingCatalog))
@@ -577,10 +597,10 @@ function AIUsageSpendingCard({ events, loading, error, onRetry, onViewProviders 
   const recentEvents = filteredEvents.slice(0, 8)
 
   return <>
-    <SectionCard icon={Activity} title="AI Usage & Spending" description="Track your AI activity, token consumption, and estimated usage cost across TECTONA." headerAside={<div className="flex flex-wrap items-center justify-end gap-2"><select aria-label="Usage time range" value={range} onChange={(event) => setRange(event.target.value as UsageRange)} className="h-8 rounded-lg border border-border/60 bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="year">This year</option><option value="custom">Custom range</option></select><span title={updatedAt.toLocaleTimeString('en-US')} className="hidden text-xs text-muted-foreground sm:inline">Updated just now</span><button type="button" aria-label="Refresh AI usage and pricing" title="Refresh" onClick={() => { setUpdatedAt(new Date()); setPricingRevision((value) => value + 1); window.dispatchEvent(new CustomEvent('tectona:token-telemetry-updated')) }} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"><RefreshCw className={cn('h-3.5 w-3.5', pricingLoading && 'animate-spin')} /></button></div>}>
+    <SectionCard icon={Activity} title="AI Usage & Spending" description="Track your AI activity, token consumption, and estimated usage cost across TECTONA." headerAside={<div className="flex flex-wrap items-center justify-end gap-2"><select aria-label="Usage time range" value={range} onChange={(event) => setRange(event.target.value as UsageRange)} className="h-8 rounded-lg border border-border/60 bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="year">This year</option><option value="custom">Custom range</option></select><span title={updatedAt.toLocaleTimeString('en-US')} className="hidden text-xs text-muted-foreground sm:inline">Updated just now</span><button type="button" aria-label="Refresh AI usage and pricing" title="Refresh" onClick={() => { const refreshedAt = new Date(); setUpdatedAt(refreshedAt); setNow(refreshedAt); setPricingRevision((value) => value + 1); window.dispatchEvent(new CustomEvent('tectona:token-telemetry-updated')) }} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"><RefreshCw className={cn('h-3.5 w-3.5', pricingLoading && 'animate-spin')} /></button></div>}>
       <div className="space-y-4 py-4">
         {range === 'custom' ? <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-border/50 bg-muted/20 p-2 text-xs"><label className="flex items-center gap-2 text-muted-foreground">From<input type="date" value={customFrom} max={customTo} onChange={(event) => setCustomFrom(event.target.value)} className="rounded-md border border-border/60 bg-background px-2 py-1 text-foreground" /></label><label className="flex items-center gap-2 text-muted-foreground">To<input type="date" value={customTo} min={customFrom} onChange={(event) => setCustomTo(event.target.value)} className="rounded-md border border-border/60 bg-background px-2 py-1 text-foreground" /></label></div> : null}
-        {loading && !events.length ? <div className="space-y-4 animate-pulse"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 rounded-xl bg-muted/60" />)}</div><div className="grid gap-4 lg:grid-cols-[1.8fr_1fr]"><div className="h-64 rounded-xl bg-muted/50" /><div className="h-64 rounded-xl bg-muted/50" /></div><div className="grid gap-4 xl:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-64 rounded-xl bg-muted/40" />)}</div><div className="h-52 rounded-xl bg-muted/40" /></div> : error && !events.length ? <div className="rounded-xl border border-destructive/20 bg-destructive/[0.035] px-5 py-7 text-center"><h3 className="text-sm font-semibold">Unable to load AI usage data</h3><p className="mt-1 text-xs text-muted-foreground">AI usage information is temporarily unavailable.</p><Button type="button" variant="outline" className="mt-4" onClick={onRetry}>Retry</Button></div> : !filteredEvents.length ? <div className="rounded-xl border border-dashed border-border/70 px-5 py-9 text-center"><h3 className="text-sm font-semibold">No AI activity yet</h3><p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">Your AI usage, token consumption, and estimated cost will appear after you start using AI capabilities in TECTONA.</p><Link to="/projects" className="mt-4 inline-flex rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90">Explore AI Features</Link></div> : <>
+        {loading && !events.length ? <div className="space-y-4 animate-pulse"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 rounded-xl bg-muted/60" />)}</div><div className="grid gap-4 lg:grid-cols-[1.8fr_1fr]"><div className="h-64 rounded-xl bg-muted/50" /><div className="h-64 rounded-xl bg-muted/50" /></div><div className="grid gap-4 xl:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-64 rounded-xl bg-muted/40" />)}</div><div className="h-52 rounded-xl bg-muted/40" /></div> : error && !events.length ? <div className="rounded-xl border border-destructive/20 bg-destructive/[0.035] px-5 py-7 text-center"><h3 className="text-sm font-semibold">Unable to load AI usage data</h3><p className="mt-1 text-xs text-muted-foreground">AI usage information is temporarily unavailable.</p><Button type="button" variant="outline" className="mt-4" onClick={onRetry}>Retry</Button></div> : !filteredEvents.length ? <div className="rounded-xl border border-dashed border-border/70 px-5 py-9 text-center"><h3 className="text-sm font-semibold">{events.length ? `No AI activity in ${period.label.toLowerCase()}` : 'No AI activity yet'}</h3><p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">{events.length ? 'Choose another time range to see your recorded AI interactions.' : 'Your AI usage, token consumption, and estimated cost will appear after you start using AI capabilities in TECTONA.'}</p>{!events.length ? <Link to="/projects" className="mt-4 inline-flex rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90">Explore AI Features</Link> : null}</div> : <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
             { label: 'AI calls', value: filteredEvents.length.toLocaleString(), detail: comparisonText(filteredEvents.length, previousEvents.length, suffix), icon: MessageSquare, tone: 'text-blue-600 bg-blue-50 dark:bg-blue-950/20' },
             { label: 'Total tokens', value: totalTokens.toLocaleString(), detail: comparisonText(totalTokens, previousTokens, suffix), icon: Coins, tone: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20' },
@@ -610,11 +630,19 @@ export function ProfilePage() {
   const [profilePrefs, setProfilePrefs] = useState<ProfilePreferences>(DEFAULT_PROFILE_PREFERENCES)
   const [editOpen, setEditOpen] = useState(false)
   const [editName, setEditName] = useState('')
+  const [editProfile, setEditProfile] = useState<EditableProfile>({ jobTitle: '', department: '', employeeNumber: '', organizationalUnit: '', officeLocation: '', secondaryEmail: '' })
+  const [profileSaveBusy, setProfileSaveBusy] = useState(false)
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
+  const [profileSaveNotice, setProfileSaveNotice] = useState<string | null>(null)
+  const [secondaryVerificationBusy, setSecondaryVerificationBusy] = useState(false)
+  const [secondaryVerificationMsg, setSecondaryVerificationMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [tokenEvents, setTokenEvents] = useState<TokenTelemetryEvent[]>([])
   const [tokenEventsLoading, setTokenEventsLoading] = useState(true)
   const [tokenEventsError, setTokenEventsError] = useState(false)
   const [profileTab, setProfileTab] = useState<'account' | 'preferences' | 'security' | 'usage' | 'performance' | 'providers'>('account')
   const [identityProfile, setIdentityProfile] = useState<OidcUserInfo | null>(null)
+  const [microsoftProfile, setMicrosoftProfile] = useState<MicrosoftProfileOrganization | null>(null)
+  const [microsoftPhotoUrl, setMicrosoftPhotoUrl] = useState<string | null>(null)
   const [authzAssignments, setAuthzAssignments] = useState<AuthzAssignmentDto[]>([])
   const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [passkeyMsg, setPasskeyMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -657,6 +685,28 @@ export function ProfilePage() {
     }
   }
 
+  const handleResendSecondaryVerification = async () => {
+    if (!session || secondaryVerificationBusy) return
+    setSecondaryVerificationBusy(true)
+    setSecondaryVerificationMsg(null)
+    try {
+      const result = await resendSecondaryEmailVerification(session.token)
+      setSecondaryVerificationMsg({
+        ok: result.sent,
+        text: result.sent
+          ? 'A new verification link was sent to your secondary email.'
+          : 'A new verification link was created, but email delivery is not available yet.',
+      })
+    } catch (error) {
+      setSecondaryVerificationMsg({
+        ok: false,
+        text: error instanceof Error ? error.message : 'Unable to resend the verification link.',
+      })
+    } finally {
+      setSecondaryVerificationBusy(false)
+    }
+  }
+
   useEffect(() => {
     const currentSession = requireAuth()
     if (!currentSession) {
@@ -667,15 +717,67 @@ export function ProfilePage() {
     const preferences = readProfilePreferences(currentSession.user.id)
     setProfilePrefs(preferences)
     setEditName(normalizeUserDisplayName(currentSession.user.name || preferences.displayName || currentSession.user.email))
-    void fetchUserInfo(currentSession.token).then(setIdentityProfile).catch(() => undefined)
+    void fetchUserInfo(currentSession.token).then((profile) => {
+      setIdentityProfile(profile)
+      setEditProfile({
+        jobTitle: profile.job_title || '',
+        department: profile.department || '',
+        employeeNumber: profile.employee_number || '',
+        organizationalUnit: profile.organizational_unit || '',
+        officeLocation: profile.office_location || '',
+        secondaryEmail: profile.secondary_email || '',
+      })
+      if (profile.display_name) setEditName(normalizeUserDisplayName(profile.display_name))
+    }).catch(() => undefined)
+    const graphController = new AbortController()
+    let graphActive = true
+    if (readAuthMethod() === 'microsoft') {
+      void fetchMicrosoftProfileOrganization(graphController.signal)
+        .then((profile) => { if (graphActive) setMicrosoftProfile(profile) })
+        .catch(() => { if (graphActive) setMicrosoftProfile(null) })
+    } else {
+      setMicrosoftProfile(null)
+      setMicrosoftPhotoUrl(null)
+    }
     void listAuthzAssignments().then(setAuthzAssignments).catch(() => undefined)
     const localEvents = mergeTokenEvents([], readTokenTelemetry(currentSession.user.id))
     setTokenEvents(localEvents)
-    void fetchTokenAudit(currentSession.token, 80, currentSession.user.id)
+    void fetchTokenAuditHistory(currentSession.token, currentSession.user.id)
       .then((events) => setTokenEvents(mergeTokenEvents(events, localEvents)))
       .catch(() => { if (!localEvents.length) setTokenEventsError(true) })
       .finally(() => setTokenEventsLoading(false))
+    return () => {
+      graphActive = false
+      graphController.abort()
+    }
   }, [navigate])
+
+  useEffect(() => {
+    if (!session?.user.id) return
+    if (readAuthMethod() !== 'microsoft') {
+      setMicrosoftPhotoUrl(null)
+      return
+    }
+    const controller = new AbortController()
+    let active = true
+    let objectUrl: string | null = null
+    void fetchMicrosoftProfilePhoto(controller.signal)
+      .then((photo) => {
+        if (!active) return
+        if (!photo) {
+          setMicrosoftPhotoUrl(null)
+          return
+        }
+        objectUrl = URL.createObjectURL(photo)
+        setMicrosoftPhotoUrl(objectUrl)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [session?.user.id, session?.token])
 
   useEffect(() => {
     const refreshTokenEvents = () => {
@@ -683,7 +785,7 @@ export function ProfilePage() {
       if (!current) return
       setTokenEventsLoading(true)
       setTokenEventsError(false)
-      void fetchTokenAudit(current.token, 80, current.user.id)
+      void fetchTokenAuditHistory(current.token, current.user.id)
         .then((events) => setTokenEvents(mergeTokenEvents(events, readTokenTelemetry(current.user.id))))
         .catch(() => {
           const localEvents = mergeTokenEvents([], readTokenTelemetry(current.user.id))
@@ -710,11 +812,57 @@ export function ProfilePage() {
     reader.readAsDataURL(file)
   }
 
-  const saveDisplayName = () => {
-    const nextName = editName.trim()
-    if (!nextName) return
-    updateProfilePreferences({ ...profilePrefs, displayName: nextName })
-    setEditOpen(false)
+  const openEditProfile = () => {
+    setEditName(identityProfile?.display_name || session?.user.name || '')
+    setEditProfile({
+      jobTitle: identityProfile?.job_title || '',
+      department: identityProfile?.department || '',
+      employeeNumber: identityProfile?.employee_number || '',
+      organizationalUnit: identityProfile?.organizational_unit || '',
+      officeLocation: identityProfile?.office_location || '',
+      secondaryEmail: identityProfile?.secondary_email || '',
+    })
+    setProfileSaveError(null)
+    setProfileSaveNotice(null)
+    setSecondaryVerificationMsg(null)
+    setEditOpen(true)
+  }
+
+  const saveProfile = async () => {
+    if (!session || !editName.trim() || profileSaveBusy) return
+    setProfileSaveBusy(true)
+    setProfileSaveError(null)
+    setProfileSaveNotice(null)
+    try {
+      const previousSecondary = identityProfile?.secondary_email?.trim().toLowerCase() || ''
+      const nextSecondary = editProfile.secondaryEmail.trim().toLowerCase()
+      const updated = await updateUserProfile({
+        accessToken: session.token,
+        displayName: editName,
+        jobTitle: editProfile.jobTitle,
+        department: editProfile.department,
+        employeeNumber: editProfile.employeeNumber,
+        organizationalUnit: editProfile.organizationalUnit,
+        officeLocation: editProfile.officeLocation,
+        secondaryEmail: editProfile.secondaryEmail,
+      })
+      setIdentityProfile(updated)
+      setProfilePrefs((current) => ({ ...current, displayName: updated.display_name || editName.trim() }))
+      setEditOpen(false)
+      if (nextSecondary && nextSecondary !== previousSecondary) {
+        setProfileSaveNotice(
+          updated.secondary_email_verification_sent
+            ? 'A verification link was sent to your secondary email. It can be used for password recovery after verification.'
+            : 'Secondary email saved, but the verification email could not be delivered yet. It will not be used for recovery until verified.',
+        )
+      } else if (!nextSecondary && previousSecondary) {
+        setProfileSaveNotice('Secondary email removed. Password recovery will use your primary email only.')
+      }
+    } catch (error) {
+      setProfileSaveError(error instanceof Error ? error.message : 'Unable to save profile changes.')
+    } finally {
+      setProfileSaveBusy(false)
+    }
   }
 
   const handleLogout = () => {
@@ -759,6 +907,8 @@ export function ProfilePage() {
     ? userAuthzAssignments.map((assignment) => `${assignment.role_name} (${scopeTypeLabel(assignment.scope_type_code)})`)
     : (effectiveRoles ?? []).map(rbacRoleLabel)
   const initials = profileInitials(displayName, session.user.email)
+  const graphProfile = microsoftProfile?.profile
+  const isMicrosoftSso = readAuthMethod() === 'microsoft' || identityProfile?.microsoft_sso === true
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-muted/40 via-background to-background">
@@ -766,7 +916,7 @@ export function ProfilePage() {
         {/* Top navigation */}
         <header className="mb-6 flex items-center justify-between gap-4">
           <Link
-            to="/projects"
+            to="/idea-backlog"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -780,7 +930,7 @@ export function ProfilePage() {
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
               <button type="button" className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-2xl bg-primary text-lg font-semibold text-primary-foreground shadow-md" onClick={() => avatarInputRef.current?.click()} aria-label="Change profile photo">
-                {profilePrefs.avatar ? <img src={profilePrefs.avatar} alt="" className="h-full w-full object-cover" /> : initials}
+                {profilePrefs.avatar || (isMicrosoftSso && microsoftPhotoUrl) ? <img src={profilePrefs.avatar || microsoftPhotoUrl || ''} alt="" className="h-full w-full object-cover" onError={() => setMicrosoftPhotoUrl(null)} /> : initials}
                 <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100"><Camera className="h-5 w-5" aria-hidden /></span>
               </button>
               <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
@@ -795,7 +945,7 @@ export function ProfilePage() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-              <Button type="button" variant="outline" className="h-10 gap-2" onClick={() => setEditOpen(true)}>
+              <Button type="button" variant="outline" className="h-10 gap-2" onClick={openEditProfile}>
                 <Edit3 className="h-4 w-4" aria-hidden /> Edit profile
               </Button>
               <Button type="button" variant="outline" className={cn(authCardButtonClass, 'sm:w-auto sm:min-w-[10rem] border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive')} onClick={handleLogout}>
@@ -835,14 +985,53 @@ export function ProfilePage() {
             description="Your identity and session summary."
             className={profileTab === 'account' ? undefined : 'hidden'}
           >
-            <dl>
+            {profileSaveNotice ? <p role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">{profileSaveNotice}</p> : null}
+              <dl>
               <ProfileField label="Display name" value={displayName} />
               <ProfileField label="Email" value={session.user.email || '-'} />
               <ProfileField label="Primary RBAC role" value={platformRoleLabel} />
               <ProfileField label="RBAC roles" value={rbacRoles.length ? rbacRoles.join(', ') : 'No role claims'} />
               <ProfileField label="Account ID" value={session.user.id} mono />
-              <ProfileField label="Job title" value={identityProfile?.job_title || session.user.jobTitle || '-'} />
-              <ProfileField label="Organizational unit" value={identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
+              <ProfileField
+                label="Secondary email"
+                value={identityProfile?.secondary_email ? (
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{identityProfile.secondary_email}</span>
+                      {identityProfile.secondary_email_verified ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-600" title="Verified">
+                          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                          <span className="text-xs font-semibold">Verified</span>
+                        </span>
+                      ) : <span className="text-xs text-muted-foreground">· Pending verification</span>}
+                    </span>
+                    {!identityProfile.secondary_email_verified ? (
+                      <Button type="button" variant="outline" className="h-7 gap-1 px-2 text-[11px]" onClick={() => { void handleResendSecondaryVerification() }} disabled={secondaryVerificationBusy}>
+                        <RefreshCw className={cn('h-3 w-3', secondaryVerificationBusy && 'animate-spin')} aria-hidden />
+                        {secondaryVerificationBusy ? 'Sending…' : 'Resend verification'}
+                      </Button>
+                    ) : null}
+                  </span>
+                ) : '-'}
+              />
+              {secondaryVerificationMsg ? <p role="status" className={cn('mb-2 -mt-2 text-xs', secondaryVerificationMsg.ok ? 'text-emerald-600' : 'text-destructive')}>{secondaryVerificationMsg.text}</p> : null}
+              {isMicrosoftSso ? (
+                <>
+                  <ProfileField label="Job title" value={graphProfile?.job_title || identityProfile?.job_title || session.user.jobTitle || '-'} />
+                  <ProfileField label="Department" value={graphProfile?.department || identityProfile?.department || '-'} />
+                  <ProfileField label="NIK / Number" value={graphProfile?.employee_id || identityProfile?.employee_number || '-'} />
+                  <ProfileField label="Organizational unit" value={graphProfile?.company_name || identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
+                  <ProfileField label="Office location" value={graphProfile?.office_location || identityProfile?.office_location || '-'} />
+                </>
+              ) : (
+                <>
+                  <ProfileField label="Job title" value={identityProfile?.job_title || session.user.jobTitle || '-'} />
+                  <ProfileField label="Department" value={identityProfile?.department || '-'} />
+                  <ProfileField label="NIK / Number" value={identityProfile?.employee_number || '-'} />
+                  <ProfileField label="Organizational unit" value={identityProfile?.organizational_unit || session.user.organizationalUnit || '-'} />
+                  <ProfileField label="Office location" value={identityProfile?.office_location || '-'} />
+                </>
+              )}
               <ProfileField label="Account status" value={identityProfile?.account_status || session.user.accountStatus || 'Active'} />
               <ProfileField label="Last login" value={formatDate(session.loginAt)} />
             </dl>
@@ -908,7 +1097,7 @@ export function ProfilePage() {
               description="Active session on this device."
               className={profileTab === 'security' ? undefined : 'hidden'}
             >
-              <dl>
+            <dl>
                 <ProfileField label="Session token" value={maskToken(session.token)} mono />
               </dl>
               <p className="flex items-start gap-2 border-t border-border/40 py-4 text-xs leading-relaxed text-muted-foreground">
@@ -977,7 +1166,7 @@ export function ProfilePage() {
                     </Button>
                   </form>
                   <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                    Only active password-based Tectona accounts in your organization are eligible.
+                    Only active password-based Tectona accounts in your organization are eligible. If the primary inbox is unavailable, enter the partner&apos;s verified secondary email.
                   </p>
                   {partnerResetMsg ? (
                     <p role="status" className={cn('mt-3 rounded-lg border px-3 py-2 text-xs', partnerResetMsg.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-destructive/20 bg-destructive/[0.04] text-destructive')}>
@@ -1006,18 +1195,38 @@ export function ProfilePage() {
 
         {editOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
-            <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card p-6 shadow-xl">
+            <div className="w-full max-w-2xl rounded-2xl border border-border/60 bg-card p-6 shadow-xl">
               <div className="flex items-start justify-between gap-4">
-                <div><h2 id="edit-profile-title" className="text-lg font-semibold text-foreground">Edit profile</h2><p className="mt-1 text-sm text-muted-foreground">These changes are saved for this browser.</p></div>
+                <div><h2 id="edit-profile-title" className="text-lg font-semibold text-foreground">Edit profile</h2><p className="mt-1 text-sm text-muted-foreground">Update your personal and organizational information.</p></div>
                 <button type="button" onClick={() => setEditOpen(false)} className="rounded-lg p-1 text-muted-foreground hover:bg-muted" aria-label="Close edit profile"><span className="text-lg">×</span></button>
               </div>
-              <div className="mt-5 space-y-2">
-                <Label htmlFor="display-name">Display name</Label>
-                <input id="display-name" value={editName} onChange={(event) => setEditName(event.target.value)} className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" autoFocus />
-              </div>
+              {isMicrosoftSso ? (
+                <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  Your profile information is managed by Microsoft and can only be changed in your organization directory.
+                </div>
+              ) : (
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  {[
+                    ['display-name', 'Display name', editName, (value: string) => setEditName(value)],
+                    ['job-title', 'Job title', editProfile.jobTitle, (value: string) => setEditProfile((current) => ({ ...current, jobTitle: value }))],
+                    ['department', 'Department', editProfile.department, (value: string) => setEditProfile((current) => ({ ...current, department: value }))],
+                    ['employee-number', 'NIK / Number', editProfile.employeeNumber, (value: string) => setEditProfile((current) => ({ ...current, employeeNumber: value }))],
+                    ['organizational-unit', 'Organizational unit', editProfile.organizationalUnit, (value: string) => setEditProfile((current) => ({ ...current, organizationalUnit: value }))],
+                    ['office-location', 'Office location', editProfile.officeLocation, (value: string) => setEditProfile((current) => ({ ...current, officeLocation: value }))],
+                    ['secondary-email', 'Secondary email', editProfile.secondaryEmail, (value: string) => setEditProfile((current) => ({ ...current, secondaryEmail: value }))],
+                  ].map(([id, label, value, onChange]) => (
+                    <div key={id as string} className="space-y-2">
+                      <Label htmlFor={id as string}>{label as string}</Label>
+                      <input id={id as string} type={id === 'secondary-email' ? 'email' : 'text'} value={value as string} onChange={(event) => (onChange as (value: string) => void)(event.target.value)} className="flex h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" autoComplete={id === 'secondary-email' ? 'email' : undefined} autoFocus={id === 'display-name'} />
+                      {id === 'secondary-email' ? <p className="text-xs text-muted-foreground">Verify this address before it can receive password recovery links.</p> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {profileSaveError ? <p className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{profileSaveError}</p> : null}
               <div className="mt-6 flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
-                <Button type="button" className="gap-2" onClick={saveDisplayName}><Check className="h-4 w-4" aria-hidden />Save changes</Button>
+                {!isMicrosoftSso ? <Button type="button" className="gap-2" onClick={() => { void saveProfile() }} disabled={profileSaveBusy || !editName.trim()}><Check className="h-4 w-4" aria-hidden />{profileSaveBusy ? 'Saving…' : 'Save changes'}</Button> : null}
               </div>
             </div>
           </div>

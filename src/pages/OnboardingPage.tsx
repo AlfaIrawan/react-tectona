@@ -84,7 +84,7 @@ export function OnboardingPage() {
     !shouldShowOnboardingWizard &&
     (!appAccess.gateEnabled || appAccess.hasAppAccess)
   ) {
-    return <Navigate to="/projects" replace />
+    return <Navigate to="/idea-backlog" replace />
   }
 
   const userEmail = session?.user.email ?? ''
@@ -124,7 +124,7 @@ export function OnboardingPage() {
       clearCorporateEmailVerificationPending(subjectId)
     }
     void queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
-    navigate('/projects', { replace: true })
+    navigate('/idea-backlog', { replace: true })
   }
 
   const handleCreateOrgPersonal = async (input: { displayName: string; slug: string }) => {
@@ -175,7 +175,7 @@ export function OnboardingPage() {
     }
     void queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
     void queryClient.invalidateQueries({ queryKey: ['corporate-onboarding-progress'] })
-    navigate('/projects', { replace: true })
+    navigate('/idea-backlog', { replace: true })
   }
 
   const handleJoinSubmit = async (input: {

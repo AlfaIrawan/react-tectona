@@ -4,6 +4,7 @@ import {
   isWorkspaceOwnedBySubject,
   resolveDirectoryAccessBadgesForViewer,
   subjectHasDirectoryWacMemberBadge,
+  subjectHasFullWacOnWorkspace,
 } from './workspaceOwnershipVisibility'
 
 describe('isWorkspaceOwnedBySubject', () => {
@@ -39,7 +40,7 @@ describe('subjectHasDirectoryWacMemberBadge', () => {
     ).toBe(true)
   })
 
-  it('hides badge when org-home membership is read_only_workspace', () => {
+  it('shows read-only membership as a badge without granting full workspace access', () => {
     const membershipIds = new Set([orgId])
     const rows = [{ subjectId: henrySubjectId, workspaceId: orgId, scopeCode: 'read_only_workspace' }]
     expect(
@@ -50,7 +51,8 @@ describe('subjectHasDirectoryWacMemberBadge', () => {
         membershipRows: rows,
         orgHomeWorkspaceId: orgId,
       }),
-    ).toBe(false)
+    ).toBe(true)
+    expect(subjectHasFullWacOnWorkspace(henrySubjectId, orgId, membershipIds, rows)).toBe(false)
   })
 })
 

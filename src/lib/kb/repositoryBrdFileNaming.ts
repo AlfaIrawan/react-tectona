@@ -103,12 +103,32 @@ export function buildAutoRenamedBrdFileName(
 
 export type StructuredDocumentPrefix = 'BRD' | 'URD' | 'FSD' | 'TPL'
 
+export type FileNameDocumentType = 'fsd' | 'urd' | 'brd'
+
+/** `urd` as its own token. Not `\burd\b`: `_` is a word character, so `\b` never matches inside
+ * structured names like "URD_AdiraFinanceWs_Requirement" and the type fell through to content
+ * sniffing (a URD that mentions FSD was renamed to FSD). */
+function hasTypeToken(base: string, token: string): boolean {
+  return new RegExp(`(?:^|[^a-z0-9])${token}(?:[^a-z0-9]|$)`).test(base)
+}
+
+/** Document type named by a file name. The leading prefix ("URD_…") wins over a later mention. */
+export function detectDocumentTypeFromFileName(fileName: string): FileNameDocumentType | null {
+  const base = fileName.replace(/\.[^/.]+$/, '').toLowerCase()
+  const leading = /^(fsd|urd|brd)(?:[^a-z0-9]|$)/.exec(base)
+  if (leading) return leading[1] as FileNameDocumentType
+  if (hasTypeToken(base, 'fsd') || /functional[\s_-]*spec/.test(base)) return 'fsd'
+  if (hasTypeToken(base, 'urd') || /user[\s_-]*requirement/.test(base)) return 'urd'
+  if (hasTypeToken(base, 'brd') || /business[\s_-]*requirement/.test(base)) return 'brd'
+  return null
+}
+
 /** Detect file-name prefix from document type cues in the original filename. */
 export function resolveStructuredDocumentPrefix(fileName: string): StructuredDocumentPrefix {
-  const base = fileName.replace(/\.[^/.]+$/, '').toLowerCase()
-  if (/\bfsd\b|functional[\s_-]*spec/i.test(base)) return 'FSD'
-  if (/\burd\b|user[\s_-]*requirement/i.test(base)) return 'URD'
-  if (/\bbrd\b|business[\s_-]*requirement/i.test(base)) return 'BRD'
+  const type = detectDocumentTypeFromFileName(fileName)
+  if (type === 'fsd') return 'FSD'
+  if (type === 'urd') return 'URD'
+  if (type === 'brd') return 'BRD'
   return 'TPL'
 }
 

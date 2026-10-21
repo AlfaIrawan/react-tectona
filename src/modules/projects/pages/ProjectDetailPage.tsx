@@ -97,6 +97,11 @@ import { useProjectDocsStore } from '../store/projectDocsStore'
 import { fetchProjectDocumentsForScenarios } from '../lib/fetchProjectDocumentsForScenarios'
 import { loadProjectScenarioState } from '../lib/projectScenariosStorage'
 import { syncIdeaDocumentsToProjectFolder } from '../lib/ideaLinkedDocuments'
+import { ProjectIdeasPanel } from '../components/ProjectIdeasPanel'
+import { NewSubProjectDialog, ProjectSubProjectsPanel } from '../components/ProjectSubProjectsPanel'
+import { ProjectRollupSummary, type RollupScope } from '../components/ProjectRollupSummary'
+import { fetchSubProjectEntries, type SubProjectEntry } from '../lib/subProjects'
+import type { IdeaApi } from '@/lib/api/ideaBacklogApi'
 import {
   uploadFilesToProjectDocumentFolder,
   type ProjectDocumentRevisionConflict,
@@ -490,6 +495,7 @@ function ProjectDetailSidebar({
   onReorderSections,
   onWidthChange,
   sectionBadgeCounts,
+  unavailableSections = [],
 }: {
   collapsed: boolean
   onCollapsedChange: (collapsed: boolean) => void
@@ -505,6 +511,7 @@ function ProjectDetailSidebar({
   onReorderSections: (orderedKeys: ProjectPanelKey[]) => void
   onWidthChange: (width: number) => void
   sectionBadgeCounts?: Partial<Record<ProjectPanelKey, number>>
+  unavailableSections?: ProjectPanelKey[]
 }) {
   const addSectionButtonRef = useRef<HTMLButtonElement>(null)
   const asideRef = useRef<HTMLElement>(null)
@@ -541,8 +548,11 @@ function ProjectDetailSidebar({
   const [catalogAnchor, setCatalogAnchor] = useState<HTMLElement | null>(null)
 
   const hasAvailableSections = useMemo(
-    () => PROJECT_PANEL_CATALOG.some((entry) => !navSections.includes(entry.key)),
-    [navSections],
+    () =>
+      PROJECT_PANEL_CATALOG.some(
+        (entry) => !navSections.includes(entry.key) && !unavailableSections.includes(entry.key),
+      ),
+    [navSections, unavailableSections],
   )
 
   useEffect(() => {
@@ -634,6 +644,7 @@ function ProjectDetailSidebar({
       open={catalogOpen}
       anchorEl={catalogAnchor ?? addSectionButtonRef.current}
       navSections={navSections}
+      unavailableSections={unavailableSections}
       onClose={() => setCatalogOpen(false)}
       onAddSection={(key) => {
         onAddSection(key)
@@ -769,12 +780,6 @@ export function ProjectDetailPage() {
 
   const inboxPendingCount = overlays.pendingInboxKeys.size
 
-  const sectionBadgeCounts = useMemo((): Partial<Record<ProjectPanelKey, number>> => {
-    const counts: Partial<Record<ProjectPanelKey, number>> = {}
-    if (inboxPendingCount > 0) counts.inbox = inboxPendingCount
-    if (scenariosStale) counts.scenarios = 1
-    return counts
-  }, [inboxPendingCount, scenariosStale])
   const {
     linkedIdea,
     linkedIdeas,
@@ -782,13 +787,59 @@ export function ProjectDetailPage() {
     reload: reloadLinkedIdea,
     setLinkedIdea,
   } = useProjectLinkedIdea(project?.id)
+  const sectionBadgeCounts = useMemo((): Partial<Record<ProjectPanelKey, number>> => {
+    const counts: Partial<Record<ProjectPanelKey, number>> = {}
+    if (inboxPendingCount > 0) counts.inbox = inboxPendingCount
+    if (scenariosStale) counts.scenarios = 1
+    if (linkedIdeas.length > 0) counts.ideas = linkedIdeas.length
+    return counts
+  }, [inboxPendingCount, linkedIdeas.length, scenariosStale])
   const addNavSection = useProjectNavSectionsStore((state) => state.addSection)
   const removeNavSection = useProjectNavSectionsStore((state) => state.removeSection)
   const reorderNavSections = useProjectNavSectionsStore((state) => state.reorderSections)
   const savedNavSections = useProjectNavSectionsStore((state) =>
     project ? state.sectionsByProject[project.id] : undefined,
   )
-  const navSections = useMemo(() => resolveProjectNavSections(savedNavSections), [savedNavSections])
+  const isSubProject = Boolean(project?.parentProjectId)
+  const unavailableSections = useMemo<ProjectPanelKey[]>(() => (isSubProject ? ['subprojects'] : []), [isSubProject])
+  const navSections = useMemo(
+    () => resolveProjectNavSections(savedNavSections).filter((key) => !unavailableSections.includes(key)),
+    [savedNavSections, unavailableSections],
+  )
+
+  // Sub-projects of a program, with their single idea and their real work items (roll-up).
+  const [subProjectEntries, setSubProjectEntries] = useState<SubProjectEntry[]>([])
+  const [subProjectsLoading, setSubProjectsLoading] = useState(false)
+  const [rollupScope, setRollupScope] = useState<RollupScope>('all')
+  const [subProjectDialogIdea, setSubProjectDialogIdea] = useState<IdeaApi | null>(null)
+  const reloadSubProjects = useCallback(async () => {
+    if (!project || project.parentProjectId) {
+      setSubProjectEntries([])
+      return
+    }
+    setSubProjectsLoading(true)
+    try {
+      setSubProjectEntries(await fetchSubProjectEntries(project))
+    } catch {
+      setSubProjectEntries([])
+    } finally {
+      setSubProjectsLoading(false)
+    }
+  }, [project])
+  useEffect(() => {
+    void reloadSubProjects()
+  }, [reloadSubProjects])
+  const isProgram = !isSubProject && subProjectEntries.length > 0
+  const sidebarBadgeCounts = useMemo(
+    () => (subProjectEntries.length > 0 ? { ...sectionBadgeCounts, subprojects: subProjectEntries.length } : sectionBadgeCounts),
+    [sectionBadgeCounts, subProjectEntries.length],
+  )
+
+  const openIdeasSection = useCallback(() => {
+    if (!project) return
+    if (!navSections.includes('ideas')) addNavSection(project.id, 'ideas')
+    setActivePanel('ideas')
+  }, [addNavSection, navSections, project])
   const templateLabel = template?.name ?? (project?.tags?.[0] ? formatProjectTagLabel(project.tags[0]) : 'Project')
   const userTags = useMemo(
     () => (project?.tags ?? []).filter((tag) => !isProjectTemplateTag(tag)),
@@ -886,16 +937,31 @@ export function ProjectDetailPage() {
     }
   }
 
+  // Stable key so the sync below only re-runs when the set of linked ideas changes.
+  const linkedIdeaIdsKey = linkedIdeas.map((idea) => idea.id).join(',')
+  const linkedIdeaIds = useMemo(() => (linkedIdeaIdsKey ? linkedIdeaIdsKey.split(',') : []), [linkedIdeaIdsKey])
+
   useEffect(() => {
-    if (!project?.id || !linkedIdea?.id) return
-    void syncIdeaDocumentsToProjectFolder({
-      project: { id: project.id, name: project.name },
-      ideaId: linkedIdea.id,
-      workspaceId: linkedIdea.workspace_id ?? project.workspaceId,
-    }).then(() => {
-      bumpDocsRefresh()
-    })
-  }, [bumpDocsRefresh, linkedIdea?.id, linkedIdea?.workspace_id, project?.id, project?.name, project?.workspaceId])
+    if (!project?.id || linkedIdeas.length === 0) return
+    let cancelled = false
+    void (async () => {
+      // Sequential on purpose: each call patches documents and ensures the same project folder.
+      for (const idea of linkedIdeas) {
+        if (cancelled) return
+        await syncIdeaDocumentsToProjectFolder({
+          project: { id: project.id, name: project.name },
+          ideaId: idea.id,
+          workspaceId: idea.workspace_id ?? project.workspaceId,
+        }).catch(() => undefined)
+      }
+      if (!cancelled) bumpDocsRefresh()
+    })()
+    return () => {
+      cancelled = true
+    }
+    // linkedIdeas is covered by linkedIdeaIdsKey; re-syncing on every reload of the same ideas is wasteful.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bumpDocsRefresh, linkedIdeaIdsKey, project?.id, project?.name, project?.workspaceId])
 
   useEffect(() => {
     if (!project?.id) {
@@ -990,7 +1056,8 @@ export function ProjectDetailPage() {
         }}
         onReorderSections={(orderedKeys) => reorderNavSections(project.id, orderedKeys)}
         onWidthChange={setRightDrawerWidth}
-        sectionBadgeCounts={sectionBadgeCounts}
+        sectionBadgeCounts={sidebarBadgeCounts}
+        unavailableSections={unavailableSections}
       />
 
       <div
@@ -1005,6 +1072,9 @@ export function ProjectDetailPage() {
           items={[
             { label: 'Workspace', href: '/workspace-management' },
             { label: 'Projects', href: '/projects' },
+            ...(project.parentProjectId
+              ? [{ label: project.parentProjectName || 'Parent project', href: `/projects/${project.parentProjectId}` }]
+              : []),
             { label: project.name },
           ]}
         />
@@ -1038,10 +1108,35 @@ export function ProjectDetailPage() {
                   <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-[10px] font-semibold text-indigo-700">
                     Tectona Delivery Workspace
                   </Badge>
+                  {isProgram ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!navSections.includes('subprojects')) addNavSection(project.id, 'subprojects')
+                        setActivePanel('subprojects')
+                      }}
+                      className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                    >
+                      Program · {subProjectEntries.length} sub-project{subProjectEntries.length === 1 ? '' : 's'}
+                    </button>
+                  ) : null}
+                  {project.parentProjectId ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/projects/${project.parentProjectId}`)}
+                      className="inline-flex max-w-[min(100%,280px)] items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                      title={`Part of ${project.parentProjectName ?? 'parent project'}`}
+                    >
+                      <ArrowLeft className="h-3 w-3 shrink-0" aria-hidden />
+                      <span className="truncate">Part of {project.parentProjectName ?? 'parent project'}</span>
+                    </button>
+                  ) : null}
                   {linkedIdea ? (
                     <button
                       type="button"
-                      onClick={() => navigate(`/idea-backlog/${linkedIdea.id}`)}
+                      onClick={() =>
+                        linkedIdeas.length > 1 ? openIdeasSection() : navigate(`/idea-backlog/${linkedIdea.id}`)
+                      }
                       className={cn(
                         'inline-flex max-w-[min(100%,280px)] items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5',
                         'text-[10px] font-semibold text-amber-800 transition hover:bg-amber-100/90',
@@ -1114,6 +1209,7 @@ export function ProjectDetailPage() {
                     setLinkedIdea(null)
                     void reloadLinkedIdea()
                   }}
+                  onOpenIdeasSection={openIdeasSection}
                 />
                 <EnterpriseViewControlSeparator />
                 <IntegrationSyncToolbarButton
@@ -1201,8 +1297,53 @@ export function ProjectDetailPage() {
 
         {activePanel === 'summary' ? (
           <div id="panel-summary" className="scroll-mt-24">
-            <ProjectDeliveryDashboard project={project} template={template} workItems={activeWorkItems} />
+            {isProgram ? (
+              <ProjectRollupSummary
+                project={project}
+                ownWorkItems={activeWorkItems}
+                ownIdeaCount={linkedIdeas.length}
+                entries={subProjectEntries}
+                loading={subProjectsLoading}
+                scope={rollupScope}
+                onScopeChange={setRollupScope}
+              />
+            ) : null}
+            <ProjectDeliveryDashboard
+              project={project}
+              template={template}
+              workItems={
+                isProgram && rollupScope === 'all'
+                  ? [...activeWorkItems, ...subProjectEntries.flatMap((entry) => entry.workItems)]
+                  : activeWorkItems
+              }
+            />
           </div>
+        ) : activePanel === 'ideas' ? (
+          <ProjectIdeasPanel
+            project={project}
+            linkedIdeas={linkedIdeas}
+            loading={linkedIdeaLoading}
+            onIdeasChanged={() => {
+              void reloadLinkedIdea()
+              void reloadSubProjects()
+            }}
+            subProjectEntries={subProjectEntries}
+            lockedToSingleIdea={isSubProject}
+            onMakeSubProject={
+              isSubProject || project.hierarchySupported === false ? undefined : (idea) => setSubProjectDialogIdea(idea)
+            }
+          />
+        ) : activePanel === 'subprojects' ? (
+          <ProjectSubProjectsPanel
+            project={project}
+            entries={subProjectEntries}
+            loading={subProjectsLoading}
+            parentIdeas={linkedIdeas}
+            onChanged={() => {
+              void reloadSubProjects()
+              void reloadLinkedIdea()
+            }}
+          />
         ) : activePanel === 'timeline' ? (
           <ProjectTimelinePanel
             project={project}
@@ -1250,6 +1391,7 @@ export function ProjectDetailPage() {
           <ProjectDocsPanel
             project={project}
             linkedIdeaId={linkedIdea?.id ?? null}
+            linkedIdeaIds={linkedIdeaIds}
             linkedIdeaTitle={linkedIdea?.title ?? null}
             linkedIdeaDescription={linkedIdea?.description ?? null}
             linkedIdeaWorkspaceId={linkedIdea?.workspace_id ?? null}
@@ -1303,6 +1445,23 @@ export function ProjectDetailPage() {
           <ProjectSectionEmptyPanel panelKey={activePanel} />
         )}
       </div>
+
+      {!isSubProject ? (
+        <NewSubProjectDialog
+          open={subProjectDialogIdea !== null}
+          onOpenChange={(open) => {
+            if (!open) setSubProjectDialogIdea(null)
+          }}
+          parent={project}
+          parentIdeas={linkedIdeas}
+          preselectedIdeaId={subProjectDialogIdea?.id ?? null}
+          onCreated={() => {
+            if (!navSections.includes('subprojects')) addNavSection(project.id, 'subprojects')
+            void reloadSubProjects()
+            void reloadLinkedIdea()
+          }}
+        />
+      ) : null}
 
       <AddProjectMembersDrawer
         open={addMembersOpen}

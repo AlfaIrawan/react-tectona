@@ -120,6 +120,11 @@ function typeCodeToUi(typeCode: string): NotificationApi['type'] {
       return 'info'
     case 'workspace_access':
       return 'warning'
+    case 'approval':
+      // An approval request is an action item with a decision attached, not an FYI.
+      // The bell is the only place an approver finds out, so it must not read as a
+      // generic info message -- same treatment as a pending workspace access request.
+      return 'warning'
     default:
       return 'info'
   }
@@ -305,7 +310,7 @@ export async function createNotification(payload: CreateNotificationPayload): Pr
  * echo of this same notification is marked to skip its toast (see `consumeSelfCreatedNotification`).
  */
 export function notifyEvent(params: {
-  type_code: 'project' | 'connector' | 'dataset' | 'folder' | 'todo' | 'workspace_access'
+  type_code: 'project' | 'connector' | 'dataset' | 'folder' | 'todo' | 'workspace_access' | 'approval'
   title: string
   body?: string | null
   link_url?: string | null

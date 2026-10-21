@@ -30,6 +30,7 @@ import { useTopbarTenantLabel } from '../hooks/useTopbarTenantLabel'
 import { WorkspaceManagementGuideTopbarButton } from '@/modules/workspace-management/components/WorkspaceManagementGuideTopbarButton'
 import { useModuleAccess } from '@/auth/useModuleAccess'
 import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate'
+import { fetchMicrosoftProfilePhoto } from '@/lib/api/microsoftGraphApi'
 
 interface TopbarProps {
   sidebarCollapsed: boolean
@@ -52,6 +53,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
   const myPresence = useMyPresenceStore((s) => s.status)
 
@@ -60,6 +62,29 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
     setSession(getSession())
     return onSessionActive(() => setSession(getSession()))
   }, [])
+
+  useEffect(() => {
+    if (!session?.user.id) return
+    const controller = new AbortController()
+    let objectUrl: string | null = null
+    let active = true
+    void fetchMicrosoftProfilePhoto(controller.signal)
+      .then((photo) => {
+        if (!active) return
+        if (!photo) {
+          setProfilePhotoUrl(null)
+          return
+        }
+        objectUrl = URL.createObjectURL(photo)
+        setProfilePhotoUrl(objectUrl)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [session?.user.id, session?.token])
 
   // Load notification unread count when session is available (for badge)
   const refreshNotificationUnreadCount = useCallback(async () => {
@@ -268,8 +293,17 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
                 className="topbar-action-btn flex items-center gap-2 px-2 h-8 hover:bg-gray-100"
               >
                 <div className="relative h-7 w-7 shrink-0">
-                  <div className="h-7 w-7 rounded-full bg-blue-500 flex items-center justify-center">
-                    <User className="h-4 w-4 text-white" />
+                  <div className="h-7 w-7 overflow-hidden rounded-full bg-blue-500 flex items-center justify-center">
+                    {profilePhotoUrl ? (
+                      <img
+                        src={profilePhotoUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        onError={() => setProfilePhotoUrl(null)}
+                      />
+                    ) : (
+                      <User className="h-4 w-4 text-white" />
+                    )}
                   </div>
                   {session && myPresence !== 'offline' ? (
                     <PresenceDot status={myPresence} size="sm" />
