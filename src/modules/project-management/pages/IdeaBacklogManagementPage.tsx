@@ -1288,7 +1288,7 @@ function BrainstormAssistantTypingMessage({
   )
 }
 
-import { fetchAllProjects, fetchProject, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { fetchAllProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import {
   fetchWorkspaceMembers,
@@ -3194,15 +3194,6 @@ export function IdeaBacklogManagementPage() {
           const globalProjects = await fetchAllProjects({ app_id: TECTONA_PROJECT_APP_ID }).catch(() => [])
           if (!cancelled) {
             for (const project of globalProjects) {
-              namesByProjectId[project.id] = project.name
-            }
-          }
-        }
-        const stillUnresolved = linkedProjectIds.filter((id) => !namesByProjectId[id])
-        if (stillUnresolved.length > 0 && !cancelled) {
-          const fetched = await Promise.all(stillUnresolved.map((id) => fetchProject(id)))
-          for (const project of fetched) {
-            if (project?.id && project.name) {
               namesByProjectId[project.id] = project.name
             }
           }
