@@ -292,6 +292,8 @@ type IdeaSectionReviewWorkspaceProps = {
   pendingReason?: string | null
   /** The idea's owner: may not approve its official scores (idea-backlog enforces it too). */
   ideaOwnerId?: string | null
+  /** A diagram section's history ("Riwayat") opened by the history button instead of the text versions. */
+  onOpenHistory?: () => void
 }
 
 export function IdeaSectionReviewWorkspace({
@@ -309,6 +311,7 @@ export function IdeaSectionReviewWorkspace({
   currentContent,
   pendingReason = null,
   ideaOwnerId = null,
+  onOpenHistory,
 }: IdeaSectionReviewWorkspaceProps) {
   const [record, setRecord] = useState<SectionReviewRecord>(EMPTY_RECORD)
   const [recordLoading, setRecordLoading] = useState(true)
@@ -666,7 +669,7 @@ export function IdeaSectionReviewWorkspace({
         >
           <Bot className="h-4 w-4" /> Discuss with AI
         </Button>
-        <Button type="button" variant="outline" className={cn(TOOLBAR_BUTTON, 'w-10 !px-0')} title="Version history" aria-label="Version history" onClick={() => setHistoryOpen(true)} disabled={recordLoading || recordBusy}>
+        <Button type="button" variant="outline" className={cn(TOOLBAR_BUTTON, 'w-10 !px-0')} title={onOpenHistory ? 'Riwayat' : 'Version history'} aria-label={onOpenHistory ? 'Riwayat' : 'Version history'} onClick={() => (onOpenHistory ? onOpenHistory() : setHistoryOpen(true))} disabled={recordLoading || recordBusy}>
           <History className="h-4 w-4" />
         </Button>
         {record.activeRevisionId && aiChanged ? <Button type="button" variant="outline" className={cn(TOOLBAR_BUTTON, REVIEW_ACTION_TONE.outline)} disabled={recordLoading || recordBusy || !!recordError} onClick={() => void compareGenerated()}>

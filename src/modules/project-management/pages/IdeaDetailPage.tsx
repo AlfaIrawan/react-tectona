@@ -251,6 +251,8 @@ import {
   getPersistentIdeaSummary,
   getPersistentIdeaIntegration,
   upsertPersistentIdeaIntegration,
+  getDiagramVersion,
+  type IdeaIntegrationPersistent,
   getPersistentIdeaC4Architecture,
   upsertPersistentIdeaC4Architecture,
   getPersistentIdeaProcessDiagram,
@@ -296,7 +298,8 @@ import {
   type ExtractedProcessDiagram,
 } from '@/lib/chat/extractProcessDiagrams'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
-import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
+import { EditableIntegrationArchitectureCanvas, type IntegrationGraphChange } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
+import { DiagramHistoryDialog } from '@/modules/project-management/components/DiagramHistoryDialog'
 import { EditableDiagramCanvas, type C4DiagramDrilldownTarget } from '@/modules/project-management/components/EditableDiagramCanvas'
 import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
 import { loadIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
@@ -3837,6 +3840,7 @@ export function IdeaDetailPage() {
   )
   const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
   const [isIntegrationExportMenuOpen, setIsIntegrationExportMenuOpen] = useState(false)
+  const [isIntegrationHistoryOpen, setIsIntegrationHistoryOpen] = useState(false)
   const [isIntegrationEmbeddedMenuOpen, setIsIntegrationEmbeddedMenuOpen] = useState(false)
   const [isEmbeddedExportMenuOpen, setIsEmbeddedExportMenuOpen] = useState(false)
   const [c4AlternativePreview, setC4AlternativePreview] = useState<{
@@ -4826,7 +4830,7 @@ export function IdeaDetailPage() {
     return [...unrelated, ...generated]
   }, [integrationLatestGraph, integrationWarnings])
   const persistIntegrationGraph = useCallback(
-    (graph: IntegrationGraphRecord) => {
+    (graph: IntegrationGraphRecord, change?: IntegrationGraphChange | { source: 'restored'; note: string }) => {
       const current = runtimeIntegrationAnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -4844,13 +4848,15 @@ export function IdeaDetailPage() {
       setRuntimeIntegrationAnalysis(nextAnalysis)
       integrationLatestGraphRef.current = graph
       setIntegrationLatestGraph(graph)
-      void saveIntegration(idea.id, {
+      return saveIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(
           nextAnalysis,
           graph,
           runtimeUserId || 'tectona-agent',
         ),
         version: idea.version,
+        change_source: change?.source ?? 'manual_edit',
+        change_note: change?.note,
       }).catch((error) => {
         if (integrationSaveConflictRef.current) return
         setIntegrationGenerationError(
@@ -5068,6 +5074,7 @@ export function IdeaDetailPage() {
       await saveIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(next, integrationLatestGraphRef.current ?? graphRecordFromIntegrationAnalysis(next), actor.id),
         version: idea.version,
+        change_source: 'review',
       })
     } else {
       const next = { ...bpmnHighAnalysisRef.current, architectureReview: review }
@@ -6038,6 +6045,7 @@ export function IdeaDetailPage() {
         await saveIntegration(sourceIdea.id, {
           ...buildPersistentIntegrationPayload(analysis, record, runtimeUserId || 'tectona-agent'),
           version: sourceIdea.version,
+          change_source: 'ai_generated',
         })
       } catch (persistError) {
         analysis.warnings = [
@@ -6048,6 +6056,29 @@ export function IdeaDetailPage() {
       applyIntegrationState(analysis, record, sourceIdea.id)
     },
     [applyIntegrationState, runtimeUserId, saveIntegration],
+  )
+
+  const restoreIntegrationVersion = useCallback(
+    async (versionNo: number) => {
+      const version = await getDiagramVersion(idea.id, 'integration', versionNo)
+      const now = new Date().toISOString()
+      const restored = graphRecordFromPersistentIntegration({
+        integration_json: version.snapshot ?? {},
+        generated_at: now,
+      } as IdeaIntegrationPersistent)
+      if (!restored.nodes.length) throw new Error('Versi ini tidak berisi diagram.')
+      const record: IntegrationGraphRecord = {
+        ...restored,
+        userCustomized: true,
+        savedAt: now,
+        viewport: integrationLatestGraphRef.current?.viewport ?? restored.viewport,
+      }
+      saveIntegrationGraph(idea.id, record)
+      setIntegrationBootstrapRecord(record)
+      setIntegrationBootstrapKey((current) => current + 1)
+      await persistIntegrationGraph(record, { source: 'restored', note: `Dipulihkan dari versi ${versionNo}` })
+    },
+    [idea.id, persistIntegrationGraph],
   )
 
   const loadRuntimeIntegration = useCallback(
@@ -12552,7 +12583,7 @@ export function IdeaDetailPage() {
     ) : null
   }
 
-  const renderSectionReviewWorkspace = (sectionKey: IdeaSectionKey, sectionLabel: string, pendingReason?: string | null) => (
+  const renderSectionReviewWorkspace = (sectionKey: IdeaSectionKey, sectionLabel: string, pendingReason?: string | null, onOpenHistory?: () => void) => (
     <IdeaSectionReviewWorkspace
       ideaId={idea.id}
       ideaTitle={idea.title}
@@ -12568,6 +12599,7 @@ export function IdeaDetailPage() {
       currentContent={getSectionReviewContent(sectionKey)}
       pendingReason={pendingReason}
       ideaOwnerId={idea.submittedBy || null}
+      onOpenHistory={onOpenHistory}
     />
   )
 
@@ -14875,7 +14907,7 @@ export function IdeaDetailPage() {
                             <Button type="button" size="sm" variant="outline" className="h-9 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'reject' }) }}><X className="h-3.5 w-3.5" aria-hidden /> Reject</Button>
                           </div>
                         ) : null}
-                      {renderSectionReviewWorkspace('integration', 'Integration')}
+                      {renderSectionReviewWorkspace('integration', 'Integration', null, () => setIsIntegrationHistoryOpen(true))}
                         <div className="relative">
                           <Button
                             type="button"
@@ -14964,6 +14996,7 @@ export function IdeaDetailPage() {
                       bootstrapKey={integrationBootstrapKey}
                       bootstrapRecord={integrationBootstrapRecord}
                       onPersistGraph={persistIntegrationGraph}
+                      onOpenHistory={() => setIsIntegrationHistoryOpen(true)}
                       isGenerating={isIntegrationRefreshing}
                       fillHeight
                       hideStudioHeader
@@ -14982,6 +15015,16 @@ export function IdeaDetailPage() {
                           {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
                         </div>
                       ) : null}
+                    />
+                    <DiagramHistoryDialog
+                      open={isIntegrationHistoryOpen}
+                      onOpenChange={setIsIntegrationHistoryOpen}
+                      ideaId={idea.id}
+                      diagramKey="integration"
+                      title="ArchiMate Integration"
+                      reviewHistory={runtimeIntegrationAnalysis.architectureReview?.history ?? []}
+                      resolveName={resolveIdentityDisplayName}
+                      onRestore={restoreIntegrationVersion}
                     />
                   </div>
                 </div>

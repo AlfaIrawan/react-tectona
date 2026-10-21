@@ -121,8 +121,11 @@ type EditableIntegrationArchitectureCanvasProps = {
   studioTitle?: string
   /** When true, outer page shell owns the panel title (Project List style header). */
   hideStudioHeader?: boolean
-  /** Persists user edits to the idea record after the local canvas cache is updated. */
-  onPersistGraph?: (graph: IntegrationGraphRecord) => void
+  /** Persists user edits to the idea record after the local canvas cache is updated; `change`
+   *  says what made it (an Ask Gen AI draft), for the diagram history. */
+  onPersistGraph?: (graph: IntegrationGraphRecord, change?: IntegrationGraphChange) => void
+  /** Opens the diagram history ("Riwayat") kept by the page, in place of the AI draft log. */
+  onOpenHistory?: () => void
   /** Key for the Idea page's Export menu and the AI diagram drafts ("integration"). */
   diagramKey?: string
 }
@@ -148,6 +151,8 @@ function archimateRelationEdge(id: string, source: string, target: string, label
   }
 }
 
+export type IntegrationGraphChange = { source: 'manual_edit' | 'ai_chat'; note?: string }
+
 function EditableIntegrationArchitectureCanvasInner({
   ideaId,
   bootstrapKey = 0,
@@ -159,6 +164,7 @@ function EditableIntegrationArchitectureCanvasInner({
   studioTitle = 'Integration diagram',
   hideStudioHeader = false,
   onPersistGraph,
+  onOpenHistory,
   diagramKey = 'integration',
 }: EditableIntegrationArchitectureCanvasProps) {
   const exportName = `archimate-${diagramKey}`
@@ -167,6 +173,8 @@ function EditableIntegrationArchitectureCanvasInner({
   const sourceApplyTimerRef = useRef<number | null>(null)
   const plantumlSourceRef = useRef('')
   const skipNextSaveRef = useRef(false)
+  // What made the next saved change (an Ask Gen AI draft); a plain edit when unset.
+  const nextChangeRef = useRef<IntegrationGraphChange | null>(null)
   const skipSourceApplyRef = useRef(true)
   const reactFlowWrapperRef = useRef<HTMLDivElement | null>(null)
   const canvasZoneRef = useRef<HTMLDivElement | null>(null)
@@ -286,7 +294,9 @@ function EditableIntegrationArchitectureCanvasInner({
         snapToGrid,
       }
       saveIntegrationGraph(ideaId, graph)
-      onPersistGraph?.(graph)
+      const change = nextChangeRef.current ?? undefined
+      nextChangeRef.current = null
+      onPersistGraph?.(graph, change)
     },
     [ideaId, onPersistGraph, snapToGrid],
   )
@@ -1605,6 +1615,7 @@ function EditableIntegrationArchitectureCanvasInner({
       }
     })
     const before = { nodes, edges }
+    nextChangeRef.current = { source: 'ai_chat', note: chatAuditDraftSummary({ ...pendingChatDraft }) ?? undefined }
     const appliedNodes = nextNodes.map((node) => ({ ...node, selected: false }))
     const appliedEdges = nextEdges.map((edge) => ({ ...edge, selected: false }))
     markCustomized()
@@ -1629,6 +1640,8 @@ function EditableIntegrationArchitectureCanvasInner({
 
   const undoLastChatDraft = useCallback(() => {
     if (!lastAppliedChatDraft) return
+    const undone = chatAuditDraftSummary({ ...lastAppliedChatDraft.draft })
+    nextChangeRef.current = { source: 'ai_chat', note: undone ? `Undo: ${undone}` : 'Undo draft AI' }
     markCustomized()
     setNodes(lastAppliedChatDraft.before.nodes)
     setEdges(lastAppliedChatDraft.before.edges)
@@ -2103,8 +2116,8 @@ function EditableIntegrationArchitectureCanvasInner({
           {chatAuditWriteError ? (
             <span className="pointer-events-auto rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">{chatAuditWriteError}</span>
           ) : null}
-          <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={() => setIsChatAuditOpen(true)}>
-            <History className="h-3.5 w-3.5" /> AI history
+          <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={() => (onOpenHistory ? onOpenHistory() : setIsChatAuditOpen(true))}>
+            <History className="h-3.5 w-3.5" /> {onOpenHistory ? 'Riwayat' : 'AI history'}
           </Button>
           {lastAppliedChatDraft ? (
             <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={undoLastChatDraft}>
