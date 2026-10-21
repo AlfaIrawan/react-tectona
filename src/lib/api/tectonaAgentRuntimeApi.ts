@@ -274,6 +274,8 @@ export interface AnalyzeIdeaIntegrationRequest {
     status: string
     tags: string[]
   }
+  /** Read the sources again although the stored facts are current ("Baca ulang sumber"). */
+  refresh_facts?: boolean
 }
 
 export interface RecommendedIntegrationSystem {
@@ -294,6 +296,33 @@ export interface AnalyzeIdeaIntegrationResponse {
   confidence_score: number
   warnings: string[]
   correlation_id: string
+  /** Drawn from facts a person corrected; and the sources changed since. */
+  facts_edited?: boolean
+  facts_stale?: boolean
+}
+
+/** The facts the integration view is drawn from (agent-runtime orchestrator/integration_facts.py). */
+export type IntegrationApplicationKind = 'application' | 'engine' | 'channel'
+export type IntegrationLinkType = 'embedded' | 'calls' | 'sends_data' | 'serves'
+export type IntegrationInfrastructureType = 'Node' | 'System Software' | 'Device' | 'Communication Network'
+export interface IntegrationFacts {
+  applications: Array<{ name: string; kind: IntegrationApplicationKind; role?: string }>
+  system_lanes: Array<{ lane: string; application: string }>
+  data: Array<{ name: string; owner: string; used_by: string[]; stored_as_file: boolean }>
+  integrations: Array<{ source: string; target: string; type: IntegrationLinkType }>
+  uses: Array<{ process_id: string; application: string }>
+  actors: Array<{ name: string; role?: boolean; kind?: 'actor' | 'role'; process_ids: string[] }>
+  infrastructure: Array<{ name: string; type: IntegrationInfrastructureType | string; hosts: string[] }>
+  meta?: Record<string, unknown>
+}
+export interface IntegrationFactsResponse {
+  idea_id: string
+  facts: Partial<IntegrationFacts>
+  process_steps: Array<{ id: string; label: string; actor: string }>
+  lanes: string[]
+  edited: boolean
+  updated_by?: string | null
+  updated_at?: string | null
 }
 
 export type C4ArchitectureLevel = 'L1' | 'L2'
@@ -1964,6 +1993,25 @@ export async function analyzeIdeaIntegration(
       body: JSON.stringify(payload),
     },
     timeoutMs,
+  )
+  return handleResponse<AnalyzeIdeaIntegrationResponse>(res)
+}
+
+export async function getIntegrationFacts(ideaId: string): Promise<IntegrationFactsResponse> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/integration-facts`, { method: 'GET' }, 30_000)
+  return handleResponse<IntegrationFactsResponse>(res)
+}
+
+/** Stores corrected facts (kept on later generations) and returns the view drawn from them. */
+export async function putIntegrationFacts(
+  ideaId: string,
+  facts: IntegrationFacts,
+  context: { workspace_id?: string | null; user_id?: string | null },
+): Promise<AnalyzeIdeaIntegrationResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/ideas/${encodeURIComponent(ideaId)}/integration-facts`,
+    { method: 'PUT', body: JSON.stringify({ facts, context }) },
+    30_000,
   )
   return handleResponse<AnalyzeIdeaIntegrationResponse>(res)
 }

@@ -76,6 +76,7 @@ import {
   ShieldCheck,
   Undo2,
   LockKeyhole,
+  ListChecks,
 } from 'lucide-react'
 import {
   DndContext,
@@ -143,6 +144,7 @@ import {
   generateIdeaSummary,
   isMultiRoleSummaryMode,
   shortMaasModelName,
+  type AnalyzeIdeaIntegrationResponse,
   type GenerateBenefitAnalysisResponse,
   type GenerateIdeaConversionResponse,
   type IdeaIntakeAnswer,
@@ -296,6 +298,7 @@ import {
 } from '@/lib/chat/extractProcessDiagrams'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
+import { IntegrationFactsDialog } from '@/modules/project-management/components/IntegrationFactsDialog'
 import { EditableDiagramCanvas, type C4DiagramDrilldownTarget } from '@/modules/project-management/components/EditableDiagramCanvas'
 import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
 import { loadIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
@@ -3836,6 +3839,7 @@ export function IdeaDetailPage() {
   )
   const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
   const [isIntegrationExportMenuOpen, setIsIntegrationExportMenuOpen] = useState(false)
+  const [isIntegrationFactsOpen, setIsIntegrationFactsOpen] = useState(false)
   const [isIntegrationEmbeddedMenuOpen, setIsIntegrationEmbeddedMenuOpen] = useState(false)
   const [isEmbeddedExportMenuOpen, setIsEmbeddedExportMenuOpen] = useState(false)
   const [c4AlternativePreview, setC4AlternativePreview] = useState<{
@@ -4793,6 +4797,7 @@ export function IdeaDetailPage() {
         .map((warning) => warning.slice('INTEGRATION_CHECK: '.length))
     return [...unrelated, ...generated]
   }, [integrationLatestGraph, integrationWarnings])
+  const integrationFactsStale = integrationWarnings.includes('INTEGRATION_FACTS_SOURCES_CHANGED')
   const persistIntegrationGraph = useCallback(
     (graph: IntegrationGraphRecord) => {
       const current = runtimeIntegrationAnalysisRef.current
@@ -5996,10 +6001,31 @@ export function IdeaDetailPage() {
     [],
   )
 
+  // A view the agent drew (generated, or redrawn from corrected facts): stored as the idea's view and shown.
+  const applyGeneratedIntegration = useCallback(
+    async (response: AnalyzeIdeaIntegrationResponse, sourceIdea: Idea) => {
+      const analysis = runtimeIntegrationFromAgentResponse(response)
+      const record = graphRecordFromIntegrationAnalysis(analysis, { userCustomized: false })
+      try {
+        await upsertPersistentIdeaIntegration(sourceIdea.id, {
+          ...buildPersistentIntegrationPayload(analysis, record, runtimeUserId || 'tectona-agent'),
+          version: sourceIdea.version,
+        })
+      } catch (persistError) {
+        analysis.warnings = [
+          ...analysis.warnings,
+          persistError instanceof Error ? persistError.message : 'INTEGRATION_PERSIST_FAILED',
+        ]
+      }
+      applyIntegrationState(analysis, record, sourceIdea.id)
+    },
+    [applyIntegrationState, runtimeUserId],
+  )
+
   const loadRuntimeIntegration = useCallback(
     async (
       sourceIdea: Idea = idea,
-      options: { forceRefresh?: boolean; autoGenerateIfMissing?: boolean } = {},
+      options: { forceRefresh?: boolean; autoGenerateIfMissing?: boolean; refreshFacts?: boolean } = {},
     ) => {
       setIntegrationGenerationError(null)
 
@@ -6059,26 +6085,11 @@ export function IdeaDetailPage() {
               status: sourceIdea.status,
               tags: sourceIdea.tags,
             },
+            refresh_facts: options.refreshFacts ?? false,
           },
           150_000,
         )
-
-        const analysis = runtimeIntegrationFromAgentResponse(response)
-        const record = graphRecordFromIntegrationAnalysis(analysis, { userCustomized: false })
-
-        try {
-          await upsertPersistentIdeaIntegration(sourceIdea.id, {
-            ...buildPersistentIntegrationPayload(analysis, record, runtimeUserId || 'tectona-agent'),
-            version: sourceIdea.version,
-          })
-        } catch (persistError) {
-          analysis.warnings = [
-            ...analysis.warnings,
-            persistError instanceof Error ? persistError.message : 'INTEGRATION_PERSIST_FAILED',
-          ]
-        }
-
-        applyIntegrationState(analysis, record, sourceIdea.id)
+        await applyGeneratedIntegration(response, sourceIdea)
       } catch (error) {
         setRuntimeIntegrationAnalysis(EMPTY_RUNTIME_INTEGRATION_ANALYSIS)
         setIntegrationLoaded(false)
@@ -6095,7 +6106,7 @@ export function IdeaDetailPage() {
         setRegenerating((prev) => ({ ...prev, integration: false }))
       }
     },
-    [applyIntegrationState, idea, runtimeUserId],
+    [applyGeneratedIntegration, idea, runtimeUserId],
   )
 
   const applyC4ArchitectureState = useCallback((level: C4ArchitectureLevel, analysis: RuntimeC4Analysis) => {
@@ -14837,6 +14848,16 @@ export function IdeaDetailPage() {
                           </div>
                         ) : null}
                       {renderSectionReviewWorkspace('integration', 'Integration')}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 rounded-md border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 shadow-none hover:bg-slate-50"
+                          title="Fakta yang dipakai untuk menggambar diagram: aplikasi, pemilik data, integrasi, pelaku"
+                          onClick={() => setIsIntegrationFactsOpen(true)}
+                        >
+                          <ListChecks className="h-4 w-4" aria-hidden />
+                          Fakta
+                        </Button>
                         <div className="relative">
                           <Button
                             type="button"
@@ -14928,15 +14949,37 @@ export function IdeaDetailPage() {
                       isGenerating={isIntegrationRefreshing}
                       fillHeight
                       hideStudioHeader
-                      studioOverlay={integrationChecks.length > 0 ? (
+                      studioOverlay={integrationChecks.length > 0 || integrationFactsStale ? (
                         <div className="max-w-xl rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow-sm">
-                          <p className="font-semibold">Perlu dicek ({integrationChecks.length})</p>
-                          <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                            {integrationChecks.slice(0, 6).map((check) => <li key={check}>{check}</li>)}
-                          </ul>
-                          {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
+                          {integrationChecks.length > 0 ? (
+                            <>
+                              <p className="font-semibold">Perlu dicek ({integrationChecks.length})</p>
+                              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                                {integrationChecks.slice(0, 6).map((check) => <li key={check}>{check}</li>)}
+                              </ul>
+                              {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
+                            </>
+                          ) : null}
+                          {integrationFactsStale ? (
+                            <p className={cn(integrationChecks.length > 0 && 'mt-2 border-t border-amber-200 pt-2')}>
+                              Diagram memakai fakta yang dikoreksi, tetapi sumber idea sudah berubah.
+                            </p>
+                          ) : null}
+                          <button type="button" className="mt-1 font-semibold underline" onClick={() => setIsIntegrationFactsOpen(true)}>
+                            Koreksi fakta integrasi
+                          </button>
                         </div>
                       ) : null}
+                    />
+                    <IntegrationFactsDialog
+                      open={isIntegrationFactsOpen}
+                      onOpenChange={setIsIntegrationFactsOpen}
+                      ideaId={idea.id}
+                      workspaceId={idea.workspace ?? null}
+                      userId={runtimeUserId}
+                      stale={integrationFactsStale}
+                      onApplied={(response) => applyGeneratedIntegration(response, idea)}
+                      onRefreshSources={() => loadRuntimeIntegration(idea, { forceRefresh: true, refreshFacts: true })}
                     />
                   </div>
                 </div>
