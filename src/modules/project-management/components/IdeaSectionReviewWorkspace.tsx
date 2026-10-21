@@ -649,8 +649,9 @@ export function IdeaSectionReviewWorkspace({
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         {/* Summary and Scoring are edited card by card (IdeaSummaryInlineField;
             Scoring also through "Score this idea"): their title and figures are
-            locked, which a free-text editor cannot honour (idea-backlog refuses it). */}
-        {sectionKey === 'summary' || sectionKey === 'scoring' || awaitingInput ? null : (
+            locked, which a free-text editor cannot honour (idea-backlog refuses it).
+            The integration view is edited on its canvas, not as text. */}
+        {sectionKey === 'summary' || sectionKey === 'scoring' || sectionKey === 'integration' || awaitingInput ? null : (
           <Button type="button" variant="outline" className={TOOLBAR_BUTTON} onClick={openEditor} disabled={recordLoading || recordBusy}>
             <PencilLine className="h-4 w-4" /> Edit
           </Button>
