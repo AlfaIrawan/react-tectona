@@ -143,6 +143,7 @@ import {
 import { useWorkspaceManagementGuideStore } from '@/stores/workspace-management-guide-store'
 import { EditWorkspaceMembershipDrawer } from '@/modules/workspace-management/components/EditWorkspaceMembershipDrawer'
 import { buildWorkspaceChatDataSummary } from '@/modules/workspace-management/lib/buildWorkspaceChatDataSummary'
+import { filterWorkspacesEligibleForWacMemberListing } from '@/modules/workspace-management/lib/wacMemberListingScope'
 import { deleteWorkspaceOrgKbMirror, syncWorkspaceOrgEntryToKb } from '@/lib/kb/workspaceOrgKbSync'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -2496,38 +2497,6 @@ function selectWorkspacesForManagementView(
   }
 
   return visible
-}
-
-/**
- * WAC GET …/members requires platform admin, WAC read role, active membership on the
- * workspace, or owner/admin on its parent workspace — align client fetches to avoid 403 noise.
- */
-function filterWorkspacesEligibleForWacMemberListing(
-  workspaces: WorkspaceRecord[],
-  opts: {
-    canViewAllActivityAudit: boolean
-    isPlatformAdmin: boolean
-    membershipWorkspaceIds: ReadonlySet<string>
-    adminMembershipWorkspaceIds: ReadonlySet<string>
-    ownedWorkspaceIds?: ReadonlySet<string>
-  },
-): WorkspaceRecord[] {
-  if (opts.canViewAllActivityAudit || opts.isPlatformAdmin) {
-    return workspaces
-  }
-  if (
-    opts.membershipWorkspaceIds.size === 0
-    && opts.adminMembershipWorkspaceIds.size === 0
-    && (opts.ownedWorkspaceIds?.size ?? 0) === 0
-  ) {
-    return []
-  }
-  return workspaces.filter((workspace) => {
-    if (opts.membershipWorkspaceIds.has(workspace.id)) return true
-    if (opts.ownedWorkspaceIds?.has(workspace.id)) return true
-    const parentId = workspace.parentWorkspaceId?.trim()
-    return Boolean(parentId && opts.adminMembershipWorkspaceIds.has(parentId))
-  })
 }
 
 const DIRECTORY_PENDING_WORKSPACE_TTL_MS = 90_000
@@ -6006,8 +5975,8 @@ export function WorkspaceManagementPage() {
   )
 
   const myWacMembershipWorkspaceIdSet = useMemo(
-    () => new Set(myMembershipWorkspaceIds),
-    [myMembershipWorkspaceIds],
+    () => new Set(myAnyWacMembershipWorkspaceIds),
+    [myAnyWacMembershipWorkspaceIds],
   )
 
   // Directory "WAC member" badge means "is an active WAC member here", regardless of
@@ -6223,19 +6192,17 @@ export function WorkspaceManagementPage() {
   const workspacesEligibleForMemberListing = useMemo(
     () =>
       filterWorkspacesEligibleForWacMemberListing(allWorkspacesForList, {
-        canViewAllActivityAudit,
         isPlatformAdmin: wmAuth.isPlatformAdmin,
-      membershipWorkspaceIds: myWacMembershipWorkspaceIdSet,
-      adminMembershipWorkspaceIds: myAdminMembershipWorkspaceIdSet,
-      ownedWorkspaceIds: new Set(myOwnedWorkspaceIds),
+        isOrganizationAdmin: wmAuth.isOrganizationAdmin,
+        membershipWorkspaceIds: myWacMembershipWorkspaceIdSet,
+        adminMembershipWorkspaceIds: myAdminMembershipWorkspaceIdSet,
       }),
     [
       allWorkspacesForList,
-      canViewAllActivityAudit,
       wmAuth.isPlatformAdmin,
+      wmAuth.isOrganizationAdmin,
       myWacMembershipWorkspaceIdSet,
       myAdminMembershipWorkspaceIdSet,
-      myOwnedWorkspaceIds,
     ],
   )
 
@@ -6737,7 +6704,8 @@ export function WorkspaceManagementPage() {
     selectedWorkspaceIds: tenant?.selectedWorkspaceIds ?? [],
     canViewAllActivityAudit,
     isPlatformAdmin: wmAuth.isPlatformAdmin,
-    myMembershipWorkspaceIds,
+    isOrganizationAdmin: wmAuth.isOrganizationAdmin,
+    myMembershipWorkspaceIds: myAnyWacMembershipWorkspaceIds,
     myMembershipWorkspaceIdsLoaded,
     myAdminMembershipWorkspaceIds,
     myManagedWorkspaceIds,
@@ -6749,7 +6717,8 @@ export function WorkspaceManagementPage() {
     selectedWorkspaceIds: tenant?.selectedWorkspaceIds ?? [],
     canViewAllActivityAudit,
     isPlatformAdmin: wmAuth.isPlatformAdmin,
-    myMembershipWorkspaceIds,
+    isOrganizationAdmin: wmAuth.isOrganizationAdmin,
+    myMembershipWorkspaceIds: myAnyWacMembershipWorkspaceIds,
     myMembershipWorkspaceIdsLoaded,
     myAdminMembershipWorkspaceIds,
     myManagedWorkspaceIds,
@@ -6831,11 +6800,10 @@ export function WorkspaceManagementPage() {
           myOwnedWorkspaceIds: scope.myOwnedWorkspaceIds,
         }),
         {
-          canViewAllActivityAudit: scope.canViewAllActivityAudit,
           isPlatformAdmin: scope.isPlatformAdmin,
+          isOrganizationAdmin: scope.isOrganizationAdmin,
           membershipWorkspaceIds: new Set(scope.myMembershipWorkspaceIds),
           adminMembershipWorkspaceIds: new Set(scope.myAdminMembershipWorkspaceIds),
-          ownedWorkspaceIds: new Set(scope.myOwnedWorkspaceIds),
         },
       )
 
@@ -7371,22 +7339,21 @@ export function WorkspaceManagementPage() {
             .map((id) => allWorkspacesForList.find((w) => w.id === id)?.primaryOrganizationId)
             .filter((id): id is string => Boolean(id)),
         )
+        const eligibleWorkspaceIds = new Set(workspacesEligibleForMemberListing.map((w) => w.id))
+        const eligibleScopeWorkspaceIds = scopeWorkspaceIds.filter((id) => eligibleWorkspaceIds.has(id))
         const orgWorkspaceIds = [...new Set([
-          ...scopeWorkspaceIds,
+          ...eligibleScopeWorkspaceIds,
           ...allWorkspacesForList
-            .filter((w) => targetOrgIds.has(w.primaryOrganizationId))
+            .filter((w) => targetOrgIds.has(w.primaryOrganizationId) && eligibleWorkspaceIds.has(w.id))
             .map((w) => w.id),
         ])]
-        // Sibling org workspaces the current user isn't a member of will 403 on
-        // this members lookup -- fall back to empty instead of failing the
-        // whole roster so one inaccessible workspace doesn't blank out everyone.
         const emptyMemberList: WacMemberListResponse = { items: [], total: 0 }
         const [orgMemberLists, wacMemberLists] = await Promise.all([
           Promise.all(
             orgWorkspaceIds.map((id) => fetchWorkspaceMembers(TECTONA_WAC_APP_ID, id).catch(() => emptyMemberList)),
           ),
           Promise.all(
-            scopeWorkspaceIds.map((id) => fetchWorkspaceMembers(TECTONA_WAC_APP_ID, id).catch(() => emptyMemberList)),
+            eligibleScopeWorkspaceIds.map((id) => fetchWorkspaceMembers(TECTONA_WAC_APP_ID, id).catch(() => emptyMemberList)),
           ),
         ])
         if (cancelled) return
@@ -7417,7 +7384,13 @@ export function WorkspaceManagementPage() {
     return () => {
       cancelled = true
     }
-  }, [inviteScopeWorkspaceIds, inviteWorkspaceMemberOpen, refreshIdentityUserDirectory])
+  }, [
+    inviteScopeWorkspaceIds,
+    inviteWorkspaceMemberOpen,
+    refreshIdentityUserDirectory,
+    allWorkspacesForList,
+    workspacesEligibleForMemberListing,
+  ])
 
   const [assignGovernanceOpen, setAssignGovernanceOpen] = useState(false)
   /** dropdown = toolbar Search & Filters; locked = row/context (workspace sudah dipilih). */
