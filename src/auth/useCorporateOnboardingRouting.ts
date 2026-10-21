@@ -44,8 +44,7 @@ export function useCorporateOnboardingRouting() {
       onboarding.enabled
       && !onboarding.bypass
       && isCorporateEmail
-      && Boolean(subjectId)
-      && Boolean(session?.token?.trim() || session?.refreshToken?.trim()),
+      && Boolean(subjectId),
     staleTime: 5_000,
     retry: 1,
   })
@@ -53,9 +52,10 @@ export function useCorporateOnboardingRouting() {
   const progress = progressQuery.data ?? null
   // Do not treat background refetches as a full-page load: that unmounts the
   // onboarding wizard and restarts it on step 1 after "Create and continue".
+  // isFetching, not isPending: a query that never starts must not spin forever.
   const loading =
     (onboarding.loading && onboarding.status == null) ||
-    (isCorporateEmail && progressQuery.isPending && !progressQuery.isFetched)
+    (isCorporateEmail && progressQuery.isFetching && !progressQuery.isFetched)
   const emailVerificationRequired = isCorporateEmailVerificationRequired()
   const adminApprovalRequired = isCorporateAdminApprovalRequired()
   const emailVerificationPathActive = isEmailVerificationPathActive(
