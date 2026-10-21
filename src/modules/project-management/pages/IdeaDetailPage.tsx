@@ -14997,6 +14997,7 @@ export function IdeaDetailPage() {
                       bootstrapRecord={integrationBootstrapRecord}
                       onPersistGraph={persistIntegrationGraph}
                       onOpenHistory={() => setIsIntegrationHistoryOpen(true)}
+                      noticeItems={integrationChecks}
                       isGenerating={isIntegrationRefreshing}
                       fillHeight
                       hideStudioHeader

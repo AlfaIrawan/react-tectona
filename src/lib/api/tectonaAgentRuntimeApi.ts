@@ -728,6 +728,8 @@ export interface RuntimeChatUiContext {
   discussion_section_label?: string | null
   discussion_section_content?: string | null
   discussion_idea_description?: string | null
+  /** A diagram's checks, sent with the diagram-notice token (the backend words the notice). */
+  diagram_notice_items?: string[] | null
   preferred_language?: string | null
   platform_roles?: string[] | null
   is_platform_admin?: boolean | null

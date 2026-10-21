@@ -1199,6 +1199,26 @@ async function resolveGenAiOpeningGreeting(
 }
 
 const BACKEND_SECTION_INTRO_TOKEN = '__TECTONA_SECTION_INTRO__'
+const BACKEND_DIAGRAM_NOTICE_TOKEN = '__TECTONA_DIAGRAM_NOTICE__'
+
+/** The diagram's checks, answered by agent-runtime with why they matter and solutions (and a draft). */
+async function resolveDiagramNotice(convId: string, binding: IdeaDiscussChatBinding, items: string[]): Promise<string> {
+  const uiContext = buildTectonaUiContextForChat({
+    pathname: window.location.pathname,
+    search: window.location.search,
+    chatPanelOpen: true,
+    chatScreen: 'thread',
+  })
+  const runtime = await sendTectonaAgentRuntimeMessage({
+    message: BACKEND_DIAGRAM_NOTICE_TOKEN,
+    context: {
+      workspace_id: TECTONA_CHAT_WORKSPACE_ID,
+      session_id: convId,
+      ui: { ...uiContext, ...buildIdeaDiscussUiFields(binding), diagram_notice_items: items },
+    },
+  })
+  return runtime.answer.trim()
+}
 // One intro request per session and section at a time (the open request can fire twice).
 const sectionIntroInFlight = new Set<string>()
 
@@ -1895,6 +1915,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   // New idea-discussion session id per idea, so repeated open requests (the
   // open event can fire again before state settles) reuse one conversation.
   const pendingIdeaDiscussIdsRef = useRef(new Map<string, string>())
+  // A diagram notice waits until its thread has loaded or greeted (the greeting replaces the
+  // thread's messages), then runs once.
+  const pendingDiagramNoticeRef = useRef<{ conversationId: string; binding: IdeaDiscussChatBinding; items: string[]; since: number } | null>(null)
+  const [diagramNoticeTick, setDiagramNoticeTick] = useState(0)
   conversationsRef.current = conversations
   const messagesByIdRef = useRef(messagesById)
   messagesByIdRef.current = messagesById
@@ -4050,6 +4074,39 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     [],
   )
 
+  useEffect(() => {
+    const pending = pendingDiagramNoticeRef.current
+    if (!pending) return
+    const list = messagesById[pending.conversationId]
+    const settled = Boolean(list && list.length > 0 && !list.some((message) => message.isLoading))
+    // A thread that never greets (or loads empty) still gets the notice after a while.
+    if (!settled && Date.now() - pending.since < 5500) return
+    pendingDiagramNoticeRef.current = null
+    const conversationId = pending.conversationId
+    const loadingId = `diagram-notice-${conversationId}-${Date.now()}`
+    setMessagesById((prev) => ({
+      ...prev,
+      [conversationId]: [...(prev[conversationId] ?? []), { id: loadingId, role: 'assistant', text: '', at: Date.now(), isLoading: true }],
+    }))
+    void resolveDiagramNotice(conversationId, pending.binding, pending.items)
+      .then((text) => {
+        setMessagesById((prev) => ({
+          ...prev,
+          [conversationId]: (prev[conversationId] ?? []).flatMap((message) =>
+            message.id === loadingId ? (text ? [{ ...message, text, isLoading: false, at: Date.now() }] : []) : [message],
+          ),
+        }))
+        const draft = text ? parseDiagramChatDraft(text) : null
+        if (draft) window.dispatchEvent(new CustomEvent('tectona:diagram-chat-draft', { detail: draft }))
+      })
+      .catch(() => {
+        setMessagesById((prev) => ({
+          ...prev,
+          [conversationId]: (prev[conversationId] ?? []).filter((message) => message.id !== loadingId),
+        }))
+      })
+  }, [diagramNoticeTick, messagesById])
+
   const fulfillPendingChatOpen = useCallback(
     async (request: OpenChatThreadRequest): Promise<boolean> => {
       unhideOpenChatRequest(request)
@@ -4147,9 +4204,13 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         useIdeaDiscussChatStore.getState().setBinding(binding)
         // A new session is greeted for this section already; an existing one
         // gets the section's intro appended (stored server-side, so a reload
-        // of the thread shows it once).
+        // of the thread shows it once). A diagram notice takes the intro's place.
         const introKey = `${conversation.id}:${idea.sectionKey}`
-        if (match && !sectionIntroInFlight.has(introKey)) {
+        if (idea.noticeItems?.length) {
+          pendingDiagramNoticeRef.current = { conversationId: conversation.id, binding, items: idea.noticeItems, since: Date.now() }
+          setDiagramNoticeTick((tick) => tick + 1)
+          window.setTimeout(() => setDiagramNoticeTick((tick) => tick + 1), 6000)
+        } else if (match && !sectionIntroInFlight.has(introKey)) {
           sectionIntroInFlight.add(introKey)
           void resolveIdeaSectionIntro(conversation.id, binding)
             .then((intro) => {

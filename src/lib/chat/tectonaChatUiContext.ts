@@ -43,6 +43,7 @@ export type TectonaUiContextPayload = {
   discussion_section_label?: string | null
   discussion_section_content?: string | null
   discussion_idea_description?: string | null
+  diagram_notice_items?: string[] | null
   preferred_language?: string | null
   /** JWT / platform roles from identity-lite session. */
   platform_roles?: string[] | null

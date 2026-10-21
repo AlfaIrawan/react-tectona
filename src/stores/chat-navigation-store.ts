@@ -12,6 +12,8 @@ export type OpenIdeaDiscussChatRequest = {
   workspaceId?: string | null
   userId?: string | null
   isImpactSection?: boolean
+  /** A diagram's checks: the chat opened by itself, and its first turn tells the user about them. */
+  noticeItems?: string[]
 }
 
 export type OpenChatThreadRequest = {

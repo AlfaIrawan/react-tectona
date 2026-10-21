@@ -29,6 +29,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { createDiagramAiDraftAudit, listDiagramAiDraftAudit, type DiagramAiDraftAuditApi } from '@/lib/api/ideaBacklogApi'
 import { requestOpenIdeaDiscussChat } from '@/stores/chat-navigation-store'
+import { useChatPanelStore } from '@/stores/chat-panel-store'
+import { useIdeaDiscussChatStore } from '@/stores/idea-discuss-chat-store'
 import {
   chatAuditDraftSummary,
   chatAuditLabel,
@@ -126,6 +128,9 @@ type EditableIntegrationArchitectureCanvasProps = {
   onPersistGraph?: (graph: IntegrationGraphRecord, change?: IntegrationGraphChange) => void
   /** Opens the diagram history ("Riwayat") kept by the page, in place of the AI draft log. */
   onOpenHistory?: () => void
+  /** The view's checks ("Perlu dicek"): when a view loads with checks this viewer has not been
+   *  told about, the diagram chat opens by itself and tells them, with solutions. */
+  noticeItems?: string[]
   /** Key for the Idea page's Export menu and the AI diagram drafts ("integration"). */
   diagramKey?: string
 }
@@ -165,6 +170,7 @@ function EditableIntegrationArchitectureCanvasInner({
   hideStudioHeader = false,
   onPersistGraph,
   onOpenHistory,
+  noticeItems,
   diagramKey = 'integration',
 }: EditableIntegrationArchitectureCanvasProps) {
   const exportName = `archimate-${diagramKey}`
@@ -1487,7 +1493,7 @@ function EditableIntegrationArchitectureCanvasInner({
     if (isChatAuditOpen) void loadChatAudit()
   }, [isChatAuditOpen, loadChatAudit])
 
-  const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>) => {
+  const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>, notice?: string[]) => {
     const titleOf = (item: Node<ArchimateNodeData> | undefined) =>
       item && (item.data.kind === 'element' || item.data.kind === 'boundary' || item.data.kind === 'note') ? item.data.title : item?.id ?? ''
     const elementLines = nodes
@@ -1514,9 +1520,37 @@ function EditableIntegrationArchitectureCanvasInner({
         `Connections (ID | source -> target | label):\n${connectionLines.join('\n') || '(none)'}`,
         `Current ArchiMate PlantUML source:\n${plantumlSourceRef.current.slice(0, 8000)}`,
       ].filter(Boolean).join('\n\n'),
+      ...(notice?.length ? { noticeItems: notice } : {}),
     })
     setCanvasMenu(null)
   }, [diagramKey, edges, ideaId, nodes])
+
+  // Checks present when a view loads (opened, generated, restored), not ones that appear while
+  // editing (a new element is unrelated until it is connected): told once per set of checks.
+  const openDiagramChatRef = useRef(openDiagramChat)
+  openDiagramChatRef.current = openDiagramChat
+  const noticeItemsRef = useRef(noticeItems)
+  noticeItemsRef.current = noticeItems
+  useEffect(() => {
+    if (!fillHeight || isGenerating) return
+    const timer = window.setTimeout(() => {
+      const items = noticeItemsRef.current ?? []
+      if (!items.length) return
+      const chatBinding = useIdeaDiscussChatStore.getState().binding
+      // An open chat on another conversation is not taken over; the checks are told next time.
+      if (useChatPanelStore.getState().open && chatBinding?.ideaId !== ideaId) return
+      const key = `tectona-diagram-notice:${ideaId}:${diagramKey}`
+      const signature = [...items].sort().join('|')
+      try {
+        if (localStorage.getItem(key) === signature) return
+        localStorage.setItem(key, signature)
+      } catch {
+        return
+      }
+      openDiagramChatRef.current(undefined, items)
+    }, 2000)
+    return () => window.clearTimeout(timer)
+  }, [bootstrapKey, diagramKey, fillHeight, ideaId, isGenerating])
 
   useEffect(() => {
     const receiveDraft = (event: Event) => {
