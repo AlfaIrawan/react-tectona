@@ -1,7 +1,9 @@
 import { jsPDF } from 'jspdf'
 import type { Edge, Node } from 'reactflow'
 import { resolveEdgeTextStyle } from '@/modules/project-management/lib/integrationEdgeAppearance'
+import { resolveNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
 import type {
+  ArchimateElementNodeData,
   ArchimateNodeData,
   IntegrationNodeTextStyle,
   IntegrationNodeVisualStyle,
@@ -148,7 +150,10 @@ export function renderDiagramCanvasImage(
     const { width, height } = dimensions(node)
     const x = node.position.x - minX
     const y = node.position.y - minY
-    const visual = styled.visual
+    // ArchiMate elements take their layer's colours, as on the canvas (ArchimateElementNode).
+    const visual = node.type === 'archimateElement' && node.data.kind === 'element'
+      ? resolveNodeVisual(styled.visual, (node.data as ArchimateElementNodeData).layer)
+      : styled.visual
     const fillColor = visual?.fillEnabled === false ? '#ffffff' : visual?.fillColor ?? '#ffffff'
     const lineColor = visual?.lineEnabled === false ? 'transparent' : visual?.lineColor ?? '#334155'
     const textColor = styled.textStyle?.fontColorEnabled
