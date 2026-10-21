@@ -232,7 +232,8 @@ function parseEdgeLine(
   line: string,
 ): { source: string; target: string; label?: string; style: 'serving' | 'flow' | 'access' } | null {
   const edgeMatch = line.match(
-    /^([A-Za-z0-9_.]+)\s+(?:-\[(?:\w+)\]->|-->|\.{2,}>|\.\.>>|->|<\.{2,}|\.{2,}<)\s+([A-Za-z0-9_.]+)(?:\s*:\s*(.+))?$/,
+    // Aliases may come bracketed ("[fc] --> [proc]") and arrows doubled ("-->>"), as the model writes them.
+    /^\[?([A-Za-z0-9_.]+)\]?\s+(?:-\[(?:\w+)\]->>?|-->>?|\.{2,}>>?|->>?|<\.{2,}|\.{2,}<)\s+\[?([A-Za-z0-9_.]+)\]?(?:\s*:\s*(.+))?$/,
   )
   if (!edgeMatch) return null
 

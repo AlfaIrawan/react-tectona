@@ -93,3 +93,13 @@ describe('Technology layer types (21 Oct 2026)', () => {
     expect(archimateCounterpartType('Data Object', 'data')).toBe(null)
   })
 })
+
+describe('relation syntax the model writes (21 Oct 2026)', () => {
+  it('reads bracketed aliases and double arrows', () => {
+    const parsed = parsePlantUmlToIntegrationGraph('@startuml\npackage "Application Layer" {\n  [Gen AI Engine] as app_ai <<Application Component>>\n  [Chat Service] as svc_chat <<Application Service>>\n  [DigiLearn] as app_digi <<Application Component>>\n}\n[app_ai] -->> [svc_chat] : Realization\n[svc_chat] --> [app_digi] : Serving\n@enduml')
+    expect(parsed.edges.map((edge) => `${edge.source}>${edge.target}:${String(edge.label)}`)).toEqual([
+      'app_ai>svc_chat:Realization',
+      'svc_chat>app_digi:Serving',
+    ])
+  })
+})
