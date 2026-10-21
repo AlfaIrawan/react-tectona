@@ -332,6 +332,7 @@ import {
   EMPTY_RUNTIME_INTEGRATION_ANALYSIS,
   graphRecordFromIntegrationAnalysis,
   graphRecordFromPersistentIntegration,
+  storedIntegrationNeedsRegeneration,
   runtimeIntegrationFromAgentResponse,
   runtimeIntegrationFromPersistent,
   type RuntimeIntegrationAnalysis,
@@ -5984,8 +5985,23 @@ export function IdeaDetailPage() {
           if (persistent) {
             const analysis = runtimeIntegrationFromPersistent(persistent)
             const record = graphRecordFromPersistentIntegration(persistent)
-            applyIntegrationState(analysis, record, sourceIdea.id)
-            return
+            // A stored "ok" view with no element (an old empty one) is generated again, once per
+            // browser session so a view that keeps coming back empty does not call the AI on
+            // every visit.
+            let regenerate = storedIntegrationNeedsRegeneration(analysis, record)
+            if (regenerate) {
+              const retryKey = `tectona-integration-auto-regenerated:${sourceIdea.id}`
+              try {
+                regenerate = sessionStorage.getItem(retryKey) !== '1'
+                if (regenerate) sessionStorage.setItem(retryKey, '1')
+              } catch {
+                regenerate = false
+              }
+            }
+            if (!regenerate) {
+              applyIntegrationState(analysis, record, sourceIdea.id)
+              return
+            }
           }
         } catch (error) {
           setIntegrationGenerationError(
