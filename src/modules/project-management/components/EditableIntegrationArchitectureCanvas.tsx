@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsLeft, ChevronsRight, Circle, Copy, Crosshair, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Settings2, Sparkles, Trash2, Waypoints } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, Grid3X3, GripVertical, ImageDown, Layers, LayoutTemplate, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, Ruler, Scissors, Settings2, Sparkles, Trash2, Unlink, Waypoints } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
@@ -58,11 +58,11 @@ import {
   createNodeFromPaletteItem,
   type ArchimatePaletteItem,
 } from '@/modules/project-management/lib/integrationArchimatePalette'
-import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
+import type { ArchimateElementNodeData, ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
 type IntegrationViewMode = 'canvas' | 'source' | 'notations'
 type StudioSidebarPanel = 'source' | 'notations'
-type CanvasMenuSubmenu = 'options' | 'layout' | null
+type CanvasMenuSubmenu = 'options' | 'layout' | 'order' | null
 type CanvasContextMenuState = {
   x: number
   y: number
@@ -180,6 +180,24 @@ function EditableIntegrationArchitectureCanvasInner({
   const [canvasMenu, setCanvasMenu] = useState<CanvasContextMenuState | null>(null)
   const [edgeMenu, setEdgeMenu] = useState<EdgeContextMenuState | null>(null)
   const [hasPasteableContent, setHasPasteableContent] = useState(false)
+  // Same canvas commands as the BPMN/C4 studio (EditableDiagramCanvas): node clipboard, default
+  // element style, text and image nodes from the footer.
+  const nodeClipboardRef = useRef<Node<ArchimateNodeData> | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const [defaultElementStyle, setDefaultElementStyle] = useState<Pick<ArchimateElementNodeData, 'visual' | 'textStyle'> | null>(null)
+  const [studioPanelWidth, setStudioPanelWidth] = useState(0)
+  const applyDefaultElementStyle = useCallback((node: Node<ArchimateNodeData>): Node<ArchimateNodeData> => {
+    if (!defaultElementStyle || node.data.kind !== 'element') return node
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        visual: defaultElementStyle.visual ? { ...defaultElementStyle.visual } : node.data.visual,
+        textStyle: defaultElementStyle.textStyle ? { ...defaultElementStyle.textStyle } : node.data.textStyle,
+      },
+    }
+  }, [defaultElementStyle])
+
   const [showGrid, setShowGrid] = useState(true)
   const [showGuides, setShowGuides] = useState(true)
   const [snapToGrid, setSnapToGrid] = useState(false)
@@ -845,7 +863,8 @@ function EditableIntegrationArchitectureCanvasInner({
         setNodes((current) => {
           mergedNodes = normalizeIntegrationNodesForCanvas([
             ...current.filter(
-              (node) => node.type === 'archimateLegend' || PRESERVED_SOURCE_SYNC_NODE_IDS.has(node.id),
+              (node) => node.type === 'archimateLegend' || node.type === 'archimateNote' || node.type === 'archimateImage'
+                || PRESERVED_SOURCE_SYNC_NODE_IDS.has(node.id),
             ),
             ...parsed.nodes,
           ])
@@ -927,11 +946,11 @@ function EditableIntegrationArchitectureCanvasInner({
         y: event.clientY - bounds.top,
       })
 
-      const newNode = createNodeFromPaletteItem(
+      const newNode = applyDefaultElementStyle(createNodeFromPaletteItem(
         item,
         position,
         nodes.map((node) => node.id),
-      )
+      ))
 
       markCustomized()
       setNodes((current) => {
@@ -984,10 +1003,14 @@ function EditableIntegrationArchitectureCanvasInner({
       if (fillHeight) setSidebarPanel('source')
       else setViewMode('canvas')
     },
-    [fillHeight, markCustomized, nodes, screenToFlowPosition, setNodes],
+    [applyDefaultElementStyle, fillHeight, markCustomized, nodes, screenToFlowPosition, setNodes],
   )
 
   const refreshPasteAvailability = useCallback(async () => {
+    if (nodeClipboardRef.current) {
+      setHasPasteableContent(true)
+      return
+    }
     if (!navigator.clipboard?.readText) {
       setHasPasteableContent(false)
       return
@@ -1067,6 +1090,126 @@ function EditableIntegrationArchitectureCanvasInner({
     [edges, nodes, setEdges, setNodes],
   )
 
+  const canvasCenterPosition = useCallback(() => {
+    const bounds = reactFlowWrapperRef.current?.getBoundingClientRect()
+    return bounds
+      ? screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 })
+      : { x: 360, y: 240 }
+  }, [screenToFlowPosition])
+
+  const addCanvasNode = useCallback((node: Node<ArchimateNodeData>) => {
+    markCustomized()
+    setNodes((current) => [...current.map((item) => ({ ...item, selected: false })), { ...node, selected: true }])
+    setSelectedNodeId(node.id)
+    setSelectedEdgeId(null)
+  }, [markCustomized, setNodes])
+
+  const addCanvasText = useCallback(() => {
+    addCanvasNode({
+      id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: 'archimateNote',
+      position: canvasCenterPosition(),
+      style: { width: 220, height: 100 },
+      data: { kind: 'note', title: 'Text', lines: ['Edit this text in the properties panel.'] },
+    })
+  }, [addCanvasNode, canvasCenterPosition])
+
+  const requestImageInsert = useCallback(() => imageInputRef.current?.click(), [])
+
+  const handleImageInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || !file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      addCanvasNode({
+        id: `image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type: 'archimateImage',
+        position: canvasCenterPosition(),
+        style: { width: 260, height: 180 },
+        data: { kind: 'image', src: String(reader.result), alt: file.name },
+      })
+    }
+    reader.readAsDataURL(file)
+  }, [addCanvasNode, canvasCenterPosition])
+
+  const copyNodeToClipboard = useCallback((nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId)
+    if (!node) return
+    nodeClipboardRef.current = structuredClone(node)
+    setHasPasteableContent(true)
+    setCanvasMenu(null)
+  }, [nodes])
+
+  const deleteNode = useCallback((nodeId: string) => {
+    markCustomized()
+    setNodes((current) => current.filter((node) => node.id !== nodeId))
+    setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId))
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setCanvasMenu(null)
+  }, [markCustomized, setEdges, setNodes])
+
+  const cutNode = useCallback((nodeId: string) => {
+    copyNodeToClipboard(nodeId)
+    deleteNode(nodeId)
+  }, [copyNodeToClipboard, deleteNode])
+
+  const duplicateNode = useCallback((nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId)
+    if (!node) return
+    addCanvasNode({
+      ...structuredClone(node),
+      id: `${node.id}-copy-${crypto.randomUUID()}`,
+      position: { x: node.position.x + 32, y: node.position.y + 32 },
+    })
+    setCanvasMenu(null)
+  }, [addCanvasNode, nodes])
+
+  const pasteCopiedNode = useCallback((at?: { x: number; y: number }) => {
+    const copied = nodeClipboardRef.current
+    if (!copied) return
+    addCanvasNode({
+      ...structuredClone(copied),
+      id: `${copied.id}-copy-${crypto.randomUUID()}`,
+      // At the cursor (pasted from the pane menu) the node lands on the canvas root.
+      ...(at ? { position: at, parentNode: undefined, extent: undefined } : { position: { x: copied.position.x + 32, y: copied.position.y + 32 } }),
+    })
+  }, [addCanvasNode])
+
+  const setNodeAsDefaultStyle = useCallback((nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId)
+    if (!node || node.data.kind !== 'element') return
+    setDefaultElementStyle({
+      visual: node.data.visual ? { ...node.data.visual } : undefined,
+      textStyle: node.data.textStyle ? { ...node.data.textStyle } : undefined,
+    })
+    setCanvasMenu(null)
+  }, [nodes])
+
+  // Menus close on any click outside them, as in the BPMN/C4 studio.
+  useEffect(() => {
+    if (!canvasMenu && !edgeMenu) return
+    const close = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-diagram-context-menu]')) return
+      setCanvasMenu(null)
+      setEdgeMenu(null)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [canvasMenu, edgeMenu])
+
+  // The footer toolbar sits right of the floating Source/ArchiMate panel, as in the BPMN studio.
+  useEffect(() => {
+    const panel = studioPanelShellRef.current
+    if (!panel || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => setStudioPanelWidth(panel.offsetWidth))
+    observer.observe(panel)
+    setStudioPanelWidth(panel.offsetWidth)
+    return () => observer.disconnect()
+  }, [fillHeight])
+
   const clearDefaultStyle = useCallback(() => {
     const selectedIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id))
     markCustomized()
@@ -1084,6 +1227,11 @@ function EditableIntegrationArchitectureCanvasInner({
   }, [markCustomized, nodes, setNodes])
 
   const pastePlantUmlAtCursor = useCallback(async () => {
+    if (canvasMenu && nodeClipboardRef.current) {
+      pasteCopiedNode(canvasMenu.flowPosition)
+      setCanvasMenu(null)
+      return
+    }
     if (!canvasMenu || !navigator.clipboard?.readText) return
     try {
       const source = await navigator.clipboard.readText()
@@ -1120,7 +1268,7 @@ function EditableIntegrationArchitectureCanvasInner({
     } finally {
       setCanvasMenu(null)
     }
-  }, [canvasMenu, markCustomized, setEdges, setNodes])
+  }, [canvasMenu, markCustomized, pasteCopiedNode, setEdges, setNodes])
 
   const copyCanvasAsImage = useCallback(async (nodeIds: string[]) => {
     const selectedIds = new Set(nodeIds)
@@ -1227,15 +1375,39 @@ function EditableIntegrationArchitectureCanvasInner({
         clearDefaultStyle()
         return
       }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'd') {
+        if (!selectedNodeId) return
+        event.preventDefault()
+        setNodeAsDefaultStyle(selectedNodeId)
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'c' && selectedNodeId) { event.preventDefault(); copyNodeToClipboard(selectedNodeId); return }
+        if (key === 'x' && selectedNodeId) { event.preventDefault(); cutNode(selectedNodeId); return }
+        if (key === 'd' && selectedNodeId) { event.preventDefault(); duplicateNode(selectedNodeId); return }
+        if (key === 'v' && nodeClipboardRef.current) { event.preventDefault(); pasteCopiedNode(); return }
+      }
+      if (event.key === 'Escape') {
+        setCanvasMenu(null)
+        setEdgeMenu(null)
+        return
+      }
       if (event.key !== 'Delete' && event.key !== 'Backspace') return
       if (selectedEdgeId) {
         event.preventDefault()
         deleteSelectedEdge()
+        return
+      }
+      const node = selectedNodeId ? nodes.find((item) => item.id === selectedNodeId) : undefined
+      if (node && node.type !== 'archimateLegend') {
+        event.preventDefault()
+        deleteNode(node.id)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [clearDefaultStyle, deleteSelectedEdge, fillHeight, selectCanvasElements, selectedEdgeId, viewMode])
+  }, [clearDefaultStyle, copyNodeToClipboard, cutNode, deleteNode, deleteSelectedEdge, duplicateNode, fillHeight, nodes, pasteCopiedNode, selectCanvasElements, selectedEdgeId, selectedNodeId, setNodeAsDefaultStyle, viewMode])
 
   const viewTabs: Array<{ id: IntegrationViewMode; label: string; icon: typeof Layers }> = [
     { id: 'canvas', label: 'Canvas', icon: Layers },
@@ -1318,55 +1490,77 @@ function EditableIntegrationArchitectureCanvasInner({
       showConnectionArrows={showConnectionArrows}
       showConnectionPoints={showConnectionPoints}
       defaultViewport={savedViewport}
+      controlsStyle={studioMode ? {
+        left: studioPanelPosition.x + (isStudioPanelCollapsed ? 140 : studioPanelWidth) + STUDIO_PANEL_MARGIN_PX,
+        bottom: STUDIO_PANEL_MARGIN_PX,
+        zIndex: 40,
+      } : undefined}
+      onAddText={studioMode ? addCanvasText : undefined}
+      onInsertImage={studioMode ? requestImageInsert : undefined}
       onMoveEnd={(_event, viewport) => persistViewport(viewport)}
     />
   )
 
+  const contextMenuNode = canvasMenu?.nodeId ? nodes.find((item) => item.id === canvasMenu.nodeId) : undefined
   const canvasContextMenu = canvasMenu ? (
     <div
       className="absolute z-50 w-64 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+      data-diagram-context-menu=""
       style={{ left: Math.max(8, canvasMenu.x), top: Math.max(8, canvasMenu.y) }}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      {canvasMenu.nodeId ? (
+      {canvasMenu.nodeId && contextMenuNode ? (
         <>
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => copyNodeToClipboard(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Copy className="h-4 w-4" /> Copy</span><span className="text-xs text-slate-400">Ctrl+C</span>
+          </button>
           <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
             onClick={() => {
-              const node = nodes.find((item) => item.id === canvasMenu.nodeId)
-              if (!node) return
-              const id = `${node.id}-copy-${crypto.randomUUID()}`
-              markCustomized()
-              setNodes((current) => [
-                ...current.map((item) => ({ ...item, selected: false })),
-                { ...structuredClone(node), id, position: { x: node.position.x + 32, y: node.position.y + 32 }, selected: true },
-              ])
+              void copyCanvasAsImage([contextMenuNode.id])
               setCanvasMenu(null)
             }}
           >
-            <Copy className="h-4 w-4" /> Duplicate
+            <ImageDown className="h-4 w-4" /> Copy as image
           </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50"
-            onClick={() => {
-              const nodeId = canvasMenu.nodeId
-              if (!nodeId) return
-              markCustomized()
-              setNodes((current) => current.filter((item) => item.id !== nodeId))
-              setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId))
-              setSelectedNodeId(null)
-              setCanvasMenu(null)
-            }}
-          >
-            <Trash2 className="h-4 w-4" /> Delete
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => cutNode(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Scissors className="h-4 w-4" /> Cut</span><span className="text-xs text-slate-400">Ctrl+X</span>
           </button>
           <div className="my-1 border-t border-slate-200" />
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => duplicateNode(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Copy className="h-4 w-4" /> Duplicate</span><span className="text-xs text-slate-400">Ctrl+D</span>
+          </button>
+          <div className="my-1 border-t border-slate-200" />
+          <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => deleteNode(contextMenuNode.id)}>
+            <span className="flex items-center gap-2"><Trash2 className="h-4 w-4" /> Delete</span><span className="text-xs text-slate-400">Delete</span>
+          </button>
+          <div className="my-1 border-t border-slate-200" />
+          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setCanvasMenu(null) }}>
+            <Paintbrush className="h-4 w-4" /> Styles &amp; formatting
+          </button>
+          {contextMenuNode.data.kind === 'element' ? (
+            <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setNodeAsDefaultStyle(contextMenuNode.id)}>
+              <span className="flex items-center gap-2"><Paintbrush className="h-4 w-4" /> Set as default style</span><span className="text-xs text-slate-400">Ctrl+Shift+D</span>
+            </button>
+          ) : null}
+          <div className="my-1 border-t border-slate-200" />
+          <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'order' } : current)}>
+            <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
+              <span className="flex items-center gap-2"><Layers className="h-4 w-4" /> Order</span><ChevronRight className="h-4 w-4" />
+            </button>
+            {canvasMenu.submenu === 'order' ? (
+              <div className="absolute left-full top-0 w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('front'); setCanvasMenu(null) }}><ChevronsUp className="h-4 w-4" />Bring to front</button>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('forward'); setCanvasMenu(null) }}><ArrowRight className="h-4 w-4" />Bring forward</button>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('backward'); setCanvasMenu(null) }}><ArrowDown className="h-4 w-4" />Send backward</button>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('back'); setCanvasMenu(null) }}><ChevronsDown className="h-4 w-4" />Send to back</button>
+              </div>
+            ) : null}
+          </div>
         </>
-      ) : null}
-      {selectedNodeId ? <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setCanvasMenu(null) }}><Paintbrush className="h-4 w-4" /> Styles &amp; formatting</button> : null}
+      ) : <>
       <button type="button" disabled={!hasPasteableContent} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', hasPasteableContent ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={pastePlantUmlAtCursor}>
         <Copy className="h-4 w-4" /> Paste here
       </button>
@@ -1427,12 +1621,14 @@ function EditableIntegrationArchitectureCanvasInner({
           </div>
         ) : null}
       </div>
+      </>}
     </div>
   ) : null
 
   const edgeContextMenu = edgeMenu ? (
     <div
       className="absolute z-50 w-60 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
+      data-diagram-context-menu=""
       style={{ left: Math.max(8, edgeMenu.x), top: Math.max(8, edgeMenu.y) }}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
@@ -1460,6 +1656,9 @@ function EditableIntegrationArchitectureCanvasInner({
       </button>
       <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeMenu(null) }}>
         <Waypoints className="h-4 w-4" /> Clear Waypoints
+      </button>
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeMenu(null) }}>
+        <Unlink className="h-4 w-4" /> Unpin Connector Ends
       </button>
       <div className="my-1 border-t border-slate-200" />
       <button
@@ -1560,6 +1759,7 @@ function EditableIntegrationArchitectureCanvasInner({
         !studioMode && fillHeight && 'flex h-full min-h-0 flex-col',
       )}
     >
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageInputChange} />
       {!studioMode && (
         <>
           <div className={cn('flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/50 bg-slate-50/80 px-3 py-2', fillHeight && 'shrink-0')}>
