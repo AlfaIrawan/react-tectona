@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, RefreshCcw, Trash2 } from 'lucide-react'
+import { ChevronDown, Loader2, Plus, RefreshCcw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -45,7 +45,16 @@ function normalizeFacts(raw: Partial<IntegrationFacts> | undefined): Integration
 }
 
 const inputClass = 'h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-800 focus:border-sky-400 focus:outline-none'
-const selectClass = `${inputClass} pr-6`
+const selectClass = `${inputClass} appearance-none pr-7`
+
+function Select({ value, onChange, children }: { value: string; onChange: (value: string) => void; children: React.ReactNode }) {
+  return (
+    <div className="relative">
+      <select className={selectClass} value={value} onChange={(event) => onChange(event.target.value)}>{children}</select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden />
+    </div>
+  )
+}
 
 function Section({ title, hint, onAdd, children }: { title: string; hint: string; onAdd?: () => void; children: React.ReactNode }) {
   return (
@@ -179,7 +188,7 @@ export function IntegrationFactsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(56rem,calc(100vw-2rem))] p-0">
+      <DialogContent surface="solid" className="flex w-[min(56rem,calc(100vw-2rem))] flex-col overflow-hidden p-0">
         <DialogHeader className="border-b border-slate-200 px-5 py-4">
           <DialogTitle className="text-base">Fakta integrasi</DialogTitle>
           <DialogDescription>
@@ -194,7 +203,7 @@ export function IntegrationFactsDialog({
             </p>
           ) : null}
         </DialogHeader>
-        <div className="max-h-[62vh] space-y-3 overflow-y-auto bg-slate-50 p-4">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
           {loading ? <p className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Memuat fakta...</p> : null}
           {error ? <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
           {!loading ? (
@@ -203,9 +212,9 @@ export function IntegrationFactsDialog({
                 {facts.applications.map((item, index) => (
                   <div key={`app-${index}`} className="grid grid-cols-[1fr_12rem_1fr_auto] items-center gap-2">
                     <input className={inputClass} value={item.name} placeholder="Nama aplikasi" onChange={(event) => patchRow('applications', index, { name: event.target.value })} />
-                    <select className={selectClass} value={item.kind} onChange={(event) => patchRow('applications', index, { kind: event.target.value })}>
+                    <Select value={item.kind} onChange={(next) => patchRow('applications', index, { kind: next })}>
                       {Object.entries(KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
+                    </Select>
                     <input className={inputClass} value={item.role ?? ''} placeholder="Peran (opsional)" onChange={(event) => patchRow('applications', index, { role: event.target.value })} />
                     <RemoveButton onClick={() => removeRow('applications', index)} />
                   </div>
@@ -216,14 +225,14 @@ export function IntegrationFactsDialog({
                 <Section title="Lane yang sebenarnya sistem" hint="Lane di diagram proses yang dijalankan aplikasi (mis. lane &quot;AI&quot;): langkahnya dilayani aplikasi itu, bukan aktor." onAdd={() => update('system_lanes', [...facts.system_lanes, { lane: lanes[0], application: appNames[0] ?? '' }])}>
                   {facts.system_lanes.map((item, index) => (
                     <div key={`lane-${index}`} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2 text-xs">
-                      <select className={selectClass} value={item.lane} onChange={(event) => patchRow('system_lanes', index, { lane: event.target.value })}>
+                      <Select value={item.lane} onChange={(next) => patchRow('system_lanes', index, { lane: next })}>
                         {lanes.map((lane) => <option key={lane} value={lane}>{lane}</option>)}
-                      </select>
+                      </Select>
                       <span className="text-slate-500">adalah</span>
-                      <select className={selectClass} value={item.application} onChange={(event) => patchRow('system_lanes', index, { application: event.target.value })}>
+                      <Select value={item.application} onChange={(next) => patchRow('system_lanes', index, { application: next })}>
                         <option value="">-</option>
                         {appOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
+                      </Select>
                       <RemoveButton onClick={() => removeRow('system_lanes', index)} />
                     </div>
                   ))}
@@ -235,10 +244,10 @@ export function IntegrationFactsDialog({
                   <div key={`data-${index}`} className="space-y-1 rounded-md border border-slate-100 p-2">
                     <div className="grid grid-cols-[1fr_12rem_auto_auto] items-center gap-2">
                       <input className={inputClass} value={item.name} placeholder="Nama data" onChange={(event) => patchRow('data', index, { name: event.target.value })} />
-                      <select className={selectClass} value={item.owner} onChange={(event) => patchRow('data', index, { owner: event.target.value })}>
+                      <Select value={item.owner} onChange={(next) => patchRow('data', index, { owner: next })}>
                         <option value="">Pemilik: -</option>
                         {appOptions.map((option) => <option key={option.value} value={option.value}>Pemilik: {option.label}</option>)}
-                      </select>
+                      </Select>
                       <label className="flex items-center gap-1 text-xs text-slate-700">
                         <input type="checkbox" checked={item.stored_as_file} onChange={(event) => patchRow('data', index, { stored_as_file: event.target.checked })} /> File/dokumen
                       </label>
@@ -255,15 +264,15 @@ export function IntegrationFactsDialog({
               <Section title="Integrasi antar aplikasi" hint="Mis. Gen AI Engine ditempel (embedded) di DigiLearn." onAdd={() => update('integrations', [...facts.integrations, { source: appNames[0] ?? '', target: appNames[1] ?? '', type: 'embedded' }])}>
                 {facts.integrations.map((item, index) => (
                   <div key={`link-${index}`} className="grid grid-cols-[1fr_12rem_1fr_auto] items-center gap-2">
-                    <select className={selectClass} value={item.source} onChange={(event) => patchRow('integrations', index, { source: event.target.value })}>
+                    <Select value={item.source} onChange={(next) => patchRow('integrations', index, { source: next })}>
                       {appOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                    <select className={selectClass} value={item.type} onChange={(event) => patchRow('integrations', index, { type: event.target.value })}>
+                    </Select>
+                    <Select value={item.type} onChange={(next) => patchRow('integrations', index, { type: next })}>
                       {Object.entries(LINK_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
-                    <select className={selectClass} value={item.target} onChange={(event) => patchRow('integrations', index, { target: event.target.value })}>
+                    </Select>
+                    <Select value={item.target} onChange={(next) => patchRow('integrations', index, { target: next })}>
                       {appOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
+                    </Select>
                     <RemoveButton onClick={() => removeRow('integrations', index)} />
                   </div>
                 ))}
@@ -273,13 +282,13 @@ export function IntegrationFactsDialog({
                 <Section title="Aplikasi yang mendukung langkah proses" hint="Langkah dari diagram proses brainstorm." onAdd={() => update('uses', [...facts.uses, { process_id: steps[0].id, application: appNames[0] ?? '' }])}>
                   {facts.uses.map((item, index) => (
                     <div key={`use-${index}`} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2 text-xs">
-                      <select className={selectClass} value={item.application} onChange={(event) => patchRow('uses', index, { application: event.target.value })}>
+                      <Select value={item.application} onChange={(next) => patchRow('uses', index, { application: next })}>
                         {appOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
+                      </Select>
                       <span className="text-slate-500">mendukung</span>
-                      <select className={selectClass} value={item.process_id} onChange={(event) => patchRow('uses', index, { process_id: event.target.value })}>
+                      <Select value={item.process_id} onChange={(next) => patchRow('uses', index, { process_id: next })}>
                         {stepOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
+                      </Select>
                       <RemoveButton onClick={() => removeRow('uses', index)} />
                     </div>
                   ))}
@@ -291,10 +300,10 @@ export function IntegrationFactsDialog({
                   <div key={`actor-${index}`} className="space-y-1 rounded-md border border-slate-100 p-2">
                     <div className="grid grid-cols-[1fr_10rem_auto] items-center gap-2">
                       <input className={inputClass} value={item.name} placeholder="Nama aktor/tim" onChange={(event) => patchRow('actors', index, { name: event.target.value })} />
-                      <select className={selectClass} value={item.role ? 'role' : 'actor'} onChange={(event) => patchRow('actors', index, { role: event.target.value === 'role' })}>
+                      <Select value={item.role ? 'role' : 'actor'} onChange={(next) => patchRow('actors', index, { role: next === 'role' })}>
                         <option value="role">Peran/tim</option>
                         <option value="actor">Aktor</option>
-                      </select>
+                      </Select>
                       <RemoveButton onClick={() => removeRow('actors', index)} />
                     </div>
                     <div className="flex items-start gap-2 text-xs text-slate-500">
@@ -310,9 +319,9 @@ export function IntegrationFactsDialog({
                   <div key={`infra-${index}`} className="space-y-1 rounded-md border border-slate-100 p-2">
                     <div className="grid grid-cols-[1fr_12rem_auto] items-center gap-2">
                       <input className={inputClass} value={item.name} placeholder="Nama infrastruktur" onChange={(event) => patchRow('infrastructure', index, { name: event.target.value })} />
-                      <select className={selectClass} value={item.type} onChange={(event) => patchRow('infrastructure', index, { type: event.target.value })}>
+                      <Select value={item.type} onChange={(next) => patchRow('infrastructure', index, { type: next })}>
                         {INFRA_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
-                      </select>
+                      </Select>
                       <RemoveButton onClick={() => removeRow('infrastructure', index)} />
                     </div>
                     <div className="flex items-start gap-2 text-xs text-slate-500">
