@@ -2240,7 +2240,8 @@ function EditableIntegrationArchitectureCanvasInner({
             </div>
 
             {studioOverlay ? (
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 max-h-28 overflow-y-auto px-3 py-2">
+              // Top right, under the AI history button: the floating Source/ArchiMate panel covers the left.
+              <div className="pointer-events-none absolute right-3 top-12 z-30 flex max-h-60 max-w-[min(28rem,45%)] justify-end overflow-y-auto">
                 <div className="pointer-events-auto space-y-2">{studioOverlay}</div>
               </div>
             ) : null}
