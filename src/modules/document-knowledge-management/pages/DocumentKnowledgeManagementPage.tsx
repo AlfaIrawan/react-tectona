@@ -17592,7 +17592,7 @@ export function DocumentKnowledgeManagementPage() {
                     className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   >
                     {!kbLoading && !kbLive ? (
-                      <motion.div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
                         Knowledge Base Graph is empty because the API failed
                         {kbLoadError ? `: ${kbLoadError}` : ''}. Fix the connection to{' '}
                         <code className="rounded bg-white/90 px-1">/api/gateway-runtime/api/tectona-kb/v1</code>{' '}
@@ -17604,7 +17604,7 @@ export function DocumentKnowledgeManagementPage() {
                           Platform Settings → Knowledge Base
                         </Link>
                         , then reload the page.
-                      </motion.div>
+                      </div>
                     ) : null}
                     {/* ROW 1 — Knowledge Base Graph */}
                     {(() => {
