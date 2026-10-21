@@ -437,6 +437,9 @@ const WORKSPACE_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 type C4ReviewAction = 'submit' | 'approve' | 'revision_requested' | 'reject' | 'cancel'
 type ArchitectureReviewTarget = 'c4-l1' | 'c4-l2' | 'integration' | 'bpmn-high'
 
+/** The ArchiMate integration view for the Export menu (its canvas listens for this diagram key). */
+const INTEGRATION_EXPORT_TARGET = { diagramKey: 'integration', title: 'AI Integration Recommendation' }
+
 function c4ReviewStatusMeta(status: C4ArchitectureReviewStatus | undefined) {
   switch (status) {
     case 'pending':
@@ -3832,6 +3835,8 @@ export function IdeaDetailPage() {
     diagramStudio?.renderAsImage ? diagramStudio.diagramSource : null,
   )
   const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
+  const [isIntegrationExportMenuOpen, setIsIntegrationExportMenuOpen] = useState(false)
+  const [isIntegrationEmbeddedMenuOpen, setIsIntegrationEmbeddedMenuOpen] = useState(false)
   const [isEmbeddedExportMenuOpen, setIsEmbeddedExportMenuOpen] = useState(false)
   const [c4AlternativePreview, setC4AlternativePreview] = useState<{
     level: C4ArchitectureLevel
@@ -6253,24 +6258,35 @@ export function IdeaDetailPage() {
     }
   }, [addToast, applyC4ArchitectureState, c4AlternativePreview, idea.id, idea.version, runtimeUserId])
 
-  const runDiagramExport = useCallback((action: 'jpeg' | 'png' | 'svg' | 'pdf' | 'copy-image' | 'print') => {
-    if (!diagramStudio) return
+  // The diagram an Export menu acts on: the open studio's, or the ArchiMate integration view's.
+  const runDiagramExport = useCallback((
+    action: 'jpeg' | 'png' | 'svg' | 'pdf' | 'copy-image' | 'print',
+    target?: { diagramKey: string; title: string },
+  ) => {
+    const diagramKey = target?.diagramKey ?? diagramStudio?.diagramKey
+    if (!diagramKey) return
     window.dispatchEvent(new CustomEvent('tectona-diagram-export', {
-      detail: { diagramKey: diagramStudio.diagramKey, action },
+      detail: { diagramKey, action },
     }))
     setIsDiagramExportMenuOpen(false)
     setIsEmbeddedExportMenuOpen(false)
+    setIsIntegrationExportMenuOpen(false)
+    setIsIntegrationEmbeddedMenuOpen(false)
   }, [diagramStudio])
 
-  const copyEmbeddedDiagramCode = useCallback(async (format: 'image' | 'svg' | 'html' | 'iframe' | 'notion') => {
-    if (!diagramStudio) return
-    const filename = `${diagramStudio.diagramKey}.${format === 'svg' ? 'svg' : 'png'}`
-    const title = diagramStudio.title.replace(/[<>]/g, '')
+  const copyEmbeddedDiagramCode = useCallback(async (
+    format: 'image' | 'svg' | 'html' | 'iframe' | 'notion',
+    target?: { diagramKey: string; title: string },
+  ) => {
+    const diagram = target ?? diagramStudio
+    if (!diagram) return
+    const filename = `${diagram.diagramKey}.${format === 'svg' ? 'svg' : 'png'}`
+    const title = diagram.title.replace(/[<>]/g, '')
     const codeByFormat = {
       image: `![${title}](${filename})`,
-      svg: `<img src="${diagramStudio.diagramKey}.svg" alt="${title}" />`,
+      svg: `<img src="${diagram.diagramKey}.svg" alt="${title}" />`,
       html: `<figure><img src="${filename}" alt="${title}" /></figure>`,
-      iframe: `<iframe src="${diagramStudio.diagramKey}.svg" title="${title}" width="100%" height="560"></iframe>`,
+      iframe: `<iframe src="${diagram.diagramKey}.svg" title="${title}" width="100%" height="560"></iframe>`,
       notion: `![${title}](${filename})`,
     }
     try {
@@ -6285,6 +6301,8 @@ export function IdeaDetailPage() {
     } finally {
       setIsDiagramExportMenuOpen(false)
       setIsEmbeddedExportMenuOpen(false)
+      setIsIntegrationExportMenuOpen(false)
+      setIsIntegrationEmbeddedMenuOpen(false)
     }
   }, [addToast, diagramStudio])
 
@@ -14800,6 +14818,67 @@ export function IdeaDetailPage() {
                           </div>
                         ) : null}
                       {renderSectionReviewWorkspace('integration', 'Integration')}
+                        <div className="relative">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-9 rounded-md border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 shadow-none hover:bg-slate-50"
+                            aria-expanded={isIntegrationExportMenuOpen}
+                            onClick={() => {
+                              setIsIntegrationExportMenuOpen((open) => !open)
+                              setIsIntegrationEmbeddedMenuOpen(false)
+                            }}
+                          >
+                            <Download className="h-4 w-4" aria-hidden />
+                            Export
+                            <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                          </Button>
+                          {isIntegrationExportMenuOpen ? (
+                            <div className="absolute right-0 top-full z-[70] mt-2 w-60 overflow-visible rounded-lg border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl">
+                              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('jpeg', INTEGRATION_EXPORT_TARGET)}>
+                                <ImageDown className="h-4 w-4" /> Save as JPEG
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('png', INTEGRATION_EXPORT_TARGET)}>
+                                <ImageDown className="h-4 w-4" /> Save as PNG
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('svg', INTEGRATION_EXPORT_TARGET)}>
+                                <FileText className="h-4 w-4" /> Save as SVG
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('pdf', INTEGRATION_EXPORT_TARGET)}>
+                                <FileText className="h-4 w-4" /> Save as PDF
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('copy-image', INTEGRATION_EXPORT_TARGET)}>
+                                <Copy className="h-4 w-4" /> Copy to MS Office as image
+                              </button>
+                              <div className="my-1 border-t border-slate-200" />
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100"
+                                  onClick={() => setIsIntegrationEmbeddedMenuOpen((open) => !open)}
+                                >
+                                  <span className="flex items-center gap-2"><ExternalLink className="h-4 w-4" /> Embedded code</span>
+                                  <ChevronRight className="h-4 w-4" />
+                                </button>
+                                {isIntegrationEmbeddedMenuOpen ? (
+                                  <div className="absolute right-full top-0 mr-1 w-52 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl">
+                                    <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('image', INTEGRATION_EXPORT_TARGET)}>Image</button>
+                                    <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('svg', INTEGRATION_EXPORT_TARGET)}>SVG</button>
+                                    <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('html', INTEGRATION_EXPORT_TARGET)}>HTML</button>
+                                    <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('iframe', INTEGRATION_EXPORT_TARGET)}>IFrame</button>
+                                    <div className="my-1 border-t border-slate-200" />
+                                    <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => void copyEmbeddedDiagramCode('notion', INTEGRATION_EXPORT_TARGET)}>Notion</button>
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="my-1 border-t border-slate-200" />
+                              <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => runDiagramExport('print', INTEGRATION_EXPORT_TARGET)}>
+                                <span className="flex items-center gap-2"><FileText className="h-4 w-4" /> Print</span>
+                                <span className="text-xs text-slate-400">Ctrl+P</span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                         <button
                           type="button"
                           aria-label="Exit integration fullscreen"

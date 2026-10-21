@@ -33,7 +33,6 @@ import { isArchimateElementData, type ArchimateElementNodeData, type ArchimateNo
 import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, parseC4Graph, serializeC4Graph, type C4ElementKind, type C4ParsedGraph } from '@/modules/project-management/lib/c4PlantUml'
 import { parseUmlDiagram, serializeUmlDiagram, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
 import { isCanvasViewport, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
-import { resolveEdgeTextStyle } from '@/modules/project-management/lib/integrationEdgeAppearance'
 import { defaultIntegrationNodeTextStyle, defaultIntegrationNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
 import { pickCenteredAnchoredHandles, type NodeGeometry } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import { parseBpmnSource, serializeBpmnCanvasToPlantUml, toBpmnEditorSource } from '@/modules/project-management/lib/bpmnPlantUml'
@@ -46,7 +45,15 @@ import { belongsToActiveWorkspaceScope, buildWorkspaceScopeFromTenant } from '@/
 import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
 import { requestOpenIdeaDiscussChat } from '@/stores/chat-navigation-store'
 import { createDiagramAiDraftAudit, listDiagramAiDraftAudit, type DiagramAiDraftAuditApi } from '@/lib/api/ideaBacklogApi'
-import { jsPDF } from 'jspdf'
+import { chatAuditDraftSummary, chatAuditLabel, chatAuditSnapshotSummary } from '@/modules/project-management/lib/diagramChatDraft'
+import {
+  copyDiagramImage,
+  downloadDiagramImage,
+  downloadDiagramPdf,
+  downloadDiagramSvg,
+  printDiagram,
+  renderDiagramCanvasImage,
+} from '@/modules/project-management/lib/diagramCanvasExport'
 
 type DiagramFormat = 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
 type ParsedKind = 'activity' | 'decision' | 'start' | 'end'
@@ -68,23 +75,6 @@ type StudioPanelResizeEdge = 'e' | 's' | 'se'
 type PropertiesPanelResizeEdge = 'e' | 's' | 'se' | 'w' | 'sw'
 const NODE_WIDTH = 210
 const NODE_HEIGHT = 78
-
-function chatAuditLabel(action: DiagramAiDraftAuditApi['action']): string {
-  return { requested: 'Draft requested', applied: 'Draft applied', discarded: 'Draft discarded', undone: 'Batch undone' }[action]
-}
-
-function chatAuditSnapshotSummary(snapshot: Record<string, unknown> | null | undefined): string | null {
-  if (!snapshot) return null
-  const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes.length : null
-  const edges = Array.isArray(snapshot.edges) ? snapshot.edges.length : null
-  return nodes !== null && edges !== null ? `${nodes} notation, ${edges} connection` : null
-}
-
-function chatAuditDraftSummary(draft: Record<string, unknown>): string | null {
-  if (typeof draft.summary === 'string' && draft.summary.trim()) return draft.summary.trim()
-  const actions = Array.isArray(draft.actions) ? draft.actions.length : 0
-  return actions ? `${actions} proposed change${actions === 1 ? '' : 's'}` : null
-}
 
 function bpmnStereotype(type: string): string {
   if (type === 'startEvent') return 'Start Event'
@@ -2178,243 +2168,35 @@ function EditableDiagramCanvasInner({
     }
   }, [c4Level, canvasMenu, format, setEdges, setNodes])
 
-  const renderCanvasImage = useCallback((nodeIds?: string[]) => {
-    const selectedIds = nodeIds ? new Set(nodeIds) : null
-    const drawableNodes = nodes.filter((node) => node.type !== 'archimateLegend' && (!selectedIds || selectedIds.has(node.id)))
-    if (drawableNodes.length === 0) return null
-    const dimensions = (node: Node<ArchimateNodeData>) => ({
-      width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 180),
-      height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 72),
-    })
-    const minX = Math.min(...drawableNodes.map((node) => node.position.x)) - 40
-    const minY = Math.min(...drawableNodes.map((node) => node.position.y)) - 40
-    const maxX = Math.max(...drawableNodes.map((node) => node.position.x + dimensions(node).width)) + 40
-    const maxY = Math.max(...drawableNodes.map((node) => node.position.y + dimensions(node).height)) + 40
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.min(2400, Math.max(640, Math.ceil(maxX - minX)))
-    canvas.height = Math.min(1800, Math.max(420, Math.ceil(maxY - minY)))
-    const context = canvas.getContext('2d')
-    if (!context) return null
-    const roundedRect = (x: number, y: number, width: number, height: number, radius: number) => {
-      const safeRadius = Math.min(radius, width / 2, height / 2)
-      context.beginPath()
-      context.moveTo(x + safeRadius, y)
-      context.lineTo(x + width - safeRadius, y)
-      context.quadraticCurveTo(x + width, y, x + width, y + safeRadius)
-      context.lineTo(x + width, y + height - safeRadius)
-      context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height)
-      context.lineTo(x + safeRadius, y + height)
-      context.quadraticCurveTo(x, y + height, x, y + height - safeRadius)
-      context.lineTo(x, y + safeRadius)
-      context.quadraticCurveTo(x, y, x + safeRadius, y)
-      context.closePath()
-    }
-    const wrapText = (text: string, maxWidth: number) => {
-      const words = text.trim().split(/\s+/).filter(Boolean)
-      const lines: string[] = []
-      let line = ''
-      words.forEach((word) => {
-        const next = line ? `${line} ${word}` : word
-        if (line && context.measureText(next).width > maxWidth) {
-          lines.push(line)
-          line = word
-        } else line = next
-      })
-      if (line) lines.push(line)
-      return lines
-    }
-    const isDarkColor = (color: string) => {
-      const match = /^#([\da-f]{6})$/i.exec(color)
-      if (!match) return false
-      const value = Number.parseInt(match[1], 16)
-      const red = value >> 16
-      const green = (value >> 8) & 255
-      const blue = value & 255
-      return (red * 299 + green * 587 + blue * 114) / 1000 < 145
-    }
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    edges.forEach((edge) => {
-      const sourceNode = drawableNodes.find((node) => node.id === edge.source)
-      const targetNode = drawableNodes.find((node) => node.id === edge.target)
-      if (!sourceNode || !targetNode) return
-      const sourceSize = dimensions(sourceNode)
-      const targetSize = dimensions(targetNode)
-      const sourceCenter = { x: sourceNode.position.x - minX + sourceSize.width / 2, y: sourceNode.position.y - minY + sourceSize.height / 2 }
-      const targetCenter = { x: targetNode.position.x - minX + targetSize.width / 2, y: targetNode.position.y - minY + targetSize.height / 2 }
-      const horizontal = Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y)
-      const start = horizontal
-        ? { x: sourceCenter.x + (targetCenter.x >= sourceCenter.x ? sourceSize.width / 2 : -sourceSize.width / 2), y: sourceCenter.y }
-        : { x: sourceCenter.x, y: sourceCenter.y + (targetCenter.y >= sourceCenter.y ? sourceSize.height / 2 : -sourceSize.height / 2) }
-      const end = horizontal
-        ? { x: targetCenter.x + (targetCenter.x >= sourceCenter.x ? -targetSize.width / 2 : targetSize.width / 2), y: targetCenter.y }
-        : { x: targetCenter.x, y: targetCenter.y + (targetCenter.y >= sourceCenter.y ? -targetSize.height / 2 : targetSize.height / 2) }
-      const stroke = typeof edge.style?.stroke === 'string' ? edge.style.stroke : '#64748b'
-      const width = typeof edge.style?.strokeWidth === 'number' ? edge.style.strokeWidth : 1.5
-      context.beginPath()
-      context.strokeStyle = stroke
-      context.lineWidth = width
-      context.setLineDash(typeof edge.style?.strokeDasharray === 'string' ? edge.style.strokeDasharray.split(/[ ,]+/).map(Number).filter(Boolean) : [])
-      context.moveTo(start.x, start.y)
-      context.lineTo(end.x, end.y)
-      context.stroke()
-      context.setLineDash([])
-      const angle = Math.atan2(end.y - start.y, end.x - start.x)
-      context.fillStyle = stroke
-      context.beginPath()
-      context.moveTo(end.x, end.y)
-      context.lineTo(end.x - 9 * Math.cos(angle - Math.PI / 6), end.y - 9 * Math.sin(angle - Math.PI / 6))
-      context.lineTo(end.x - 9 * Math.cos(angle + Math.PI / 6), end.y - 9 * Math.sin(angle + Math.PI / 6))
-      context.closePath()
-      context.fill()
-      if (edge.label) {
-        const label = String(edge.label)
-        const textStyle = resolveEdgeTextStyle(edge)
-        context.font = `${textStyle.italic ? 'italic ' : ''}${textStyle.bold ? 700 : 400} ${textStyle.fontSize}px ${textStyle.fontFamily}`
-        const labelWidth = Math.min(Math.max(88, context.measureText(label).width + 18), 420)
-        const labelX = (start.x + end.x) / 2 - labelWidth / 2
-        const labelY = (start.y + end.y) / 2 + 12
-        roundedRect(labelX, labelY, labelWidth, 24, 5)
-        context.fillStyle = '#ffffff'
-        context.fill()
-        context.strokeStyle = '#cbd5e1'
-        context.lineWidth = 1
-        context.stroke()
-        context.fillStyle = '#0f172a'
-        context.textAlign = 'center'
-        context.textBaseline = 'middle'
-        context.fillText(label, labelX + labelWidth / 2, labelY + 12, labelWidth - 12)
-      }
-    })
-    drawableNodes.forEach((node) => {
-      const { width, height } = dimensions(node)
-      const x = node.position.x - minX
-      const y = node.position.y - minY
-      const visual = node.data.visual
-      const fillColor = visual?.fillEnabled === false ? '#ffffff' : visual?.fillColor ?? '#ffffff'
-      const lineColor = visual?.lineEnabled === false ? 'transparent' : visual?.lineColor ?? '#334155'
-      const textColor = node.data.textStyle?.fontColorEnabled
-        ? node.data.textStyle.fontColor ?? '#0f172a'
-        : isDarkColor(fillColor) ? '#ffffff' : '#0f172a'
-      if (visual?.shadow) {
-        context.shadowColor = 'rgba(15,23,42,0.2)'
-        context.shadowBlur = 10
-        context.shadowOffsetY = 4
-      }
-      roundedRect(x, y, width, height, visual?.rounded === false ? 3 : 12)
-      context.globalAlpha = (visual?.opacity ?? 100) / 100
-      context.fillStyle = fillColor
-      context.fill()
-      context.shadowColor = 'transparent'
-      context.globalAlpha = 1
-      if (lineColor !== 'transparent') {
-        context.strokeStyle = lineColor
-        context.lineWidth = visual?.lineWidth ?? 1.5
-        context.setLineDash(visual?.lineStyle === 'dashed' ? [7, 4] : visual?.lineStyle === 'dotted' ? [2, 3] : [])
-        context.stroke()
-        context.setLineDash([])
-      }
-      const elementData = node.data.kind === 'element' ? node.data : null
-      if (elementData?.notationId.includes('Person')) {
-        const personColor = lineColor === 'transparent' ? '#0f5d9d' : lineColor
-        const centerX = x + width / 2
-        context.strokeStyle = personColor
-        context.fillStyle = fillColor
-        context.lineWidth = 1.5
-        context.beginPath()
-        context.arc(centerX, y - 6, 6, 0, Math.PI * 2)
-        context.fill()
-        context.stroke()
-        context.beginPath()
-        context.moveTo(centerX - 14, y + 14)
-        context.bezierCurveTo(centerX - 12, y + 4, centerX - 4, y, centerX, y)
-        context.bezierCurveTo(centerX + 4, y, centerX + 12, y + 4, centerX + 14, y + 14)
-        context.closePath()
-        context.fill()
-        context.stroke()
-      }
-      const fontFamily = node.data.textStyle?.fontFamily ?? 'Arial'
-      context.textAlign = 'center'
-      context.textBaseline = 'middle'
-      if (elementData?.stereotype) {
-        context.fillStyle = textColor
-        context.font = `italic ${Math.max(9, (node.data.textStyle?.fontSize ?? 12) - 2)}px ${fontFamily}`
-        context.fillText(`<<${elementData.stereotype.toLowerCase()}>>`, x + width / 2, y + 23, width - 20)
-      }
-      const title = node.data.kind === 'element' || node.data.kind === 'boundary' || node.data.kind === 'note' ? node.data.title : node.id
-      context.fillStyle = textColor
-      context.font = `${node.data.textStyle?.bold === false ? 500 : 700} ${Math.max(11, node.data.textStyle?.fontSize ?? 14)}px ${fontFamily}`
-      const titleLines = wrapText(title, Math.max(40, width - 20)).slice(0, 2)
-      const titleY = elementData?.stereotype ? y + 46 : y + height / 2 - 8
-      titleLines.forEach((line, index) => context.fillText(line, x + width / 2, titleY + index * 16, width - 20))
-      const description = elementData?.description.filter((line) => !/^\[.*\]$/.test(line)) ?? (node.data.kind === 'note' ? node.data.lines : [])
-      if (description.length) {
-        context.font = `${Math.max(9, (node.data.textStyle?.fontSize ?? 12) - 2)}px ${fontFamily}`
-        const descriptionLines = description.flatMap((line) => wrapText(line, Math.max(40, width - 24))).slice(0, 3)
-        const descriptionY = titleY + titleLines.length * 16 + 12
-        descriptionLines.forEach((line, index) => context.fillText(line, x + width / 2, descriptionY + index * 12, width - 24))
-      }
-    })
-    return canvas
-  }, [edges, nodes])
+  const renderCanvasImage = useCallback(
+    (nodeIds?: string[]) => renderDiagramCanvasImage(nodes, edges, nodeIds),
+    [edges, nodes],
+  )
 
   const downloadCanvasImage = useCallback(async (mimeType: 'image/png' | 'image/jpeg') => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const extension = mimeType === 'image/png' ? 'png' : 'jpeg'
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, 0.95))
-    if (!blob) return
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `${diagramKey}.${extension}`
-    link.click()
-    URL.revokeObjectURL(link.href)
+    if (canvas) await downloadDiagramImage(canvas, diagramKey, mimeType)
   }, [diagramKey, renderCanvasImage])
 
   const downloadCanvasSvg = useCallback(() => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}"><image href="${canvas.toDataURL('image/png')}" width="${canvas.width}" height="${canvas.height}" /></svg>`
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
-    link.download = `${diagramKey}.svg`
-    link.click()
-    URL.revokeObjectURL(link.href)
+    if (canvas) downloadDiagramSvg(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
   const downloadCanvasPdf = useCallback(() => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait'
-    const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] })
-    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height)
-    pdf.save(`${diagramKey}.pdf`)
+    if (canvas) downloadDiagramPdf(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
   const printCanvas = useCallback(() => {
     const canvas = renderCanvasImage()
-    if (!canvas) return
-    const printWindow = window.open('', '_blank', 'width=1200,height=900')
-    if (!printWindow) return
-    printWindow.opener = null
-    printWindow.document.write(`<!doctype html><html><head><title>${diagramKey}</title><style>body{margin:24px;background:#fff}img{display:block;max-width:100%;height:auto}</style></head><body><img src="${canvas.toDataURL('image/png')}" alt="${diagramKey}" /></body></html>`)
-    printWindow.document.close()
-    printWindow.addEventListener('load', () => printWindow.print(), { once: true })
+    if (canvas) printDiagram(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
   const copyCanvasAsImage = useCallback(async (nodeIds?: string[]) => {
     const canvas = renderCanvasImage(nodeIds)
-    if (!canvas) return
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-    if (!blob) return
     try {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-    } catch {
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = `${diagramKey}.png`
-      link.click()
-      URL.revokeObjectURL(link.href)
+      if (canvas) await copyDiagramImage(canvas, diagramKey)
     } finally {
       setCanvasMenu(null)
     }
