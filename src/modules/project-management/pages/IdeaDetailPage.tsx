@@ -4774,6 +4774,25 @@ export function IdeaDetailPage() {
   const integrationLatestGraphRef = useRef<IntegrationGraphRecord | null>(null)
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
   const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
+  // What the integration view still misses: elements without a relation, read live from the canvas,
+  // and the generator's other checks (data owner, step performer) while the view is unedited.
+  const integrationChecks = useMemo(() => {
+    const graph = integrationLatestGraph
+    if (!graph) return []
+    const related = new Set(graph.edges.flatMap((edge) => [edge.source, edge.target]))
+    const unrelated = graph.nodes
+      .filter((node) => node.type === 'archimateElement' && !related.has(node.id))
+      .map((node) => {
+        const data = node.data as { title?: string; stereotype?: string }
+        return `${data.title ?? node.id}${data.stereotype ? ` (${data.stereotype})` : ''} belum punya relasi`
+      })
+    const generated = graph.userCustomized
+      ? []
+      : integrationWarnings
+        .filter((warning) => warning.startsWith('INTEGRATION_CHECK: ') && !warning.endsWith('belum punya relasi'))
+        .map((warning) => warning.slice('INTEGRATION_CHECK: '.length))
+    return [...unrelated, ...generated]
+  }, [integrationLatestGraph, integrationWarnings])
   const persistIntegrationGraph = useCallback(
     (graph: IntegrationGraphRecord) => {
       const current = runtimeIntegrationAnalysisRef.current
@@ -14909,76 +14928,14 @@ export function IdeaDetailPage() {
                       isGenerating={isIntegrationRefreshing}
                       fillHeight
                       hideStudioHeader
-                      studioOverlay={false ? (
-                        <>
-                          {runtimeIntegrationAnalysis.status === 'insufficient_data' &&
-                          integrationLoaded &&
-                          !isIntegrationRefreshing ? (
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-800">
-                                Evidence kurang
-                              </Badge>
-                            </div>
-                          ) : null}
-
-                          {isIntegrationRefreshing && (
-                            <div className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-                              <RefreshCcw className="h-3.5 w-3.5 animate-spin text-sky-600" />
-                              <span>Tectona Assistant menyusun rekomendasi integrasi…</span>
-                            </div>
-                          )}
-
-                          {integrationGenerationError && !isIntegrationRefreshing && (
-                            <div
-                              role="alert"
-                              className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-900"
-                            >
-                              <span className="font-semibold text-rose-800">Analisis integrasi gagal — </span>
-                              {integrationGenerationError}
-                            </div>
-                          )}
-
-                          {integrationLoaded && !integrationGenerationError && (
-                            <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
-                              <button
-                                type="button"
-                                className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-50"
-                                onClick={() => setIntegrationBriefExpanded((prev) => !prev)}
-                              >
-                                <ChevronDown
-                                  className={cn(
-                                    'h-4 w-4 shrink-0 text-slate-500 transition-transform',
-                                    integrationBriefExpanded && 'rotate-180',
-                                  )}
-                                />
-                                <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800">
-                                  {runtimeIntegrationAnalysis.summaryTitle}
-                                </span>
-                              </button>
-                              {integrationBriefExpanded && (
-                                <div className="max-h-32 space-y-2 overflow-y-auto border-t border-border/30 px-3 py-2 text-xs text-slate-600">
-                                  <p className="leading-5">{runtimeIntegrationAnalysis.executiveBrief}</p>
-                                  {runtimeIntegrationAnalysis.integrationPatterns.length > 0 && (
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {runtimeIntegrationAnalysis.integrationPatterns.map((pattern) => (
-                                        <Badge key={pattern} variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-800">
-                                          {pattern}
-                                        </Badge>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {runtimeIntegrationAnalysis.missingEvidence.length > 0 && (
-                                    <ul className="list-disc pl-4 text-amber-900">
-                                      {runtimeIntegrationAnalysis.missingEvidence.map((item) => (
-                                        <li key={item}>{item}</li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </>
+                      studioOverlay={integrationChecks.length > 0 ? (
+                        <div className="max-w-xl rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow-sm">
+                          <p className="font-semibold">Perlu dicek ({integrationChecks.length})</p>
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                            {integrationChecks.slice(0, 6).map((check) => <li key={check}>{check}</li>)}
+                          </ul>
+                          {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
+                        </div>
                       ) : null}
                     />
                   </div>
