@@ -3176,28 +3176,11 @@ export function IdeaBacklogManagementPage() {
       fetchIdentityUsers({ limit: 500, offset: 0 }).catch(() => null),
       fetchAllProjects({
         app_id: TECTONA_PROJECT_APP_ID,
-        workspace_id: workspaceApiId,
       }).catch(() => []),
     ])
-      .then(async ([ideaItems, usersRes, projects]) => {
+      .then(([ideaItems, usersRes, projects]) => {
         if (cancelled) return
         const namesByProjectId = Object.fromEntries(projects.map((project) => [project.id, project.name]))
-        const linkedProjectIds = [
-          ...new Set(
-            ideaItems
-              .map((item) => item.project_id?.trim())
-              .filter((id): id is string => Boolean(id)),
-          ),
-        ]
-        const unresolvedProjectIds = linkedProjectIds.filter((id) => !namesByProjectId[id])
-        if (unresolvedProjectIds.length > 0) {
-          const globalProjects = await fetchAllProjects({ app_id: TECTONA_PROJECT_APP_ID }).catch(() => [])
-          if (!cancelled) {
-            for (const project of globalProjects) {
-              namesByProjectId[project.id] = project.name
-            }
-          }
-        }
         if (cancelled) return
         setProjectNameById(namesByProjectId)
         projectNameByIdRef.current = namesByProjectId
