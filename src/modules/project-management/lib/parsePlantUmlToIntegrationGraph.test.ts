@@ -72,3 +72,24 @@ describe('ArchiMate layered view', () => {
     expect(again.edges.length).toBe(5)
   })
 })
+
+describe('Technology layer types (21 Oct 2026)', () => {
+  it('reads Artifact and System Software as technology elements', () => {
+    const data = elements('@startuml\npackage "Technology Layer" {\n  [Dokumen Kebijakan] as doc <<Artifact>>\n  [Ubuntu Server] as os <<System Software>>\n}\n@enduml')
+    expect(data.map((item) => `${item.layer}/${item.stereotype}/${item.notationId}`)).toEqual([
+      'technology/Artifact/technology-layer-artifact',
+      'technology/System Software/technology-layer-system-software',
+    ])
+  })
+
+  it('offers the counterpart type when an element moves to another layer', async () => {
+    const { archimateCounterpartType } = await import('@/modules/project-management/lib/integrationArchimateNotationCatalog')
+    expect(archimateCounterpartType('Application Data Object', 'technology')).toBe('Artifact')
+    expect(archimateCounterpartType('Data Object', 'technology')).toBe('Artifact')
+    expect(archimateCounterpartType('Application Component', 'technology')).toBe('System Software')
+    expect(archimateCounterpartType('Application Service', 'technology')).toBe('Technology Service')
+    expect(archimateCounterpartType('Artifact', 'application')).toBe('Application Data Object')
+    expect(archimateCounterpartType('Business Process', 'business')).toBe(null)
+    expect(archimateCounterpartType('Data Object', 'data')).toBe(null)
+  })
+})

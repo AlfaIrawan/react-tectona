@@ -35,7 +35,7 @@ import {
   chatAuditSnapshotSummary,
   type DiagramChatDraft,
 } from '@/modules/project-management/lib/diagramChatDraft'
-import { normalizeArchimateElementData, resolveArchimateFromLabel } from '@/modules/project-management/lib/integrationArchimateNotationCatalog'
+import { archimateCounterpartType, normalizeArchimateElementData, resolveArchimateFromLabel } from '@/modules/project-management/lib/integrationArchimateNotationCatalog'
 import { layerOfPackageTitle } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
 import { Textarea } from '@/components/ui/textarea'
 import { enterpriseIndigoGradientActionButtonClass } from '@/lib/enterpriseButtonClasses'
@@ -231,6 +231,14 @@ function EditableIntegrationArchitectureCanvasInner({
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const [defaultElementStyle, setDefaultElementStyle] = useState<Pick<ArchimateElementNodeData, 'visual' | 'textStyle'> | null>(null)
   const [studioPanelWidth, setStudioPanelWidth] = useState(0)
+  // An element dropped into another layer: its counterpart type there is offered, never applied silently.
+  const [layerTypeSuggestion, setLayerTypeSuggestion] = useState<{
+    nodeId: string
+    title: string
+    from: string
+    to: string
+    layerTitle: string
+  } | null>(null)
   const applyDefaultElementStyle = useCallback((node: Node<ArchimateNodeData>): Node<ArchimateNodeData> => {
     if (!defaultElementStyle || node.data.kind !== 'element') return node
     return {
@@ -917,6 +925,15 @@ function EditableIntegrationArchitectureCanvasInner({
         }
 
         const targetAbsolute = absolutePosition(target)
+        if (currentNode.data.kind === 'element' && target.data.kind === 'boundary') {
+          const element = currentNode.data
+          const targetLayer = layerOfPackageTitle(target.data.title)
+          const counterpart = targetLayer ? archimateCounterpartType(element.stereotype, targetLayer) : null
+          const suggestion = counterpart
+            ? { nodeId: currentNode.id, title: element.title, from: element.stereotype, to: counterpart, layerTitle: target.data.title }
+            : null
+          queueMicrotask(() => setLayerTypeSuggestion(suggestion))
+        }
         nextNodes = current.map((node) =>
             node.id === currentNode.id
             ? {
@@ -966,6 +983,25 @@ function EditableIntegrationArchitectureCanvasInner({
     },
     [markCustomized, setNodes, setEdges],
   )
+
+  const acceptLayerTypeSuggestion = useCallback(() => {
+    const suggestion = layerTypeSuggestion
+    setLayerTypeSuggestion(null)
+    const typed = suggestion ? resolveArchimateFromLabel(suggestion.to) : null
+    if (!suggestion || !typed) return
+    markCustomized()
+    setNodes((current) => current.map((node) => node.id === suggestion.nodeId && node.data.kind === 'element'
+      ? {
+          ...node,
+          data: normalizeArchimateElementData({
+            ...node.data,
+            layer: typed.layer,
+            stereotype: typed.stereotype,
+            notationId: typed.notationId,
+          }),
+        }
+      : node))
+  }, [layerTypeSuggestion, markCustomized, setNodes])
 
   const applyPlantUmlSourceToCanvas = useCallback(
     (source: string) => {
@@ -2075,6 +2111,17 @@ function EditableIntegrationArchitectureCanvasInner({
               <RotateCcw className="h-3.5 w-3.5" /> Undo AI batch
             </Button>
           ) : null}
+        </div>
+      ) : null}
+      {studioMode && layerTypeSuggestion ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-16 z-40 flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-xl">
+            <span>
+              <b>{layerTypeSuggestion.title}</b> is a {layerTypeSuggestion.from} in the {layerTypeSuggestion.layerTitle}. Change it to <b>{layerTypeSuggestion.to}</b>?
+            </span>
+            <Button type="button" size="sm" className="h-7 shrink-0 text-xs" onClick={acceptLayerTypeSuggestion}>Change to {layerTypeSuggestion.to}</Button>
+            <Button type="button" size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setLayerTypeSuggestion(null)}>Keep</Button>
+          </div>
         </div>
       ) : null}
       <Dialog open={Boolean(pendingChatDraft)} onOpenChange={(open) => { if (!open) setPendingChatDraft(null) }}>

@@ -77,6 +77,19 @@ const STEREOTYPE_TO_NOTATION: Record<string, string> = {
   'Application Data Object': 'application-layer-data',
   'Data Object': 'application-layer-data',
   'Technology Node': 'technology-layer-node',
+  Node: 'technology-layer-node',
+  'System Software': 'technology-layer-system-software',
+  'Device': 'technology-layer-device',
+  'Technology Collaboration': 'technology-layer-technology-collaboration',
+  'Technology Interface': 'technology-layer-technology-interface',
+  'Path': 'technology-layer-path',
+  'Communication Network': 'technology-layer-network',
+  'Technology Function': 'technology-layer-technology-function',
+  'Technology Process': 'technology-layer-technology-process',
+  'Technology Interaction': 'technology-layer-technology-interaction',
+  'Technology Event': 'technology-layer-technology-event',
+  'Technology Service': 'technology-layer-technology-service',
+  'Artifact': 'technology-layer-artifact',
 }
 
 export const ARCHIMATE_NOTATION_DEFINITIONS: ArchimateNotationDefinition[] = [
@@ -103,6 +116,18 @@ export const ARCHIMATE_NOTATION_DEFINITIONS: ArchimateNotationDefinition[] = [
   { id: 'application-layer-event', imageFile: 'application-layer-event.png', label: 'Application Event', stereotype: 'Application Event', layer: 'application', section: 'application' },
   { id: 'application-layer-data', imageFile: 'application-layer-data.png', label: 'Data Object', stereotype: 'Application Data Object', layer: 'data', section: 'application', defaultWidth: 210 },
   { id: 'technology-layer-node', imageFile: 'technology-layer-node.png', label: 'Technology Node', stereotype: 'Technology Node', layer: 'technology', section: 'technology', defaultWidth: 210 },
+  { id: 'technology-layer-system-software', imageFile: 'technology-layer-system-software.png', label: 'System Software', stereotype: 'System Software', layer: 'technology', section: 'technology', defaultWidth: 210 },
+  { id: 'technology-layer-device', imageFile: 'technology-layer-device.png', label: 'Device', stereotype: 'Device', layer: 'technology', section: 'technology', defaultWidth: 210 },
+  { id: 'technology-layer-technology-collaboration', imageFile: 'technology-layer-technology-collaboration.png', label: 'Technology Collaboration', stereotype: 'Technology Collaboration', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-technology-interface', imageFile: 'technology-layer-technology-interface.png', label: 'Technology Interface', stereotype: 'Technology Interface', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-path', imageFile: 'technology-layer-path.png', label: 'Path', stereotype: 'Path', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-network', imageFile: 'technology-layer-network.png', label: 'Communication Network', stereotype: 'Communication Network', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-technology-function', imageFile: 'technology-layer-technology-function.png', label: 'Technology Function', stereotype: 'Technology Function', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-technology-process', imageFile: 'technology-layer-technology-process.png', label: 'Technology Process', stereotype: 'Technology Process', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-technology-interaction', imageFile: 'technology-layer-technology-interaction.png', label: 'Technology Interaction', stereotype: 'Technology Interaction', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-technology-event', imageFile: 'technology-layer-technology-event.png', label: 'Technology Event', stereotype: 'Technology Event', layer: 'technology', section: 'technology' },
+  { id: 'technology-layer-technology-service', imageFile: 'technology-layer-technology-service.png', label: 'Technology Service', stereotype: 'Technology Service', layer: 'technology', section: 'technology', defaultWidth: 210 },
+  { id: 'technology-layer-artifact', imageFile: 'technology-layer-artifact.png', label: 'Artifact', stereotype: 'Artifact', layer: 'technology', section: 'technology', defaultWidth: 210 },
 ]
 
 export const ARCHIMATE_PALETTE_SECTIONS: Array<{ id: ArchimatePaletteSectionId; title: string }> = [
@@ -184,4 +209,32 @@ export function normalizeArchimateElementData(data: ArchimateElementNodeData): A
 
 export function listArchimateNotationsBySection(section: ArchimatePaletteSectionId): ArchimateNotationDefinition[] {
   return ARCHIMATE_NOTATION_DEFINITIONS.filter((item) => item.section === section)
+}
+
+// The same kind of element in each layer (ArchiMate's layer correspondence): moving an element into
+// another layer offers its counterpart there (Data Object -> Artifact, Application Component ->
+// System Software, ...). Order: business, application, technology.
+const ARCHIMATE_LAYER_COUNTERPARTS: Array<[string[], string[], string[]]> = [
+  [['Business Actor', 'Business Role'], ['Application Component'], ['System Software', 'Node', 'Technology Node', 'Device']],
+  [['Business Collaboration'], ['Application Collaboration'], ['Technology Collaboration']],
+  [['Business Interface'], ['Application Interface'], ['Technology Interface']],
+  [['Business Process'], ['Application Process'], ['Technology Process']],
+  [['Business Function'], ['Application Function'], ['Technology Function']],
+  [['Business Interaction'], ['Application Interaction'], ['Technology Interaction']],
+  [['Business Event'], ['Application Event'], ['Technology Event']],
+  [['Business Service'], ['Application Service'], ['Technology Service']],
+  [['Business Object', 'Contract', 'Representation'], ['Application Data Object', 'Data Object'], ['Artifact']],
+]
+
+/** The counterpart of an element type in another layer, or null when there is none or it is
+ * already of that layer ("data" counts as the application layer). */
+export function archimateCounterpartType(stereotype: string, targetLayer: ArchimateLayer): string | null {
+  const column = targetLayer === 'business' ? 0 : targetLayer === 'technology' ? 2 : 1
+  const name = stereotype.trim().toLowerCase()
+  for (const row of ARCHIMATE_LAYER_COUNTERPARTS) {
+    const at = row.findIndex((names) => names.some((item) => item.toLowerCase() === name))
+    if (at < 0) continue
+    return at === column ? null : row[column][0]
+  }
+  return null
 }
