@@ -747,7 +747,7 @@ export async function listIdeas(params?: {
 
   const res = await apiFetch(
     `${BASE_URL}/v1/ideas${qs.toString() ? `?${qs}` : ''}`,
-    { headers: defaultHeaders() }
+    { headers: defaultHeaders(params?.workspace_id ? { 'X-Workspace-Id': params.workspace_id } : undefined) }
   )
   return handleResponse<IdeaListApi>(res)
 }
