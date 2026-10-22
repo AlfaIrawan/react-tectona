@@ -556,6 +556,8 @@ export interface IdeaDraftSimilarItem {
   similarity_score: number
   status?: string | null
   project_name?: string | null
+  /** A document's type (URD, BRD, FSD...): an idea's documents share its title. */
+  doc_type?: string | null
 }
 
 export interface IdeaDraftEvidenceSummary {

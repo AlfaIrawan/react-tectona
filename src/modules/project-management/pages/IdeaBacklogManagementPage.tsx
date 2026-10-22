@@ -6323,7 +6323,7 @@ export function IdeaBacklogManagementPage() {
                                 <p className="font-semibold">Potential overlap detected</p>
                                 {[...ideaDraftJob.similar_ideas, ...ideaDraftJob.similar_documents].map((item) => (
                                   <p key={`${item.kind}-${item.id}-${item.title}`} className="mt-1 truncate">
-                                    {item.kind === 'brd' ? 'BRD' : item.kind === 'document' ? 'Document' : 'Idea'} · {item.title}
+                                    {item.kind === 'idea' ? 'Idea' : item.doc_type || (item.kind === 'brd' ? 'BRD' : 'Document')} · {item.title}
                                     {' · '}
                                     {Math.round(item.similarity_score * 100)}%
                                   </p>
