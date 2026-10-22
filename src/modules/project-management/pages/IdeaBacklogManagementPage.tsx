@@ -59,6 +59,7 @@ import {
   RefreshCw,
   Wrench,
   Copy,
+  Pencil,
 } from 'lucide-react'
 import {
   Bar,
@@ -146,6 +147,7 @@ import {
 } from '@/lib/api/ideaBacklogApi'
 import {
   brainstormIdeaDraftJob,
+  editIdeaDraftBrainstormMessage,
   cancelIdeaDraftJob,
   continueIdeaDraftJob,
   getIdeaDraftJob,
@@ -447,8 +449,20 @@ function friendlyBrainstormError(rawMessage: string): string {
   if (/^HTTP 500\b/i.test(rawMessage) || rawMessage.includes('Internal Server Error')) {
     return 'Tectona Assistant is having a brief issue. Please resend your message.'
   }
+  if (rawMessage.includes('BRAINSTORM_EDIT_UNAVAILABLE')) {
+    return 'This answer was sent before answers could be edited, so it cannot be edited. Answer again in a new message.'
+  }
+  if (rawMessage.includes('BRAINSTORM_EDIT_AFTER_DRAFT')) {
+    return 'The draft is already written; change the idea itself instead of the brainstorm answers.'
+  }
+  if (rawMessage.includes('BRAINSTORM_EDIT_MISMATCH') || rawMessage.includes('BRAINSTORM_EDIT_NOT_FOUND')) {
+    return 'This conversation changed in the meantime. Reload it and edit again.'
+  }
   return rawMessage
 }
+
+// A process diagram drawn in the reply (approved or awaiting approval).
+const BRAINSTORM_DIAGRAM_RE = /```(?:mermaid|plantuml)|@startuml|tectona-process-diagram/i
 
 type BrainstormTextBlock =
   | { type: 'paragraph'; text: string }
@@ -2182,6 +2196,9 @@ export function IdeaBacklogManagementPage() {
   const [aiAssistanceWarning, setAiAssistanceWarning] = useState('')
   const [createIdeaTitleError, setCreateIdeaTitleError] = useState('')
   const [ideaDraftJob, setIdeaDraftJob] = useState<IdeaDraftJobStatusResponse | null>(null)
+  // Editing an earlier answer: its index in the thread, the text being written, and whether the
+  // "later messages will be replaced" warning is showing.
+  const [brainstormEdit, setBrainstormEdit] = useState<{ index: number; text: string; confirming: boolean } | null>(null)
   const [isEvidenceDialogOpen, setIsEvidenceDialogOpen] = useState(false)
   const [isBrainstormMode, setIsBrainstormMode] = useState(false)
   const [brainstormMessages, setBrainstormMessages] = useState<BrainstormUiMessage[]>([])
@@ -4188,7 +4205,10 @@ export function IdeaBacklogManagementPage() {
     }
   }
 
-  const handleSendBrainstormMessage = async (messageOverride?: string) => {
+  const handleSendBrainstormMessage = async (
+    messageOverride?: string,
+    edit?: { index: number; userTurn: number; originalText: string },
+  ) => {
     // 'completed' is accepted too: chatting on a finished draft is what feeds
     // the next re-analysis.
     if (!ideaDraftJob) {
@@ -4214,7 +4234,9 @@ export function IdeaBacklogManagementPage() {
     // one more question in the same turn, and blocking the send left that question
     // unanswerable.
     if ((!message && !attached) || isBrainstormSending) return
-    const historyBeforeSend = brainstormMessages
+    const fullHistory = brainstormMessages
+    // Editing answer N: the conversation continues from just before it.
+    const historyBeforeSend = edit ? brainstormMessages.slice(0, edit.index) : brainstormMessages
     const indonesian = isBrainstormThreadIndonesian(historyBeforeSend)
     const shown = attached ? diagramUploadCaption(message, indonesian) : message
     if (shown.length > 4000) {
@@ -4232,7 +4254,7 @@ export function IdeaBacklogManagementPage() {
     setBrainstormOfferGenerateAnyway(false)
     const requestSentAt = new Date().toISOString()
     setBrainstormMessages((current) => [
-      ...current,
+      ...(edit ? historyBeforeSend : current),
       { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined },
     ])
     try {
@@ -4245,10 +4267,17 @@ export function IdeaBacklogManagementPage() {
       )
       let response
       try {
-        response = await sendWithJob(ideaDraftJob.job_id)
+        response = edit
+          ? await editIdeaDraftBrainstormMessage(
+            ideaDraftJob.job_id,
+            { userTurn: edit.userTurn, originalMessage: edit.originalText, message: shown },
+            brainstormLlmMode,
+            brainstormAbbreviationEntry?.rows ?? [],
+          )
+          : await sendWithJob(ideaDraftJob.job_id)
       } catch (firstError) {
         const rawFirst = firstError instanceof Error ? firstError.message : String(firstError)
-        if (!isIdeaDraftJobLostError(rawFirst)) throw firstError
+        if (edit || !isIdeaDraftJobLostError(rawFirst)) throw firstError
         const restored = await restoreIdeaDraftBrainstormSession({
           title: createIdeaForm.title.trim() || 'Untitled idea',
           tags: effectiveCreateIdeaTags,
@@ -4369,7 +4398,8 @@ export function IdeaBacklogManagementPage() {
       setBrainstormAnimatingAssistantIndex(lastAssistantIndex >= 0 ? lastAssistantIndex : null)
       // Sticky: further answers can only add context, so never drop back to
       // not-ready and pull the Generate draft button out from under the user.
-      setBrainstormReady((current) => current || response.ready_to_continue)
+      // An edit replaced later answers, so readiness is what the replayed session says.
+      setBrainstormReady((current) => (edit ? response.ready_to_continue : current || response.ready_to_continue))
       setBrainstormRemainingGaps(response.remaining_gaps)
       setBrainstormLatestKind(response.latest_kind ?? null)
       setBrainstormOfferGenerateAnyway(Boolean(response.offer_generate_anyway) && !response.ready_to_continue)
@@ -4388,7 +4418,7 @@ export function IdeaBacklogManagementPage() {
         ? {
             ...current,
             brainstorm_messages: visibleResponseMessages,
-            brainstorm_ready: current.brainstorm_ready || response.ready_to_continue,
+            brainstorm_ready: edit ? response.ready_to_continue : current.brainstorm_ready || response.ready_to_continue,
             brainstorm_remaining_gaps: response.remaining_gaps,
             intake_checklist: response.intake_checklist ?? current.intake_checklist,
             evidence_progress: response.evidence_progress ?? current.evidence_progress,
@@ -4410,9 +4440,14 @@ export function IdeaBacklogManagementPage() {
       }
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
       setBrainstormError(friendlyBrainstormError(rawMessage))
-      setBrainstormMessages((current) => current.filter(
-        (_item, index) => index !== current.length - 1,
-      ))
+      if (edit) {
+        // The session is unchanged on the server when an edit fails: show it as it was.
+        setBrainstormMessages(fullHistory)
+      } else {
+        setBrainstormMessages((current) => current.filter(
+          (_item, index) => index !== current.length - 1,
+        ))
+      }
     } finally {
       setIsBrainstormSending(false)
     }
@@ -7053,21 +7088,90 @@ export function IdeaBacklogManagementPage() {
                                   </div>
                                 </div>
                               ) : (
-                                <div className="flex max-w-[85%] flex-col items-end gap-1">
-                                  <div className="whitespace-pre-wrap rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
-                                    {message.imagePreview ? (
-                                      <img
-                                        src={message.imagePreview}
-                                        alt=""
-                                        className="mb-2 max-h-40 rounded-2xl border border-black/10"
-                                      />
-                                    ) : null}
-                                    {message.text}
-                                  </div>
-                                  <div className="flex items-center gap-1.5 pr-1">
-                                    {sentLabel ? <p className="text-[11px] text-muted-foreground">Sent {sentLabel}</p> : null}
-                                    {message.text ? <BrainstormCopyButton text={message.text} /> : null}
-                                  </div>
+                                <div className={cn('flex flex-col items-end gap-1', brainstormEdit?.index === index ? 'w-full max-w-[85%]' : 'max-w-[85%]')}>
+                                  {brainstormEdit?.index === index ? (() => {
+                                    const indonesian = isBrainstormThreadIndonesian(brainstormMessages)
+                                    const later = brainstormMessages.slice(index + 1)
+                                    const laterHasDiagram = later.some((item) => item.role === 'assistant' && BRAINSTORM_DIAGRAM_RE.test(item.text))
+                                    const submitEdit = () => {
+                                      const text = brainstormEdit.text.trim()
+                                      if (!text || text === message.text.trim()) {
+                                        setBrainstormEdit(null)
+                                        return
+                                      }
+                                      const userTurn = brainstormMessages.slice(0, index).filter((item) => item.role === 'user').length
+                                      setBrainstormEdit(null)
+                                      void handleSendBrainstormMessage(text, { index, userTurn, originalText: message.text })
+                                    }
+                                    return (
+                                      <div className="w-full rounded-3xl bg-muted px-4 py-3">
+                                        <textarea
+                                          value={brainstormEdit.text}
+                                          onChange={(event) => setBrainstormEdit({ ...brainstormEdit, text: event.target.value, confirming: false })}
+                                          rows={Math.min(8, Math.max(2, brainstormEdit.text.split('\n').length))}
+                                          maxLength={4000}
+                                          autoFocus
+                                          className="w-full resize-none bg-transparent text-[15px] leading-7 text-foreground focus:outline-none"
+                                        />
+                                        {brainstormEdit.confirming ? (
+                                          <p className="mt-1 text-xs text-amber-800">
+                                            {indonesian
+                                              ? `Mengedit jawaban ini akan menghapus ${later.length} pesan sesudahnya${laterHasDiagram ? ', termasuk diagram proses yang sudah dibuat' : ''}, lalu brainstorm dilanjutkan dari jawaban baru. Lanjut?`
+                                              : `Editing this answer removes the ${later.length} message(s) after it${laterHasDiagram ? ', including the process diagram drawn there' : ''}, and the brainstorm continues from the new answer. Continue?`}
+                                          </p>
+                                        ) : null}
+                                        <div className="mt-2 flex justify-end gap-2">
+                                          <Button type="button" size="sm" variant="outline" className="h-8 rounded-full" onClick={() => setBrainstormEdit(null)}>
+                                            {indonesian ? 'Batal' : 'Cancel'}
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            className="h-8 rounded-full"
+                                            disabled={!brainstormEdit.text.trim() || isBrainstormSending}
+                                            onClick={() => {
+                                              if (later.length > 0 && !brainstormEdit.confirming) {
+                                                setBrainstormEdit({ ...brainstormEdit, confirming: true })
+                                                return
+                                              }
+                                              submitEdit()
+                                            }}
+                                          >
+                                            {brainstormEdit.confirming ? (indonesian ? 'Ya, kirim ulang' : 'Yes, resend') : (indonesian ? 'Kirim' : 'Send')}
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    )
+                                  })() : (
+                                    <div className="whitespace-pre-wrap rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
+                                      {message.imagePreview ? (
+                                        <img
+                                          src={message.imagePreview}
+                                          alt=""
+                                          className="mb-2 max-h-40 rounded-2xl border border-black/10"
+                                        />
+                                      ) : null}
+                                      {message.text}
+                                    </div>
+                                  )}
+                                  {brainstormEdit?.index !== index ? (
+                                    <div className="flex items-center gap-1.5 pr-1">
+                                      {sentLabel ? <p className="text-[11px] text-muted-foreground">Sent {sentLabel}</p> : null}
+                                      {message.text ? <BrainstormCopyButton text={message.text} /> : null}
+                                      {/* Editable while the brainstorm is open; an uploaded diagram is not an editable answer. */}
+                                      {message.text && !message.imagePreview && ideaDraftJob?.status === 'awaiting_input' && !isBrainstormSending ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setBrainstormEdit({ index, text: message.text, confirming: false })}
+                                          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          aria-label="Edit answer"
+                                          title="Edit"
+                                        >
+                                          <Pencil className="h-3.5 w-3.5" aria-hidden />
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </div>
                               )}
                             {message.role === 'assistant'

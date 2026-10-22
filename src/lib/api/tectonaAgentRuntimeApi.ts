@@ -2689,6 +2689,31 @@ export async function brainstormIdeaDraftJob(
   return handleResponse<IdeaDraftBrainstormResponse>(res)
 }
 
+/** Edit the user's earlier answer number `userTurn` (0-based): the brainstorm goes back to it and
+ *  continues from the new text; every message after it is replaced. */
+export async function editIdeaDraftBrainstormMessage(
+  jobId: string,
+  edit: { userTurn: number; originalMessage: string; message: string },
+  llmMode: 'normal' | 'thinking' = 'normal',
+  workspaceAbbreviations: Array<{ abbr: string; expansion: string; domain?: string; not_confused_with?: string }> = [],
+): Promise<IdeaDraftBrainstormResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm/edit`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        user_turn: edit.userTurn,
+        original_message: edit.originalMessage,
+        message: edit.message,
+        llm_mode: llmMode,
+        workspace_abbreviations: workspaceAbbreviations,
+      }),
+    },
+    MULTI_ROLE_SUMMARY_TIMEOUT_MS,
+  )
+  return handleResponse<IdeaDraftBrainstormResponse>(res)
+}
+
 /**
  * Re-run the analysis on an already generated draft after the user has chatted
  * further. Returns the job in `running`; poll it the same way the first
