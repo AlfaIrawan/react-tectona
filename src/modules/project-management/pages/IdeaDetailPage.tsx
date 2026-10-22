@@ -7077,8 +7077,9 @@ export function IdeaDetailPage() {
     void listAllDocuments({ idea_id: idea.id, page: 1, page_size: 100 })
       .then((response) => {
         if (cancelled) return
+        // An archived document (a duplicate URD put away) is not one of the idea's documents.
         const linked = response.items.filter(
-          (item) => item.tags.includes(idea.id) || item.metadata?.idea_id === idea.id,
+          (item) => (item.tags.includes(idea.id) || item.metadata?.idea_id === idea.id) && item.status_code !== 'archived',
         )
         // URD/BRD/FSD carry the idea's title. A document still on another title (generated
         // before this rule, or a sync that failed) is put on it once, versioned, then reloaded.
