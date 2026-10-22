@@ -113,9 +113,10 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
     }
   }, [refreshNotificationUnreadCount])
 
-  const environment =
-    (import.meta.env.VITE_APP_ENV as string | undefined)?.trim().toLowerCase() ||
-    (import.meta.env.PROD ? 'production' : 'development')
+  const configuredEnvironment = (import.meta.env.VITE_APP_ENV as string | undefined)?.trim().toLowerCase()
+  const environment = window.location.hostname.toLowerCase() === 'tectona-dev.adira.co.id'
+    ? 'development'
+    : configuredEnvironment || (import.meta.env.PROD ? 'production' : 'development')
   const userName = normalizeUserDisplayName(session?.user.name || session?.user.email || 'User')
   const { label: topbarTenantLabel, loading: topbarTenantLabelLoading } = useTopbarTenantLabel()
 
