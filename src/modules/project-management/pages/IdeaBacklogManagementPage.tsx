@@ -2479,6 +2479,12 @@ export function IdeaBacklogManagementPage() {
   }, [createIdeaTags])
 
   const isCreateIdeaTagLimitReached = createIdeaTags.length >= MAX_CREATE_IDEA_TAGS
+  // The AI draft is still being written, or its brainstorm waits for answers: creating the idea
+  // now would save the description as it is (e.g. the pasted questions), not the draft.
+  const isIdeaDraftInProgress = createIdeaDraftMode === 'ai' && (
+    ideaDraftJob?.status === 'queued' || ideaDraftJob?.status === 'running' || ideaDraftJob?.status === 'awaiting_input'
+  )
+
   const isCreateIdeaFormValid = useMemo(() => {
     const hasTitle = createIdeaForm.title.trim().length > 0
     const hasDescription = createIdeaForm.description.trim().length > 0
@@ -6102,6 +6108,7 @@ export function IdeaBacklogManagementPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
+                  if (isIdeaDraftInProgress) return
                   void submitCreateIdea()
                 }}
                 className="flex min-h-0 flex-1 flex-col"
@@ -6796,10 +6803,17 @@ export function IdeaBacklogManagementPage() {
                 </div>
 
                 <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+                  {isIdeaDraftInProgress ? (
+                    <p className="mb-2 text-center text-[11px] text-muted-foreground">
+                      {ideaDraftJob?.status === 'awaiting_input'
+                        ? 'Answer the brainstorm questions to finish the AI draft, or cancel the generation.'
+                        : 'Wait until the AI draft is written, or cancel the generation.'}
+                    </p>
+                  ) : null}
                   <div className="flex w-full items-stretch">
                     <button
                       type="submit"
-                      disabled={!isCreateIdeaFormValid}
+                      disabled={!isCreateIdeaFormValid || isIdeaDraftInProgress}
                       className={cn(
                         enterprisePrimarySolidButtonClass(),
                         'w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
