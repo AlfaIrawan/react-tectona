@@ -58,6 +58,7 @@ import {
   Folder as FolderIcon,
   RefreshCw,
   Wrench,
+  Copy,
 } from 'lucide-react'
 import {
   Bar,
@@ -1218,6 +1219,38 @@ function prefetchBrainstormDiagrams(text: string): void {
       prefetchProcessDiagramPlantUmlPng(part.source, 'id', isTechnicalViewSource(part.source) ? 'plantuml' : 'bpmn')
     }
   }
+}
+
+/** Copies one brainstorm message, as the chat panel's message actions do. */
+function BrainstormCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      document.execCommand('copy')
+      area.remove()
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+      aria-label={copied ? 'Copied' : 'Copy message'}
+      title={copied ? 'Copied' : 'Copy'}
+    >
+      {copied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
+    </button>
+  )
 }
 
 function BrainstormAssistantMessageBody({ text }: { text: string }) {
@@ -7006,11 +7039,16 @@ export function IdeaBacklogManagementPage() {
                                         {message.evidence}
                                       </p>
                                     ) : null}
-                                    {receivedLabel ? (
-                                      <p className="mt-1 text-[11px] text-muted-foreground">
-                                        Received {receivedLabel}
-                                        {latencyLabel ? ` · ${latencyLabel}` : ''}
-                                      </p>
+                                    {index !== brainstormAnimatingAssistantIndex ? (
+                                      <div className="mt-1 flex items-center gap-1.5">
+                                        {receivedLabel ? (
+                                          <p className="text-[11px] text-muted-foreground">
+                                            Received {receivedLabel}
+                                            {latencyLabel ? ` · ${latencyLabel}` : ''}
+                                          </p>
+                                        ) : null}
+                                        <BrainstormCopyButton text={message.text} />
+                                      </div>
                                     ) : null}
                                   </div>
                                 </div>
@@ -7026,9 +7064,10 @@ export function IdeaBacklogManagementPage() {
                                     ) : null}
                                     {message.text}
                                   </div>
-                                  {sentLabel ? (
-                                    <p className="pr-1 text-[11px] text-muted-foreground">Sent {sentLabel}</p>
-                                  ) : null}
+                                  <div className="flex items-center gap-1.5 pr-1">
+                                    {sentLabel ? <p className="text-[11px] text-muted-foreground">Sent {sentLabel}</p> : null}
+                                    {message.text ? <BrainstormCopyButton text={message.text} /> : null}
+                                  </div>
                                 </div>
                               )}
                             {message.role === 'assistant'
