@@ -1381,7 +1381,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
         </div>
       ) : null}
       {message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
-        <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+        <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
       ) : null}
     </>
   )

@@ -3,9 +3,10 @@ import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 
-export function BrainstormConfirmationOptions({ choices, explanations = [], indonesian, disabled, onSubmit }: {
+export function BrainstormConfirmationOptions({ choices, explanations = [], actions = ['confirm', 'adjust'], indonesian, disabled, onSubmit }: {
   choices: string[]
   explanations?: string[]
+  actions?: Array<'confirm' | 'adjust'>
   indonesian: boolean
   disabled?: boolean
   onSubmit: (text: string) => Promise<void> | void
@@ -15,7 +16,7 @@ export function BrainstormConfirmationOptions({ choices, explanations = [], indo
   const [selected, setSelected] = useState<number | null>(null)
   const [correction, setCorrection] = useState('')
   const [sending, setSending] = useState(false)
-  const adjusting = selected === 1
+  const adjusting = selected !== null && actions[selected] === 'adjust'
   const blocked = disabled || sending
   const fallback = indonesian ? [
     'Gunakan fungsi dan alur dalam rangkuman sebagai dasar kebutuhan. Detail yang ditandai belum pasti tetap perlu dikonfirmasi.',

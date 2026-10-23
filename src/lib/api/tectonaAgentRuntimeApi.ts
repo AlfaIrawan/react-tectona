@@ -612,6 +612,7 @@ export interface IdeaDraftBrainstormMessage {
   question_kind?: 'mandatory' | 'challenge' | 'extended' | 'confirm' | null
   confirmation_choices?: string[]
   confirmation_explanations?: string[]
+  confirmation_actions?: Array<'confirm' | 'adjust'>
   ai_advice?: string | null
 }
 

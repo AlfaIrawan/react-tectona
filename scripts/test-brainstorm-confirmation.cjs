@@ -26,7 +26,7 @@ async function main() {
   const Component = loaded.exports.BrainstormConfirmationOptions
   const root = createRoot(document.getElementById('root'))
   const sent = []
-  const props = { choices: ['Ya, sudah sesuai', 'Perlu penyesuaian'], explanations: ['Alur Credit sesuai; integrasi belum dikonfirmasi.', 'Sumber kebijakan Credit dapat dikoreksi.'], indonesian: true, onSubmit: async text => { sent.push(text) } }
+  const props = { choices: ['Gunakan tujuan Credit ini', 'Ubah target Credit'], actions: ['confirm', 'adjust'], explanations: ['Alur Credit sesuai; integrasi belum dikonfirmasi.', 'Sumber kebijakan Credit dapat dikoreksi.'], indonesian: true, onSubmit: async text => { sent.push(text) } }
   await act(async () => root.render(React.createElement(Component, props)))
   const radios = document.querySelectorAll('input[type="radio"]')
   const submit = () => document.querySelector('button[type="submit"]')
@@ -44,12 +44,12 @@ async function main() {
   })
   assert.equal(submit().disabled, false)
   await act(async () => submit().click())
-  assert.deepEqual(sent, ['Perlu penyesuaian: Eskalasi melalui tiket'])
+  assert.deepEqual(sent, ['Ubah target Credit: Eskalasi melalui tiket'])
   await act(async () => radios[0].click())
   assert.equal(radios[1].checked, false)
   assert.equal(document.querySelector('textarea'), null)
   await act(async () => submit().click())
-  assert.equal(sent[1], 'Ya, sudah sesuai')
+  assert.equal(sent[1], 'Gunakan tujuan Credit ini')
   await act(async () => root.render(React.createElement(Component, { ...props, disabled: true })))
   assert.equal(submit().disabled, true)
   await act(async () => root.unmount())
