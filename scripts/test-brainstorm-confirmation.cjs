@@ -71,6 +71,26 @@ async function main() {
   await act(async () => root.render(React.createElement(Component, { ...suggestionProps, key: 'revised' })))
   assert.equal(submit().disabled, true)
   assert.equal(document.querySelector('input:checked'), null)
+  const evidenceProps = {
+    ...props, choices: ['Validasi acuan nanti', 'Bahas kontrol rekaman', 'Bagikan sumber'],
+    actions: ['defer', 'discuss', 'provide'],
+    explanations: ['Tetap terbuka.', 'Usulan bukan kewajiban.', 'Sumber perlu ditinjau.'],
+  }
+  await act(async () => root.render(React.createElement(Component, { ...evidenceProps, key: 'evidence' })))
+  await act(async () => document.querySelectorAll('input[type="radio"]')[2].click())
+  assert.match(document.body.textContent, /Referensi pendukung/)
+  assert.equal(submit().disabled, true)
+  const sourceInput = document.querySelector('textarea')
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value').set.call(sourceInput, 'Memo privasi internal')
+    sourceInput.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+  })
+  await act(async () => submit().click())
+  assert.equal(sent.at(-1), 'Bagikan sumber: Memo privasi internal')
+  await act(async () => document.querySelectorAll('input[type="radio"]')[1].click())
+  assert.equal(document.querySelector('textarea'), null)
+  await act(async () => submit().click())
+  assert.equal(sent.at(-1), 'Bahas kontrol rekaman')
   await act(async () => root.unmount())
   dom.window.close()
   console.log('Confirmation UI checks passed: selection, explanations, correction, send, disabled state')

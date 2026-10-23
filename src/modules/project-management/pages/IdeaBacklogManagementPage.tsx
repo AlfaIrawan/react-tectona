@@ -60,6 +60,7 @@ import {
   Wrench,
   Copy,
   Pencil,
+  Send,
 } from 'lucide-react'
 import {
   Bar,
@@ -105,6 +106,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
+import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import {
   enterpriseDestructiveOutlineButtonClass,
   enterprisePrimarySoftButtonClass,
@@ -1380,7 +1382,9 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
           <BrainstormAssistantMessageBody text={question} />
         </div>
       ) : null}
-      {message.suggestion_options?.length && onConfirm ? (
+      {message.suggestion_multiple && message.suggestion_options?.length && onConfirm ? (
+        <BrainstormPainPointOptions key={message.text} options={message.suggestion_options} baseline={message.suggestion_baseline} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+      ) : message.suggestion_options?.length && onConfirm ? (
         <BrainstormConfirmationOptions key={JSON.stringify(message.suggestion_options)} choices={message.suggestion_options.map(option => option.label)} explanations={message.suggestion_options.map(option => option.explanation)} actions={message.suggestion_options.map(option => option.action)} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
       ) : message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
         <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
@@ -4815,7 +4819,7 @@ export function IdeaBacklogManagementPage() {
         (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
       )?.name ?? null,
       sessionId: ideaDraftJob.correlation_id || null,
-      messages: brainstormMessages.map(({ role, text }) => ({ role, text })),
+      messages: brainstormMessages.map(({ role, text, edited_at, edit_history }) => ({ role, text, edited_at, edit_history })),
       remainingGaps: brainstormRemainingGaps,
       readyToContinue: brainstormReady,
     })
@@ -7222,13 +7226,13 @@ export function IdeaBacklogManagementPage() {
                                           </p>
                                         ) : null}
                                         <div className="mt-2 flex justify-end gap-2">
-                                          <Button type="button" size="sm" variant="outline" className="h-8 rounded-full" onClick={() => setBrainstormEdit(null)}>
+                                          <Button type="button" variant="outline" className="h-10 gap-2 rounded-md px-4 text-sm" onClick={() => setBrainstormEdit(null)}>
+                                            <X className="h-4 w-4" aria-hidden />
                                             {indonesian ? 'Batal' : 'Cancel'}
                                           </Button>
                                           <Button
                                             type="button"
-                                            size="sm"
-                                            className="h-8 rounded-full"
+                                            className="h-10 gap-2 rounded-md px-4 text-sm"
                                             disabled={!brainstormEdit.text.trim() || isBrainstormSending}
                                             onClick={() => {
                                               if (later.length > 0 && !brainstormEdit.confirming) {
@@ -7238,6 +7242,7 @@ export function IdeaBacklogManagementPage() {
                                               submitEdit()
                                             }}
                                           >
+                                            <Send className="h-4 w-4" aria-hidden />
                                             {brainstormEdit.confirming ? (indonesian ? 'Ya, kirim ulang' : 'Yes, resend') : (indonesian ? 'Kirim' : 'Send')}
                                           </Button>
                                         </div>
@@ -7258,6 +7263,7 @@ export function IdeaBacklogManagementPage() {
                                   {brainstormEdit?.index !== index ? (
                                     <div className="flex items-center gap-1.5 pr-1">
                                       {sentLabel ? <p className="text-[11px] text-muted-foreground">Sent {sentLabel}</p> : null}
+                                      {message.edited_at ? <span className="text-[11px] text-muted-foreground" title={`Edited ${new Date(message.edited_at).toLocaleString()} · ${message.edit_history?.length ?? 1} revision(s)`}>Edited</span> : null}
                                       {message.text ? <BrainstormCopyButton text={message.text} /> : null}
                                       {/* Editable while the brainstorm is open; an uploaded diagram is not an editable answer. */}
                                       {message.text && !message.imagePreview && ideaDraftJob?.status === 'awaiting_input' && !isBrainstormSending ? (

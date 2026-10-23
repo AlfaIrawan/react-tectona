@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea'
 export function BrainstormConfirmationOptions({ choices, explanations = [], actions = ['confirm', 'adjust'], indonesian, disabled, onSubmit }: {
   choices: string[]
   explanations?: string[]
-  actions?: Array<'confirm' | 'choose' | 'adjust' | 'defer'>
+  actions?: Array<'confirm' | 'choose' | 'adjust' | 'defer' | 'discuss' | 'provide'>
   indonesian: boolean
   disabled?: boolean
   onSubmit: (text: string) => Promise<void> | void
@@ -16,7 +16,8 @@ export function BrainstormConfirmationOptions({ choices, explanations = [], acti
   const [selected, setSelected] = useState<number | null>(null)
   const [correction, setCorrection] = useState('')
   const [sending, setSending] = useState(false)
-  const adjusting = selected !== null && actions[selected] === 'adjust'
+  const providing = selected !== null && actions[selected] === 'provide'
+  const adjusting = selected !== null && (actions[selected] === 'adjust' || providing)
   const blocked = disabled || sending
   const fallback = indonesian ? [
     'Gunakan fungsi dan alur dalam rangkuman sebagai dasar kebutuhan. Detail yang ditandai belum pasti tetap perlu dikonfirmasi.',
@@ -43,7 +44,7 @@ export function BrainstormConfirmationOptions({ choices, explanations = [], acti
         </span>
       </label>)}
       {adjusting ? <div className="space-y-1 px-2">
-        <label htmlFor={`${id}-correction`} className="text-sm font-medium">{indonesian ? 'Bagian yang perlu disesuaikan' : 'What needs adjustment'}</label>
+        <label htmlFor={`${id}-correction`} className="text-sm font-medium">{providing ? (indonesian ? 'Referensi pendukung' : 'Supporting reference') : (indonesian ? 'Bagian yang perlu disesuaikan' : 'What needs adjustment')}</label>
         <Textarea id={`${id}-correction`} value={correction} onChange={(event) => setCorrection(event.target.value)} required maxLength={4000 - (selected === null ? 0 : choices[selected].length + 2)} rows={3} />
       </div> : null}
     </fieldset>
