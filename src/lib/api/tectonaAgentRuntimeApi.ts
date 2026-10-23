@@ -611,6 +611,8 @@ export interface IdeaDraftBrainstormMessage {
   /** What the reply asks: a mandatory question, a challenge (sub-question) or an extended question after the intake. */
   question_kind?: 'mandatory' | 'challenge' | 'extended' | 'confirm' | null
   confirmation_choices?: string[]
+  confirmation_explanations?: string[]
+  ai_advice?: string | null
 }
 
 export interface IdeaDraftBrainstormResponse {

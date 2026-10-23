@@ -104,6 +104,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
+import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import {
   enterpriseDestructiveOutlineButtonClass,
   enterprisePrimarySoftButtonClass,
@@ -1328,7 +1329,7 @@ const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended', { label: string
  *  extended question badged and coloured. The text itself is the server's, unchanged. */
 function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }: {
   message: IdeaDraftBrainstormMessage; indonesian: boolean
-  onConfirm?: (choice: string) => void; disabled?: boolean
+  onConfirm?: (choice: string) => Promise<void> | void; disabled?: boolean
 }) {
   const text = message.text
   const summary = (message.summary ?? '').trim()
@@ -1365,24 +1366,22 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
             </p>
             <BrainstormAssistantMessageBody text={summary} />
           </div>
-          {rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
         </>
       ) : rest ? (
         <BrainstormAssistantMessageBody text={rest} />
       ) : null}
+      {message.ai_advice ? <div className="my-3 border-l-2 border-teal-500 pl-3 text-sm leading-6">
+        <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Saran AI' : 'AI suggestion'}</p>
+        <BrainstormAssistantMessageBody text={message.ai_advice} />
+      </div> : null}
+      {at >= 0 && rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
       {question ? (
         <div className={kind?.text}>
           <BrainstormAssistantMessageBody text={question} />
         </div>
       ) : null}
       {message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {message.confirmation_choices.map((choice) => (
-            <Button key={choice} type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onConfirm(choice)}>
-              {choice}
-            </Button>
-          ))}
-        </div>
+        <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
       ) : null}
     </>
   )
@@ -7164,7 +7163,7 @@ export function IdeaBacklogManagementPage() {
                                         <BrainstormAssistantContent
                                           message={message}
                                           indonesian={isBrainstormThreadIndonesian(brainstormMessages)}
-                                          onConfirm={index === brainstormMessages.length - 1 ? (choice) => { void handleSendBrainstormMessage(choice) } : undefined}
+                                          onConfirm={index === brainstormMessages.length - 1 ? (choice) => handleSendBrainstormMessage(choice) : undefined}
                                           disabled={brainstormComposerDisabled}
                                         />
                                       )}
