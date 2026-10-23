@@ -1308,6 +1308,73 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
   )
 }
 
+// The kind of question a reply asks, set by agent-runtime: a sub-question while a mandatory one is
+// open is a challenge; a question after the mandatory intake (Bisnis/Teknis discovery) is extended.
+const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended', { label: string; badge: string; text: string }> = {
+  challenge: {
+    label: 'Challenge Question',
+    badge: 'border-amber-200 bg-amber-50 text-amber-800',
+    text: '[&_*]:!text-amber-800',
+  },
+  extended: {
+    label: 'Extended Question',
+    badge: 'border-violet-200 bg-violet-50 text-violet-800',
+    text: '[&_*]:!text-violet-800',
+  },
+}
+
+/** An assistant reply: the summary of what was understood in a titled box, and a challenge or
+ *  extended question badged and coloured. The text itself is the server's, unchanged. */
+function BrainstormAssistantContent({ message, indonesian }: { message: IdeaDraftBrainstormMessage; indonesian: boolean }) {
+  const text = message.text
+  const summary = (message.summary ?? '').trim()
+  const at = summary ? text.indexOf(summary) : -1
+  const before = at >= 0 ? text.slice(0, at).trim() : text
+  const after = at >= 0 ? text.slice(at + summary.length).trim() : ''
+  const kind = message.question_kind === 'challenge' || message.question_kind === 'extended'
+    ? BRAINSTORM_QUESTION_KIND[message.question_kind]
+    : null
+  // The closing question is the last paragraph when it asks something (and is not a diagram).
+  let rest = at >= 0 ? after : before
+  let question = ''
+  if (kind) {
+    const paragraphs = rest.split(/\n{2,}/)
+    const last = paragraphs[paragraphs.length - 1] ?? ''
+    if (last.includes('?') && !last.includes('```')) {
+      question = last
+      rest = paragraphs.slice(0, -1).join('\n\n')
+    }
+  }
+  return (
+    <>
+      {kind ? (
+        <span className={cn('mb-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold', kind.badge)}>
+          {kind.label}
+        </span>
+      ) : null}
+      {at >= 0 ? (
+        <>
+          {before ? <BrainstormAssistantMessageBody text={before} /> : null}
+          <div className="my-2 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/30">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-300">
+              {indonesian ? 'Rangkuman Pemahaman' : 'Summary of Understanding'}
+            </p>
+            <BrainstormAssistantMessageBody text={summary} />
+          </div>
+          {rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
+        </>
+      ) : rest ? (
+        <BrainstormAssistantMessageBody text={rest} />
+      ) : null}
+      {question ? (
+        <div className={kind?.text}>
+          <BrainstormAssistantMessageBody text={question} />
+        </div>
+      ) : null}
+    </>
+  )
+}
+
 function BrainstormAssistantTypingMessage({
   text,
   animate,
@@ -7066,7 +7133,7 @@ export function IdeaBacklogManagementPage() {
                                           onProgress={scrollBrainstormToBottom}
                                         />
                                       ) : (
-                                        <BrainstormAssistantMessageBody text={message.text} />
+                                        <BrainstormAssistantContent message={message} indonesian={isBrainstormThreadIndonesian(brainstormMessages)} />
                                       )}
                                     </div>
                                     {message.evidence && index !== brainstormAnimatingAssistantIndex ? (
