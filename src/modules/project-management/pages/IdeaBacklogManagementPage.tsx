@@ -103,6 +103,7 @@ import {
 import { Tooltip } from '@/components/ui/tooltip'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
+import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import {
   enterpriseDestructiveOutlineButtonClass,
   enterprisePrimarySoftButtonClass,
@@ -2614,6 +2615,15 @@ export function IdeaBacklogManagementPage() {
     ideaDraftJob?.status === 'queued' || ideaDraftJob?.status === 'running' || ideaDraftJob?.status === 'awaiting_input'
   )
 
+  const createIdeaDraftValidationError = createIdeaDraftError({
+    mode: createIdeaDraftMode,
+    description: createIdeaForm.description,
+    prompts: createIdeaIntakeItems.map((item) => item.prompt),
+    jobStatus: ideaDraftJob?.status,
+    draftText: ideaDraftJob?.result?.draft_text,
+    busy: aiAssistanceLoading !== null || isIdeaDraftInProgress,
+  })
+
   const isCreateIdeaFormValid = useMemo(() => {
     const hasTitle = createIdeaForm.title.trim().length > 0
     const hasDescription = createIdeaForm.description.trim().length > 0
@@ -2625,12 +2635,14 @@ export function IdeaBacklogManagementPage() {
     return (
       hasTitle &&
       hasDescription &&
+      !createIdeaDraftValidationError &&
       hasWorkspace &&
       hasValidTags &&
       workspaceReady &&
       noBlockingLookupError
     )
   }, [
+    createIdeaDraftValidationError,
     createIdeaForm.description,
     createIdeaForm.title,
     createIdeaForm.workspaceId,
@@ -4046,6 +4058,10 @@ export function IdeaBacklogManagementPage() {
   }
 
   const submitCreateIdea = async () => {
+    if (createIdeaDraftValidationError) {
+      setCreateIdeaError(createIdeaDraftValidationError)
+      return
+    }
     const titleError = validateIdeaTitle(createIdeaForm.title)
     if (titleError) {
       setCreateIdeaTitleError(titleError)
