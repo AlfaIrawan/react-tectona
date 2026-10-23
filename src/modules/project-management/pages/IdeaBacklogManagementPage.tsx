@@ -1325,7 +1325,10 @@ const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended', { label: string
 
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
  *  extended question badged and coloured. The text itself is the server's, unchanged. */
-function BrainstormAssistantContent({ message, indonesian }: { message: IdeaDraftBrainstormMessage; indonesian: boolean }) {
+function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }: {
+  message: IdeaDraftBrainstormMessage; indonesian: boolean
+  onConfirm?: (choice: string) => void; disabled?: boolean
+}) {
   const text = message.text
   const summary = (message.summary ?? '').trim()
   const at = summary ? text.indexOf(summary) : -1
@@ -1369,6 +1372,15 @@ function BrainstormAssistantContent({ message, indonesian }: { message: IdeaDraf
       {question ? (
         <div className={kind?.text}>
           <BrainstormAssistantMessageBody text={question} />
+        </div>
+      ) : null}
+      {message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {message.confirmation_choices.map((choice) => (
+            <Button key={choice} type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onConfirm(choice)}>
+              {choice}
+            </Button>
+          ))}
         </div>
       ) : null}
     </>
@@ -7133,7 +7145,12 @@ export function IdeaBacklogManagementPage() {
                                           onProgress={scrollBrainstormToBottom}
                                         />
                                       ) : (
-                                        <BrainstormAssistantContent message={message} indonesian={isBrainstormThreadIndonesian(brainstormMessages)} />
+                                        <BrainstormAssistantContent
+                                          message={message}
+                                          indonesian={isBrainstormThreadIndonesian(brainstormMessages)}
+                                          onConfirm={index === brainstormMessages.length - 1 ? (choice) => { void handleSendBrainstormMessage(choice) } : undefined}
+                                          disabled={brainstormComposerDisabled}
+                                        />
                                       )}
                                     </div>
                                     {message.evidence && index !== brainstormAnimatingAssistantIndex ? (
@@ -7245,6 +7262,7 @@ export function IdeaBacklogManagementPage() {
                               && index === brainstormLatestAssistantIndex
                               && brainstormAnimatingAssistantIndex !== index
                               && brainstormLatestKind === 'followup'
+                              && message.question_kind !== 'confirm'
                               && hasPendingMandatoryQuestion
                               && !isBrainstormSending
                               && !brainstormReady ? (

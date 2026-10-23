@@ -609,7 +609,8 @@ export interface IdeaDraftBrainstormMessage {
   /** The part of the text that summarises what was understood, shown in a "Rangkuman Pemahaman" box. */
   summary?: string | null
   /** What the reply asks: a mandatory question, a challenge (sub-question) or an extended question after the intake. */
-  question_kind?: 'mandatory' | 'challenge' | 'extended' | null
+  question_kind?: 'mandatory' | 'challenge' | 'extended' | 'confirm' | null
+  confirmation_choices?: string[]
 }
 
 export interface IdeaDraftBrainstormResponse {
