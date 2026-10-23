@@ -52,6 +52,25 @@ async function main() {
   assert.equal(sent[1], 'Gunakan tujuan Credit ini')
   await act(async () => root.render(React.createElement(Component, { ...props, disabled: true })))
   assert.equal(submit().disabled, true)
+  const suggestionProps = {
+    ...props, choices: ['Gunakan peran MoM', 'Sesuaikan reviewer', 'Tentukan akses nanti'],
+    actions: ['choose', 'adjust', 'defer'],
+    explanations: ['Gunakan tanggung jawab rapat.', 'Ubah siapa yang mengesahkan MoM.', 'Simpan sebagai keputusan terbuka.'],
+  }
+  await act(async () => root.render(React.createElement(Component, { ...suggestionProps, key: 'suggestion' })))
+  assert.equal(document.querySelectorAll('input[type="radio"]').length, 3)
+  assert.equal(submit().disabled, true)
+  assert.match(document.body.textContent, /keputusan terbuka/)
+  await act(async () => document.querySelectorAll('input[type="radio"]')[2].click())
+  assert.equal(document.querySelector('textarea'), null)
+  await act(async () => submit().click())
+  assert.equal(sent.at(-1), 'Tentukan akses nanti')
+  await act(async () => document.querySelectorAll('input[type="radio"]')[1].click())
+  assert.ok(document.querySelector('textarea'))
+  assert.equal(submit().disabled, true)
+  await act(async () => root.render(React.createElement(Component, { ...suggestionProps, key: 'revised' })))
+  assert.equal(submit().disabled, true)
+  assert.equal(document.querySelector('input:checked'), null)
   await act(async () => root.unmount())
   dom.window.close()
   console.log('Confirmation UI checks passed: selection, explanations, correction, send, disabled state')

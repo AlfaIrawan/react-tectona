@@ -1380,7 +1380,9 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
           <BrainstormAssistantMessageBody text={question} />
         </div>
       ) : null}
-      {message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
+      {message.suggestion_options?.length && onConfirm ? (
+        <BrainstormConfirmationOptions key={JSON.stringify(message.suggestion_options)} choices={message.suggestion_options.map(option => option.label)} explanations={message.suggestion_options.map(option => option.explanation)} actions={message.suggestion_options.map(option => option.action)} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+      ) : message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
         <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
       ) : null}
     </>
@@ -7278,6 +7280,7 @@ export function IdeaBacklogManagementPage() {
                               && brainstormAnimatingAssistantIndex !== index
                               && brainstormLatestKind === 'followup'
                               && message.question_kind !== 'confirm'
+                              && !message.suggestion_options?.length
                               && hasPendingMandatoryQuestion
                               && !isBrainstormSending
                               && !brainstormReady ? (
