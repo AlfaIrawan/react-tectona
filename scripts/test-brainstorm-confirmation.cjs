@@ -91,9 +91,20 @@ async function main() {
   assert.equal(document.querySelector('textarea'), null)
   await act(async () => submit().click())
   assert.equal(sent.at(-1), 'Bahas kontrol rekaman')
+  const longChoice = 'Gunakan metrik waktu penyelesaian MoM per meeting dan tinjau kualitas ringkasannya secara terpisah'
+  await act(async () => root.render(React.createElement(Component, { ...suggestionProps, key: 'wrapped-label', choices: [longChoice, 'Sesuaikan metrik'], actions: ['choose', 'adjust'] })))
+  const labelText = document.querySelector('label span span')
+  assert.equal(labelText.textContent, longChoice)
+  assert.ok(labelText.classList.contains('whitespace-normal'))
+  assert.ok(labelText.classList.contains('break-words'))
+  assert.ok(labelText.classList.contains('[overflow-wrap:anywhere]'))
+  assert.ok(!labelText.classList.contains('truncate'))
+  await act(async () => document.querySelector('input[type="radio"]').click())
+  await act(async () => submit().click())
+  assert.equal(sent.at(-1), longChoice, 'wrapping must not change the submitted decision label')
   await act(async () => root.unmount())
   dom.window.close()
-  console.log('Confirmation UI checks passed: selection, explanations, correction, send, disabled state')
+  console.log('Confirmation UI checks passed: selection, explanations, correction, send, disabled state and complete wrapping labels')
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1 })

@@ -34,13 +34,13 @@ export function BrainstormConfirmationOptions({ choices, explanations = [], acti
     try { await onSubmit(adjusting ? `${choices[selected]}: ${correction.trim()}` : choices[selected]) }
     finally { lock.current = false; setSending(false) }
   }}>
-    <fieldset disabled={blocked} className="space-y-2">
+    <fieldset disabled={blocked} className="min-w-0 space-y-2">
       <legend className="sr-only">{indonesian ? 'Pilih tindakan' : 'Choose an action'}</legend>
       {choices.map((choice, index) => <label key={choice} htmlFor={`${id}-${index}`} className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/50 focus-within:ring-2 focus-within:ring-primary">
         <input id={`${id}-${index}`} type="radio" name={id} checked={selected === index} onChange={() => setSelected(index)} className="mt-1 h-5 w-5 shrink-0 accent-blue-600" />
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold leading-6">{choice}</span>
-          <span className="block whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">{explanations[index] || fallback[index]}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block whitespace-normal break-words text-sm font-semibold leading-6 [overflow-wrap:anywhere]">{choice}</span>
+          <span className="block whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">{explanations[index] || fallback[index]}</span>
         </span>
       </label>)}
       {adjusting ? <div className="space-y-1 px-2">
