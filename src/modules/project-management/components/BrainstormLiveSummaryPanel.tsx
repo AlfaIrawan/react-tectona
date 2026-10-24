@@ -187,7 +187,7 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
           {busy ? 'Updating summary...' : 'Update failed. Showing the last processed summary.'}
         </p>
       </div> : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 [overflow-wrap:anywhere]" data-summary-scroll>
+      <div role="region" aria-label="Idea summary" tabIndex={0} className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-4 pb-5 [overflow-wrap:anywhere]" data-summary-scroll>
         {snapshot.sections.map(section => <SummarySection key={section.id} section={section} reduced={reduced} active={textReady && (expanded || mobileOpen)} />)}
       </div>
     </>
@@ -197,7 +197,7 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
       <div aria-hidden="true" data-summary-space className={cn('hidden shrink-0 transition-[width] duration-[240ms] motion-reduce:transition-none min-[1440px]:block', !entered ? 'w-0' : expanded ? 'w-[416px]' : 'w-16')} />
       {mobileOpen ? <button type="button" aria-label="Close summary backdrop" className="absolute inset-0 z-40 bg-black/25 min-[1440px]:hidden" onClick={() => setMobileOpen(false)} /> : null}
       <aside ref={panelRef} role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen || undefined} aria-label="Live AI Summary" data-summary-floating data-brainstorm-summary-dialog={mobileOpen || undefined} data-summary-entered={entered}
-        className={cn('absolute min-h-0 flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl transition-[width,transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:right-4 min-[1440px]:top-4 min-[1440px]:bottom-auto min-[1440px]:z-20 min-[1440px]:flex', !entered ? 'translate-x-4 opacity-0' : 'translate-x-0 opacity-100', expanded ? 'min-[1440px]:w-96 min-[1440px]:max-h-[min(760px,calc(100%_-_2rem))]' : 'min-[1440px]:h-12 min-[1440px]:w-12', mobileOpen ? 'bottom-3 right-3 top-3 z-50 flex w-[min(400px,calc(100%_-_1.5rem))]' : 'hidden')}>
+        className={cn('absolute min-h-0 flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-sm transition-[width,transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:right-4 min-[1440px]:top-4 min-[1440px]:bottom-auto min-[1440px]:z-20 min-[1440px]:flex', !entered ? 'translate-x-4 opacity-0' : 'translate-x-0 opacity-100', expanded ? 'min-[1440px]:w-96 min-[1440px]:max-h-[min(760px,calc(100%_-_2rem))]' : 'min-[1440px]:h-12 min-[1440px]:w-12', mobileOpen ? 'bottom-3 right-3 top-3 z-50 flex w-[min(400px,calc(100%_-_1.5rem))]' : 'hidden')}>
         <div className={cn('min-h-0 flex-1 flex-col transition-[transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:w-96', entered ? 'translate-x-0 opacity-100' : 'translate-x-4 opacity-0', expanded || mobileOpen ? 'flex' : 'hidden')}>{content}</div>
         {!expanded && !mobileOpen ? <button type="button" title={unread ? 'Open Live AI Summary - updated' : 'Open Live AI Summary'} aria-label="Open Live AI Summary" onClick={openDesktop} className="relative m-auto inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-muted"><PanelRightOpen className="h-4 w-4" />{unread ? <span role="status" aria-label="Summary updated" className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-600" /> : null}</button> : null}
       </aside>

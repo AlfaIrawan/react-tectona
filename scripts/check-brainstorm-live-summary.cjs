@@ -16,8 +16,8 @@ async function main() {
     import { BrainstormLiveSummaryPanel } from './src/modules/project-management/components/BrainstormLiveSummaryPanel';
     const initial = {job_id:'test',brainstorm_messages:[{role:'assistant',text:'Response',summary:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',ai_advice:'Validate policy access with the Credit team.'}],intake_checklist:[{id:'goal',prompt:'Project goal',evidence_status:'confirmed',evidence_text:'Answer Credit policy questions.'},{id:'kpi',prompt:'Success metrics',evidence_status:'inferred',evidence_text:'Accuracy target: 90% (not confirmed).'}],brainstorm_remaining_gaps:['Confirm the current process and policy owners.']};
     initial.revision='r1';initial.live_summary={status:'ready',source_revision:'r1',source_fingerprint:'test',text:'Structured proposal',sections:[{key:'objective',title:'Tujuan',body:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',evidence_ids:['goal']},{key:'problem',title:'Permasalahan',body:'Credit staff currently search policy documents manually.',evidence_ids:['problem']},{key:'as_is_evidence',title:'Evidence AS-IS',body:'- Policy lookup is manual.\\n- Staff consult internal policy documents.',evidence_ids:['asis']}]};
-    function Fixture(){const [job,setJob]=useState({...initial,live_summary:null,brainstorm_messages:[{role:'assistant',text:'Hello. Describe your project.'}]});const [busy,setBusy]=useState(false);window.startSummary=()=>setJob(initial);window.updateSummary=(text)=>setJob({...initial,live_summary:{...initial.live_summary,sections:initial.live_summary.sections.map((section,index)=>index===0?{...section,body:text}:section)}});window.summaryBusy=setBusy;
-      return <div className="flex h-screen flex-col bg-background text-foreground"><header className="flex h-14 shrink-0 items-center border-b px-4 text-sm font-semibold">Tectona Assistant</header><div className="relative flex min-h-0 flex-1 overflow-hidden"><aside className="hidden w-[416px] shrink-0 border-r p-5 min-[1024px]:block">Draft Readiness</aside><main data-chat className="flex min-w-0 flex-1 flex-col"><div className="min-h-0 flex-1 overflow-auto px-5 py-6"><p className="max-w-xl pr-12">Describe the current Credit policy process.</p></div><div className="border-t p-4"><textarea aria-label="Brainstorm message" className="h-20 w-full resize-none rounded-lg border p-3" placeholder="Ask Tectona Assistant" /></div></main><BrainstormLiveSummaryPanel job={job} busy={busy} /></div></div>;
+    function Fixture(){const [job,setJob]=useState({...initial,live_summary:null,brainstorm_messages:[{role:'assistant',text:'Hello. Describe your project.'}]});const [busy,setBusy]=useState(false);const [longChat,setLongChat]=useState(false);window.fillChat=setLongChat;window.startSummary=()=>setJob(initial);window.updateSummary=(text)=>setJob({...initial,live_summary:{...initial.live_summary,sections:initial.live_summary.sections.map((section,index)=>index===0?{...section,body:text}:section)}});window.summaryBusy=setBusy;
+      return <div className="flex h-screen flex-col bg-background text-foreground"><header className="flex h-14 shrink-0 items-center border-b px-4 text-sm font-semibold">Tectona Assistant</header><div data-chat-surface className="relative flex min-h-0 flex-1 overflow-hidden bg-background"><aside className="hidden w-[416px] shrink-0 border-r p-5 min-[1024px]:block">Draft Readiness</aside><main data-chat className="flex min-w-0 flex-1 flex-col bg-background"><div role="region" aria-label="Brainstorm conversation" tabIndex={0} className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-5 py-6"><p className="max-w-xl pr-12">Describe the current Credit policy process.</p>{longChat?Array.from({length:80},(_,i)=><p key={i} className="py-4">Confirmed context from the Credit policy discussion.</p>):null}</div><div data-composer className="p-4"><textarea aria-label="Brainstorm message" className="h-20 w-full resize-none rounded-lg border p-3" placeholder="Ask Tectona Assistant" /></div></main><BrainstormLiveSummaryPanel job={job} busy={busy} /></div></div>;
     }createRoot(document.getElementById('root')).render(<Fixture/>);`
   const bundle = await esbuild.build({
     stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' },
@@ -29,7 +29,7 @@ async function main() {
     } }],
   })
   const config = (await import(pathToFileURL(path.resolve('tailwind.config.js')))).default
-  const css = await postcss([tailwind({ ...config, content: [...config.content, { raw: fixture, extension: 'tsx' }] })]).process('@tailwind base;@tailwind components;@tailwind utilities;', { from: undefined })
+  const css = await postcss([tailwind({ ...config, content: [...config.content, { raw: fixture, extension: 'tsx' }] })]).process(await fs.readFile('src/index.css', 'utf8'), { from: path.resolve('src/index.css') })
   const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><style>:root{--background:0 0% 100%;--foreground:222 25% 15%;--border:215 30% 88%;--muted:215 30% 96%;--muted-foreground:215 16% 45%;--destructive:0 70% 45%}body{font-family:Arial,sans-serif}*{letter-spacing:0}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>`
   const server = http.createServer((req, res) => {
     const isJs = req.url === '/fixture.js', isCss = req.url === '/style.css'
@@ -88,10 +88,40 @@ async function main() {
     }
     await verify()
     await page.screenshot({ path: path.join(output, 'desktop.png') })
+    const conversation = page.getByRole('region', { name: 'Brainstorm conversation', exact: true })
+    const assertHiddenScrollbar = async region => {
+      assert.equal(await region.evaluate(element => getComputedStyle(element).scrollbarWidth), 'none')
+      assert.equal(await region.evaluate(element => getComputedStyle(element, '::-webkit-scrollbar').display), 'none')
+      await region.hover()
+      assert.equal(await region.evaluate(element => getComputedStyle(element).scrollbarWidth), 'none', 'hover must not reveal scrollbar')
+    }
+    await page.evaluate(() => window.fillChat(true))
+    await assertHiddenScrollbar(conversation)
+    await page.mouse.wheel(0, 400)
+    await page.waitForTimeout(200)
+    assert.ok(await conversation.evaluate(element => element.scrollTop > 0), 'conversation still scrolls with the wheel')
+    await conversation.evaluate(element => { element.scrollTop = 0; element.focus() })
+    await page.keyboard.press('PageDown')
+    await page.waitForTimeout(200)
+    assert.ok(await conversation.evaluate(element => element.scrollTop > 0), 'conversation still scrolls with keyboard')
+    await page.evaluate(() => window.fillChat(false))
+    const surfaceColour = await page.locator('[data-chat-surface]').evaluate(element => getComputedStyle(element).backgroundColor)
+    assert.equal(await page.locator('[data-chat]').evaluate(element => getComputedStyle(element).backgroundColor), surfaceColour)
+    assert.equal(await panel.evaluate(element => getComputedStyle(element).backgroundColor), surfaceColour, 'summary floats on the same chat surface')
+    assert.equal(await page.locator('[data-composer]').evaluate(element => getComputedStyle(element).borderTopWidth), '0px')
     await page.evaluate(() => window.updateSummary(Array(100).fill('A grounded paragraph about the Credit policy process.').join('\n\n')))
     await page.waitForTimeout(1000)
     assert.ok((await panel.boundingBox()).height <= 761)
     assert.equal(await panel.locator('[data-summary-scroll]').evaluate(element => element.scrollHeight > element.clientHeight), true, 'long proposals scroll within the floating panel')
+    const summaryScroll = panel.getByRole('region', { name: 'Idea summary', exact: true })
+    await assertHiddenScrollbar(summaryScroll)
+    await page.mouse.wheel(0, 400)
+    await page.waitForTimeout(200)
+    assert.ok(await summaryScroll.evaluate(element => element.scrollTop > 0), 'summary still scrolls with the wheel')
+    await summaryScroll.evaluate(element => { element.scrollTop = 0; element.focus() })
+    await page.keyboard.press('PageDown')
+    await page.waitForTimeout(200)
+    assert.ok(await summaryScroll.evaluate(element => element.scrollTop > 0), 'summary still scrolls with keyboard')
     await page.evaluate(() => window.startSummary())
     await page.waitForTimeout(1000)
     await page.getByRole('button', { name: 'Collapse summary', exact: true }).click()

@@ -7184,7 +7184,7 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       </header>
 
-                      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-muted/15">
+                      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
                         <div className="hidden min-h-0 md:flex">
                           <BrainstormEvidenceRail
                             confidencePercent={brainstormConfidencePercent}
@@ -7216,7 +7216,10 @@ export function IdeaBacklogManagementPage() {
                           </div>
                           <div
                             ref={brainstormScrollRef}
-                            className="min-h-0 flex-1 overflow-y-auto"
+                            role="region"
+                            aria-label="Brainstorm conversation"
+                            tabIndex={0}
+                            className="scrollbar-hide min-h-0 flex-1 overflow-y-auto"
                           >
                             <div
                               className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-8 lg:px-10"
@@ -7637,7 +7640,7 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           </div>
 
-                      <div className="shrink-0 border-t border-border/60 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
+                      <div className="shrink-0 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
                         <div className="mx-auto w-full max-w-4xl space-y-2">
                           {brainstormError && <p className="px-3 text-xs text-destructive">{brainstormError}</p>}
                           {brainstormReady ? (
