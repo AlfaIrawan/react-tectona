@@ -45,12 +45,10 @@ import {
   ArrowUp,
   Mic,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Circle,
   CircleCheck,
   SkipForward,
-  Target,
   FolderKanban,
   Palette,
   Upload,
@@ -108,6 +106,7 @@ import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import { BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
+import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame'
 import { closeBrainstorm } from '../lib/closeBrainstorm'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
@@ -907,6 +906,7 @@ function BrainstormEvidenceRail({
   collapsed,
   onToggleCollapsed,
   indonesian = false,
+  inline = false,
 }: {
   confidencePercent: number
   progress: IdeaDraftEvidenceProgress | null
@@ -918,6 +918,7 @@ function BrainstormEvidenceRail({
   collapsed: boolean
   onToggleCollapsed: () => void
   indonesian?: boolean
+  inline?: boolean
 }) {
   const resolvedConfidence = resolveBrainstormConfidencePercent(
     confidencePercent,
@@ -960,64 +961,12 @@ function BrainstormEvidenceRail({
   const discoveryPercent = discoveryTotal > 0 ? Math.round((discoveryCovered / discoveryTotal) * 100) : 0
 
   return (
-    <aside
-      className={cn(
-        'flex shrink-0 flex-col',
-        collapsed
-          ? 'w-12 border-r border-border/70 bg-background'
-          : 'w-full border-b border-border/70 bg-muted/20 p-3 md:w-[26rem] md:border-b-0 md:border-r md:p-4',
-      )}
-    >
-      {collapsed ? (
-        <div className="flex flex-col items-center gap-2 py-3">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            onClick={onToggleCollapsed}
-            aria-label="Expand readiness panel"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Target className="h-4 w-4 text-muted-foreground" aria-hidden />
-          <span className="text-[10px] font-medium tabular-nums text-muted-foreground [writing-mode:vertical-rl]">
-            {resolvedConfidence}%
-          </span>
-        </div>
-      ) : (
-        <div
-          className={cn(
-            'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden border border-border/40',
-            'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
-            'rounded-2xl',
-          )}
-        >
-          <div className="flex h-full min-h-0 w-full flex-col">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-5">
-              <div className="flex shrink-0 items-start justify-between gap-3">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Target className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                    <h2 className="text-lg font-semibold text-foreground">Draft Readiness</h2>
-                  </div>
-                  <p className="text-[11px] leading-snug text-muted-foreground">
-                    AI confidence and AS-IS evidence progress before draft generation.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={onToggleCollapsed}
-                  aria-label="Collapse readiness panel"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-              </div>
+    <BrainstormReadinessFrame collapsed={collapsed} onToggleCollapsed={onToggleCollapsed} confidence={resolvedConfidence} inline={inline}>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                AI confidence and AS-IS evidence progress before draft generation.
+              </p>
 
-              <div className="flex shrink-0 flex-col items-center gap-2 rounded-xl border border-border/40 bg-muted/10 px-4 py-3 text-center">
+              <div className="flex shrink-0 flex-col items-center gap-2 border-b border-border/60 px-1 pb-4 text-center">
                 <BrainstormConfidenceRing percent={resolvedConfidence} />
                 <div className="min-w-0 space-y-1">
                   <p className="text-sm font-semibold text-foreground">{readinessLabel}</p>
@@ -1029,7 +978,7 @@ function BrainstormEvidenceRail({
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-background/70 p-3">
+              <div className="flex flex-col gap-2 border-b border-border/60 pb-4">
                 <div className="flex shrink-0 items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Evidence progress
@@ -1088,7 +1037,7 @@ function BrainstormEvidenceRail({
                     </div>
                   </>
                 ) : null}
-                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                <div className="space-y-1.5">
                   {items.length > 0 ? (
                     items.map((item) => {
                       const status = item.status ?? 'pending'
@@ -1135,7 +1084,7 @@ function BrainstormEvidenceRail({
                 </div>
               </div>
 
-              <div className="shrink-0 space-y-2 rounded-xl border border-border/40 bg-muted/10 p-3">
+              <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Initiative direction
                 </p>
@@ -1175,11 +1124,7 @@ function BrainstormEvidenceRail({
                   Shares add up to 100% from title, tags, and your answers — not a final scoring decision.
                 </p>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </aside>
+    </BrainstormReadinessFrame>
   )
 }
 
@@ -7202,6 +7147,7 @@ export function IdeaBacklogManagementPage() {
                         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
                           <div className="max-h-[42vh] shrink-0 overflow-hidden border-b border-border/60 md:hidden">
                             <BrainstormEvidenceRail
+                              inline
                               confidencePercent={brainstormConfidencePercent}
                               progress={brainstormEvidenceProgress}
                               discoveryProgress={brainstormDiscoveryProgress}
