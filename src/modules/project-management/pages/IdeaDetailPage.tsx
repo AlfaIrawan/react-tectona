@@ -6977,7 +6977,7 @@ export function IdeaDetailPage() {
     [confidence.costBenefit, costBenefitEvidenceItems],
   )
 
-  const brainstormPointer = useIdeaDraftBrainstormPointerStore((state) => state.pointer)
+  const brainstormPointer = useIdeaDraftBrainstormPointerStore((state) => state.pointers.find((item) => item.ideaId === idea.id))
   const brainstormProcessDiagrams = useMemo(
     () => latestRevisedProcessDiagrams(idea.description || ''),
     [idea.description],

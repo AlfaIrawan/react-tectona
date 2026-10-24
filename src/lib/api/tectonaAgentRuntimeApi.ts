@@ -629,6 +629,7 @@ export interface IdeaDraftBrainstormMessage {
 }
 
 export interface IdeaDraftBrainstormResponse {
+  revision?: string
   messages: IdeaDraftBrainstormMessage[]
   ready_to_continue: boolean
   remaining_gaps: string[]
@@ -698,6 +699,7 @@ export interface CreateIdeaDraftJobResponse {
 }
 
 export interface IdeaDraftJobStatusResponse {
+  revision?: string
   job_id: string
   status: IdeaDraftJobStatus
   progress_percent: number
@@ -2460,6 +2462,28 @@ export async function getIdeaDraftJob(
   return handleResponse<IdeaDraftJobStatusResponse>(res)
 }
 
+export interface IdeaDraftSessionEntry {
+  job_id: string
+  workspace_id: string
+  title: string
+  status: string
+  correlation_id: string
+  idea_id: string | null
+  updated_date: string
+  tags?: string[]
+  workspace_name?: string | null
+}
+
+export async function listIdeaDraftSessions(offset = 0): Promise<{ items: IdeaDraftSessionEntry[]; has_more: boolean }> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/idea-draft-sessions?offset=${offset}`, { method: 'GET' }, 15_000)
+  return handleResponse(res)
+}
+
+export async function deleteIdeaDraftSession(jobId: string): Promise<void> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/idea-draft-sessions/${encodeURIComponent(jobId)}`, { method: 'DELETE' }, 15_000)
+  await handleResponse(res)
+}
+
 export async function cancelIdeaDraftJob(
   jobId: string,
 ): Promise<IdeaDraftJobStatusResponse> {
@@ -2692,6 +2716,7 @@ export async function brainstormIdeaDraftJob(
     domain?: string
     not_confused_with?: string
   }> = [],
+  expectedRevision?: string,
 ): Promise<IdeaDraftBrainstormResponse> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm`,
@@ -2699,6 +2724,7 @@ export async function brainstormIdeaDraftJob(
       method: 'POST',
       body: JSON.stringify({
         message,
+        expected_revision: expectedRevision,
         llm_mode: llmMode,
         workspace_abbreviations: workspaceAbbreviations,
         ...(diagramImage ? { diagram_image: diagramImage } : {}),
@@ -2716,6 +2742,7 @@ export async function editIdeaDraftBrainstormMessage(
   edit: { userTurn: number; originalMessage: string; message: string },
   llmMode: 'normal' | 'thinking' = 'normal',
   workspaceAbbreviations: Array<{ abbr: string; expansion: string; domain?: string; not_confused_with?: string }> = [],
+  expectedRevision?: string,
 ): Promise<IdeaDraftBrainstormResponse> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm/edit`,
@@ -2723,6 +2750,7 @@ export async function editIdeaDraftBrainstormMessage(
       method: 'POST',
       body: JSON.stringify({
         user_turn: edit.userTurn,
+        expected_revision: expectedRevision,
         original_message: edit.originalMessage,
         message: edit.message,
         llm_mode: llmMode,

@@ -6,6 +6,7 @@ import { getSession } from '@/auth/authService'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import { randomUuid } from '@/lib/randomId'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
+import { listIdeaDraftSessions, deleteIdeaDraftSession, linkIdeaDraftJobToIdea } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
   DndContext,
   DragOverlay,
@@ -2500,34 +2501,75 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     }
   }, [aiFolderLabelByKey])
 
-  // Mirror the active "Generate Draft" brainstorm (if any) into the AI
-  // sessions list as a local-only row, so it stays resumable even after the
-  // Create Idea modal is closed. Clicking it (see openConversation) reopens
-  // the modal instead of a normal thread. Backend genai-session reconciliation
-  // above already preserves local-only genai rows, so this survives polling.
-  const brainstormPointer = useIdeaDraftBrainstormPointerStore((s) => s.pointer)
+  // Idea drafts have their own server index and recovery snapshots, separate
+  // from ordinary Gen AI chats. Closing Create Idea does not remove a session.
+  const brainstormPointers = useIdeaDraftBrainstormPointerStore((s) => s.pointers)
+  const brainstormOwnerId = getSession()?.user.id ?? ''
+  const [brainstormSessionError, setBrainstormSessionError] = useState('')
+  useEffect(() => {
+    if (!brainstormOwnerId) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const pending = useIdeaDraftBrainstormPointerStore.getState().pointers.filter((item) => item.ownerId === brainstormOwnerId && item.pendingIdeaLink && item.ideaId)
+        for (const pointer of pending) {
+          await linkIdeaDraftJobToIdea(pointer.jobId, pointer.ideaId!)
+          if (cancelled) return
+          useIdeaDraftBrainstormPointerStore.getState().markCreated(pointer.jobId, pointer.ideaId!)
+        }
+        let offset = 0
+        do {
+          const page = await listIdeaDraftSessions(offset)
+          if (cancelled) return
+          useIdeaDraftBrainstormPointerStore.getState().mergePointers(page.items.map((entry) => ({
+            jobId: entry.job_id, ownerId: brainstormOwnerId, title: entry.title,
+            workspaceId: entry.workspace_id, status: entry.status, ideaId: entry.idea_id,
+            tags: entry.tags ?? [], workspaceName: entry.workspace_name,
+            sessionId: entry.correlation_id, updatedAt: new Date(entry.updated_date).getTime(),
+          })))
+          if (!page.has_more) break
+          offset += page.items.length
+        } while (!cancelled)
+        setBrainstormSessionError('')
+      } catch {
+        if (!cancelled) setBrainstormSessionError('Could not sync idea drafts. Saved local drafts are still available.')
+      }
+    }
+    void refresh()
+    const onFocus = () => { void refresh() }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'idea-draft-brainstorm-pointer-storage') void useIdeaDraftBrainstormPointerStore.persist.rehydrate()
+    }
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [brainstormOwnerId])
   useEffect(() => {
     setConversations((prev) => {
       const withoutPointer = prev.filter((c) => !c.isBrainstormPointer)
-      if (!brainstormPointer) return withoutPointer
-      const synthetic: Conversation = {
+      const previousDrafts = new Map(prev.filter((c) => c.isBrainstormPointer).map((c) => [c.brainstormJobId, c]))
+      const synthetic: Conversation[] = brainstormPointers.filter((item) => item.ownerId === brainstormOwnerId).map((brainstormPointer) => ({
         id: `idea-draft-brainstorm-${brainstormPointer.jobId}`,
         mode: 'genai',
         title: brainstormPointer.title,
-        preview: 'Brainstorm in progress — tap to reopen',
+        preview: brainstormPointer.ideaId ? 'Created - view idea' : 'Draft - tap to resume',
         updatedAt: brainstormPointer.updatedAt,
         unreadCount: 0,
-        archived: false,
-        isFavorite: false,
-        isLocked: false,
-        isBlurred: false,
-        isBlocked: false,
+        archived: previousDrafts.get(brainstormPointer.jobId)?.archived ?? false,
+        isFavorite: previousDrafts.get(brainstormPointer.jobId)?.isFavorite ?? false,
+        isLocked: previousDrafts.get(brainstormPointer.jobId)?.isLocked ?? false,
+        isBlurred: previousDrafts.get(brainstormPointer.jobId)?.isBlurred ?? false,
+        isBlocked: previousDrafts.get(brainstormPointer.jobId)?.isBlocked ?? false,
         isBrainstormPointer: true,
         brainstormJobId: brainstormPointer.jobId,
-      }
-      return [synthetic, ...withoutPointer].sort((a, b) => b.updatedAt - a.updatedAt)
+      }))
+      return [...synthetic, ...withoutPointer].sort((a, b) => b.updatedAt - a.updatedAt)
     })
-  }, [brainstormPointer])
+  }, [brainstormPointers, brainstormOwnerId])
 
   useEffect(() => {
     const conv =
@@ -3304,13 +3346,22 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   }, [])
 
   const deleteConversation = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const removed = conversations.find((c) => c.id === id)
+      if (removed?.isBrainstormPointer && removed.brainstormJobId) {
+        try {
+          await deleteIdeaDraftSession(removed.brainstormJobId)
+          useIdeaDraftBrainstormPointerStore.getState().clearPointer(removed.brainstormJobId)
+        } catch {
+          setBrainstormSessionError('Could not delete the idea draft. It has been kept; please try again.')
+          return
+        }
+      }
       if (removed && (removed.mode === 'team' || removed.mode === 'group')) {
         addHiddenFromConversation(removed)
         setHiddenChatRevision((v) => v + 1)
       }
-      if (removed?.mode === 'genai') {
+      if (removed?.mode === 'genai' && !removed.isBrainstormPointer) {
         deleteGenAiSessionsRemote([id])
       }
       setConversations((prev) => prev.filter((c) => c.id !== id))
@@ -3776,7 +3827,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const bulkDelete = useCallback(
     (ids: string[]) => {
-      const idSet = new Set(ids)
+      const draftIds = conversations.filter((c) => ids.includes(c.id) && c.isBrainstormPointer).map((c) => c.id)
+      for (const id of draftIds) void deleteConversation(id)
+      const idSet = new Set(ids.filter((id) => !draftIds.includes(id)))
       const genaiIds = conversations.filter((c) => idSet.has(c.id) && c.mode === 'genai').map((c) => c.id)
       if (genaiIds.length > 0) {
         deleteGenAiSessionsRemote(genaiIds)
@@ -3784,7 +3837,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       setConversations((prev) => prev.filter((c) => !idSet.has(c.id)))
       setMessagesById((prev) => {
         const next = { ...prev }
-        for (const id of ids) delete next[id]
+        for (const id of idSet) delete next[id]
         return next
       })
       if (activeConversationId && ids.includes(activeConversationId)) {
@@ -3792,7 +3845,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       }
       clearSelection()
     },
-    [activeConversationId, clearSelection, conversations, deleteGenAiSessionsRemote]
+    [activeConversationId, clearSelection, conversations, deleteGenAiSessionsRemote, deleteConversation]
   )
 
   const bulkMenuCanCreateGroup = useMemo(() => {
@@ -3833,7 +3886,10 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     const current = conversations.find((x) => x.id === id)
     if (current?.isBrainstormPointer && current.brainstormJobId) {
       const jobId = current.brainstormJobId
+      const saved = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === jobId && item.ownerId === brainstormOwnerId)
+      if (!saved) return
       close()
+      if (saved.ideaId) { navigate(`/idea-backlog/${saved.ideaId}`); return }
       navigate('/idea-backlog', { state: { resumeBrainstormJobId: jobId } })
       return
     }
@@ -5943,6 +5999,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               </div>
 
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {brainstormSessionError && <p role="status" className="mb-2 text-xs text-destructive">{brainstormSessionError}</p>}
                 <div className="mb-2.5 shrink-0 flex items-end justify-between gap-2 border-b border-border/50 pb-2">
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">

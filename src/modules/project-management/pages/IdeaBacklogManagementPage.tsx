@@ -9,7 +9,7 @@ import {
   resolveWorkspaceApiId,
 } from '@/lib/tenantWorkspaceScope'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
-import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
+import { useIdeaDraftBrainstormPointerStore, useIdeaDraftSaveStatusStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import {
   GripVertical,
   Eye,
@@ -2261,6 +2261,9 @@ export function IdeaBacklogManagementPage() {
   const [ideaCardContextMenu, setIdeaCardContextMenu] = useState<(FixedContextMenuPosition & { idea: Idea }) | null>(null)
   const [isSavingIdeaColor, setIsSavingIdeaColor] = useState(false)
   const [isCreateIdeaDrawerOpen, setIsCreateIdeaDrawerOpen] = useState(false)
+  const [isResumingDraft, setIsResumingDraft] = useState(false)
+  const createIdeaSubmitInFlight = useRef(false)
+  const draftBackupStatus = useIdeaDraftSaveStatusStore((state) => state.status)
   const [isUploadIdeaPanelOpen, setIsUploadIdeaPanelOpen] = useState(false)
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
   const [moveIdeaTarget, setMoveIdeaTarget] = useState<Idea | null>(null)
@@ -2443,8 +2446,8 @@ export function IdeaBacklogManagementPage() {
     return sanitized
   }
 
-  const setCreateIdeaDescriptionFromPlainText = (nextText: string) => {
-    const brainstormText = brainstormMessages.map((message) => message.text).filter(Boolean).join('\n\n')
+  const setCreateIdeaDescriptionFromPlainText = (nextText: string, messages: Array<{ text: string }> = brainstormMessages) => {
+    const brainstormText = messages.map((message) => message.text).filter(Boolean).join('\n\n')
     const diagrams = [
       ...latestRevisedProcessDiagrams(nextText),
       ...latestValidatedTechnicalDiagrams([nextText, brainstormText].filter(Boolean).join('\n\n')),
@@ -3931,6 +3934,14 @@ export function IdeaBacklogManagementPage() {
   }
 
   const openCreateIdeaDrawer = () => {
+    if (draftBackupStatus === 'failed' && brainstormMessages.length) {
+      setAiAssistanceError('The draft backup could not be saved on this device. Keep this draft open and retry before switching ideas.')
+      return
+    }
+    if (isBrainstormSending || isDraftContinuing || aiAssistanceLoading || isReanalyzing || isResumingDraft) {
+      setAiAssistanceError('Please wait for the current draft request to finish before starting another idea.')
+      return
+    }
     setCreateIdeaDraftMode('ai')
     setCreateIdeaForm({
       title: '',
@@ -4094,6 +4105,8 @@ export function IdeaBacklogManagementPage() {
       return
     }
 
+    if (createIdeaSubmitInFlight.current) return
+    createIdeaSubmitInFlight.current = true
     try {
       const created = await apiCreateIdea({
         title: normalizeIdeaTitle(createIdeaForm.title),
@@ -4117,14 +4130,21 @@ export function IdeaBacklogManagementPage() {
       void runAgentAnalysisForIdea(newIdea)
       // The brainstorm this idea came from: its confirmed intake answers ground the idea's documents.
       if (ideaDraftJob?.job_id) {
-        void linkIdeaDraftJobToIdea(ideaDraftJob.job_id, newIdea.id).catch(() => undefined)
+        const jobId = ideaDraftJob.job_id
+        useIdeaDraftBrainstormPointerStore.getState().markCreated(jobId, newIdea.id, true)
+        void linkIdeaDraftJobToIdea(jobId, newIdea.id)
+          .then(() => useIdeaDraftBrainstormPointerStore.getState().markCreated(jobId, newIdea.id))
+          .catch(() => addToast({ title: 'Idea created; conversation link pending', description: 'The saved draft will retry linking when Chat syncs again.', variant: 'warning' }))
       }
     } catch (err) {
       setCreateIdeaError(err instanceof Error ? err.message : 'Failed to create idea.')
       return
+    } finally {
+      createIdeaSubmitInFlight.current = false
     }
 
     setIsCreateIdeaDrawerOpen(false)
+    setIdeaDraftJob(null)
     setCreateIdeaForm({
       title: '',
       description: '',
@@ -4141,12 +4161,12 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaTitleError('')
   }
 
-  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse) => {
+  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse, messages: Array<{ text: string }> = brainstormMessages) => {
     const draftText = terminal.result?.draft_text?.trim()
     if (!draftText) {
       throw new Error(terminal.error_message || 'AI draft generation failed.')
     }
-    setCreateIdeaDescriptionFromPlainText(draftText)
+    setCreateIdeaDescriptionFromPlainText(draftText, messages)
     const overlapMessages: string[] = []
     if (terminal.similar_ideas.length > 0) {
       overlapMessages.push(`${terminal.similar_ideas.length} similar idea(s) found`)
@@ -4178,18 +4198,21 @@ export function IdeaBacklogManagementPage() {
     syncBrainstormEvidenceState(status)
   }
 
-  const waitForIdeaDraftJob = async (jobId: string): Promise<IdeaDraftJobStatusResponse> => {
+  const waitForIdeaDraftJob = async (jobId: string, isCurrent = () => true, updateUi = true): Promise<IdeaDraftJobStatusResponse> => {
     for (let attempt = 0; attempt < 240; attempt += 1) {
       const status = await getIdeaDraftJob(jobId)
-      setIdeaDraftJob(status)
+      if (!isCurrent()) throw new Error('Draft navigation was superseded.')
+      if (updateUi) setIdeaDraftJob(status)
       if (status.status === 'awaiting_input') {
         const hasOpening = (status.brainstorm_messages ?? []).some((message) => message.role === 'assistant')
         if (!hasOpening && attempt < 239) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, 400))
           continue
         }
-        applyIdeaDraftBrainstormState(status)
-        setIsEvidenceDialogOpen(true)
+        if (updateUi) {
+          applyIdeaDraftBrainstormState(status)
+          setIsEvidenceDialogOpen(true)
+        }
         return status
       }
       if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
@@ -4336,7 +4359,7 @@ export function IdeaBacklogManagementPage() {
     // Generate draft, it does not end the conversation. The assistant often asks
     // one more question in the same turn, and blocking the send left that question
     // unanswerable.
-    if ((!message && !attached) || isBrainstormSending) return
+    if ((!message && !attached) || isBrainstormSending || isResumingDraft) return
     const fullHistory = brainstormMessages
     // Editing answer N: the conversation continues from just before it.
     const historyBeforeSend = edit ? brainstormMessages.slice(0, edit.index) : brainstormMessages
@@ -4361,12 +4384,13 @@ export function IdeaBacklogManagementPage() {
       { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined },
     ])
     try {
-      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(
+      const sendWithJob = async (jobId: string, revision = ideaDraftJob.revision) => brainstormIdeaDraftJob(
         jobId,
         shown,
         brainstormLlmMode,
         attached,
         brainstormAbbreviationEntry?.rows ?? [],
+        revision,
       )
       let response
       try {
@@ -4376,6 +4400,7 @@ export function IdeaBacklogManagementPage() {
             { userTurn: edit.userTurn, originalMessage: edit.originalText, message: shown },
             brainstormLlmMode,
             brainstormAbbreviationEntry?.rows ?? [],
+            ideaDraftJob.revision,
           )
           : await sendWithJob(ideaDraftJob.job_id)
       } catch (firstError) {
@@ -4397,6 +4422,8 @@ export function IdeaBacklogManagementPage() {
           remaining_gaps: brainstormRemainingGaps,
           ready_to_continue: brainstormReady,
         })
+        const previousSnapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)
+        if (previousSnapshot) useIdeaDraftBrainstormPointerStore.getState().replacePointer(ideaDraftJob.job_id, { ...previousSnapshot, jobId: restored.job_id })
         setIdeaDraftJob(restored)
         setBrainstormMessages((current) => mergeBrainstormUiMessages(
           current.length > 0 ? current : historyBeforeSend,
@@ -4409,7 +4436,7 @@ export function IdeaBacklogManagementPage() {
         )
         setBrainstormOfferGenerateAnyway(Boolean(restored.offer_generate_anyway))
         syncBrainstormEvidenceState(restored)
-        response = await sendWithJob(restored.job_id)
+        response = await sendWithJob(restored.job_id, restored.revision)
       }
       const responseReceivedAt = new Date().toISOString()
       let updatedAbbreviationEntry = brainstormAbbreviationEntry
@@ -4520,6 +4547,7 @@ export function IdeaBacklogManagementPage() {
       setIdeaDraftJob((current) => current
         ? {
             ...current,
+            revision: response.revision,
             brainstorm_messages: visibleResponseMessages,
             brainstorm_ready: edit ? response.ready_to_continue : current.brainstorm_ready || response.ready_to_continue,
             brainstorm_remaining_gaps: response.remaining_gaps,
@@ -4542,7 +4570,9 @@ export function IdeaBacklogManagementPage() {
         if (attached) setBrainstormDiagramImage(attached)
       }
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
-      setBrainstormError(friendlyBrainstormError(rawMessage))
+      setBrainstormError(/IDEA_DRAFT_SESSION_CHANGED|IDEA_DRAFT_SESSION_BUSY/.test(rawMessage)
+        ? 'This draft changed or is being updated in another tab. Reopen it from Chat before sending again. Your message has not been saved.'
+        : friendlyBrainstormError(rawMessage))
       if (edit) {
         // The session is unchanged on the server when an edit fails: show it as it was.
         setBrainstormMessages(fullHistory)
@@ -4711,7 +4741,7 @@ export function IdeaBacklogManagementPage() {
     syncBrainstormComposerHeight()
   }, [isBrainstormMode, brainstormInput])
 
-  const brainstormComposerDisabled = isBrainstormSending || isDraftContinuing
+  const brainstormComposerDisabled = isBrainstormSending || isDraftContinuing || isResumingDraft
   const brainstormComposerWasDisabledRef = useRef(false)
   useEffect(() => {
     const wasDisabled = brainstormComposerWasDisabledRef.current
@@ -4781,13 +4811,19 @@ export function IdeaBacklogManagementPage() {
   // renders, and re-writing the pointer every render would churn the chat
   // panel's session row on each keystroke.
   const brainstormPointerSignature = useMemo(() => {
-    if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input') return ''
+    if (!ideaDraftJob) return ''
     const last = brainstormMessages[brainstormMessages.length - 1]
     return [
       ideaDraftJob.job_id,
       createIdeaForm.title.trim(),
       createIdeaForm.workspaceId,
       effectiveCreateIdeaTags.join(','),
+      createIdeaForm.description,
+      createIdeaDescriptionHtml,
+      createIdeaProcessDiagrams.map((diagram) => diagram.source).join('\n'),
+      createIdeaForm.type,
+      createIdeaForm.reviewer,
+      brainstormInput,
       brainstormMessages.length,
       last ? `${last.role}:${last.text.slice(0, 80)}` : '',
       brainstormReady ? 'ready' : 'open',
@@ -4797,22 +4833,33 @@ export function IdeaBacklogManagementPage() {
     ideaDraftJob,
     createIdeaForm.title,
     createIdeaForm.workspaceId,
+    createIdeaForm.description,
+    createIdeaDescriptionHtml,
+    createIdeaProcessDiagrams,
+    createIdeaForm.type,
+    createIdeaForm.reviewer,
     effectiveCreateIdeaTags,
     brainstormMessages,
+    brainstormInput,
     brainstormReady,
     brainstormRemainingGaps,
   ])
 
   useEffect(() => {
-    if (!ideaDraftJob) return
+    if (!ideaDraftJob || isResumingDraft) return
     // Keep the recovery snapshot while generation is running or fails.
-    const currentPointer = useIdeaDraftBrainstormPointerStore.getState().pointer
+    const currentPointer = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)
+    if (currentPointer?.ownerId && currentPointer.ownerId !== currentUserId) return
     const typedTitle = createIdeaForm.title.trim()
     const title = typedTitle
       || (currentPointer?.jobId === ideaDraftJob.job_id ? currentPointer.title : '')
       || 'Untitled idea'
     useIdeaDraftBrainstormPointerStore.getState().retainPointer(ideaDraftJob.status, {
       jobId: ideaDraftJob.job_id,
+      ownerId: currentUserId,
+      status: ideaDraftJob.status,
+      composerDraft: brainstormInput,
+      form: { description: appendProcessDiagramsToText(createIdeaForm.description, createIdeaProcessDiagrams), html: createIdeaDescriptionHtml, type: createIdeaForm.type, reviewer: createIdeaForm.reviewer },
       title,
       updatedAt: Date.now(),
       // Recovery snapshot survives jobs being evicted from the runtime.
@@ -4822,12 +4869,12 @@ export function IdeaBacklogManagementPage() {
         (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
       )?.name ?? null,
       sessionId: ideaDraftJob.correlation_id || null,
-      messages: brainstormMessages.map(({ role, text, edited_at, edit_history }) => ({ role, text, edited_at, edit_history })),
+      messages: brainstormMessages.map(({ sentAt: _sentAt, imagePreview: _imagePreview, ...message }) => message),
       remainingGaps: brainstormRemainingGaps,
       readyToContinue: brainstormReady,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- brainstormPointerSignature stands in for the unstable values read here
-  }, [ideaDraftJob, brainstormPointerSignature])
+  }, [ideaDraftJob, brainstormPointerSignature, isResumingDraft])
 
   // Resume entry point: the chat panel navigates here with
   // navigate('/idea-backlog', { state: { resumeBrainstormJobId } }). Uses router
@@ -4839,11 +4886,26 @@ export function IdeaBacklogManagementPage() {
   useEffect(() => {
     const jobId = (location.state as { resumeBrainstormJobId?: string } | null)?.resumeBrainstormJobId
     if (!jobId) return
+    if (draftBackupStatus === 'failed' && brainstormMessages.length) {
+      setAiAssistanceError('The current draft backup could not be saved. Keep it open and retry before switching ideas.')
+      navigate('.', { replace: true, state: null })
+      return
+    }
+    if (isBrainstormSending || isDraftContinuing || aiAssistanceLoading || isReanalyzing) {
+      setAiAssistanceError('Please wait for the current draft request to finish before switching ideas.')
+      navigate('.', { replace: true, state: null })
+      return
+    }
 
     let cancelled = false
+    setIsResumingDraft(true)
     void (async () => {
-      const pointer = useIdeaDraftBrainstormPointerStore.getState().pointer
-      const snapshot = pointer?.jobId === jobId ? pointer : null
+      const snapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === jobId && item.ownerId === currentUserId)
+      if (!snapshot) {
+        setIsResumingDraft(false)
+        navigate('.', { replace: true, state: null })
+        return
+      }
       const restoreSnapshot = () => restoreIdeaDraftBrainstormSession({
         title: snapshot?.title || 'Untitled idea',
         tags: snapshot?.tags ?? [],
@@ -4872,15 +4934,38 @@ export function IdeaBacklogManagementPage() {
         }
         if (status.status === 'failed' && snapshot?.messages?.length) status = await restoreSnapshot()
         if (cancelled) return
+        if (status.status === 'queued' || status.status === 'running') {
+          status = await waitForIdeaDraftJob(status.job_id, () => !cancelled, false)
+          if (cancelled) return
+        }
+        if (status.job_id !== jobId) {
+          useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, { ...snapshot, jobId: status.job_id })
+        }
         setIsCreateIdeaDrawerOpen(true)
+        setCreateIdeaDraftMode('ai')
         const pointerTitle = snapshot?.title
         if (pointerTitle) {
-          setCreateIdeaForm((prev) => ({
-            ...prev,
+          setCreateIdeaForm({
             title: pointerTitle,
-            workspaceId: snapshot?.workspaceId || prev.workspaceId,
-          }))
+            workspaceId: snapshot.workspaceId || '',
+            description: snapshot.form?.description ?? '',
+            type: IDEA_TYPES.includes(snapshot.form?.type as IdeaType) ? snapshot.form!.type as IdeaType : 'Innovation',
+            reviewer: snapshot.form?.reviewer ?? '',
+          })
         }
+        setCreateIdeaTags(snapshot.tags ?? [])
+        setCreateIdeaTagDraft('')
+        setCreateIdeaDescriptionHtml('')
+        setCreateIdeaProcessDiagrams([])
+        setBrainstormInput(snapshot.composerDraft ?? '')
+        setBrainstormDiagramImage(null)
+        setBrainstormEdit(null)
+        setBrainstormError('')
+        setAiAssistanceError('')
+        setBrainstormMessages(mergeBrainstormUiMessages([], status.brainstorm_messages ?? [], new Date().toISOString()))
+        if (status.status === 'completed') applyCompletedIdeaDraft(status, status.brainstorm_messages)
+        if (snapshot.form?.description) setCreateIdeaDescriptionFromPlainText(snapshot.form.description, status.brainstorm_messages)
+        if (snapshot.form?.html) syncCreateIdeaDescriptionFromHtml(snapshot.form.html)
         if (status.status === 'awaiting_input' || status.status === 'completed') {
           applyIdeaDraftBrainstormState(status)
           setIsEvidenceDialogOpen(true)
@@ -4901,6 +4986,7 @@ export function IdeaBacklogManagementPage() {
         )
       } finally {
         if (cancelled) return
+        setIsResumingDraft(false)
         const rest = { ...((location.state as Record<string, unknown> | null) ?? {}) }
         delete rest.resumeBrainstormJobId
         navigate('.', { replace: true, state: Object.keys(rest).length > 0 ? rest : null })
@@ -4908,6 +4994,7 @@ export function IdeaBacklogManagementPage() {
     })()
     return () => {
       cancelled = true
+      setIsResumingDraft(false)
     }
   }, [location.state, navigate, currentUserId, currentUserDisplayName])
 
@@ -7132,6 +7219,15 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           ) : null}
 
+                          {brainstormMessages.length > 0 && (
+                            <p role="status" className={cn('text-xs', draftBackupStatus === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
+                              {draftBackupStatus === 'failed' ? 'Save failed - keep this draft open and retry.' : isBrainstormSending ? 'Saving response...' : 'Local backup saved'}
+                              {draftBackupStatus === 'failed' && <button type="button" className="ml-2 underline" onClick={() => {
+                                const store = useIdeaDraftBrainstormPointerStore.getState()
+                                if (store.pointer) store.setPointer(store.pointer)
+                              }}>Retry save</button>}
+                            </p>
+                          )}
                           {brainstormMessages.map((message, index) => {
                             const previousUser = [...brainstormMessages.slice(0, index)]
                               .reverse()
