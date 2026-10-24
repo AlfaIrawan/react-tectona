@@ -962,7 +962,7 @@ function BrainstormEvidenceRail({
 
   return (
     <BrainstormReadinessFrame collapsed={collapsed} onToggleCollapsed={onToggleCollapsed} confidence={resolvedConfidence} inline={inline}>
-              <p className="text-[11px] leading-snug text-muted-foreground">
+              <p className="shrink-0 text-[11px] leading-snug text-muted-foreground">
                 AI confidence and AS-IS evidence progress before draft generation.
               </p>
 
@@ -978,7 +978,7 @@ function BrainstormEvidenceRail({
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 border-b border-border/60 pb-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden border-b border-border/60 pb-4">
                 <div className="flex shrink-0 items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Evidence progress
@@ -1037,7 +1037,7 @@ function BrainstormEvidenceRail({
                     </div>
                   </>
                 ) : null}
-                <div className="space-y-1.5">
+                <div role="region" aria-label="Readiness questions" tabIndex={0} data-readiness-scroll className="scrollbar-hide min-h-0 flex-1 space-y-1.5 overflow-y-auto">
                   {items.length > 0 ? (
                     items.map((item) => {
                       const status = item.status ?? 'pending'
@@ -1084,7 +1084,7 @@ function BrainstormEvidenceRail({
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="shrink-0 space-y-2" data-readiness-initiative>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Initiative direction
                 </p>
