@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Loader2, MessageSquare, X } from 'lucide-react'
+import { Loader2, MessageSquare, RotateCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ChatSidebarPanel } from '@/modules/core-shell/components/ChatSidebarPanel'
@@ -210,6 +210,8 @@ export function DocumentOnlyOfficeEditor({
     if (!isTemplate && !documentId) return
 
     let cancelled = false
+    let editorStarted = false
+    let appReadyTimer: number | undefined
     setLoading(true)
     setSaving(false)
     setError(null)
@@ -242,16 +244,29 @@ export function DocumentOnlyOfficeEditor({
         surface.style.width = '100%'
         hostRef.current.appendChild(surface)
 
+        appReadyTimer = window.setTimeout(() => {
+          if (cancelled) return
+          scriptPromises.delete(documentServerUrl)
+          setLoading(false)
+          setError('The document editor did not become ready. Its iframe may be blocked or the Document Server is unavailable. Retry; if this persists, check the /onlyoffice-ds proxy and framing headers.')
+        }, 30_000)
         editorRef.current = new window.DocsAPI.DocEditor(PLACEHOLDER_ID, {
           ...config,
           width: '100%',
           height: '100%',
           events: {
+            onAppReady: () => {
+              if (cancelled) return
+              window.clearTimeout(appReadyTimer)
+              setLoading(false)
+            },
             onDocumentStateChange: (event: { data?: boolean }) => {
               if (event?.data) editedRef.current = true
             },
             onError: (event: { data?: unknown }) => {
               if (cancelled) return
+              window.clearTimeout(appReadyTimer)
+              setLoading(false)
               const payload = event?.data
               const parsed = extractOnlyOfficeError(payload)
               console.error('[OnlyOffice] onError', {
@@ -264,15 +279,18 @@ export function DocumentOnlyOfficeEditor({
             },
           },
         })
+        editorStarted = true
       } catch (openError) {
+        window.clearTimeout(appReadyTimer)
         if (!cancelled) setError(openError instanceof Error ? openError.message : 'Unable to open the editor.')
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && !editorStarted) setLoading(false)
       }
     })()
 
     return () => {
       cancelled = true
+      window.clearTimeout(appReadyTimer)
       try {
         editorRef.current?.destroyEditor?.()
       } catch {
@@ -394,8 +412,11 @@ export function DocumentOnlyOfficeEditor({
           <div ref={hostRef} className="absolute inset-0" />
           {error ? (
             <div className="absolute inset-0 z-20 flex items-center justify-center px-6">
-              <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                {error}
+              <div role="alert" className="max-w-md rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <p>{error}</p>
+                <Button variant="outline" className="mt-3 gap-2" onClick={() => setReloadNonce((value) => value + 1)}>
+                  <RotateCw className="h-4 w-4" />Retry
+                </Button>
               </div>
             </div>
           ) : loading || saving ? (

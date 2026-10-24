@@ -15,6 +15,7 @@ import {
 export async function ensureProjectDocumentFolder(project: {
   id: string
   name: string
+  workspace_id?: string | null
 }): Promise<string> {
   const store = useProjectDocumentFolderStore.getState()
   const cachedFolderId = store.getFolderId(project.id)
@@ -24,7 +25,7 @@ export async function ensureProjectDocumentFolder(project: {
     const existing = await getDocumentFolder(cachedFolderId)
     if (existing) {
       const linkedProjectId = parseProjectIdFromDocumentFolderDescription(existing.description)
-      if (linkedProjectId && linkedProjectId !== project.id) {
+      if ((linkedProjectId && linkedProjectId !== project.id) || (project.workspace_id && existing.workspace_id && existing.workspace_id !== project.workspace_id)) {
         // A stale persisted mapping must never make a new project reuse another
         // project's repository folder.
         store.removeFolderMapping(project.id)
@@ -42,7 +43,7 @@ export async function ensureProjectDocumentFolder(project: {
     store.removeFolderMapping(project.id)
   }
 
-  const folders = await fetchAllDocumentFolders()
+  const folders = await fetchAllDocumentFolders(project.workspace_id)
   const matched = folders.find(
     (folder) => parseProjectIdFromDocumentFolderDescription(folder.description) === project.id,
   )
@@ -86,6 +87,7 @@ export async function ensureProjectDocumentFolder(project: {
     name: folderName,
     description: buildProjectDocumentFolderDescription(project.id),
     parent_id: null,
+    workspace_id: project.workspace_id ?? null,
   })
   store.setFolderMapping(project.id, created.id)
   return created.id

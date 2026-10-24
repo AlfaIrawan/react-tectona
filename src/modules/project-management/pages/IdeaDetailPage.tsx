@@ -216,6 +216,7 @@ import {
 } from '@/lib/api/documentFolderApi'
 import { resolveIdeaDocsProject } from '@/modules/projects/lib/resolveIdeaDocsProject'
 import { ensureProjectDocumentFolder } from '@/modules/projects/lib/ensureProjectDocumentFolder'
+import { resolveExistingIdeaDocsFolder } from '@/modules/projects/lib/resolveExistingIdeaDocsFolder'
 import { nextUntitledDocumentFolderName } from '@/modules/document-knowledge-management/lib/documentFolderUtils'
 import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
 import { findRepositoryTraceEntryByDocumentId } from '@/lib/kb/repositoryKbFromDocument'
@@ -398,6 +399,7 @@ type Idea = {
   type: IdeaType
   submittedBy: string
   workspace?: string
+  project_id?: string | null
   tags: string[]
   createdAt: string
   reviewer: string
@@ -622,6 +624,7 @@ function ideaFromApi(api: IdeaApi): Idea {
     type,
     submittedBy: api.owner_id?.trim() ?? '',
     workspace: api.workspace_id ?? undefined,
+    project_id: api.project_id ?? null,
     tags: api.tags,
     createdAt: api.created_date.slice(0, 10),
     reviewer: api.assignee_id?.trim() ?? '',
@@ -3779,11 +3782,14 @@ export function IdeaDetailPage() {
   const location = useLocation()
   const tenant = useTenantContextOptional()
   const { addToast } = useToast()
-  const fromState = location.state as { idea?: Idea } | undefined
+  const fromState = location.state as { idea?: Idea & { projectId?: string | null } } | undefined
 
-  const initialIdea = fromState?.idea ?? { ...FALLBACK_IDEA, id: ideaId ?? FALLBACK_IDEA.id }
+  const initialIdea = fromState?.idea
+    ? { ...fromState.idea, project_id: fromState.idea.project_id ?? fromState.idea.projectId ?? null }
+    : { ...FALLBACK_IDEA, id: ideaId ?? FALLBACK_IDEA.id }
 
   const [idea, setIdea] = useState<Idea>(initialIdea)
+  const [resolvedIdeaId, setResolvedIdeaId] = useState(fromState?.idea?.id ?? '')
   const [identityUserNameById, setIdentityUserNameById] = useState<Record<string, string>>({})
   const [reviewerMemberships, setReviewerMemberships] = useState<WacMembershipDto[]>([])
   const [isReviewerOptionsLoading, setIsReviewerOptionsLoading] = useState(false)
@@ -3809,6 +3815,7 @@ export function IdeaDetailPage() {
   const ideaDocTitleHealRef = useRef<string | null>(null)
   const ideaDocGenerationRetryRef = useRef<string | null>(null)
   const [ideaDocsLoading, setIdeaDocsLoading] = useState(false)
+  const [ideaDocsLoadedScope, setIdeaDocsLoadedScope] = useState('')
   const [ideaDocsPage, setIdeaDocsPage] = useState(1)
   const [ideaDocsPageSize, setIdeaDocsPageSize] = useState(10)
   const [ideaDocsView, setIdeaDocsView] = useState<'documents' | 'templates'>('documents')
@@ -6736,7 +6743,10 @@ export function IdeaDetailPage() {
         try {
           const api = await getIdeaById(ideaId)
           hydratedIdea = ideaFromApi(api)
-          setIdea(hydratedIdea)
+          if (!cancelled) {
+            setIdea(hydratedIdea)
+            setResolvedIdeaId(hydratedIdea.id)
+          }
         } catch {
           // Keep navigation state or fallback when backlog is unavailable.
         }
@@ -7071,6 +7081,7 @@ export function IdeaDetailPage() {
 
   useEffect(() => {
     if (activePanel !== 'document') return
+    if (resolvedIdeaId !== idea.id) return
     let cancelled = false
     setIdeaDocsLoading(true)
     // Query by idea across workspaces so older documents remain discoverable.
@@ -7134,12 +7145,15 @@ export function IdeaDetailPage() {
         // Best-effort — the Docs table still works with session-generated documents only.
       })
       .finally(() => {
-        if (!cancelled) setIdeaDocsLoading(false)
+        if (!cancelled) {
+          setIdeaDocsLoading(false)
+          setIdeaDocsLoadedScope(`${idea.id}:${idea.workspace ?? ''}`)
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [activePanel, idea.id, idea.title, idea.workspace, ideaDocsReloadKey])
+  }, [activePanel, idea.id, idea.title, idea.workspace, ideaDocsReloadKey, resolvedIdeaId])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -7593,12 +7607,22 @@ export function IdeaDetailPage() {
     [idea.id, idea.project_id, idea.title, idea.workspace, ideaDocsHoldingProjectId],
   )
 
+  const ideaDocsFolderSignature = ideaGeneratedDocs.map((doc) => `${doc.id}:${doc.folder_id}:${doc.project_id}`).sort().join('|')
+
   useEffect(() => {
     if (activePanel !== 'document') return
+    if (ideaDocsLoadedScope !== `${idea.id}:${idea.workspace ?? ''}`) return
+    if (resolvedIdeaId !== idea.id) return
     let cancelled = false
     setIdeaDocFolderInitBusy(true)
     void (async () => {
       try {
+        const existing = await resolveExistingIdeaDocsFolder({ ideaId: idea.id, workspaceId: idea.workspace, documents: ideaGeneratedDocs })
+        if (cancelled) return
+        if (existing) {
+          setIdeaDocFolderStack([{ id: existing.id, name: existing.name }])
+          return
+        }
         const targetProject = await resolveIdeaTargetProject(false)
         if (!targetProject) {
           if (!cancelled) {
@@ -7610,6 +7634,7 @@ export function IdeaDetailPage() {
         const folderId = await ensureProjectDocumentFolder({
           id: targetProject.id,
           name: targetProject.name,
+          workspace_id: targetProject.workspace_id ?? idea.workspace,
         })
         if (!cancelled) {
           setIdeaDocFolderStack([{ id: folderId, name: targetProject.name }])
@@ -7620,7 +7645,9 @@ export function IdeaDetailPage() {
           setIdeaDocSubfolders([])
           addToast({
             title: 'Failed to load idea docs folder',
-            description: error instanceof Error ? error.message : '',
+            description: error instanceof Error && /workspace access forbidden/i.test(error.message)
+              ? 'Project service denied access to this idea workspace. Existing documents remain available; workspace permissions must be checked before creating folders.'
+              : error instanceof Error ? error.message : '',
             variant: 'error',
           })
         }
@@ -7631,7 +7658,9 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [activePanel, addToast, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject])
+  // Folder resolution only changes when a document moves, not when its content or version changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePanel, addToast, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject, ideaDocsLoadedScope, ideaDocsFolderSignature, resolvedIdeaId])
 
   useEffect(() => {
     if (activePanel !== 'document' || !ideaDocCurrentFolder) return
@@ -7682,7 +7711,7 @@ export function IdeaDetailPage() {
         // An idea with no project and no documents yet gets its document container now.
         const targetProject = await resolveIdeaTargetProject(true)
         if (!targetProject) throw new Error('No project available to store the idea folder.')
-        const rootId = await ensureProjectDocumentFolder({ id: targetProject.id, name: targetProject.name })
+        const rootId = await ensureProjectDocumentFolder({ id: targetProject.id, name: targetProject.name, workspace_id: targetProject.workspace_id ?? idea.workspace })
         parentFolder = { id: rootId, name: targetProject.name }
         setIdeaDocFolderStack([parentFolder])
       }
@@ -7692,6 +7721,7 @@ export function IdeaDetailPage() {
         name,
         description: null,
         parent_id: parentFolder.id,
+        workspace_id: idea.workspace ?? null,
         owner_id: session?.user.id || session?.user.email || idea.submittedBy || null,
       })
 
@@ -7716,7 +7746,7 @@ export function IdeaDetailPage() {
     } finally {
       setIdeaDocFolderCreateBusy(false)
     }
-  }, [addToast, idea.submittedBy, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders, resolveIdeaTargetProject])
+  }, [addToast, idea.submittedBy, idea.workspace, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders, resolveIdeaTargetProject])
 
   const handleIdeaDocCreateSubfolder = useCallback(async (parentFolder: DocumentFolder) => {
     if (ideaDocFolderCreateBusy) return
@@ -7734,6 +7764,7 @@ export function IdeaDetailPage() {
         name,
         description: null,
         parent_id: parentFolder.id,
+        workspace_id: parentFolder.workspace_id ?? idea.workspace ?? null,
         owner_id: session?.user.id || session?.user.email || idea.submittedBy || null,
       })
       setIdeaDocSubfolders((prev) => prev.map((folder) => (
@@ -7755,7 +7786,7 @@ export function IdeaDetailPage() {
     } finally {
       setIdeaDocFolderCreateBusy(false)
     }
-  }, [addToast, idea.submittedBy, ideaDocFolderCreateBusy])
+  }, [addToast, idea.submittedBy, idea.workspace, ideaDocFolderCreateBusy])
 
   const handleIdeaDocFolderRenameConfirm = useCallback(async () => {
     if (!ideaDocFolderRenameTarget) return
@@ -8021,6 +8052,7 @@ export function IdeaDetailPage() {
       const targetFolderId = ideaDocCurrentFolder?.id ?? await ensureProjectDocumentFolder({
         id: targetProject.id,
         name: targetProject.name,
+        workspace_id: targetProject.workspace_id ?? idea.workspace,
       })
       // The idea's URD/BRD/FSD is one document wherever it is stored: an idea linked to a project
       // after its URD was written keeps that URD in the earlier project, and a regeneration must
