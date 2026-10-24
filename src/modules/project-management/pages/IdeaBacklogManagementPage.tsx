@@ -1318,7 +1318,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
         <BrainstormAssistantMessageBody text={rest} />
       ) : null}
       {message.ai_advice ? <div className="my-3 border-l-2 border-teal-500 pl-3 text-sm leading-6">
-        <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Saran AI' : 'AI suggestion'}</p>
+        <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Pertimbangan Tambahan' : 'Additional Considerations'}</p>
         <BrainstormAssistantMessageBody text={message.ai_advice} />
       </div> : null}
       {hasSummary && rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
