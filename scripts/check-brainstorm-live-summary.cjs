@@ -15,8 +15,8 @@ async function main() {
     import { createRoot } from 'react-dom/client';
     import { BrainstormLiveSummaryPanel } from './src/modules/project-management/components/BrainstormLiveSummaryPanel';
     const initial = {job_id:'test',brainstorm_messages:[{role:'assistant',text:'Response',summary:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',ai_advice:'Validate policy access with the Credit team.'}],intake_checklist:[{id:'goal',prompt:'Project goal',evidence_status:'confirmed',evidence_text:'Answer Credit policy questions.'},{id:'kpi',prompt:'Success metrics',evidence_status:'inferred',evidence_text:'Accuracy target: 90% (not confirmed).'}],brainstorm_remaining_gaps:['Confirm the current process and policy owners.']};
-    function Fixture(){const [job,setJob]=useState(initial);const [busy,setBusy]=useState(false);window.updateSummary=(text)=>setJob({...initial,brainstorm_messages:[{role:'assistant',text:'Updated',summary:text}]});window.summaryBusy=setBusy;
-      return <div className="flex h-screen flex-col bg-background text-foreground"><header className="flex h-14 shrink-0 items-center border-b px-4 text-sm font-semibold">Tectona Assistant</header><div className="relative flex min-h-0 flex-1 overflow-hidden"><aside className="hidden w-[416px] shrink-0 border-r p-5 min-[1024px]:block">Draft Readiness</aside><main data-chat className="flex min-w-0 flex-1 flex-col"><div className="min-h-0 flex-1 overflow-auto px-5 py-6"><p className="max-w-xl pr-12">Describe the current Credit policy process.</p></div><div className="border-t p-4"><textarea aria-label="Brainstorm message" className="h-20 w-full resize-none rounded-lg border p-3" placeholder="Ask Tectona Assistant" /></div></main><BrainstormLiveSummaryPanel job={job} confidence={28} busy={busy} /></div></div>;
+    function Fixture(){const [job,setJob]=useState({...initial,brainstorm_messages:[{role:'assistant',text:'Hello. Describe your project.'}]});const [busy,setBusy]=useState(false);window.startSummary=()=>setJob(initial);window.updateSummary=(text)=>setJob({...initial,brainstorm_messages:[{role:'assistant',text:'Updated',summary:text}]});window.summaryBusy=setBusy;
+      return <div className="flex h-screen flex-col bg-background text-foreground"><header className="flex h-14 shrink-0 items-center border-b px-4 text-sm font-semibold">Tectona Assistant</header><div className="relative flex min-h-0 flex-1 overflow-hidden"><aside className="hidden w-[416px] shrink-0 border-r p-5 min-[1024px]:block">Draft Readiness</aside><main data-chat className="flex min-w-0 flex-1 flex-col"><div className="min-h-0 flex-1 overflow-auto px-5 py-6"><p className="max-w-xl pr-12">Describe the current Credit policy process.</p></div><div className="border-t p-4"><textarea aria-label="Brainstorm message" className="h-20 w-full resize-none rounded-lg border p-3" placeholder="Ask Tectona Assistant" /></div></main><BrainstormLiveSummaryPanel job={job} busy={busy} /></div></div>;
     }createRoot(document.getElementById('root')).render(<Fixture/>);`
   const bundle = await esbuild.build({
     stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' },
@@ -47,9 +47,28 @@ async function main() {
     await page.waitForTimeout(1000)
     assert.equal(errors.length, 0, `fixture browser errors: ${errors.join('; ')}`)
     const panel = page.locator('aside[aria-label="Live AI Summary"]')
+    const output = await fs.mkdtemp(path.join(os.tmpdir(), 'tectona-live-summary-'))
+    assert.equal(await panel.count(), 0, 'no reserved panel before summary data')
+    assert.equal(await page.getByRole('button', { name: 'Open Live AI Summary', exact: true }).count(), 0)
+    const originalChat = await page.locator('[data-chat]').boundingBox()
+    await page.screenshot({ path: path.join(output, 'before-summary.png') })
+    await page.evaluate(() => { window.summaryBusy(true); window.startSummary() })
+    await page.waitForTimeout(100)
+    assert.equal(await panel.count(), 0, 'do not show pending data')
+    const widths = await page.evaluate(async () => {
+      window.summaryBusy(false)
+      const samples = []
+      for (let i = 0; i < 35; i++) {
+        await new Promise(requestAnimationFrame)
+        samples.push(document.querySelector('aside[aria-label="Live AI Summary"]')?.getBoundingClientRect().width ?? 0)
+      }
+      return samples
+    })
+    assert.ok(widths.some(width => width > 1 && width < 359), 'panel width animates and chat reflows gradually')
     await panel.waitFor({ state: 'visible' })
     await page.waitForTimeout(1100)
-    const output = await fs.mkdtemp(path.join(os.tmpdir(), 'tectona-live-summary-'))
+    assert.ok(originalChat.width - (await page.locator('[data-chat]').boundingBox()).width > 350)
+    assert.doesNotMatch(await panel.textContent(), /Open points|Confidence|Confirmed evidence|Evidence \(/)
     const verify = async () => {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal overflow')
       const chat = await page.locator('[data-chat]').boundingBox(), summary = await panel.boundingBox()
@@ -60,6 +79,11 @@ async function main() {
     await verify()
     await page.screenshot({ path: path.join(output, 'desktop.png') })
     await page.getByRole('button', { name: 'Collapse summary', exact: true }).click()
+    await page.evaluate(() => window.updateSummary('Build a Gen AI assistant for **Credit**.\n\n- Retrieve approved policies with RAG.\n- Embed the chat in DigiLearn.\n\nUpdated policy scope.'))
+    await page.waitForTimeout(300)
+    assert.ok((await panel.boundingBox()).width <= 49, 'summary updates respect collapsed preference')
+    assert.equal(await panel.getByRole('status', { name: 'Summary updated' }).isVisible(), true)
+    await page.screenshot({ path: path.join(output, 'collapsed-updated.png') })
     await page.getByRole('button', { name: 'Open Live AI Summary', exact: true }).filter({ visible: true }).click()
     await page.waitForTimeout(250)
     await verify()
@@ -86,8 +110,19 @@ async function main() {
     await page.evaluate(() => window.updateSummary('Updated Credit scope.'))
     await page.waitForTimeout(100)
     assert.equal(await page.locator('[data-summary-section="understanding"] [data-summary-phase]').getAttribute('data-summary-phase'), 'idle')
+    await page.reload()
+    await page.waitForTimeout(150)
+    assert.equal(await panel.count(), 0, 'mobile also starts without panel or trigger')
+    assert.equal(await page.getByRole('button', { name: 'Open Live AI Summary', exact: true }).count(), 0)
+    await page.evaluate(() => window.startSummary())
+    await page.getByRole('dialog', { name: 'Live AI Summary' }).waitFor({ state: 'visible' })
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => window.updateSummary('Second mobile summary.'))
+    await page.waitForTimeout(100)
+    assert.equal(await panel.isVisible(), false, 'later updates do not reopen a dismissed mobile drawer')
+    assert.equal(await page.getByRole('status', { name: 'Summary updated' }).filter({ visible: true }).count(), 1)
     assert.deepEqual(errors, [])
-    console.log(`PASS desktop/mobile screenshots, reserved layout, responsive drawer, keyboard focus, Markdown bullets, reduced motion, no overflow or browser errors. Screenshots: ${output}`)
+    console.log(`PASS no panel before data, animated entrance and layout, narrative-only content, collapsed update marker, desktop/mobile screenshots, keyboard focus, reduced motion and no overflow. Screenshots: ${output}`)
   } finally {
     await browser?.close()
     await new Promise(resolve => server.close(resolve))

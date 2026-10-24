@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { BookOpenText, ChevronDown, ChevronRight, Loader2, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
+import { BookOpenText, Loader2, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
 import type { IdeaDraftJobStatusResponse } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
@@ -21,12 +21,13 @@ function useReducedMotion() {
 
 const MARKDOWN_CLASS = 'text-sm leading-6 [&_strong]:text-foreground [&_li]:leading-6 [&_p]:my-2'
 
-function AnimatedSummaryText({ text, reduced }: { text: string; reduced: boolean }) {
+function AnimatedSummaryText({ text, reduced, active }: { text: string; reduced: boolean; active: boolean }) {
   const [display, setDisplay] = useState('')
   const displayed = useRef('')
   const [phase, setPhase] = useState<'idle' | 'deleting' | 'typing'>('idle')
   const [highlight, setHighlight] = useState(false)
   useEffect(() => {
+    if (!active) return
     let timer: ReturnType<typeof setTimeout>
     let highlightTimer: ReturnType<typeof setTimeout>
     const publish = (value: string) => { displayed.current = value; setDisplay(value) }
@@ -62,7 +63,7 @@ function AnimatedSummaryText({ text, reduced }: { text: string; reduced: boolean
     }
     tick()
     return () => { clearTimeout(timer); clearTimeout(highlightTimer) }
-  }, [text, reduced])
+  }, [text, reduced, active])
   return (
     <div data-summary-phase={phase} className={cn('grid rounded-sm transition-colors motion-reduce:transition-none', highlight && 'bg-emerald-50 dark:bg-emerald-950/30')}>
       <div className="invisible col-start-1 row-start-1" aria-hidden="true">
@@ -76,40 +77,71 @@ function AnimatedSummaryText({ text, reduced }: { text: string; reduced: boolean
   )
 }
 
-function SummarySection({ section, reduced }: { section: LiveSummarySection; reduced: boolean }) {
+function SummarySection({ section, reduced, active }: { section: LiveSummarySection; reduced: boolean; active: boolean }) {
   return (
     <section className="min-w-0 border-b border-border/60 py-4 last:border-b-0" data-summary-section={section.id}>
       <h3 className="mb-2 text-sm font-semibold leading-5 text-foreground">{section.title}</h3>
-      <AnimatedSummaryText text={section.text} reduced={reduced} />
+      <AnimatedSummaryText text={section.text} reduced={reduced} active={active} />
     </section>
   )
 }
 
-export function BrainstormLiveSummaryPanel({ job, confidence, busy, error }: {
+export function BrainstormLiveSummaryPanel({ job, busy, error }: {
   job: IdeaDraftJobStatusResponse | null
-  confidence: number
   busy: boolean
   error?: string
 }) {
   const reduced = useReducedMotion()
   const [expanded, setExpanded] = useState(true)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [evidenceOpen, setEvidenceOpen] = useState(false)
+  const [present, setPresent] = useState(false)
+  const [entered, setEntered] = useState(false)
+  const [textReady, setTextReady] = useState(false)
+  const [unread, setUnread] = useState(false)
+  const firstSummarySeen = useRef(false)
+  const previousSummary = useRef('')
   const panelRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const candidate = JSON.stringify(buildBrainstormLiveSummary(job, confidence))
-  const [snapshot, setSnapshot] = useState(() => buildBrainstormLiveSummary(busy ? null : job, busy ? 0 : confidence))
+  const candidate = JSON.stringify(buildBrainstormLiveSummary(job))
+  const [snapshot, setSnapshot] = useState(() => buildBrainstormLiveSummary(null))
   useEffect(() => {
     // Never publish optimistic edits, partial replies, or failed request results.
     if (!busy && !error) setSnapshot(JSON.parse(candidate) as typeof snapshot)
   }, [candidate, busy, error])
-  const [sections, setSections] = useState(snapshot.sections)
+  const hasSummary = snapshot.sections.some(section => Boolean(section.text.trim()))
+  const summaryText = snapshot.sections.map(section => section.text).join('\n\n')
   useEffect(() => {
-    const ids = new Set(snapshot.sections.map(section => section.id))
-    setSections(previous => [...snapshot.sections, ...previous.filter(section => !ids.has(section.id)).map(section => ({ ...section, text: '' }))])
-    const timer = setTimeout(() => setSections(previous => previous.filter(section => ids.has(section.id))), reduced ? 0 : 300)
-    return () => clearTimeout(timer)
-  }, [snapshot.sections, reduced])
+    let frame = 0, nextFrame = 0
+    let timer: ReturnType<typeof setTimeout>
+    if (hasSummary) {
+      setPresent(true)
+      if (reduced) { setEntered(true); setTextReady(true) }
+      else {
+        frame = requestAnimationFrame(() => {
+          nextFrame = requestAnimationFrame(() => {
+            setEntered(true)
+            timer = setTimeout(() => setTextReady(true), 240)
+          })
+        })
+      }
+    } else {
+      setEntered(false)
+      setTextReady(false)
+      timer = setTimeout(() => setPresent(false), reduced ? 0 : 240)
+    }
+    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(nextFrame); clearTimeout(timer) }
+  }, [hasSummary, reduced])
+  useEffect(() => {
+    if (!summaryText) { previousSummary.current = ''; setUnread(false); setMobileOpen(false); return }
+    const wide = window.matchMedia?.('(min-width: 1440px)').matches
+    if (!firstSummarySeen.current) {
+      firstSummarySeen.current = true
+      if (!wide) setMobileOpen(true)
+    } else if (summaryText !== previousSummary.current && (!wide ? !mobileOpen : !expanded)) {
+      setUnread(true)
+    }
+    previousSummary.current = summaryText
+  }, [summaryText, expanded, mobileOpen])
   useEffect(() => {
     const wide = window.matchMedia?.('(min-width: 1440px)')
     const update = () => { if (wide?.matches) setMobileOpen(false) }
@@ -117,7 +149,7 @@ export function BrainstormLiveSummaryPanel({ job, confidence, busy, error }: {
     return () => wide?.removeEventListener('change', update)
   }, [])
   useEffect(() => {
-    if (!mobileOpen) return
+    if (!mobileOpen || !present) return
     const previous = document.activeElement as HTMLElement | null
     panelRef.current?.querySelector<HTMLButtonElement>('[aria-label="Close summary"]')?.focus()
     const keydown = (event: KeyboardEvent) => {
@@ -136,9 +168,10 @@ export function BrainstormLiveSummaryPanel({ job, confidence, busy, error }: {
     }
     window.addEventListener('keydown', keydown, true)
     return () => { window.removeEventListener('keydown', keydown, true); (previous ?? triggerRef.current)?.focus() }
-  }, [mobileOpen])
-  const evidence = sections.filter(section => section.id.startsWith('evidence:'))
-  const primary = sections.filter(section => !section.id.startsWith('evidence:'))
+  }, [mobileOpen, present])
+  if (!present) return null
+  const openDesktop = () => { setExpanded(true); setUnread(false) }
+  const openMobile = () => { setMobileOpen(true); setUnread(false) }
   const content = (
     <>
       <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
@@ -146,43 +179,26 @@ export function BrainstormLiveSummaryPanel({ job, confidence, busy, error }: {
         <button type="button" title="Collapse summary" aria-label="Collapse summary" onClick={() => { setExpanded(false); setMobileOpen(false) }} className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:inline-flex"><PanelRightClose className="h-4 w-4" /></button>
         <button type="button" title="Close summary" aria-label="Close summary" onClick={() => setMobileOpen(false)} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:hidden"><X className="h-4 w-4" /></button>
       </header>
-      <div className="shrink-0 border-b border-border/70 px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>Confidence <strong className="font-semibold text-foreground">{snapshot.confidence}%</strong></span>
-          <span>Confirmed evidence <strong className="font-semibold text-foreground">{snapshot.confirmed}/{snapshot.total}</strong></span>
-        </div>
-        <p role="status" className={cn('mt-2 flex items-start gap-1.5 text-xs leading-5', error ? 'text-destructive' : 'text-muted-foreground')}>
+      {busy || error ? <div className="shrink-0 border-b border-border/70 px-4 py-3">
+        <p role="status" className={cn('flex items-start gap-1.5 text-xs leading-5', error ? 'text-destructive' : 'text-muted-foreground')}>
           {busy ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : null}
-          {busy ? 'Updating summary...' : error ? 'Update failed. Showing the last processed summary.' : snapshot.sections.length ? 'Based on the latest processed brainstorm response.' : 'Waiting for brainstorm evidence.'}
+          {busy ? 'Updating summary...' : 'Update failed. Showing the last processed summary.'}
         </p>
-      </div>
+      </div> : null}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 [overflow-wrap:anywhere]" data-summary-scroll>
-        {!snapshot.sections.length ? <p className="py-5 text-sm text-muted-foreground">No summary yet.</p> : null}
-        {primary.filter(section => section.kind === 'understanding').map(section => <SummarySection key={section.id} section={section} reduced={reduced} />)}
-        {evidence.length ? <div className="border-b border-border/60 py-3">
-          <button type="button" className="flex min-h-9 w-full items-center justify-between gap-2 text-left text-sm font-semibold" aria-expanded={evidenceOpen} aria-controls="brainstorm-summary-evidence" onClick={() => setEvidenceOpen(value => !value)}>
-            Evidence ({evidence.length}){evidenceOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </button>
-          <div id="brainstorm-summary-evidence" hidden={!evidenceOpen}>
-            {evidence.map(section => <div key={section.id}>
-              <p className={cn('pt-3 text-xs font-medium', section.kind === 'confirmed' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-300')}>{section.kind === 'confirmed' ? 'Confirmed' : 'To confirm'}</p>
-              <SummarySection section={section} reduced={reduced} />
-            </div>)}
-          </div>
-        </div> : null}
-        {primary.filter(section => section.kind !== 'understanding').map(section => <SummarySection key={section.id} section={section} reduced={reduced} />)}
+        {snapshot.sections.map(section => <SummarySection key={section.id} section={section} reduced={reduced} active={textReady && (expanded || mobileOpen)} />)}
       </div>
     </>
   )
   return (
     <>
       {mobileOpen ? <button type="button" aria-label="Close summary backdrop" className="absolute inset-0 z-40 bg-black/25 min-[1440px]:hidden" onClick={() => setMobileOpen(false)} /> : null}
-      <aside ref={panelRef} role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen || undefined} aria-label="Live AI Summary" data-brainstorm-summary-dialog={mobileOpen || undefined}
-        className={cn('min-h-0 shrink-0 flex-col border-l border-border bg-background transition-[width] duration-200 motion-reduce:transition-none min-[1440px]:relative min-[1440px]:inset-auto min-[1440px]:z-auto min-[1440px]:flex', expanded ? 'min-[1440px]:w-[360px]' : 'min-[1440px]:w-12', mobileOpen ? 'absolute inset-y-0 right-0 z-50 flex w-[min(400px,100%)] shadow-xl' : 'hidden')}>
-        <div className={cn('min-h-0 flex-1 flex-col', expanded || mobileOpen ? 'flex' : 'hidden')}>{content}</div>
-        {!expanded && !mobileOpen ? <button type="button" title="Open Live AI Summary" aria-label="Open Live AI Summary" onClick={() => setExpanded(true)} className="mx-auto mt-3 inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-muted"><PanelRightOpen className="h-4 w-4" /></button> : null}
+      <aside ref={panelRef} role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen || undefined} aria-label="Live AI Summary" data-brainstorm-summary-dialog={mobileOpen || undefined} data-summary-entered={entered}
+        className={cn('min-h-0 shrink-0 flex-col overflow-hidden border-l border-border bg-background transition-[width,transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:relative min-[1440px]:inset-auto min-[1440px]:z-auto min-[1440px]:flex', !entered ? 'translate-x-4 opacity-0 min-[1440px]:w-0' : expanded ? 'translate-x-0 opacity-100 min-[1440px]:w-[360px]' : 'translate-x-0 opacity-100 min-[1440px]:w-12', mobileOpen ? 'absolute inset-y-0 right-0 z-50 flex w-[min(400px,100%)] shadow-xl' : 'hidden')}>
+        <div className={cn('min-h-0 flex-1 flex-col transition-[transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:w-[360px]', entered ? 'translate-x-0 opacity-100' : 'translate-x-4 opacity-0', expanded || mobileOpen ? 'flex' : 'hidden')}>{content}</div>
+        {!expanded && !mobileOpen ? <button type="button" title={unread ? 'Open Live AI Summary - updated' : 'Open Live AI Summary'} aria-label="Open Live AI Summary" onClick={openDesktop} className="relative mx-auto mt-3 inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-muted"><PanelRightOpen className="h-4 w-4" />{unread ? <span role="status" aria-label="Summary updated" className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-600" /> : null}</button> : null}
       </aside>
-      <button ref={triggerRef} type="button" title="Open Live AI Summary" aria-label="Open Live AI Summary" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)} className="absolute right-3 top-3 z-20 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-background shadow-sm min-[1440px]:hidden"><BookOpenText className="h-4 w-4" /></button>
+      <button ref={triggerRef} type="button" title={unread ? 'Open Live AI Summary - updated' : 'Open Live AI Summary'} aria-label="Open Live AI Summary" aria-expanded={mobileOpen} onClick={openMobile} className="absolute right-3 top-3 z-20 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-background shadow-sm min-[1440px]:hidden"><BookOpenText className="h-4 w-4" />{unread ? <span role="status" aria-label="Summary updated" className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-600" /> : null}</button>
     </>
   )
 }

@@ -7836,7 +7836,6 @@ export function IdeaBacklogManagementPage() {
                         <BrainstormLiveSummaryPanel
                           key={ideaDraftJob?.draft_session_id ?? ideaDraftJob?.job_id ?? 'new-brainstorm'}
                           job={ideaDraftJob}
-                          confidence={brainstormConfidencePercent}
                           busy={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
                           error={brainstormError}
                         />
