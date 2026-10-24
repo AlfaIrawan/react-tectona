@@ -37,6 +37,10 @@ import { isAllWorkspacesSelection } from '@/lib/tenantWorkspaceScope'
 import { fetchSubjectMembershipsCached } from '@/lib/wacMembershipCache'
 import { fetchAllWorkspaceOrgWorkspacesCached } from '@/lib/workspaceOrgDirectoryCache'
 import {
+  collectSwitcherOrganizationIds,
+  selectAdministeredOrgWorkspacesForSwitcher,
+} from '@/lib/workspaceSwitcherOrganizationHome'
+import {
   isOrganizationHomeWorkspace,
   isWorkspaceOwnedBySubject,
 } from '@/lib/workspaceOwnershipVisibility'
@@ -53,7 +57,9 @@ export type TenantContextValue = {
   selectedWorkspaceIds: string[]
   uiProfile: TenantUiProfile
   loading: boolean
-  setActiveTenant: (payload: StoredTenantSelection) => void
+  /** `remember: false` for a selection the app made itself (a fallback, metadata enrichment):
+   *  only the user's own choices become the workspace a new session opens in. */
+  setActiveTenant: (payload: StoredTenantSelection, options?: { remember?: boolean }) => void
   clearActiveTenant: () => void
 }
 
@@ -106,7 +112,7 @@ function readStoredTenant(): StoredTenantSelection | null {
   }
 }
 
-function persistTenant(payload: StoredTenantSelection | null): void {
+function persistTenant(payload: StoredTenantSelection | null, options: { remember?: boolean } = {}): void {
   if (!payload) {
     sessionStorage.removeItem(TENANT_STORAGE_KEY)
     clearStoredUserWorkspaceContext()
@@ -117,7 +123,9 @@ function persistTenant(payload: StoredTenantSelection | null): void {
     persistStoredTenantSubjectId(session.user.id)
   }
   sessionStorage.setItem(TENANT_STORAGE_KEY, JSON.stringify(payload))
-  rememberLastWorkspace(payload)
+  // A selection the app made itself must not replace the one the user made: the login
+  // fallback to the personal workspace overwrote "IT Business Partner WS" every session.
+  if (options.remember ?? true) rememberLastWorkspace(payload)
 }
 
 function sessionRoles(): string[] {
@@ -165,7 +173,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
   const tenantRef = useRef<StoredTenantSelection | null>(tenant)
   tenantRef.current = tenant
 
-  const setActiveTenant = useCallback((payload: StoredTenantSelection) => {
+  const setActiveTenant = useCallback((payload: StoredTenantSelection, options?: { remember?: boolean }) => {
     const prev = tenantRef.current
     // Route guards and tenant hydration can rediscover the same tenant. Do not
     // publish a state change for an identical selection; doing so remounts
@@ -176,7 +184,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
     }
     tenantRef.current = payload
     setTenant(payload)
-    persistTenant(payload)
+    persistTenant(payload, options)
     dispatchTenantChanged()
   }, [])
 
@@ -242,8 +250,24 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
               tenantMode: workspaceById.get(row.workspace_id)?.tenant_mode ?? null,
             }))
 
+      // Organization admins may open every organization workspace of an organization they
+      // use, as the workspace switcher lists them (useUserWorkspaceOptions). Without this a
+      // remembered workspace they are not a member of was "not accessible" at login.
+      const administeredIds = new Set(
+        selectAdministeredOrgWorkspacesForSwitcher(
+          workspaces.filter((workspace) => workspace.status_code !== 'archived'),
+          {
+            isPlatformAdmin,
+            isOrganizationAdmin,
+            alreadyListedOrganizationIds: collectSwitcherOrganizationIds(
+              membershipRows.map((row) => workspaceById.get(row.workspace_id)?.organization_id),
+            ),
+          },
+        ).map((workspace) => workspace.id),
+      )
       const rememberedIsAccessible = rememberedWorkspaceId
         ? accessible.some((workspace) => workspace.workspaceId === rememberedWorkspaceId)
+          || administeredIds.has(rememberedWorkspaceId)
         : false
       const preferredId = rememberedIsAccessible
         ? rememberedWorkspaceId
@@ -257,7 +281,8 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
           tenantMode: preferredWorkspace?.tenant_mode ?? null,
           displayName: preferredWorkspace?.name ?? null,
         }
-        setActiveTenant(fallback)
+        // Restoring the remembered workspace, or falling back: neither is a new choice.
+        setActiveTenant(fallback, { remember: false })
       }
       setLoading(false)
     })()
@@ -297,7 +322,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
           tenantMode: preferred.tenant_mode ?? null,
           displayName: preferred.name,
           selectedWorkspaceIds: undefined,
-        })
+        }, { remember: false })
       })
       .catch(() => {
         // ignore — user can pick workspace manually from switcher
@@ -409,7 +434,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
             displayName: preferredWorkspace.name,
           }
           setTenant(replacement)
-          persistTenant(replacement)
+          persistTenant(replacement, { remember: false })
           dispatchTenantChanged()
           return
         }
@@ -428,7 +453,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
         // avoid publishing a new object and restarting the effect forever.
         if (sameTenantSelection(tenant, enriched)) return
         setTenant(enriched)
-        persistTenant(enriched)
+        persistTenant(enriched, { remember: false })
       })
       .catch(() => {
         // ignore — UI profile falls back until workspace metadata loads
@@ -456,7 +481,7 @@ export function TenantContextProvider({ children }: { children: ReactNode }) {
           slug,
           tenantMode: tenant.tenantMode ?? workspace.tenant_mode ?? null,
           displayName: tenant.displayName ?? workspace.name,
-        })
+        }, { remember: false })
       })
       .catch(() => undefined)
 
