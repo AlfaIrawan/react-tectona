@@ -2150,6 +2150,7 @@ export interface IdeaIntakeAnswer {
 export interface IdeaIntakeFollowup {
   question: string
   answer: string
+  question_kind?: 'challenge' | 'extended' | null
   /** The brainstorm message that asked it. */
   turn?: number
 }
@@ -2168,6 +2169,7 @@ export interface IdeaIntakeAnswers {
   openPoints: string[]
   /** Per open point, the brainstorm message that asked it (null when not found). */
   openPointTurns: Array<number | null>
+  openPointQuestionKinds?: Array<'challenge' | 'extended' | null>
   reviewerInputs: IdeaReviewerInput[]
   block: string
 }
@@ -2177,6 +2179,7 @@ type IdeaIntakeAnswersBody = {
   followups?: IdeaIntakeFollowup[]
   open_points?: string[]
   open_point_turns?: Array<number | null>
+  open_point_question_kinds?: Array<'challenge' | 'extended' | null>
   reviewer_inputs?: IdeaReviewerInput[]
   block?: string
 }
@@ -2187,6 +2190,7 @@ function toIdeaIntakeAnswers(body: IdeaIntakeAnswersBody): IdeaIntakeAnswers {
     followups: body.followups ?? [],
     openPoints: body.open_points ?? [],
     openPointTurns: body.open_point_turns ?? [],
+    openPointQuestionKinds: body.open_point_question_kinds ?? [],
     reviewerInputs: body.reviewer_inputs ?? [],
     block: body.block ?? '',
   }

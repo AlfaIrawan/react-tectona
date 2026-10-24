@@ -3882,6 +3882,7 @@ export function IdeaDetailPage() {
   const [ideaDocGenerateIntakeFollowups, setIdeaDocGenerateIntakeFollowups] = useState<IdeaIntakeFollowup[]>([])
   const [ideaDocGenerateIntakeOpenPoints, setIdeaDocGenerateIntakeOpenPoints] = useState<string[]>([])
   const [ideaDocGenerateIntakeOpenPointTurns, setIdeaDocGenerateIntakeOpenPointTurns] = useState<Array<number | null>>([])
+  const [ideaDocGenerateIntakeOpenPointQuestionKinds, setIdeaDocGenerateIntakeOpenPointQuestionKinds] = useState<Array<IdeaIntakeFollowup['question_kind']>>([])
   // The source preview's tabs: the brainstorm (questions and answers) and the AI summary.
   const [ideaDocSourceTab, setIdeaDocSourceTab] = useState<'brainstorm' | 'summary'>('brainstorm')
   const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
@@ -4057,6 +4058,7 @@ export function IdeaDetailPage() {
     setIdeaDocGenerateIntakeFollowups(next.followups)
     setIdeaDocGenerateIntakeOpenPoints(next.openPoints)
     setIdeaDocGenerateIntakeOpenPointTurns(next.openPointTurns)
+    setIdeaDocGenerateIntakeOpenPointQuestionKinds(next.openPointQuestionKinds ?? [])
     setIdeaDocGenerateIntakeBlock(next.block)
     // The answers lead the source context: swap the old block for the new one, keeping the rest.
     setIdeaDocGenerateSource((source) => {
@@ -7911,6 +7913,7 @@ export function IdeaDetailPage() {
       setIdeaDocGenerateIntakeFollowups(intake.followups)
       setIdeaDocGenerateIntakeOpenPoints(intake.openPoints)
       setIdeaDocGenerateIntakeOpenPointTurns(intake.openPointTurns)
+      setIdeaDocGenerateIntakeOpenPointQuestionKinds(intake.openPointQuestionKinds ?? [])
       setIdeaDocSourceTab('brainstorm')
       setIdeaDocGenerateSource([intake.block, narrative].filter(Boolean).join('\n\n'))
       setIdeaDocSourceMode('preview')
@@ -16381,7 +16384,7 @@ export function IdeaDetailPage() {
                                         <div>
                                           <h3 className="!mt-0 !text-base font-semibold text-foreground">Brainstorming</h3>
                                           <p className="text-xs text-muted-foreground">
-                                            The proposer's confirmed answers and the AI's follow-up questions, in the order they were asked.
+                                            The proposer's confirmed answers and questions from the brainstorm, labelled by their original question type and shown in the order they were asked.
                                           </p>
                                         </div>
                                         <IdeaIntakeAnswerList
@@ -16389,6 +16392,7 @@ export function IdeaDetailPage() {
                                           followups={ideaDocGenerateIntakeFollowups}
                                           openPoints={ideaDocGenerateIntakeOpenPoints}
                                           openPointTurns={ideaDocGenerateIntakeOpenPointTurns}
+                                          openPointQuestionKinds={ideaDocGenerateIntakeOpenPointQuestionKinds}
                                           disabled={ideaDocGenerateBusy}
                                           onSave={saveIdeaDocIntakeAnswer}
                                         />
