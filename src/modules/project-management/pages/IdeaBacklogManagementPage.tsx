@@ -4529,6 +4529,7 @@ export function IdeaBacklogManagementPage() {
         ? {
             ...current,
             revision: response.revision,
+            live_summary: response.live_summary,
             draft_session_id: response.draft_session_id ?? current.draft_session_id,
             brainstorm_messages: visibleResponseMessages,
             brainstorm_ready: edit ? response.ready_to_continue : current.brainstorm_ready || response.ready_to_continue,

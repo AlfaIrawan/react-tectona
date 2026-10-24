@@ -629,6 +629,7 @@ export interface IdeaDraftBrainstormMessage {
 }
 
 export interface IdeaDraftBrainstormResponse {
+  live_summary?: IdeaDraftLiveSummary | null
   draft_session_id?: string | null
   revision?: string
   messages: IdeaDraftBrainstormMessage[]
@@ -702,7 +703,16 @@ export interface CreateIdeaDraftJobResponse {
   correlation_id: string
 }
 
+export interface IdeaDraftLiveSummary {
+  status: 'ready' | 'empty' | 'unavailable'
+  source_revision: string
+  source_fingerprint: string
+  sections: Array<{ key: string; title: string; body: string; evidence_ids: string[] }>
+  text: string
+}
+
 export interface IdeaDraftJobStatusResponse {
+  live_summary?: IdeaDraftLiveSummary | null
   draft_session_id?: string | null
   revision?: string
   job_id: string

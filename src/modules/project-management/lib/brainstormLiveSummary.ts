@@ -10,13 +10,14 @@ export type LiveSummarySnapshot = {
   sections: LiveSummarySection[]
 }
 
-/** A projection of the server's evidence, not another independently generated summary. */
+/** The structured proposal is separate from the per-reply understanding box. */
 export function buildBrainstormLiveSummary(job: IdeaDraftJobStatusResponse | null): LiveSummarySnapshot {
-  const messages = job?.brainstorm_messages ?? []
-  const latest = [...messages].reverse().find(message => message.role === 'assistant')
-  const sections: LiveSummarySection[] = []
-  if (latest?.summary?.trim()) sections.push({ id: 'understanding', title: 'Current understanding', text: latest.summary.trim() })
-  return { sections }
+  const summary = job?.live_summary
+  if (!summary || summary.status === 'empty') return { sections: [] }
+  if (summary.status === 'ready' && job.revision && summary.source_revision && summary.source_revision !== job.revision) return { sections: [] }
+  return { sections: summary.sections.filter(section => section.body.trim()).map(section => ({
+    id: section.key, title: section.title, text: section.body,
+  })) }
 }
 
 /** Keep unchanged text on both sides; animate only the replaced range (Unicode-safe). */

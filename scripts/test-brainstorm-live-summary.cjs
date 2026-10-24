@@ -31,18 +31,21 @@ async function main() {
   loaded.filename = path.resolve('live-summary-test.cjs'); loaded.paths = module.paths
   loaded._compile(built.outputFiles[0].text, loaded.filename)
   const { BrainstormLiveSummaryPanel: Component, buildBrainstormLiveSummary: build, summaryTextChange: diff } = loaded.exports
+  const live = text => ({ status: 'ready', source_revision: 'r1', source_fingerprint: 'evidence-v1', text, sections: [{ key: 'objective', title: 'Tujuan', body: text, evidence_ids: ['intake:goal'] }] })
   const job = { job_id: 'one', brainstorm_messages: [{ role: 'assistant', summary: 'Chat for Collection.\n\nKeep audit logs.', text: 'Summary', ai_advice: 'Consider an API.' }], intake_checklist: [
     { id: 'goal', prompt: 'Project goal', status: 'answered', evidence_status: 'confirmed', evidence_text: 'Assist Collection' },
     { id: 'kpi', prompt: 'Success target', status: 'answered', evidence_status: 'inferred', evidence_text: '90% accuracy' },
     { id: 'asis', prompt: 'Current process', evidence_status: 'missing', evidence_text: '' },
     { id: 'legacy', prompt: 'Unknown confirmation', status: 'answered', evidence_text: 'Not confirmed' },
-  ], brainstorm_remaining_gaps: ['Current process', 'Current process'] }
+  ], brainstorm_remaining_gaps: ['Current process', 'Current process'], revision: 'r1', live_summary: live('Chat for Collection.\n\nKeep audit logs.') }
   const model = build(job)
-  assert.deepEqual(model.sections.map(s => s.id), ['understanding'], 'only narrative summary belongs in the panel')
-  const greeting = { ...job, brainstorm_messages: [{ role: 'assistant', text: 'Hello. Describe your project.', ai_advice: 'Consider an API.' }] }
+  assert.deepEqual(model.sections.map(s => s.id), ['objective'], 'use canonical proposal sections')
+  assert.equal(model.sections[0].title, 'Tujuan')
+  const greeting = { ...job, live_summary: null, brainstorm_messages: [{ role: 'assistant', summary: 'This is only a chat recap.', text: 'Hello. Describe your project.', ai_advice: 'Consider an API.' }] }
   assert.deepEqual(build(greeting).sections, [], 'gaps, checklist and advice alone must not trigger a summary')
   assert.deepEqual(build(null).sections, [])
-  assert.equal(build({ ...job, brainstorm_messages: [...job.brainstorm_messages, { role: 'assistant', text: 'Next question' }] }).sections.length, 0, 'do not invent a summary for newer replies')
+  assert.equal(build({ ...job, revision: 'changed' }).sections.length, 0, 'reject stale summaries after edits')
+  assert.equal(build({ ...job, brainstorm_messages: [{ role: 'assistant', summary: 'Different chat recap' }] }).sections[0].text, job.live_summary.sections[0].body, 'never copy the per-turn recap')
   for (const [before, after] of [['Alpha Collection Omega', 'Alpha Credit Omega'], ['hello', ''], ['', 'new'], ['A😀B', 'A🧠B']]) {
     const change = diff(before, after)
     assert.equal(change.prefix + change.removed.join('') + change.suffix, before)
@@ -52,7 +55,7 @@ async function main() {
   let props = { job: greeting, busy: false }
   const render = async patch => { props = { ...props, ...patch }; await act(async () => root.render(React.createElement(Component, props))) }
   const wait = async ms => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)) })
-  const body = () => document.querySelector('[data-summary-section="understanding"] [aria-hidden="true"]:nth-child(2)')?.textContent
+  const body = () => document.querySelector('[data-summary-section="objective"] [aria-hidden="true"]:nth-child(2)')?.textContent
   await render({})
   assert.equal(document.querySelector('aside'), null)
   assert.equal(document.querySelector('[aria-label="Open Live AI Summary"]'), null)
@@ -68,7 +71,7 @@ async function main() {
   assert.equal(body(), 'Chat for Collection.\nKeep audit logs.')
   assert.doesNotMatch(document.body.textContent, /Open points|Confidence|Confirmed evidence|Success target|Consider an API/)
   assert.equal(document.querySelector('[role="status"]'), null, 'no permanent status row')
-  const next = { ...job, brainstorm_messages: [{ role: 'assistant', summary: 'Chat for Credit.\n\nKeep audit logs.', text: 'Summary' }] }
+  const next = { ...job, live_summary: live('Chat for Credit.\n\nKeep audit logs.') }
   await render({ job: next, busy: true })
   await wait(100)
   assert.match(body(), /Collection/)
@@ -77,28 +80,31 @@ async function main() {
   assert.match(body(), /Collection/)
   assert.match(document.querySelector('[role="status"]').textContent, /Update failed/)
   await render({ error: '' })
-  assert.equal(document.querySelector('[data-summary-section="understanding"] [data-summary-phase]').dataset.summaryPhase, 'deleting')
+  assert.equal(document.querySelector('[data-summary-section="objective"] [data-summary-phase]').dataset.summaryPhase, 'deleting')
   await wait(1100)
   assert.match(body(), /Credit/)
   assert.doesNotMatch(body(), /Collection/)
   assert.match(body(), /Keep audit logs/)
   await act(async () => document.querySelector('[aria-label="Collapse summary"]').click())
-  await render({ job: { ...next, brainstorm_messages: [{ role: 'assistant', text: 'Summary', summary: 'Updated while collapsed.' }] } })
+  await render({ job: { ...next, live_summary: live('Updated while collapsed.') } })
   assert.ok(document.querySelector('aside button[aria-label="Open Live AI Summary"]'))
   assert.equal(document.querySelector('aside [aria-label="Summary updated"]')?.getAttribute('role'), 'status')
   assert.equal(document.querySelector('[aria-label="Collapse summary"]').closest('div.flex-col').classList.contains('hidden'), true, 'updates do not reopen a collapsed panel')
   await act(async () => document.querySelector('aside button[aria-label="Open Live AI Summary"]').click())
   assert.equal(document.querySelector('aside [aria-label="Summary updated"]'), null)
-  await render({ job: { ...next, brainstorm_messages: [{ role: 'assistant', text: 'Summary', summary: 'First replacement' }] } })
+  await render({ job: { ...next, live_summary: live('First replacement') } })
   await wait(40)
-  await render({ job: { ...next, brainstorm_messages: [{ role: 'assistant', text: 'Summary', summary: 'Latest replacement' }] } })
+  await render({ job: { ...next, live_summary: live('Latest replacement') } })
   await wait(1100)
   assert.equal(body(), 'Latest replacement', 'rapid updates must cancel older animation timers')
   reduced = true
   await act(async () => motionListeners.forEach(fn => fn()))
-  await render({ job: { ...next, brainstorm_messages: [{ role: 'assistant', text: 'Summary', summary: 'No motion' }] } })
+  await render({ job: { ...next, live_summary: live('No motion') } })
   assert.equal(body(), 'No motion')
-  assert.equal(document.querySelector('[data-summary-section="understanding"] [data-summary-phase]').dataset.summaryPhase, 'idle')
+  assert.equal(document.querySelector('[data-summary-section="objective"] [data-summary-phase]').dataset.summaryPhase, 'idle')
+  await render({ job: { ...next, live_summary: { ...live('Unavailable'), status: 'unavailable' } } })
+  assert.equal(body(), 'No motion', 'failed synthesis retains the previous proposal, never substitutes a chat recap')
+  await render({ job: { ...next, live_summary: live('No motion') } })
   wide = false
   await act(async () => motionListeners.forEach(fn => fn()))
   const open = document.querySelector('button[aria-expanded="false"][aria-label="Open Live AI Summary"]')
