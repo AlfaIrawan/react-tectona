@@ -107,6 +107,7 @@ import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import { BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
+import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
 import { closeBrainstorm } from '../lib/closeBrainstorm'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
@@ -4881,6 +4882,7 @@ export function IdeaBacklogManagementPage() {
     if (!isEvidenceDialogOpen) return
     const onEsc = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return
+      if (document.querySelector('[data-brainstorm-summary-dialog]')) return
       event.preventDefault()
       event.stopImmediatePropagation()
       if (isBrainstormMode) {
@@ -7181,7 +7183,7 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       </header>
 
-                      <div className="flex min-h-0 flex-1 overflow-hidden bg-muted/15">
+                      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-muted/15">
                         <div className="hidden min-h-0 md:flex">
                           <BrainstormEvidenceRail
                             confidencePercent={brainstormConfidencePercent}
@@ -7831,6 +7833,13 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       </div>
                         </div>
+                        <BrainstormLiveSummaryPanel
+                          key={ideaDraftJob?.draft_session_id ?? ideaDraftJob?.job_id ?? 'new-brainstorm'}
+                          job={ideaDraftJob}
+                          confidence={brainstormConfidencePercent}
+                          busy={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
+                          error={brainstormError}
+                        />
                       </div>
                     </div>
                   ) : (
