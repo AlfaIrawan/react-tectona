@@ -80,10 +80,13 @@ async function main() {
       if (await page.viewportSize().width >= 1440) assert.ok(chat.x + chat.width <= summary.x + 1, 'summary reserves space beside chat')
       assert.equal(await page.locator('[data-summary-section="objective"] ul li').count(), 4, 'animated and reserved Markdown each render two bullets')
       if (page.viewportSize().width >= 1440) {
-        assert.ok(summary.y >= 64 && summary.x + summary.width <= page.viewportSize().width - 12, 'floating panel has top and right margins')
+        assert.ok(summary.y >= 80 && summary.x + summary.width <= page.viewportSize().width - 24, 'floating panel has generous top and right margins')
         assert.ok(summary.height <= 761 && summary.y + summary.height < page.viewportSize().height, 'not a full-height sidebar')
         assert.equal(await panel.evaluate(element => getComputedStyle(element).position), 'absolute')
         assert.equal(await panel.evaluate(element => getComputedStyle(element).borderRadius), '8px')
+        const shadow = await panel.evaluate(element => getComputedStyle(element).boxShadow)
+        assert.match(shadow, /32px/, 'visible elevation must not regress to a nearly flat shadow')
+        assert.match(shadow, /8px/, 'floating panel has layered elevation')
       }
     }
     await verify()

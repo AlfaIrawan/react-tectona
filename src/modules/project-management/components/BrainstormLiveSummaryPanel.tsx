@@ -176,7 +176,7 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
   const openMobile = () => { setMobileOpen(true); setUnread(false) }
   const content = (
     <>
-      <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+      <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border/70 bg-muted/40 px-4">
         <h2 id="brainstorm-live-summary-title" className="flex min-w-0 items-center gap-2 text-sm font-semibold"><BookOpenText className="h-4 w-4 shrink-0" />Live AI Summary</h2>
         <button type="button" title="Collapse summary" aria-label="Collapse summary" onClick={() => { setExpanded(false); setMobileOpen(false) }} className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:inline-flex"><PanelRightClose className="h-4 w-4" /></button>
         <button type="button" title="Close summary" aria-label="Close summary" onClick={() => setMobileOpen(false)} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:hidden"><X className="h-4 w-4" /></button>
@@ -194,10 +194,10 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
   )
   return (
     <>
-      <div aria-hidden="true" data-summary-space className={cn('hidden shrink-0 transition-[width] duration-[240ms] motion-reduce:transition-none min-[1440px]:block', !entered ? 'w-0' : expanded ? 'w-[416px]' : 'w-16')} />
+      <div aria-hidden="true" data-summary-space className={cn('hidden shrink-0 transition-[width] duration-[240ms] motion-reduce:transition-none min-[1440px]:block', !entered ? 'w-0' : expanded ? 'w-[432px]' : 'w-[72px]')} />
       {mobileOpen ? <button type="button" aria-label="Close summary backdrop" className="absolute inset-0 z-40 bg-black/25 min-[1440px]:hidden" onClick={() => setMobileOpen(false)} /> : null}
       <aside ref={panelRef} role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen || undefined} aria-label="Live AI Summary" data-summary-floating data-brainstorm-summary-dialog={mobileOpen || undefined} data-summary-entered={entered}
-        className={cn('absolute min-h-0 flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-sm transition-[width,transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:right-4 min-[1440px]:top-4 min-[1440px]:bottom-auto min-[1440px]:z-20 min-[1440px]:flex', !entered ? 'translate-x-4 opacity-0' : 'translate-x-0 opacity-100', expanded ? 'min-[1440px]:w-96 min-[1440px]:max-h-[min(760px,calc(100%_-_2rem))]' : 'min-[1440px]:h-12 min-[1440px]:w-12', mobileOpen ? 'bottom-3 right-3 top-3 z-50 flex w-[min(400px,calc(100%_-_1.5rem))]' : 'hidden')}>
+        className={cn('absolute min-h-0 flex-col overflow-hidden rounded-[8px] border border-border/80 bg-background shadow-[0_12px_32px_-10px_rgba(15,23,42,0.24),0_3px_8px_-3px_rgba(15,23,42,0.12)] dark:shadow-[0_16px_40px_-10px_rgba(0,0,0,0.55)] transition-[width,transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:right-6 min-[1440px]:top-6 min-[1440px]:bottom-auto min-[1440px]:z-20 min-[1440px]:flex', !entered ? 'translate-x-4 opacity-0' : 'translate-x-0 opacity-100', expanded ? 'min-[1440px]:w-96 min-[1440px]:max-h-[min(760px,calc(100%_-_3rem))]' : 'min-[1440px]:h-12 min-[1440px]:w-12', mobileOpen ? 'bottom-3 right-3 top-3 z-50 flex w-[min(400px,calc(100%_-_1.5rem))]' : 'hidden')}>
         <div className={cn('min-h-0 flex-1 flex-col transition-[transform,opacity] duration-[240ms] motion-reduce:transition-none min-[1440px]:w-96', entered ? 'translate-x-0 opacity-100' : 'translate-x-4 opacity-0', expanded || mobileOpen ? 'flex' : 'hidden')}>{content}</div>
         {!expanded && !mobileOpen ? <button type="button" title={unread ? 'Open Live AI Summary - updated' : 'Open Live AI Summary'} aria-label="Open Live AI Summary" onClick={openDesktop} className="relative m-auto inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-muted"><PanelRightOpen className="h-4 w-4" />{unread ? <span role="status" aria-label="Summary updated" className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-600" /> : null}</button> : null}
       </aside>
