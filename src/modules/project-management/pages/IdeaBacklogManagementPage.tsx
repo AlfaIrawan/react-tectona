@@ -106,6 +106,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
+import { BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import {
@@ -1364,12 +1365,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
       {hasSummary ? (
         <>
           {before ? <BrainstormAssistantMessageBody text={before} /> : null}
-          <div className="my-2 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/30">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-300">
-              {indonesian ? 'Rangkuman Pemahaman' : 'Summary of Understanding'}
-            </p>
-            <BrainstormAssistantMessageBody text={summary} />
-          </div>
+          <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS} />
         </>
       ) : rest ? (
         <BrainstormAssistantMessageBody text={rest} />
