@@ -622,6 +622,9 @@ export interface IdeaDraftBrainstormMessage {
   suggestion_multiple?: boolean
   suggestion_baseline?: string
   suggestion_item_id?: string
+  catalog_matches?: Array<{ application: string; documented_function: string; proposed_fit: string }>
+  catalog_mode?: 'current' | 'proposed' | null
+  catalog_status?: 'matched' | 'no_match' | 'unavailable' | null
   ai_advice?: string | null
 }
 

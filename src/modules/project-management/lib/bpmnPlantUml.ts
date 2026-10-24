@@ -46,6 +46,21 @@ function bpmnTypeFromKind(kind: BpmnParsedKind, shape?: string): string {
   return 'task'
 }
 
+function boundaryKind(id: string, label: string): 'start' | 'end' | null {
+  if (/(?:^|_)(?:start(?:event)?|mulai)(?:_|$)/i.test(id) || /^(?:start|mulai)$/i.test(label.trim())) return 'start'
+  if (/(?:^|_)(?:end(?:event)?|stop|finish)(?:_|$)/i.test(id) || /^(?:end|selesai|stop|finish)$/i.test(label.trim())) return 'end'
+  return null
+}
+
+function classifyBoundaryEvents(graph: BpmnParsedGraph): BpmnParsedGraph {
+  return { ...graph, nodes: graph.nodes.map(node => {
+    if (node.kind !== 'start' && node.kind !== 'end') return node
+    const degree = graphDegree(graph, node.id)
+    const kind = boundaryKind(node.id, node.label) ?? (degree.incoming === 0 && degree.outgoing > 0 ? 'start' : degree.outgoing === 0 && degree.incoming > 0 ? 'end' : node.kind)
+    return { ...node, kind, bpmnType: bpmnTypeFromKind(kind) }
+  }) }
+}
+
 const LANE_NAME = String.raw`(?:[A-Z][\p{L}\p{N}.]*|AI|HO|ID)`
 const PARTICIPANT_RE = new RegExp(
   String.raw`\b(?:dengan|diterima(?:\s+oleh)?|dari|di)\s+(${LANE_NAME}(?:\s+${LANE_NAME}){0,4})`,
@@ -224,7 +239,7 @@ function parseMermaidFlowToBpmn(source: string): BpmnParsedGraph {
       continue
     }
     if (circle || stadium || round) {
-      const kind: BpmnParsedKind = /end|selesai|stop|finish/i.test(label) ? 'end' : 'start'
+      const kind: BpmnParsedKind = boundaryKind(id, label) ?? 'start'
       add(id, label, kind, bpmnTypeFromKind(kind))
       continue
     }
@@ -248,7 +263,7 @@ function parseMermaidFlowToBpmn(source: string): BpmnParsedGraph {
       edges.push({ id: `edge-${index}`, source: nodes[index].id, target: current.id })
     })
   }
-  return { nodes, edges }
+  return classifyBoundaryEvents({ nodes, edges })
 }
 
 export function parseBpmnPlantUml(source: string): BpmnParsedGraph {
@@ -271,7 +286,7 @@ export function parseBpmnPlantUml(source: string): BpmnParsedGraph {
   let match: RegExpExecArray | null
   while ((match = circle.exec(source))) {
     const label = match[1]
-    const kind: BpmnParsedKind = /end|selesai|stop|finish/i.test(label) ? 'end' : 'start'
+    const kind: BpmnParsedKind = boundaryKind(match[2], label) ?? 'start'
     add(match[2], label, kind, bpmnTypeFromKind(kind))
   }
 
@@ -319,7 +334,7 @@ export function parseBpmnPlantUml(source: string): BpmnParsedGraph {
     })
   }
 
-  return { nodes, edges }
+  return classifyBoundaryEvents({ nodes, edges })
 }
 
 function isBoundaryNode(node: BpmnParsedNode, boundary: 'start' | 'end'): boolean {

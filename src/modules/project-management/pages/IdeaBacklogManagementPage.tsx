@@ -107,6 +107,7 @@ import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
+import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import {
   enterpriseDestructiveOutlineButtonClass,
   enterprisePrimarySoftButtonClass,
@@ -1335,19 +1336,20 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
 }) {
   const text = message.text
   const summary = (message.summary ?? '').trim()
+  const hasSummary = Boolean(summary)
   const at = summary ? text.indexOf(summary) : -1
-  const before = at >= 0 ? text.slice(0, at).trim() : text
+  const before = at >= 0 ? text.slice(0, at).trim() : ''
   const after = at >= 0 ? text.slice(at + summary.length).trim() : ''
   const kind = message.question_kind === 'challenge' || message.question_kind === 'extended'
     ? BRAINSTORM_QUESTION_KIND[message.question_kind]
     : null
   // The closing question is the last paragraph when it asks something (and is not a diagram).
-  let rest = at >= 0 ? after : before
+  let rest = at >= 0 ? after : text
   let question = ''
-  if (kind) {
+  if (kind || message.question_kind === 'mandatory') {
     const paragraphs = rest.split(/\n{2,}/)
     const last = paragraphs[paragraphs.length - 1] ?? ''
-    if (last.includes('?') && !last.includes('```')) {
+    if ((last.includes('?') || /^\s*\*\*/.test(last)) && !last.includes('```')) {
       question = last
       rest = paragraphs.slice(0, -1).join('\n\n')
     }
@@ -1359,7 +1361,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
           {kind.label}
         </span>
       ) : null}
-      {at >= 0 ? (
+      {hasSummary ? (
         <>
           {before ? <BrainstormAssistantMessageBody text={before} /> : null}
           <div className="my-2 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/30">
@@ -1376,7 +1378,8 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
         <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Saran AI' : 'AI suggestion'}</p>
         <BrainstormAssistantMessageBody text={message.ai_advice} />
       </div> : null}
-      {at >= 0 && rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
+      {hasSummary && rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
+      <BrainstormCatalogComparison matches={message.catalog_matches} mode={message.catalog_mode} status={message.catalog_status} indonesian={indonesian} />
       {question ? (
         <div className={kind?.text}>
           <BrainstormAssistantMessageBody text={question} />
