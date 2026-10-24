@@ -21,6 +21,8 @@ import type { IdeaDraftBrainstormMessage } from '@/lib/api/tectonaAgentRuntimeAp
  */
 export type IdeaDraftBrainstormPointer = {
   jobId: string
+  draftSessionId?: string | null
+  relatedJobIds?: string[]
   title: string
   updatedAt: number
   ownerId?: string
@@ -94,15 +96,24 @@ export const useIdeaDraftBrainstormPointerStore = create<IdeaDraftBrainstormPoin
       },
       mergePointers: (incoming) => set((state) => {
         let pointers = state.pointers
+        const removed = new Set(state.removedJobIds)
         for (const pointer of incoming) {
           if (state.removedJobIds.includes(pointer.jobId)) continue
+          const aliases = (pointer.relatedJobIds ?? []).filter((id) => id !== pointer.jobId)
           const previous = pointers.find((item) => item.jobId === pointer.jobId)
+            ?? pointers.filter((item) => aliases.includes(item.jobId) && item.ownerId === pointer.ownerId && item.workspaceId === pointer.workspaceId)
+              .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+          pointers = pointers.filter((item) => !aliases.includes(item.jobId))
+          for (const id of aliases) removed.add(id)
           // Server list metadata must never discard the local recovery transcript.
           pointers = upsert(pointers, previous && previous.updatedAt > pointer.updatedAt
-            ? { ...pointer, ...previous, ideaId: pointer.ideaId || previous.ideaId }
-            : { ...previous, ...pointer, ideaId: pointer.ideaId || previous?.ideaId })
+            ? { ...pointer, ...previous, jobId: pointer.jobId, status: pointer.status ?? previous.status, relatedJobIds: pointer.relatedJobIds,
+              messages: pointer.messages?.length ? pointer.messages : previous.messages,
+              draftSessionId: pointer.draftSessionId || previous.draftSessionId, ideaId: pointer.ideaId || previous.ideaId }
+            : { ...previous, ...pointer, messages: pointer.messages?.length ? pointer.messages : previous?.messages,
+              draftSessionId: pointer.draftSessionId || previous?.draftSessionId, ideaId: pointer.ideaId || previous?.ideaId })
         }
-        return { pointers }
+        return { pointers, removedJobIds: [...removed] }
       }),
       replacePointer: (jobId, pointer) => set((state) => ({
         pointer: trimPointer(pointer),

@@ -4407,6 +4407,8 @@ export function IdeaBacklogManagementPage() {
         const rawFirst = firstError instanceof Error ? firstError.message : String(firstError)
         if (edit || !isIdeaDraftJobLostError(rawFirst)) throw firstError
         const restored = await restoreIdeaDraftBrainstormSession({
+          source_job_id: ideaDraftJob.job_id,
+          draft_session_id: ideaDraftJob.draft_session_id ?? useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)?.draftSessionId,
           title: createIdeaForm.title.trim() || 'Untitled idea',
           tags: effectiveCreateIdeaTags,
           context: {
@@ -4423,7 +4425,7 @@ export function IdeaBacklogManagementPage() {
           ready_to_continue: brainstormReady,
         })
         const previousSnapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)
-        if (previousSnapshot) useIdeaDraftBrainstormPointerStore.getState().replacePointer(ideaDraftJob.job_id, { ...previousSnapshot, jobId: restored.job_id })
+        if (previousSnapshot) useIdeaDraftBrainstormPointerStore.getState().replacePointer(ideaDraftJob.job_id, { ...previousSnapshot, jobId: restored.job_id, draftSessionId: restored.draft_session_id ?? previousSnapshot.draftSessionId ?? ideaDraftJob.job_id })
         setIdeaDraftJob(restored)
         setBrainstormMessages((current) => mergeBrainstormUiMessages(
           current.length > 0 ? current : historyBeforeSend,
@@ -4548,6 +4550,7 @@ export function IdeaBacklogManagementPage() {
         ? {
             ...current,
             revision: response.revision,
+            draft_session_id: response.draft_session_id ?? current.draft_session_id,
             brainstorm_messages: visibleResponseMessages,
             brainstorm_ready: edit ? response.ready_to_continue : current.brainstorm_ready || response.ready_to_continue,
             brainstorm_remaining_gaps: response.remaining_gaps,
@@ -4856,6 +4859,7 @@ export function IdeaBacklogManagementPage() {
       || 'Untitled idea'
     useIdeaDraftBrainstormPointerStore.getState().retainPointer(ideaDraftJob.status, {
       jobId: ideaDraftJob.job_id,
+      draftSessionId: ideaDraftJob.draft_session_id ?? currentPointer?.draftSessionId,
       ownerId: currentUserId,
       status: ideaDraftJob.status,
       composerDraft: brainstormInput,
@@ -4907,6 +4911,8 @@ export function IdeaBacklogManagementPage() {
         return
       }
       const restoreSnapshot = () => restoreIdeaDraftBrainstormSession({
+        source_job_id: jobId,
+        draft_session_id: snapshot?.draftSessionId,
         title: snapshot?.title || 'Untitled idea',
         tags: snapshot?.tags ?? [],
         context: {
@@ -4938,9 +4944,10 @@ export function IdeaBacklogManagementPage() {
           status = await waitForIdeaDraftJob(status.job_id, () => !cancelled, false)
           if (cancelled) return
         }
-        if (status.job_id !== jobId) {
-          useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, { ...snapshot, jobId: status.job_id })
-        }
+        const resumed = { ...snapshot, jobId: status.job_id, status: status.status,
+          draftSessionId: status.draft_session_id ?? snapshot.draftSessionId ?? jobId }
+        if (status.job_id !== jobId) useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, resumed)
+        else useIdeaDraftBrainstormPointerStore.getState().setPointer(resumed)
         setIsCreateIdeaDrawerOpen(true)
         setCreateIdeaDraftMode('ai')
         const pointerTitle = snapshot?.title

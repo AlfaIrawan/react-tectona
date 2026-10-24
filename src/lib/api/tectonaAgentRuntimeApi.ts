@@ -629,6 +629,7 @@ export interface IdeaDraftBrainstormMessage {
 }
 
 export interface IdeaDraftBrainstormResponse {
+  draft_session_id?: string | null
   revision?: string
   messages: IdeaDraftBrainstormMessage[]
   ready_to_continue: boolean
@@ -645,6 +646,8 @@ export interface IdeaDraftBrainstormResponse {
 }
 
 export interface RestoreIdeaDraftBrainstormRequest {
+  source_job_id?: string
+  draft_session_id?: string | null
   title: string
   tags?: string[]
   context?: {
@@ -692,6 +695,7 @@ export interface IdeaDraftVersionListResponse {
 }
 
 export interface CreateIdeaDraftJobResponse {
+  draft_session_id?: string | null
   job_id: string
   status: IdeaDraftJobStatus
   progress_percent: number
@@ -699,6 +703,7 @@ export interface CreateIdeaDraftJobResponse {
 }
 
 export interface IdeaDraftJobStatusResponse {
+  draft_session_id?: string | null
   revision?: string
   job_id: string
   status: IdeaDraftJobStatus
@@ -2463,6 +2468,8 @@ export async function getIdeaDraftJob(
 }
 
 export interface IdeaDraftSessionEntry {
+  draft_session_id?: string | null
+  related_job_ids?: string[]
   job_id: string
   workspace_id: string
   title: string
@@ -2474,8 +2481,10 @@ export interface IdeaDraftSessionEntry {
   workspace_name?: string | null
 }
 
-export async function listIdeaDraftSessions(offset = 0): Promise<{ items: IdeaDraftSessionEntry[]; has_more: boolean }> {
-  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/idea-draft-sessions?offset=${offset}`, { method: 'GET' }, 15_000)
+export async function listIdeaDraftSessions(offset = 0, workspaceId?: string): Promise<{ items: IdeaDraftSessionEntry[]; has_more: boolean }> {
+  const query = new URLSearchParams({ offset: String(offset) })
+  if (workspaceId) query.set('workspace_id', workspaceId)
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/idea-draft-sessions?${query}`, { method: 'GET' }, 15_000)
   return handleResponse(res)
 }
 

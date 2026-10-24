@@ -57,6 +57,35 @@ async function main() {
   store.getState().setPointer({ ...a, jobId: 'this-tab', updatedAt: 60 })
   await store.persist.rehydrate()
   assert.ok(store.getState().pointers.some(p => p.jobId === 'other-tab'), 'another tab draft survives an index write')
-  console.log('PASS: migration, multiple drafts, refresh, metadata sync, creation, restore, targeted deletion, late responses, failed save, retry and independent tab writes')
+  const indexBuild = await esbuild.build({ entryPoints: ['src/lib/chat/ideaDraftSessionIndex.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external' })
+  const indexModule = new Module(path.resolve('draft-index-test.cjs'), module)
+  indexModule.filename = path.resolve('draft-index-test.cjs')
+  indexModule.paths = module.paths
+  indexModule._compile(indexBuild.outputFiles[0].text, indexModule.filename)
+  const { indexIdeaDraftSessions, isActiveIdeaDraft, ideaDraftSessionPreview } = indexModule.exports
+  const oldJobs = Array.from({ length: 48 }, (_, i) => ({ ...a, jobId: `legacy-${i}`, status: 'awaiting_input' }))
+  const oldIndex = indexIdeaDraftSessions(oldJobs, 'alice', ['w1'])
+  assert.equal(oldIndex.length, 48, 'legacy data is preserved')
+  assert.equal(oldIndex.filter(isActiveIdeaDraft).length, 0, 'historical technical jobs do not flood the active list')
+  assert.match(ideaDraftSessionPreview(oldIndex[0]), /Previous session/)
+  const active = { ...a, jobId: 'root-job', draftSessionId: 'logical-a', status: 'awaiting_input' }
+  const recovered = { ...active, jobId: 'recovered', updatedAt: 100 }
+  assert.deepEqual(indexIdeaDraftSessions([active, recovered], 'alice', ['w1']).map(p => p.jobId), ['recovered'])
+  const independent = { ...active, jobId: 'independent', draftSessionId: 'logical-b' }
+  assert.equal(indexIdeaDraftSessions([active, independent], 'alice', ['w1']).length, 2, 'same title does not merge unrelated drafts')
+  assert.equal(indexIdeaDraftSessions([active, { ...active, ownerId: 'bob' }, { ...independent, workspaceId: 'w2' }], 'alice', ['w1']).length, 1)
+  assert.equal(indexIdeaDraftSessions([active], '', ['w1']).length, 0)
+  assert.equal(isActiveIdeaDraft({ ...active, status: 'failed' }), false)
+  assert.equal(isActiveIdeaDraft({ ...active, ideaId: 'created' }), false)
+  assert.match(ideaDraftSessionPreview({ ...active, status: 'failed' }), /Generation failed/)
+  assert.match(ideaDraftSessionPreview({ ...active, status: 'completed' }), /Draft ready/)
+  store.getState().setPointer(active)
+  store.getState().mergePointers([{ ...recovered, messages: undefined, relatedJobIds: ['root-job', 'recovered'] }])
+  await store.persist.rehydrate()
+  assert.ok(!store.getState().pointers.some(p => p.jobId === 'root-job'), 'verified obsolete job aliases disappear from the index only')
+  assert.deepEqual(store.getState().pointers.find(p => p.jobId === 'recovered').messages, active.messages)
+  store.getState().mergePointers([active])
+  assert.ok(!store.getState().pointers.some(p => p.jobId === 'root-job'), 'late metadata cannot reintroduce a superseded job')
+  console.log('PASS: multi-draft lifecycle, 48-job legacy history, stable identity, workspace/owner scope, accurate statuses, same-title independence and verified recovery aliases')
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })

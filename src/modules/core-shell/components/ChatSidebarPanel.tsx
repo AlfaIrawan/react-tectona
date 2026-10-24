@@ -6,6 +6,7 @@ import { getSession } from '@/auth/authService'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import { randomUuid } from '@/lib/randomId'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
+import { indexIdeaDraftSessions, isActiveIdeaDraft, ideaDraftSessionPreview } from '@/lib/chat/ideaDraftSessionIndex'
 import { listIdeaDraftSessions, deleteIdeaDraftSession, linkIdeaDraftJobToIdea } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
   DndContext,
@@ -31,6 +32,7 @@ import {
   ChevronRight,
   ChevronDown,
   Archive,
+  History,
   Inbox,
   Trash2,
   Mail,
@@ -643,6 +645,7 @@ interface Conversation {
   /** Local-only pointer row for a resumable "Generate Draft" brainstorm (idea-draft-job). */
   isBrainstormPointer?: boolean
   brainstormJobId?: string
+  isBrainstormHistory?: boolean
 }
 
 function formatMessageTime(ts: number): string {
@@ -1549,6 +1552,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   const [contactSearchQuery, setContactSearchQuery] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [filterAi, setFilterAi] = useState(true)
+  const [showDraftHistory, setShowDraftHistory] = useState(false)
   const [filterPeople, setFilterPeople] = useState(true)
   const [favoritesAccordionOpen, setFavoritesAccordionOpen] = useState(true)
   const [aiAccordionOpen, setAiAccordionOpen] = useState(true)
@@ -2505,6 +2509,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   // from ordinary Gen AI chats. Closing Create Idea does not remove a session.
   const brainstormPointers = useIdeaDraftBrainstormPointerStore((s) => s.pointers)
   const brainstormOwnerId = getSession()?.user.id ?? ''
+  const brainstormWorkspaceScope = useMemo(() => buildWorkspaceScopeFromTenant(tenant), [tenant?.workspaceId, tenant?.selectedWorkspaceIds, tenant?.tenantMode])
+  const brainstormWorkspaceId = brainstormWorkspaceScope.mode === 'single' ? brainstormWorkspaceScope.workspaceId : undefined
   const [brainstormSessionError, setBrainstormSessionError] = useState('')
   useEffect(() => {
     if (!brainstormOwnerId) return
@@ -2519,10 +2525,11 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         }
         let offset = 0
         do {
-          const page = await listIdeaDraftSessions(offset)
+          const page = await listIdeaDraftSessions(offset, brainstormWorkspaceId)
           if (cancelled) return
           useIdeaDraftBrainstormPointerStore.getState().mergePointers(page.items.map((entry) => ({
             jobId: entry.job_id, ownerId: brainstormOwnerId, title: entry.title,
+            draftSessionId: entry.draft_session_id, relatedJobIds: entry.related_job_ids,
             workspaceId: entry.workspace_id, status: entry.status, ideaId: entry.idea_id,
             tags: entry.tags ?? [], workspaceName: entry.workspace_name,
             sessionId: entry.correlation_id, updatedAt: new Date(entry.updated_date).getTime(),
@@ -2547,16 +2554,17 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('storage', onStorage)
     }
-  }, [brainstormOwnerId])
+  }, [brainstormOwnerId, brainstormWorkspaceId])
   useEffect(() => {
     setConversations((prev) => {
       const withoutPointer = prev.filter((c) => !c.isBrainstormPointer)
       const previousDrafts = new Map(prev.filter((c) => c.isBrainstormPointer).map((c) => [c.brainstormJobId, c]))
-      const synthetic: Conversation[] = brainstormPointers.filter((item) => item.ownerId === brainstormOwnerId).map((brainstormPointer) => ({
+      const workspaceIds = brainstormWorkspaceScope.mode === 'single' ? [brainstormWorkspaceScope.workspaceId] : brainstormWorkspaceScope.workspaceIds
+      const synthetic: Conversation[] = indexIdeaDraftSessions(brainstormPointers, brainstormOwnerId, workspaceIds).map((brainstormPointer) => ({
         id: `idea-draft-brainstorm-${brainstormPointer.jobId}`,
         mode: 'genai',
         title: brainstormPointer.title,
-        preview: brainstormPointer.ideaId ? 'Created - view idea' : 'Draft - tap to resume',
+        preview: ideaDraftSessionPreview(brainstormPointer),
         updatedAt: brainstormPointer.updatedAt,
         unreadCount: 0,
         archived: previousDrafts.get(brainstormPointer.jobId)?.archived ?? false,
@@ -2565,11 +2573,12 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         isBlurred: previousDrafts.get(brainstormPointer.jobId)?.isBlurred ?? false,
         isBlocked: previousDrafts.get(brainstormPointer.jobId)?.isBlocked ?? false,
         isBrainstormPointer: true,
+        isBrainstormHistory: !isActiveIdeaDraft(brainstormPointer),
         brainstormJobId: brainstormPointer.jobId,
       }))
       return [...synthetic, ...withoutPointer].sort((a, b) => b.updatedAt - a.updatedAt)
     })
-  }, [brainstormPointers, brainstormOwnerId])
+  }, [brainstormPointers, brainstormOwnerId, brainstormWorkspaceScope])
 
   useEffect(() => {
     const conv =
@@ -2824,6 +2833,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   const filteredConversations = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     return conversations
+      .filter((c) => showDraftHistory ? Boolean(c.isBrainstormHistory) : !c.isBrainstormHistory)
       .filter((c) => (showArchived ? !!c.archived : !c.archived))
       .filter((c) => (c.mode === 'genai' ? filterAi : filterPeople))
       .filter((c) => !isHiddenPeopleConversation(c))
@@ -2846,7 +2856,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         if (af !== bf) return bf - af
         return b.updatedAt - a.updatedAt
       })
-  }, [conversations, searchQuery, showArchived, filterAi, filterPeople, hiddenChatRevision])
+  }, [conversations, searchQuery, showArchived, filterAi, filterPeople, hiddenChatRevision, showDraftHistory])
 
   const filteredFavoriteConversations = useMemo(
     () => filteredConversations.filter((c) => c.isFavorite),
@@ -6044,6 +6054,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                       <Users className="h-3 w-3" aria-hidden />
                       Team
                     </button>
+                    <Button type="button" variant="ghost" size="icon"
+                      className={cn('h-8 w-8 shrink-0', showDraftHistory && 'bg-muted ring-1 ring-border/70')}
+                      aria-pressed={showDraftHistory}
+                      aria-label={showDraftHistory ? 'Back to active conversations' : 'Show idea draft history'}
+                      title={showDraftHistory ? 'Back to active conversations' : 'Show idea draft history'}
+                      onClick={() => { setShowDraftHistory((value) => !value); setFilterAi(true); setShowArchived(false) }}>
+                      <History className="h-4 w-4" />
+                    </Button>
                     <ChatArchiveDropWrap showArchived={showArchived}>
                       <Button
                         type="button"
@@ -6080,6 +6098,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                       <p className="text-xs font-medium text-foreground">
                         {searchQuery.trim()
                           ? 'No matches'
+                          : showDraftHistory
+                            ? 'No previous idea drafts in this workspace'
                           : showArchived
                             ? 'No archived conversations'
                             : 'No conversations yet'}
@@ -6087,6 +6107,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                       <p className="max-w-[220px] text-[11px] leading-relaxed text-muted-foreground">
                         {searchQuery.trim()
                           ? 'Try different keywords or clear the search.'
+                          : showDraftHistory
+                            ? ''
                           : showArchived
                             ? 'Archive a conversation to keep your inbox clean.'
                             : 'Use New chat to pick a contact and start.'}
@@ -6112,8 +6134,8 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                       {filterAi && (
                         <ConversationSection
                           kind="ai"
-                          title={showArchived ? 'Archived (AI sessions)' : 'AI sessions'}
-                          emptyLabel={showArchived ? 'No archived AI sessions' : 'No AI sessions yet'}
+                          title={showDraftHistory ? 'Idea draft history' : showArchived ? 'Archived (AI sessions)' : 'AI sessions'}
+                          emptyLabel={showDraftHistory ? 'No previous idea drafts in this workspace' : showArchived ? 'No archived AI sessions' : 'No AI sessions yet'}
                           conversations={filteredAiConversations}
                           aiFolderGroups={filteredAiFolderGroups}
                           onRenameAiFolder={renameAiFolder}
@@ -6126,7 +6148,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                           dragToArchiveEnabled={!showArchived}
                         />
                       )}
-                      {filterPeople && (
+                      {filterPeople && !showDraftHistory && (
                         <ConversationSection
                           kind="people"
                           title={showArchived ? 'Archived (People)' : 'People'}
