@@ -107,6 +107,7 @@ import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import { BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
+import { closeBrainstorm } from '../lib/closeBrainstorm'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import {
@@ -3560,25 +3561,6 @@ export function IdeaBacklogManagementPage() {
   }, [isCreateIdeaDrawerOpen, isEvidenceDialogOpen])
 
   useEffect(() => {
-    if (!isEvidenceDialogOpen) return
-    const onEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if (isDraftContinuing || isBrainstormSending) return
-      // A stray Escape (dismissing an IME candidate, a browser autofill popup, or
-      // plain habit) must not tear down a live conversation while the assistant is
-      // still waiting on an answer. Closing stays deliberate: the header's back and
-      // X buttons.
-      if (isBrainstormMode && brainstormMessages.length > 0) return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      setIsEvidenceDialogOpen(false)
-      setIsBrainstormMode(false)
-    }
-    window.addEventListener('keydown', onEsc, true)
-    return () => window.removeEventListener('keydown', onEsc, true)
-  }, [isEvidenceDialogOpen, isDraftContinuing, isBrainstormSending, isBrainstormMode, brainstormMessages.length])
-
-  useEffect(() => {
     const ideaIds = ideas.map((idea) => idea.id)
     setOrderedIdeaIds((prev) => {
       const known = new Set(ideaIds)
@@ -4844,11 +4826,11 @@ export function IdeaBacklogManagementPage() {
     brainstormRemainingGaps,
   ])
 
-  useEffect(() => {
-    if (!ideaDraftJob || isResumingDraft) return
+  const saveBrainstormSnapshot = (): boolean => {
+    if (!ideaDraftJob || isResumingDraft) return false
     // Keep the recovery snapshot while generation is running or fails.
     const currentPointer = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)
-    if (currentPointer?.ownerId && currentPointer.ownerId !== currentUserId) return
+    if (currentPointer?.ownerId && currentPointer.ownerId !== currentUserId) return false
     const typedTitle = createIdeaForm.title.trim()
     const title = typedTitle
       || (currentPointer?.jobId === ideaDraftJob.job_id ? currentPointer.title : '')
@@ -4873,6 +4855,46 @@ export function IdeaBacklogManagementPage() {
       remainingGaps: brainstormRemainingGaps,
       readyToContinue: brainstormReady,
     })
+    return useIdeaDraftSaveStatusStore.getState().status === 'saved'
+      && useIdeaDraftBrainstormPointerStore.getState().pointers.some((item) => item.jobId === ideaDraftJob.job_id)
+  }
+
+  const handleCloseBrainstorm = () => {
+    const closePanels = () => {
+      setIsEvidenceDialogOpen(false)
+      setIsBrainstormMode(false)
+      setIsCreateIdeaDrawerOpen(false)
+    }
+    if (!ideaDraftJob || ideaDraftJob.status === 'cancelled') {
+      closePanels()
+      return
+    }
+    closeBrainstorm({
+      busy: isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing,
+      save: saveBrainstormSnapshot,
+      close: closePanels,
+      notify: addToast,
+    })
+  }
+
+  useEffect(() => {
+    if (!isEvidenceDialogOpen) return
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (isBrainstormMode) {
+        handleCloseBrainstorm()
+      } else if (!isDraftContinuing && !isBrainstormSending) {
+        setIsEvidenceDialogOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onEsc, true)
+    return () => window.removeEventListener('keydown', onEsc, true)
+  }, [isEvidenceDialogOpen, isBrainstormMode, handleCloseBrainstorm, isDraftContinuing, isBrainstormSending])
+
+  useEffect(() => {
+    saveBrainstormSnapshot()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- brainstormPointerSignature stands in for the unstable values read here
   }, [ideaDraftJob, brainstormPointerSignature, isResumingDraft])
 
@@ -7110,8 +7132,8 @@ export function IdeaBacklogManagementPage() {
                             variant="ghost"
                             size="icon"
                             className="h-9 w-9 shrink-0"
-                            onClick={() => setIsBrainstormMode(false)}
-                            aria-label="Back to evidence options"
+                            onClick={handleCloseBrainstorm}
+                            aria-label="Save and close brainstorm"
                           >
                             <ArrowLeft className="h-4 w-4" />
                           </Button>
@@ -7151,10 +7173,7 @@ export function IdeaBacklogManagementPage() {
                             variant="ghost"
                             size="icon"
                             className="h-9 w-9"
-                            onClick={() => {
-                              setIsEvidenceDialogOpen(false)
-                              setIsBrainstormMode(false)
-                            }}
+                            onClick={handleCloseBrainstorm}
                             aria-label="Close chat"
                           >
                             <X className="h-4 w-4" />
@@ -7226,8 +7245,7 @@ export function IdeaBacklogManagementPage() {
                             <p role="status" className={cn('text-xs', draftBackupStatus === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
                               {draftBackupStatus === 'failed' ? 'Save failed - keep this draft open and retry.' : isBrainstormSending ? 'Saving response...' : 'Local backup saved'}
                               {draftBackupStatus === 'failed' && <button type="button" className="ml-2 underline" onClick={() => {
-                                const store = useIdeaDraftBrainstormPointerStore.getState()
-                                if (store.pointer) store.setPointer(store.pointer)
+                                saveBrainstormSnapshot()
                               }}>Retry save</button>}
                             </p>
                           )}
