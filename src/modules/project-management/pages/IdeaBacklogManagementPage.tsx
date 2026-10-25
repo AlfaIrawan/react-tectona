@@ -158,6 +158,7 @@ import {
   cancelIdeaDraftJob,
   continueIdeaDraftJob,
   getIdeaDraftJob,
+  recoverIdeaDraftLiveSummary,
   getIdeaSummaryJob,
   getIdeaDraftVersion,
   listIdeaDraftVersions,
@@ -178,6 +179,7 @@ import {
   type IdeaIntakeQuestion,
   type ContextUsageReport,
 } from '@/lib/api/tectonaAgentRuntimeApi'
+import { recoverBrainstormSummaryOnResume } from '../lib/brainstormLiveSummary'
 import { ChatContextUsagePanel } from '@/modules/core-shell/components/chat/ChatContextUsagePanel'
 import { ChatContextUsageRing } from '@/modules/core-shell/components/chat/ChatContextUsageRing'
 import { UI_SCOPE_IDEA_BACKLOG, useUiLayoutBoolean } from '@/stores/ui-layout-store'
@@ -4910,6 +4912,8 @@ export function IdeaBacklogManagementPage() {
           status = await waitForIdeaDraftJob(status.job_id, () => !cancelled, false)
           if (cancelled) return
         }
+        status = await recoverBrainstormSummaryOnResume(status, recoverIdeaDraftLiveSummary)
+        if (cancelled) return
         const resumed = { ...snapshot, jobId: status.job_id, status: status.status,
           draftSessionId: status.draft_session_id ?? snapshot.draftSessionId ?? jobId }
         if (status.job_id !== jobId) useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, resumed)

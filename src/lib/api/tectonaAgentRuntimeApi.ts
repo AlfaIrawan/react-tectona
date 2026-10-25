@@ -2481,6 +2481,15 @@ export async function getIdeaDraftJob(
   return handleResponse<IdeaDraftJobStatusResponse>(res)
 }
 
+export async function recoverIdeaDraftLiveSummary(jobId: string): Promise<IdeaDraftJobStatusResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/live-summary/recover`,
+    { method: 'POST' },
+    MULTI_ROLE_SUMMARY_TIMEOUT_MS,
+  )
+  return handleResponse<IdeaDraftJobStatusResponse>(res)
+}
+
 export interface IdeaDraftSessionEntry {
   draft_session_id?: string | null
   related_job_ids?: string[]

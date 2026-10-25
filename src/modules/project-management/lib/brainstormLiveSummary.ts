@@ -10,6 +10,20 @@ export type LiveSummarySnapshot = {
   sections: LiveSummarySection[]
 }
 
+/** Resume is an explicit retry boundary; polling must not repeatedly generate summaries. */
+export async function recoverBrainstormSummaryOnResume(
+  job: IdeaDraftJobStatusResponse,
+  recover: (jobId: string) => Promise<IdeaDraftJobStatusResponse>,
+): Promise<IdeaDraftJobStatusResponse> {
+  if (job.live_summary?.status !== 'unavailable' || !['awaiting_input', 'completed'].includes(job.status)) return job
+  try {
+    return await recover(job.job_id)
+  } catch {
+    // A failed retry must not prevent reopening the conversation or erase saved content.
+    return job
+  }
+}
+
 /** The structured proposal is separate from the per-reply understanding box. */
 export function buildBrainstormLiveSummary(job: IdeaDraftJobStatusResponse | null): LiveSummarySnapshot {
   const summary = job?.live_summary

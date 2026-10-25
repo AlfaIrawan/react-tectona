@@ -31,6 +31,7 @@ async function main() {
   loaded.filename = path.resolve('live-summary-test.cjs'); loaded.paths = module.paths
   loaded._compile(built.outputFiles[0].text, loaded.filename)
   const { BrainstormLiveSummaryPanel: Component, buildBrainstormLiveSummary: build, summaryTextChange: diff } = loaded.exports
+  const { recoverBrainstormSummaryOnResume: recoverOnResume } = loaded.exports
   const live = text => ({ status: 'ready', source_revision: 'r1', source_fingerprint: 'evidence-v1', text, sections: [{ key: 'objective', title: 'Tujuan', body: text, evidence_ids: ['intake:goal'] }] })
   const job = { job_id: 'one', brainstorm_messages: [{ role: 'assistant', summary: 'Chat for Collection.\n\nKeep audit logs.', text: 'Summary', ai_advice: 'Consider an API.' }], intake_checklist: [
     { id: 'goal', prompt: 'Project goal', status: 'answered', evidence_status: 'confirmed', evidence_text: 'Assist Collection' },
@@ -39,6 +40,16 @@ async function main() {
     { id: 'legacy', prompt: 'Unknown confirmation', status: 'answered', evidence_text: 'Not confirmed' },
   ], brainstorm_remaining_gaps: ['Current process', 'Current process'], revision: 'r1', live_summary: live('Chat for Collection.\n\nKeep audit logs.') }
   const model = build(job)
+  const failedJob = { ...job, status: 'awaiting_input', live_summary: { ...job.live_summary, status: 'unavailable' } }
+  let recoveries = 0
+  const recover = async id => { recoveries++; assert.equal(id, job.job_id); return job }
+  assert.equal(await recoverOnResume(failedJob, recover), job)
+  assert.equal(recoveries, 1, 'failed summary is retried once on explicit resume')
+  assert.equal(await recoverOnResume(job, recover), job)
+  assert.equal(recoveries, 1, 'healthy summaries do not generate again')
+  assert.equal(await recoverOnResume({ ...failedJob, status: 'cancelled' }, recover).then(j => j.status), 'cancelled')
+  assert.equal(recoveries, 1)
+  assert.equal(await recoverOnResume(failedJob, async () => { throw new Error('offline') }), failedJob, 'failed recovery preserves the saved session')
   assert.deepEqual(model.sections.map(s => s.id), ['objective'], 'use canonical proposal sections')
   assert.equal(model.sections[0].title, 'Tujuan')
   const greeting = { ...job, live_summary: null, brainstorm_messages: [{ role: 'assistant', summary: 'This is only a chat recap.', text: 'Hello. Describe your project.', ai_advice: 'Consider an API.' }] }
