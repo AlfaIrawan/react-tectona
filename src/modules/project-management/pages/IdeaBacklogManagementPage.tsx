@@ -1267,7 +1267,9 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
 
 // The kind of question a reply asks, set by agent-runtime: a sub-question while a mandatory one is
 // open is a challenge; a question after the mandatory intake (Bisnis/Teknis discovery) is extended.
-const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended', { label: string; badge: string; text: string }> = {
+// An extended question also names its track (agent-runtime question_focus): Business in teal,
+// Technical in indigo. One without a track (older messages) keeps the plain violet badge.
+const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended' | 'extended_business' | 'extended_technical', { label: string; badge: string; text: string }> = {
   challenge: {
     label: 'Challenge Question',
     badge: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -1278,6 +1280,24 @@ const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended', { label: string
     badge: 'border-violet-200 bg-violet-50 text-violet-800',
     text: '[&_*]:!text-violet-800',
   },
+  extended_business: {
+    label: 'Extended Question · Business',
+    badge: 'border-teal-200 bg-teal-50 text-teal-800',
+    text: '[&_*]:!text-teal-800',
+  },
+  extended_technical: {
+    label: 'Extended Question · Technical',
+    badge: 'border-indigo-200 bg-indigo-50 text-indigo-800',
+    text: '[&_*]:!text-indigo-800',
+  },
+}
+
+function brainstormQuestionKind(message: IdeaDraftBrainstormMessage) {
+  if (message.question_kind === 'challenge') return BRAINSTORM_QUESTION_KIND.challenge
+  if (message.question_kind !== 'extended') return null
+  if (message.question_focus === 'business') return BRAINSTORM_QUESTION_KIND.extended_business
+  if (message.question_focus === 'technical') return BRAINSTORM_QUESTION_KIND.extended_technical
+  return BRAINSTORM_QUESTION_KIND.extended
 }
 
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
@@ -1293,9 +1313,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   const at = summary ? text.indexOf(summary) : -1
   const before = at >= 0 ? text.slice(0, at).trim() : ''
   const after = at >= 0 ? text.slice(at + summary.length).trim() : ''
-  const kind = message.question_kind === 'challenge' || message.question_kind === 'extended'
-    ? BRAINSTORM_QUESTION_KIND[message.question_kind]
-    : null
+  const kind = brainstormQuestionKind(message)
   // The closing question is the last paragraph when it asks something (and is not a diagram).
   let rest = at >= 0 ? after : text
   let question = ''
@@ -7442,10 +7460,9 @@ export function IdeaBacklogManagementPage() {
                                     enterpriseSecondaryButtonClass(),
                                     'inline-flex h-9 items-center gap-2 border-emerald-300 bg-white text-emerald-950 hover:bg-emerald-100',
                                   )}
+                                  // Only the choice is sent; how the questions are asked and labelled is agent-runtime's.
                                   onClick={() => void handleSendBrainstormMessage(
-                                    brainstormThreadIndonesian
-                                      ? 'Lanjutkan dengan pertanyaan bisnis. Beri label "Business" pada setiap pertanyaan, ajukan satu per satu, dan fokus pada value, outcome, stakeholder, scope, KPI, risiko, serta prioritas bisnis.'
-                                      : 'Continue with business questions. Label every question "Business", ask them one at a time, and focus on value, outcomes, stakeholders, scope, KPIs, risks, and business priorities.',
+                                    brainstormThreadIndonesian ? 'Pertanyaan bisnis' : 'Business questions',
                                   )}
                                 >
                                   <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden />
@@ -7459,9 +7476,7 @@ export function IdeaBacklogManagementPage() {
                                     'inline-flex h-9 items-center gap-2 border-sky-300 bg-white text-sky-950 hover:bg-sky-100',
                                   )}
                                   onClick={() => void handleSendBrainstormMessage(
-                                    brainstormThreadIndonesian
-                                      ? 'Lanjutkan dengan pertanyaan teknis. Beri label "Technical" pada setiap pertanyaan, ajukan satu per satu, dan fokus pada aplikasi, integrasi, data, security, infrastructure, operasional, serta constraint teknis.'
-                                      : 'Continue with technical questions. Label every question "Technical", ask them one at a time, and focus on applications, integrations, data, security, infrastructure, operations, and technical constraints.',
+                                    brainstormThreadIndonesian ? 'Pertanyaan teknis' : 'Technical questions',
                                   )}
                                 >
                                   <Wrench className="h-4 w-4 shrink-0" aria-hidden />
