@@ -8,11 +8,12 @@ export type LiveSummarySection = {
 }
 
 /** Bind confirmations to the latest saved diagram, never to a newly generated sketch. */
-export function confirmedSummaryDiagrams(messages: IdeaDraftJobStatusResponse['brainstorm_messages']) {
+export function confirmedSummaryDiagramTimeline(messages: IdeaDraftJobStatusResponse['brainstorm_messages']) {
   const pending: Partial<Record<'as_is' | 'to_be', string>> = {}
   const confirmed: typeof pending = {}
+  const timeline: Array<typeof pending> = []
   for (const message of messages ?? []) {
-    if (message.role !== 'assistant' || typeof message.text !== 'string') continue
+    if (message.role !== 'assistant' || typeof message.text !== 'string') { timeline.push({ ...confirmed }); continue }
     const text = message.text.replace(/\r\n/g, '\n')
     for (const fence of text.matchAll(/```(?:plantuml|mermaid|bpmn)\s*\n([\s\S]*?)```/gi)) {
       const headings = [...text.slice(0, fence.index).matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?(AS-IS|TO-BE)\s*[\u2014\u2013:-]/gi)]
@@ -30,8 +31,13 @@ export function confirmedSummaryDiagrams(messages: IdeaDraftJobStatusResponse['b
       const ack = new RegExp(`(?:flow ${name} sudah terkonfirmasi|the ${name} flow is confirmed)`, 'i')
       if (ack.test(text) && pending[lane]) confirmed[lane] = pending[lane]
     }
+    timeline.push({ ...confirmed })
   }
-  return confirmed
+  return timeline
+}
+
+export function confirmedSummaryDiagrams(messages: IdeaDraftJobStatusResponse['brainstorm_messages']) {
+  return confirmedSummaryDiagramTimeline(messages).at(-1) ?? {}
 }
 
 /** Emphasis changes presentation only; it never supplies a missing fact or KPI. */

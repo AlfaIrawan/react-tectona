@@ -21,16 +21,22 @@ async function main() {
     import { createRoot } from 'react-dom/client';
     import { BrainstormLiveSummaryPanel } from './src/modules/project-management/components/BrainstormLiveSummaryPanel';
     import { BrainstormReadinessFrame } from './src/modules/project-management/components/BrainstormReadinessFrame';
+    import { BrainstormSummaryBox } from './src/modules/project-management/components/BrainstormSummaryBox';
+    import { BrainstormSummaryDiagrams } from './src/modules/project-management/components/BrainstormSummaryDiagrams';
+    import { buildSummaryDiagramAttachments } from './src/modules/project-management/lib/brainstormSummaryDiagrams';
     const initial = {job_id:'test',brainstorm_messages:[{role:'assistant',text:'Response',summary:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',ai_advice:'Validate policy access with the Credit team.'}],intake_checklist:[{id:'goal',prompt:'Project goal',evidence_status:'confirmed',evidence_text:'Answer Credit policy questions.'},{id:'kpi',prompt:'Success metrics',evidence_status:'inferred',evidence_text:'Accuracy target: 90% (not confirmed).'}],brainstorm_remaining_gaps:['Confirm the current process and policy owners.']};
     initial.revision='r1';initial.live_summary={status:'ready',source_revision:'r1',source_fingerprint:'test',text:'Structured proposal',sections:[{key:'objective',title:'Tujuan',body:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',evidence_ids:['goal']},{key:'problem',title:'Permasalahan',body:'Credit staff currently search policy documents manually.',evidence_ids:['problem']},{key:'as_is_evidence',title:'Evidence AS-IS',body:'- Policy lookup is manual.\\n- Staff consult internal policy documents.',evidence_ids:['asis']}]};
     initial.brainstorm_messages.push(...${JSON.stringify(diagramMessages)});
+    const chatRecap='Alur AS-IS: rapat selesai, PIC membuat MoM, lalu mengirimkannya lewat email.';
+    const chatAttachments=buildSummaryDiagramAttachments([...initial.brainstorm_messages,{role:'assistant',text:chatRecap,summary:chatRecap}]);
+    function ChatSummaryFixture(){return ${testDiagrams}?<div data-chat-summary-fixture className="mx-auto max-w-xl"><BrainstormSummaryBox text="Alur AS-IS sudah dikonfirmasi." indonesian><BrainstormSummaryDiagrams diagrams={chatAttachments.at(-2)||[]} indonesian /></BrainstormSummaryBox><BrainstormSummaryBox text={chatRecap} indonesian><BrainstormSummaryDiagrams diagrams={chatAttachments.at(-1)||[]} indonesian /></BrainstormSummaryBox></div>:null;}
     function Fixture(){const [job,setJob]=useState({...initial,live_summary:null,brainstorm_messages:[{role:'assistant',text:'Hello. Describe your project.'}]});const [busy,setBusy]=useState(false);const [longChat,setLongChat]=useState(false);const [readinessCollapsed,setReadinessCollapsed]=useState(false);const [longReadiness,setLongReadiness]=useState(false);window.longReadiness=setLongReadiness;window.fillChat=setLongChat;window.startSummary=()=>setJob(initial);window.updateSummary=(text)=>setJob({...initial,live_summary:{...initial.live_summary,sections:initial.live_summary.sections.map((section,index)=>index===0?{...section,body:text}:section)}});window.summaryBusy=setBusy;
       return <div className="flex h-screen flex-col bg-background text-foreground"><header className="flex h-14 shrink-0 items-center border-b px-4 text-sm font-semibold">Tectona Assistant</header><div data-chat-surface className="relative flex min-h-0 flex-1 overflow-hidden bg-background"><div className="hidden min-h-0 min-[1024px]:flex"><BrainstormReadinessFrame collapsed={readinessCollapsed} onToggleCollapsed={()=>setReadinessCollapsed(v=>!v)} confidence={7}>
         <p className="shrink-0 text-xs text-muted-foreground">AI confidence and AS-IS evidence progress before draft generation.</p>
         <div data-readiness-confidence className="shrink-0 border-b pb-4 text-center"><p className="py-6 text-xl">7%</p><p className="text-sm font-semibold">Just started - continue the discussion</p></div>
         <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><h3 className="mb-3 shrink-0 text-xs font-semibold">Evidence progress 2/10</h3><div role="region" aria-label="Readiness questions" tabIndex={0} data-readiness-scroll className="scrollbar-hide min-h-0 flex-1 overflow-y-auto">{Array.from({length:longReadiness?80:10},(_,i)=><p key={i} className="py-2 text-xs">{i+1}. Confirm the Credit project context.</p>)}</div></section>
         <div data-readiness-initiative className="shrink-0 border-t pt-4 text-xs">Initiative direction</div>
-      </BrainstormReadinessFrame></div><main data-chat className="flex min-w-0 flex-1 flex-col bg-background"><div role="region" aria-label="Brainstorm conversation" tabIndex={0} className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-5 py-6"><p className="max-w-xl pr-12">Describe the current Credit policy process.</p>{longChat?Array.from({length:80},(_,i)=><p key={i} className="py-4">Confirmed context from the Credit policy discussion.</p>):null}</div><div data-composer className="p-4"><textarea aria-label="Brainstorm message" className="h-20 w-full resize-none rounded-lg border p-3" placeholder="Ask Tectona Assistant" /></div></main><BrainstormLiveSummaryPanel job={job} busy={busy} /></div></div>;
+      </BrainstormReadinessFrame></div><main data-chat className="flex min-w-0 flex-1 flex-col bg-background"><div role="region" aria-label="Brainstorm conversation" tabIndex={0} className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-5 py-6"><p className="max-w-xl pr-12">Describe the current Credit policy process.</p><ChatSummaryFixture />{longChat?Array.from({length:80},(_,i)=><p key={i} className="py-4">Confirmed context from the Credit policy discussion.</p>):null}</div><div data-composer className="p-4"><textarea aria-label="Brainstorm message" className="h-20 w-full resize-none rounded-lg border p-3" placeholder="Ask Tectona Assistant" /></div></main><BrainstormLiveSummaryPanel job={job} busy={busy} /></div></div>;
     }createRoot(document.getElementById('root')).render(<Fixture/>);`
   const bundle = await esbuild.build({
     stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' },
@@ -89,6 +95,18 @@ async function main() {
     assert.ok(widths.some(width => width > 1 && width < 415), 'reserved space animates and chat reflows gradually')
     await panel.waitFor({ state: 'visible' })
     await page.waitForTimeout(1100)
+    if (testDiagrams) {
+      const chatSummary = page.locator('[data-chat-summary-fixture]')
+      assert.equal(await chatSummary.locator('figure').count(), 1, 'only first confirmation previews the diagram')
+      const button = chatSummary.getByRole('button', { name: 'Lihat diagram AS-IS', exact: true })
+      await button.click()
+      assert.equal(await chatSummary.locator('figure').count(), 2)
+      await chatSummary.locator('figure').last().getByRole('button', { name: 'Fullscreen', exact: true }).click()
+      await page.getByRole('dialog', { name: 'Fullscreen diagram' }).waitFor()
+      await page.keyboard.press('Escape')
+      await chatSummary.getByRole('button', { name: 'Tutup diagram AS-IS', exact: true }).click()
+      assert.equal(await chatSummary.locator('figure').count(), 1)
+    }
     assert.ok(originalChat.width - (await page.locator('[data-chat]').boundingBox()).width > 350)
     assert.doesNotMatch(await panel.textContent(), /Open points|Confidence|Confirmed evidence|Evidence \(/)
     assert.doesNotMatch(await panel.textContent(), /Current understanding/)
@@ -222,6 +240,12 @@ async function main() {
       await page.keyboard.press('Escape')
       assert.equal(await panel.isVisible(), false)
       assert.equal(await page.getByRole('textbox', { name: 'Brainstorm message' }).isVisible(), true)
+      if (testDiagrams) {
+        const chatPreview = page.locator('[data-chat-summary-fixture] figure').first()
+        await chatPreview.scrollIntoViewIfNeeded()
+        assert.ok((await chatPreview.locator('img').boundingBox()).width <= width - 20, 'chat diagram fits the mobile conversation')
+        await page.screenshot({ path: path.join(output, `chat-diagram-${width}.png`) })
+      }
     }
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.getByRole('button', { name: 'Open Live AI Summary', exact: true }).filter({ visible: true }).click()

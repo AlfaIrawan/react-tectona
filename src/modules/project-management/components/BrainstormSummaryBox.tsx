@@ -1,10 +1,12 @@
 import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
 import { normalizeBrainstormSummary } from '../lib/normalizeBrainstormSummary'
+import type { ReactNode } from 'react'
 
-export function BrainstormSummaryBox({ text, indonesian, className }: {
+export function BrainstormSummaryBox({ text, indonesian, className, children }: {
   text: string
   indonesian: boolean
   className?: string
+  children?: ReactNode
 }) {
   return (
     <div className="my-2 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/30">
@@ -12,6 +14,7 @@ export function BrainstormSummaryBox({ text, indonesian, className }: {
         {indonesian ? 'Rangkuman Pemahaman' : 'Summary of Understanding'}
       </p>
       <AssistantChatMarkdown content={normalizeBrainstormSummary(text)} className={className} />
+      {children}
     </div>
   )
 }

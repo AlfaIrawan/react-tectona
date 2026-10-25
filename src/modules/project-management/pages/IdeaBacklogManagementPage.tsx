@@ -105,6 +105,8 @@ import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import { BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
+import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
+import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
 import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame'
 import { closeBrainstorm } from '../lib/closeBrainstorm'
@@ -1280,9 +1282,10 @@ const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended', { label: string
 
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
  *  extended question badged and coloured. The text itself is the server's, unchanged. */
-function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }: {
+function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [] }: {
   message: IdeaDraftBrainstormMessage; indonesian: boolean
   onConfirm?: (choice: string) => Promise<void> | void; disabled?: boolean
+  diagrams?: SummaryDiagramAttachment[]
 }) {
   const text = message.text
   const summary = (message.summary ?? '').trim()
@@ -1314,11 +1317,14 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled }
       {hasSummary ? (
         <>
           {before ? <BrainstormAssistantMessageBody text={before} /> : null}
-          <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS} />
+          <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS}>
+            <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} />
+          </BrainstormSummaryBox>
         </>
       ) : rest ? (
         <BrainstormAssistantMessageBody text={rest} />
       ) : null}
+      {!hasSummary ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
       {message.ai_advice ? <div className="my-3 border-l-2 border-teal-500 pl-3 text-sm leading-6">
         <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Pertimbangan Tambahan' : 'Additional Considerations'}</p>
         <BrainstormAssistantMessageBody text={message.ai_advice} />
@@ -2238,6 +2244,7 @@ export function IdeaBacklogManagementPage() {
   const [isEvidenceDialogOpen, setIsEvidenceDialogOpen] = useState(false)
   const [isBrainstormMode, setIsBrainstormMode] = useState(false)
   const [brainstormMessages, setBrainstormMessages] = useState<BrainstormUiMessage[]>([])
+  const brainstormSummaryDiagrams = useMemo(() => buildSummaryDiagramAttachments(brainstormMessages), [brainstormMessages])
   const [brainstormInput, setBrainstormInput] = useState('')
   const [brainstormDiagramImage, setBrainstormDiagramImage] = useState<string | null>(null)
   const brainstormDiagramInputRef = useRef<HTMLInputElement | null>(null)
@@ -7244,6 +7251,7 @@ export function IdeaBacklogManagementPage() {
                                       ) : (
                                         <BrainstormAssistantContent
                                           message={message}
+                                          diagrams={brainstormSummaryDiagrams[index]}
                                           indonesian={isBrainstormThreadIndonesian(brainstormMessages)}
                                           onConfirm={index === brainstormMessages.length - 1 ? (choice) => handleSendBrainstormMessage(choice) : undefined}
                                           disabled={brainstormComposerDisabled}
