@@ -616,6 +616,8 @@ export interface IdeaDraftBrainstormMessage {
   suggestion_options?: Array<{ action: 'choose' | 'adjust' | 'defer' | 'discuss' | 'provide'; label: string; explanation: string; value: string }>
   suggestion_question?: string
   suggestion_kind?: 'mandatory' | 'followup' | null
+  suggestion_origin?: 'assistant' | 'user'
+  accepted_decision?: { question: string; value: string; item_id: string; origin: 'assistant' | 'user' } | null
   evidence_pending?: boolean
   edited_at?: string | null
   edit_history?: Array<{ previous_text: string; edited_at: string; edited_by?: string | null }>
