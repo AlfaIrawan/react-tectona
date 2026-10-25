@@ -32,6 +32,23 @@ async function main() {
   loaded._compile(built.outputFiles[0].text, loaded.filename)
   const { BrainstormLiveSummaryPanel: Component, buildBrainstormLiveSummary: build, summaryTextChange: diff } = loaded.exports
   const { recoverBrainstormSummaryOnResume: recoverOnResume } = loaded.exports
+  const { confirmedSummaryDiagrams: diagrams, styleLiveSummaryText: style } = loaded.exports
+  const asis = '@startuml\nstart\n:Write MoM;\nstop\n@enduml'
+  const tobe = '@startuml\nstart\n:Generate MoM;\nstop\n@enduml'
+  const savedDiagram = (lane, source) => ({ role: 'assistant', text: `${lane} — current process:\n\n\x60\x60\x60plantuml\n${source}\n\x60\x60\x60` })
+  const ack = lane => ({ role: 'assistant', text: `Great, the ${lane} flow is confirmed.` })
+  assert.deepEqual(diagrams([savedDiagram('AS-IS', asis)]), {}, 'pending diagram is not a confirmed summary asset')
+  assert.deepEqual(diagrams([savedDiagram('AS-IS', asis), { role: 'user', text: 'yes' }, ack('AS-IS')]), { as_is: asis })
+  assert.deepEqual(diagrams([savedDiagram('AS-IS', asis), ack('AS-IS'), savedDiagram('TO-BE', tobe), ack('TO-BE')]), { as_is: asis, to_be: tobe })
+  assert.deepEqual(diagrams([savedDiagram('AS-IS', asis), ack('AS-IS'), savedDiagram('AS-IS', tobe)]), {}, 'redraw invalidates the old confirmed version')
+  assert.deepEqual(diagrams([{ role: 'user', text: savedDiagram('AS-IS', asis).text }, ack('AS-IS')]), {}, 'user-provided code is not an assistant-confirmed diagram')
+  const styled = style('MoM manual, membutuhkan waktu lama. Input **MP3** 128 kbps maksimal 30 menit. `30 menit`', 'problem')
+  assert.match(styled, /\*\*manual\*\*/)
+  assert.match(styled, /\*\*waktu lama\*\*/)
+  assert.match(styled, /\*\*128 kbps\*\*/)
+  assert.match(styled, /\*\*30 menit\*\*/)
+  assert.equal(style(styled, 'problem'), styled, 'emphasis is idempotent and code is preserved')
+  assert.equal(style('manual', 'objective'), 'manual', 'problem emphasis must not leak into other sections')
   const live = text => ({ status: 'ready', source_revision: 'r1', source_fingerprint: 'evidence-v1', text, sections: [{ key: 'objective', title: 'Tujuan', body: text, evidence_ids: ['intake:goal'] }] })
   const job = { job_id: 'one', brainstorm_messages: [{ role: 'assistant', summary: 'Chat for Collection.\n\nKeep audit logs.', text: 'Summary', ai_advice: 'Consider an API.' }], intake_checklist: [
     { id: 'goal', prompt: 'Project goal', status: 'answered', evidence_status: 'confirmed', evidence_text: 'Assist Collection' },
@@ -40,6 +57,12 @@ async function main() {
     { id: 'legacy', prompt: 'Unknown confirmation', status: 'answered', evidence_text: 'Not confirmed' },
   ], brainstorm_remaining_gaps: ['Current process', 'Current process'], revision: 'r1', live_summary: live('Chat for Collection.\n\nKeep audit logs.') }
   const model = build(job)
+  const diagramJob = { ...job, brainstorm_messages: [savedDiagram('AS-IS', asis), ack('AS-IS'), savedDiagram('TO-BE', tobe), ack('TO-BE')] }
+  const withDiagrams = build(diagramJob)
+  assert.equal(withDiagrams.sections.find(s => s.id === 'as_is_evidence').diagram.source, asis)
+  assert.equal(withDiagrams.sections.find(s => s.id === 'proposed_change').diagram.source, tobe)
+  assert.equal(withDiagrams.sections.filter(s => s.diagram).length, 2)
+  assert.deepEqual(build({ ...diagramJob, live_summary: null }).sections, [], 'diagrams alone do not open an empty summary')
   const failedJob = { ...job, status: 'awaiting_input', live_summary: { ...job.live_summary, status: 'unavailable' } }
   let recoveries = 0
   const recover = async id => { recoveries++; assert.equal(id, job.job_id); return job }

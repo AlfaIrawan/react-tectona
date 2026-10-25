@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookOpenText, Loader2, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
+import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import type { IdeaDraftJobStatusResponse } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
 import { buildBrainstormLiveSummary, summaryTextChange, type LiveSummarySection } from '../lib/brainstormLiveSummary'
@@ -20,7 +21,7 @@ function useReducedMotion() {
   return reduced
 }
 
-const MARKDOWN_CLASS = 'text-sm leading-6 [&_strong]:text-foreground [&_li]:leading-6 [&_p]:my-2'
+const MARKDOWN_CLASS = 'text-sm leading-6 [&_strong]:font-semibold [&_strong]:text-foreground [&_li]:leading-6 [&_li]:my-1 [&_ul]:my-2 [&_ol]:my-2 [&_p]:my-2 [&_em]:text-muted-foreground'
 
 function AnimatedSummaryText({ text, reduced, active }: { text: string; reduced: boolean; active: boolean }) {
   const [display, setDisplay] = useState('')
@@ -83,6 +84,10 @@ function SummarySection({ section, reduced, active }: { section: LiveSummarySect
     <section className="min-w-0 border-b border-border/60 py-4 last:border-b-0" data-summary-section={section.id}>
       <h3 className="mb-3 border-b border-border/70 border-l-2 border-l-primary pb-2 pl-2 text-sm font-semibold leading-5 text-foreground">{section.title}</h3>
       <AnimatedSummaryText text={section.text} reduced={reduced} active={active} />
+      {section.diagram && active ? <figure className="mt-3 min-w-0" data-summary-diagram={section.diagram.lane}>
+        <figcaption className="mb-2 text-xs font-medium text-muted-foreground">{section.diagram.lane === 'as_is' ? 'AS-IS' : 'TO-BE'}</figcaption>
+        <AssistantMermaidBlock source={section.diagram.source} notation="bpmn" compact />
+      </figure> : null}
     </section>
   )
 }
@@ -112,7 +117,7 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
     if (!busy && !error && (!summaryUnavailable || !snapshot.sections.length)) setSnapshot(JSON.parse(candidate) as typeof snapshot)
   }, [candidate, busy, error, summaryUnavailable, snapshot.sections.length])
   const hasSummary = snapshot.sections.some(section => Boolean(section.text.trim()))
-  const summaryText = snapshot.sections.map(section => section.text).join('\n\n')
+  const summaryText = snapshot.sections.map(section => section.text + (section.diagram?.source ?? '')).join('\n\n')
   useEffect(() => {
     let frame = 0, nextFrame = 0
     let timer: ReturnType<typeof setTimeout>
@@ -156,6 +161,7 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
     const previous = document.activeElement as HTMLElement | null
     panelRef.current?.querySelector<HTMLButtonElement>('[aria-label="Close summary"]')?.focus()
     const keydown = (event: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"][aria-label="Fullscreen diagram"]')) return
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopImmediatePropagation()

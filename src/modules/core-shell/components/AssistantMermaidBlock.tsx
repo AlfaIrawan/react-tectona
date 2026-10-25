@@ -18,6 +18,8 @@ type AssistantMermaidBlockProps = {
   className?: string
   /** `bpmn`: BPMN 2.0 notation, the same renderer as the Idea Diagram section. */
   notation?: ProcessDiagramNotation
+  /** Fit a thumbnail in a narrow panel; the fullscreen viewer keeps the original resolution. */
+  compact?: boolean
 }
 
 /** Smallest scale a BPMN diagram is shown at in a message; wider ones scroll sideways. */
@@ -205,6 +207,7 @@ type MermaidFullscreenModalProps = {
 }
 
 function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }: MermaidFullscreenModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(1)
@@ -218,8 +221,20 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
   }, [])
 
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null
+    modalRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    return () => previousFocus?.focus()
+  }, [])
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
+      if (event.key === 'Tab') {
+        const controls = [...(modalRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex="0"]') ?? [])]
+        const first = controls[0], last = controls.at(-1)
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -269,6 +284,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
         className="flex max-h-[94vh] w-full max-w-[min(96vw,1200px)] flex-col overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-2xl dark:border-[#3b4a54] dark:bg-[#111b21]"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
+        ref={modalRef}
         aria-modal="true"
         aria-label="Fullscreen diagram"
       >
@@ -371,7 +387,7 @@ async function renderMermaidSvg(source: string, reactId: string): Promise<{ svg:
   throw new Error('Diagram could not be rendered')
 }
 
-export function AssistantMermaidBlock({ source, className, notation = 'plantuml' }: AssistantMermaidBlockProps) {
+export function AssistantMermaidBlock({ source, className, notation = 'plantuml', compact = false }: AssistantMermaidBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const reactId = useId().replace(/:/g, '')
   const [svgHtml, setSvgHtml] = useState<string | null>(null)
@@ -401,7 +417,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
         ? source
         : cleanedSource
   const showFlowchart = canRenderAssistantFlowchart(flowchartSource)
-  const flowHeight = showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
+  const flowHeight = compact ? 160 : showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
   const isEmptyPlaceholder = useMemo(() => isEmptyProcessPlaceholder(source), [source])
 
   useEffect(() => {
@@ -589,11 +605,12 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
               src={bpmnUrl}
               alt={drawnNotation === 'bpmn' ? 'Diagram proses bisnis BPMN' : 'Diagram proses bisnis PlantUML'}
               className={cn(
-                'max-h-[min(70vh,640px)] object-contain',
-                bpmnImageWidth ? 'max-w-none' : 'mx-auto w-auto max-w-full',
+                compact ? 'h-[140px] w-auto max-w-full object-contain' : 'max-h-[min(70vh,640px)] object-contain',
+                !compact && bpmnImageWidth ? 'max-w-none' : 'mx-auto w-auto max-w-full',
               )}
-              style={bpmnImageWidth ? { width: bpmnImageWidth, maxHeight: 'none' } : undefined}
+              style={!compact && bpmnImageWidth ? { width: bpmnImageWidth, maxHeight: 'none' } : undefined}
               onLoad={(event) => {
+                if (compact) { setBpmnImageWidth(null); return }
                 const height = event.currentTarget.naturalHeight
                 const width = event.currentTarget.naturalWidth
                 const host = (event.currentTarget.parentElement?.clientWidth || 480) - 24
@@ -620,7 +637,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
               '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
               !svgHtml && 'min-h-[120px] animate-pulse bg-slate-50/80 dark:bg-slate-900/40',
             )}
-            style={{ height: previewHeight }}
+            style={{ height: compact ? 160 : previewHeight }}
             aria-label="Diagram or chart"
             aria-busy={!svgHtml}
           />

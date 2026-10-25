@@ -10,6 +10,12 @@ const tailwind = require('tailwindcss')
 
 async function main() {
   const { chromium } = require(process.argv[2] || 'playwright')
+  const testDiagrams = process.env.TECTONA_SUMMARY_DIAGRAMS === '1'
+  const diagramSource = '@startuml\nstart\n:Organizer: hold meeting;\n:PIC: write MoM;\n:PIC: email MoM;\nstop\n@enduml'
+  const diagramMessages = testDiagrams ? [
+    { role: 'assistant', text: 'AS-IS — current process:\n\n```plantuml\n' + diagramSource + '\n```' },
+    { role: 'assistant', text: 'Great, the AS-IS flow is confirmed.' },
+  ] : []
   const fixture = `
     import React, { useState } from 'react';
     import { createRoot } from 'react-dom/client';
@@ -17,6 +23,7 @@ async function main() {
     import { BrainstormReadinessFrame } from './src/modules/project-management/components/BrainstormReadinessFrame';
     const initial = {job_id:'test',brainstorm_messages:[{role:'assistant',text:'Response',summary:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',ai_advice:'Validate policy access with the Credit team.'}],intake_checklist:[{id:'goal',prompt:'Project goal',evidence_status:'confirmed',evidence_text:'Answer Credit policy questions.'},{id:'kpi',prompt:'Success metrics',evidence_status:'inferred',evidence_text:'Accuracy target: 90% (not confirmed).'}],brainstorm_remaining_gaps:['Confirm the current process and policy owners.']};
     initial.revision='r1';initial.live_summary={status:'ready',source_revision:'r1',source_fingerprint:'test',text:'Structured proposal',sections:[{key:'objective',title:'Tujuan',body:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',evidence_ids:['goal']},{key:'problem',title:'Permasalahan',body:'Credit staff currently search policy documents manually.',evidence_ids:['problem']},{key:'as_is_evidence',title:'Evidence AS-IS',body:'- Policy lookup is manual.\\n- Staff consult internal policy documents.',evidence_ids:['asis']}]};
+    initial.brainstorm_messages.push(...${JSON.stringify(diagramMessages)});
     function Fixture(){const [job,setJob]=useState({...initial,live_summary:null,brainstorm_messages:[{role:'assistant',text:'Hello. Describe your project.'}]});const [busy,setBusy]=useState(false);const [longChat,setLongChat]=useState(false);const [readinessCollapsed,setReadinessCollapsed]=useState(false);const [longReadiness,setLongReadiness]=useState(false);window.longReadiness=setLongReadiness;window.fillChat=setLongChat;window.startSummary=()=>setJob(initial);window.updateSummary=(text)=>setJob({...initial,live_summary:{...initial.live_summary,sections:initial.live_summary.sections.map((section,index)=>index===0?{...section,body:text}:section)}});window.summaryBusy=setBusy;
       return <div className="flex h-screen flex-col bg-background text-foreground"><header className="flex h-14 shrink-0 items-center border-b px-4 text-sm font-semibold">Tectona Assistant</header><div data-chat-surface className="relative flex min-h-0 flex-1 overflow-hidden bg-background"><div className="hidden min-h-0 min-[1024px]:flex"><BrainstormReadinessFrame collapsed={readinessCollapsed} onToggleCollapsed={()=>setReadinessCollapsed(v=>!v)} confidence={7}>
         <p className="shrink-0 text-xs text-muted-foreground">AI confidence and AS-IS evidence progress before draft generation.</p>
@@ -28,10 +35,15 @@ async function main() {
   const bundle = await esbuild.build({
     stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' },
     bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
-    define: { 'process.env.NODE_ENV': '"production"' }, alias: { '@': path.resolve('src') },
+    define: { 'process.env.NODE_ENV': '"production"' }, alias: { '@': path.resolve('src') }, loader: { '.css': 'empty' },
     plugins: [{ name: 'non-prose-visuals', setup(build) {
-      build.onResolve({ filter: /\/Assistant(?:Mermaid|Chart)Block$/ }, args => ({ path: args.path, namespace: 'visual' }))
+      build.onResolve({ filter: /\/Assistant(?:Mermaid|Chart)Block$/ }, args => testDiagrams && args.path.endsWith('AssistantMermaidBlock') ? undefined : ({ path: args.path, namespace: 'visual' }))
       build.onLoad({ filter: /.*/, namespace: 'visual' }, () => ({ contents: 'export const AssistantMermaidBlock=()=>null;export const AssistantChartBlock=()=>null;', loader: 'js' }))
+      if (testDiagrams) {
+        build.onResolve({ filter: /tectonaAgentRuntimeApi$/ }, args => ({ path: args.path, namespace: 'diagram-api' }))
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="170" viewBox="0 0 900 170"><rect width="900" height="170" fill="white"/><g fill="white" stroke="#111" stroke-width="2"><circle cx="35" cy="85" r="18"/><rect x="90" y="45" width="200" height="80" rx="6"/><rect x="350" y="45" width="200" height="80" rx="6"/><rect x="610" y="45" width="200" height="80" rx="6"/><circle cx="860" cy="85" r="18"/><path d="M53 85H90M290 85H350M550 85H610M810 85H842"/></g><g font-family="Arial" font-size="18" text-anchor="middle"><text x="190" y="90">Hold meeting</text><text x="450" y="90">Write MoM</text><text x="710" y="90">Email MoM</text></g></svg>'
+        build.onLoad({ filter: /.*/, namespace: 'diagram-api' }, () => ({ contents: `export async function renderProcessDiagram(source){window.__diagramSources=(window.__diagramSources||[]).concat(source);return {url:${JSON.stringify('data:image/svg+xml,' + encodeURIComponent(svg))},notation:'bpmn'}}`, loader: 'js' }))
+      }
     } }],
   })
   const config = (await import(pathToFileURL(path.resolve('tailwind.config.js')))).default
@@ -48,6 +60,7 @@ async function main() {
     browser = await chromium.launch({ headless: true, channel: process.env.TECTONA_BROWSER_CHANNEL || (process.platform === 'win32' ? 'chrome' : undefined) })
     const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } })
     const page = await context.newPage()
+    await page.addInitScript(source => { window.__expectedDiagram = source }, diagramSource)
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     await page.goto(`http://127.0.0.1:${server.address().port}`)
@@ -84,6 +97,21 @@ async function main() {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal overflow')
       const chat = await page.locator('[data-chat]').boundingBox(), summary = await panel.boundingBox()
       assert.ok(chat.width > 0)
+      if (testDiagrams) {
+        const figure = panel.locator('[data-summary-diagram="as_is"]')
+        await figure.scrollIntoViewIfNeeded()
+        const image = figure.locator('img')
+        await image.waitFor()
+        await page.waitForFunction(() => document.querySelector('[data-summary-diagram] img')?.naturalWidth > 0)
+        assert.ok((await image.boundingBox()).height <= 141, 'compact thumbnail height is bounded')
+        assert.ok((await image.boundingBox()).width <= (await figure.boundingBox()).width, 'thumbnail fits narrow panel')
+        assert.equal(await page.evaluate(() => window.__diagramSources.every(source => source === window.__expectedDiagram)), true, 'render the saved source without AI redrawing')
+        await figure.getByRole('button', { name: 'Fullscreen', exact: true }).click()
+        await page.getByRole('dialog', { name: 'Fullscreen diagram' }).waitFor()
+        await page.keyboard.press('Escape')
+        assert.equal(await page.getByRole('dialog', { name: 'Fullscreen diagram' }).count(), 0)
+        assert.equal(await panel.isVisible(), true, 'closing the diagram must not close the summary drawer')
+      }
       if (await page.viewportSize().width >= 1440) assert.ok(chat.x + chat.width <= summary.x + 1, 'summary reserves space beside chat')
       assert.equal(await page.locator('[data-summary-section="objective"] ul li').count(), 4, 'animated and reserved Markdown each render two bullets')
       if (page.viewportSize().width >= 1440) {
