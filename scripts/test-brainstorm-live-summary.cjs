@@ -62,6 +62,17 @@ async function main() {
   assert.equal(withDiagrams.sections.find(s => s.id === 'as_is_evidence').diagram.source, asis)
   assert.equal(withDiagrams.sections.find(s => s.id === 'proposed_change').diagram.source, tobe)
   assert.equal(withDiagrams.sections.filter(s => s.diagram).length, 2)
+  const pendingDiagramJob = { ...job, brainstorm_messages: [savedDiagram('AS-IS', asis), ack('AS-IS'), savedDiagram('TO-BE', tobe)] }
+  const pendingDiagram = build(pendingDiagramJob).sections.find(s => s.id === 'proposed_change').diagram
+  assert.equal(pendingDiagram.source, tobe, 'TO-BE is visible before approval using the exact chat source')
+  assert.equal(pendingDiagram.status, 'awaiting_confirmation')
+  assert.equal(withDiagrams.sections.find(s => s.id === 'proposed_change').diagram.status, 'confirmed')
+  const proposalMessage = { ...savedDiagram('TO-BE', tobe), process_diagram_proposals: [{ lane: 'to_be', option_value: 'Use proposed process', diagram_block: savedDiagram('TO-BE', tobe).text }] }
+  assert.equal(build({ ...job, brainstorm_messages: [proposalMessage] }).sections.find(s => s.diagram).diagram.status, 'proposed')
+  const correctedDiagram = tobe.replace('Generate MoM', 'Finance: Generate MoM')
+  const unavailableDiagrams = build({ ...pendingDiagramJob, live_summary: { ...job.live_summary, status: 'unavailable' }, brainstorm_messages: [...pendingDiagramJob.brainstorm_messages, savedDiagram('TO-BE', correctedDiagram)] })
+  assert.equal(unavailableDiagrams.sections.find(s => s.id === 'proposed_change').diagram.source, correctedDiagram, 'failed prose refresh cannot freeze diagrams')
+  assert.deepEqual(diagrams(pendingDiagramJob.brainstorm_messages), { as_is: asis }, 'proposed TO-BE never becomes confirmed evidence')
   assert.deepEqual(build({ ...diagramJob, live_summary: null }).sections, [], 'diagrams alone do not open an empty summary')
   const failedJob = { ...job, status: 'awaiting_input', live_summary: { ...job.live_summary, status: 'unavailable' } }
   let recoveries = 0
@@ -138,6 +149,13 @@ async function main() {
   assert.equal(document.querySelector('[data-summary-section="objective"] [data-summary-phase]').dataset.summaryPhase, 'idle')
   await render({ job: { ...next, live_summary: { ...live('Unavailable'), status: 'unavailable' } } })
   assert.equal(body(), 'No motion', 'failed synthesis retains the previous proposal, never substitutes a chat recap')
+  await render({ job: { ...pendingDiagramJob, live_summary: { ...live('Old prose'), status: 'unavailable' } } })
+  assert.equal(body(), 'No motion')
+  assert.equal(document.querySelector('[data-summary-diagram="to_be"]').dataset.diagramStatus, 'awaiting_confirmation')
+  const oldVersion = document.querySelector('[data-summary-diagram="to_be"]').dataset.diagramVersion
+  await render({ job: { ...pendingDiagramJob, live_summary: { ...live('Old prose'), status: 'unavailable' }, brainstorm_messages: [...pendingDiagramJob.brainstorm_messages, savedDiagram('TO-BE', correctedDiagram)] } })
+  assert.notEqual(document.querySelector('[data-summary-diagram="to_be"]').dataset.diagramVersion, oldVersion)
+  assert.equal(body(), 'No motion', 'diagram updates do not replace retained prose on synthesis failure')
   await render({ job: { ...next, live_summary: live('No motion') } })
   wide = false
   await act(async () => motionListeners.forEach(fn => fn()))

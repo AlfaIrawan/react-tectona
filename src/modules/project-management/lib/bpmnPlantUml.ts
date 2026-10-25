@@ -61,11 +61,6 @@ function classifyBoundaryEvents(graph: BpmnParsedGraph): BpmnParsedGraph {
   }) }
 }
 
-const LANE_NAME = String.raw`(?:[A-Z][\p{L}\p{N}.]*|AI|HO|ID)`
-const PARTICIPANT_RE = new RegExp(
-  String.raw`\b(?:dengan|diterima(?:\s+oleh)?|dari|di)\s+(${LANE_NAME}(?:\s+${LANE_NAME}){0,4})`,
-  'u',
-)
 const ACTOR_PREFIX_RE = /^\s*([^:?]{2,48}?)\s*:\s*\S/
 
 function explicitActor(label: string): string | null {
@@ -74,11 +69,6 @@ function explicitActor(label: string): string | null {
   const actor = match[1].trim()
   if (actor.split(/\s+/).length > 10) return null
   return actor
-}
-
-function mentionedParticipant(label: string): string | null {
-  const text = label.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ')
-  return PARTICIPANT_RE.exec(text)?.[1]?.trim() || null
 }
 
 function flowOrder(graph: BpmnParsedGraph): string[] {
@@ -108,22 +98,16 @@ export function assignSwimlanes(graph: BpmnParsedGraph): BpmnParsedGraph {
   for (const node of graph.nodes) {
     if (node.lane) laneOf.set(node.id, node.lane)
   }
-  if (new Set(laneOf.values()).size < 2) {
-    laneOf.clear()
-    for (const node of graph.nodes) {
-      if (node.kind === 'decision') continue
-      const actor = explicitActor(node.label) ?? mentionedParticipant(node.label)
-      if (actor) laneOf.set(node.id, actor)
-    }
-    const known = [...new Set(laneOf.values())].sort((a, b) => b.length - a.length)
-    for (const node of graph.nodes) {
-      if (laneOf.has(node.id)) continue
-      const hit = known.find((name) => node.label.toLowerCase().includes(name.toLowerCase()))
-      if (hit) laneOf.set(node.id, hit)
-    }
+  for (const node of graph.nodes) {
+    if (node.kind !== 'activity' || laneOf.has(node.id)) continue
+    const actor = explicitActor(node.label)
+    if (actor) laneOf.set(node.id, actor)
   }
-  if (new Set(laneOf.values()).size < 2) {
+  if (!laneOf.size) {
     return { ...graph, nodes: graph.nodes.map((node) => ({ ...node, lane: undefined })) }
+  }
+  for (const node of graph.nodes) {
+    if (node.kind === 'activity' && !laneOf.has(node.id)) laneOf.set(node.id, 'Unassigned')
   }
   const outgoing = new Map<string, string[]>()
   const incoming = new Map<string, string[]>()

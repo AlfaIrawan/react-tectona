@@ -64,20 +64,30 @@ describe('bpmnPlantUml', () => {
   it('puts each named participant on its own swimlane, like the brainstorm diagram', () => {
     const graph = parseBpmnSource(`@startuml
       () "Isu diterima Tim Cabang" as StartEvent_1
-      rectangle "Interaksi dengan Chat Gen AI" as Task_Chat
+      rectangle "Tim Cabang: Interaksi dengan Chat Gen AI" as Task_Chat
       hexagon "Jenis Isu?" as Gateway_Issue
-      rectangle "Otomasi Pembuatan Tiket di Ivanti (via API)" as Task_Ivanti
-      rectangle "Pemberian Jawaban Real-time (Policy/Process)" as Task_Answer
+      rectangle "Ivanti: Otomasi Pembuatan Tiket (via API)" as Task_Ivanti
+      rectangle "Chat Gen AI: Pemberian Jawaban Real-time (Policy/Process)" as Task_Answer
       StartEvent_1 --> Task_Chat
       Task_Chat --> Gateway_Issue
       Gateway_Issue --> Task_Ivanti
       Gateway_Issue --> Task_Answer
       @enduml`)
     expect(graph.nodes.find((node) => node.id === 'StartEvent_1')?.lane).toBe('Tim Cabang')
-    expect(graph.nodes.find((node) => node.id === 'Task_Chat')?.lane).toBe('Chat Gen AI')
+    expect(graph.nodes.find((node) => node.id === 'Task_Chat')?.lane).toBe('Tim Cabang')
     expect(graph.nodes.find((node) => node.id === 'Task_Ivanti')?.lane).toBe('Ivanti')
-    expect(graph.nodes.find((node) => node.id === 'Gateway_Issue')?.lane).toBe('Chat Gen AI')
+    expect(graph.nodes.find((node) => node.id === 'Gateway_Issue')?.lane).toBe('Tim Cabang')
     expect(graph.nodes.find((node) => node.id === 'Task_Answer')?.lane).toBe('Chat Gen AI')
+  })
+
+  it('does not infer ownership from an application mentioned as a destination', () => {
+    const graph = parseBpmnSource(`@startuml
+      rectangle "Clerk: validate invoice" as check
+      rectangle "Store invoice in Archive" as store
+      check --> store
+      @enduml`)
+    expect(graph.nodes.find(node => node.id === 'check')?.lane).toBe('Clerk')
+    expect(graph.nodes.find(node => node.id === 'store')?.lane).toBe('Unassigned')
   })
 
   it('hides escape characters and does not repeat the swimlane name inside the task', () => {

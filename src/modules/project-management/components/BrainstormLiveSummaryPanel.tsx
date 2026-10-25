@@ -4,7 +4,7 @@ import { AssistantChatMarkdown } from '@/modules/core-shell/components/Assistant
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import type { IdeaDraftJobStatusResponse } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
-import { buildBrainstormLiveSummary, summaryTextChange, type LiveSummarySection } from '../lib/brainstormLiveSummary'
+import { attachLatestSummaryDiagrams, buildBrainstormLiveSummary, summaryTextChange, type LiveSummarySection } from '../lib/brainstormLiveSummary'
 import { normalizeBrainstormSummary } from '../lib/normalizeBrainstormSummary'
 import { BRAINSTORM_FLOATING_HEADER_CLASS, BRAINSTORM_FLOATING_PANEL_CLASS } from '../lib/brainstormFloatingPanel'
 
@@ -84,8 +84,8 @@ function SummarySection({ section, reduced, active }: { section: LiveSummarySect
     <section className="min-w-0 border-b border-border/60 py-4 last:border-b-0" data-summary-section={section.id}>
       <h3 className="mb-3 border-b border-border/70 border-l-2 border-l-primary pb-2 pl-2 text-sm font-semibold leading-5 text-foreground">{section.title}</h3>
       <AnimatedSummaryText text={section.text} reduced={reduced} active={active} />
-      {section.diagram && active ? <figure className="mt-3 min-w-0" data-summary-diagram={section.diagram.lane}>
-        <figcaption className="mb-2 text-xs font-medium text-muted-foreground">{section.diagram.lane === 'as_is' ? 'AS-IS' : 'TO-BE'}</figcaption>
+      {section.diagram && active ? <figure className="mt-3 min-w-0" data-summary-diagram={section.diagram.lane} data-diagram-version={section.diagram.version} data-diagram-status={section.diagram.status}>
+        <figcaption className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-muted-foreground"><span>{section.diagram.lane === 'as_is' ? 'AS-IS' : 'TO-BE'}</span><span>{section.diagram.status === 'confirmed' ? 'Confirmed' : section.diagram.status === 'proposed' ? 'Proposed' : 'Awaiting confirmation'}</span></figcaption>
         <AssistantMermaidBlock source={section.diagram.source} notation="bpmn" compact />
       </figure> : null}
     </section>
@@ -112,12 +112,23 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
   const summaryUnavailable = job?.live_summary?.status === 'unavailable'
     || Boolean(job?.live_summary?.status === 'ready' && job.revision && job.live_summary.source_revision !== job.revision)
   const [snapshot, setSnapshot] = useState(() => buildBrainstormLiveSummary(null))
+  const snapshotJob = useRef(job?.job_id)
+  const diagramMessages = JSON.stringify(job?.brainstorm_messages ?? [])
   useEffect(() => {
     // Never publish optimistic edits, partial replies, or failed request results.
-    if (!busy && !error && (!summaryUnavailable || !snapshot.sections.length)) setSnapshot(JSON.parse(candidate) as typeof snapshot)
-  }, [candidate, busy, error, summaryUnavailable, snapshot.sections.length])
+    if (snapshotJob.current !== job?.job_id) {
+      snapshotJob.current = job?.job_id
+      setSnapshot(buildBrainstormLiveSummary(null))
+      firstSummarySeen.current = false
+    }
+    if (busy || error) return
+    setSnapshot(previous => {
+      const next = !summaryUnavailable || !previous.sections.length ? JSON.parse(candidate) as typeof previous : previous
+      return attachLatestSummaryDiagrams(next, JSON.parse(diagramMessages))
+    })
+  }, [candidate, diagramMessages, busy, error, summaryUnavailable, job?.job_id])
   const hasSummary = snapshot.sections.some(section => Boolean(section.text.trim()))
-  const summaryText = snapshot.sections.map(section => section.text + (section.diagram?.source ?? '')).join('\n\n')
+  const summaryText = snapshot.sections.map(section => section.text + (section.diagram ? section.diagram.source + section.diagram.status : '')).join('\n\n')
   useEffect(() => {
     let frame = 0, nextFrame = 0
     let timer: ReturnType<typeof setTimeout>

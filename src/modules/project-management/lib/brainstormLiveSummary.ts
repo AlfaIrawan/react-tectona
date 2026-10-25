@@ -4,7 +4,7 @@ export type LiveSummarySection = {
   id: string
   title: string
   text: string
-  diagram?: { source: string; lane: 'as_is' | 'to_be' }
+  diagram?: { source: string; lane: 'as_is' | 'to_be'; status: 'proposed' | 'awaiting_confirmation' | 'confirmed'; version: string }
 }
 
 /** Bind confirmations to the latest saved diagram, never to a newly generated sketch. */
@@ -38,6 +38,44 @@ export function confirmedSummaryDiagramTimeline(messages: IdeaDraftJobStatusResp
 
 export function confirmedSummaryDiagrams(messages: IdeaDraftJobStatusResponse['brainstorm_messages']) {
   return confirmedSummaryDiagramTimeline(messages).at(-1) ?? {}
+}
+
+/** Latest published chat assets are visible before approval, but never labelled as facts. */
+export function latestSummaryDiagrams(messages: IdeaDraftJobStatusResponse['brainstorm_messages']) {
+  const latest: Partial<Record<'as_is' | 'to_be', NonNullable<LiveSummarySection['diagram']>>> = {}
+  const confirmed = confirmedSummaryDiagrams(messages)
+  for (const [index, message] of (messages ?? []).entries()) {
+    if (message.role !== 'assistant' || typeof message.text !== 'string') continue
+    const text = message.text.replace(/\r\n/g, '\n')
+    for (const fence of text.matchAll(/```(?:plantuml|mermaid|bpmn)\s*\n([\s\S]*?)```/gi)) {
+      const heading = [...text.slice(0, fence.index).matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?(AS-IS|TO-BE)\s*[\u2014\u2013:-]/gi)].at(-1)?.[1].toUpperCase()
+      const source = fence[1].trim()
+      if (!heading || !source) continue
+      const lane = heading === 'AS-IS' ? 'as_is' : 'to_be'
+      const proposed = message.process_diagram_proposals?.some(proposal => proposal.lane === lane && proposal.diagram_block.includes(source))
+      latest[lane] = { source, lane, version: `${index}:${lane}`, status: confirmed[lane] === source ? 'confirmed' : proposed ? 'proposed' : 'awaiting_confirmation' }
+    }
+  }
+  return latest
+}
+
+/** Diagram delivery is independent of prose generation, including failed prose refreshes. */
+export function attachLatestSummaryDiagrams(snapshot: LiveSummarySnapshot, messages: IdeaDraftJobStatusResponse['brainstorm_messages']): LiveSummarySnapshot {
+  const diagrams = latestSummaryDiagrams(messages)
+  const sections = snapshot.sections.filter(section => section.text.trim()).map(({ diagram: _old, ...section }) => ({ ...section } as LiveSummarySection))
+  if (!sections.length) return { sections }
+  for (const [lane, key, title] of [['as_is', 'as_is_evidence', 'Evidence AS-IS'], ['to_be', 'proposed_change', 'TO-BE']] as const) {
+    const diagram = diagrams[lane]
+    if (!diagram) continue
+    let section = sections.find(row => row.id === key)
+    if (!section) {
+      section = { id: key, title, text: '' }
+      const before = lane === 'as_is' ? sections.findIndex(row => row.id === 'proposed_change') : -1
+      sections.splice(before < 0 ? sections.length : before, 0, section)
+    }
+    section.diagram = diagram
+  }
+  return { sections }
 }
 
 /** Emphasis changes presentation only; it never supplies a missing fact or KPI. */
@@ -74,22 +112,10 @@ export function buildBrainstormLiveSummary(job: IdeaDraftJobStatusResponse | nul
   const summary = job?.live_summary
   if (!summary || summary.status === 'empty') return { sections: [] }
   if (summary.status === 'ready' && job.revision && summary.source_revision && summary.source_revision !== job.revision) return { sections: [] }
-  const diagrams = confirmedSummaryDiagrams(job?.brainstorm_messages)
   const sections: LiveSummarySection[] = summary.sections.filter(section => section.body.trim()).map(section => ({
     id: section.key, title: section.title, text: styleLiveSummaryText(section.body, section.key),
   }))
-  for (const [lane, key, title] of [['as_is', 'as_is_evidence', 'Evidence AS-IS'], ['to_be', 'proposed_change', 'TO-BE']] as const) {
-    const source = diagrams[lane]
-    if (!source || !sections.length) continue
-    let section = sections.find(row => row.id === key)
-    if (!section) {
-      section = { id: key, title, text: '' }
-      const before = lane === 'as_is' ? sections.findIndex(row => row.id === 'proposed_change') : -1
-      sections.splice(before < 0 ? sections.length : before, 0, section)
-    }
-    section.diagram = { source, lane }
-  }
-  return { sections }
+  return attachLatestSummaryDiagrams({ sections }, job?.brainstorm_messages)
 }
 
 /** Keep unchanged text on both sides; animate only the replaced range (Unicode-safe). */
