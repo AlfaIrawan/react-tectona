@@ -7,7 +7,7 @@ import { useTenantContextOptional } from '@/auth/TenantContext'
 import { randomUuid } from '@/lib/randomId'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import { indexIdeaDraftSessions, isActiveIdeaDraft, ideaDraftSessionPreview } from '@/lib/chat/ideaDraftSessionIndex'
-import { listIdeaDraftSessions, deleteIdeaDraftSession, linkIdeaDraftJobToIdea } from '@/lib/api/tectonaAgentRuntimeApi'
+import { listIdeaDraftSessions, linkIdeaDraftJobToIdea } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
   DndContext,
   DragOverlay,
@@ -165,7 +165,6 @@ import { ChatComposerContextToolbar } from './chat/ChatComposerContextToolbar'
 import {
   TECTONA_CHAT_WORKSPACE_ID,
   fetchGenAiChatSessionMessages,
-  deleteGenAiChatSession,
   listGenAiChatSessions,
   sendTectonaAgentRuntimeMessage,
   uploadChatAttachment,
@@ -253,6 +252,7 @@ import { useChatNavigationStore, type OpenChatThreadRequest } from '@/stores/cha
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
 import { pushGlobalToast } from '@/components/ui/toast'
 import { notifyIncomingChatMessage } from '@/lib/notifications/notifyChatMessage'
+import { deleteSavedChatSession, notifyChatDeletion } from '@/lib/chat/chatDeletion'
 import {
   CHAT_CHANNEL_RECEIPT_EVENT,
   CHAT_MESSAGE_RECEIVED_EVENT,
@@ -1650,6 +1650,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   }, [chatContacts, explainerContacts, presenceByUserId, myPresence, hiddenContactIds])
 
   const genaiHydratedRef = useRef<Set<string>>(new Set())
+  const deletingConversationsRef = useRef(new Set<string>())
   /**
    * One opening greet per conversation, shared across effect re-runs.
    *
@@ -3263,8 +3264,12 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   }, [activeConversationId, exitMessageSelection])
 
   const deleteSelectedThreadMessages = useCallback(() => {
-    if (selectedMessageIds.size === 0) return
-    const ids = selectedMessageIds
+    if (selectedMessageIds.size === 0 || !activeConversationId) return
+    const channelId = conversations.find((c) => c.id === activeConversationId)?.channelId
+    const alternate = channelId ? channelConversationId(channelId) : ''
+    const ids = new Set([...(messagesByIdRef.current[activeConversationId] ?? []), ...(messagesByIdRef.current[alternate] ?? [])]
+      .filter(message => selectedMessageIds.has(message.id)).map(message => message.id))
+    if (!ids.size) { exitMessageSelection(); return }
     setMessagesById((prev) => {
       const convId = activeConversationId
       if (!convId) return prev
@@ -3277,11 +3282,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       return next
     })
     exitMessageSelection()
-    pushGlobalToast({
-      variant: 'default',
-      title: 'Messages removed',
-      description: 'Removed from this chat view (local).',
-    })
+    notifyChatDeletion({ deleted: ids.size, messagesOnly: true })
   }, [activeConversationId, conversations, selectedMessageIds, exitMessageSelection])
 
   const goHome = () => {
@@ -3344,47 +3345,44 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     )
   }, [])
 
-  const deleteGenAiSessionsRemote = useCallback((ids: string[]) => {
-    if (ids.length === 0) return
-    rememberDeletedGenAiSessionIds(ids)
-    for (const id of ids) {
-      genaiHydratedRef.current.delete(id)
-      void deleteGenAiChatSession(id).catch(() => {
-        // Best-effort; UI already removed from local state. Tombstone keeps it hidden.
-      })
-    }
-  }, [])
-
   const deleteConversation = useCallback(
-    async (id: string) => {
-      const removed = conversations.find((c) => c.id === id)
-      if (removed?.isBrainstormPointer && removed.brainstormJobId) {
-        try {
-          await deleteIdeaDraftSession(removed.brainstormJobId)
+    async (id: string, announce = true): Promise<boolean | null> => {
+      const removed = conversationsRef.current.find((c) => c.id === id)
+      if (!removed || deletingConversationsRef.current.has(id)) return null
+      deletingConversationsRef.current.add(id)
+      try {
+        await deleteSavedChatSession(removed)
+        if (removed.isBrainstormPointer && removed.brainstormJobId) {
           useIdeaDraftBrainstormPointerStore.getState().clearPointer(removed.brainstormJobId)
-        } catch {
-          setBrainstormSessionError('Could not delete the idea draft. It has been kept; please try again.')
-          return
         }
-      }
-      if (removed && (removed.mode === 'team' || removed.mode === 'group')) {
-        addHiddenFromConversation(removed)
-        setHiddenChatRevision((v) => v + 1)
-      }
-      if (removed?.mode === 'genai' && !removed.isBrainstormPointer) {
-        deleteGenAiSessionsRemote([id])
-      }
-      setConversations((prev) => prev.filter((c) => c.id !== id))
-      setMessagesById((prev) => {
-        const next = { ...prev }
-        delete next[id]
-        return next
-      })
-      if (activeConversationId === id) {
-        goHome()
+        const localOnly = removed.mode === 'team' || removed.mode === 'group'
+        if (localOnly) {
+          addHiddenFromConversation(removed)
+          setHiddenChatRevision((v) => v + 1)
+        }
+        if (removed.mode === 'genai' && !removed.isBrainstormPointer) {
+          rememberDeletedGenAiSessionIds([id])
+          genaiHydratedRef.current.delete(id)
+        }
+        setConversations((prev) => prev.filter((c) => c.id !== id))
+        setMessagesById((prev) => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        if (activeConversationIdRef.current === id) goHome()
+        setBrainstormSessionError('')
+        if (announce) notifyChatDeletion({ deleted: 1, localOnly, title: removed.title })
+        return true
+      } catch {
+        if (removed.isBrainstormPointer) setBrainstormSessionError('Could not delete the idea draft. It has been kept; please try again.')
+        if (announce) notifyChatDeletion({ deleted: 0, failed: 1 })
+        return false
+      } finally {
+        deletingConversationsRef.current.delete(id)
       }
     },
-    [activeConversationId, conversations, deleteGenAiSessionsRemote]
+    [activeConversationId, conversations]
   )
 
   const markAsUnread = useCallback((id: string) => {
@@ -3836,26 +3834,15 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   )
 
   const bulkDelete = useCallback(
-    (ids: string[]) => {
-      const draftIds = conversations.filter((c) => ids.includes(c.id) && c.isBrainstormPointer).map((c) => c.id)
-      for (const id of draftIds) void deleteConversation(id)
-      const idSet = new Set(ids.filter((id) => !draftIds.includes(id)))
-      const genaiIds = conversations.filter((c) => idSet.has(c.id) && c.mode === 'genai').map((c) => c.id)
-      if (genaiIds.length > 0) {
-        deleteGenAiSessionsRemote(genaiIds)
-      }
-      setConversations((prev) => prev.filter((c) => !idSet.has(c.id)))
-      setMessagesById((prev) => {
-        const next = { ...prev }
-        for (const id of idSet) delete next[id]
-        return next
-      })
-      if (activeConversationId && ids.includes(activeConversationId)) {
-        goHome()
-      }
+    async (ids: string[]) => {
+      const targets = conversations.filter(c => ids.includes(c.id))
       clearSelection()
+      const results = await Promise.all(targets.map(async target => ({ target, deleted: await deleteConversation(target.id, false) })))
+      const deleted = results.filter(result => result.deleted === true)
+      const failed = results.filter(result => result.deleted === false)
+      notifyChatDeletion({ deleted: deleted.length, failed: failed.length, localDeleted: deleted.filter(({ target }) => target.mode === 'team' || target.mode === 'group').length })
     },
-    [activeConversationId, clearSelection, conversations, deleteGenAiSessionsRemote, deleteConversation]
+    [clearSelection, conversations, deleteConversation]
   )
 
   const bulkMenuCanCreateGroup = useMemo(() => {
