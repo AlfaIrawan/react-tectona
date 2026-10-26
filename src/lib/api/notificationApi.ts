@@ -125,6 +125,9 @@ function typeCodeToUi(typeCode: string): NotificationApi['type'] {
       // The bell is the only place an approver finds out, so it must not read as a
       // generic info message -- same treatment as a pending workspace access request.
       return 'warning'
+    case 'workflow':
+      // A workflow run that failed: someone has to resume it (the link opens the run).
+      return 'error'
     default:
       return 'info'
   }

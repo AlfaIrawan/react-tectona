@@ -83,6 +83,9 @@ import {
   listWorkflowVersions,
   publishWorkflowApi,
   rejectWorkflowRun,
+  retryWorkflowRun,
+  WorkflowPublishCheckError,
+  type WorkflowPublishProblem,
   runWorkflow,
   updateWorkflow,
   type WorkflowRunDto,
@@ -169,6 +172,8 @@ type WorkflowBuilderCanvasProps = {
   open: boolean
   workflowId: string | null
   initialView?: 'builder' | 'runs' | 'run'
+  /** A run to open in the run panel, e.g. from a failed-run notification. */
+  initialRunId?: string | null
   /**
    * Workspace the new workflow belongs to. An approval workflow drawn in the ORGANISATION
    * workspace governs every workspace under it; without this a saved workflow is global.
@@ -1482,6 +1487,7 @@ function stepStatusTextClass(status: WorkflowRunStepStatus): string {
 function WorkflowBuilderCanvasInner({
   workflowId,
   initialView = 'builder',
+  initialRunId,
   workspaceId,
   workflowName,
   workspaceMembers = [],
@@ -1545,6 +1551,10 @@ function WorkflowBuilderCanvasInner({
   // After publishing: ideas whose runs went past a Set Section Visibility node before it existed.
   const [sectionApplyPrompt, setSectionApplyPrompt] = useState<SectionNodeApplication | null>(null)
   const [sectionApplyBusy, setSectionApplyBusy] = useState(false)
+  // What the publish check found (an error blocks publishing; warnings need acknowledgement).
+  const [publishCheck, setPublishCheck] = useState<{ problems: WorkflowPublishProblem[]; blocking: boolean } | null>(null)
+  const [publishBusy, setPublishBusy] = useState(false)
+  const [retryingRun, setRetryingRun] = useState(false)
   // Which Set Section Visibility nodes change each section, for the note on the trigger's map.
   const sectionChangedBy = useMemo(() => {
     const byKey: Partial<Record<IdeaPanelKey, string[]>> = {}
@@ -2042,6 +2052,9 @@ function WorkflowBuilderCanvasInner({
       })
   }, [activeWorkspaceId, addToast, edges, ideaSectionAudience, ideaSections, name, nodes, onWorkflowCreated, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
+  const publishNowRef = useRef<(acknowledgeWarnings: boolean) => Promise<void>>(() => Promise.resolve())
+  const publishNow = useCallback((acknowledgeWarnings: boolean) => publishNowRef.current(acknowledgeWarnings), [])
+
   const handlePublish = useCallback(() => {
     if (scopeMode !== 'organization' && scopeWorkspaceIds.length === 0) {
       addToast({ variant: 'warning', title: 'Choose workspaces for this scope', description: 'Pick at least one workspace, or switch back to all workspaces in the organization.' })
@@ -2057,8 +2070,16 @@ function WorkflowBuilderCanvasInner({
       return
     }
     updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) })
-      .then(() => publishWorkflowApi(workflowId))
+      .then(() => publishNow(false))
+      .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
+  }, [addToast, edges, ideaSectionAudience, ideaSections, name, nodes, ownerId, persist, publishNow, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+
+  // The saved draft is checked by the engine before it goes live (engine/publish_check.py).
+  function publishNowImpl(acknowledgeWarnings: boolean): Promise<void> {
+    if (!workflowId) return Promise.resolve()
+    return publishWorkflowApi(workflowId, { acknowledgeWarnings })
       .then((published) => {
+        setPublishCheck(null)
         const revision = workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
@@ -2075,8 +2096,16 @@ function WorkflowBuilderCanvasInner({
             .catch(() => undefined)
         }
       })
-      .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
-  }, [addToast, edges, ideaSectionAudience, ideaSections, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+      .catch((error) => {
+        if (error instanceof WorkflowPublishCheckError) {
+          setPublishCheck({ problems: error.problems, blocking: error.blocking })
+          return
+        }
+        throw error
+      })
+  }
+
+  publishNowRef.current = publishNowImpl
 
   const openVersions = useCallback(() => {
     setVersionsOpen((open) => {
@@ -2253,6 +2282,26 @@ function WorkflowBuilderCanvasInner({
   const openRun = useCallback((runId: string) => {
     getWorkflowRun(runId).then(setActiveRun).catch(() => {})
   }, [])
+
+  const initialRunOpenedRef = useRef(false)
+  useEffect(() => {
+    if (!initialRunId || initialRunOpenedRef.current) return
+    initialRunOpenedRef.current = true
+    openRun(initialRunId)
+  }, [initialRunId, openRun])
+
+  const handleRetryRun = useCallback(() => {
+    if (!activeRun) return
+    setRetryingRun(true)
+    retryWorkflowRun(activeRun.id)
+      .then((run) => {
+        setActiveRun(run)
+        refreshRuns()
+        addToast({ variant: 'info', title: 'Run resumed', description: 'Continuing from the step that failed.' })
+      })
+      .catch((e) => addToast({ variant: 'error', title: 'Could not resume the run', description: e instanceof Error ? e.message : '' }))
+      .finally(() => setRetryingRun(false))
+  }, [activeRun, addToast, refreshRuns])
 
   const activeRunId = activeRun?.id
   const activeRunStatus = activeRun?.status
@@ -2922,6 +2971,12 @@ function WorkflowBuilderCanvasInner({
                           Run <span className="font-mono">{activeRun.id}</span> · <span className="font-semibold text-slate-700">{activeRun.status.replace('_', ' ')}</span>
                           {activeRun.error ? <span className="text-rose-500"> · {activeRun.error}</span> : null}
                         </span>
+                        {activeRun.status === 'failed' && activeRun.error !== 'approval rejected' ? (
+                          <Button type="button" size="sm" variant="outline" className="h-7 shrink-0 rounded-lg px-2.5 text-xs" disabled={retryingRun} onClick={handleRetryRun}>
+                            {retryingRun ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                            Retry from failed step
+                          </Button>
+                        ) : null}
                         {activeRun.status === 'waiting_approval' ? (
                           <span className="flex shrink-0 gap-1.5">
                             <Button type="button" size="sm" className="h-7 rounded-lg bg-emerald-600 px-2.5 text-xs hover:bg-emerald-700" onClick={handleApprove}>Approve</Button>
@@ -3683,6 +3738,69 @@ function WorkflowBuilderCanvasInner({
       </ContextMenu>
 
       <Dialog
+        open={Boolean(publishCheck)}
+        onOpenChange={(open) => {
+          if (!open && !publishBusy) setPublishCheck(null)
+        }}
+      >
+        <DialogContent surface="solid" className="w-[min(560px,calc(100vw-2rem))] rounded-2xl p-5">
+          <DialogHeader>
+            <DialogTitle>{publishCheck?.blocking ? 'Fix these before publishing' : 'Publish with these warnings?'}</DialogTitle>
+            <DialogDescription>
+              {publishCheck?.blocking
+                ? 'The engine checked the workflow against the workspaces it runs in. These would fail every run.'
+                : 'Nothing blocks publishing, but these may make runs fail. Runs that hit a service that does not answer are retried automatically.'}
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-[40vh] space-y-1.5 overflow-y-auto text-sm">
+            {(publishCheck?.problems ?? []).map((problem, index) => (
+              <li key={`${problem.code}-${problem.node_id ?? ''}-${index}`}>
+                <button
+                  type="button"
+                  disabled={!problem.node_id}
+                  onClick={() => {
+                    if (!problem.node_id) return
+                    setSelectedNodeId(problem.node_id)
+                    setPublishCheck(null)
+                  }}
+                  className="flex w-full items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-left enabled:hover:bg-slate-50"
+                >
+                  <span className={cn('mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase', problem.level === 'error' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')}>
+                    {problem.level}
+                  </span>
+                  <span className="min-w-0">
+                    {problem.node_label ? <span className="block truncate font-medium text-slate-800">{problem.node_label}</span> : null}
+                    <span className="block text-xs text-slate-600">{problem.message}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button type="button" variant="ghost" size="sm" disabled={publishBusy} onClick={() => setPublishCheck(null)}>
+              {publishCheck?.blocking ? 'Close' : 'Not now'}
+            </Button>
+            {publishCheck && !publishCheck.blocking ? (
+              <Button
+                type="button"
+                size="sm"
+                disabled={publishBusy}
+                onClick={() => {
+                  setPublishBusy(true)
+                  publishNow(true)
+                    .catch(() => addToast({ variant: 'error', title: 'Publish failed', description: 'Try again.' }))
+                    .finally(() => setPublishBusy(false))
+                }}
+              >
+                {publishBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                Publish anyway
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={Boolean(sectionApplyPrompt)}
         onOpenChange={(open) => {
           if (!open && !sectionApplyBusy) setSectionApplyPrompt(null)
@@ -3740,7 +3858,7 @@ function WorkflowBuilderCanvasInner({
   )
 }
 
-export function WorkflowBuilderCanvas({ open, workflowId, initialView, workspaceId, workflowName, workspaceMembers, onWorkflowCreated, onClose }: WorkflowBuilderCanvasProps) {
+export function WorkflowBuilderCanvas({ open, workflowId, initialView, initialRunId, workspaceId, workflowName, workspaceMembers, onWorkflowCreated, onClose }: WorkflowBuilderCanvasProps) {
   if (!open || typeof document === 'undefined') return null
   return createPortal(
     <ReactFlowProvider>
@@ -3748,6 +3866,7 @@ export function WorkflowBuilderCanvas({ open, workflowId, initialView, workspace
         key={workflowId ?? 'new'}
         workflowId={workflowId}
         initialView={initialView}
+        initialRunId={initialRunId}
         workspaceId={workspaceId}
         workflowName={workflowName}
         workspaceMembers={workspaceMembers}

@@ -202,12 +202,48 @@ export async function deleteWorkflowApi(id: string): Promise<void> {
   }
 }
 
-export async function publishWorkflowApi(id: string): Promise<WorkflowDto> {
-  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/publish`, {
+/** One thing the publish check found: an error blocks publishing, a warning needs acknowledgement. */
+export type WorkflowPublishProblem = {
+  level: 'error' | 'warning'
+  code: string
+  message: string
+  node_id?: string | null
+  node_label?: string | null
+}
+
+/** Publishing was refused by the publish check; `problems` says why. */
+export class WorkflowPublishCheckError extends Error {
+  problems: WorkflowPublishProblem[]
+  blocking: boolean
+
+  constructor(problems: WorkflowPublishProblem[], blocking: boolean) {
+    super(blocking ? 'The workflow has problems that would fail its runs.' : 'The workflow has warnings to acknowledge.')
+    this.problems = problems
+    this.blocking = blocking
+  }
+}
+
+export async function publishWorkflowApi(id: string, options: { acknowledgeWarnings?: boolean } = {}): Promise<WorkflowDto> {
+  const qs = options.acknowledgeWarnings ? '?acknowledge_warnings=true' : ''
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/publish${qs}`, {
     method: 'POST',
     headers: defaultHeaders(),
   })
+  if (res.status === 422 || res.status === 409) {
+    const body = await res.clone().json().catch(() => null) as { error?: { details?: { code?: string; problems?: WorkflowPublishProblem[] } } } | null
+    const details = body?.error?.details
+    if (details?.problems?.length) throw new WorkflowPublishCheckError(details.problems, details.code === 'PUBLISH_CHECK_FAILED')
+  }
   return readJson<WorkflowDto>(res)
+}
+
+/** Resume a failed run from the step that failed, with the context it had. */
+export async function retryWorkflowRun(runId: string): Promise<WorkflowRunDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/retry`, {
+    method: 'POST',
+    headers: defaultHeaders(),
+  })
+  return readJson<WorkflowRunDto>(res)
 }
 
 export async function listWorkflowVersions(id: string): Promise<WorkflowVersionDto[]> {

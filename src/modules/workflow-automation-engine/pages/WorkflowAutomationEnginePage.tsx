@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import {
   Activity,
@@ -874,7 +875,21 @@ export function WorkflowAutomationEnginePage() {
     false,
   )
   const [search, setSearch] = useState('')
-  const [builder, setBuilder] = useState<{ open: boolean; workflowId: string | null; view?: 'builder' | 'runs' | 'run' }>({ open: false, workflowId: null })
+  const [builder, setBuilder] = useState<{ open: boolean; workflowId: string | null; view?: 'builder' | 'runs' | 'run'; runId?: string | null }>({ open: false, workflowId: null })
+  // ?workflow=<id>&view=runs&run=<id> (the link in a failed-run notification) opens that run.
+  const [linkParams, setLinkParams] = useSearchParams()
+  useEffect(() => {
+    const linkedWorkflowId = linkParams.get('workflow')
+    if (!linkedWorkflowId) return
+    const view = linkParams.get('view')
+    setBuilder({
+      open: true,
+      workflowId: linkedWorkflowId,
+      view: view === 'runs' || view === 'run' ? 'runs' : 'builder',
+      runId: linkParams.get('run'),
+    })
+    setLinkParams({}, { replace: true })
+  }, [linkParams, setLinkParams])
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([])
   const [workflowCatalogState, setWorkflowCatalogState] = useState<'loading' | 'backend' | 'error'>('loading')
   const workflowOwnerOptionsRef = useRef<WorkflowOwnerOption[]>([])
@@ -3661,6 +3676,7 @@ export function WorkflowAutomationEnginePage() {
         open={builder.open}
         workflowId={builder.workflowId}
         initialView={builder.view}
+        initialRunId={builder.runId}
         workspaceId={isAllWorkspacesSelection(workspaceId) ? null : workspaceId}
         workflowName={builder.workflowId ? workflows.find((item) => item.id === builder.workflowId)?.name ?? null : null}
         workspaceMembers={workflowOwnerOptions}
