@@ -123,7 +123,8 @@ export const WORKFLOW_TRIGGER_EVENT_CATALOG = {
     'AI-generated Task': ['Ready for Review', 'Approved', 'Rejected', 'Created'],
   },
   'AI Idea & Prioritization': {
-    Idea: ['Created', 'Scored', 'Prioritized', 'Approved', 'Converted to Project'],
+    // Submitted is raised once the idea's AI analysis has finished (workflow-automation analysis-completed).
+    Idea: ['Submitted', 'Created', 'Scored', 'Prioritized', 'Approved', 'Converted to Project'],
     Recommendation: ['Created', 'Approved', 'Rejected'],
     'Decision Matrix': ['Updated', 'Threshold Breached'],
   },
