@@ -136,10 +136,24 @@ export async function apiFetch(
   return response
 }
 
+/**
+ * A web server's own HTML error page (nginx "405 Not Allowed", a proxy's "502 Bad Gateway") is not
+ * an API answer: showing its markup told the user nothing (a failed idea delete printed the whole
+ * nginx page in red). Say what happened and what to do instead.
+ */
+export function htmlErrorPageMessage(body: string): string | null {
+  if (!/^\s*<(?:!doctype|html|head|body)\b/i.test(body)) return null
+  const title = body.match(/<title>\s*([^<]{1,120}?)\s*<\/title>/i)?.[1]
+  return `The server returned an error page${title ? ` (${title})` : ''} instead of a response. `
+    + 'Reload the page and try again; if it keeps happening, contact the administrator.'
+}
+
 /** Extract a human-readable message from FastAPI / JSON API error bodies. */
 export function parseApiErrorMessage(body: string, fallback = 'Request failed'): string {
   const trimmed = body.trim()
   if (!trimmed) return fallback
+  const htmlPage = htmlErrorPageMessage(trimmed)
+  if (htmlPage) return htmlPage
 
   try {
     const parsed = JSON.parse(trimmed) as unknown

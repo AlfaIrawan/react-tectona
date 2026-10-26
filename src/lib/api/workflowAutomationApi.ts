@@ -7,7 +7,7 @@
  * NOTE: the backend responds in snake_case (matching the idea-backlog convention).
  */
 
-import { apiFetch, parseApiErrorMessage, tectonaServiceHeaders } from './httpClient'
+import { apiFetch, htmlErrorPageMessage, parseApiErrorMessage, tectonaServiceHeaders } from './httpClient'
 import { serviceApiBase } from './gatewayBase'
 
 const BASE_URL = (() => {
@@ -111,6 +111,10 @@ async function readJson<T>(res: Response): Promise<T> {
     const text = await res.text().catch(() => '')
     // Errors arrive as {"detail": ...} or, behind the error middleware, {"error": {"message": ...}}.
     throw new Error(parseApiErrorMessage(text, `HTTP ${res.status}`))
+  }
+  // A path the web server does not route to the API answers with the app's own HTML page (200).
+  if ((res.headers.get('content-type') ?? '').includes('text/html')) {
+    throw new Error(htmlErrorPageMessage(await res.text()) ?? 'The server returned a page instead of data. Reload the page and try again.')
   }
   return (await res.json()) as T
 }
