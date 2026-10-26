@@ -5928,7 +5928,20 @@ export function WorkspaceManagementPage() {
   const [workspaceMemberCounts, setWorkspaceMemberCounts] = useState<Record<string, number>>({})
   const [sessionOnboardingStatus, setSessionOnboardingStatus] = useState<OnboardingStatusCode | null>(null)
 
-  const currentSessionUser = getSession()?.user ?? null
+  // getSession() JSON.parses storage on every call, so the user object is a new
+  // reference each render. Memoize it or every derived workspace list is new,
+  // and the Add Members effect (which setStates while open) loops into React #185.
+  const sessionUserSnapshot = getSession()?.user ?? null
+  const sessionUserKey = sessionUserSnapshot
+    ? [
+        sessionUserSnapshot.id,
+        sessionUserSnapshot.name,
+        sessionUserSnapshot.email,
+        sessionUserSnapshot.role ?? '',
+        (sessionUserSnapshot.roles ?? []).join('|'),
+      ].join('\0')
+    : ''
+  const currentSessionUser = useMemo(() => sessionUserSnapshot, [sessionUserKey])
   const currentSessionUserRole = (currentSessionUser?.role ?? '').trim().toLowerCase()
   const currentSessionUserRoles = (currentSessionUser?.roles ?? []).map((role) => role.trim().toLowerCase())
   const canViewAllActivityAudit =
@@ -7315,15 +7328,23 @@ export function WorkspaceManagementPage() {
   const [editMembershipOpen, setEditMembershipOpen] = useState(false)
   const [editMembershipTarget, setEditMembershipTarget] = useState<AggregatedMemberRecord | null>(null)
   const [editMembershipSubmitting, setEditMembershipSubmitting] = useState(false)
+  const inviteScopeWorkspaceKey = inviteScopeWorkspaceIds.join('\0')
+  const inviteDirectoryRef = useRef(allWorkspacesForList)
+  inviteDirectoryRef.current = allWorkspacesForList
+  const inviteEligibleRef = useRef(workspacesEligibleForMemberListing)
+  inviteEligibleRef.current = workspacesEligibleForMemberListing
+
   useEffect(() => {
     if (!inviteWorkspaceMemberOpen) return
     let cancelled = false
-    const scopeWorkspaceIds = inviteScopeWorkspaceIds
+    const scopeWorkspaceIds = inviteScopeWorkspaceKey ? inviteScopeWorkspaceKey.split('\0') : []
+    const directory = inviteDirectoryRef.current
+    const eligible = inviteEligibleRef.current
     setInviteOrgMemberScopeReady(false)
-    setInviteOrgMemberIdentityIds([])
-    setInviteScopedIdentityUsers([])
-    setInviteExistingTectonaIdentityIds([])
-    setInviteWorkspaceRoles([])
+    setInviteOrgMemberIdentityIds((prev) => (prev.length === 0 ? prev : []))
+    setInviteScopedIdentityUsers((prev) => (prev.length === 0 ? prev : []))
+    setInviteExistingTectonaIdentityIds((prev) => (prev.length === 0 ? prev : []))
+    setInviteWorkspaceRoles((prev) => (prev.length === 0 ? prev : []))
     setInviteWorkspaceRolesLoading(scopeWorkspaceIds.length > 0)
     void (async () => {
       try {
@@ -7336,14 +7357,14 @@ export function WorkspaceManagementPage() {
         // of truth for who actually belongs to a workspace/organization.
         const targetOrgIds = new Set(
           scopeWorkspaceIds
-            .map((id) => allWorkspacesForList.find((w) => w.id === id)?.primaryOrganizationId)
+            .map((id) => directory.find((w) => w.id === id)?.primaryOrganizationId)
             .filter((id): id is string => Boolean(id)),
         )
-        const eligibleWorkspaceIds = new Set(workspacesEligibleForMemberListing.map((w) => w.id))
+        const eligibleWorkspaceIds = new Set(eligible.map((w) => w.id))
         const eligibleScopeWorkspaceIds = scopeWorkspaceIds.filter((id) => eligibleWorkspaceIds.has(id))
         const orgWorkspaceIds = [...new Set([
           ...eligibleScopeWorkspaceIds,
-          ...allWorkspacesForList
+          ...directory
             .filter((w) => targetOrgIds.has(w.primaryOrganizationId) && eligibleWorkspaceIds.has(w.id))
             .map((w) => w.id),
         ])]
@@ -7385,11 +7406,9 @@ export function WorkspaceManagementPage() {
       cancelled = true
     }
   }, [
-    inviteScopeWorkspaceIds,
+    inviteScopeWorkspaceKey,
     inviteWorkspaceMemberOpen,
     refreshIdentityUserDirectory,
-    allWorkspacesForList,
-    workspacesEligibleForMemberListing,
   ])
 
   const [assignGovernanceOpen, setAssignGovernanceOpen] = useState(false)

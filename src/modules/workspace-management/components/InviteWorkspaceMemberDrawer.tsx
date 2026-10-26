@@ -771,14 +771,29 @@ export function InviteWorkspaceMemberDrawer({
     setEmployeePickerOpen(false)
   }, [open])
 
+  const workspaceOptionIdsKey = useMemo(
+    () => workspaceOptions.map((workspace) => workspace.id).join('\0'),
+    [workspaceOptions],
+  )
+  const initialWorkspaceIdsKey = (initialWorkspaceIds ?? []).join('\0')
+
   useEffect(() => {
     if (!open) return
-    const preset = (initialWorkspaceIds ?? []).filter((id) =>
-      workspaceOptions.some((w) => w.id === id)
+    const allowed = new Set(workspaceOptionIdsKey ? workspaceOptionIdsKey.split('\0') : [])
+    const preset = (initialWorkspaceIdsKey ? initialWorkspaceIdsKey.split('\0') : []).filter(
+      (id) => id && allowed.has(id),
     )
     if (preset.length === 0) return
-    setForm((prev) => ({ ...prev, workspaceIds: preset }))
-  }, [open, initialWorkspaceIds, workspaceOptions])
+    setForm((prev) => {
+      if (
+        prev.workspaceIds.length === preset.length
+        && prev.workspaceIds.every((id, index) => id === preset[index])
+      ) {
+        return prev
+      }
+      return { ...prev, workspaceIds: preset }
+    })
+  }, [open, initialWorkspaceIdsKey, workspaceOptionIdsKey])
 
   const buildPayload = () => {
     const workspaceIds =
