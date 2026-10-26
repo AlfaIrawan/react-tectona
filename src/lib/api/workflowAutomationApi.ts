@@ -387,20 +387,20 @@ export async function getWorkflowRun(runId: string): Promise<WorkflowRunDto> {
   return readJson<WorkflowRunDto>(res)
 }
 
-export async function approveWorkflowRun(runId: string, note?: string): Promise<WorkflowRunDto> {
+export async function approveWorkflowRun(runId: string, note?: string, expectedApprovalId?: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/approve`, {
     method: 'POST',
     headers: defaultHeaders(),
-    body: JSON.stringify({ note: note ?? null }),
+    body: JSON.stringify({ note: note ?? null, ...(expectedApprovalId ? { expected_approval_id: expectedApprovalId } : {}) }),
   })
   return readJson<WorkflowRunDto>(res)
 }
 
-export async function rejectWorkflowRun(runId: string, note?: string, outcome?: 'reject' | 'revision'): Promise<WorkflowRunDto> {
+export async function rejectWorkflowRun(runId: string, note?: string, outcome?: 'reject' | 'revision', expectedApprovalId?: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/reject`, {
     method: 'POST',
     headers: defaultHeaders(),
-    body: JSON.stringify({ note: note ?? null, outcome: outcome ?? 'revision' }),
+    body: JSON.stringify({ note: note ?? null, outcome: outcome ?? 'revision', ...(expectedApprovalId ? { expected_approval_id: expectedApprovalId } : {}) }),
   })
   return readJson<WorkflowRunDto>(res)
 }

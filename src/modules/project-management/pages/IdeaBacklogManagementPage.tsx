@@ -112,6 +112,8 @@ import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame
 import { closeBrainstorm } from '../lib/closeBrainstorm'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
+import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
+import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
 import {
   enterpriseDestructiveOutlineButtonClass,
   enterprisePrimarySoftButtonClass,
@@ -148,7 +150,6 @@ import {
   getIdeaById,
   upsertPersistentIdeaSummary,
   toDisplayStatus,
-  toBackendStatus,
   extractScoringDimensions,
   generateIdeaDescriptionWithAI,
   type IdeaApi,
@@ -2236,7 +2237,10 @@ export function IdeaBacklogManagementPage() {
   const [isUploadIdeaPanelOpen, setIsUploadIdeaPanelOpen] = useState(false)
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
   const [moveIdeaTarget, setMoveIdeaTarget] = useState<Idea | null>(null)
-  const [moveIdeaWorkspaceId, setMoveIdeaWorkspaceId] = useState('')
+  const [moveIdeaFolderId, setMoveIdeaFolderId] = useState('')
+  const [workflowDecision, setWorkflowDecision] = useState<{ idea: Idea; mode: IdeaDecisionMode } | null>(null)
+  const [rejectContextIdeaId, setRejectContextIdeaId] = useState('')
+  const [decidableSelectedIdeaId, setDecidableSelectedIdeaId] = useState('')
   const [isMovingIdea, setIsMovingIdea] = useState(false)
   const [moveIdeaError, setMoveIdeaError] = useState('')
   const [isDeletingIdea, setIsDeletingIdea] = useState(false)
@@ -3051,28 +3055,37 @@ export function IdeaBacklogManagementPage() {
     return () => window.removeEventListener('pointermove', onPointerMove)
   }, [isAnyItemDragActive])
 
-  const decideIdea = async (status: IdeaStatus) => {
-    if (!selectedIdea) return
-    const targetStatus = toBackendStatus(status)
-    try {
-      const updated = await patchIdea(selectedIdea.id, { status_code: targetStatus, version: selectedIdea.version })
-      setIdeas((prev) => prev.map((idea) => (idea.id === selectedIdea.id ? toIdea(updated) : idea)))
-    } catch {
-      // optimistic fallback
-      setIdeas((prev) => prev.map((idea) => (idea.id === selectedIdea.id ? { ...idea, status } : idea)))
+  useEffect(() => {
+    let active = true
+    setRejectContextIdeaId('')
+    const ideaId = ideaCardContextMenu?.idea.id
+    const multiSelect = selectedIdeaIds.size > 1 && Boolean(ideaId && selectedIdeaIds.has(ideaId))
+    if (ideaId && !multiSelect) {
+      void loadIdeaDecisionGates(ideaId, currentUserId).then((gates) => {
+        if (active) setRejectContextIdeaId(gates.length > 0 ? ideaId : '')
+      }).catch(() => undefined)
     }
-  }
+    return () => { active = false }
+  }, [ideaCardContextMenu?.idea.id, selectedIdeaIds, currentUserId])
 
-  const updateIdeaStatus = async (ideaId: string, status: IdeaStatus) => {
-    const idea = ideas.find((i) => i.id === ideaId)
-    if (!idea) return
-    const targetStatus = toBackendStatus(status)
-    try {
-      const updated = await patchIdea(ideaId, { status_code: targetStatus, version: idea.version })
-      setIdeas((prev) => prev.map((i) => (i.id === ideaId ? toIdea(updated) : i)))
-    } catch {
-      setIdeas((prev) => prev.map((i) => (i.id === ideaId ? { ...i, status } : i)))
-    }
+  useEffect(() => {
+    let active = true
+    setDecidableSelectedIdeaId('')
+    if (selectedIdeaId && showScoringPanels) void loadIdeaDecisionGates(selectedIdeaId, currentUserId).then((gates) => {
+      if (active) setDecidableSelectedIdeaId(gates.length > 0 ? selectedIdeaId : '')
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [selectedIdeaId, showScoringPanels, currentUserId, ideas])
+
+  const onWorkflowDecisionSaved = () => {
+    const ideaId = workflowDecision?.idea.id
+    setWorkflowDecision(null)
+    setRejectContextIdeaId('')
+    setDecidableSelectedIdeaId('')
+    addToast({ title: 'Workflow decision saved', description: 'The approval step has been updated.', variant: 'success' })
+    if (ideaId) void getIdeaById(ideaId).then((updated) => {
+      setIdeas((prev) => prev.map((idea) => idea.id === ideaId ? toIdea(updated) : idea))
+    }).catch(() => addToast({ title: 'Could not refresh idea', description: 'The workflow decision was saved. Refresh the page to reload the idea.', variant: 'warning' }))
   }
 
   const applyIdeaCardAccentColor = async (color: string, ideaIds: string[]) => {
@@ -3941,7 +3954,7 @@ export function IdeaBacklogManagementPage() {
 
   const openMoveIdeaDialog = (idea: Idea) => {
     setMoveIdeaTarget(idea)
-    setMoveIdeaWorkspaceId('')
+    setMoveIdeaFolderId(idea.folderId || '')
     setMoveIdeaError('')
     closeContextMenu()
   }
@@ -3949,26 +3962,31 @@ export function IdeaBacklogManagementPage() {
   const closeMoveIdeaDialog = () => {
     if (isMovingIdea) return
     setMoveIdeaTarget(null)
-    setMoveIdeaWorkspaceId('')
+    setMoveIdeaFolderId('')
     setMoveIdeaError('')
   }
 
   const submitMoveIdea = async () => {
-    if (!moveIdeaTarget || !moveIdeaWorkspaceId || isMovingIdea) return
-    const destination = userWorkspaceOptions.options.find((option) => option.workspaceId === moveIdeaWorkspaceId)
-    if (!destination || destination.workspaceId === moveIdeaTarget.workspaceId) return
+    if (!moveIdeaTarget || isMovingIdea) return
+    const folderId = moveIdeaFolderId || null
+    if (folderId === (moveIdeaTarget.folderId || null)) return
+    const destination = folders.find((folder) => folder.id === folderId)
+    if (folderId && (!destination || (destination.workspaceId || '') !== (moveIdeaTarget.workspaceId || ''))) {
+      setMoveIdeaError('Select a folder in the same workspace.')
+      return
+    }
 
     setIsMovingIdea(true)
     setMoveIdeaError('')
     try {
       const updated = await patchIdea(moveIdeaTarget.id, {
-        workspace_id: destination.workspaceId,
-        folder_id: null,
+        folder_id: folderId,
         version: moveIdeaTarget.version,
       })
       setIdeas((prev) => prev.map((idea) => (idea.id === updated.id ? toIdea(updated) : idea)))
-      addToast({ title: 'Idea moved', description: `Moved to ${destination.workspaceName}.` })
-      closeMoveIdeaDialog()
+      addToast({ title: 'Idea moved', description: `Moved to ${destination?.name || 'workspace root'}.`, variant: 'success' })
+      setMoveIdeaTarget(null)
+      setMoveIdeaFolderId('')
     } catch (error) {
       setMoveIdeaError(error instanceof Error ? error.message : 'Could not move the idea.')
     } finally {
@@ -5243,7 +5261,7 @@ export function IdeaBacklogManagementPage() {
       />
 
       {showScoringPanels && selectedIdea && (
-        <section className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <section id="idea-evaluation-panel" className="grid grid-cols-1 xl:grid-cols-12 gap-4 scroll-mt-4">
           <Card className={cn('xl:col-span-8', ideaBacklogLiquidGlassPanelClass)}>
           <CardHeader className="pb-3">
             <CardTitle className="text-base text-slate-900 flex items-center gap-2">
@@ -5372,14 +5390,15 @@ export function IdeaBacklogManagementPage() {
             </div>
 
             <div className="space-y-3 pt-1">
-              <p className="text-[11px] text-slate-500">Decision SLA: target within 2 business days from intake review.</p>
+              <p className="text-[11px] text-slate-500">Decisions follow the active Workflow Automation approval. Only assigned approvers can decide.</p>
               <div className="flex w-full flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
-                  onClick={() => decideIdea('Approved')}
+                  onClick={() => setWorkflowDecision({ idea: selectedIdea, mode: 'approve' })}
+                  disabled={decidableSelectedIdeaId !== selectedIdea.id}
                   className={cn(
                     enterprisePrimarySolidButtonClass(),
-                    'flex min-w-0 w-full basis-0 flex-1 justify-center',
+                    'flex min-w-0 w-full basis-0 flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed',
                   )}
                 >
                   <Check className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
@@ -5387,10 +5406,11 @@ export function IdeaBacklogManagementPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => decideIdea('Rejected')}
+                  onClick={() => setWorkflowDecision({ idea: selectedIdea, mode: 'reject' })}
+                  disabled={decidableSelectedIdeaId !== selectedIdea.id}
                   className={cn(
                     enterpriseDestructiveOutlineButtonClass(),
-                    'flex min-w-0 w-full basis-0 flex-1 justify-center',
+                    'flex min-w-0 w-full basis-0 flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed',
                   )}
                 >
                   <X className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
@@ -5398,10 +5418,11 @@ export function IdeaBacklogManagementPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => decideIdea('Under Review')}
+                  onClick={() => setWorkflowDecision({ idea: selectedIdea, mode: 'revision' })}
+                  disabled={decidableSelectedIdeaId !== selectedIdea.id}
                   className={cn(
                     enterpriseSecondaryButtonClass(),
-                    'group flex min-w-0 w-full basis-0 flex-1 items-center justify-center gap-2 rounded-2xl whitespace-nowrap text-[13.5px]',
+                    'group flex min-w-0 w-full basis-0 flex-1 items-center justify-center gap-2 rounded-2xl whitespace-nowrap text-[13.5px] disabled:opacity-50 disabled:cursor-not-allowed',
                   )}
                 >
                   <Undo2 className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:-rotate-12" strokeWidth={2.5} />
@@ -6061,7 +6082,7 @@ export function IdeaBacklogManagementPage() {
             onClick={() => openMoveIdeaDialog(ideaCardContextMenu.idea)}
           >
             <MoveRight className="w-4 h-4 mr-2" />
-            Move idea
+            Move to Folder
           </ContextMenuItem>
         )}
 
@@ -6084,37 +6105,26 @@ export function IdeaBacklogManagementPage() {
         <ContextMenuItem
           onClick={() => {
             if (!ideaCardContextMenu) return
-            if (isMultiSelectCardMenu) {
-              setSelectedIdeaId(ideaCardContextMenu.idea.id)
-              setShowScoringPanels(true)
-            } else {
-              selectSingleIdea(ideaCardContextMenu.idea.id)
-            }
+            selectSingleIdea(ideaCardContextMenu.idea.id)
+            setShowScoringPanels(true)
             closeContextMenu()
+            requestAnimationFrame(() => document.getElementById('idea-evaluation-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
           }}
         >
           <BarChart3 className="w-4 h-4 mr-2" />
-          Evaluate
+          View Evaluation
         </ContextMenuItem>
 
-        <ContextMenuItem
+        {!isMultiSelectCardMenu && ideaCardContextMenu?.idea.id === rejectContextIdeaId && <ContextMenuItem
           onClick={() => {
             if (!ideaCardContextMenu) return
-            if (isMultiSelectCardMenu) {
-              setIdeas((prev) =>
-                prev.map((idea) =>
-                  selectedIdeaIds.has(idea.id) ? { ...idea, status: 'Rejected' } : idea
-                )
-              )
-            } else {
-              updateIdeaStatus(ideaCardContextMenu.idea.id, 'Rejected')
-            }
+            setWorkflowDecision({ idea: ideaCardContextMenu.idea, mode: 'reject' })
             closeContextMenu()
           }}
         >
           <X className="w-4 h-4 mr-2" />
           Reject
-        </ContextMenuItem>
+        </ContextMenuItem>}
 
         <ContextMenuSeparator />
 
@@ -7938,6 +7948,14 @@ export function IdeaBacklogManagementPage() {
                   document.body,
                 )
               : null}
+            {workflowDecision && <IdeaWorkflowDecisionDialog
+              key={`${workflowDecision.idea.id}:${workflowDecision.mode}`}
+              idea={workflowDecision.idea}
+              mode={workflowDecision.mode}
+              userId={currentUserId}
+              onClose={() => setWorkflowDecision(null)}
+              onSaved={onWorkflowDecisionSaved}
+            />}
             {moveIdeaTarget && typeof document !== 'undefined'
               ? createPortal(
                   <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
@@ -7948,9 +7966,9 @@ export function IdeaBacklogManagementPage() {
                             <MoveRight className="h-5 w-5" aria-hidden />
                           </div>
                           <div>
-                            <h2 className="text-lg font-semibold">Move idea</h2>
+                            <h2 className="text-lg font-semibold">Move to Folder</h2>
                             <p className="mt-1 text-sm text-muted-foreground">
-                              Change where this idea is stored and who can access it.
+                              Organize this idea within its current workspace.
                             </p>
                           </div>
                         </div>
@@ -7961,25 +7979,25 @@ export function IdeaBacklogManagementPage() {
                           <p className="mt-1 break-words text-sm font-semibold">{moveIdeaTarget.title}</p>
                         </div>
                         <div>
-                          <Label htmlFor="move-idea-workspace">Destination workspace</Label>
+                          <Label htmlFor="move-idea-folder">Destination folder</Label>
                           <select
-                            id="move-idea-workspace"
-                            value={moveIdeaWorkspaceId}
-                            onChange={(event) => setMoveIdeaWorkspaceId(event.target.value)}
+                            id="move-idea-folder"
+                            value={moveIdeaFolderId}
+                            onChange={(event) => setMoveIdeaFolderId(event.target.value)}
                             className="mt-2 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                           >
-                            <option value="">Select a destination</option>
-                            {userWorkspaceOptions.options
-                              .filter((option) => option.workspaceId !== moveIdeaTarget.workspaceId)
-                              .map((option) => (
-                                <option key={option.workspaceId} value={option.workspaceId}>
-                                  {option.workspaceName} ({option.tenantMode === 'personal' ? 'Personal' : 'Non-personal'})
+                            <option value="">Workspace root</option>
+                            {folders
+                              .filter((folder) => (folder.workspaceId || '') === (moveIdeaTarget.workspaceId || ''))
+                              .map((folder) => (
+                                <option key={folder.id} value={folder.id}>
+                                  {folder.name}
                                 </option>
                               ))}
                           </select>
                         </div>
                         <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-950">
-                          Moving to a Personal workspace makes the idea private to that workspace. Moving to a Non-personal workspace makes it available according to that workspace's access policy. The current folder link will be cleared.
+                          Workspace, ownership, and workflow remain unchanged. Cross-workspace transfers are unavailable until workflow and document access can be migrated safely.
                         </div>
                         {moveIdeaError && <p className="text-sm text-destructive">{moveIdeaError}</p>}
                       </div>
@@ -7987,8 +8005,8 @@ export function IdeaBacklogManagementPage() {
                         <Button type="button" variant="outline" className="flex-1" onClick={closeMoveIdeaDialog} disabled={isMovingIdea}>
                           Cancel
                         </Button>
-                        <Button type="button" className="flex-1" onClick={() => void submitMoveIdea()} disabled={!moveIdeaWorkspaceId || isMovingIdea}>
-                          {isMovingIdea ? 'Moving…' : 'Move idea'}
+                        <Button type="button" className="flex-1 gap-2" onClick={() => void submitMoveIdea()} disabled={moveIdeaFolderId === (moveIdeaTarget.folderId || '') || isMovingIdea}>
+                          <MoveRight className="h-4 w-4" />{isMovingIdea ? 'Moving...' : 'Move to Folder'}
                         </Button>
                       </div>
                     </div>
