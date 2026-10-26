@@ -303,6 +303,18 @@ const STATUS_COLORS: Record<string, string> = {
   'Needs Approval': '#f59e0b',
   Failed: '#ef4444',
 }
+/** Says whose runs the overview counts: the backend rolls a workspace up with everything under it. */
+function overviewScopeDescription(overview: WorkflowOverviewDto | null): string {
+  const base = 'Workflow execution KPI summary and daily success/failure trend'
+  const scope = overview?.scope
+  if (!scope) return `${base}.`
+  if (scope.runs === 'all') return `${base} across all workspaces.`
+  const below = Math.max(0, (scope.workspaces ?? 1) - 1)
+  return below > 0
+    ? `${base} for runs in this workspace and its ${below} sub-workspace${below === 1 ? '' : 's'}.`
+    : `${base} for runs in this workspace.`
+}
+
 function statusColor(label: string): string {
   return STATUS_COLORS[label] ?? '#cbd5e1'
 }
@@ -2245,7 +2257,7 @@ export function WorkflowAutomationEnginePage() {
           {activePanel === 'overview' ? (
             <Panel
               title="Workflow Execution Overview Panel"
-              description="Workflow execution KPI summary and daily success/failure trend."
+              description={overviewScopeDescription(overview)}
               headerIcon={<BarChart3 className="h-5 w-5" />}
               panelRef={activeMainPanelRef}
               style={isOverviewSectionActive ? workspaceMainPanelViewportHeightStyle(mainPanelViewportHeightPx) : undefined}

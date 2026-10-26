@@ -149,6 +149,8 @@ export type WorkflowOverviewDto = {
   status_mix: Array<{ label: string; value: number }>
   queue: { waiting_approval: number; waiting_delay: number; running: number; pending_approvals: number }
   insights: Array<{ level: 'Critical' | 'Warning' | 'Info'; text: string }>
+  /** What the run figures cover: every workspace, or the selected one plus all under it. */
+  scope?: { runs: 'all' | 'workspace'; workspaces: number | null }
 }
 
 export async function getWorkflowOverview(params: { workspaceId?: string; days?: number } = {}): Promise<WorkflowOverviewDto> {
