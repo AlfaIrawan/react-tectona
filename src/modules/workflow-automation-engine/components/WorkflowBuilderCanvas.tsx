@@ -24,7 +24,7 @@ import {
   type OnSelectionChangeFunc,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { AlertTriangle, ArrowLeft, Bell, BoxSelect, Bug, CalendarClock, CalendarDays, CheckCircle2, Clock3, Code2, Copy, Flag, Globe2, Info, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MousePointerClick, Pencil, Play, PlayCircle, PlugZap, Plus, Power, Save, Send, Settings2, ShieldCheck, Tag, Trash2, TriangleAlert, Unlink, UserRound, Users, Wand2, Webhook, X, Zap, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Bell, BoxSelect, Bug, CalendarClock, CalendarDays, CheckCircle2, Clock3, Code2, Copy, Eye, Flag, Globe2, Info, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MousePointerClick, Pencil, Play, PlayCircle, PlugZap, Plus, Power, Save, Send, Settings2, ShieldCheck, Tag, Trash2, TriangleAlert, Unlink, UserRound, Users, Wand2, Webhook, X, Zap, type LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
@@ -1589,6 +1589,10 @@ function WorkflowBuilderCanvasInner({
   const [scopeWorkspaceIds, setScopeWorkspaceIds] = useState<string[]>([])
   // The owning workspace decides which organization's workspaces can be chosen.
   const [ownerWorkspaceId, setOwnerWorkspaceId] = useState<string | null>(activeWorkspaceId)
+  // Opened from a workspace that only inherits it from the organization home: viewing is
+  // fine, but a change here would change the policy for every workspace (the backend
+  // refuses it too), so nothing is saved, published or edited.
+  const inherited = Boolean(workflowId && activeWorkspaceId && ownerWorkspaceId && ownerWorkspaceId !== activeWorkspaceId)
   const [orgWorkspaces, setOrgWorkspaces] = useState<WorkspaceOrgWorkspaceDto[]>([])
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [tab, setTab] = useState<'builder' | 'debug'>(initialView === 'builder' ? 'builder' : 'debug')
@@ -1951,7 +1955,7 @@ function WorkflowBuilderCanvasInner({
   // resize interactions responsive while ensuring positions and dimensions survive
   // a reload without requiring an extra click on Save Draft.
   useEffect(() => {
-    if (!workflowId || !autosaveReady) return
+    if (!workflowId || !autosaveReady || inherited) return
     const revision = currentRevision
     if (revision === savedRevisionRef.current) return
 
@@ -1967,7 +1971,7 @@ function WorkflowBuilderCanvasInner({
         scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds,
         trigger: triggerTypeOf(nodes),
         definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience),
-        })
+        }, activeWorkspaceId)
         .then(() => {
           savedRevisionRef.current = revision
         })
@@ -1977,7 +1981,7 @@ function WorkflowBuilderCanvasInner({
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [autosaveReady, currentRevision, edges, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+  }, [activeWorkspaceId, autosaveReady, currentRevision, edges, inherited, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   useEffect(() => {
     let cancelled = false
@@ -2001,6 +2005,7 @@ function WorkflowBuilderCanvasInner({
   }, [orgWorkspaces, ownerWorkspaceId])
 
   const handleSaveDraft = useCallback(() => {
+    if (inherited) return
     if (scopeMode !== 'organization' && scopeWorkspaceIds.length === 0) {
       addToast({ variant: 'warning', title: 'Choose workspaces for this scope', description: 'Pick at least one workspace, or switch back to all workspaces in the organization.' })
       return
@@ -2038,7 +2043,7 @@ function WorkflowBuilderCanvasInner({
         })
       return
     }
-    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) }, activeWorkspaceId)
       .then(() => {
         const revision = workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
         savedRevisionRef.current = revision
@@ -2050,12 +2055,13 @@ function WorkflowBuilderCanvasInner({
         setDraftSaveState('unsaved')
         addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' })
       })
-  }, [activeWorkspaceId, addToast, edges, ideaSectionAudience, ideaSections, name, nodes, onWorkflowCreated, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+  }, [activeWorkspaceId, addToast, edges, ideaSectionAudience, ideaSections, inherited, name, nodes, onWorkflowCreated, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   const publishNowRef = useRef<(acknowledgeWarnings: boolean) => Promise<void>>(() => Promise.resolve())
   const publishNow = useCallback((acknowledgeWarnings: boolean) => publishNowRef.current(acknowledgeWarnings), [])
 
   const handlePublish = useCallback(() => {
+    if (inherited) return
     if (scopeMode !== 'organization' && scopeWorkspaceIds.length === 0) {
       addToast({ variant: 'warning', title: 'Choose workspaces for this scope', description: 'Pick at least one workspace, or switch back to all workspaces in the organization.' })
       return
@@ -2069,15 +2075,15 @@ function WorkflowBuilderCanvasInner({
       addToast({ variant: 'info', title: 'Workflow published', description: `${name} published (prototype).` })
       return
     }
-    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) })
+    updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) }, activeWorkspaceId)
       .then(() => publishNow(false))
       .catch(() => addToast({ variant: 'warning', title: 'Published locally', description: 'Backend unavailable — not synced.' }))
-  }, [addToast, edges, ideaSectionAudience, ideaSections, name, nodes, ownerId, persist, publishNow, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+  }, [activeWorkspaceId, addToast, edges, ideaSectionAudience, ideaSections, inherited, name, nodes, ownerId, persist, publishNow, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   // The saved draft is checked by the engine before it goes live (engine/publish_check.py).
   function publishNowImpl(acknowledgeWarnings: boolean): Promise<void> {
     if (!workflowId) return Promise.resolve()
-    return publishWorkflowApi(workflowId, { acknowledgeWarnings })
+    return publishWorkflowApi(workflowId, { acknowledgeWarnings, workspaceId: activeWorkspaceId })
       .then((published) => {
         setPublishCheck(null)
         const revision = workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
@@ -2089,7 +2095,7 @@ function WorkflowBuilderCanvasInner({
         addToast({ variant: 'success', title: 'Workflow published', description: `${name} published as v${published.version}.` })
         // Ideas whose runs went past a Set Section Visibility node before it existed: ask first.
         if (nodes.some(isIdeaSectionNode)) {
-          applyWorkflowSectionNodes(workflowId, true)
+          applyWorkflowSectionNodes(workflowId, true, activeWorkspaceId)
             .then((preview) => {
               if (preview.ideas.length > 0) setSectionApplyPrompt(preview)
             })
@@ -2237,7 +2243,8 @@ function WorkflowBuilderCanvasInner({
       setIsRunning(true)
       setTab('debug')
       try {
-        await updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) })
+        // An inherited workflow runs as its owner saved it; its draft is not this workspace's to save.
+        if (!inherited) await updateWorkflow(workflowId, { name, definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) }, activeWorkspaceId)
         let context: Record<string, unknown> = {}
         if (runContextText.trim()) {
           try {
@@ -2646,11 +2653,19 @@ function WorkflowBuilderCanvasInner({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {inherited ? (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700"
+              title="Inherited from the organization workspace. Open it there to edit, publish or delete it."
+            >
+              <Eye className="h-3.5 w-3.5" /> View only · Organization
+            </span>
+          ) : null}
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-9 rounded-lg px-3 text-xs"
+            className={cn('h-9 rounded-lg px-3 text-xs', inherited && 'hidden')}
             onClick={handleAutoLayout}
             disabled={tab !== 'builder' || nodes.length === 0}
             title="Auto-arrange nodes top-down"
@@ -2693,6 +2708,7 @@ function WorkflowBuilderCanvasInner({
             size="sm"
             className={cn(
               'h-9 rounded-lg px-3 text-xs transition-colors',
+              inherited && 'hidden',
               draftSaveState === 'unsaved' && 'border-amber-400 bg-amber-50 text-amber-800 hover:border-amber-500 hover:bg-amber-100',
               draftSaveState === 'saving' && 'border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100',
             )}
@@ -2745,7 +2761,7 @@ function WorkflowBuilderCanvasInner({
                         </div>
                         <button
                           type="button"
-                          className="shrink-0 rounded-md border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-100"
+                          className={cn('shrink-0 rounded-md border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-100', inherited && 'hidden')}
                           onClick={() => restoreVersion(row.version)}
                         >
                           Restore
@@ -2760,7 +2776,7 @@ function WorkflowBuilderCanvasInner({
           <Button
             type="button"
             size="sm"
-            className="h-9 rounded-lg px-3 text-xs"
+            className={cn('h-9 rounded-lg px-3 text-xs', inherited && 'hidden')}
             onClick={handlePublish}
             disabled={draftSaveState === 'saved' && publishedRevision !== null && publishedRevision === currentRevision}
             title={draftSaveState === 'saved' && publishedRevision !== null && publishedRevision === currentRevision ? 'Already published' : 'Publish this workflow'}
@@ -2772,7 +2788,10 @@ function WorkflowBuilderCanvasInner({
 
       <div className="flex min-h-0 flex-1">
         {/* Left palette */}
-        <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
+        <aside
+          className={cn('flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white', inherited && 'pointer-events-none opacity-50')}
+          aria-disabled={inherited || undefined}
+        >
           <div className="border-b border-slate-100 px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Node Palette</p>
             <p className="mt-0.5 text-[11px] text-slate-500">Click to add, or drag onto the canvas.</p>
@@ -2815,7 +2834,7 @@ function WorkflowBuilderCanvasInner({
         {/* Center canvas */}
         <main className="relative min-h-0 min-w-0 flex-1">
           {tab === 'builder' ? (
-            <div ref={wrapperRef} className="absolute inset-0 min-h-[320px] min-w-0" onDragOver={handleCanvasDragOver} onDrop={handleCanvasDrop}>
+            <div ref={wrapperRef} className="absolute inset-0 min-h-[320px] min-w-0" onDragOver={handleCanvasDragOver} onDrop={inherited ? undefined : handleCanvasDrop}>
               <WorkflowCanvasActionsProvider value={{ setEdgeWaypoints, setEdgeAnchor }}>
               <ReactFlow
                 className="workflow-builder-canvas h-full w-full"
@@ -2825,13 +2844,17 @@ function WorkflowBuilderCanvasInner({
                 edgeTypes={WORKFLOW_EDGE_TYPES}
                 onNodesChange={onWorkflowNodesChange}
                 onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
+                onConnect={inherited ? undefined : onConnect}
                 onSelectionChange={handleSelectionChange}
                 onNodeClick={handleNodeClick}
                 onPaneClick={handlePaneClick}
-                onNodeContextMenu={onNodeContextMenu}
-                onEdgeContextMenu={onEdgeContextMenu}
-                onPaneContextMenu={onPaneContextMenu}
+                onNodeContextMenu={inherited ? undefined : onNodeContextMenu}
+                onEdgeContextMenu={inherited ? undefined : onEdgeContextMenu}
+                onPaneContextMenu={inherited ? undefined : onPaneContextMenu}
+                nodesDraggable={!inherited}
+                nodesConnectable={!inherited}
+                edgesUpdatable={!inherited}
+                deleteKeyCode={inherited ? null : undefined}
                 defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
                 connectionLineComponent={WorkflowConnectionPreview}
                 connectionMode={ConnectionMode.Loose}
@@ -3035,6 +3058,8 @@ function WorkflowBuilderCanvasInner({
             </p>
           </div>
           <div className="source-editor-scroll min-h-0 flex-1 overflow-y-auto p-4">
+            {/* A disabled fieldset turns every control inside it read-only in one place. */}
+            <fieldset disabled={inherited} className="m-0 min-w-0 border-0 p-0">
             {selectedNode && selectedMeta ? (
               <div key={`${selectedNode.id}:${selectedNode.data.kind}`} className="space-y-4">
                 <div className="flex items-center gap-2.5">
@@ -3568,6 +3593,7 @@ function WorkflowBuilderCanvasInner({
                 </p>
               </div>
             )}
+            </fieldset>
           </div>
         </aside>
       </div>
@@ -3835,7 +3861,7 @@ function WorkflowBuilderCanvasInner({
               onClick={() => {
                 if (!workflowId) return
                 setSectionApplyBusy(true)
-                applyWorkflowSectionNodes(workflowId, false)
+                applyWorkflowSectionNodes(workflowId, false, activeWorkspaceId)
                   .then((result) => {
                     addToast({
                       variant: 'success',

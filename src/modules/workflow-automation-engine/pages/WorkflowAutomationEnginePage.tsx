@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Clock3,
   Download,
+  Eye,
   Filter,
   Gauge,
   Globe,
@@ -1438,7 +1439,7 @@ export function WorkflowAutomationEnginePage() {
   const changeWorkflowStatus = useCallback((id: string, status: 'Active' | 'Paused') => {
     if (workflowStatusBusyId) return
     setWorkflowStatusBusyId(id)
-    void updateWorkflow(id, { status })
+    void updateWorkflow(id, { status }, isAllWorkspacesSelection(workspaceId) ? null : workspaceId)
       .then((updated) => {
         setWorkflows((current) => current.map((item) => (
           item.id === id ? mapWorkflowDto(updated, workflowOwnerOptionsRef.current) : item
@@ -1451,7 +1452,7 @@ export function WorkflowAutomationEnginePage() {
         description: error instanceof Error ? error.message : 'Please try again.',
       }))
       .finally(() => setWorkflowStatusBusyId(null))
-  }, [addToast, workflowStatusBusyId])
+  }, [addToast, workflowStatusBusyId, workspaceId])
 
   const copyWorkflowId = useCallback((id: string) => {
     if (!navigator.clipboard?.writeText) {
@@ -1465,7 +1466,7 @@ export function WorkflowAutomationEnginePage() {
 
   const deleteWorkflow = useCallback(
     (id: string) => {
-      deleteWorkflowApi(id)
+      deleteWorkflowApi(id, isAllWorkspacesSelection(workspaceId) ? null : workspaceId)
         .then(() => {
           setWorkflows((current) => current.filter((item) => item.id !== id))
           setWorkflowTableSelectedIds((current) => current.filter((selectedId) => selectedId !== id))
@@ -1482,7 +1483,7 @@ export function WorkflowAutomationEnginePage() {
           description: error instanceof Error ? error.message : 'Please try again.',
         }))
     },
-    [addToast],
+    [addToast, workspaceId],
   )
 
   const createWorkflow = useCallback(() => {
@@ -1634,6 +1635,12 @@ export function WorkflowAutomationEnginePage() {
       return owner !== workspaceId
     },
     [workspaceId],
+  )
+
+  // The row menu hides changes an inherited workflow does not accept from this workspace.
+  const rowMenuInherited = useMemo(
+    () => Boolean(rowMenuWorkflow && isInheritedWorkflow(rowMenuWorkflow)),
+    [isInheritedWorkflow, rowMenuWorkflow],
   )
 
   const renderWorkflowTableCell = (item: WorkflowRecord, key: WorkflowTableColumnKey) => {
@@ -2963,8 +2970,17 @@ export function WorkflowAutomationEnginePage() {
                             setRowMenu(null)
                           }}
                         >
-                          <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                          Open in Builder
+                          {rowMenuInherited ? (
+                            <>
+                              <Eye className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              View in Builder
+                            </>
+                          ) : (
+                            <>
+                              <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                              Open in Builder
+                            </>
+                          )}
                         </ContextMenuItem>
                         <ContextMenuItem
                           onSelect={() => {
@@ -3005,7 +3021,9 @@ export function WorkflowAutomationEnginePage() {
                           <Hash className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                           Copy Workflow ID
                         </ContextMenuItem>
-                        {rowMenuWorkflow && ['Active', 'Paused'].includes(rowMenuWorkflow.status) ? (
+                        {/* An inherited workflow is the organization's policy: pausing or deleting it
+                            here would change it for every workspace, so only its owner may. */}
+                        {rowMenuWorkflow && !rowMenuInherited && ['Active', 'Paused'].includes(rowMenuWorkflow.status) ? (
                           <ContextMenuItem
                             disabled={workflowStatusBusyId !== null}
                             onSelect={() => {
@@ -3019,16 +3037,27 @@ export function WorkflowAutomationEnginePage() {
                             {rowMenuWorkflow.status === 'Active' ? 'Pause' : 'Resume'}
                           </ContextMenuItem>
                         ) : null}
-                        <ContextMenuSeparator />
-                        <ContextMenuItem
-                          onSelect={() => {
-                            if (rowMenu) setDeleteTargetId(rowMenu.id)
-                            setRowMenu(null)
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4 shrink-0 text-rose-500" aria-hidden />
-                          <span className="text-rose-600">Delete</span>
-                        </ContextMenuItem>
+                        {rowMenuInherited ? (
+                          <>
+                            <ContextMenuSeparator />
+                            <p className="max-w-[15rem] px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
+                              Inherited from the organization workspace. Edit, pause or delete it there.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onSelect={() => {
+                                if (rowMenu) setDeleteTargetId(rowMenu.id)
+                                setRowMenu(null)
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+                              <span className="text-rose-600">Delete</span>
+                            </ContextMenuItem>
+                          </>
+                        )}
                       </ContextMenu>
 
                       <EnterpriseColumnWidthModal

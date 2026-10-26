@@ -174,8 +174,15 @@ export async function createWorkflow(body: WorkflowCreateInput): Promise<Workflo
   return readJson<WorkflowDto>(res)
 }
 
-export async function updateWorkflow(id: string, patch: WorkflowUpdateInput): Promise<WorkflowDto> {
-  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}`, {
+/** `?workspace_id=` naming the workspace the caller acts from. The backend refuses to change a
+    workflow from a workspace that only inherits it (403). */
+function actingWorkspaceQuery(workspaceId?: string | null, prefix: '?' | '&' = '?'): string {
+  const id = workspaceId?.trim()
+  return id ? `${prefix}workspace_id=${encodeURIComponent(id)}` : ''
+}
+
+export async function updateWorkflow(id: string, patch: WorkflowUpdateInput, workspaceId?: string | null): Promise<WorkflowDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}${actingWorkspaceQuery(workspaceId)}`, {
     method: 'PUT',
     headers: defaultHeaders(),
     body: JSON.stringify(patch),
@@ -191,14 +198,14 @@ export async function duplicateWorkflowApi(id: string): Promise<WorkflowDto> {
   return readJson<WorkflowDto>(res)
 }
 
-export async function deleteWorkflowApi(id: string): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}`, {
+export async function deleteWorkflowApi(id: string, workspaceId?: string | null): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}${actingWorkspaceQuery(workspaceId)}`, {
     method: 'DELETE',
     headers: defaultHeaders(),
   })
   if (!res.ok && res.status !== 204 && res.status !== 404) {
     const text = await res.text().catch(() => '')
-    throw new Error(text || `HTTP ${res.status}`)
+    throw new Error(parseApiErrorMessage(text, `HTTP ${res.status}`))
   }
 }
 
@@ -223,8 +230,10 @@ export class WorkflowPublishCheckError extends Error {
   }
 }
 
-export async function publishWorkflowApi(id: string, options: { acknowledgeWarnings?: boolean } = {}): Promise<WorkflowDto> {
-  const qs = options.acknowledgeWarnings ? '?acknowledge_warnings=true' : ''
+export async function publishWorkflowApi(id: string, options: { acknowledgeWarnings?: boolean; workspaceId?: string | null } = {}): Promise<WorkflowDto> {
+  const qs = options.acknowledgeWarnings
+    ? `?acknowledge_warnings=true${actingWorkspaceQuery(options.workspaceId, '&')}`
+    : actingWorkspaceQuery(options.workspaceId)
   const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/publish${qs}`, {
     method: 'POST',
     headers: defaultHeaders(),
@@ -433,9 +442,9 @@ export type SectionNodeApplication = {
  * "Set Section Visibility" nodes that ideas' runs went past before the node was published: which
  * ideas they change (dryRun) or apply the change.
  */
-export async function applyWorkflowSectionNodes(workflowId: string, dryRun: boolean): Promise<SectionNodeApplication> {
+export async function applyWorkflowSectionNodes(workflowId: string, dryRun: boolean, workspaceId?: string | null): Promise<SectionNodeApplication> {
   const res = await apiFetch(
-    `${BASE_URL}/v1/workflows/${encodeURIComponent(workflowId)}/apply-section-nodes?dry_run=${dryRun ? 'true' : 'false'}`,
+    `${BASE_URL}/v1/workflows/${encodeURIComponent(workflowId)}/apply-section-nodes?dry_run=${dryRun ? 'true' : 'false'}${actingWorkspaceQuery(workspaceId, '&')}`,
     { method: 'POST', headers: defaultHeaders() },
   )
   return readJson<SectionNodeApplication>(res)
