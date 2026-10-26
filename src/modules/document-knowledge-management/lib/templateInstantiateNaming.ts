@@ -3,6 +3,7 @@ import {
   buildAutoRenamedStructuredFileName,
   detectDocumentTypeFromFileName,
   deriveBrdModuleNameFromFileName,
+  explicitDocumentPrefix,
   prefixForTemplateDocumentKind,
   testFileNameAgainstRegex,
 } from '@/lib/kb/repositoryBrdFileNaming'
@@ -80,7 +81,8 @@ export function buildTemplateInstantiateNamingPlan(params: {
   let autoRenamed = false
 
   if (namingRule && !shouldSkipNamingForTemplateInstantiate(documentKind, sourceFileName)) {
-    const prefix = prefixForTemplateDocumentKind(documentKind, sourceFileName)
+    // The template's own name states its type ("SRD_…"); the schema's kind is only a fallback.
+    const prefix = explicitDocumentPrefix(template.name) ?? prefixForTemplateDocumentKind(documentKind, sourceFileName)
     const preferredFileName = buildAutoRenamedStructuredFileName(sourceFileName, projectName, Date.now(), {
       projectName: projectSegment,
       moduleName,

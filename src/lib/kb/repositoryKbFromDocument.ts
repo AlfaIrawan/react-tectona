@@ -75,10 +75,11 @@ export function normalizeBrdVersionLabel(value: string | null | undefined): stri
   return trimmed
 }
 
-/** Parse structured file names: BRD_|URD_|FSD_|TPL_{Workspace}_{Module}_V{n}_{yyyymmdd}. */
+/** Parse structured file names: {TYPE}_{Workspace}_{Module}_V{n}_{yyyymmdd}, TYPE being BRD, URD,
+ * FSD, TPL or any other 2–6 letter type (SRD, …). */
 export function parseStructuredDocumentName(value: string): BrdStructuredNameParts | null {
   const baseName = value.replace(/\.[^/.]+$/, '').trim()
-  if (!/^(?:BRD|URD|FSD|TPL)_/i.test(baseName)) return null
+  if (!/^[A-Za-z]{2,6}_/.test(baseName)) return null
   const tokens = baseName.split('_').filter(Boolean)
   if (tokens.length < 5) return null
   const yyyymmdd = tokens[tokens.length - 1]
