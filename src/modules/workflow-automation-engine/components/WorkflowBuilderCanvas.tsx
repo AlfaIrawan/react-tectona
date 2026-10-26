@@ -184,6 +184,7 @@ type WorkflowBuilderCanvasProps = {
   workflowName?: string | null
   workspaceMembers?: Array<{ id: string; name: string; email: string }>
   onWorkflowCreated?: (workflow: WorkflowDto) => void
+  onWorkflowSaved?: (workflow: WorkflowDto) => void
   onClose: () => void
 }
 
@@ -758,6 +759,30 @@ function workflowRevision(
     trigger: triggerTypeOf(nodes),
     definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience),
   })
+}
+
+// Only the definition is snapshotted on publish; name, category, owner and scope live on the
+// workflow row and take effect as soon as they are saved, so they never need a publish.
+function workflowPublishRevision(
+  nodes: Node<WorkflowNodeData>[],
+  edges: Edge[],
+  ideaSections: IdeaSectionVisibilityMap = {},
+  ideaSectionAudience: IdeaSectionAudience | null = null,
+): string {
+  return JSON.stringify({
+    trigger: triggerTypeOf(nodes),
+    definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience),
+  })
+}
+
+function graphFromDefinition(def: WorkflowGraph | null | undefined): { nodes: Node<WorkflowNodeData>[]; edges: Edge[] } | null {
+  if (!def || !Array.isArray(def.nodes) || def.nodes.length === 0) return null
+  const nodes = (def.nodes as Node<WorkflowNodeData>[]).map((node) => {
+    const sized = withWorkflowNodeSize(node)
+    if (sized.data?.kind !== 'action') return sized
+    return { ...sized, data: { ...sized.data, config: withoutApprovalConfig(sized.data.config ?? {}) } }
+  })
+  return { nodes, edges: (Array.isArray(def.edges) ? def.edges : []) as Edge[] }
 }
 
 
@@ -1490,12 +1515,16 @@ function WorkflowBuilderCanvasInner({
   initialView = 'builder',
   initialRunId,
   workspaceId,
-  workflowName,
+  workflowName: openedWorkflowName,
   workspaceMembers = [],
   onWorkflowCreated,
+  onWorkflowSaved,
   onClose,
 }: Omit<WorkflowBuilderCanvasProps, 'open'>) {
   const { addToast } = useToast()
+  // The catalog row is renamed while the builder is open; reading that prop live would reload
+  // the graph from the server and drop edits that are still waiting for autosave.
+  const [workflowName] = useState(openedWorkflowName)
   // The builder renders in a portal outside the page's tree, so read the active workspace
   // here rather than trusting a prop chain: a workflow must be saved into the workspace it
   // was drawn in (an organisation workflow governs every workspace under it).
@@ -1620,6 +1649,10 @@ function WorkflowBuilderCanvasInner({
   const currentRevision = useMemo(
     () => workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds }),
     [edges, ideaSectionAudience, ideaSections, name, nodes, ownerId, scopeMode, scopeWorkspaceIds, workflowType],
+  )
+  const currentPublishRevision = useMemo(
+    () => workflowPublishRevision(nodes, edges, ideaSections, ideaSectionAudience),
+    [edges, ideaSectionAudience, ideaSections, nodes],
   )
   const latestRevisionRef = useRef(currentRevision)
 
@@ -1973,8 +2006,9 @@ function WorkflowBuilderCanvasInner({
         trigger: triggerTypeOf(nodes),
         definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience),
         }, activeWorkspaceId)
-        .then(() => {
+        .then((saved) => {
           savedRevisionRef.current = revision
+          onWorkflowSaved?.(saved)
         })
         .catch(() => {
           // The local copy written above remains the recovery path while offline.
@@ -1982,7 +2016,7 @@ function WorkflowBuilderCanvasInner({
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [activeWorkspaceId, autosaveReady, currentRevision, edges, inherited, name, nodes, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+  }, [activeWorkspaceId, autosaveReady, currentRevision, edges, inherited, name, nodes, onWorkflowSaved, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   useEffect(() => {
     let cancelled = false
@@ -2045,18 +2079,31 @@ function WorkflowBuilderCanvasInner({
       return
     }
     updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) }, activeWorkspaceId)
-      .then(() => {
+      .then((saved) => {
         const revision = workflowRevision(name, nodes, edges, ideaSections, ideaSectionAudience, { category: workflowType, owner: ownerId, scopeMode, scopeWorkspaceIds })
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
+        onWorkflowSaved?.(saved)
         addToast({ variant: 'success', title: 'Draft saved', description: `${name} saved.` })
       })
       .catch(() => {
         setDraftSaveState('unsaved')
         addToast({ variant: 'warning', title: 'Saved locally', description: 'Backend unavailable — not synced.' })
       })
-  }, [activeWorkspaceId, addToast, edges, ideaSectionAudience, ideaSections, inherited, name, nodes, onWorkflowCreated, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+  }, [activeWorkspaceId, addToast, edges, ideaSectionAudience, ideaSections, inherited, name, nodes, onWorkflowCreated, onWorkflowSaved, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
+
+  // Closing unmounts the builder and cancels the pending autosave timer, so send the last edit now.
+  const handleClose = useCallback(() => {
+    const scopeComplete = scopeMode === 'organization' || scopeWorkspaceIds.length > 0
+    if (workflowId && autosaveReady && !inherited && scopeComplete && currentRevision !== savedRevisionRef.current) {
+      persist()
+      updateWorkflow(workflowId, { name, category: workflowType, owner: ownerId, scope_mode: scopeMode, scope_workspace_ids: scopeMode === 'organization' ? [] : scopeWorkspaceIds, trigger: triggerTypeOf(nodes), definition: buildRuntimeDefinition(nodes, edges, ideaSections, ideaSectionAudience) }, activeWorkspaceId)
+        .then((saved) => onWorkflowSaved?.(saved))
+        .catch(() => undefined)
+    }
+    onClose()
+  }, [activeWorkspaceId, autosaveReady, currentRevision, edges, ideaSectionAudience, ideaSections, inherited, name, nodes, onClose, onWorkflowSaved, ownerId, persist, scopeMode, scopeWorkspaceIds, workflowId, workflowType])
 
   const publishNowRef = useRef<(acknowledgeWarnings: boolean) => Promise<void>>(() => Promise.resolve())
   const publishNow = useCallback((acknowledgeWarnings: boolean) => publishNowRef.current(acknowledgeWarnings), [])
@@ -2091,8 +2138,9 @@ function WorkflowBuilderCanvasInner({
         savedRevisionRef.current = revision
         explicitRevisionRef.current = revision
         setDraftSaveState(latestRevisionRef.current === revision ? 'saved' : 'unsaved')
-        setPublishedRevision(revision)
+        setPublishedRevision(workflowPublishRevision(nodes, edges, ideaSections, ideaSectionAudience))
         setPublishedVersion(published.version)
+        onWorkflowSaved?.(published)
         addToast({ variant: 'success', title: 'Workflow published', description: `${name} published as v${published.version}.` })
         // Ideas whose runs went past a Set Section Visibility node before it existed: ask first.
         if (nodes.some(isIdeaSectionNode)) {
@@ -2186,26 +2234,26 @@ function WorkflowBuilderCanvasInner({
         const loadedAudience = readIdeaSectionAudience(def?.ideaSectionAudience)
         setIdeaSections(loadedSections)
         setIdeaSectionAudience(loadedAudience)
-        if (def && Array.isArray(def.nodes) && def.nodes.length > 0) {
-          const loadedNodes = (def.nodes as Node<WorkflowNodeData>[]).map((node) => {
-            const sized = withWorkflowNodeSize(node)
-            if (sized.data?.kind !== 'action') return sized
-            return { ...sized, data: { ...sized.data, config: withoutApprovalConfig(sized.data.config ?? {}) } }
-          })
-          const loadedEdges = (Array.isArray(def.edges) ? def.edges : []) as Edge[]
-          const revision = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections, loadedAudience, loadedMeta)
-          savedRevisionRef.current = revision
-          explicitRevisionRef.current = revision
-          setPublishedRevision(wf.is_published ? revision : null)
-          setPublishedVersion(wf.is_published ? wf.version : null)
-          setNodes(loadedNodes)
-          setEdges(loadedEdges)
-        } else {
-          const revision = workflowRevision(loadedName, nodesRef.current, edgesRef.current, loadedSections, loadedAudience, loadedMeta)
-          savedRevisionRef.current = revision
-          explicitRevisionRef.current = revision
-          setPublishedRevision(wf.is_published ? revision : null)
-          setPublishedVersion(wf.is_published ? wf.version : null)
+        const draftGraph = graphFromDefinition(def)
+        const loadedNodes = draftGraph?.nodes ?? nodesRef.current
+        const loadedEdges = draftGraph?.edges ?? edgesRef.current
+        const revision = workflowRevision(loadedName, loadedNodes, loadedEdges, loadedSections, loadedAudience, loadedMeta)
+        savedRevisionRef.current = revision
+        explicitRevisionRef.current = revision
+        if (wf.is_published) {
+          const liveDef = wf.published_definition ?? def
+          const liveGraph = graphFromDefinition(liveDef) ?? { nodes: loadedNodes, edges: loadedEdges }
+          setPublishedRevision(workflowPublishRevision(
+            liveGraph.nodes,
+            liveGraph.edges,
+            readIdeaSectionVisibility(liveDef?.ideaSections),
+            readIdeaSectionAudience(liveDef?.ideaSectionAudience),
+          ))
+          setPublishedVersion(wf.version)
+        }
+        if (draftGraph) {
+          setNodes(draftGraph.nodes)
+          setEdges(draftGraph.edges)
         }
       })
       .catch(() => {
@@ -2579,7 +2627,7 @@ function WorkflowBuilderCanvasInner({
           variant="ghost"
           size="icon"
           className="h-9 w-9 rounded-lg text-slate-500 hover:text-slate-900"
-          onClick={onClose}
+          onClick={handleClose}
           aria-label="Close workflow builder"
           title="Back to catalog"
         >
@@ -2779,8 +2827,8 @@ function WorkflowBuilderCanvasInner({
             size="sm"
             className={cn('h-9 rounded-lg px-3 text-xs', inherited && 'hidden')}
             onClick={handlePublish}
-            disabled={draftSaveState === 'saved' && publishedRevision !== null && publishedRevision === currentRevision}
-            title={draftSaveState === 'saved' && publishedRevision !== null && publishedRevision === currentRevision ? 'Already published' : 'Publish this workflow'}
+            disabled={publishedRevision !== null && publishedRevision === currentPublishRevision}
+            title={publishedRevision !== null && publishedRevision === currentPublishRevision ? 'The live version already has this flow. Name, category, owner and scope apply when saved.' : 'Publish this workflow'}
           >
             <Send className="mr-1.5 h-3.5 w-3.5" /> Publish
           </Button>
@@ -3906,7 +3954,7 @@ function WorkflowBuilderCanvasInner({
   )
 }
 
-export function WorkflowBuilderCanvas({ open, workflowId, initialView, initialRunId, workspaceId, workflowName, workspaceMembers, onWorkflowCreated, onClose }: WorkflowBuilderCanvasProps) {
+export function WorkflowBuilderCanvas({ open, workflowId, initialView, initialRunId, workspaceId, workflowName, workspaceMembers, onWorkflowCreated, onWorkflowSaved, onClose }: WorkflowBuilderCanvasProps) {
   if (!open || typeof document === 'undefined') return null
   return createPortal(
     <ReactFlowProvider>
@@ -3919,6 +3967,7 @@ export function WorkflowBuilderCanvas({ open, workflowId, initialView, initialRu
         workflowName={workflowName}
         workspaceMembers={workspaceMembers}
         onWorkflowCreated={onWorkflowCreated}
+        onWorkflowSaved={onWorkflowSaved}
         onClose={onClose}
       />
     </ReactFlowProvider>,

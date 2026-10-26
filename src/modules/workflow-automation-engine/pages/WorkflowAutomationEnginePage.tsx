@@ -908,6 +908,19 @@ export function WorkflowAutomationEnginePage() {
   const [workflowCatalogState, setWorkflowCatalogState] = useState<'loading' | 'backend' | 'error'>('loading')
   const workflowOwnerOptionsRef = useRef<WorkflowOwnerOption[]>([])
   const [workflowOwnerOptions, setWorkflowOwnerOptions] = useState<WorkflowOwnerOption[]>([])
+  const applySavedWorkflow = useCallback((saved: WorkflowSummaryDto) => {
+    setWorkflows((current) => current.map((item) => {
+      if (item.id !== saved.id) return item
+      const mapped = mapWorkflowDto(saved, workflowOwnerOptionsRef.current)
+      // A save response does not carry run statistics; keep the catalog's figures.
+      return {
+        ...mapped,
+        successRate: saved.success_rate ?? item.successRate,
+        executions: saved.executions ?? item.executions,
+        lastUpdated: saved.last_updated ?? item.lastUpdated,
+      }
+    }))
+  }, [])
   const [rowMenu, setRowMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const rowMenuWorkflow = workflows.find((item) => item.id === rowMenu?.id)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
@@ -3728,6 +3741,7 @@ export function WorkflowAutomationEnginePage() {
           setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current, 0), ...current.filter((item) => item.id !== created.id)])
           setBuilder({ open: true, workflowId: created.id })
         }}
+        onWorkflowSaved={applySavedWorkflow}
         onClose={() => setBuilder({ open: false, workflowId: null })}
       />
       <EnterpriseDeleteConfirmModal
