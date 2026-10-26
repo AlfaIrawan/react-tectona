@@ -21,6 +21,7 @@ import {
   Hash,
   Info,
   LayoutGrid,
+  Lock,
   PanelLeft,
   Layers3,
   MousePointerClick,
@@ -1664,9 +1665,11 @@ export function WorkflowAutomationEnginePage() {
               <div className="truncate font-semibold text-slate-900">{item.name}</div>
               {isInheritedWorkflow(item) ? (
                 <span
-                  className="shrink-0 rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700"
-                  title="Inherited from the organization workspace — it runs here, but edit it where it was created."
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700"
+                  title="Locked: inherited from the organization workspace. It runs here, but only the organization workspace can edit, pause or delete it."
+                  aria-label="Organization workflow, locked in this workspace"
                 >
+                  <Lock className="h-2.5 w-2.5" aria-hidden />
                   Organization
                 </span>
               ) : null}

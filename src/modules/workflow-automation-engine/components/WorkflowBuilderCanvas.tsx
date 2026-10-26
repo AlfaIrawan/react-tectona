@@ -24,7 +24,7 @@ import {
   type OnSelectionChangeFunc,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { AlertTriangle, ArrowLeft, Bell, BoxSelect, Bug, CalendarClock, CalendarDays, CheckCircle2, Clock3, Code2, Copy, Eye, Flag, Globe2, Info, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MousePointerClick, Pencil, Play, PlayCircle, PlugZap, Plus, Power, Save, Send, Settings2, ShieldCheck, Tag, Trash2, TriangleAlert, Unlink, UserRound, Users, Wand2, Webhook, X, Zap, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Bell, BoxSelect, Bug, CalendarClock, CalendarDays, CheckCircle2, Clock3, Code2, Copy, Flag, Globe2, Info, LayoutGrid, Link2, Loader2, Lock, Maximize2, MessageSquare, MousePointerClick, Pencil, Play, PlayCircle, PlugZap, Plus, Power, Save, Send, Settings2, ShieldCheck, Tag, Trash2, TriangleAlert, Unlink, UserRound, Users, Wand2, Webhook, X, Zap, type LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
@@ -100,6 +100,7 @@ import {
   type SectionNodeApplication,
 } from '@/lib/api/workflowAutomationApi'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import {
   DEFAULT_IDEA_SECTION_AUDIENCE,
   IDEA_DIAGRAM_TYPES,
@@ -2658,7 +2659,7 @@ function WorkflowBuilderCanvasInner({
               className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700"
               title="Inherited from the organization workspace. Open it there to edit, publish or delete it."
             >
-              <Eye className="h-3.5 w-3.5" /> View only · Organization
+              <Lock className="h-3.5 w-3.5" /> View only · Organization
             </span>
           ) : null}
           <Button
@@ -3769,16 +3770,35 @@ function WorkflowBuilderCanvasInner({
           if (!open && !publishBusy) setPublishCheck(null)
         }}
       >
-        <DialogContent surface="solid" className="w-[min(560px,calc(100vw-2rem))] rounded-2xl p-5">
-          <DialogHeader>
-            <DialogTitle>{publishCheck?.blocking ? 'Fix these before publishing' : 'Publish with these warnings?'}</DialogTitle>
-            <DialogDescription>
-              {publishCheck?.blocking
-                ? 'The engine checked the workflow against the workspaces it runs in. These would fail every run.'
-                : 'Nothing blocks publishing, but these may make runs fail. Runs that hit a service that does not answer are retried automatically.'}
-            </DialogDescription>
+        <DialogContent
+          surface="solid"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workflow-publish-check-title"
+          aria-describedby="workflow-publish-check-description"
+          className="flex w-[min(512px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card via-card to-card/95 p-0 shadow-[0_24px_70px_-30px_rgba(15,23,42,0.65)]"
+        >
+          <DialogHeader className="mb-0 shrink-0 border-b border-border/70 bg-muted/25 px-6 py-5">
+            <div className="flex items-start gap-4">
+              <div className={cn('mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1', publishCheck?.blocking ? 'bg-red-500/12 text-red-700 ring-red-500/25' : 'bg-amber-500/12 text-amber-700 ring-amber-500/25')}>
+                <AlertTriangle className="h-5 w-5" aria-hidden />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <DialogTitle id="workflow-publish-check-title" className="text-base font-semibold tracking-normal">{publishCheck?.blocking ? 'Fix these before publishing' : 'Publish with these warnings?'}</DialogTitle>
+                <DialogDescription id="workflow-publish-check-description">
+                  {publishCheck?.blocking
+                    ? 'The engine checked the workflow against the workspaces it runs in. These would fail every run.'
+                    : 'Nothing blocks publishing, but these may make runs fail. Runs that hit a service that does not answer are retried automatically.'}
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <ul className="max-h-[40vh] space-y-1.5 overflow-y-auto text-sm">
+          <div className="min-h-0 space-y-3 overflow-y-auto px-6 py-5">
+            <div className="rounded-xl border border-border bg-background/70 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Workflow</p>
+              <p className="mt-1 break-words text-sm font-semibold text-foreground">{name || 'Untitled Workflow'}</p>
+            </div>
+          <ul className="space-y-2 text-sm">
             {(publishCheck?.problems ?? []).map((problem, index) => (
               <li key={`${problem.code}-${problem.node_id ?? ''}-${index}`}>
                 <button
@@ -3789,27 +3809,29 @@ function WorkflowBuilderCanvasInner({
                     setSelectedNodeId(problem.node_id)
                     setPublishCheck(null)
                   }}
-                  className="flex w-full items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-left enabled:hover:bg-slate-50"
+                  className="flex w-full items-start gap-2 rounded-xl border border-border bg-background/70 px-4 py-3 text-left enabled:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className={cn('mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase', problem.level === 'error' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')}>
                     {problem.level}
                   </span>
                   <span className="min-w-0">
-                    {problem.node_label ? <span className="block truncate font-medium text-slate-800">{problem.node_label}</span> : null}
-                    <span className="block text-xs text-slate-600">{problem.message}</span>
+                    {problem.node_label ? <span className="block break-words font-medium text-foreground">{problem.node_label}</span> : null}
+                    <span className="block break-words text-xs text-muted-foreground">{problem.message}</span>
                   </span>
                 </button>
               </li>
             ))}
           </ul>
-          <DialogFooter>
-            <Button type="button" variant="ghost" size="sm" disabled={publishBusy} onClick={() => setPublishCheck(null)}>
+          </div>
+          <DialogFooter className="shrink-0 gap-3 border-t border-border/70 bg-muted/20 px-6 py-4">
+            <Button type="button" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'min-w-0 flex-1 justify-center gap-2')} disabled={publishBusy} onClick={() => setPublishCheck(null)}>
+              <X className="h-4 w-4 shrink-0" aria-hidden />
               {publishCheck?.blocking ? 'Close' : 'Not now'}
             </Button>
             {publishCheck && !publishCheck.blocking ? (
               <Button
                 type="button"
-                size="sm"
+                className={cn(registerServicePrimaryButtonClass(), 'min-w-0 flex-1 justify-center gap-2')}
                 disabled={publishBusy}
                 onClick={() => {
                   setPublishBusy(true)
@@ -3818,7 +3840,7 @@ function WorkflowBuilderCanvasInner({
                     .finally(() => setPublishBusy(false))
                 }}
               >
-                {publishBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                {publishBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden /> : <Send className="h-4 w-4 shrink-0" aria-hidden />}
                 Publish anyway
               </Button>
             ) : null}
