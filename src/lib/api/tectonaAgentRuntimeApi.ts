@@ -2840,6 +2840,15 @@ export async function getIdeaDraftVersion(
   return handleResponse<IdeaDraftVersionDetail>(res)
 }
 
+function fitBrainstormSummary(value: string | null | undefined, limit = 4000): string | null | undefined {
+  if (value == null || value.length <= limit) return value
+  const note = '\n\nDetail tambahan tetap tersimpan dalam jawaban brainstorming.'
+  const budget = Math.max(0, limit - note.length)
+  const cut = value.lastIndexOf('\n', budget)
+  const end = cut > budget / 2 ? cut : budget
+  return (value.slice(0, end).trimEnd() + note).slice(0, limit)
+}
+
 export async function restoreIdeaDraftBrainstormSession(
   payload: RestoreIdeaDraftBrainstormRequest,
 ): Promise<IdeaDraftJobStatusResponse> {
@@ -2847,7 +2856,13 @@ export async function restoreIdeaDraftBrainstormSession(
     `${BASE_URL}/v1/agent/idea-draft-jobs/restore-brainstorm`,
     {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        messages: payload.messages.map((message) => ({
+          ...message,
+          summary: fitBrainstormSummary(message.summary),
+        })),
+      }),
     },
     30_000,
   )
