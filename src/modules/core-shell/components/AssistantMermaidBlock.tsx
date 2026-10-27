@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import {
   flowchartPreviewHeight,
 } from '@/modules/core-shell/components/AssistantFlowchartCanvas'
 import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
+import { diagramScrollSurface, fittedDiagramSize } from '@/modules/core-shell/components/diagramFullscreenFrame'
 import { cn } from '@/lib/utils'
 
 type AssistantMermaidBlockProps = {
@@ -210,8 +211,13 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
   const modalRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [panning, setPanning] = useState(false)
   const [natural, setNatural] = useState({ width: 0, height: 0 })
+  const [viewport, setViewport] = useState({ width: 0, height: 0 })
+  const fitted = fittedDiagramSize(natural, viewport, zoom)
+  const surface = fitted ? diagramScrollSurface(fitted, viewport) : null
 
   const centerScroll = useCallback(() => {
     const el = scrollerRef.current
@@ -241,27 +247,34 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
   }, [onClose])
 
   useEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const measure = () => setViewport({ width: el.clientWidth, height: el.clientHeight })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [children, imageUrl, svgHtml])
+
+  useEffect(() => {
     if (!canvasRef.current || imageUrl || !svgHtml) return
     canvasRef.current.innerHTML = svgHtml
     const svg = canvasRef.current.querySelector('svg')
     if (!(svg instanceof SVGSVGElement)) return
-    const size = measureSvgNaturalSize(svg)
-    setNatural(size)
+    setNatural(measureSvgNaturalSize(svg))
     svg.style.display = 'block'
     svg.style.maxWidth = 'none'
-    svg.style.width = `${size.width}px`
-    svg.style.height = `${size.height}px`
   }, [svgHtml, imageUrl])
 
   useEffect(() => {
     const svg = canvasRef.current?.querySelector('svg')
-    if (svg instanceof SVGSVGElement && natural.width > 0) {
-      svg.style.width = `${natural.width * zoom}px`
-      svg.style.height = `${natural.height * zoom}px`
+    if (svg instanceof SVGSVGElement && fitted) {
+      svg.style.width = `${fitted.width}px`
+      svg.style.height = `${fitted.height}px`
     }
     const frame = window.requestAnimationFrame(centerScroll)
     return () => window.cancelAnimationFrame(frame)
-  }, [centerScroll, imageUrl, natural.height, natural.width, zoom])
+  }, [centerScroll, fitted?.width, fitted?.height])
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(source)
@@ -272,7 +285,27 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
     })
   }
 
-  const imageWidth = natural.width > 0 ? natural.width * zoom : undefined
+  const onPanStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    const el = scrollerRef.current
+    if (!el) return
+    dragRef.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop }
+    setPanning(true)
+    el.setPointerCapture(event.pointerId)
+  }
+
+  const onPanMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = dragRef.current
+    const el = scrollerRef.current
+    if (!start || !el) return
+    el.scrollLeft = start.left - (event.clientX - start.x)
+    el.scrollTop = start.top - (event.clientY - start.y)
+  }
+
+  const onPanEnd = () => {
+    dragRef.current = null
+    setPanning(false)
+  }
 
   return createPortal(
     <div
@@ -281,7 +314,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
       role="presentation"
     >
       <div
-        className="flex max-h-[94vh] w-full max-w-[min(96vw,1200px)] flex-col overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-2xl dark:border-[#3b4a54] dark:bg-[#111b21]"
+        className="flex h-[94vh] max-h-[94vh] w-full max-w-[min(96vw,1200px)] flex-col overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-2xl dark:border-[#3b4a54] dark:bg-[#111b21]"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         ref={modalRef}
@@ -312,17 +345,25 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
         {children ? (
           <div className="min-h-0 flex-1 overflow-hidden p-2">{children}</div>
         ) : (
-        <div ref={scrollerRef} className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 sm:p-6">
-          <div className="flex min-h-full w-full min-w-full items-center justify-center">
+        <div
+          ref={scrollerRef}
+          className={cn('min-h-0 flex-1 overflow-auto', panning ? 'cursor-grabbing' : 'cursor-grab')}
+          onPointerDown={onPanStart}
+          onPointerMove={onPanMove}
+          onPointerUp={onPanEnd}
+          onPointerCancel={onPanEnd}
+        >
+          <div
+            className="flex items-center justify-center"
+            style={surface ? { width: surface.width, height: surface.height } : { width: '100%', height: '100%' }}
+          >
             {imageUrl ? (
               <img
                 src={imageUrl}
                 alt="Diagram proses bisnis BPMN"
-                className="mx-auto block h-auto shrink-0"
-                style={{
-                  width: zoom <= 1 ? '100%' : imageWidth,
-                  maxWidth: zoom <= 1 ? '100%' : 'none',
-                }}
+                draggable={false}
+                className="block shrink-0 select-none"
+                style={fitted ? { width: fitted.width, height: fitted.height, maxWidth: 'none' } : { maxWidth: '100%', height: 'auto' }}
                 onLoad={(event) => {
                   setNatural({
                     width: event.currentTarget.naturalWidth,
@@ -331,7 +372,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
                 }}
               />
             ) : (
-              <div ref={canvasRef} className="mx-auto flex w-full justify-center [&_svg]:mx-auto [&_svg]:block" />
+              <div ref={canvasRef} className="flex shrink-0 justify-center [&_svg]:block" />
             )}
           </div>
         </div>
