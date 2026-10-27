@@ -205,6 +205,7 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
           {busy ? 'Updating summary...' : 'Update failed. Showing the last processed summary.'}
         </p>
       </div> : null}
+      {!busy && !error && !summaryUnavailable && job?.live_summary?.recovery_mode === 'evidence_rebuild' ? <p role="status" className="shrink-0 border-b border-border/70 px-4 py-3 text-xs leading-5 text-muted-foreground">Summary rebuilt from saved evidence.</p> : null}
       <div role="region" aria-label="Idea summary" tabIndex={0} className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-4 pb-5 [overflow-wrap:anywhere]" data-summary-scroll>
         {snapshot.sections.map(section => <SummarySection key={section.id} section={section} reduced={reduced} active={textReady && (expanded || mobileOpen)} />)}
       </div>

@@ -941,7 +941,7 @@ function BrainstormEvidenceRail({
     ?? items.filter((item) => item.required !== false && item.status === 'answered').length
   const itemsTotal = progress?.total ?? items.length
   const itemsAnswered = progress?.answered
-    ?? items.filter((item) => item.status === 'answered' || item.status === 'skipped').length
+    ?? items.filter((item) => item.status === 'answered').length
   const progressPercent = requiredTotal > 0
     ? Math.round((requiredAnswered / requiredTotal) * 100)
     : items.length > 0

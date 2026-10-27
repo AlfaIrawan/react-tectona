@@ -28,6 +28,7 @@ async function main() {
     import { buildSummaryDiagramAttachments } from './src/modules/project-management/lib/brainstormSummaryDiagrams';
     const initial = {job_id:'test',brainstorm_messages:[{role:'assistant',text:'Response',summary:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',ai_advice:'Validate policy access with the Credit team.'}],intake_checklist:[{id:'goal',prompt:'Project goal',evidence_status:'confirmed',evidence_text:'Answer Credit policy questions.'},{id:'kpi',prompt:'Success metrics',evidence_status:'inferred',evidence_text:'Accuracy target: 90% (not confirmed).'}],brainstorm_remaining_gaps:['Confirm the current process and policy owners.']};
     initial.revision='r1';initial.live_summary={status:'ready',source_revision:'r1',source_fingerprint:'test',text:'Structured proposal',sections:[{key:'objective',title:'Tujuan',body:'Build a Gen AI assistant for **Credit**.\\n\\n- Retrieve approved policies with RAG.\\n- Embed the chat in DigiLearn.',evidence_ids:['goal']},{key:'problem',title:'Permasalahan',body:'Credit staff currently search policy documents manually.',evidence_ids:['problem']},{key:'as_is_evidence',title:'Evidence AS-IS',body:'- Policy lookup is manual.\\n- Staff consult internal policy documents.',evidence_ids:['asis']}]};
+    initial.live_summary.recovery_mode='evidence_rebuild';
     initial.brainstorm_messages.push(...${JSON.stringify(diagramMessages)});
     const chatRecap='Alur AS-IS: rapat selesai, PIC membuat MoM, lalu mengirimkannya lewat email.';
     const chatAttachments=buildSummaryDiagramAttachments([...initial.brainstorm_messages.filter(message=>!message.text.startsWith('TO-BE')),{role:'assistant',text:chatRecap,summary:chatRecap}]);
@@ -113,6 +114,8 @@ async function main() {
     assert.doesNotMatch(await panel.textContent(), /Open points|Confidence|Confirmed evidence|Evidence \(/)
     assert.doesNotMatch(await panel.textContent(), /Current understanding/)
     for (const title of ['Tujuan', 'Permasalahan', 'Evidence AS-IS']) assert.equal(await panel.getByRole('heading', { name: title, exact: true }).count(), 1)
+    assert.equal(await panel.getByText('Summary rebuilt from saved evidence.', { exact: true }).count(), 1)
+    assert.doesNotMatch(await panel.textContent(), /Update failed/)
     const verify = async () => {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal overflow')
       const chat = await page.locator('[data-chat]').boundingBox(), summary = await panel.boundingBox()

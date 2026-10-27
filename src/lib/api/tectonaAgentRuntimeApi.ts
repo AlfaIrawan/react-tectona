@@ -712,6 +712,7 @@ export interface CreateIdeaDraftJobResponse {
 
 export interface IdeaDraftLiveSummary {
   status: 'ready' | 'empty' | 'unavailable'
+  recovery_mode?: 'evidence_rebuild' | null
   source_revision: string
   source_fingerprint: string
   sections: Array<{ key: string; title: string; body: string; evidence_ids: string[] }>
