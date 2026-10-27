@@ -584,6 +584,9 @@ export interface IdeaDraftChecklistItem {
   // See the backend IdeaDraftChecklistItem model docstring for what each value means.
   evidence_status?: IdeaDraftEvidenceStatus
   evidence_text?: string | null
+  candidate_evidence?: string[]
+  completion_origin?: 'active_answer' | 'explicit_confirmation' | null
+  review_needed?: boolean
 }
 
 export interface IdeaDraftEvidenceProgress {

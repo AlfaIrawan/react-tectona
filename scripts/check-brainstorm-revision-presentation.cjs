@@ -86,6 +86,7 @@ async function main() {
       assert.equal(await page.evaluate(() => window.lastAction), 'Pertanyaan bisnis')
       assert.equal(await page.evaluate(() => window.intakeComplete({total:11,answered:10,items:[{id:'goal',status:'answered'},{id:'discovery_security',status:'asked'}]})), true)
       assert.equal(await page.evaluate(() => window.intakeComplete({items:[{id:'goal',status:'asked'}]})), false)
+      assert.equal(await page.evaluate(() => window.intakeComplete({items:[{id:'goal',status:'answered',review_needed:true}]})), false)
       await page.screenshot({ path: path.join(output, `revision-${width}.png`), fullPage: true })
     }
     assert.deepEqual(errors, [])

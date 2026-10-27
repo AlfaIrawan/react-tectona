@@ -628,7 +628,7 @@ function brainstormMessageHasDiagram(text: string): boolean {
 
 function isBrainstormIntakeComplete(progress: IdeaDraftEvidenceProgress | null | undefined): boolean {
   const core = (progress?.items ?? []).filter((item) => !item.id.startsWith('discovery_'))
-  if (core.length > 0) return core.every((item) => item.status === 'answered' || item.status === 'skipped')
+  if (core.length > 0) return core.every((item) => !item.review_needed && (item.status === 'answered' || item.status === 'skipped'))
   const total = progress?.total ?? 0
   const answered = progress?.answered ?? 0
   return total > 0 && answered >= total
@@ -940,14 +940,14 @@ function BrainstormEvidenceRail({
   const items = checklist.length > 0 ? checklist : progress?.items ?? []
   const requiredTotal = progress?.required_total ?? items.filter((item) => item.required !== false).length
   const requiredAnswered = progress?.required_answered
-    ?? items.filter((item) => item.required !== false && item.status === 'answered').length
+    ?? items.filter((item) => item.required !== false && item.status === 'answered' && !item.review_needed).length
   const itemsTotal = progress?.total ?? items.length
   const itemsAnswered = progress?.answered
-    ?? items.filter((item) => item.status === 'answered').length
+    ?? items.filter((item) => item.status === 'answered' && !item.review_needed).length
   const progressPercent = requiredTotal > 0
     ? Math.round((requiredAnswered / requiredTotal) * 100)
     : items.length > 0
-      ? Math.round((items.filter((item) => item.status === 'answered').length / items.length) * 100)
+      ? Math.round((items.filter((item) => item.status === 'answered' && !item.review_needed).length / items.length) * 100)
       : 0
   // Stage 5 (explainable readiness): an evidence-quality-weighted version of the same bar — a
   // "confirmed" answer counts fully, a "partial" one only partially, so 5/5 items reaching
@@ -1050,7 +1050,7 @@ function BrainstormEvidenceRail({
                 <div role="region" aria-label="Readiness questions" tabIndex={0} data-readiness-scroll className="scrollbar-hide min-h-0 flex-1 space-y-1.5 overflow-y-auto">
                   {items.length > 0 ? (
                     items.map((item) => {
-                      const status = item.status ?? 'pending'
+                      const status = item.review_needed ? 'asked' : (item.status ?? 'pending')
                       const Icon = status === 'answered'
                         ? CircleCheck
                         : status === 'asked'
@@ -1074,7 +1074,14 @@ function BrainstormEvidenceRail({
                             )}
                             aria-hidden
                           />
-                          <span className="min-w-0">{formatBrainstormChecklistPrompt(item.prompt, indonesian, item.id)}</span>
+                          <span className="min-w-0">
+                            {formatBrainstormChecklistPrompt(item.prompt, indonesian, item.id)}
+                            {item.review_needed ? (
+                              <span className="block text-amber-700">{indonesian ? 'Jawaban lama perlu ditinjau' : 'Previous answer needs review'}</span>
+                            ) : status === 'pending' && item.candidate_evidence?.length ? (
+                              <span className="block text-sky-700">{indonesian ? 'Informasi tersedia, belum dikonfirmasi' : 'Information available, not yet confirmed'}</span>
+                            ) : null}
+                          </span>
                         </div>
                       )
                     })
