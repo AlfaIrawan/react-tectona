@@ -610,6 +610,8 @@ export interface IdeaDraftBrainstormMessage {
   summary?: string | null
   /** What the reply asks: a mandatory question, a challenge (sub-question) or an extended question after the intake. */
   question_kind?: 'mandatory' | 'challenge' | 'extended' | 'confirm' | null
+  question_text?: string | null
+  invalidated_process_lanes?: Array<'as_is' | 'to_be'>
   /** The track of an extended question, shown as "Extended Question · Business/Technical". */
   question_focus?: 'business' | 'technical' | null
   confirmation_choices?: string[]

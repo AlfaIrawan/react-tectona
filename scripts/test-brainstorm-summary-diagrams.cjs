@@ -56,7 +56,7 @@ async function main() {
   assert.ok(document.querySelector('strong'))
   await render(attachments[3])
   assert.equal(document.querySelector('[data-source]'), null, 'repeated recap is collapsed by default')
-  const button = document.querySelector('button')
+  const button = document.querySelector('[data-chat-summary-diagram] button')
   assert.match(button.textContent, /Lihat diagram AS-IS/)
   assert.equal(button.getAttribute('aria-expanded'), 'false')
   await act(async () => button.click())
@@ -66,7 +66,7 @@ async function main() {
   await act(async () => button.click())
   assert.equal(document.querySelector('[data-source]'), null)
   await render(attachments[3], false)
-  assert.match(document.querySelector('button').textContent, /View AS-IS diagram/)
+  assert.match(document.querySelector('[data-chat-summary-diagram] button').textContent, /View AS-IS diagram/)
   await act(async () => root.unmount())
   console.log('PASS confirmed diagram history, preview once, repeated recap links, pending/edit guards, exact source, Markdown, localized labels and accessible expand/collapse')
 }

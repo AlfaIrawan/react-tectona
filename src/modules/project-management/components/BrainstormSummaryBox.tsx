@@ -3,6 +3,7 @@ import { ChevronDown } from 'lucide-react'
 import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
 import { cn } from '@/lib/utils'
 import { normalizeBrainstormSummary } from '../lib/normalizeBrainstormSummary'
+import { normalizeBrainstormMarkdown } from '../lib/brainstormMarkdown'
 import type { ReactNode } from 'react'
 
 /** The "Rangkuman Pemahaman" box. Always shown and open; the header folds it away (accordion). */
@@ -35,7 +36,7 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
       </button>
       {open ? (
         <div id={contentId} className="mt-1">
-          <AssistantChatMarkdown content={normalizeBrainstormSummary(text)} className={className} />
+          <AssistantChatMarkdown content={normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))} className={className} />
           {children}
         </div>
       ) : null}

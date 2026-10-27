@@ -114,6 +114,7 @@ import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOpt
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
 import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
+import { normalizeBrainstormMarkdown, splitBrainstormQuestion } from '../lib/brainstormMarkdown'
 import { fetchAllIdeaFolders, type IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
   enterpriseDestructiveOutlineButtonClass,
@@ -574,6 +575,7 @@ function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
 }
 
 function formatBrainstormProse(chunk: string): string {
+  chunk = normalizeBrainstormMarkdown(chunk)
   const blocks = parseBrainstormAssistantBlocks(chunk)
   if (blocks.length === 0) return chunk
   return blocks
@@ -1319,13 +1321,10 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   // The closing question is the last paragraph when it asks something (and is not a diagram).
   let rest = at >= 0 ? after : text
   let question = ''
-  if (kind || message.question_kind === 'mandatory') {
-    const paragraphs = rest.split(/\n{2,}/)
-    const last = paragraphs[paragraphs.length - 1] ?? ''
-    if ((last.includes('?') || /^\s*\*\*/.test(last)) && !last.includes('```')) {
-      question = last
-      rest = paragraphs.slice(0, -1).join('\n\n')
-    }
+  if (kind || message.question_kind === 'mandatory' || message.question_text) {
+    const split = splitBrainstormQuestion(rest, message.question_text)
+    question = split.question
+    rest = split.rest
   }
   return (
     <>
@@ -1353,7 +1352,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
       <BrainstormCatalogComparison matches={message.catalog_matches} mode={message.catalog_mode} status={message.catalog_status} indonesian={indonesian} />
       {question ? (
         <div className={kind?.text}>
-          <BrainstormAssistantMessageBody text={question} />
+          <p className="my-3 font-semibold">{question}</p>
         </div>
       ) : null}
       {message.suggestion_multiple && message.suggestion_options?.length && onConfirm ? (

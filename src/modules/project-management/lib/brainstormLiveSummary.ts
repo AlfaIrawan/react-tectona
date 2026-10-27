@@ -13,6 +13,7 @@ export function confirmedSummaryDiagramTimeline(messages: IdeaDraftJobStatusResp
   const confirmed: typeof pending = {}
   const timeline: Array<typeof pending> = []
   for (const message of messages ?? []) {
+    for (const lane of message.invalidated_process_lanes ?? []) { delete pending[lane]; delete confirmed[lane] }
     if (message.role !== 'assistant' || typeof message.text !== 'string') { timeline.push({ ...confirmed }); continue }
     const text = message.text.replace(/\r\n/g, '\n')
     for (const fence of text.matchAll(/```(?:plantuml|mermaid|bpmn)\s*\n([\s\S]*?)```/gi)) {
@@ -45,6 +46,7 @@ export function latestSummaryDiagrams(messages: IdeaDraftJobStatusResponse['brai
   const latest: Partial<Record<'as_is' | 'to_be', NonNullable<LiveSummarySection['diagram']>>> = {}
   const confirmed = confirmedSummaryDiagrams(messages)
   for (const [index, message] of (messages ?? []).entries()) {
+    for (const lane of message.invalidated_process_lanes ?? []) delete latest[lane]
     if (message.role !== 'assistant' || typeof message.text !== 'string') continue
     const text = message.text.replace(/\r\n/g, '\n')
     for (const fence of text.matchAll(/```(?:plantuml|mermaid|bpmn)\s*\n([\s\S]*?)```/gi)) {
