@@ -627,6 +627,8 @@ function brainstormMessageHasDiagram(text: string): boolean {
 }
 
 function isBrainstormIntakeComplete(progress: IdeaDraftEvidenceProgress | null | undefined): boolean {
+  const core = (progress?.items ?? []).filter((item) => !item.id.startsWith('discovery_'))
+  if (core.length > 0) return core.every((item) => item.status === 'answered' || item.status === 'skipped')
   const total = progress?.total ?? 0
   const answered = progress?.answered ?? 0
   return total > 0 && answered >= total
@@ -7503,7 +7505,7 @@ export function IdeaBacklogManagementPage() {
                                   )}
                                 >
                                   <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden />
-                                  {brainstormThreadIndonesian ? 'Pertanyaan bisnis' : 'Business questions'}
+                                  Extended Question · Business
                                 </button>
                                 <button
                                   type="button"
@@ -7517,7 +7519,7 @@ export function IdeaBacklogManagementPage() {
                                   )}
                                 >
                                   <Wrench className="h-4 w-4 shrink-0" aria-hidden />
-                                  {brainstormThreadIndonesian ? 'Pertanyaan teknis' : 'Technical questions'}
+                                  Extended Question · Technical
                                 </button>
                                 <button
                                   type="button"

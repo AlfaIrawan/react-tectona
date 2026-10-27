@@ -20,12 +20,19 @@ async function main() {
   }
   const fn = name => find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(tree)
   const badge = find(node => ts.isVariableDeclaration(node) && node.name.getText(tree) === 'BRAINSTORM_QUESTION_KIND').initializer.getText(tree)
+  const offer = find(node => ts.isJsxElement(node) && node.openingElement.attributes.getText(tree).includes('space-y-3 rounded-2xl border border-emerald-200')).getText(tree)
   const fixture = String.raw`
     import React from 'react';import {createRoot} from 'react-dom/client';import {cn} from './src/lib/utils';
     import {BrainstormSummaryBox} from './src/modules/project-management/components/BrainstormSummaryBox';
     import {BrainstormConfirmationOptions} from './src/modules/project-management/components/BrainstormConfirmationOptions';
     import {AssistantChatMarkdown} from './src/modules/core-shell/components/AssistantChatMarkdown';
     import {normalizeBrainstormMarkdown,splitBrainstormQuestion} from './src/modules/project-management/lib/brainstormMarkdown';
+    import {enterpriseSecondaryButtonClass,enterprisePrimarySolidButtonClass} from './src/lib/enterpriseButtonClasses';
+    import {BriefcaseBusiness,Wrench,Sparkles,Wand2} from 'lucide-react';
+    const brainstormThreadIndonesian=true,isBrainstormSending=false,isDraftContinuing=false;
+    const handleSendBrainstormMessage=text=>{window.lastAction=text},handleContinueIdeaDraft=text=>{window.lastAction=text};
+    ${fn('isBrainstormIntakeComplete')}
+    window.intakeComplete=isBrainstormIntakeComplete;
     const BRAINSTORM_MARKDOWN_CLASS='text-sm leading-7';const BRAINSTORM_QUESTION_KIND=${badge};
     const BrainstormSummaryDiagrams=()=>null,BrainstormCatalogComparison=()=>null;
     function BrainstormAssistantMessageBody({text}){return <AssistantChatMarkdown content={normalizeBrainstormMarkdown(text)}/>}
@@ -37,6 +44,7 @@ async function main() {
       <section data-example="legacy"><BrainstormAssistantContent indonesian message={{role:'assistant',text:'**Apakah ada informasi tambahan?',question_kind:'mandatory'}}/></section>
       <section data-example="revision"><BrainstormAssistantContent indonesian onConfirm={()=>{}} message={{role:'assistant',text:summary+'\n\nApakah revisi pemahaman ini sudah tepat?',summary,question_text:'Apakah revisi pemahaman ini sudah tepat?',question_kind:'confirm',confirmation_choices:['Konfirmasi revisi pemahaman','Koreksi isi revisi'],confirmation_actions:['confirm','adjust'],confirmation_explanations:['Terapkan penggantian fakta; progres tetap dipertahankan.','Tulis fakta pengganti yang benar.']}}/></section>
       <section data-example="extended"><BrainstormAssistantContent indonesian message={{role:'assistant',text:summary+'\n\n**'+question+'**',summary,question_text:question,question_kind:'extended',question_focus:'technical'}}/></section>
+      <section data-example="completed">${offer}</section>
     </main>);`
   const bundle = await esbuild.build({
     stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false,
@@ -65,12 +73,19 @@ async function main() {
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1100 })
       await page.goto(`http://127.0.0.1:${server.address().port}`)
-      await page.getByText('Extended Question · Technical', { exact: true }).waitFor({ timeout: 5000 }).catch(error => { throw new Error(error.message + '\nBrowser errors: ' + JSON.stringify(errors)) })
+      await page.locator('[data-example="extended"]').getByText('Extended Question · Technical', { exact: true }).waitFor({ timeout: 5000 }).catch(error => { throw new Error(error.message + '\nBrowser errors: ' + JSON.stringify(errors)) })
       assert.equal((await page.locator('main').innerText()).includes('**'), false)
       assert.equal(await page.locator('[data-example="revision"]').getByText('Rangkuman Pemahaman', { exact: true }).count(), 1)
       assert.equal(await page.locator('[data-example="extended"]').getByText('Kapan modul Document & Knowledge Management akan diaktifkan dalam rencana TO-BE?', { exact: true }).count(), 1)
       assert.equal(await page.locator('[data-example="revision"]').getByRole('radio').count(), 2)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+      const completed = page.locator('[data-example="completed"]')
+      await completed.getByRole('button', { name: 'Extended Question · Technical', exact: true }).click()
+      assert.equal(await page.evaluate(() => window.lastAction), 'Pertanyaan teknis')
+      await completed.getByRole('button', { name: 'Extended Question · Business', exact: true }).click()
+      assert.equal(await page.evaluate(() => window.lastAction), 'Pertanyaan bisnis')
+      assert.equal(await page.evaluate(() => window.intakeComplete({total:11,answered:10,items:[{id:'goal',status:'answered'},{id:'discovery_security',status:'asked'}]})), true)
+      assert.equal(await page.evaluate(() => window.intakeComplete({items:[{id:'goal',status:'asked'}]})), false)
       await page.screenshot({ path: path.join(output, `revision-${width}.png`), fullPage: true })
     }
     assert.deepEqual(errors, [])
