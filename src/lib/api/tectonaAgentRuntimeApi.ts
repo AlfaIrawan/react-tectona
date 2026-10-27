@@ -2841,12 +2841,15 @@ export async function getIdeaDraftVersion(
 }
 
 function fitBrainstormSummary(value: string | null | undefined, limit = 4000): string | null | undefined {
-  if (value == null || value.length <= limit) return value
-  const note = '\n\nDetail tambahan tetap tersimpan dalam jawaban brainstorming.'
-  const budget = Math.max(0, limit - note.length)
-  const cut = value.lastIndexOf('\n', budget)
-  const end = cut > budget / 2 ? cut : budget
-  return (value.slice(0, end).trimEnd() + note).slice(0, limit)
+  if (value == null) return value
+  const silent = value
+    .replace(/\n*Detail tambahan tetap tersimpan dalam jawaban brainstorming\./g, '')
+    .replace(/\n*Additional details remain saved in the brainstorming answers\./g, '')
+    .trim()
+  if (silent.length <= limit) return silent
+  const cut = silent.lastIndexOf('\n', limit)
+  const end = cut > limit / 2 ? cut : limit
+  return silent.slice(0, end).trimEnd()
 }
 
 export async function restoreIdeaDraftBrainstormSession(

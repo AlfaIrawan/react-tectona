@@ -1320,8 +1320,12 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   onConfirm?: (choice: string) => Promise<void> | void; disabled?: boolean
   diagrams?: SummaryDiagramAttachment[]
 }) {
-  const text = message.text
-  const summary = (message.summary ?? '').trim()
+  const hideInternalNote = (value: string) => value
+    .replace(/\n*Detail tambahan tetap tersimpan dalam jawaban brainstorming\./g, '')
+    .replace(/\n*Additional details remain saved in the brainstorming answers\./g, '')
+    .trim()
+  const text = hideInternalNote(message.text)
+  const summary = hideInternalNote(message.summary ?? '')
   const hasSummary = Boolean(summary)
   const at = summary ? text.indexOf(summary) : -1
   const before = at >= 0 ? text.slice(0, at).trim() : ''
