@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import type { IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
   fetchAllIdeaFolders,
-  fetchIdeaFolders,
   createIdeaFolder,
   updateIdeaFolder,
   deleteIdeaFolder,
@@ -83,72 +82,53 @@ interface IdeaFolderState {
   clearLocalCache: () => void
 }
 
+let generation = 0
+let activeRequest: { key: string; promise: Promise<void> } | null = null
+let cacheKey: string | null = null
+
 export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
   folders: [],
   foldersLoading: false,
   foldersError: null,
 
-  fetchFolders: async (ownerId, parentId) => {
-    set({ foldersLoading: true, foldersError: null })
-    try {
-      const scope = readActiveWorkspaceScope()
-      const workspace_id = resolveWorkspaceIdForIdeaFolderFetch(scope)
-      const isScopedFetch = parentId !== undefined
-      const apiFolders = isScopedFetch
-        ? (
-            await fetchIdeaFolders({
-              page: 1,
-              page_size: 500,
-              owner_id: ownerId,
-              parent_id: parentId,
-              workspace_id,
-            })
-          ).folders
-        : await fetchAllIdeaFolders({ owner_id: ownerId, workspace_id })
+  fetchFolders: (ownerId, _parentId) => {
+    const scope = readActiveWorkspaceScope()
+    const key = JSON.stringify([scope, ownerId ?? null])
+    if (activeRequest?.key === key) return activeRequest.promise
+    const requestGeneration = ++generation
+    set({ ...(cacheKey !== key ? { folders: [] } : {}), foldersLoading: true, foldersError: null })
+    cacheKey = key
+    // Refresh the complete inventory so deleted or inaccessible folders cannot survive a merge.
+    const promise = (async () => {
+      try {
+        const workspace_id = resolveWorkspaceIdForIdeaFolderFetch(scope)
+        const apiFolders = await fetchAllIdeaFolders({ owner_id: ownerId, workspace_id })
+        if (generation !== requestGeneration || JSON.stringify(readActiveWorkspaceScope()) !== JSON.stringify(scope)) return
 
-      const incoming = apiFolders
-        .filter((api) => belongsToIdeaBacklogFolderScope(api.workspace_id, scope))
-        .map(mapApiToFolder)
-      const incomingIds = new Set(incoming.map((folder) => folder.id))
-
-      set((state) => {
-        if (!isScopedFetch) {
-          const mergedById = new Map(incoming.map((folder) => [folder.id, folder]))
-          for (const folder of state.folders) {
-            if (!mergedById.has(folder.id)) mergedById.set(folder.id, folder)
-          }
-          return { folders: Array.from(mergedById.values()), foldersLoading: false, foldersError: null }
+        const incoming = apiFolders
+          .filter((api) => belongsToIdeaBacklogFolderScope(api.workspace_id, scope))
+          .map(mapApiToFolder)
+        set({ folders: incoming, foldersLoading: false, foldersError: null })
+      } catch (e) {
+        if (generation !== requestGeneration || JSON.stringify(readActiveWorkspaceScope()) !== JSON.stringify(scope)) return
+        const raw = e instanceof Error ? e.message : 'Failed to fetch folders'
+        const isMissingRoute =
+          raw === 'Not Found' || /\b404\b/.test(raw) || raw.toLowerCase().includes('not found')
+        if (isMissingRoute) {
+          set({ folders: [], foldersLoading: false, foldersError: null })
+          return
         }
-        const normalizedParent = parentId ?? null
-        const kept = state.folders.filter((folder) => {
-          const folderParent = folder.parentId ?? null
-          if (folderParent !== normalizedParent) return true
-          return incomingIds.has(folder.id)
-        })
-        const mergedById = new Map(kept.map((folder) => [folder.id, folder]))
-        for (const folder of incoming) {
-          mergedById.set(folder.id, folder)
-        }
-        return {
-          folders: Array.from(mergedById.values()),
-          foldersLoading: false,
-          foldersError: null,
-        }
-      })
-        } catch (e) {
-      const raw = e instanceof Error ? e.message : 'Failed to fetch folders'
-      const isMissingRoute =
-        raw === 'Not Found' || /\b404\b/.test(raw) || raw.toLowerCase().includes('not found')
-      if (isMissingRoute) {
-        set({ folders: [], foldersLoading: false, foldersError: null })
-        return
+        const msg =
+          raw === 'Failed to fetch' || raw.toLowerCase().includes('network')
+            ? 'Unable to connect to the Idea Backlog Service. Make sure python-idea-backlog-service-fastapi is running on port 8511.'
+            : raw
+        set({ foldersLoading: false, foldersError: msg })
+      } finally {
+        if (generation === requestGeneration) activeRequest = null
       }
-      const msg =
-        raw === 'Failed to fetch' || raw.toLowerCase().includes('network')
-          ? 'Unable to connect to the Idea Backlog Service. Make sure python-idea-backlog-service-fastapi is running on port 8511.'
-          : raw
-      set({ foldersLoading: false, foldersError: msg })
-    }
+    })()
+    activeRequest = { key, promise }
+    return promise
   },
 
   addFolder: async (folderData) => {
@@ -162,6 +142,8 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
       workspace_id,
       border_color: folderData.borderColor ?? null,
     })
+    generation += 1
+    activeRequest = null
     const folder: IdeaBacklogFolder = {
       ...mapApiToFolder(created),
       workspaceId: applyWorkspaceIdFromWrite(mapApiToFolder(created).workspaceId, workspace_id),
@@ -180,6 +162,8 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
     if (Object.keys(payload).length === 0) return
 
     await updateIdeaFolder(id, payload)
+    generation += 1
+    activeRequest = null
     const folder = get().folders.find((f) => f.id === id)
     if (folder) {
       await get().fetchFolders(folder.ownerId, folder.parentId)
@@ -188,8 +172,11 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
 
   deleteFolder: async (id) => {
     await deleteIdeaFolder(id)
+    generation += 1
+    activeRequest = null
     set((state) => ({
       folders: state.folders.filter((folder) => folder.id !== id),
+      foldersLoading: false,
     }))
   },
 
@@ -244,6 +231,9 @@ export const useIdeaFolderStore = create<IdeaFolderState>()((set, get) => ({
   },
 
   clearLocalCache: () => {
+    generation += 1
+    activeRequest = null
+    cacheKey = null
     set({ folders: [], foldersLoading: false, foldersError: null })
   },
 }))

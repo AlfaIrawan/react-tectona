@@ -114,6 +114,7 @@ import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOpt
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
 import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
+import { fetchAllIdeaFolders, type IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
   enterpriseDestructiveOutlineButtonClass,
   enterprisePrimarySoftButtonClass,
@@ -2238,6 +2239,10 @@ export function IdeaBacklogManagementPage() {
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
   const [moveIdeaTarget, setMoveIdeaTarget] = useState<Idea | null>(null)
   const [moveIdeaFolderId, setMoveIdeaFolderId] = useState('')
+  const [moveIdeaFolders, setMoveIdeaFolders] = useState<IdeaFolderApi[]>([])
+  const [moveFoldersLoading, setMoveFoldersLoading] = useState(false)
+  const [moveFoldersError, setMoveFoldersError] = useState('')
+  const [moveFoldersReloadKey, setMoveFoldersReloadKey] = useState(0)
   const [workflowDecision, setWorkflowDecision] = useState<{ idea: Idea; mode: IdeaDecisionMode } | null>(null)
   const [rejectContextIdeaId, setRejectContextIdeaId] = useState('')
   const [decidableSelectedIdeaId, setDecidableSelectedIdeaId] = useState('')
@@ -3953,11 +3958,34 @@ export function IdeaBacklogManagementPage() {
   }
 
   const openMoveIdeaDialog = (idea: Idea) => {
+    setMoveIdeaFolders([])
+    setMoveFoldersLoading(true)
+    setMoveFoldersError('')
     setMoveIdeaTarget(idea)
     setMoveIdeaFolderId(idea.folderId || '')
     setMoveIdeaError('')
     closeContextMenu()
   }
+
+  useEffect(() => {
+    if (!moveIdeaTarget) return
+    let active = true
+    const workspaceId = moveIdeaTarget.workspace
+    setMoveIdeaFolders([])
+    setMoveFoldersLoading(true)
+    setMoveFoldersError('')
+    if (!workspaceId) {
+      setMoveFoldersError('This idea has no workspace. Refresh the idea before choosing a destination.')
+      setMoveFoldersLoading(false)
+      return
+    }
+    void fetchAllIdeaFolders({ workspace_id: workspaceId, owner_id: LEGACY_DUMMY_OWNER_ID }).then((rows) => {
+      if (active) setMoveIdeaFolders(rows.filter((folder) => folder.workspace_id === workspaceId))
+    }).catch((error) => {
+      if (active) setMoveFoldersError(error instanceof Error ? error.message : 'Could not load destination folders.')
+    }).finally(() => { if (active) setMoveFoldersLoading(false) })
+    return () => { active = false }
+  }, [moveIdeaTarget?.id, moveIdeaTarget?.workspace, moveFoldersReloadKey])
 
   const closeMoveIdeaDialog = () => {
     if (isMovingIdea) return
@@ -3967,11 +3995,11 @@ export function IdeaBacklogManagementPage() {
   }
 
   const submitMoveIdea = async () => {
-    if (!moveIdeaTarget || isMovingIdea) return
+    if (!moveIdeaTarget?.workspace || isMovingIdea || moveFoldersLoading || moveFoldersError) return
     const folderId = moveIdeaFolderId || null
     if (folderId === (moveIdeaTarget.folderId || null)) return
-    const destination = folders.find((folder) => folder.id === folderId)
-    if (folderId && (!destination || (destination.workspaceId || '') !== (moveIdeaTarget.workspaceId || ''))) {
+    const destination = moveIdeaFolders.find((folder) => folder.id === folderId)
+    if (folderId && (!destination || destination.workspace_id !== moveIdeaTarget.workspace)) {
       setMoveIdeaError('Select a folder in the same workspace.')
       return
     }
@@ -7983,18 +8011,24 @@ export function IdeaBacklogManagementPage() {
                           <select
                             id="move-idea-folder"
                             value={moveIdeaFolderId}
+                            disabled={moveFoldersLoading || Boolean(moveFoldersError) || isMovingIdea}
                             onChange={(event) => setMoveIdeaFolderId(event.target.value)}
                             className="mt-2 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                           >
-                            <option value="">Workspace root</option>
-                            {folders
-                              .filter((folder) => (folder.workspaceId || '') === (moveIdeaTarget.workspaceId || ''))
+                            <option value="">{moveFoldersLoading ? 'Loading folders...' : moveFoldersError ? 'Folders unavailable' : 'Workspace root'}</option>
+                            {moveIdeaFolders
                               .map((folder) => (
                                 <option key={folder.id} value={folder.id}>
                                   {folder.name}
                                 </option>
                               ))}
                           </select>
+                          {moveFoldersLoading && <p role="status" className="mt-2 text-xs text-muted-foreground">Checking available folders...</p>}
+                          {moveFoldersError && <div className="mt-2 space-y-2">
+                            <p role="alert" className="text-sm text-destructive">{moveFoldersError}</p>
+                            <Button type="button" variant="outline" className="gap-2" onClick={() => setMoveFoldersReloadKey((key) => key + 1)}><RefreshCw className="h-4 w-4" />Retry</Button>
+                          </div>}
+                          {!moveFoldersLoading && !moveFoldersError && moveIdeaFolders.length === 0 && <p className="mt-2 text-xs text-muted-foreground">No destination folders are available in this workspace.</p>}
                         </div>
                         <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-950">
                           Workspace, ownership, and workflow remain unchanged. Cross-workspace transfers are unavailable until workflow and document access can be migrated safely.
@@ -8005,7 +8039,7 @@ export function IdeaBacklogManagementPage() {
                         <Button type="button" variant="outline" className="flex-1" onClick={closeMoveIdeaDialog} disabled={isMovingIdea}>
                           Cancel
                         </Button>
-                        <Button type="button" className="flex-1 gap-2" onClick={() => void submitMoveIdea()} disabled={moveIdeaFolderId === (moveIdeaTarget.folderId || '') || isMovingIdea}>
+                        <Button type="button" className="flex-1 gap-2" onClick={() => void submitMoveIdea()} disabled={moveFoldersLoading || Boolean(moveFoldersError) || (Boolean(moveIdeaFolderId) && !moveIdeaFolders.some((folder) => folder.id === moveIdeaFolderId)) || moveIdeaFolderId === (moveIdeaTarget.folderId || '') || isMovingIdea}>
                           <MoveRight className="h-4 w-4" />{isMovingIdea ? 'Moving...' : 'Move to Folder'}
                         </Button>
                       </div>
