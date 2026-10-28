@@ -70,6 +70,68 @@ function nestIntroducedLists(notes: UnderstandingNote[]): UnderstandingNote[] {
   return result
 }
 
+type NoteKind = 'goal' | 'people' | 'today' | 'systems' | 'expected' | 'open'
+
+const KIND_LABEL: Record<NoteKind, { id: string; en: string }> = {
+  goal: { id: 'Yang ingin dicapai:', en: 'What this is for:' },
+  people: { id: 'Pihak yang terlibat:', en: 'Who is involved:' },
+  today: { id: 'Kondisi saat ini:', en: 'How it works today:' },
+  systems: { id: 'Sistem dan saluran yang tercatat:', en: 'Systems and channels on record:' },
+  expected: { id: 'Yang diharapkan:', en: 'What is expected:' },
+  open: { id: 'Yang masih terbuka:', en: 'Still open:' },
+}
+
+/** One kind per note. A short "Nama: keterangan" is a named system or channel. */
+export function understandingNoteKind(text: string): NoteKind | null {
+  const folded = text.toLowerCase()
+  if (LABELED_ITEM.test(text) && !/\b(tujuan(?:\s+utama)?|proyek ini|project ini)\b/.test(folded)) return 'systems'
+  if (/\b(tujuan(?:\s+utama)?|proyek ini adalah|project ini|ingin membuat|bantuan bagi)\b/.test(folded)) return 'goal'
+  if (/\b(pengguna bisnis|user bisnis|pihak yang|yang terdampak|peran yang)\b/.test(folded)) return 'people'
+  if (/\b(diharapkan|nantinya|ke depan|yang diharapkan|solusi yang)\b/.test(folded)) return 'expected'
+  if (/\b(saat ini|sekarang|hari ini|kondisi berjalan)\b/.test(folded)) return 'today'
+  if (/\b(belum pasti|perlu dikonfirmasi|masih terbuka|tidak tahu|belum diketahui)\b/.test(folded)) return 'open'
+  return null
+}
+
+/** Group flat notes that share a kind. A note that already has children is left as written. */
+export function classifyUnderstandingNotes(notes: UnderstandingNote[], indonesian: boolean): UnderstandingNote[] {
+  const prepared = notes
+  const loose = prepared.filter(note => note.children.length === 0)
+  if (loose.length < 2) return prepared
+  const groups = new Map<NoteKind, UnderstandingNote[]>()
+  const kindOf = new Map<UnderstandingNote, NoteKind | null>()
+  for (const note of loose) {
+    const kind = understandingNoteKind(note.text)
+    kindOf.set(note, kind)
+    if (!kind) continue
+    const items = groups.get(kind) ?? []
+    items.push(note)
+    groups.set(kind, items)
+  }
+  const consumed = new Set<UnderstandingNote>()
+  for (const items of groups.values()) {
+    if (items.length >= 2) items.forEach(item => consumed.add(item))
+  }
+  const result: UnderstandingNote[] = []
+  const emitted = new Set<NoteKind>()
+  for (const note of prepared) {
+    if (note.children.length > 0) {
+      result.push(note)
+      continue
+    }
+    const kind = kindOf.get(note) ?? null
+    if (kind && consumed.has(note)) {
+      if (!emitted.has(kind)) {
+        emitted.add(kind)
+        result.push({ text: indonesian ? KIND_LABEL[kind].id : KIND_LABEL[kind].en, children: groups.get(kind) ?? [] })
+      }
+      continue
+    }
+    result.push(note)
+  }
+  return result
+}
+
 export function countUnderstandingNotes(notes: UnderstandingNote[]): number {
   return notes.reduce((total, note) => total + 1 + countUnderstandingNotes(note.children), 0)
 }

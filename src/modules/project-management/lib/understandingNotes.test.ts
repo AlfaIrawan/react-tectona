@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countUnderstandingNotes, parseUnderstandingNotes, understandingStartsCollapsed } from './understandingNotes'
+import { classifyUnderstandingNotes, countUnderstandingNotes, parseUnderstandingNotes, understandingStartsCollapsed } from './understandingNotes'
 
 describe('understanding notes', () => {
   it('keeps each bullet as its own note and joins a wrapped line', () => {
@@ -34,6 +34,40 @@ describe('understanding notes', () => {
       { text: 'Project membantu collector field', children: [] },
     ])
     expect(countUnderstandingNotes(notes)).toBe(4)
+  })
+
+  it('groups notes of the same kind and leaves a single note where it is', () => {
+    const notes = classifyUnderstandingNotes(parseUnderstandingNotes([
+      '- Tujuan utama proyek ini adalah menyediakan bantuan bagi collector field.',
+      '- Project ingin membuat Chat Gen AI agar collector field dapat bertanya langsung.',
+      '- Saat ini collector field harus menanyakan kebijakan lewat WhatsApp.',
+      '- WhatsApp: saluran komunikasi utama bagi Collector Field.',
+      '- Ad1ForFlow: sumber data kebijakan yang ada saat ini.',
+    ].join('\n')), true)
+    expect(notes.map(note => note.text)).toEqual([
+      'Yang ingin dicapai:',
+      'Saat ini collector field harus menanyakan kebijakan lewat WhatsApp.',
+      'Sistem dan saluran yang tercatat:',
+    ])
+    expect(notes[0].children.map(note => note.text)).toEqual([
+      'Tujuan utama proyek ini adalah menyediakan bantuan bagi collector field.',
+      'Project ingin membuat Chat Gen AI agar collector field dapat bertanya langsung.',
+    ])
+    expect(notes[2].children.map(note => note.text)).toEqual([
+      'WhatsApp: saluran komunikasi utama bagi Collector Field.',
+      'Ad1ForFlow: sumber data kebijakan yang ada saat ini.',
+    ])
+  })
+
+  it('does not wrap a list the summary already introduced', () => {
+    const notes = classifyUnderstandingNotes(parseUnderstandingNotes([
+      '- Sistem yang digunakan meliputi:',
+      '- WhatsApp: saluran',
+      '- Ad1ForFlow: sumber',
+      '- Project membantu',
+    ].join('\n')), true)
+    expect(notes[0].text).toBe('Sistem yang digunakan meliputi:')
+    expect(notes[0].children.map(note => note.text)).toEqual(['WhatsApp: saluran', 'Ad1ForFlow: sumber'])
   })
 
   it('starts collapsed only after the preview', () => {

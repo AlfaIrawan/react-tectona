@@ -4,7 +4,7 @@ import { AssistantChatMarkdown } from '@/modules/core-shell/components/Assistant
 import { cn } from '@/lib/utils'
 import { normalizeBrainstormSummary } from '../lib/normalizeBrainstormSummary'
 import { normalizeBrainstormMarkdown } from '../lib/brainstormMarkdown'
-import { countUnderstandingNotes, parseUnderstandingNotes, previewUnderstandingNotes, UNDERSTANDING_PREVIEW_COUNT, understandingStartsCollapsed, type UnderstandingNote } from '../lib/understandingNotes'
+import { classifyUnderstandingNotes, countUnderstandingNotes, parseUnderstandingNotes, previewUnderstandingNotes, UNDERSTANDING_PREVIEW_COUNT, understandingStartsCollapsed, type UnderstandingNote } from '../lib/understandingNotes'
 import type { ReactNode } from 'react'
 
 const NOTE_CLASS = 'text-[13px] leading-6 text-sky-950 [&_p]:m-0 [&_strong]:font-semibold dark:text-sky-50'
@@ -17,7 +17,10 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
   className?: string
   children?: ReactNode
 }) {
-  const notes = parseUnderstandingNotes(normalizeBrainstormMarkdown(normalizeBrainstormSummary(text)))
+  const notes = classifyUnderstandingNotes(
+    parseUnderstandingNotes(normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))),
+    indonesian,
+  )
   const long = understandingStartsCollapsed(notes)
   const [open, setOpen] = useState(true)
   const [expanded, setExpanded] = useState(!long)
