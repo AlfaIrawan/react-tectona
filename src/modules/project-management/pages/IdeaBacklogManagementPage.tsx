@@ -1313,6 +1313,14 @@ function brainstormQuestionKind(message: IdeaDraftBrainstormMessage) {
   return BRAINSTORM_QUESTION_KIND.extended
 }
 
+function activeExtendedQuestionFocus(
+  messages: IdeaDraftBrainstormMessage[],
+): 'business' | 'technical' | null {
+  const last = [...messages].reverse().find((message) => message.role === 'assistant')
+  if (last?.question_kind !== 'extended') return null
+  return last.question_focus === 'business' || last.question_focus === 'technical' ? last.question_focus : null
+}
+
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
  *  extended question badged and coloured. The text itself is the server's, unchanged. */
 function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [] }: {
@@ -7505,10 +7513,13 @@ export function IdeaBacklogManagementPage() {
                               <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  disabled={isBrainstormSending || isDraftContinuing || activeExtendedQuestionFocus(brainstormMessages) === 'business'}
+                                  title={activeExtendedQuestionFocus(brainstormMessages) === 'business'
+                                    ? (brainstormThreadIndonesian ? 'Jalur pertanyaan yang sedang berjalan' : 'The question track already in progress')
+                                    : undefined}
                                   className={cn(
                                     enterpriseSecondaryButtonClass(),
-                                    'inline-flex h-9 items-center gap-2 border-emerald-300 bg-white text-emerald-950 hover:bg-emerald-100',
+                                    'inline-flex h-9 items-center gap-2 border-emerald-300 bg-white text-emerald-950 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60',
                                   )}
                                   // Only the choice is sent; how the questions are asked and labelled is agent-runtime's.
                                   onClick={() => void handleSendBrainstormMessage(
@@ -7520,10 +7531,13 @@ export function IdeaBacklogManagementPage() {
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  disabled={isBrainstormSending || isDraftContinuing || activeExtendedQuestionFocus(brainstormMessages) === 'technical'}
+                                  title={activeExtendedQuestionFocus(brainstormMessages) === 'technical'
+                                    ? (brainstormThreadIndonesian ? 'Jalur pertanyaan yang sedang berjalan' : 'The question track already in progress')
+                                    : undefined}
                                   className={cn(
                                     enterpriseSecondaryButtonClass(),
-                                    'inline-flex h-9 items-center gap-2 border-sky-300 bg-white text-sky-950 hover:bg-sky-100',
+                                    'inline-flex h-9 items-center gap-2 border-sky-300 bg-white text-sky-950 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60',
                                   )}
                                   onClick={() => void handleSendBrainstormMessage(
                                     brainstormThreadIndonesian ? 'Pertanyaan teknis' : 'Technical questions',
