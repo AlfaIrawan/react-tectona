@@ -74,6 +74,20 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
   )
 }
 
+/** The sentence a correction changed. Separate from the numbered understanding. */
+export function BrainstormRevisionNote({ text, indonesian }: { text: string; indonesian: boolean }) {
+  const body = text.trim()
+  if (!body) return null
+  return (
+    <div className="my-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/30">
+      <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+        {indonesian ? 'Revisi' : 'Revision'}
+      </p>
+      <AssistantChatMarkdown content={body} className="mt-1 text-[13px] leading-6 text-amber-950 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 dark:text-amber-50" />
+    </div>
+  )
+}
+
 function UnderstandingNoteList({ notes, prefix = '' }: { notes: UnderstandingNote[]; prefix?: string }) {
   return (
     <ol className={cn('m-0 list-none space-y-2 p-0', prefix && 'mt-2')}>

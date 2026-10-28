@@ -104,7 +104,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
-import { BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
+import { BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
@@ -1360,6 +1360,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
           <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS}>
             <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} />
           </BrainstormSummaryBox>
+          {message.revision_text ? <BrainstormRevisionNote text={message.revision_text} indonesian={indonesian} /> : null}
         </>
       ) : rest ? (
         <BrainstormAssistantMessageBody text={rest} />

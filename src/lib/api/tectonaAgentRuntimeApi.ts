@@ -611,6 +611,8 @@ export interface IdeaDraftBrainstormMessage {
   evidence?: string | null
   /** The part of the text that summarises what was understood, shown in a "Rangkuman Pemahaman" box. */
   summary?: string | null
+  /** The sentence a correction just changed, shown as Revisi beside the full understanding. */
+  revision_text?: string | null
   /** What the reply asks: a mandatory question, a challenge (sub-question) or an extended question after the intake. */
   question_kind?: 'mandatory' | 'challenge' | 'extended' | 'confirm' | null
   question_text?: string | null
