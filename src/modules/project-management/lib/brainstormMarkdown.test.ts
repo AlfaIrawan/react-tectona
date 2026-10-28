@@ -11,6 +11,10 @@ describe('brainstorm Markdown and question delivery', () => {
     ['```plantuml\nA -> B: **literal\n```', '```plantuml\nA -> B: **literal\n```'],
     ['\\**literal', '\\**literal'],
     ['**Bold\nmultiline**', '**Bold\nmultiline**'],
+    [
+      'Oke, aku catat: **Berdasarkan konteks:\n- **Data leakage:** pertanyaan.\n- **Compliance: verifikasi.',
+      'Oke, aku catat: Berdasarkan konteks:\n- **Data leakage:** pertanyaan.\n- Compliance: verifikasi.',
+    ],
   ])('repairs only orphan emphasis: %s', (text, expected) => {
     expect(normalizeBrainstormMarkdown(text)).toBe(expected)
   })
