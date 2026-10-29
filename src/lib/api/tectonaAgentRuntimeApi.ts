@@ -294,6 +294,9 @@ export interface AnalyzeIdeaIntegrationResponse {
   confidence_score: number
   warnings: string[]
   correlation_id: string
+  /** Drawn from facts a person corrected; and the sources changed since. */
+  facts_edited?: boolean
+  facts_stale?: boolean
 }
 
 export type C4ArchitectureLevel = 'L1' | 'L2'
@@ -553,6 +556,8 @@ export interface IdeaDraftSimilarItem {
   similarity_score: number
   status?: string | null
   project_name?: string | null
+  /** A document's type (URD, BRD, FSD...): an idea's documents share its title. */
+  doc_type?: string | null
 }
 
 export interface IdeaDraftEvidenceSummary {
@@ -579,6 +584,9 @@ export interface IdeaDraftChecklistItem {
   // See the backend IdeaDraftChecklistItem model docstring for what each value means.
   evidence_status?: IdeaDraftEvidenceStatus
   evidence_text?: string | null
+  candidate_evidence?: string[]
+  completion_origin?: 'active_answer' | 'explicit_confirmation' | null
+  review_needed?: boolean
 }
 
 export interface IdeaDraftEvidenceProgress {
@@ -601,9 +609,44 @@ export interface IdeaDraftBrainstormMessage {
   text: string
   /** Basis of a sub-question (the user's quoted words and the question they answered), set by the server. */
   evidence?: string | null
+  /** The part of the text that summarises what was understood, shown in a "Rangkuman Pemahaman" box. */
+  summary?: string | null
+  /** The sentence a correction just changed, shown as Revisi beside the full understanding. */
+  revision_text?: string | null
+  /** A decision waiting for confirmation, shown under its own title instead of the understanding summary. */
+  decision_label?: string | null
+  decision_text?: string | null
+  /** What the reply asks: a mandatory question, a challenge (sub-question) or an extended question after the intake. */
+  question_kind?: 'mandatory' | 'challenge' | 'extended' | 'confirm' | null
+  question_text?: string | null
+  invalidated_process_lanes?: Array<'as_is' | 'to_be'>
+  /** The track of an extended question, shown as "Extended Question · Business/Technical". */
+  question_focus?: 'business' | 'technical' | null
+  confirmation_choices?: string[]
+  confirmation_explanations?: string[]
+  confirmation_actions?: Array<'confirm' | 'adjust'>
+  suggestion_options?: Array<{ action: 'choose' | 'adjust' | 'defer' | 'discuss' | 'provide'; label: string; explanation: string; value: string }>
+  suggestion_question?: string
+  suggestion_kind?: 'mandatory' | 'followup' | null
+  suggestion_origin?: 'assistant' | 'user'
+  accepted_decision?: { question: string; value: string; item_id: string; origin: 'assistant' | 'user' } | null
+  evidence_pending?: boolean
+  edited_at?: string | null
+  edit_history?: Array<{ previous_text: string; edited_at: string; edited_by?: string | null }>
+  suggestion_multiple?: boolean
+  suggestion_baseline?: string
+  suggestion_item_id?: string
+  process_diagram_proposals?: Array<{ lane: 'as_is' | 'to_be'; option_value: string; diagram_block: string }>
+  catalog_matches?: Array<{ application: string; documented_function: string; proposed_fit: string }>
+  catalog_mode?: 'current' | 'proposed' | null
+  catalog_status?: 'matched' | 'no_match' | 'unavailable' | null
+  ai_advice?: string | null
 }
 
 export interface IdeaDraftBrainstormResponse {
+  live_summary?: IdeaDraftLiveSummary | null
+  draft_session_id?: string | null
+  revision?: string
   messages: IdeaDraftBrainstormMessage[]
   ready_to_continue: boolean
   remaining_gaps: string[]
@@ -619,6 +662,8 @@ export interface IdeaDraftBrainstormResponse {
 }
 
 export interface RestoreIdeaDraftBrainstormRequest {
+  source_job_id?: string
+  draft_session_id?: string | null
   title: string
   tags?: string[]
   context?: {
@@ -666,13 +711,26 @@ export interface IdeaDraftVersionListResponse {
 }
 
 export interface CreateIdeaDraftJobResponse {
+  draft_session_id?: string | null
   job_id: string
   status: IdeaDraftJobStatus
   progress_percent: number
   correlation_id: string
 }
 
+export interface IdeaDraftLiveSummary {
+  status: 'ready' | 'empty' | 'unavailable'
+  recovery_mode?: 'evidence_rebuild' | null
+  source_revision: string
+  source_fingerprint: string
+  sections: Array<{ key: string; title: string; body: string; evidence_ids: string[] }>
+  text: string
+}
+
 export interface IdeaDraftJobStatusResponse {
+  live_summary?: IdeaDraftLiveSummary | null
+  draft_session_id?: string | null
+  revision?: string
   job_id: string
   status: IdeaDraftJobStatus
   progress_percent: number
@@ -725,6 +783,8 @@ export interface RuntimeChatUiContext {
   discussion_section_label?: string | null
   discussion_section_content?: string | null
   discussion_idea_description?: string | null
+  /** A diagram's checks, sent with the diagram-notice token (the backend words the notice). */
+  diagram_notice_items?: string[] | null
   preferred_language?: string | null
   platform_roles?: string[] | null
   is_platform_admin?: boolean | null
@@ -2116,6 +2176,7 @@ export interface IdeaIntakeAnswer {
 export interface IdeaIntakeFollowup {
   question: string
   answer: string
+  question_kind?: 'challenge' | 'extended' | null
   /** The brainstorm message that asked it. */
   turn?: number
 }
@@ -2134,6 +2195,7 @@ export interface IdeaIntakeAnswers {
   openPoints: string[]
   /** Per open point, the brainstorm message that asked it (null when not found). */
   openPointTurns: Array<number | null>
+  openPointQuestionKinds?: Array<'challenge' | 'extended' | null>
   reviewerInputs: IdeaReviewerInput[]
   block: string
 }
@@ -2143,6 +2205,7 @@ type IdeaIntakeAnswersBody = {
   followups?: IdeaIntakeFollowup[]
   open_points?: string[]
   open_point_turns?: Array<number | null>
+  open_point_question_kinds?: Array<'challenge' | 'extended' | null>
   reviewer_inputs?: IdeaReviewerInput[]
   block?: string
 }
@@ -2153,6 +2216,7 @@ function toIdeaIntakeAnswers(body: IdeaIntakeAnswersBody): IdeaIntakeAnswers {
     followups: body.followups ?? [],
     openPoints: body.open_points ?? [],
     openPointTurns: body.open_point_turns ?? [],
+    openPointQuestionKinds: body.open_point_question_kinds ?? [],
     reviewerInputs: body.reviewer_inputs ?? [],
     block: body.block ?? '',
   }
@@ -2433,6 +2497,41 @@ export async function getIdeaDraftJob(
   return handleResponse<IdeaDraftJobStatusResponse>(res)
 }
 
+export async function recoverIdeaDraftLiveSummary(jobId: string): Promise<IdeaDraftJobStatusResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/live-summary/recover`,
+    { method: 'POST' },
+    MULTI_ROLE_SUMMARY_TIMEOUT_MS,
+  )
+  return handleResponse<IdeaDraftJobStatusResponse>(res)
+}
+
+export interface IdeaDraftSessionEntry {
+  draft_session_id?: string | null
+  related_job_ids?: string[]
+  job_id: string
+  workspace_id: string
+  title: string
+  status: string
+  correlation_id: string
+  idea_id: string | null
+  updated_date: string
+  tags?: string[]
+  workspace_name?: string | null
+}
+
+export async function listIdeaDraftSessions(offset = 0, workspaceId?: string): Promise<{ items: IdeaDraftSessionEntry[]; has_more: boolean }> {
+  const query = new URLSearchParams({ offset: String(offset) })
+  if (workspaceId) query.set('workspace_id', workspaceId)
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/idea-draft-sessions?${query}`, { method: 'GET' }, 15_000)
+  return handleResponse(res)
+}
+
+export async function deleteIdeaDraftSession(jobId: string): Promise<void> {
+  const res = await fetchWithTimeout(`${BASE_URL}/v1/agent/idea-draft-sessions/${encodeURIComponent(jobId)}`, { method: 'DELETE' }, 15_000)
+  await handleResponse(res)
+}
+
 export async function cancelIdeaDraftJob(
   jobId: string,
 ): Promise<IdeaDraftJobStatusResponse> {
@@ -2665,6 +2764,7 @@ export async function brainstormIdeaDraftJob(
     domain?: string
     not_confused_with?: string
   }> = [],
+  expectedRevision?: string,
 ): Promise<IdeaDraftBrainstormResponse> {
   const res = await fetchWithTimeout(
     `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm`,
@@ -2672,9 +2772,37 @@ export async function brainstormIdeaDraftJob(
       method: 'POST',
       body: JSON.stringify({
         message,
+        expected_revision: expectedRevision,
         llm_mode: llmMode,
         workspace_abbreviations: workspaceAbbreviations,
         ...(diagramImage ? { diagram_image: diagramImage } : {}),
+      }),
+    },
+    MULTI_ROLE_SUMMARY_TIMEOUT_MS,
+  )
+  return handleResponse<IdeaDraftBrainstormResponse>(res)
+}
+
+/** Edit the user's earlier answer number `userTurn` (0-based): the brainstorm goes back to it and
+ *  continues from the new text; every message after it is replaced. */
+export async function editIdeaDraftBrainstormMessage(
+  jobId: string,
+  edit: { userTurn: number; originalMessage: string; message: string },
+  llmMode: 'normal' | 'thinking' = 'normal',
+  workspaceAbbreviations: Array<{ abbr: string; expansion: string; domain?: string; not_confused_with?: string }> = [],
+  expectedRevision?: string,
+): Promise<IdeaDraftBrainstormResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-draft-jobs/${encodeURIComponent(jobId)}/brainstorm/edit`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        user_turn: edit.userTurn,
+        expected_revision: expectedRevision,
+        original_message: edit.originalMessage,
+        message: edit.message,
+        llm_mode: llmMode,
+        workspace_abbreviations: workspaceAbbreviations,
       }),
     },
     MULTI_ROLE_SUMMARY_TIMEOUT_MS,
@@ -2717,6 +2845,18 @@ export async function getIdeaDraftVersion(
   return handleResponse<IdeaDraftVersionDetail>(res)
 }
 
+function fitBrainstormSummary(value: string | null | undefined, limit = 4000): string | null | undefined {
+  if (value == null) return value
+  const silent = value
+    .replace(/\n*Detail tambahan tetap tersimpan dalam jawaban brainstorming\./g, '')
+    .replace(/\n*Additional details remain saved in the brainstorming answers\./g, '')
+    .trim()
+  if (silent.length <= limit) return silent
+  const cut = silent.lastIndexOf('\n', limit)
+  const end = cut > limit / 2 ? cut : limit
+  return silent.slice(0, end).trimEnd()
+}
+
 export async function restoreIdeaDraftBrainstormSession(
   payload: RestoreIdeaDraftBrainstormRequest,
 ): Promise<IdeaDraftJobStatusResponse> {
@@ -2724,7 +2864,13 @@ export async function restoreIdeaDraftBrainstormSession(
     `${BASE_URL}/v1/agent/idea-draft-jobs/restore-brainstorm`,
     {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        messages: payload.messages.map((message) => ({
+          ...message,
+          summary: fitBrainstormSummary(message.summary),
+        })),
+      }),
     },
     30_000,
   )

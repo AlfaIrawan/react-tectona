@@ -7,7 +7,7 @@
  * NOTE: the backend responds in snake_case (matching the idea-backlog convention).
  */
 
-import { apiFetch, parseApiErrorMessage, tectonaServiceHeaders } from './httpClient'
+import { apiFetch, htmlErrorPageMessage, parseApiErrorMessage, tectonaServiceHeaders } from './httpClient'
 import { serviceApiBase } from './gatewayBase'
 
 const BASE_URL = (() => {
@@ -112,6 +112,10 @@ async function readJson<T>(res: Response): Promise<T> {
     // Errors arrive as {"detail": ...} or, behind the error middleware, {"error": {"message": ...}}.
     throw new Error(parseApiErrorMessage(text, `HTTP ${res.status}`))
   }
+  // A path the web server does not route to the API answers with the app's own HTML page (200).
+  if ((res.headers.get('content-type') ?? '').includes('text/html')) {
+    throw new Error(htmlErrorPageMessage(await res.text()) ?? 'The server returned a page instead of data. Reload the page and try again.')
+  }
   return (await res.json()) as T
 }
 
@@ -149,6 +153,8 @@ export type WorkflowOverviewDto = {
   status_mix: Array<{ label: string; value: number }>
   queue: { waiting_approval: number; waiting_delay: number; running: number; pending_approvals: number }
   insights: Array<{ level: 'Critical' | 'Warning' | 'Info'; text: string }>
+  /** What the run figures cover: every workspace, or the selected one plus all under it. */
+  scope?: { runs: 'all' | 'workspace'; workspaces: number | null }
 }
 
 export async function getWorkflowOverview(params: { workspaceId?: string; days?: number } = {}): Promise<WorkflowOverviewDto> {
@@ -174,8 +180,15 @@ export async function createWorkflow(body: WorkflowCreateInput): Promise<Workflo
   return readJson<WorkflowDto>(res)
 }
 
-export async function updateWorkflow(id: string, patch: WorkflowUpdateInput): Promise<WorkflowDto> {
-  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}`, {
+/** `?workspace_id=` naming the workspace the caller acts from. The backend refuses to change a
+    workflow from a workspace that only inherits it (403). */
+function actingWorkspaceQuery(workspaceId?: string | null, prefix: '?' | '&' = '?'): string {
+  const id = workspaceId?.trim()
+  return id ? `${prefix}workspace_id=${encodeURIComponent(id)}` : ''
+}
+
+export async function updateWorkflow(id: string, patch: WorkflowUpdateInput, workspaceId?: string | null): Promise<WorkflowDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}${actingWorkspaceQuery(workspaceId)}`, {
     method: 'PUT',
     headers: defaultHeaders(),
     body: JSON.stringify(patch),
@@ -191,23 +204,61 @@ export async function duplicateWorkflowApi(id: string): Promise<WorkflowDto> {
   return readJson<WorkflowDto>(res)
 }
 
-export async function deleteWorkflowApi(id: string): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}`, {
+export async function deleteWorkflowApi(id: string, workspaceId?: string | null): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}${actingWorkspaceQuery(workspaceId)}`, {
     method: 'DELETE',
     headers: defaultHeaders(),
   })
   if (!res.ok && res.status !== 204 && res.status !== 404) {
     const text = await res.text().catch(() => '')
-    throw new Error(text || `HTTP ${res.status}`)
+    throw new Error(parseApiErrorMessage(text, `HTTP ${res.status}`))
   }
 }
 
-export async function publishWorkflowApi(id: string): Promise<WorkflowDto> {
-  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/publish`, {
+/** One thing the publish check found: an error blocks publishing, a warning needs acknowledgement. */
+export type WorkflowPublishProblem = {
+  level: 'error' | 'warning'
+  code: string
+  message: string
+  node_id?: string | null
+  node_label?: string | null
+}
+
+/** Publishing was refused by the publish check; `problems` says why. */
+export class WorkflowPublishCheckError extends Error {
+  problems: WorkflowPublishProblem[]
+  blocking: boolean
+
+  constructor(problems: WorkflowPublishProblem[], blocking: boolean) {
+    super(blocking ? 'The workflow has problems that would fail its runs.' : 'The workflow has warnings to acknowledge.')
+    this.problems = problems
+    this.blocking = blocking
+  }
+}
+
+export async function publishWorkflowApi(id: string, options: { acknowledgeWarnings?: boolean; workspaceId?: string | null } = {}): Promise<WorkflowDto> {
+  const qs = options.acknowledgeWarnings
+    ? `?acknowledge_warnings=true${actingWorkspaceQuery(options.workspaceId, '&')}`
+    : actingWorkspaceQuery(options.workspaceId)
+  const res = await apiFetch(`${BASE_URL}/v1/workflows/${encodeURIComponent(id)}/publish${qs}`, {
     method: 'POST',
     headers: defaultHeaders(),
   })
+  if (res.status === 422 || res.status === 409) {
+    const body = await res.clone().json().catch(() => null) as { error?: { details?: { code?: string; problems?: WorkflowPublishProblem[] } } } | null
+    const details = body?.error?.details
+    if (details?.problems?.length) throw new WorkflowPublishCheckError(details.problems, details.code === 'PUBLISH_CHECK_FAILED')
+  }
   return readJson<WorkflowDto>(res)
+}
+
+/** Resume a failed run from the step that failed, with the context it had. */
+export async function retryWorkflowRun(runId: string): Promise<WorkflowRunDto> {
+  const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/retry`, {
+    method: 'POST',
+    headers: defaultHeaders(),
+  })
+  return readJson<WorkflowRunDto>(res)
 }
 
 export async function listWorkflowVersions(id: string): Promise<WorkflowVersionDto[]> {
@@ -336,20 +387,20 @@ export async function getWorkflowRun(runId: string): Promise<WorkflowRunDto> {
   return readJson<WorkflowRunDto>(res)
 }
 
-export async function approveWorkflowRun(runId: string, note?: string): Promise<WorkflowRunDto> {
+export async function approveWorkflowRun(runId: string, note?: string, expectedApprovalId?: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/approve`, {
     method: 'POST',
     headers: defaultHeaders(),
-    body: JSON.stringify({ note: note ?? null }),
+    body: JSON.stringify({ note: note ?? null, ...(expectedApprovalId ? { expected_approval_id: expectedApprovalId } : {}) }),
   })
   return readJson<WorkflowRunDto>(res)
 }
 
-export async function rejectWorkflowRun(runId: string, note?: string, outcome?: 'reject' | 'revision'): Promise<WorkflowRunDto> {
+export async function rejectWorkflowRun(runId: string, note?: string, outcome?: 'reject' | 'revision', expectedApprovalId?: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/reject`, {
     method: 'POST',
     headers: defaultHeaders(),
-    body: JSON.stringify({ note: note ?? null, outcome: outcome ?? 'revision' }),
+    body: JSON.stringify({ note: note ?? null, outcome: outcome ?? 'revision', ...(expectedApprovalId ? { expected_approval_id: expectedApprovalId } : {}) }),
   })
   return readJson<WorkflowRunDto>(res)
 }
@@ -397,9 +448,9 @@ export type SectionNodeApplication = {
  * "Set Section Visibility" nodes that ideas' runs went past before the node was published: which
  * ideas they change (dryRun) or apply the change.
  */
-export async function applyWorkflowSectionNodes(workflowId: string, dryRun: boolean): Promise<SectionNodeApplication> {
+export async function applyWorkflowSectionNodes(workflowId: string, dryRun: boolean, workspaceId?: string | null): Promise<SectionNodeApplication> {
   const res = await apiFetch(
-    `${BASE_URL}/v1/workflows/${encodeURIComponent(workflowId)}/apply-section-nodes?dry_run=${dryRun ? 'true' : 'false'}`,
+    `${BASE_URL}/v1/workflows/${encodeURIComponent(workflowId)}/apply-section-nodes?dry_run=${dryRun ? 'true' : 'false'}${actingWorkspaceQuery(workspaceId, '&')}`,
     { method: 'POST', headers: defaultHeaders() },
   )
   return readJson<SectionNodeApplication>(res)

@@ -101,7 +101,19 @@ export function buildAutoRenamedBrdFileName(
   })
 }
 
-export type StructuredDocumentPrefix = 'BRD' | 'URD' | 'FSD' | 'TPL'
+/** 'BRD' | 'URD' | 'FSD' | 'TPL' or any other type a name states itself (e.g. 'SRD'). */
+export type StructuredDocumentPrefix = string
+
+/** The document-type prefix a name states itself — a structured lead token ("SRD_AdiraFinanceWs_…")
+ * or a standalone acronym ("Template - SRD (Simplified Requirement Document)"). There is no fixed
+ * list of types: whatever the author named the document wins over a kind guessed from its content.
+ * The generic 'TPL' is not an explicit type. */
+export function explicitDocumentPrefix(name: string): string | null {
+  const base = name.replace(/\.[^/.]+$/, '').trim()
+  const structured = /^([A-Z]{2,6})_/.exec(base)
+  if (structured) return structured[1] === 'TPL' ? null : structured[1]
+  return /(?:^|[^A-Za-z0-9])([A-Z]{2,4}D)(?=[^A-Za-z0-9]|$)/.exec(base)?.[1] ?? null
+}
 
 export type FileNameDocumentType = 'fsd' | 'urd' | 'brd'
 
@@ -125,6 +137,8 @@ export function detectDocumentTypeFromFileName(fileName: string): FileNameDocume
 
 /** Detect file-name prefix from document type cues in the original filename. */
 export function resolveStructuredDocumentPrefix(fileName: string): StructuredDocumentPrefix {
+  const explicit = explicitDocumentPrefix(fileName)
+  if (explicit) return explicit
   const type = detectDocumentTypeFromFileName(fileName)
   if (type === 'fsd') return 'FSD'
   if (type === 'urd') return 'URD'
@@ -136,6 +150,8 @@ export function prefixForTemplateDocumentKind(
   documentKind: string,
   fileName: string,
 ): StructuredDocumentPrefix {
+  const explicit = explicitDocumentPrefix(fileName)
+  if (explicit) return explicit
   if (documentKind === 'fsd') return 'FSD'
   if (documentKind === 'urd') return 'URD'
   if (documentKind === 'brd') return 'BRD'

@@ -33,7 +33,6 @@ export type OnboardingStatusState = {
 export function useOnboardingStatus(): OnboardingStatusState {
   const session = getSession()
   const subjectId = session?.user.id
-  const hasAuthSession = Boolean(session?.token?.trim() || session?.refreshToken?.trim())
   const enabled = isOnboardingEnabled()
   const bypass = hasPlatformAdminAccess(sessionRoles(), session?.user.role)
   const queryClient = useQueryClient()
@@ -41,7 +40,9 @@ export function useOnboardingStatus(): OnboardingStatusState {
   const query = useQuery({
     queryKey: ['tectona-onboarding-status', subjectId],
     queryFn: () => fetchOnboardingStatus(TECTONA_WAC_APP_ID, subjectId!),
-    enabled: enabled && !bypass && Boolean(subjectId) && hasAuthSession,
+    // A cookie session has a user id and no JavaScript token. The browser still
+    // sends the cookie, and the dev proxy copies it into Authorization.
+    enabled: enabled && !bypass && Boolean(subjectId),
     staleTime: 0,
     refetchOnMount: 'always',
     retry: 1,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Navigate, Outlet, useLocation, useParams } from 'react-router-dom'
 import { PlatformRouteLoadingFallback } from '@/components/loading'
 import { useTenantContext } from '@/auth/TenantContext'
@@ -13,9 +13,12 @@ type SlugAccessState = 'pending' | 'allowed' | 'denied'
 /** Syncs active tenant from `/w/:workspaceSlug/*` and renders nested shell routes. */
 export function WorkspaceSlugLayout() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>()
-  const { setActiveTenant } = useTenantContext()
+  const { setActiveTenant, workspaceId: activeWorkspaceId } = useTenantContext()
   const location = useLocation()
   const [accessState, setAccessState] = useState<SlugAccessState>('pending')
+  // Read inside the effect without restarting it (see the dependency note below).
+  const activeWorkspaceIdRef = useRef(activeWorkspaceId)
+  activeWorkspaceIdRef.current = activeWorkspaceId
 
   useEffect(() => {
     const normalizedParam = workspaceSlug?.trim()
@@ -41,6 +44,10 @@ export function WorkspaceSlugLayout() {
           slug: result.slug.slug,
           tenantMode: result.slug.tenant_mode,
           displayName: result.slug.display_name,
+        }, {
+          // Opening another workspace's URL is a choice; the URL the app itself redirected to
+          // for the active workspace is not, and must not replace the remembered one.
+          remember: result.slug.workspace_id !== activeWorkspaceIdRef.current,
         })
         setAccessState('allowed')
       })

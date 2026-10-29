@@ -571,6 +571,33 @@ export async function getPersistentIdeaIntegration(ideaId: string): Promise<Idea
   return handleResponse<IdeaIntegrationPersistent>(res)
 }
 
+export type DiagramChangeSource = 'ai_generated' | 'manual_edit' | 'ai_chat' | 'restored' | 'review' | 'system'
+
+/** One version of an idea's diagram (idea-backlog db/operations/diagram_version_repo.py). */
+export interface DiagramVersionApi {
+  id: string
+  idea_id: string
+  diagram_key: string
+  version_no: number
+  change_source: DiagramChangeSource | 'initial'
+  change_note?: string | null
+  summary: { elements?: string[]; relation_count?: number }
+  actor_id: string
+  created_at: string
+  updated_at: string
+  snapshot?: Record<string, unknown> | null
+}
+
+export async function listDiagramVersions(ideaId: string, diagramKey: string): Promise<DiagramVersionApi[]> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/diagrams/${encodeURIComponent(diagramKey)}/versions`, { headers: defaultHeaders() })
+  return handleResponse<DiagramVersionApi[]>(res)
+}
+
+export async function getDiagramVersion(ideaId: string, diagramKey: string, versionNo: number): Promise<DiagramVersionApi> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/diagrams/${encodeURIComponent(diagramKey)}/versions/${versionNo}`, { headers: defaultHeaders() })
+  return handleResponse<DiagramVersionApi>(res)
+}
+
 export async function upsertPersistentIdeaIntegration(
   ideaId: string,
   body: {
@@ -580,6 +607,11 @@ export async function upsertPersistentIdeaIntegration(
     generated_by: string
     source_correlation_id?: string | null
     version: number
+    /** The stored integration version this save is based on; a newer stored one gives 409. */
+    integration_version?: number
+    /** What made this change, for the diagram history (Riwayat). */
+    change_source?: DiagramChangeSource
+    change_note?: string
   },
 ): Promise<IdeaIntegrationPersistent> {
   const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/integration`, {
@@ -715,7 +747,7 @@ export async function listIdeas(params?: {
 
   const res = await apiFetch(
     `${BASE_URL}/v1/ideas${qs.toString() ? `?${qs}` : ''}`,
-    { headers: defaultHeaders() }
+    { headers: defaultHeaders(params?.workspace_id ? { 'X-Workspace-Id': params.workspace_id } : undefined) }
   )
   return handleResponse<IdeaListApi>(res)
 }

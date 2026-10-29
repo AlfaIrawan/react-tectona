@@ -9,7 +9,7 @@ import {
   resolveWorkspaceApiId,
 } from '@/lib/tenantWorkspaceScope'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
-import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
+import { useIdeaDraftBrainstormPointerStore, useIdeaDraftSaveStatusStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import {
   GripVertical,
   Eye,
@@ -45,12 +45,10 @@ import {
   ArrowUp,
   Mic,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Circle,
   CircleCheck,
   SkipForward,
-  Target,
   FolderKanban,
   Palette,
   Upload,
@@ -58,6 +56,9 @@ import {
   Folder as FolderIcon,
   RefreshCw,
   Wrench,
+  Copy,
+  Pencil,
+  Send,
 } from 'lucide-react'
 import {
   Bar,
@@ -101,6 +102,20 @@ import {
 import { Tooltip } from '@/components/ui/tooltip'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
+import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
+import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
+import { BrainstormDecisionNote, BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
+import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
+import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
+import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
+import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame'
+import { closeBrainstorm } from '../lib/closeBrainstorm'
+import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
+import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
+import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
+import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
+import { normalizeBrainstormMarkdown, splitBrainstormQuestion } from '../lib/brainstormMarkdown'
+import { fetchAllIdeaFolders, type IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
   enterpriseDestructiveOutlineButtonClass,
   enterprisePrimarySoftButtonClass,
@@ -137,7 +152,6 @@ import {
   getIdeaById,
   upsertPersistentIdeaSummary,
   toDisplayStatus,
-  toBackendStatus,
   extractScoringDimensions,
   generateIdeaDescriptionWithAI,
   type IdeaApi,
@@ -145,9 +159,11 @@ import {
 } from '@/lib/api/ideaBacklogApi'
 import {
   brainstormIdeaDraftJob,
+  editIdeaDraftBrainstormMessage,
   cancelIdeaDraftJob,
   continueIdeaDraftJob,
   getIdeaDraftJob,
+  recoverIdeaDraftLiveSummary,
   getIdeaSummaryJob,
   getIdeaDraftVersion,
   listIdeaDraftVersions,
@@ -168,6 +184,7 @@ import {
   type IdeaIntakeQuestion,
   type ContextUsageReport,
 } from '@/lib/api/tectonaAgentRuntimeApi'
+import { recoverBrainstormSummaryOnResume } from '../lib/brainstormLiveSummary'
 import { ChatContextUsagePanel } from '@/modules/core-shell/components/chat/ChatContextUsagePanel'
 import { ChatContextUsageRing } from '@/modules/core-shell/components/chat/ChatContextUsageRing'
 import { UI_SCOPE_IDEA_BACKLOG, useUiLayoutBoolean } from '@/stores/ui-layout-store'
@@ -446,8 +463,20 @@ function friendlyBrainstormError(rawMessage: string): string {
   if (/^HTTP 500\b/i.test(rawMessage) || rawMessage.includes('Internal Server Error')) {
     return 'Tectona Assistant is having a brief issue. Please resend your message.'
   }
+  if (rawMessage.includes('BRAINSTORM_EDIT_UNAVAILABLE')) {
+    return 'This answer was sent before answers could be edited, so it cannot be edited. Answer again in a new message.'
+  }
+  if (rawMessage.includes('BRAINSTORM_EDIT_AFTER_DRAFT')) {
+    return 'The draft is already written; change the idea itself instead of the brainstorm answers.'
+  }
+  if (rawMessage.includes('BRAINSTORM_EDIT_MISMATCH') || rawMessage.includes('BRAINSTORM_EDIT_NOT_FOUND')) {
+    return 'This conversation changed in the meantime. Reload it and edit again.'
+  }
   return rawMessage
 }
+
+// A process diagram drawn in the reply (approved or awaiting approval).
+const BRAINSTORM_DIAGRAM_RE = /```(?:mermaid|plantuml)|@startuml|tectona-process-diagram/i
 
 type BrainstormTextBlock =
   | { type: 'paragraph'; text: string }
@@ -546,6 +575,7 @@ function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
 }
 
 function formatBrainstormProse(chunk: string): string {
+  chunk = normalizeBrainstormMarkdown(chunk)
   const blocks = parseBrainstormAssistantBlocks(chunk)
   if (blocks.length === 0) return chunk
   return blocks
@@ -597,6 +627,8 @@ function brainstormMessageHasDiagram(text: string): boolean {
 }
 
 function isBrainstormIntakeComplete(progress: IdeaDraftEvidenceProgress | null | undefined): boolean {
+  const core = (progress?.items ?? []).filter((item) => !item.id.startsWith('discovery_'))
+  if (core.length > 0) return core.every((item) => !item.review_needed && (item.status === 'answered' || item.status === 'skipped'))
   const total = progress?.total ?? 0
   const answered = progress?.answered ?? 0
   return total > 0 && answered >= total
@@ -884,6 +916,7 @@ function BrainstormEvidenceRail({
   collapsed,
   onToggleCollapsed,
   indonesian = false,
+  inline = false,
 }: {
   confidencePercent: number
   progress: IdeaDraftEvidenceProgress | null
@@ -895,6 +928,7 @@ function BrainstormEvidenceRail({
   collapsed: boolean
   onToggleCollapsed: () => void
   indonesian?: boolean
+  inline?: boolean
 }) {
   const resolvedConfidence = resolveBrainstormConfidencePercent(
     confidencePercent,
@@ -906,14 +940,14 @@ function BrainstormEvidenceRail({
   const items = checklist.length > 0 ? checklist : progress?.items ?? []
   const requiredTotal = progress?.required_total ?? items.filter((item) => item.required !== false).length
   const requiredAnswered = progress?.required_answered
-    ?? items.filter((item) => item.required !== false && item.status === 'answered').length
+    ?? items.filter((item) => item.required !== false && item.status === 'answered' && !item.review_needed).length
   const itemsTotal = progress?.total ?? items.length
   const itemsAnswered = progress?.answered
-    ?? items.filter((item) => item.status === 'answered' || item.status === 'skipped').length
+    ?? items.filter((item) => item.status === 'answered' && !item.review_needed).length
   const progressPercent = requiredTotal > 0
     ? Math.round((requiredAnswered / requiredTotal) * 100)
     : items.length > 0
-      ? Math.round((items.filter((item) => item.status === 'answered').length / items.length) * 100)
+      ? Math.round((items.filter((item) => item.status === 'answered' && !item.review_needed).length / items.length) * 100)
       : 0
   // Stage 5 (explainable readiness): an evidence-quality-weighted version of the same bar — a
   // "confirmed" answer counts fully, a "partial" one only partially, so 5/5 items reaching
@@ -937,64 +971,12 @@ function BrainstormEvidenceRail({
   const discoveryPercent = discoveryTotal > 0 ? Math.round((discoveryCovered / discoveryTotal) * 100) : 0
 
   return (
-    <aside
-      className={cn(
-        'flex shrink-0 flex-col',
-        collapsed
-          ? 'w-12 border-r border-border/70 bg-background'
-          : 'w-full border-b border-border/70 bg-muted/20 p-3 md:w-[26rem] md:border-b-0 md:border-r md:p-4',
-      )}
-    >
-      {collapsed ? (
-        <div className="flex flex-col items-center gap-2 py-3">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            onClick={onToggleCollapsed}
-            aria-label="Expand readiness panel"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Target className="h-4 w-4 text-muted-foreground" aria-hidden />
-          <span className="text-[10px] font-medium tabular-nums text-muted-foreground [writing-mode:vertical-rl]">
-            {resolvedConfidence}%
-          </span>
-        </div>
-      ) : (
-        <div
-          className={cn(
-            'liquid-glass-enterprise-panel flex min-h-0 flex-1 flex-col overflow-hidden border border-border/40',
-            'shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
-            'rounded-2xl',
-          )}
-        >
-          <div className="flex h-full min-h-0 w-full flex-col">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-5">
-              <div className="flex shrink-0 items-start justify-between gap-3">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Target className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
-                    <h2 className="text-lg font-semibold text-foreground">Draft Readiness</h2>
-                  </div>
-                  <p className="text-[11px] leading-snug text-muted-foreground">
-                    AI confidence and AS-IS evidence progress before draft generation.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={onToggleCollapsed}
-                  aria-label="Collapse readiness panel"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-              </div>
+    <BrainstormReadinessFrame collapsed={collapsed} onToggleCollapsed={onToggleCollapsed} confidence={resolvedConfidence} inline={inline}>
+              <p className="shrink-0 text-[11px] leading-snug text-muted-foreground">
+                AI confidence and AS-IS evidence progress before draft generation.
+              </p>
 
-              <div className="flex shrink-0 flex-col items-center gap-2 rounded-xl border border-border/40 bg-muted/10 px-4 py-3 text-center">
+              <div className="flex shrink-0 flex-col items-center gap-2 border-b border-border/60 px-1 pb-4 text-center">
                 <BrainstormConfidenceRing percent={resolvedConfidence} />
                 <div className="min-w-0 space-y-1">
                   <p className="text-sm font-semibold text-foreground">{readinessLabel}</p>
@@ -1006,7 +988,7 @@ function BrainstormEvidenceRail({
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-background/70 p-3">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden border-b border-border/60 pb-4">
                 <div className="flex shrink-0 items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Evidence progress
@@ -1065,10 +1047,10 @@ function BrainstormEvidenceRail({
                     </div>
                   </>
                 ) : null}
-                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                <div role="region" aria-label="Readiness questions" tabIndex={0} data-readiness-scroll className="scrollbar-hide min-h-0 flex-1 space-y-1.5 overflow-y-auto">
                   {items.length > 0 ? (
                     items.map((item) => {
-                      const status = item.status ?? 'pending'
+                      const status = item.review_needed ? 'asked' : (item.status ?? 'pending')
                       const Icon = status === 'answered'
                         ? CircleCheck
                         : status === 'asked'
@@ -1092,7 +1074,14 @@ function BrainstormEvidenceRail({
                             )}
                             aria-hidden
                           />
-                          <span className="min-w-0">{formatBrainstormChecklistPrompt(item.prompt, indonesian, item.id)}</span>
+                          <span className="min-w-0">
+                            {formatBrainstormChecklistPrompt(item.prompt, indonesian, item.id)}
+                            {item.review_needed ? (
+                              <span className="block text-amber-700">{indonesian ? 'Jawaban lama perlu ditinjau' : 'Previous answer needs review'}</span>
+                            ) : status === 'pending' && item.candidate_evidence?.length ? (
+                              <span className="block text-sky-700">{indonesian ? 'Informasi tersedia, belum dikonfirmasi' : 'Information available, not yet confirmed'}</span>
+                            ) : null}
+                          </span>
                         </div>
                       )
                     })
@@ -1112,7 +1101,7 @@ function BrainstormEvidenceRail({
                 </div>
               </div>
 
-              <div className="shrink-0 space-y-2 rounded-xl border border-border/40 bg-muted/10 p-3">
+              <div className="shrink-0 space-y-2" data-readiness-initiative>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Initiative direction
                 </p>
@@ -1152,11 +1141,7 @@ function BrainstormEvidenceRail({
                   Shares add up to 100% from title, tags, and your answers — not a final scoring decision.
                 </p>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </aside>
+    </BrainstormReadinessFrame>
   )
 }
 
@@ -1220,6 +1205,38 @@ function prefetchBrainstormDiagrams(text: string): void {
   }
 }
 
+/** Copies one brainstorm message, as the chat panel's message actions do. */
+function BrainstormCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      document.execCommand('copy')
+      area.remove()
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+      aria-label={copied ? 'Copied' : 'Copy message'}
+      title={copied ? 'Copied' : 'Copy'}
+    >
+      {copied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
+    </button>
+  )
+}
+
 function BrainstormAssistantMessageBody({ text }: { text: string }) {
   const displayText = text
   const parts = splitBrainstormDisplayParts(displayText)
@@ -1261,6 +1278,122 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
   )
 }
 
+// The kind of question a reply asks, set by agent-runtime: a sub-question while a mandatory one is
+// open is a challenge; a question after the mandatory intake (Bisnis/Teknis discovery) is extended.
+// An extended question also names its track (agent-runtime question_focus): Business in teal,
+// Technical in indigo. One without a track (older messages) keeps the plain violet badge.
+const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended' | 'extended_business' | 'extended_technical', { label: string; badge: string; text: string }> = {
+  challenge: {
+    label: 'Challenge Question',
+    badge: 'border-amber-200 bg-amber-50 text-amber-800',
+    text: '[&_*]:!text-amber-800',
+  },
+  extended: {
+    label: 'Extended Question',
+    badge: 'border-violet-200 bg-violet-50 text-violet-800',
+    text: '[&_*]:!text-violet-800',
+  },
+  extended_business: {
+    label: 'Extended Question · Business',
+    badge: 'border-teal-200 bg-teal-50 text-teal-800',
+    text: '[&_*]:!text-teal-800',
+  },
+  extended_technical: {
+    label: 'Extended Question · Technical',
+    badge: 'border-indigo-200 bg-indigo-50 text-indigo-800',
+    text: '[&_*]:!text-indigo-800',
+  },
+}
+
+function brainstormQuestionKind(message: IdeaDraftBrainstormMessage) {
+  if (message.question_kind === 'challenge') return BRAINSTORM_QUESTION_KIND.challenge
+  if (message.question_kind !== 'extended') return null
+  if (message.question_focus === 'business') return BRAINSTORM_QUESTION_KIND.extended_business
+  if (message.question_focus === 'technical') return BRAINSTORM_QUESTION_KIND.extended_technical
+  return BRAINSTORM_QUESTION_KIND.extended
+}
+
+function activeExtendedQuestionFocus(
+  messages: IdeaDraftBrainstormMessage[],
+): 'business' | 'technical' | null {
+  const last = [...messages].reverse().find((message) => message.role === 'assistant')
+  if (last?.question_kind !== 'extended') return null
+  return last.question_focus === 'business' || last.question_focus === 'technical' ? last.question_focus : null
+}
+
+/** An assistant reply: the summary of what was understood in a titled box, and a challenge or
+ *  extended question badged and coloured. The text itself is the server's, unchanged. */
+function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [] }: {
+  message: IdeaDraftBrainstormMessage; indonesian: boolean
+  onConfirm?: (choice: string) => Promise<void> | void; disabled?: boolean
+  diagrams?: SummaryDiagramAttachment[]
+}) {
+  const hideInternalNote = (value: string) => value
+    .replace(/\n*Detail tambahan tetap tersimpan dalam jawaban brainstorming\./g, '')
+    .replace(/\n*Additional details remain saved in the brainstorming answers\./g, '')
+    .trim()
+  const text = hideInternalNote(message.text)
+  const summary = hideInternalNote(message.summary ?? '')
+  const hasSummary = Boolean(summary)
+  const at = summary ? text.indexOf(summary) : -1
+  const before = at >= 0 ? text.slice(0, at).trim() : ''
+  const after = at >= 0 ? text.slice(at + summary.length).trim() : ''
+  const kind = brainstormQuestionKind(message)
+  // The closing question is the last paragraph when it asks something (and is not a diagram).
+  let rest = at >= 0 ? after : text
+  let question = ''
+  if (kind || message.question_kind === 'mandatory' || message.question_text) {
+    const split = splitBrainstormQuestion(rest, message.question_text)
+    question = split.question
+    rest = split.rest
+  }
+  return (
+    <>
+      {kind ? (
+        <span className={cn('mb-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold', kind.badge)}>
+          {kind.label}
+        </span>
+      ) : null}
+      {hasSummary ? (
+        <>
+          {before ? <BrainstormAssistantMessageBody text={before} /> : null}
+          <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS}>
+            <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} />
+          </BrainstormSummaryBox>
+          {message.revision_text ? <BrainstormRevisionNote text={message.revision_text} indonesian={indonesian} /> : null}
+        </>
+      ) : rest ? (
+        <BrainstormAssistantMessageBody text={rest} />
+      ) : null}
+      {!hasSummary ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
+      {message.ai_advice ? <div className="my-3 border-l-2 border-teal-500 pl-3 text-sm leading-6">
+        <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Pertimbangan Tambahan' : 'Additional Considerations'}</p>
+        <BrainstormAssistantMessageBody text={message.ai_advice} />
+      </div> : null}
+      {hasSummary && rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
+      <BrainstormCatalogComparison matches={message.catalog_matches} mode={message.catalog_mode} status={message.catalog_status} indonesian={indonesian} />
+      {message.decision_text ? (
+        <BrainstormDecisionNote
+          title={message.decision_label || (indonesian ? 'Batasan fase' : 'Phase scope')}
+          text={message.decision_text}
+        />
+      ) : null}
+      {question ? (
+        <div className={kind?.text}>
+          <p className="my-3 font-semibold">{question}</p>
+        </div>
+      ) : null}
+      {message.suggestion_multiple && message.suggestion_options?.length && onConfirm ? (
+        <BrainstormPainPointOptions key={message.text} options={message.suggestion_options} baseline={message.suggestion_baseline} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+      ) : message.suggestion_options?.length && onConfirm ? (
+        <BrainstormConfirmationOptions key={JSON.stringify(message.suggestion_options)} choices={message.suggestion_options.map(option => option.label)} explanations={message.suggestion_options.map(option => option.explanation)} actions={message.suggestion_options.map(option => option.action)} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+      ) : message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
+        <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+      ) : null}
+    </>
+  )
+}
+
 function BrainstormAssistantTypingMessage({
   text,
   animate,
@@ -1288,7 +1421,7 @@ function BrainstormAssistantTypingMessage({
   )
 }
 
-import { fetchAllProjects, fetchProject, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
+import { fetchAllProjects, TECTONA_PROJECT_APP_ID } from '@/lib/api/projectApi'
 import { fetchIdentityUsers, type IdentityUserDto } from '@/lib/api/identityAdminApi'
 import {
   fetchWorkspaceMembers,
@@ -2126,10 +2259,20 @@ export function IdeaBacklogManagementPage() {
   const [ideaCardContextMenu, setIdeaCardContextMenu] = useState<(FixedContextMenuPosition & { idea: Idea }) | null>(null)
   const [isSavingIdeaColor, setIsSavingIdeaColor] = useState(false)
   const [isCreateIdeaDrawerOpen, setIsCreateIdeaDrawerOpen] = useState(false)
+  const [isResumingDraft, setIsResumingDraft] = useState(false)
+  const createIdeaSubmitInFlight = useRef(false)
+  const draftBackupStatus = useIdeaDraftSaveStatusStore((state) => state.status)
   const [isUploadIdeaPanelOpen, setIsUploadIdeaPanelOpen] = useState(false)
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
   const [moveIdeaTarget, setMoveIdeaTarget] = useState<Idea | null>(null)
-  const [moveIdeaWorkspaceId, setMoveIdeaWorkspaceId] = useState('')
+  const [moveIdeaFolderId, setMoveIdeaFolderId] = useState('')
+  const [moveIdeaFolders, setMoveIdeaFolders] = useState<IdeaFolderApi[]>([])
+  const [moveFoldersLoading, setMoveFoldersLoading] = useState(false)
+  const [moveFoldersError, setMoveFoldersError] = useState('')
+  const [moveFoldersReloadKey, setMoveFoldersReloadKey] = useState(0)
+  const [workflowDecision, setWorkflowDecision] = useState<{ idea: Idea; mode: IdeaDecisionMode } | null>(null)
+  const [rejectContextIdeaId, setRejectContextIdeaId] = useState('')
+  const [decidableSelectedIdeaId, setDecidableSelectedIdeaId] = useState('')
   const [isMovingIdea, setIsMovingIdea] = useState(false)
   const [moveIdeaError, setMoveIdeaError] = useState('')
   const [isDeletingIdea, setIsDeletingIdea] = useState(false)
@@ -2149,9 +2292,13 @@ export function IdeaBacklogManagementPage() {
   const [aiAssistanceWarning, setAiAssistanceWarning] = useState('')
   const [createIdeaTitleError, setCreateIdeaTitleError] = useState('')
   const [ideaDraftJob, setIdeaDraftJob] = useState<IdeaDraftJobStatusResponse | null>(null)
+  // Editing an earlier answer: its index in the thread, the text being written, and whether the
+  // "later messages will be replaced" warning is showing.
+  const [brainstormEdit, setBrainstormEdit] = useState<{ index: number; text: string; confirming: boolean } | null>(null)
   const [isEvidenceDialogOpen, setIsEvidenceDialogOpen] = useState(false)
   const [isBrainstormMode, setIsBrainstormMode] = useState(false)
   const [brainstormMessages, setBrainstormMessages] = useState<BrainstormUiMessage[]>([])
+  const brainstormSummaryDiagrams = useMemo(() => buildSummaryDiagramAttachments(brainstormMessages), [brainstormMessages])
   const [brainstormInput, setBrainstormInput] = useState('')
   const [brainstormDiagramImage, setBrainstormDiagramImage] = useState<string | null>(null)
   const brainstormDiagramInputRef = useRef<HTMLInputElement | null>(null)
@@ -2305,8 +2452,8 @@ export function IdeaBacklogManagementPage() {
     return sanitized
   }
 
-  const setCreateIdeaDescriptionFromPlainText = (nextText: string) => {
-    const brainstormText = brainstormMessages.map((message) => message.text).filter(Boolean).join('\n\n')
+  const setCreateIdeaDescriptionFromPlainText = (nextText: string, messages: Array<{ text: string }> = brainstormMessages) => {
+    const brainstormText = messages.map((message) => message.text).filter(Boolean).join('\n\n')
     const diagrams = [
       ...latestRevisedProcessDiagrams(nextText),
       ...latestValidatedTechnicalDiagrams([nextText, brainstormText].filter(Boolean).join('\n\n')),
@@ -2479,6 +2626,21 @@ export function IdeaBacklogManagementPage() {
   }, [createIdeaTags])
 
   const isCreateIdeaTagLimitReached = createIdeaTags.length >= MAX_CREATE_IDEA_TAGS
+  // The AI draft is still being written, or its brainstorm waits for answers: creating the idea
+  // now would save the description as it is (e.g. the pasted questions), not the draft.
+  const isIdeaDraftInProgress = createIdeaDraftMode === 'ai' && (
+    ideaDraftJob?.status === 'queued' || ideaDraftJob?.status === 'running' || ideaDraftJob?.status === 'awaiting_input'
+  )
+
+  const createIdeaDraftValidationError = createIdeaDraftError({
+    mode: createIdeaDraftMode,
+    description: createIdeaForm.description,
+    prompts: createIdeaIntakeItems.map((item) => item.prompt),
+    jobStatus: ideaDraftJob?.status,
+    draftText: ideaDraftJob?.result?.draft_text,
+    busy: aiAssistanceLoading !== null || isIdeaDraftInProgress,
+  })
+
   const isCreateIdeaFormValid = useMemo(() => {
     const hasTitle = createIdeaForm.title.trim().length > 0
     const hasDescription = createIdeaForm.description.trim().length > 0
@@ -2490,12 +2652,14 @@ export function IdeaBacklogManagementPage() {
     return (
       hasTitle &&
       hasDescription &&
+      !createIdeaDraftValidationError &&
       hasWorkspace &&
       hasValidTags &&
       workspaceReady &&
       noBlockingLookupError
     )
   }, [
+    createIdeaDraftValidationError,
     createIdeaForm.description,
     createIdeaForm.title,
     createIdeaForm.workspaceId,
@@ -2923,28 +3087,37 @@ export function IdeaBacklogManagementPage() {
     return () => window.removeEventListener('pointermove', onPointerMove)
   }, [isAnyItemDragActive])
 
-  const decideIdea = async (status: IdeaStatus) => {
-    if (!selectedIdea) return
-    const targetStatus = toBackendStatus(status)
-    try {
-      const updated = await patchIdea(selectedIdea.id, { status_code: targetStatus, version: selectedIdea.version })
-      setIdeas((prev) => prev.map((idea) => (idea.id === selectedIdea.id ? toIdea(updated) : idea)))
-    } catch {
-      // optimistic fallback
-      setIdeas((prev) => prev.map((idea) => (idea.id === selectedIdea.id ? { ...idea, status } : idea)))
+  useEffect(() => {
+    let active = true
+    setRejectContextIdeaId('')
+    const ideaId = ideaCardContextMenu?.idea.id
+    const multiSelect = selectedIdeaIds.size > 1 && Boolean(ideaId && selectedIdeaIds.has(ideaId))
+    if (ideaId && !multiSelect) {
+      void loadIdeaDecisionGates(ideaId, currentUserId).then((gates) => {
+        if (active) setRejectContextIdeaId(gates.length > 0 ? ideaId : '')
+      }).catch(() => undefined)
     }
-  }
+    return () => { active = false }
+  }, [ideaCardContextMenu?.idea.id, selectedIdeaIds, currentUserId])
 
-  const updateIdeaStatus = async (ideaId: string, status: IdeaStatus) => {
-    const idea = ideas.find((i) => i.id === ideaId)
-    if (!idea) return
-    const targetStatus = toBackendStatus(status)
-    try {
-      const updated = await patchIdea(ideaId, { status_code: targetStatus, version: idea.version })
-      setIdeas((prev) => prev.map((i) => (i.id === ideaId ? toIdea(updated) : i)))
-    } catch {
-      setIdeas((prev) => prev.map((i) => (i.id === ideaId ? { ...i, status } : i)))
-    }
+  useEffect(() => {
+    let active = true
+    setDecidableSelectedIdeaId('')
+    if (selectedIdeaId && showScoringPanels) void loadIdeaDecisionGates(selectedIdeaId, currentUserId).then((gates) => {
+      if (active) setDecidableSelectedIdeaId(gates.length > 0 ? selectedIdeaId : '')
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [selectedIdeaId, showScoringPanels, currentUserId, ideas])
+
+  const onWorkflowDecisionSaved = () => {
+    const ideaId = workflowDecision?.idea.id
+    setWorkflowDecision(null)
+    setRejectContextIdeaId('')
+    setDecidableSelectedIdeaId('')
+    addToast({ title: 'Workflow decision saved', description: 'The approval step has been updated.', variant: 'success' })
+    if (ideaId) void getIdeaById(ideaId).then((updated) => {
+      setIdeas((prev) => prev.map((idea) => idea.id === ideaId ? toIdea(updated) : idea))
+    }).catch(() => addToast({ title: 'Could not refresh idea', description: 'The workflow decision was saved. Refresh the page to reload the idea.', variant: 'warning' }))
   }
 
   const applyIdeaCardAccentColor = async (color: string, ideaIds: string[]) => {
@@ -3176,37 +3349,11 @@ export function IdeaBacklogManagementPage() {
       fetchIdentityUsers({ limit: 500, offset: 0 }).catch(() => null),
       fetchAllProjects({
         app_id: TECTONA_PROJECT_APP_ID,
-        workspace_id: workspaceApiId,
       }).catch(() => []),
     ])
-      .then(async ([ideaItems, usersRes, projects]) => {
+      .then(([ideaItems, usersRes, projects]) => {
         if (cancelled) return
         const namesByProjectId = Object.fromEntries(projects.map((project) => [project.id, project.name]))
-        const linkedProjectIds = [
-          ...new Set(
-            ideaItems
-              .map((item) => item.project_id?.trim())
-              .filter((id): id is string => Boolean(id)),
-          ),
-        ]
-        const unresolvedProjectIds = linkedProjectIds.filter((id) => !namesByProjectId[id])
-        if (unresolvedProjectIds.length > 0) {
-          const globalProjects = await fetchAllProjects({ app_id: TECTONA_PROJECT_APP_ID }).catch(() => [])
-          if (!cancelled) {
-            for (const project of globalProjects) {
-              namesByProjectId[project.id] = project.name
-            }
-          }
-        }
-        const stillUnresolved = linkedProjectIds.filter((id) => !namesByProjectId[id])
-        if (stillUnresolved.length > 0 && !cancelled) {
-          const fetched = await Promise.all(stillUnresolved.map((id) => fetchProject(id)))
-          for (const project of fetched) {
-            if (project?.id && project.name) {
-              namesByProjectId[project.id] = project.name
-            }
-          }
-        }
         if (cancelled) return
         setProjectNameById(namesByProjectId)
         projectNameByIdRef.current = namesByProjectId
@@ -3430,25 +3577,6 @@ export function IdeaBacklogManagementPage() {
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
   }, [isCreateIdeaDrawerOpen, isEvidenceDialogOpen])
-
-  useEffect(() => {
-    if (!isEvidenceDialogOpen) return
-    const onEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if (isDraftContinuing || isBrainstormSending) return
-      // A stray Escape (dismissing an IME candidate, a browser autofill popup, or
-      // plain habit) must not tear down a live conversation while the assistant is
-      // still waiting on an answer. Closing stays deliberate: the header's back and
-      // X buttons.
-      if (isBrainstormMode && brainstormMessages.length > 0) return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      setIsEvidenceDialogOpen(false)
-      setIsBrainstormMode(false)
-    }
-    window.addEventListener('keydown', onEsc, true)
-    return () => window.removeEventListener('keydown', onEsc, true)
-  }, [isEvidenceDialogOpen, isDraftContinuing, isBrainstormSending, isBrainstormMode, brainstormMessages.length])
 
   useEffect(() => {
     const ideaIds = ideas.map((idea) => idea.id)
@@ -3802,6 +3930,14 @@ export function IdeaBacklogManagementPage() {
   }
 
   const openCreateIdeaDrawer = () => {
+    if (draftBackupStatus === 'failed' && brainstormMessages.length) {
+      setAiAssistanceError('The draft backup could not be saved on this device. Keep this draft open and retry before switching ideas.')
+      return
+    }
+    if (isBrainstormSending || isDraftContinuing || aiAssistanceLoading || isReanalyzing || isResumingDraft) {
+      setAiAssistanceError('Please wait for the current draft request to finish before starting another idea.')
+      return
+    }
     setCreateIdeaDraftMode('ai')
     setCreateIdeaForm({
       title: '',
@@ -3849,35 +3985,63 @@ export function IdeaBacklogManagementPage() {
   }
 
   const openMoveIdeaDialog = (idea: Idea) => {
+    setMoveIdeaFolders([])
+    setMoveFoldersLoading(true)
+    setMoveFoldersError('')
     setMoveIdeaTarget(idea)
-    setMoveIdeaWorkspaceId('')
+    setMoveIdeaFolderId(idea.folderId || '')
     setMoveIdeaError('')
     closeContextMenu()
   }
 
+  useEffect(() => {
+    if (!moveIdeaTarget) return
+    let active = true
+    const workspaceId = moveIdeaTarget.workspace
+    setMoveIdeaFolders([])
+    setMoveFoldersLoading(true)
+    setMoveFoldersError('')
+    if (!workspaceId) {
+      setMoveFoldersError('This idea has no workspace. Refresh the idea before choosing a destination.')
+      setMoveFoldersLoading(false)
+      return
+    }
+    void fetchAllIdeaFolders({ workspace_id: workspaceId, owner_id: LEGACY_DUMMY_OWNER_ID }).then((rows) => {
+      if (active) setMoveIdeaFolders(rows.filter((folder) => folder.workspace_id === workspaceId))
+    }).catch((error) => {
+      if (active) setMoveFoldersError(error instanceof Error ? error.message : 'Could not load destination folders.')
+    }).finally(() => { if (active) setMoveFoldersLoading(false) })
+    return () => { active = false }
+  }, [moveIdeaTarget?.id, moveIdeaTarget?.workspace, moveFoldersReloadKey])
+
   const closeMoveIdeaDialog = () => {
     if (isMovingIdea) return
     setMoveIdeaTarget(null)
-    setMoveIdeaWorkspaceId('')
+    setMoveIdeaFolderId('')
     setMoveIdeaError('')
   }
 
   const submitMoveIdea = async () => {
-    if (!moveIdeaTarget || !moveIdeaWorkspaceId || isMovingIdea) return
-    const destination = userWorkspaceOptions.options.find((option) => option.workspaceId === moveIdeaWorkspaceId)
-    if (!destination || destination.workspaceId === moveIdeaTarget.workspaceId) return
+    if (!moveIdeaTarget?.workspace || isMovingIdea || moveFoldersLoading || moveFoldersError) return
+    const folderId = moveIdeaFolderId || null
+    if (folderId === (moveIdeaTarget.folderId || null)) return
+    const destination = moveIdeaFolders.find((folder) => folder.id === folderId)
+    if (folderId && (!destination || destination.workspace_id !== moveIdeaTarget.workspace)) {
+      setMoveIdeaError('Select a folder in the same workspace.')
+      return
+    }
 
     setIsMovingIdea(true)
     setMoveIdeaError('')
     try {
       const updated = await patchIdea(moveIdeaTarget.id, {
-        workspace_id: destination.workspaceId,
-        folder_id: null,
+        folder_id: folderId,
         version: moveIdeaTarget.version,
       })
       setIdeas((prev) => prev.map((idea) => (idea.id === updated.id ? toIdea(updated) : idea)))
-      addToast({ title: 'Idea moved', description: `Moved to ${destination.workspaceName}.` })
-      closeMoveIdeaDialog()
+      addToast({ title: 'Idea moved', description: `Moved to ${destination?.name || 'workspace root'}.`, variant: 'success' })
+      setMoveIdeaTarget(null)
+      setMoveIdeaFolderId('')
     } catch (error) {
       setMoveIdeaError(error instanceof Error ? error.message : 'Could not move the idea.')
     } finally {
@@ -3937,6 +4101,10 @@ export function IdeaBacklogManagementPage() {
   }
 
   const submitCreateIdea = async () => {
+    if (createIdeaDraftValidationError) {
+      setCreateIdeaError(createIdeaDraftValidationError)
+      return
+    }
     const titleError = validateIdeaTitle(createIdeaForm.title)
     if (titleError) {
       setCreateIdeaTitleError(titleError)
@@ -3961,6 +4129,8 @@ export function IdeaBacklogManagementPage() {
       return
     }
 
+    if (createIdeaSubmitInFlight.current) return
+    createIdeaSubmitInFlight.current = true
     try {
       const created = await apiCreateIdea({
         title: normalizeIdeaTitle(createIdeaForm.title),
@@ -3984,14 +4154,21 @@ export function IdeaBacklogManagementPage() {
       void runAgentAnalysisForIdea(newIdea)
       // The brainstorm this idea came from: its confirmed intake answers ground the idea's documents.
       if (ideaDraftJob?.job_id) {
-        void linkIdeaDraftJobToIdea(ideaDraftJob.job_id, newIdea.id).catch(() => undefined)
+        const jobId = ideaDraftJob.job_id
+        useIdeaDraftBrainstormPointerStore.getState().markCreated(jobId, newIdea.id, true)
+        void linkIdeaDraftJobToIdea(jobId, newIdea.id)
+          .then(() => useIdeaDraftBrainstormPointerStore.getState().markCreated(jobId, newIdea.id))
+          .catch(() => addToast({ title: 'Idea created; conversation link pending', description: 'The saved draft will retry linking when Chat syncs again.', variant: 'warning' }))
       }
     } catch (err) {
       setCreateIdeaError(err instanceof Error ? err.message : 'Failed to create idea.')
       return
+    } finally {
+      createIdeaSubmitInFlight.current = false
     }
 
     setIsCreateIdeaDrawerOpen(false)
+    setIdeaDraftJob(null)
     setCreateIdeaForm({
       title: '',
       description: '',
@@ -4008,12 +4185,12 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaTitleError('')
   }
 
-  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse) => {
+  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse, messages: Array<{ text: string }> = brainstormMessages) => {
     const draftText = terminal.result?.draft_text?.trim()
     if (!draftText) {
       throw new Error(terminal.error_message || 'AI draft generation failed.')
     }
-    setCreateIdeaDescriptionFromPlainText(draftText)
+    setCreateIdeaDescriptionFromPlainText(draftText, messages)
     const overlapMessages: string[] = []
     if (terminal.similar_ideas.length > 0) {
       overlapMessages.push(`${terminal.similar_ideas.length} similar idea(s) found`)
@@ -4045,18 +4222,21 @@ export function IdeaBacklogManagementPage() {
     syncBrainstormEvidenceState(status)
   }
 
-  const waitForIdeaDraftJob = async (jobId: string): Promise<IdeaDraftJobStatusResponse> => {
+  const waitForIdeaDraftJob = async (jobId: string, isCurrent = () => true, updateUi = true): Promise<IdeaDraftJobStatusResponse> => {
     for (let attempt = 0; attempt < 240; attempt += 1) {
       const status = await getIdeaDraftJob(jobId)
-      setIdeaDraftJob(status)
+      if (!isCurrent()) throw new Error('Draft navigation was superseded.')
+      if (updateUi) setIdeaDraftJob(status)
       if (status.status === 'awaiting_input') {
         const hasOpening = (status.brainstorm_messages ?? []).some((message) => message.role === 'assistant')
         if (!hasOpening && attempt < 239) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, 400))
           continue
         }
-        applyIdeaDraftBrainstormState(status)
-        setIsEvidenceDialogOpen(true)
+        if (updateUi) {
+          applyIdeaDraftBrainstormState(status)
+          setIsEvidenceDialogOpen(true)
+        }
         return status
       }
       if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
@@ -4175,7 +4355,10 @@ export function IdeaBacklogManagementPage() {
     }
   }
 
-  const handleSendBrainstormMessage = async (messageOverride?: string) => {
+  const handleSendBrainstormMessage = async (
+    messageOverride?: string,
+    edit?: { index: number; userTurn: number; originalText: string },
+  ) => {
     // 'completed' is accepted too: chatting on a finished draft is what feeds
     // the next re-analysis.
     if (!ideaDraftJob) {
@@ -4200,8 +4383,10 @@ export function IdeaBacklogManagementPage() {
     // Generate draft, it does not end the conversation. The assistant often asks
     // one more question in the same turn, and blocking the send left that question
     // unanswerable.
-    if ((!message && !attached) || isBrainstormSending) return
-    const historyBeforeSend = brainstormMessages
+    if ((!message && !attached) || isBrainstormSending || isResumingDraft) return
+    const fullHistory = brainstormMessages
+    // Editing answer N: the conversation continues from just before it.
+    const historyBeforeSend = edit ? brainstormMessages.slice(0, edit.index) : brainstormMessages
     const indonesian = isBrainstormThreadIndonesian(historyBeforeSend)
     const shown = attached ? diagramUploadCaption(message, indonesian) : message
     if (shown.length > 4000) {
@@ -4219,24 +4404,35 @@ export function IdeaBacklogManagementPage() {
     setBrainstormOfferGenerateAnyway(false)
     const requestSentAt = new Date().toISOString()
     setBrainstormMessages((current) => [
-      ...current,
+      ...(edit ? historyBeforeSend : current),
       { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined },
     ])
     try {
-      const sendWithJob = async (jobId: string) => brainstormIdeaDraftJob(
+      const sendWithJob = async (jobId: string, revision = ideaDraftJob.revision) => brainstormIdeaDraftJob(
         jobId,
         shown,
         brainstormLlmMode,
         attached,
         brainstormAbbreviationEntry?.rows ?? [],
+        revision,
       )
       let response
       try {
-        response = await sendWithJob(ideaDraftJob.job_id)
+        response = edit
+          ? await editIdeaDraftBrainstormMessage(
+            ideaDraftJob.job_id,
+            { userTurn: edit.userTurn, originalMessage: edit.originalText, message: shown },
+            brainstormLlmMode,
+            brainstormAbbreviationEntry?.rows ?? [],
+            ideaDraftJob.revision,
+          )
+          : await sendWithJob(ideaDraftJob.job_id)
       } catch (firstError) {
         const rawFirst = firstError instanceof Error ? firstError.message : String(firstError)
-        if (!isIdeaDraftJobLostError(rawFirst)) throw firstError
+        if (edit || !isIdeaDraftJobLostError(rawFirst)) throw firstError
         const restored = await restoreIdeaDraftBrainstormSession({
+          source_job_id: ideaDraftJob.job_id,
+          draft_session_id: ideaDraftJob.draft_session_id ?? useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)?.draftSessionId,
           title: createIdeaForm.title.trim() || 'Untitled idea',
           tags: effectiveCreateIdeaTags,
           context: {
@@ -4252,6 +4448,8 @@ export function IdeaBacklogManagementPage() {
           remaining_gaps: brainstormRemainingGaps,
           ready_to_continue: brainstormReady,
         })
+        const previousSnapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)
+        if (previousSnapshot) useIdeaDraftBrainstormPointerStore.getState().replacePointer(ideaDraftJob.job_id, { ...previousSnapshot, jobId: restored.job_id, draftSessionId: restored.draft_session_id ?? previousSnapshot.draftSessionId ?? ideaDraftJob.job_id })
         setIdeaDraftJob(restored)
         setBrainstormMessages((current) => mergeBrainstormUiMessages(
           current.length > 0 ? current : historyBeforeSend,
@@ -4264,7 +4462,7 @@ export function IdeaBacklogManagementPage() {
         )
         setBrainstormOfferGenerateAnyway(Boolean(restored.offer_generate_anyway))
         syncBrainstormEvidenceState(restored)
-        response = await sendWithJob(restored.job_id)
+        response = await sendWithJob(restored.job_id, restored.revision)
       }
       const responseReceivedAt = new Date().toISOString()
       let updatedAbbreviationEntry = brainstormAbbreviationEntry
@@ -4356,7 +4554,8 @@ export function IdeaBacklogManagementPage() {
       setBrainstormAnimatingAssistantIndex(lastAssistantIndex >= 0 ? lastAssistantIndex : null)
       // Sticky: further answers can only add context, so never drop back to
       // not-ready and pull the Generate draft button out from under the user.
-      setBrainstormReady((current) => current || response.ready_to_continue)
+      // An edit replaced later answers, so readiness is what the replayed session says.
+      setBrainstormReady((current) => (edit ? response.ready_to_continue : current || response.ready_to_continue))
       setBrainstormRemainingGaps(response.remaining_gaps)
       setBrainstormLatestKind(response.latest_kind ?? null)
       setBrainstormOfferGenerateAnyway(Boolean(response.offer_generate_anyway) && !response.ready_to_continue)
@@ -4374,8 +4573,11 @@ export function IdeaBacklogManagementPage() {
       setIdeaDraftJob((current) => current
         ? {
             ...current,
+            revision: response.revision,
+            live_summary: response.live_summary,
+            draft_session_id: response.draft_session_id ?? current.draft_session_id,
             brainstorm_messages: visibleResponseMessages,
-            brainstorm_ready: current.brainstorm_ready || response.ready_to_continue,
+            brainstorm_ready: edit ? response.ready_to_continue : current.brainstorm_ready || response.ready_to_continue,
             brainstorm_remaining_gaps: response.remaining_gaps,
             intake_checklist: response.intake_checklist ?? current.intake_checklist,
             evidence_progress: response.evidence_progress ?? current.evidence_progress,
@@ -4396,10 +4598,17 @@ export function IdeaBacklogManagementPage() {
         if (attached) setBrainstormDiagramImage(attached)
       }
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
-      setBrainstormError(friendlyBrainstormError(rawMessage))
-      setBrainstormMessages((current) => current.filter(
-        (_item, index) => index !== current.length - 1,
-      ))
+      setBrainstormError(/IDEA_DRAFT_SESSION_CHANGED|IDEA_DRAFT_SESSION_BUSY/.test(rawMessage)
+        ? 'This draft changed or is being updated in another tab. Reopen it from Chat before sending again. Your message has not been saved.'
+        : friendlyBrainstormError(rawMessage))
+      if (edit) {
+        // The session is unchanged on the server when an edit fails: show it as it was.
+        setBrainstormMessages(fullHistory)
+      } else {
+        setBrainstormMessages((current) => current.filter(
+          (_item, index) => index !== current.length - 1,
+        ))
+      }
     } finally {
       setIsBrainstormSending(false)
     }
@@ -4560,7 +4769,7 @@ export function IdeaBacklogManagementPage() {
     syncBrainstormComposerHeight()
   }, [isBrainstormMode, brainstormInput])
 
-  const brainstormComposerDisabled = isBrainstormSending || isDraftContinuing
+  const brainstormComposerDisabled = isBrainstormSending || isDraftContinuing || isResumingDraft
   const brainstormComposerWasDisabledRef = useRef(false)
   useEffect(() => {
     const wasDisabled = brainstormComposerWasDisabledRef.current
@@ -4630,13 +4839,19 @@ export function IdeaBacklogManagementPage() {
   // renders, and re-writing the pointer every render would churn the chat
   // panel's session row on each keystroke.
   const brainstormPointerSignature = useMemo(() => {
-    if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input') return ''
+    if (!ideaDraftJob) return ''
     const last = brainstormMessages[brainstormMessages.length - 1]
     return [
       ideaDraftJob.job_id,
       createIdeaForm.title.trim(),
       createIdeaForm.workspaceId,
       effectiveCreateIdeaTags.join(','),
+      createIdeaForm.description,
+      createIdeaDescriptionHtml,
+      createIdeaProcessDiagrams.map((diagram) => diagram.source).join('\n'),
+      createIdeaForm.type,
+      createIdeaForm.reviewer,
+      brainstormInput,
       brainstormMessages.length,
       last ? `${last.role}:${last.text.slice(0, 80)}` : '',
       brainstormReady ? 'ready' : 'open',
@@ -4646,22 +4861,34 @@ export function IdeaBacklogManagementPage() {
     ideaDraftJob,
     createIdeaForm.title,
     createIdeaForm.workspaceId,
+    createIdeaForm.description,
+    createIdeaDescriptionHtml,
+    createIdeaProcessDiagrams,
+    createIdeaForm.type,
+    createIdeaForm.reviewer,
     effectiveCreateIdeaTags,
     brainstormMessages,
+    brainstormInput,
     brainstormReady,
     brainstormRemainingGaps,
   ])
 
-  useEffect(() => {
-    if (!ideaDraftJob) return
+  const saveBrainstormSnapshot = (): boolean => {
+    if (!ideaDraftJob || isResumingDraft) return false
     // Keep the recovery snapshot while generation is running or fails.
-    const currentPointer = useIdeaDraftBrainstormPointerStore.getState().pointer
+    const currentPointer = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)
+    if (currentPointer?.ownerId && currentPointer.ownerId !== currentUserId) return false
     const typedTitle = createIdeaForm.title.trim()
     const title = typedTitle
       || (currentPointer?.jobId === ideaDraftJob.job_id ? currentPointer.title : '')
       || 'Untitled idea'
     useIdeaDraftBrainstormPointerStore.getState().retainPointer(ideaDraftJob.status, {
       jobId: ideaDraftJob.job_id,
+      draftSessionId: ideaDraftJob.draft_session_id ?? currentPointer?.draftSessionId,
+      ownerId: currentUserId,
+      status: ideaDraftJob.status,
+      composerDraft: brainstormInput,
+      form: { description: appendProcessDiagramsToText(createIdeaForm.description, createIdeaProcessDiagrams), html: createIdeaDescriptionHtml, type: createIdeaForm.type, reviewer: createIdeaForm.reviewer },
       title,
       updatedAt: Date.now(),
       // Recovery snapshot survives jobs being evicted from the runtime.
@@ -4671,12 +4898,53 @@ export function IdeaBacklogManagementPage() {
         (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
       )?.name ?? null,
       sessionId: ideaDraftJob.correlation_id || null,
-      messages: brainstormMessages.map(({ role, text }) => ({ role, text })),
+      messages: brainstormMessages.map(({ sentAt: _sentAt, imagePreview: _imagePreview, ...message }) => message),
       remainingGaps: brainstormRemainingGaps,
       readyToContinue: brainstormReady,
     })
+    return useIdeaDraftSaveStatusStore.getState().status === 'saved'
+      && useIdeaDraftBrainstormPointerStore.getState().pointers.some((item) => item.jobId === ideaDraftJob.job_id)
+  }
+
+  const handleCloseBrainstorm = () => {
+    const closePanels = () => {
+      setIsEvidenceDialogOpen(false)
+      setIsBrainstormMode(false)
+      setIsCreateIdeaDrawerOpen(false)
+    }
+    if (!ideaDraftJob || ideaDraftJob.status === 'cancelled') {
+      closePanels()
+      return
+    }
+    closeBrainstorm({
+      busy: isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing,
+      save: saveBrainstormSnapshot,
+      close: closePanels,
+      notify: addToast,
+    })
+  }
+
+  useEffect(() => {
+    if (!isEvidenceDialogOpen) return
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return
+      if (document.querySelector('[data-brainstorm-summary-dialog]')) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (isBrainstormMode) {
+        handleCloseBrainstorm()
+      } else if (!isDraftContinuing && !isBrainstormSending) {
+        setIsEvidenceDialogOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onEsc, true)
+    return () => window.removeEventListener('keydown', onEsc, true)
+  }, [isEvidenceDialogOpen, isBrainstormMode, handleCloseBrainstorm, isDraftContinuing, isBrainstormSending])
+
+  useEffect(() => {
+    saveBrainstormSnapshot()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- brainstormPointerSignature stands in for the unstable values read here
-  }, [ideaDraftJob, brainstormPointerSignature])
+  }, [ideaDraftJob, brainstormPointerSignature, isResumingDraft])
 
   // Resume entry point: the chat panel navigates here with
   // navigate('/idea-backlog', { state: { resumeBrainstormJobId } }). Uses router
@@ -4688,12 +4956,29 @@ export function IdeaBacklogManagementPage() {
   useEffect(() => {
     const jobId = (location.state as { resumeBrainstormJobId?: string } | null)?.resumeBrainstormJobId
     if (!jobId) return
+    if (draftBackupStatus === 'failed' && brainstormMessages.length) {
+      setAiAssistanceError('The current draft backup could not be saved. Keep it open and retry before switching ideas.')
+      navigate('.', { replace: true, state: null })
+      return
+    }
+    if (isBrainstormSending || isDraftContinuing || aiAssistanceLoading || isReanalyzing) {
+      setAiAssistanceError('Please wait for the current draft request to finish before switching ideas.')
+      navigate('.', { replace: true, state: null })
+      return
+    }
 
     let cancelled = false
+    setIsResumingDraft(true)
     void (async () => {
-      const pointer = useIdeaDraftBrainstormPointerStore.getState().pointer
-      const snapshot = pointer?.jobId === jobId ? pointer : null
+      const snapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === jobId && item.ownerId === currentUserId)
+      if (!snapshot) {
+        setIsResumingDraft(false)
+        navigate('.', { replace: true, state: null })
+        return
+      }
       const restoreSnapshot = () => restoreIdeaDraftBrainstormSession({
+        source_job_id: jobId,
+        draft_session_id: snapshot?.draftSessionId,
         title: snapshot?.title || 'Untitled idea',
         tags: snapshot?.tags ?? [],
         context: {
@@ -4721,15 +5006,41 @@ export function IdeaBacklogManagementPage() {
         }
         if (status.status === 'failed' && snapshot?.messages?.length) status = await restoreSnapshot()
         if (cancelled) return
+        if (status.status === 'queued' || status.status === 'running') {
+          status = await waitForIdeaDraftJob(status.job_id, () => !cancelled, false)
+          if (cancelled) return
+        }
+        status = await recoverBrainstormSummaryOnResume(status, recoverIdeaDraftLiveSummary)
+        if (cancelled) return
+        const resumed = { ...snapshot, jobId: status.job_id, status: status.status,
+          draftSessionId: status.draft_session_id ?? snapshot.draftSessionId ?? jobId }
+        if (status.job_id !== jobId) useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, resumed)
+        else useIdeaDraftBrainstormPointerStore.getState().setPointer(resumed)
         setIsCreateIdeaDrawerOpen(true)
+        setCreateIdeaDraftMode('ai')
         const pointerTitle = snapshot?.title
         if (pointerTitle) {
-          setCreateIdeaForm((prev) => ({
-            ...prev,
+          setCreateIdeaForm({
             title: pointerTitle,
-            workspaceId: snapshot?.workspaceId || prev.workspaceId,
-          }))
+            workspaceId: snapshot.workspaceId || '',
+            description: snapshot.form?.description ?? '',
+            type: IDEA_TYPES.includes(snapshot.form?.type as IdeaType) ? snapshot.form!.type as IdeaType : 'Innovation',
+            reviewer: snapshot.form?.reviewer ?? '',
+          })
         }
+        setCreateIdeaTags(snapshot.tags ?? [])
+        setCreateIdeaTagDraft('')
+        setCreateIdeaDescriptionHtml('')
+        setCreateIdeaProcessDiagrams([])
+        setBrainstormInput(snapshot.composerDraft ?? '')
+        setBrainstormDiagramImage(null)
+        setBrainstormEdit(null)
+        setBrainstormError('')
+        setAiAssistanceError('')
+        setBrainstormMessages(mergeBrainstormUiMessages([], status.brainstorm_messages ?? [], new Date().toISOString()))
+        if (status.status === 'completed') applyCompletedIdeaDraft(status, status.brainstorm_messages)
+        if (snapshot.form?.description) setCreateIdeaDescriptionFromPlainText(snapshot.form.description, status.brainstorm_messages)
+        if (snapshot.form?.html) syncCreateIdeaDescriptionFromHtml(snapshot.form.html)
         if (status.status === 'awaiting_input' || status.status === 'completed') {
           applyIdeaDraftBrainstormState(status)
           setIsEvidenceDialogOpen(true)
@@ -4750,6 +5061,7 @@ export function IdeaBacklogManagementPage() {
         )
       } finally {
         if (cancelled) return
+        setIsResumingDraft(false)
         const rest = { ...((location.state as Record<string, unknown> | null) ?? {}) }
         delete rest.resumeBrainstormJobId
         navigate('.', { replace: true, state: Object.keys(rest).length > 0 ? rest : null })
@@ -4757,6 +5069,7 @@ export function IdeaBacklogManagementPage() {
     })()
     return () => {
       cancelled = true
+      setIsResumingDraft(false)
     }
   }, [location.state, navigate, currentUserId, currentUserDisplayName])
 
@@ -5003,7 +5316,7 @@ export function IdeaBacklogManagementPage() {
       />
 
       {showScoringPanels && selectedIdea && (
-        <section className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <section id="idea-evaluation-panel" className="grid grid-cols-1 xl:grid-cols-12 gap-4 scroll-mt-4">
           <Card className={cn('xl:col-span-8', ideaBacklogLiquidGlassPanelClass)}>
           <CardHeader className="pb-3">
             <CardTitle className="text-base text-slate-900 flex items-center gap-2">
@@ -5132,14 +5445,15 @@ export function IdeaBacklogManagementPage() {
             </div>
 
             <div className="space-y-3 pt-1">
-              <p className="text-[11px] text-slate-500">Decision SLA: target within 2 business days from intake review.</p>
+              <p className="text-[11px] text-slate-500">Decisions follow the active Workflow Automation approval. Only assigned approvers can decide.</p>
               <div className="flex w-full flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
-                  onClick={() => decideIdea('Approved')}
+                  onClick={() => setWorkflowDecision({ idea: selectedIdea, mode: 'approve' })}
+                  disabled={decidableSelectedIdeaId !== selectedIdea.id}
                   className={cn(
                     enterprisePrimarySolidButtonClass(),
-                    'flex min-w-0 w-full basis-0 flex-1 justify-center',
+                    'flex min-w-0 w-full basis-0 flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed',
                   )}
                 >
                   <Check className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
@@ -5147,10 +5461,11 @@ export function IdeaBacklogManagementPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => decideIdea('Rejected')}
+                  onClick={() => setWorkflowDecision({ idea: selectedIdea, mode: 'reject' })}
+                  disabled={decidableSelectedIdeaId !== selectedIdea.id}
                   className={cn(
                     enterpriseDestructiveOutlineButtonClass(),
-                    'flex min-w-0 w-full basis-0 flex-1 justify-center',
+                    'flex min-w-0 w-full basis-0 flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed',
                   )}
                 >
                   <X className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" strokeWidth={2.5} />
@@ -5158,10 +5473,11 @@ export function IdeaBacklogManagementPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => decideIdea('Under Review')}
+                  onClick={() => setWorkflowDecision({ idea: selectedIdea, mode: 'revision' })}
+                  disabled={decidableSelectedIdeaId !== selectedIdea.id}
                   className={cn(
                     enterpriseSecondaryButtonClass(),
-                    'group flex min-w-0 w-full basis-0 flex-1 items-center justify-center gap-2 rounded-2xl whitespace-nowrap text-[13.5px]',
+                    'group flex min-w-0 w-full basis-0 flex-1 items-center justify-center gap-2 rounded-2xl whitespace-nowrap text-[13.5px] disabled:opacity-50 disabled:cursor-not-allowed',
                   )}
                 >
                   <Undo2 className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:-rotate-12" strokeWidth={2.5} />
@@ -5821,7 +6137,7 @@ export function IdeaBacklogManagementPage() {
             onClick={() => openMoveIdeaDialog(ideaCardContextMenu.idea)}
           >
             <MoveRight className="w-4 h-4 mr-2" />
-            Move idea
+            Move to Folder
           </ContextMenuItem>
         )}
 
@@ -5844,37 +6160,26 @@ export function IdeaBacklogManagementPage() {
         <ContextMenuItem
           onClick={() => {
             if (!ideaCardContextMenu) return
-            if (isMultiSelectCardMenu) {
-              setSelectedIdeaId(ideaCardContextMenu.idea.id)
-              setShowScoringPanels(true)
-            } else {
-              selectSingleIdea(ideaCardContextMenu.idea.id)
-            }
+            selectSingleIdea(ideaCardContextMenu.idea.id)
+            setShowScoringPanels(true)
             closeContextMenu()
+            requestAnimationFrame(() => document.getElementById('idea-evaluation-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
           }}
         >
           <BarChart3 className="w-4 h-4 mr-2" />
-          Evaluate
+          View Evaluation
         </ContextMenuItem>
 
-        <ContextMenuItem
+        {!isMultiSelectCardMenu && ideaCardContextMenu?.idea.id === rejectContextIdeaId && <ContextMenuItem
           onClick={() => {
             if (!ideaCardContextMenu) return
-            if (isMultiSelectCardMenu) {
-              setIdeas((prev) =>
-                prev.map((idea) =>
-                  selectedIdeaIds.has(idea.id) ? { ...idea, status: 'Rejected' } : idea
-                )
-              )
-            } else {
-              updateIdeaStatus(ideaCardContextMenu.idea.id, 'Rejected')
-            }
+            setWorkflowDecision({ idea: ideaCardContextMenu.idea, mode: 'reject' })
             closeContextMenu()
           }}
         >
           <X className="w-4 h-4 mr-2" />
           Reject
-        </ContextMenuItem>
+        </ContextMenuItem>}
 
         <ContextMenuSeparator />
 
@@ -6128,6 +6433,7 @@ export function IdeaBacklogManagementPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
+                  if (isIdeaDraftInProgress) return
                   void submitCreateIdea()
                 }}
                 className="flex min-h-0 flex-1 flex-col"
@@ -6349,7 +6655,7 @@ export function IdeaBacklogManagementPage() {
                                 <p className="font-semibold">Potential overlap detected</p>
                                 {[...ideaDraftJob.similar_ideas, ...ideaDraftJob.similar_documents].map((item) => (
                                   <p key={`${item.kind}-${item.id}-${item.title}`} className="mt-1 truncate">
-                                    {item.kind === 'brd' ? 'BRD' : item.kind === 'document' ? 'Document' : 'Idea'} · {item.title}
+                                    {item.kind === 'idea' ? 'Idea' : item.doc_type || (item.kind === 'brd' ? 'BRD' : 'Document')} · {item.title}
                                     {' · '}
                                     {Math.round(item.similarity_score * 100)}%
                                   </p>
@@ -6822,10 +7128,17 @@ export function IdeaBacklogManagementPage() {
                 </div>
 
                 <div className="shrink-0 border-t border-border bg-background/95 px-5 py-4 backdrop-blur-sm">
+                  {isIdeaDraftInProgress ? (
+                    <p className="mb-2 text-center text-[11px] text-muted-foreground">
+                      {ideaDraftJob?.status === 'awaiting_input'
+                        ? 'Answer the brainstorm questions to finish the AI draft, or cancel the generation.'
+                        : 'Wait until the AI draft is written, or cancel the generation.'}
+                    </p>
+                  ) : null}
                   <div className="flex w-full items-stretch">
                     <button
                       type="submit"
-                      disabled={!isCreateIdeaFormValid}
+                      disabled={!isCreateIdeaFormValid || isIdeaDraftInProgress}
                       className={cn(
                         enterprisePrimarySolidButtonClass(),
                         'w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
@@ -6861,8 +7174,8 @@ export function IdeaBacklogManagementPage() {
                             variant="ghost"
                             size="icon"
                             className="h-9 w-9 shrink-0"
-                            onClick={() => setIsBrainstormMode(false)}
-                            aria-label="Back to evidence options"
+                            onClick={handleCloseBrainstorm}
+                            aria-label="Save and close brainstorm"
                           >
                             <ArrowLeft className="h-4 w-4" />
                           </Button>
@@ -6902,10 +7215,7 @@ export function IdeaBacklogManagementPage() {
                             variant="ghost"
                             size="icon"
                             className="h-9 w-9"
-                            onClick={() => {
-                              setIsEvidenceDialogOpen(false)
-                              setIsBrainstormMode(false)
-                            }}
+                            onClick={handleCloseBrainstorm}
                             aria-label="Close chat"
                           >
                             <X className="h-4 w-4" />
@@ -6913,7 +7223,7 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       </header>
 
-                      <div className="flex min-h-0 flex-1 overflow-hidden bg-muted/15">
+                      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
                         <div className="hidden min-h-0 md:flex">
                           <BrainstormEvidenceRail
                             confidencePercent={brainstormConfidencePercent}
@@ -6931,6 +7241,7 @@ export function IdeaBacklogManagementPage() {
                         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
                           <div className="max-h-[42vh] shrink-0 overflow-hidden border-b border-border/60 md:hidden">
                             <BrainstormEvidenceRail
+                              inline
                               confidencePercent={brainstormConfidencePercent}
                               progress={brainstormEvidenceProgress}
                               discoveryProgress={brainstormDiscoveryProgress}
@@ -6945,7 +7256,10 @@ export function IdeaBacklogManagementPage() {
                           </div>
                           <div
                             ref={brainstormScrollRef}
-                            className="min-h-0 flex-1 overflow-y-auto"
+                            role="region"
+                            aria-label="Brainstorm conversation"
+                            tabIndex={0}
+                            className="scrollbar-hide min-h-0 flex-1 overflow-y-auto"
                           >
                             <div
                               className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-8 lg:px-10"
@@ -6973,6 +7287,14 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           ) : null}
 
+                          {brainstormMessages.length > 0 && (
+                            <p role="status" className={cn('text-xs', draftBackupStatus === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
+                              {draftBackupStatus === 'failed' ? 'Save failed - keep this draft open and retry.' : isBrainstormSending ? 'Saving response...' : 'Local backup saved'}
+                              {draftBackupStatus === 'failed' && <button type="button" className="ml-2 underline" onClick={() => {
+                                saveBrainstormSnapshot()
+                              }}>Retry save</button>}
+                            </p>
+                          )}
                           {brainstormMessages.map((message, index) => {
                             const previousUser = [...brainstormMessages.slice(0, index)]
                               .reverse()
@@ -7010,7 +7332,13 @@ export function IdeaBacklogManagementPage() {
                                           onProgress={scrollBrainstormToBottom}
                                         />
                                       ) : (
-                                        <BrainstormAssistantMessageBody text={message.text} />
+                                        <BrainstormAssistantContent
+                                          message={message}
+                                          diagrams={brainstormSummaryDiagrams[index]}
+                                          indonesian={isBrainstormThreadIndonesian(brainstormMessages)}
+                                          onConfirm={index === brainstormMessages.length - 1 ? (choice) => handleSendBrainstormMessage(choice) : undefined}
+                                          disabled={brainstormComposerDisabled}
+                                        />
                                       )}
                                     </div>
                                     {message.evidence && index !== brainstormAnimatingAssistantIndex ? (
@@ -7018,28 +7346,105 @@ export function IdeaBacklogManagementPage() {
                                         {message.evidence}
                                       </p>
                                     ) : null}
-                                    {receivedLabel ? (
-                                      <p className="mt-1 text-[11px] text-muted-foreground">
-                                        Received {receivedLabel}
-                                        {latencyLabel ? ` · ${latencyLabel}` : ''}
-                                      </p>
+                                    {index !== brainstormAnimatingAssistantIndex ? (
+                                      <div className="mt-1 flex items-center gap-1.5">
+                                        {receivedLabel ? (
+                                          <p className="text-[11px] text-muted-foreground">
+                                            Received {receivedLabel}
+                                            {latencyLabel ? ` · ${latencyLabel}` : ''}
+                                          </p>
+                                        ) : null}
+                                        <BrainstormCopyButton text={message.text} />
+                                      </div>
                                     ) : null}
                                   </div>
                                 </div>
                               ) : (
-                                <div className="flex max-w-[85%] flex-col items-end gap-1">
-                                  <div className="whitespace-pre-wrap rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
-                                    {message.imagePreview ? (
-                                      <img
-                                        src={message.imagePreview}
-                                        alt=""
-                                        className="mb-2 max-h-40 rounded-2xl border border-black/10"
-                                      />
-                                    ) : null}
-                                    {message.text}
-                                  </div>
-                                  {sentLabel ? (
-                                    <p className="pr-1 text-[11px] text-muted-foreground">Sent {sentLabel}</p>
+                                <div className={cn('flex flex-col items-end gap-1', brainstormEdit?.index === index ? 'w-full max-w-[85%]' : 'max-w-[85%]')}>
+                                  {brainstormEdit?.index === index ? (() => {
+                                    const indonesian = isBrainstormThreadIndonesian(brainstormMessages)
+                                    const later = brainstormMessages.slice(index + 1)
+                                    const laterHasDiagram = later.some((item) => item.role === 'assistant' && BRAINSTORM_DIAGRAM_RE.test(item.text))
+                                    const submitEdit = () => {
+                                      const text = brainstormEdit.text.trim()
+                                      if (!text || text === message.text.trim()) {
+                                        setBrainstormEdit(null)
+                                        return
+                                      }
+                                      const userTurn = brainstormMessages.slice(0, index).filter((item) => item.role === 'user').length
+                                      setBrainstormEdit(null)
+                                      void handleSendBrainstormMessage(text, { index, userTurn, originalText: message.text })
+                                    }
+                                    return (
+                                      <div className="w-full rounded-3xl bg-muted px-4 py-3">
+                                        <textarea
+                                          value={brainstormEdit.text}
+                                          onChange={(event) => setBrainstormEdit({ ...brainstormEdit, text: event.target.value, confirming: false })}
+                                          rows={Math.min(8, Math.max(2, brainstormEdit.text.split('\n').length))}
+                                          maxLength={4000}
+                                          autoFocus
+                                          className="w-full resize-none bg-transparent text-[15px] leading-7 text-foreground focus:outline-none"
+                                        />
+                                        {brainstormEdit.confirming ? (
+                                          <p className="mt-1 text-xs text-amber-800">
+                                            {indonesian
+                                              ? `Mengedit jawaban ini akan menghapus ${later.length} pesan sesudahnya${laterHasDiagram ? ', termasuk diagram proses yang sudah dibuat' : ''}, lalu brainstorm dilanjutkan dari jawaban baru. Lanjut?`
+                                              : `Editing this answer removes the ${later.length} message(s) after it${laterHasDiagram ? ', including the process diagram drawn there' : ''}, and the brainstorm continues from the new answer. Continue?`}
+                                          </p>
+                                        ) : null}
+                                        <div className="mt-2 flex justify-end gap-2">
+                                          <Button type="button" variant="outline" className="h-10 gap-2 rounded-md px-4 text-sm" onClick={() => setBrainstormEdit(null)}>
+                                            <X className="h-4 w-4" aria-hidden />
+                                            {indonesian ? 'Batal' : 'Cancel'}
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            className="h-10 gap-2 rounded-md px-4 text-sm"
+                                            disabled={!brainstormEdit.text.trim() || isBrainstormSending}
+                                            onClick={() => {
+                                              if (later.length > 0 && !brainstormEdit.confirming) {
+                                                setBrainstormEdit({ ...brainstormEdit, confirming: true })
+                                                return
+                                              }
+                                              submitEdit()
+                                            }}
+                                          >
+                                            <Send className="h-4 w-4" aria-hidden />
+                                            {brainstormEdit.confirming ? (indonesian ? 'Ya, kirim ulang' : 'Yes, resend') : (indonesian ? 'Kirim' : 'Send')}
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    )
+                                  })() : (
+                                    <div className="whitespace-pre-wrap rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-7 text-foreground">
+                                      {message.imagePreview ? (
+                                        <img
+                                          src={message.imagePreview}
+                                          alt=""
+                                          className="mb-2 max-h-40 rounded-2xl border border-black/10"
+                                        />
+                                      ) : null}
+                                      {message.text}
+                                    </div>
+                                  )}
+                                  {brainstormEdit?.index !== index ? (
+                                    <div className="flex items-center gap-1.5 pr-1">
+                                      {sentLabel ? <p className="text-[11px] text-muted-foreground">Sent {sentLabel}</p> : null}
+                                      {message.edited_at ? <span className="text-[11px] text-muted-foreground" title={`Edited ${new Date(message.edited_at).toLocaleString()} · ${message.edit_history?.length ?? 1} revision(s)`}>Edited</span> : null}
+                                      {message.text ? <BrainstormCopyButton text={message.text} /> : null}
+                                      {/* Editable while the brainstorm is open; an uploaded diagram is not an editable answer. */}
+                                      {message.text && !message.imagePreview && ideaDraftJob?.status === 'awaiting_input' && !isBrainstormSending ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setBrainstormEdit({ index, text: message.text, confirming: false })}
+                                          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          aria-label="Edit answer"
+                                          title="Edit"
+                                        >
+                                          <Pencil className="h-3.5 w-3.5" aria-hidden />
+                                        </button>
+                                      ) : null}
+                                    </div>
                                   ) : null}
                                 </div>
                               )}
@@ -7047,6 +7452,8 @@ export function IdeaBacklogManagementPage() {
                               && index === brainstormLatestAssistantIndex
                               && brainstormAnimatingAssistantIndex !== index
                               && brainstormLatestKind === 'followup'
+                              && message.question_kind !== 'confirm'
+                              && !message.suggestion_options?.length
                               && hasPendingMandatoryQuestion
                               && !isBrainstormSending
                               && !brainstormReady ? (
@@ -7113,35 +7520,38 @@ export function IdeaBacklogManagementPage() {
                               <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  disabled={isBrainstormSending || isDraftContinuing || activeExtendedQuestionFocus(brainstormMessages) === 'business'}
+                                  title={activeExtendedQuestionFocus(brainstormMessages) === 'business'
+                                    ? (brainstormThreadIndonesian ? 'Jalur pertanyaan yang sedang berjalan' : 'The question track already in progress')
+                                    : undefined}
                                   className={cn(
                                     enterpriseSecondaryButtonClass(),
-                                    'inline-flex h-9 items-center gap-2 border-emerald-300 bg-white text-emerald-950 hover:bg-emerald-100',
+                                    'inline-flex h-9 items-center gap-2 border-emerald-300 bg-white text-emerald-950 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60',
                                   )}
+                                  // Only the choice is sent; how the questions are asked and labelled is agent-runtime's.
                                   onClick={() => void handleSendBrainstormMessage(
-                                    brainstormThreadIndonesian
-                                      ? 'Lanjutkan dengan pertanyaan bisnis. Beri label "Business" pada setiap pertanyaan, ajukan satu per satu, dan fokus pada value, outcome, stakeholder, scope, KPI, risiko, serta prioritas bisnis.'
-                                      : 'Continue with business questions. Label every question "Business", ask them one at a time, and focus on value, outcomes, stakeholders, scope, KPIs, risks, and business priorities.',
+                                    brainstormThreadIndonesian ? 'Pertanyaan bisnis' : 'Business questions',
                                   )}
                                 >
                                   <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden />
-                                  {brainstormThreadIndonesian ? 'Pertanyaan bisnis' : 'Business questions'}
+                                  Extended Question · Business
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing}
+                                  disabled={isBrainstormSending || isDraftContinuing || activeExtendedQuestionFocus(brainstormMessages) === 'technical'}
+                                  title={activeExtendedQuestionFocus(brainstormMessages) === 'technical'
+                                    ? (brainstormThreadIndonesian ? 'Jalur pertanyaan yang sedang berjalan' : 'The question track already in progress')
+                                    : undefined}
                                   className={cn(
                                     enterpriseSecondaryButtonClass(),
-                                    'inline-flex h-9 items-center gap-2 border-sky-300 bg-white text-sky-950 hover:bg-sky-100',
+                                    'inline-flex h-9 items-center gap-2 border-sky-300 bg-white text-sky-950 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60',
                                   )}
                                   onClick={() => void handleSendBrainstormMessage(
-                                    brainstormThreadIndonesian
-                                      ? 'Lanjutkan dengan pertanyaan teknis. Beri label "Technical" pada setiap pertanyaan, ajukan satu per satu, dan fokus pada aplikasi, integrasi, data, security, infrastructure, operasional, serta constraint teknis.'
-                                      : 'Continue with technical questions. Label every question "Technical", ask them one at a time, and focus on applications, integrations, data, security, infrastructure, operations, and technical constraints.',
+                                    brainstormThreadIndonesian ? 'Pertanyaan teknis' : 'Technical questions',
                                   )}
                                 >
                                   <Wrench className="h-4 w-4 shrink-0" aria-hidden />
-                                  {brainstormThreadIndonesian ? 'Pertanyaan teknis' : 'Technical questions'}
+                                  Extended Question · Technical
                                 </button>
                                 <button
                                   type="button"
@@ -7274,7 +7684,7 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           </div>
 
-                      <div className="shrink-0 border-t border-border/60 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
+                      <div className="shrink-0 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
                         <div className="mx-auto w-full max-w-4xl space-y-2">
                           {brainstormError && <p className="px-3 text-xs text-destructive">{brainstormError}</p>}
                           {brainstormReady ? (
@@ -7471,6 +7881,12 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       </div>
                         </div>
+                        <BrainstormLiveSummaryPanel
+                          key={ideaDraftJob?.draft_session_id ?? ideaDraftJob?.job_id ?? 'new-brainstorm'}
+                          job={ideaDraftJob}
+                          busy={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
+                          error={brainstormError}
+                        />
                       </div>
                     </div>
                   ) : (
@@ -7593,6 +8009,14 @@ export function IdeaBacklogManagementPage() {
                   document.body,
                 )
               : null}
+            {workflowDecision && <IdeaWorkflowDecisionDialog
+              key={`${workflowDecision.idea.id}:${workflowDecision.mode}`}
+              idea={workflowDecision.idea}
+              mode={workflowDecision.mode}
+              userId={currentUserId}
+              onClose={() => setWorkflowDecision(null)}
+              onSaved={onWorkflowDecisionSaved}
+            />}
             {moveIdeaTarget && typeof document !== 'undefined'
               ? createPortal(
                   <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
@@ -7603,9 +8027,9 @@ export function IdeaBacklogManagementPage() {
                             <MoveRight className="h-5 w-5" aria-hidden />
                           </div>
                           <div>
-                            <h2 className="text-lg font-semibold">Move idea</h2>
+                            <h2 className="text-lg font-semibold">Move to Folder</h2>
                             <p className="mt-1 text-sm text-muted-foreground">
-                              Change where this idea is stored and who can access it.
+                              Organize this idea within its current workspace.
                             </p>
                           </div>
                         </div>
@@ -7616,25 +8040,31 @@ export function IdeaBacklogManagementPage() {
                           <p className="mt-1 break-words text-sm font-semibold">{moveIdeaTarget.title}</p>
                         </div>
                         <div>
-                          <Label htmlFor="move-idea-workspace">Destination workspace</Label>
+                          <Label htmlFor="move-idea-folder">Destination folder</Label>
                           <select
-                            id="move-idea-workspace"
-                            value={moveIdeaWorkspaceId}
-                            onChange={(event) => setMoveIdeaWorkspaceId(event.target.value)}
+                            id="move-idea-folder"
+                            value={moveIdeaFolderId}
+                            disabled={moveFoldersLoading || Boolean(moveFoldersError) || isMovingIdea}
+                            onChange={(event) => setMoveIdeaFolderId(event.target.value)}
                             className="mt-2 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                           >
-                            <option value="">Select a destination</option>
-                            {userWorkspaceOptions.options
-                              .filter((option) => option.workspaceId !== moveIdeaTarget.workspaceId)
-                              .map((option) => (
-                                <option key={option.workspaceId} value={option.workspaceId}>
-                                  {option.workspaceName} ({option.tenantMode === 'personal' ? 'Personal' : 'Non-personal'})
+                            <option value="">{moveFoldersLoading ? 'Loading folders...' : moveFoldersError ? 'Folders unavailable' : 'Workspace root'}</option>
+                            {moveIdeaFolders
+                              .map((folder) => (
+                                <option key={folder.id} value={folder.id}>
+                                  {folder.name}
                                 </option>
                               ))}
                           </select>
+                          {moveFoldersLoading && <p role="status" className="mt-2 text-xs text-muted-foreground">Checking available folders...</p>}
+                          {moveFoldersError && <div className="mt-2 space-y-2">
+                            <p role="alert" className="text-sm text-destructive">{moveFoldersError}</p>
+                            <Button type="button" variant="outline" className="gap-2" onClick={() => setMoveFoldersReloadKey((key) => key + 1)}><RefreshCw className="h-4 w-4" />Retry</Button>
+                          </div>}
+                          {!moveFoldersLoading && !moveFoldersError && moveIdeaFolders.length === 0 && <p className="mt-2 text-xs text-muted-foreground">No destination folders are available in this workspace.</p>}
                         </div>
                         <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-950">
-                          Moving to a Personal workspace makes the idea private to that workspace. Moving to a Non-personal workspace makes it available according to that workspace's access policy. The current folder link will be cleared.
+                          Workspace, ownership, and workflow remain unchanged. Cross-workspace transfers are unavailable until workflow and document access can be migrated safely.
                         </div>
                         {moveIdeaError && <p className="text-sm text-destructive">{moveIdeaError}</p>}
                       </div>
@@ -7642,8 +8072,8 @@ export function IdeaBacklogManagementPage() {
                         <Button type="button" variant="outline" className="flex-1" onClick={closeMoveIdeaDialog} disabled={isMovingIdea}>
                           Cancel
                         </Button>
-                        <Button type="button" className="flex-1" onClick={() => void submitMoveIdea()} disabled={!moveIdeaWorkspaceId || isMovingIdea}>
-                          {isMovingIdea ? 'Moving…' : 'Move idea'}
+                        <Button type="button" className="flex-1 gap-2" onClick={() => void submitMoveIdea()} disabled={moveFoldersLoading || Boolean(moveFoldersError) || (Boolean(moveIdeaFolderId) && !moveIdeaFolders.some((folder) => folder.id === moveIdeaFolderId)) || moveIdeaFolderId === (moveIdeaTarget.folderId || '') || isMovingIdea}>
+                          <MoveRight className="h-4 w-4" />{isMovingIdea ? 'Moving...' : 'Move to Folder'}
                         </Button>
                       </div>
                     </div>

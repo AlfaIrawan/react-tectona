@@ -3,7 +3,7 @@ import type { IdeaIntakeAnswer, IdeaIntakeFollowup } from '@/lib/api/tectonaAgen
 export type BrainstormIntakeEntry =
   | { kind: 'answer'; item: IdeaIntakeAnswer }
   | { kind: 'followup'; item: IdeaIntakeFollowup }
-  | { kind: 'skipped'; question: string }
+  | { kind: 'skipped'; question: string; questionKind?: IdeaIntakeFollowup['question_kind'] }
 
 const KIND_ORDER = { answer: 0, followup: 1, skipped: 2 } as const
 
@@ -18,6 +18,7 @@ export function brainstormIntakeOrder(
   followups: IdeaIntakeFollowup[],
   openPoints: string[] = [],
   openPointTurns: Array<number | null> = [],
+  openPointQuestionKinds: Array<IdeaIntakeFollowup['question_kind']> = [],
 ): BrainstormIntakeEntry[] {
   const rows: Array<{ entry: BrainstormIntakeEntry; turn: number; index: number }> = []
   let lastAnswerTurn = -1
@@ -31,7 +32,7 @@ export function brainstormIntakeOrder(
   })
   openPoints.forEach((question, index) => {
     const turn = openPointTurns[index]
-    rows.push({ entry: { kind: 'skipped', question }, turn: typeof turn === 'number' ? turn : Infinity, index })
+    rows.push({ entry: { kind: 'skipped', question, questionKind: openPointQuestionKinds[index] }, turn: typeof turn === 'number' ? turn : Infinity, index })
   })
   return rows
     .sort((a, b) => a.turn - b.turn || KIND_ORDER[a.entry.kind] - KIND_ORDER[b.entry.kind] || a.index - b.index)

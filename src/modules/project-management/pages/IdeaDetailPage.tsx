@@ -143,6 +143,7 @@ import {
   generateIdeaSummary,
   isMultiRoleSummaryMode,
   shortMaasModelName,
+  type AnalyzeIdeaIntegrationResponse,
   type GenerateBenefitAnalysisResponse,
   type GenerateIdeaConversionResponse,
   type IdeaIntakeAnswer,
@@ -215,6 +216,7 @@ import {
 } from '@/lib/api/documentFolderApi'
 import { resolveIdeaDocsProject } from '@/modules/projects/lib/resolveIdeaDocsProject'
 import { ensureProjectDocumentFolder } from '@/modules/projects/lib/ensureProjectDocumentFolder'
+import { resolveExistingIdeaDocsFolder } from '@/modules/projects/lib/resolveExistingIdeaDocsFolder'
 import { nextUntitledDocumentFolderName } from '@/modules/document-knowledge-management/lib/documentFolderUtils'
 import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
 import { findRepositoryTraceEntryByDocumentId } from '@/lib/kb/repositoryKbFromDocument'
@@ -250,6 +252,8 @@ import {
   getPersistentIdeaSummary,
   getPersistentIdeaIntegration,
   upsertPersistentIdeaIntegration,
+  getDiagramVersion,
+  type IdeaIntegrationPersistent,
   getPersistentIdeaC4Architecture,
   upsertPersistentIdeaC4Architecture,
   getPersistentIdeaProcessDiagram,
@@ -295,7 +299,8 @@ import {
   type ExtractedProcessDiagram,
 } from '@/lib/chat/extractProcessDiagrams'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
-import { EditableIntegrationArchitectureCanvas } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
+import { EditableIntegrationArchitectureCanvas, type IntegrationGraphChange } from '@/modules/project-management/components/EditableIntegrationArchitectureCanvas'
+import { DiagramHistoryDialog } from '@/modules/project-management/components/DiagramHistoryDialog'
 import { EditableDiagramCanvas, type C4DiagramDrilldownTarget } from '@/modules/project-management/components/EditableDiagramCanvas'
 import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
 import { loadIntegrationGraph } from '@/modules/project-management/lib/integrationGraphStorage'
@@ -394,6 +399,7 @@ type Idea = {
   type: IdeaType
   submittedBy: string
   workspace?: string
+  project_id?: string | null
   tags: string[]
   createdAt: string
   reviewer: string
@@ -618,6 +624,7 @@ function ideaFromApi(api: IdeaApi): Idea {
     type,
     submittedBy: api.owner_id?.trim() ?? '',
     workspace: api.workspace_id ?? undefined,
+    project_id: api.project_id ?? null,
     tags: api.tags,
     createdAt: api.created_date.slice(0, 10),
     reviewer: api.assignee_id?.trim() ?? '',
@@ -3775,11 +3782,14 @@ export function IdeaDetailPage() {
   const location = useLocation()
   const tenant = useTenantContextOptional()
   const { addToast } = useToast()
-  const fromState = location.state as { idea?: Idea } | undefined
+  const fromState = location.state as { idea?: Idea & { projectId?: string | null } } | undefined
 
-  const initialIdea = fromState?.idea ?? { ...FALLBACK_IDEA, id: ideaId ?? FALLBACK_IDEA.id }
+  const initialIdea = fromState?.idea
+    ? { ...fromState.idea, project_id: fromState.idea.project_id ?? fromState.idea.projectId ?? null }
+    : { ...FALLBACK_IDEA, id: ideaId ?? FALLBACK_IDEA.id }
 
   const [idea, setIdea] = useState<Idea>(initialIdea)
+  const [resolvedIdeaId, setResolvedIdeaId] = useState(fromState?.idea?.id ?? '')
   const [identityUserNameById, setIdentityUserNameById] = useState<Record<string, string>>({})
   const [reviewerMemberships, setReviewerMemberships] = useState<WacMembershipDto[]>([])
   const [isReviewerOptionsLoading, setIsReviewerOptionsLoading] = useState(false)
@@ -3805,6 +3815,7 @@ export function IdeaDetailPage() {
   const ideaDocTitleHealRef = useRef<string | null>(null)
   const ideaDocGenerationRetryRef = useRef<string | null>(null)
   const [ideaDocsLoading, setIdeaDocsLoading] = useState(false)
+  const [ideaDocsLoadedScope, setIdeaDocsLoadedScope] = useState('')
   const [ideaDocsPage, setIdeaDocsPage] = useState(1)
   const [ideaDocsPageSize, setIdeaDocsPageSize] = useState(10)
   const [ideaDocsView, setIdeaDocsView] = useState<'documents' | 'templates'>('documents')
@@ -3836,6 +3847,7 @@ export function IdeaDetailPage() {
   )
   const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
   const [isIntegrationExportMenuOpen, setIsIntegrationExportMenuOpen] = useState(false)
+  const [isIntegrationHistoryOpen, setIsIntegrationHistoryOpen] = useState(false)
   const [isIntegrationEmbeddedMenuOpen, setIsIntegrationEmbeddedMenuOpen] = useState(false)
   const [isEmbeddedExportMenuOpen, setIsEmbeddedExportMenuOpen] = useState(false)
   const [c4AlternativePreview, setC4AlternativePreview] = useState<{
@@ -3870,6 +3882,7 @@ export function IdeaDetailPage() {
   const [ideaDocGenerateIntakeFollowups, setIdeaDocGenerateIntakeFollowups] = useState<IdeaIntakeFollowup[]>([])
   const [ideaDocGenerateIntakeOpenPoints, setIdeaDocGenerateIntakeOpenPoints] = useState<string[]>([])
   const [ideaDocGenerateIntakeOpenPointTurns, setIdeaDocGenerateIntakeOpenPointTurns] = useState<Array<number | null>>([])
+  const [ideaDocGenerateIntakeOpenPointQuestionKinds, setIdeaDocGenerateIntakeOpenPointQuestionKinds] = useState<Array<IdeaIntakeFollowup['question_kind']>>([])
   // The source preview's tabs: the brainstorm (questions and answers) and the AI summary.
   const [ideaDocSourceTab, setIdeaDocSourceTab] = useState<'brainstorm' | 'summary'>('brainstorm')
   const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
@@ -4045,6 +4058,7 @@ export function IdeaDetailPage() {
     setIdeaDocGenerateIntakeFollowups(next.followups)
     setIdeaDocGenerateIntakeOpenPoints(next.openPoints)
     setIdeaDocGenerateIntakeOpenPointTurns(next.openPointTurns)
+    setIdeaDocGenerateIntakeOpenPointQuestionKinds(next.openPointQuestionKinds ?? [])
     setIdeaDocGenerateIntakeBlock(next.block)
     // The answers lead the source context: swap the old block for the new one, keeping the rest.
     setIdeaDocGenerateSource((source) => {
@@ -4772,6 +4786,37 @@ export function IdeaDetailPage() {
   // canvas autosave, which saved again — a PUT loop of ~3/s while the page was open (dev, 21 Oct).
   const [integrationLatestGraph, setIntegrationLatestGraph] = useState<IntegrationGraphRecord | null>(null)
   const integrationLatestGraphRef = useRef<IntegrationGraphRecord | null>(null)
+  // The stored integration version this page last read or wrote. Saves send it, so a page that
+  // loaded an older view (another tab, before a regeneration) cannot silently overwrite a newer
+  // one; saves run one after another so each sends the version the previous one returned.
+  const integrationStoredVersionRef = useRef<number | null>(null)
+  const integrationSaveChainRef = useRef<Promise<unknown>>(Promise.resolve())
+  const integrationSaveConflictRef = useRef(false)
+  const [integrationSaveConflict, setIntegrationSaveConflict] = useState(false)
+  const saveIntegration = useCallback(
+    (ideaId: string, body: Parameters<typeof upsertPersistentIdeaIntegration>[1]) => {
+      const run = integrationSaveChainRef.current.catch(() => undefined).then(async () => {
+        if (integrationSaveConflictRef.current) throw new Error('INTEGRATION_VERSION_CONFLICT')
+        try {
+          const saved = await upsertPersistentIdeaIntegration(ideaId, {
+            ...body,
+            integration_version: integrationStoredVersionRef.current ?? undefined,
+          })
+          integrationStoredVersionRef.current = saved.version
+          return saved
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('INTEGRATION_VERSION_CONFLICT')) {
+            integrationSaveConflictRef.current = true
+            setIntegrationSaveConflict(true)
+          }
+          throw error
+        }
+      })
+      integrationSaveChainRef.current = run
+      return run
+    },
+    [],
+  )
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
   const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
   // What the integration view still misses: elements without a relation, read live from the canvas,
@@ -4794,7 +4839,7 @@ export function IdeaDetailPage() {
     return [...unrelated, ...generated]
   }, [integrationLatestGraph, integrationWarnings])
   const persistIntegrationGraph = useCallback(
-    (graph: IntegrationGraphRecord) => {
+    (graph: IntegrationGraphRecord, change?: IntegrationGraphChange | { source: 'restored'; note: string }) => {
       const current = runtimeIntegrationAnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -4812,20 +4857,23 @@ export function IdeaDetailPage() {
       setRuntimeIntegrationAnalysis(nextAnalysis)
       integrationLatestGraphRef.current = graph
       setIntegrationLatestGraph(graph)
-      void upsertPersistentIdeaIntegration(idea.id, {
+      return saveIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(
           nextAnalysis,
           graph,
           runtimeUserId || 'tectona-agent',
         ),
         version: idea.version,
+        change_source: change?.source ?? 'manual_edit',
+        change_note: change?.note,
       }).catch((error) => {
+        if (integrationSaveConflictRef.current) return
         setIntegrationGenerationError(
           error instanceof Error ? error.message : 'INTEGRATION_GRAPH_PERSIST_FAILED',
         )
       })
     },
-    [idea.id, idea.version, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId],
+    [idea.id, idea.version, runtimeUserId, currentArchitectureTeamName, currentUserDisplayName, currentUserId, saveIntegration],
   )
   const [c4Level1Analysis, setC4Level1Analysis] = useState<RuntimeC4Analysis>(emptyRuntimeC4Analysis('L1'))
   const [c4Level1Loaded, setC4Level1Loaded] = useState(false)
@@ -5032,9 +5080,10 @@ export function IdeaDetailPage() {
     if (target === 'integration') {
       const next = { ...runtimeIntegrationAnalysisRef.current, architectureReview: review }
       setRuntimeIntegrationAnalysis(next)
-      await upsertPersistentIdeaIntegration(idea.id, {
+      await saveIntegration(idea.id, {
         ...buildPersistentIntegrationPayload(next, integrationLatestGraphRef.current ?? graphRecordFromIntegrationAnalysis(next), actor.id),
         version: idea.version,
+        change_source: 'review',
       })
     } else {
       const next = { ...bpmnHighAnalysisRef.current, architectureReview: review }
@@ -5996,6 +6045,51 @@ export function IdeaDetailPage() {
     [],
   )
 
+  // A view the agent drew (generated, or redrawn from corrected facts): stored as the idea's view and shown.
+  const applyGeneratedIntegration = useCallback(
+    async (response: AnalyzeIdeaIntegrationResponse, sourceIdea: Idea) => {
+      const analysis = runtimeIntegrationFromAgentResponse(response)
+      const record = graphRecordFromIntegrationAnalysis(analysis, { userCustomized: false })
+      try {
+        await saveIntegration(sourceIdea.id, {
+          ...buildPersistentIntegrationPayload(analysis, record, runtimeUserId || 'tectona-agent'),
+          version: sourceIdea.version,
+          change_source: 'ai_generated',
+        })
+      } catch (persistError) {
+        analysis.warnings = [
+          ...analysis.warnings,
+          persistError instanceof Error ? persistError.message : 'INTEGRATION_PERSIST_FAILED',
+        ]
+      }
+      applyIntegrationState(analysis, record, sourceIdea.id)
+    },
+    [applyIntegrationState, runtimeUserId, saveIntegration],
+  )
+
+  const restoreIntegrationVersion = useCallback(
+    async (versionNo: number) => {
+      const version = await getDiagramVersion(idea.id, 'integration', versionNo)
+      const now = new Date().toISOString()
+      const restored = graphRecordFromPersistentIntegration({
+        integration_json: version.snapshot ?? {},
+        generated_at: now,
+      } as IdeaIntegrationPersistent)
+      if (!restored.nodes.length) throw new Error('Versi ini tidak berisi diagram.')
+      const record: IntegrationGraphRecord = {
+        ...restored,
+        userCustomized: true,
+        savedAt: now,
+        viewport: integrationLatestGraphRef.current?.viewport ?? restored.viewport,
+      }
+      saveIntegrationGraph(idea.id, record)
+      setIntegrationBootstrapRecord(record)
+      setIntegrationBootstrapKey((current) => current + 1)
+      await persistIntegrationGraph(record, { source: 'restored', note: `Dipulihkan dari versi ${versionNo}` })
+    },
+    [idea.id, persistIntegrationGraph],
+  )
+
   const loadRuntimeIntegration = useCallback(
     async (
       sourceIdea: Idea = idea,
@@ -6006,6 +6100,7 @@ export function IdeaDetailPage() {
       if (!options.forceRefresh) {
         try {
           const persistent = await getPersistentIdeaIntegration(sourceIdea.id)
+          integrationStoredVersionRef.current = persistent?.version ?? null
           if (persistent) {
             const analysis = runtimeIntegrationFromPersistent(persistent)
             const record = graphRecordFromPersistentIntegration(persistent)
@@ -6062,23 +6157,7 @@ export function IdeaDetailPage() {
           },
           150_000,
         )
-
-        const analysis = runtimeIntegrationFromAgentResponse(response)
-        const record = graphRecordFromIntegrationAnalysis(analysis, { userCustomized: false })
-
-        try {
-          await upsertPersistentIdeaIntegration(sourceIdea.id, {
-            ...buildPersistentIntegrationPayload(analysis, record, runtimeUserId || 'tectona-agent'),
-            version: sourceIdea.version,
-          })
-        } catch (persistError) {
-          analysis.warnings = [
-            ...analysis.warnings,
-            persistError instanceof Error ? persistError.message : 'INTEGRATION_PERSIST_FAILED',
-          ]
-        }
-
-        applyIntegrationState(analysis, record, sourceIdea.id)
+        await applyGeneratedIntegration(response, sourceIdea)
       } catch (error) {
         setRuntimeIntegrationAnalysis(EMPTY_RUNTIME_INTEGRATION_ANALYSIS)
         setIntegrationLoaded(false)
@@ -6095,7 +6174,7 @@ export function IdeaDetailPage() {
         setRegenerating((prev) => ({ ...prev, integration: false }))
       }
     },
-    [applyIntegrationState, idea, runtimeUserId],
+    [applyGeneratedIntegration, idea, runtimeUserId],
   )
 
   const applyC4ArchitectureState = useCallback((level: C4ArchitectureLevel, analysis: RuntimeC4Analysis) => {
@@ -6666,7 +6745,10 @@ export function IdeaDetailPage() {
         try {
           const api = await getIdeaById(ideaId)
           hydratedIdea = ideaFromApi(api)
-          setIdea(hydratedIdea)
+          if (!cancelled) {
+            setIdea(hydratedIdea)
+            setResolvedIdeaId(hydratedIdea.id)
+          }
         } catch {
           // Keep navigation state or fallback when backlog is unavailable.
         }
@@ -6907,7 +6989,7 @@ export function IdeaDetailPage() {
     [confidence.costBenefit, costBenefitEvidenceItems],
   )
 
-  const brainstormPointer = useIdeaDraftBrainstormPointerStore((state) => state.pointer)
+  const brainstormPointer = useIdeaDraftBrainstormPointerStore((state) => state.pointers.find((item) => item.ideaId === idea.id))
   const brainstormProcessDiagrams = useMemo(
     () => latestRevisedProcessDiagrams(idea.description || ''),
     [idea.description],
@@ -7001,14 +7083,16 @@ export function IdeaDetailPage() {
 
   useEffect(() => {
     if (activePanel !== 'document') return
+    if (resolvedIdeaId !== idea.id) return
     let cancelled = false
     setIdeaDocsLoading(true)
     // Query by idea across workspaces so older documents remain discoverable.
     void listAllDocuments({ idea_id: idea.id, page: 1, page_size: 100 })
       .then((response) => {
         if (cancelled) return
+        // An archived document (a duplicate URD put away) is not one of the idea's documents.
         const linked = response.items.filter(
-          (item) => item.tags.includes(idea.id) || item.metadata?.idea_id === idea.id,
+          (item) => (item.tags.includes(idea.id) || item.metadata?.idea_id === idea.id) && item.status_code !== 'archived',
         )
         // URD/BRD/FSD carry the idea's title. A document still on another title (generated
         // before this rule, or a sync that failed) is put on it once, versioned, then reloaded.
@@ -7063,12 +7147,15 @@ export function IdeaDetailPage() {
         // Best-effort — the Docs table still works with session-generated documents only.
       })
       .finally(() => {
-        if (!cancelled) setIdeaDocsLoading(false)
+        if (!cancelled) {
+          setIdeaDocsLoading(false)
+          setIdeaDocsLoadedScope(`${idea.id}:${idea.workspace ?? ''}`)
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [activePanel, idea.id, idea.title, idea.workspace, ideaDocsReloadKey])
+  }, [activePanel, idea.id, idea.title, idea.workspace, ideaDocsReloadKey, resolvedIdeaId])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -7522,12 +7609,22 @@ export function IdeaDetailPage() {
     [idea.id, idea.project_id, idea.title, idea.workspace, ideaDocsHoldingProjectId],
   )
 
+  const ideaDocsFolderSignature = ideaGeneratedDocs.map((doc) => `${doc.id}:${doc.folder_id}:${doc.project_id}`).sort().join('|')
+
   useEffect(() => {
     if (activePanel !== 'document') return
+    if (ideaDocsLoadedScope !== `${idea.id}:${idea.workspace ?? ''}`) return
+    if (resolvedIdeaId !== idea.id) return
     let cancelled = false
     setIdeaDocFolderInitBusy(true)
     void (async () => {
       try {
+        const existing = await resolveExistingIdeaDocsFolder({ ideaId: idea.id, workspaceId: idea.workspace, documents: ideaGeneratedDocs })
+        if (cancelled) return
+        if (existing) {
+          setIdeaDocFolderStack([{ id: existing.id, name: existing.name }])
+          return
+        }
         const targetProject = await resolveIdeaTargetProject(false)
         if (!targetProject) {
           if (!cancelled) {
@@ -7539,6 +7636,7 @@ export function IdeaDetailPage() {
         const folderId = await ensureProjectDocumentFolder({
           id: targetProject.id,
           name: targetProject.name,
+          workspace_id: targetProject.workspace_id ?? idea.workspace,
         })
         if (!cancelled) {
           setIdeaDocFolderStack([{ id: folderId, name: targetProject.name }])
@@ -7549,7 +7647,9 @@ export function IdeaDetailPage() {
           setIdeaDocSubfolders([])
           addToast({
             title: 'Failed to load idea docs folder',
-            description: error instanceof Error ? error.message : '',
+            description: error instanceof Error && /workspace access forbidden/i.test(error.message)
+              ? 'Project service denied access to this idea workspace. Existing documents remain available; workspace permissions must be checked before creating folders.'
+              : error instanceof Error ? error.message : '',
             variant: 'error',
           })
         }
@@ -7560,7 +7660,9 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [activePanel, addToast, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject])
+  // Folder resolution only changes when a document moves, not when its content or version changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePanel, addToast, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject, ideaDocsLoadedScope, ideaDocsFolderSignature, resolvedIdeaId])
 
   useEffect(() => {
     if (activePanel !== 'document' || !ideaDocCurrentFolder) return
@@ -7611,7 +7713,7 @@ export function IdeaDetailPage() {
         // An idea with no project and no documents yet gets its document container now.
         const targetProject = await resolveIdeaTargetProject(true)
         if (!targetProject) throw new Error('No project available to store the idea folder.')
-        const rootId = await ensureProjectDocumentFolder({ id: targetProject.id, name: targetProject.name })
+        const rootId = await ensureProjectDocumentFolder({ id: targetProject.id, name: targetProject.name, workspace_id: targetProject.workspace_id ?? idea.workspace })
         parentFolder = { id: rootId, name: targetProject.name }
         setIdeaDocFolderStack([parentFolder])
       }
@@ -7621,6 +7723,7 @@ export function IdeaDetailPage() {
         name,
         description: null,
         parent_id: parentFolder.id,
+        workspace_id: idea.workspace ?? null,
         owner_id: session?.user.id || session?.user.email || idea.submittedBy || null,
       })
 
@@ -7645,7 +7748,7 @@ export function IdeaDetailPage() {
     } finally {
       setIdeaDocFolderCreateBusy(false)
     }
-  }, [addToast, idea.submittedBy, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders, resolveIdeaTargetProject])
+  }, [addToast, idea.submittedBy, idea.workspace, ideaDocCurrentFolder, ideaDocFolderCreateBusy, ideaDocSubfolders, resolveIdeaTargetProject])
 
   const handleIdeaDocCreateSubfolder = useCallback(async (parentFolder: DocumentFolder) => {
     if (ideaDocFolderCreateBusy) return
@@ -7663,6 +7766,7 @@ export function IdeaDetailPage() {
         name,
         description: null,
         parent_id: parentFolder.id,
+        workspace_id: parentFolder.workspace_id ?? idea.workspace ?? null,
         owner_id: session?.user.id || session?.user.email || idea.submittedBy || null,
       })
       setIdeaDocSubfolders((prev) => prev.map((folder) => (
@@ -7684,7 +7788,7 @@ export function IdeaDetailPage() {
     } finally {
       setIdeaDocFolderCreateBusy(false)
     }
-  }, [addToast, idea.submittedBy, ideaDocFolderCreateBusy])
+  }, [addToast, idea.submittedBy, idea.workspace, ideaDocFolderCreateBusy])
 
   const handleIdeaDocFolderRenameConfirm = useCallback(async () => {
     if (!ideaDocFolderRenameTarget) return
@@ -7809,6 +7913,7 @@ export function IdeaDetailPage() {
       setIdeaDocGenerateIntakeFollowups(intake.followups)
       setIdeaDocGenerateIntakeOpenPoints(intake.openPoints)
       setIdeaDocGenerateIntakeOpenPointTurns(intake.openPointTurns)
+      setIdeaDocGenerateIntakeOpenPointQuestionKinds(intake.openPointQuestionKinds ?? [])
       setIdeaDocSourceTab('brainstorm')
       setIdeaDocGenerateSource([intake.block, narrative].filter(Boolean).join('\n\n'))
       setIdeaDocSourceMode('preview')
@@ -7950,6 +8055,7 @@ export function IdeaDetailPage() {
       const targetFolderId = ideaDocCurrentFolder?.id ?? await ensureProjectDocumentFolder({
         id: targetProject.id,
         name: targetProject.name,
+        workspace_id: targetProject.workspace_id ?? idea.workspace,
       })
       // The idea's URD/BRD/FSD is one document wherever it is stored: an idea linked to a project
       // after its URD was written keeps that URD in the earlier project, and a regeneration must
@@ -12513,7 +12619,7 @@ export function IdeaDetailPage() {
     ) : null
   }
 
-  const renderSectionReviewWorkspace = (sectionKey: IdeaSectionKey, sectionLabel: string, pendingReason?: string | null) => (
+  const renderSectionReviewWorkspace = (sectionKey: IdeaSectionKey, sectionLabel: string, pendingReason?: string | null, onOpenHistory?: () => void) => (
     <IdeaSectionReviewWorkspace
       ideaId={idea.id}
       ideaTitle={idea.title}
@@ -12529,6 +12635,7 @@ export function IdeaDetailPage() {
       currentContent={getSectionReviewContent(sectionKey)}
       pendingReason={pendingReason}
       ideaOwnerId={idea.submittedBy || null}
+      onOpenHistory={onOpenHistory}
     />
   )
 
@@ -14836,7 +14943,7 @@ export function IdeaDetailPage() {
                             <Button type="button" size="sm" variant="outline" className="h-9 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'reject' }) }}><X className="h-3.5 w-3.5" aria-hidden /> Reject</Button>
                           </div>
                         ) : null}
-                      {renderSectionReviewWorkspace('integration', 'Integration')}
+                      {renderSectionReviewWorkspace('integration', 'Integration', null, () => setIsIntegrationHistoryOpen(true))}
                         <div className="relative">
                           <Button
                             type="button"
@@ -14925,10 +15032,18 @@ export function IdeaDetailPage() {
                       bootstrapKey={integrationBootstrapKey}
                       bootstrapRecord={integrationBootstrapRecord}
                       onPersistGraph={persistIntegrationGraph}
+                      onOpenHistory={() => setIsIntegrationHistoryOpen(true)}
+                      noticeItems={integrationChecks}
                       isGenerating={isIntegrationRefreshing}
                       fillHeight
                       hideStudioHeader
-                      studioOverlay={integrationChecks.length > 0 ? (
+                      studioOverlay={integrationSaveConflict ? (
+                        <div className="max-w-xl rounded-lg border border-rose-200 bg-rose-50/95 px-3 py-2 text-xs text-rose-900 shadow-sm">
+                          <p className="font-semibold">Perubahan tidak disimpan</p>
+                          <p className="mt-1">Diagram ini sudah diubah di tab atau sesi lain. Muat ulang untuk melihat versi terbaru.</p>
+                          <button type="button" className="mt-1 font-semibold underline" onClick={() => window.location.reload()}>Muat ulang</button>
+                        </div>
+                      ) : integrationChecks.length > 0 ? (
                         <div className="max-w-xl rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow-sm">
                           <p className="font-semibold">Perlu dicek ({integrationChecks.length})</p>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
@@ -14937,6 +15052,16 @@ export function IdeaDetailPage() {
                           {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
                         </div>
                       ) : null}
+                    />
+                    <DiagramHistoryDialog
+                      open={isIntegrationHistoryOpen}
+                      onOpenChange={setIsIntegrationHistoryOpen}
+                      ideaId={idea.id}
+                      diagramKey="integration"
+                      title="ArchiMate Integration"
+                      reviewHistory={runtimeIntegrationAnalysis.architectureReview?.history ?? []}
+                      resolveName={resolveIdentityDisplayName}
+                      onRestore={restoreIntegrationVersion}
                     />
                   </div>
                 </div>
@@ -16259,7 +16384,7 @@ export function IdeaDetailPage() {
                                         <div>
                                           <h3 className="!mt-0 !text-base font-semibold text-foreground">Brainstorming</h3>
                                           <p className="text-xs text-muted-foreground">
-                                            The proposer's confirmed answers and the AI's follow-up questions, in the order they were asked.
+                                            The proposer's confirmed answers and questions from the brainstorm, labelled by their original question type and shown in the order they were asked.
                                           </p>
                                         </div>
                                         <IdeaIntakeAnswerList
@@ -16267,6 +16392,7 @@ export function IdeaDetailPage() {
                                           followups={ideaDocGenerateIntakeFollowups}
                                           openPoints={ideaDocGenerateIntakeOpenPoints}
                                           openPointTurns={ideaDocGenerateIntakeOpenPointTurns}
+                                          openPointQuestionKinds={ideaDocGenerateIntakeOpenPointQuestionKinds}
                                           disabled={ideaDocGenerateBusy}
                                           onSave={saveIdeaDocIntakeAnswer}
                                         />

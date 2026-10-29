@@ -174,7 +174,7 @@ export function resolveTemplateWorkspaceId(
   if (typeof metaWs === 'string' && metaWs.trim()) return metaWs.trim()
 
   const title = template.name?.trim() || template.latest_file_name?.trim() || ''
-  const segmentMatch = title.match(/^(?:BRD|URD|FSD|TPL)_([A-Za-z0-9]+)_/i)
+  const segmentMatch = title.match(/^[A-Za-z]{2,6}_([A-Za-z0-9]+)_/)
   if (!segmentMatch || !workspaceCandidates?.length) return null
 
   const segment = segmentMatch[1].toLowerCase()

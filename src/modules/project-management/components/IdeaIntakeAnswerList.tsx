@@ -6,22 +6,43 @@ import type { IdeaIntakeAnswer, IdeaIntakeFollowup } from '@/lib/api/tectonaAgen
 import { cn } from '@/lib/utils'
 import { brainstormIntakeOrder } from '@/modules/project-management/lib/brainstormIntakeOrder'
 
-// The AI's follow-ups are told apart from the mandatory questions by colour (and an indent).
-const FOLLOWUP_CARD = 'border-violet-200/80 bg-violet-50/50 dark:border-violet-500/30 dark:bg-violet-500/[0.07]'
-const FOLLOWUP_LABEL = 'text-violet-700 dark:text-violet-300'
+function followupPresentation(kind: IdeaIntakeFollowup['question_kind']) {
+  if (kind === 'challenge') return {
+    label: 'Challenge Question',
+    card: 'border-amber-200/80 bg-amber-50/50 dark:border-amber-500/30 dark:bg-amber-500/[0.07]',
+    text: 'text-amber-800 dark:text-amber-300',
+    swatch: 'border-amber-300 bg-amber-100 dark:border-amber-500/50 dark:bg-amber-500/20',
+  }
+  if (kind === 'extended') return {
+    label: 'Extended Question',
+    card: 'border-violet-200/80 bg-violet-50/50 dark:border-violet-500/30 dark:bg-violet-500/[0.07]',
+    text: 'text-violet-800 dark:text-violet-300',
+    swatch: 'border-violet-300 bg-violet-100 dark:border-violet-500/50 dark:bg-violet-500/20',
+  }
+  return {
+    label: 'Additional Question',
+    card: 'border-border/80 bg-muted/20',
+    text: 'text-muted-foreground',
+    swatch: 'border-border bg-muted/40',
+  }
+}
 
-function FollowupCard({ question, answer }: { question: string; answer: string | null }) {
+function FollowupCard({ question, answer, questionKind }: {
+  question: string; answer: string | null; questionKind?: IdeaIntakeFollowup['question_kind']
+}) {
+  const presentation = followupPresentation(questionKind)
   return (
     <article
       className={cn(
         'grid gap-2 rounded-lg border p-3 sm:ml-5 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] sm:gap-4',
-        answer === null ? 'border-dashed border-violet-300/80 bg-background dark:border-violet-500/40' : FOLLOWUP_CARD,
+        presentation.card,
+        answer === null && 'border-dashed bg-background',
       )}
     >
       <div>
-        <p className={cn('mb-1 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em]', FOLLOWUP_LABEL)}>
+        <p className={cn('mb-1 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em]', presentation.text)}>
           <Sparkles className="h-3 w-3" aria-hidden />
-          AI follow-up
+          {presentation.label}
         </p>
         <p className="text-sm leading-5 text-foreground">{question}</p>
       </div>
@@ -35,7 +56,7 @@ function FollowupCard({ question, answer }: { question: string; answer: string |
           </>
         ) : (
           <>
-            <p className={cn('mb-1 text-[10px] font-semibold uppercase tracking-[0.12em]', FOLLOWUP_LABEL)}>Answer</p>
+            <p className={cn('mb-1 text-[10px] font-semibold uppercase tracking-[0.12em]', presentation.text)}>Answer</p>
             <p className="whitespace-pre-wrap text-sm leading-5 text-foreground/90">{answer}</p>
           </>
         )}
@@ -56,6 +77,7 @@ export function IdeaIntakeAnswerList({
   followups = [],
   openPoints = [],
   openPointTurns = [],
+  openPointQuestionKinds = [],
   disabled,
   onSave,
 }: {
@@ -64,6 +86,7 @@ export function IdeaIntakeAnswerList({
   /** Follow-ups skipped in the brainstorm, and the message that asked each. */
   openPoints?: string[]
   openPointTurns?: Array<number | null>
+  openPointQuestionKinds?: Array<IdeaIntakeFollowup['question_kind']>
   disabled: boolean
   /** Saves the answer; rejects with a readable error. */
   onSave: (itemId: string, answer: string) => Promise<void>
@@ -97,7 +120,12 @@ export function IdeaIntakeAnswerList({
   }
 
   const pending = answers.filter((item) => item.needs_review).length
-  const entries = brainstormIntakeOrder(answers, followups, openPoints, openPointTurns)
+  const entries = brainstormIntakeOrder(answers, followups, openPoints, openPointTurns, openPointQuestionKinds)
+  const legend = new Map(entries.flatMap((entry) => {
+    if (entry.kind === 'answer') return []
+    const presentation = followupPresentation(entry.kind === 'followup' ? entry.item.question_kind : entry.questionKind)
+    return [[presentation.label, presentation] as const]
+  }))
 
   return (
     <div className="space-y-2">
@@ -114,21 +142,23 @@ export function IdeaIntakeAnswerList({
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <span aria-hidden className="h-2.5 w-2.5 rounded-sm border border-border bg-muted/40" />
-            Mandatory question
+            Mandatory Question
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span aria-hidden className="h-2.5 w-2.5 rounded-sm border border-violet-300 bg-violet-100 dark:border-violet-500/50 dark:bg-violet-500/20" />
-            AI follow-up
-          </span>
+          {[...legend.values()].map((presentation) => (
+            <span key={presentation.label} className="inline-flex items-center gap-1.5">
+              <span aria-hidden className={cn('h-2.5 w-2.5 rounded-sm border', presentation.swatch)} />
+              {presentation.label}
+            </span>
+          ))}
           <span>In the order the brainstorm asked them.</span>
         </p>
       ) : null}
       {entries.map((entry, entryIndex) => {
         if (entry.kind === 'followup') {
-          return <FollowupCard key={`f-${entryIndex}-${entry.item.question}`} question={entry.item.question} answer={entry.item.answer} />
+          return <FollowupCard key={`f-${entryIndex}-${entry.item.question}`} question={entry.item.question} answer={entry.item.answer} questionKind={entry.item.question_kind} />
         }
         if (entry.kind === 'skipped') {
-          return <FollowupCard key={`s-${entryIndex}-${entry.question}`} question={entry.question} answer={null} />
+          return <FollowupCard key={`s-${entryIndex}-${entry.question}`} question={entry.question} answer={null} questionKind={entry.questionKind} />
         }
         const item = entry.item
         const editing = editingId === item.id
@@ -144,7 +174,7 @@ export function IdeaIntakeAnswerList({
             )}
           >
             <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Question</p>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Mandatory Question</p>
               <p className="text-sm leading-5 text-foreground">{item.question}</p>
             </div>
             <div className="sm:border-l sm:border-border/70 sm:pl-4">

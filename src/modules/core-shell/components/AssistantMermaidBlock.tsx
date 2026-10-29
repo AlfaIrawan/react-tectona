@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import {
   flowchartPreviewHeight,
 } from '@/modules/core-shell/components/AssistantFlowchartCanvas'
 import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
+import { diagramScrollSurface, fittedDiagramSize } from '@/modules/core-shell/components/diagramFullscreenFrame'
 import { cn } from '@/lib/utils'
 
 type AssistantMermaidBlockProps = {
@@ -18,6 +19,8 @@ type AssistantMermaidBlockProps = {
   className?: string
   /** `bpmn`: BPMN 2.0 notation, the same renderer as the Idea Diagram section. */
   notation?: ProcessDiagramNotation
+  /** Fit a thumbnail in a narrow panel; the fullscreen viewer keeps the original resolution. */
+  compact?: boolean
 }
 
 /** Smallest scale a BPMN diagram is shown at in a message; wider ones scroll sideways. */
@@ -205,10 +208,16 @@ type MermaidFullscreenModalProps = {
 }
 
 function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }: MermaidFullscreenModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [panning, setPanning] = useState(false)
   const [natural, setNatural] = useState({ width: 0, height: 0 })
+  const [viewport, setViewport] = useState({ width: 0, height: 0 })
+  const fitted = fittedDiagramSize(natural, viewport, zoom)
+  const surface = fitted ? diagramScrollSurface(fitted, viewport) : null
 
   const centerScroll = useCallback(() => {
     const el = scrollerRef.current
@@ -218,35 +227,54 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
   }, [])
 
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null
+    modalRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    return () => previousFocus?.focus()
+  }, [])
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
+      if (event.key === 'Tab') {
+        const controls = [...(modalRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex="0"]') ?? [])]
+        const first = controls[0], last = controls.at(-1)
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
   useEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const measure = () => setViewport({ width: el.clientWidth, height: el.clientHeight })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [children, imageUrl, svgHtml])
+
+  useEffect(() => {
     if (!canvasRef.current || imageUrl || !svgHtml) return
     canvasRef.current.innerHTML = svgHtml
     const svg = canvasRef.current.querySelector('svg')
     if (!(svg instanceof SVGSVGElement)) return
-    const size = measureSvgNaturalSize(svg)
-    setNatural(size)
+    setNatural(measureSvgNaturalSize(svg))
     svg.style.display = 'block'
     svg.style.maxWidth = 'none'
-    svg.style.width = `${size.width}px`
-    svg.style.height = `${size.height}px`
   }, [svgHtml, imageUrl])
 
   useEffect(() => {
     const svg = canvasRef.current?.querySelector('svg')
-    if (svg instanceof SVGSVGElement && natural.width > 0) {
-      svg.style.width = `${natural.width * zoom}px`
-      svg.style.height = `${natural.height * zoom}px`
+    if (svg instanceof SVGSVGElement && fitted) {
+      svg.style.width = `${fitted.width}px`
+      svg.style.height = `${fitted.height}px`
     }
     const frame = window.requestAnimationFrame(centerScroll)
     return () => window.cancelAnimationFrame(frame)
-  }, [centerScroll, imageUrl, natural.height, natural.width, zoom])
+  }, [centerScroll, fitted?.width, fitted?.height])
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(source)
@@ -257,7 +285,27 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
     })
   }
 
-  const imageWidth = natural.width > 0 ? natural.width * zoom : undefined
+  const onPanStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    const el = scrollerRef.current
+    if (!el) return
+    dragRef.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop }
+    setPanning(true)
+    el.setPointerCapture(event.pointerId)
+  }
+
+  const onPanMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = dragRef.current
+    const el = scrollerRef.current
+    if (!start || !el) return
+    el.scrollLeft = start.left - (event.clientX - start.x)
+    el.scrollTop = start.top - (event.clientY - start.y)
+  }
+
+  const onPanEnd = () => {
+    dragRef.current = null
+    setPanning(false)
+  }
 
   return createPortal(
     <div
@@ -266,9 +314,10 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
       role="presentation"
     >
       <div
-        className="flex max-h-[94vh] w-full max-w-[min(96vw,1200px)] flex-col overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-2xl dark:border-[#3b4a54] dark:bg-[#111b21]"
+        className="flex h-[94vh] max-h-[94vh] w-full max-w-[min(96vw,1200px)] flex-col overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-2xl dark:border-[#3b4a54] dark:bg-[#111b21]"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
+        ref={modalRef}
         aria-modal="true"
         aria-label="Fullscreen diagram"
       >
@@ -296,17 +345,25 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
         {children ? (
           <div className="min-h-0 flex-1 overflow-hidden p-2">{children}</div>
         ) : (
-        <div ref={scrollerRef} className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 sm:p-6">
-          <div className="flex min-h-full w-full min-w-full items-center justify-center">
+        <div
+          ref={scrollerRef}
+          className={cn('min-h-0 flex-1 overflow-auto', panning ? 'cursor-grabbing' : 'cursor-grab')}
+          onPointerDown={onPanStart}
+          onPointerMove={onPanMove}
+          onPointerUp={onPanEnd}
+          onPointerCancel={onPanEnd}
+        >
+          <div
+            className="flex items-center justify-center"
+            style={surface ? { width: surface.width, height: surface.height } : { width: '100%', height: '100%' }}
+          >
             {imageUrl ? (
               <img
                 src={imageUrl}
                 alt="Diagram proses bisnis BPMN"
-                className="mx-auto block h-auto shrink-0"
-                style={{
-                  width: zoom <= 1 ? '100%' : imageWidth,
-                  maxWidth: zoom <= 1 ? '100%' : 'none',
-                }}
+                draggable={false}
+                className="block shrink-0 select-none"
+                style={fitted ? { width: fitted.width, height: fitted.height, maxWidth: 'none' } : { maxWidth: '100%', height: 'auto' }}
                 onLoad={(event) => {
                   setNatural({
                     width: event.currentTarget.naturalWidth,
@@ -315,7 +372,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
                 }}
               />
             ) : (
-              <div ref={canvasRef} className="mx-auto flex w-full justify-center [&_svg]:mx-auto [&_svg]:block" />
+              <div ref={canvasRef} className="flex shrink-0 justify-center [&_svg]:block" />
             )}
           </div>
         </div>
@@ -371,7 +428,7 @@ async function renderMermaidSvg(source: string, reactId: string): Promise<{ svg:
   throw new Error('Diagram could not be rendered')
 }
 
-export function AssistantMermaidBlock({ source, className, notation = 'plantuml' }: AssistantMermaidBlockProps) {
+export function AssistantMermaidBlock({ source, className, notation = 'plantuml', compact = false }: AssistantMermaidBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const reactId = useId().replace(/:/g, '')
   const [svgHtml, setSvgHtml] = useState<string | null>(null)
@@ -401,7 +458,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
         ? source
         : cleanedSource
   const showFlowchart = canRenderAssistantFlowchart(flowchartSource)
-  const flowHeight = showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
+  const flowHeight = compact ? 160 : showFlowchart ? flowchartPreviewHeight(flowchartSource) : previewHeight
   const isEmptyPlaceholder = useMemo(() => isEmptyProcessPlaceholder(source), [source])
 
   useEffect(() => {
@@ -589,11 +646,12 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
               src={bpmnUrl}
               alt={drawnNotation === 'bpmn' ? 'Diagram proses bisnis BPMN' : 'Diagram proses bisnis PlantUML'}
               className={cn(
-                'max-h-[min(70vh,640px)] object-contain',
-                bpmnImageWidth ? 'max-w-none' : 'mx-auto w-auto max-w-full',
+                compact ? 'h-[140px] w-auto max-w-full object-contain' : 'max-h-[min(70vh,640px)] object-contain',
+                !compact && bpmnImageWidth ? 'max-w-none' : 'mx-auto w-auto max-w-full',
               )}
-              style={bpmnImageWidth ? { width: bpmnImageWidth, maxHeight: 'none' } : undefined}
+              style={!compact && bpmnImageWidth ? { width: bpmnImageWidth, maxHeight: 'none' } : undefined}
               onLoad={(event) => {
+                if (compact) { setBpmnImageWidth(null); return }
                 const height = event.currentTarget.naturalHeight
                 const width = event.currentTarget.naturalWidth
                 const host = (event.currentTarget.parentElement?.clientWidth || 480) - 24
@@ -620,7 +678,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
               '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
               !svgHtml && 'min-h-[120px] animate-pulse bg-slate-50/80 dark:bg-slate-900/40',
             )}
-            style={{ height: previewHeight }}
+            style={{ height: compact ? 160 : previewHeight }}
             aria-label="Diagram or chart"
             aria-busy={!svgHtml}
           />

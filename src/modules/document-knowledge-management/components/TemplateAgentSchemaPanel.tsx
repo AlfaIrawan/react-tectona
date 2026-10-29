@@ -119,11 +119,11 @@ function prefixCorrectionForSchema(
   const desiredPrefix = prefixByKind[schema.document_kind ?? '']
   if (!desiredPrefix) return {}
 
+  // Only the generic TPL prefix is replaced: a type the author named (SRD, BRD, …) is never
+  // overwritten by the analysis' guess.
   const replacePrefix = (value: string | null | undefined, separator: '_' | '-'): string | undefined => {
     if (!value?.trim()) return undefined
-    const pattern = separator === '_'
-      ? /^(BRD|URD|FSD|TPL)(?=_)/i
-      : /^(brd|urd|fsd|tpl)(?=-)/i
+    const pattern = separator === '_' ? /^TPL(?=_)/i : /^tpl(?=-)/i
     const replacement = separator === '_' ? desiredPrefix : desiredPrefix.toLowerCase()
     return pattern.test(value) ? value.replace(pattern, replacement) : value
   }

@@ -29,6 +29,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { createDiagramAiDraftAudit, listDiagramAiDraftAudit, type DiagramAiDraftAuditApi } from '@/lib/api/ideaBacklogApi'
 import { requestOpenIdeaDiscussChat } from '@/stores/chat-navigation-store'
+import { useChatPanelStore } from '@/stores/chat-panel-store'
+import { useIdeaDiscussChatStore } from '@/stores/idea-discuss-chat-store'
 import {
   chatAuditDraftSummary,
   chatAuditLabel,
@@ -121,8 +123,14 @@ type EditableIntegrationArchitectureCanvasProps = {
   studioTitle?: string
   /** When true, outer page shell owns the panel title (Project List style header). */
   hideStudioHeader?: boolean
-  /** Persists user edits to the idea record after the local canvas cache is updated. */
-  onPersistGraph?: (graph: IntegrationGraphRecord) => void
+  /** Persists user edits to the idea record after the local canvas cache is updated; `change`
+   *  says what made it (an Ask Gen AI draft), for the diagram history. */
+  onPersistGraph?: (graph: IntegrationGraphRecord, change?: IntegrationGraphChange) => void
+  /** Opens the diagram history ("Riwayat") kept by the page, in place of the AI draft log. */
+  onOpenHistory?: () => void
+  /** The view's checks ("Perlu dicek"): when a view loads with checks this viewer has not been
+   *  told about, the diagram chat opens by itself and tells them, with solutions. */
+  noticeItems?: string[]
   /** Key for the Idea page's Export menu and the AI diagram drafts ("integration"). */
   diagramKey?: string
 }
@@ -148,6 +156,8 @@ function archimateRelationEdge(id: string, source: string, target: string, label
   }
 }
 
+export type IntegrationGraphChange = { source: 'manual_edit' | 'ai_chat'; note?: string }
+
 function EditableIntegrationArchitectureCanvasInner({
   ideaId,
   bootstrapKey = 0,
@@ -159,6 +169,8 @@ function EditableIntegrationArchitectureCanvasInner({
   studioTitle = 'Integration diagram',
   hideStudioHeader = false,
   onPersistGraph,
+  onOpenHistory,
+  noticeItems,
   diagramKey = 'integration',
 }: EditableIntegrationArchitectureCanvasProps) {
   const exportName = `archimate-${diagramKey}`
@@ -167,6 +179,8 @@ function EditableIntegrationArchitectureCanvasInner({
   const sourceApplyTimerRef = useRef<number | null>(null)
   const plantumlSourceRef = useRef('')
   const skipNextSaveRef = useRef(false)
+  // What made the next saved change (an Ask Gen AI draft); a plain edit when unset.
+  const nextChangeRef = useRef<IntegrationGraphChange | null>(null)
   const skipSourceApplyRef = useRef(true)
   const reactFlowWrapperRef = useRef<HTMLDivElement | null>(null)
   const canvasZoneRef = useRef<HTMLDivElement | null>(null)
@@ -286,7 +300,9 @@ function EditableIntegrationArchitectureCanvasInner({
         snapToGrid,
       }
       saveIntegrationGraph(ideaId, graph)
-      onPersistGraph?.(graph)
+      const change = nextChangeRef.current ?? undefined
+      nextChangeRef.current = null
+      onPersistGraph?.(graph, change)
     },
     [ideaId, onPersistGraph, snapToGrid],
   )
@@ -1477,7 +1493,7 @@ function EditableIntegrationArchitectureCanvasInner({
     if (isChatAuditOpen) void loadChatAudit()
   }, [isChatAuditOpen, loadChatAudit])
 
-  const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>) => {
+  const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>, notice?: string[]) => {
     const titleOf = (item: Node<ArchimateNodeData> | undefined) =>
       item && (item.data.kind === 'element' || item.data.kind === 'boundary' || item.data.kind === 'note') ? item.data.title : item?.id ?? ''
     const elementLines = nodes
@@ -1504,9 +1520,37 @@ function EditableIntegrationArchitectureCanvasInner({
         `Connections (ID | source -> target | label):\n${connectionLines.join('\n') || '(none)'}`,
         `Current ArchiMate PlantUML source:\n${plantumlSourceRef.current.slice(0, 8000)}`,
       ].filter(Boolean).join('\n\n'),
+      ...(notice?.length ? { noticeItems: notice } : {}),
     })
     setCanvasMenu(null)
   }, [diagramKey, edges, ideaId, nodes])
+
+  // Checks present when a view loads (opened, generated, restored), not ones that appear while
+  // editing (a new element is unrelated until it is connected): told once per set of checks.
+  const openDiagramChatRef = useRef(openDiagramChat)
+  openDiagramChatRef.current = openDiagramChat
+  const noticeItemsRef = useRef(noticeItems)
+  noticeItemsRef.current = noticeItems
+  useEffect(() => {
+    if (!fillHeight || isGenerating) return
+    const timer = window.setTimeout(() => {
+      const items = noticeItemsRef.current ?? []
+      if (!items.length) return
+      const chatBinding = useIdeaDiscussChatStore.getState().binding
+      // An open chat on another conversation is not taken over; the checks are told next time.
+      if (useChatPanelStore.getState().open && chatBinding?.ideaId !== ideaId) return
+      const key = `tectona-diagram-notice:${ideaId}:${diagramKey}`
+      const signature = [...items].sort().join('|')
+      try {
+        if (localStorage.getItem(key) === signature) return
+        localStorage.setItem(key, signature)
+      } catch {
+        return
+      }
+      openDiagramChatRef.current(undefined, items)
+    }, 2000)
+    return () => window.clearTimeout(timer)
+  }, [bootstrapKey, diagramKey, fillHeight, ideaId, isGenerating])
 
   useEffect(() => {
     const receiveDraft = (event: Event) => {
@@ -1605,6 +1649,7 @@ function EditableIntegrationArchitectureCanvasInner({
       }
     })
     const before = { nodes, edges }
+    nextChangeRef.current = { source: 'ai_chat', note: chatAuditDraftSummary({ ...pendingChatDraft }) ?? undefined }
     const appliedNodes = nextNodes.map((node) => ({ ...node, selected: false }))
     const appliedEdges = nextEdges.map((edge) => ({ ...edge, selected: false }))
     markCustomized()
@@ -1629,6 +1674,8 @@ function EditableIntegrationArchitectureCanvasInner({
 
   const undoLastChatDraft = useCallback(() => {
     if (!lastAppliedChatDraft) return
+    const undone = chatAuditDraftSummary({ ...lastAppliedChatDraft.draft })
+    nextChangeRef.current = { source: 'ai_chat', note: undone ? `Undo: ${undone}` : 'Undo draft AI' }
     markCustomized()
     setNodes(lastAppliedChatDraft.before.nodes)
     setEdges(lastAppliedChatDraft.before.edges)
@@ -2103,8 +2150,8 @@ function EditableIntegrationArchitectureCanvasInner({
           {chatAuditWriteError ? (
             <span className="pointer-events-auto rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">{chatAuditWriteError}</span>
           ) : null}
-          <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={() => setIsChatAuditOpen(true)}>
-            <History className="h-3.5 w-3.5" /> AI history
+          <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={() => (onOpenHistory ? onOpenHistory() : setIsChatAuditOpen(true))}>
+            <History className="h-3.5 w-3.5" /> {onOpenHistory ? 'Riwayat' : 'AI history'}
           </Button>
           {lastAppliedChatDraft ? (
             <Button type="button" size="sm" variant="outline" className="pointer-events-auto h-7 gap-1.5 bg-white text-xs" onClick={undoLastChatDraft}>
