@@ -11,6 +11,8 @@ import { createPortal } from 'react-dom'
 import { Archive, AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Save, Search, Send, Shield, Users, X } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
+import { ExplainerMailboxConnectors } from '@/modules/document-knowledge-management/components/ExplainerMailboxConnectors'
+import { type WorkspaceMailConnector } from '@/lib/api/mailApi'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
@@ -37,6 +39,7 @@ import {
   type DocumentResponse,
   type ExplainerAccessGrant,
   type ExplainerAssistant,
+  type ExplainerMailbox,
   type ExplainerAssistantAvatar,
   type ExplainerAssistantRevision,
   type ExplainerCharacter,
@@ -123,6 +126,17 @@ interface DraftState {
   chatLimitScopes: ExplainerChatLimitScope[]
   character: ExplainerCharacter
   fallback: ExplainerFallback
+  mailConnectorId: string
+  mailFromAddress: string
+  mailFromName: string
+}
+
+function mailboxFromDraft(draft: Pick<DraftState, 'mailConnectorId' | 'mailFromAddress' | 'mailFromName'>): ExplainerMailbox {
+  return {
+    connector_id: draft.mailConnectorId.trim(),
+    from_address: draft.mailFromAddress.trim(),
+    from_name: draft.mailFromName.trim(),
+  }
 }
 
 const EMPTY_FALLBACK: ExplainerFallback = {
@@ -148,6 +162,9 @@ const EMPTY_DRAFT: DraftState = {
   chatLimitScopes: [],
   character: 'polite',
   fallback: EMPTY_FALLBACK,
+  mailConnectorId: '',
+  mailFromAddress: '',
+  mailFromName: '',
 }
 
 const CHAT_LIMIT_MODE_OPTIONS: Array<{ mode: 'general' | 'scoped'; label: string }> = [
@@ -464,6 +481,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
   ref: Ref<ExplainerAssistantsPanelHandle>,
 ) {
   const [assistants, setAssistants] = useState<ExplainerAssistant[]>([])
+  const [mailConnectors, setMailConnectors] = useState<WorkspaceMailConnector[]>([])
   const [folders, setFolders] = useState<DocumentFolder[]>([])
   const [documents, setDocuments] = useState<DocumentResponse[]>([])
   const [loading, setLoading] = useState(false)
@@ -861,6 +879,9 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           ? assistant.character
           : 'polite',
       fallback: fallbackFromAssistant(assistant),
+      mailConnectorId: assistant.mailbox?.connector_id ?? '',
+      mailFromAddress: assistant.mailbox?.from_address ?? '',
+      mailFromName: assistant.mailbox?.from_name ?? '',
     })
     setSaveError(null)
     setCorpusQuery('')
@@ -1228,6 +1249,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           chat_limit_scopes: scopedChatLimit ? draft.chatLimitScopes : [],
           character: draft.character,
           fallback: fallbackPayload,
+          mailbox: mailboxFromDraft(draft),
           version: draft.version ?? undefined,
         })
       } else {
@@ -1243,6 +1265,7 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
           chat_limit_scopes: scopedChatLimit ? draft.chatLimitScopes : [],
           character: draft.character,
           fallback: fallbackPayload,
+          mailbox: mailboxFromDraft(draft),
         })
       }
       setDrawerOpen(false)
@@ -1310,6 +1333,10 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
             </p>
           </div>
         </div>
+
+        {workspaceId ? (
+          <ExplainerMailboxConnectors workspaceId={workspaceId} onConnectors={setMailConnectors} />
+        ) : null}
 
         {error ? (
           <div className="shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -2267,6 +2294,42 @@ export const ExplainerAssistantsPanel = forwardRef(function ExplainerAssistantsP
                             </button>
                           )
                         })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Sender mailbox</Label>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        Choose a workspace mailbox. The password is not stored on this assistant.
+                      </p>
+                      <select
+                        aria-label="Sender mailbox"
+                        value={draft.mailConnectorId}
+                        onChange={(event) => {
+                          const connector = mailConnectors.find((item) => item.id === event.target.value)
+                          setDraft((prev) => ({
+                            ...prev,
+                            mailConnectorId: event.target.value,
+                            mailFromAddress: connector?.from_address ?? prev.mailFromAddress,
+                            mailFromName: connector?.from_name || prev.mailFromName,
+                          }))
+                        }}
+                        className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"
+                      >
+                        <option value="">No mailbox</option>
+                        {mailConnectors.map((item) => (
+                          <option key={item.id} value={item.id}>{item.name} · {item.from_address}</option>
+                        ))}
+                      </select>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label className="space-y-1">
+                          <span className="text-[11px] text-muted-foreground">From address</span>
+                          <Input value={draft.mailFromAddress} onChange={(event) => setDraft((prev) => ({ ...prev, mailFromAddress: event.target.value }))} />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[11px] text-muted-foreground">From name</span>
+                          <Input value={draft.mailFromName} onChange={(event) => setDraft((prev) => ({ ...prev, mailFromName: event.target.value }))} />
+                        </label>
                       </div>
                     </div>
 

@@ -48,6 +48,7 @@ import { cn } from '@/lib/utils'
 import { enterpriseControlFocusClass, enterprisePrimarySolidButtonClass, enterpriseSecondaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import { CanvasViewportGrid, CanvasViewportRulers } from '@/modules/project-management/components/CanvasViewportRulers'
 import { listExplainerAssistants, type ExplainerAssistant } from '@/lib/api/documentKnowledgeApi'
+import { listWorkspaceMailConnectors, type WorkspaceMailConnector } from '@/lib/api/mailApi'
 import { getSession } from '@/auth/authService'
 import {
   createAgentWorkflow,
@@ -323,6 +324,7 @@ function AgentWorkflowStudioInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
   const [catalog, setCatalog] = useState<AgentCatalogEntryDto[]>([])
   const [explainerAssistants, setExplainerAssistants] = useState<ExplainerAssistant[]>([])
+  const [mailConnectors, setMailConnectors] = useState<WorkspaceMailConnector[]>([])
   const [workflows, setWorkflows] = useState<AgentWorkflowSummaryDto[]>([])
   const [isPublished, setIsPublished] = useState(false)
   const [workflowId, setWorkflowId] = useState<string | null>(null)
@@ -495,14 +497,19 @@ function AgentWorkflowStudioInner({
     const assistantRequest = workspaceId
       ? listExplainerAssistants({ workspaceId, pageSize: 200 }).catch(() => ({ assistants: [], total: 0, page: 1, page_size: 200 }))
       : Promise.resolve({ assistants: [], total: 0, page: 1, page_size: 200 })
-    const [agents, definitions, assistantResponse] = await Promise.all([
+    const connectorRequest = workspaceId
+      ? listWorkspaceMailConnectors(workspaceId).catch(() => [])
+      : Promise.resolve([])
+    const [agents, definitions, assistantResponse, connectors] = await Promise.all([
       listAgentCatalog(workspaceId ?? undefined),
       listAgentWorkflows(workspaceId ?? undefined),
       assistantRequest,
+      connectorRequest,
     ])
     setCatalog(agents)
     setWorkflows(definitions)
     setExplainerAssistants(assistantResponse.assistants)
+    setMailConnectors(connectors)
   }, [workspaceId])
 
   const graph = useCallback(() => ({ nodes, edges }), [nodes, edges])
@@ -1091,6 +1098,18 @@ function AgentWorkflowStudioInner({
                       <>
                         <label className="block text-[11px] font-medium text-slate-600">Recipient / destination</label>
                         <Input className="h-10 rounded-xl px-3 text-sm" value={selected.data.config.target ?? ''} onChange={(event) => updateSelected({ config: { ...selected.data.config, target: event.target.value } })} placeholder="Member ID, group ID, or email address" />
+                        {selected.data.config.action_code === 'send_customer_email' || selected.data.config.action_code === 'send_member_email' ? (
+                          <>
+                            <label className="block text-[11px] font-medium text-slate-600">Sender mailbox</label>
+                            <select value={selected.data.config.mail_connector_id ?? ''} onChange={(event) => updateSelected({ config: { ...selected.data.config, mail_connector_id: event.target.value } })} className={INSPECTOR_CONTROL_CLASS}>
+                              <option value="">Use the assistant mailbox</option>
+                              {mailConnectors.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name} · {item.from_address}</option>
+                              ))}
+                            </select>
+                            <p className="text-[11px] leading-relaxed text-slate-500">Leave this on the assistant mailbox unless this step must send from a different connector. The SMTP password is not stored in the workflow.</p>
+                          </>
+                        ) : null}
                       </>
                     ) : null}
                     <label className="block text-[11px] font-medium text-slate-600">Request title</label>
