@@ -104,7 +104,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
-import { BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
+import { BrainstormDecisionNote, BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
@@ -1372,6 +1372,12 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
       </div> : null}
       {hasSummary && rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
       <BrainstormCatalogComparison matches={message.catalog_matches} mode={message.catalog_mode} status={message.catalog_status} indonesian={indonesian} />
+      {message.decision_text ? (
+        <BrainstormDecisionNote
+          title={message.decision_label || (indonesian ? 'Batasan fase' : 'Phase scope')}
+          text={message.decision_text}
+        />
+      ) : null}
       {question ? (
         <div className={kind?.text}>
           <p className="my-3 font-semibold">{question}</p>

@@ -77,6 +77,18 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
   )
 }
 
+/** One decision waiting for confirmation, such as a phase boundary. */
+export function BrainstormDecisionNote({ title, text }: { title: string; text: string }) {
+  const body = text.trim()
+  if (!body) return null
+  return (
+    <div className="my-2 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-950/40">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">{title}</p>
+      <AssistantChatMarkdown content={body} className="mt-1 text-[13px] leading-6 text-slate-900 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 dark:text-slate-50" />
+    </div>
+  )
+}
+
 /** The sentence a correction changed. Separate from the numbered understanding. */
 export function BrainstormRevisionNote({ text, indonesian }: { text: string; indonesian: boolean }) {
   const body = text.trim()

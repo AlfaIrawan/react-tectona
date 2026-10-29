@@ -613,6 +613,9 @@ export interface IdeaDraftBrainstormMessage {
   summary?: string | null
   /** The sentence a correction just changed, shown as Revisi beside the full understanding. */
   revision_text?: string | null
+  /** A decision waiting for confirmation, shown under its own title instead of the understanding summary. */
+  decision_label?: string | null
+  decision_text?: string | null
   /** What the reply asks: a mandatory question, a challenge (sub-question) or an extended question after the intake. */
   question_kind?: 'mandatory' | 'challenge' | 'extended' | 'confirm' | null
   question_text?: string | null
