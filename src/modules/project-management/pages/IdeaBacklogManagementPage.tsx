@@ -1323,10 +1323,12 @@ function activeExtendedQuestionFocus(
 
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
  *  extended question badged and coloured. The text itself is the server's, unchanged. */
-function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [] }: {
+function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [], followupWhileMandatory = false }: {
   message: IdeaDraftBrainstormMessage; indonesian: boolean
   onConfirm?: (choice: string) => Promise<void> | void; disabled?: boolean
   diagrams?: SummaryDiagramAttachment[]
+  /** The latest reply is a sub-question while a mandatory question is still open. */
+  followupWhileMandatory?: boolean
 }) {
   const hideInternalNote = (value: string) => value
     .replace(/\n*Detail tambahan tetap tersimpan dalam jawaban brainstorming\./g, '')
@@ -1338,15 +1340,18 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   const at = summary ? text.indexOf(summary) : -1
   const before = at >= 0 ? text.slice(0, at).trim() : ''
   const after = at >= 0 ? text.slice(at + summary.length).trim() : ''
-  const kind = brainstormQuestionKind(message)
+  const recordedKind = brainstormQuestionKind(message)
   // The closing question is the last paragraph when it asks something (and is not a diagram).
   let rest = at >= 0 ? after : text
   let question = ''
-  if (kind || message.question_kind === 'mandatory' || message.question_text) {
+  if (recordedKind || followupWhileMandatory || message.question_kind === 'mandatory' || message.question_text) {
     const split = splitBrainstormQuestion(rest, message.question_text)
     question = split.question
     rest = split.rest
   }
+  // A parenthetical example used to leave question_kind empty, so the badge and amber text
+  // never appeared even though the skip control already treated the reply as a challenge.
+  const kind = recordedKind ?? (followupWhileMandatory && question ? BRAINSTORM_QUESTION_KIND.challenge : null)
   return (
     <>
       {kind ? (
@@ -7338,6 +7343,13 @@ export function IdeaBacklogManagementPage() {
                                           indonesian={isBrainstormThreadIndonesian(brainstormMessages)}
                                           onConfirm={index === brainstormMessages.length - 1 ? (choice) => handleSendBrainstormMessage(choice) : undefined}
                                           disabled={brainstormComposerDisabled}
+                                          followupWhileMandatory={
+                                            index === brainstormLatestAssistantIndex
+                                            && brainstormLatestKind === 'followup'
+                                            && message.question_kind !== 'confirm'
+                                            && message.question_kind !== 'extended'
+                                            && hasPendingMandatoryQuestion
+                                          }
                                         />
                                       )}
                                     </div>

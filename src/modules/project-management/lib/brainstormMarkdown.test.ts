@@ -29,6 +29,10 @@ describe('brainstorm Markdown and question delivery', () => {
   it('does not interpret code as a question', () => {
     expect(splitBrainstormQuestion('```text\nquestion?\n```').question).toBe('')
   })
+  it('keeps an example in parentheses as part of the question', () => {
+    const asked = 'Dari mana saja data kebijakan yang akan dijawab oleh Chat Gen AI? (misalnya dokumen kebijakan internal, database regulasi, atau sumber lain)'
+    expect(splitBrainstormQuestion(`Rangkuman.\n\n${asked}`)).toEqual({ rest: 'Rangkuman.', question: asked })
+  })
 })
 
 const messages: IdeaDraftBrainstormMessage[] = [

@@ -35,11 +35,20 @@ export function normalizeBrainstormMarkdown(text: string): string {
   }).join('')
 }
 
+function isClosingQuestion(paragraph: string): boolean {
+  return paragraph.endsWith('?') || /\?\s*(?:\([^)]*\)\s*)+$/.test(paragraph)
+}
+
 export function splitBrainstormQuestion(text: string, questionText?: string | null) {
   const paragraphs = text.trim().split(/\n{2,}/)
   const last = paragraphs.at(-1) ?? ''
   const cleanLast = last.replace(/(?<!\\)\*\*/g, '').trim()
-  const question = questionText?.replace(/(?<!\\)\*\*/g, '').trim() || cleanLast
-  if (last.includes('```') || last.includes('~~~') || (!questionText && !cleanLast.endsWith('?'))) return { rest: text, question: '' }
-  return { rest: cleanLast === question ? paragraphs.slice(0, -1).join('\n\n') : text, question }
+  const asked = questionText?.replace(/(?<!\\)\*\*/g, '').trim() ?? ''
+  if (last.includes('```') || last.includes('~~~')) return { rest: text, question: '' }
+  const lastAsks = isClosingQuestion(cleanLast)
+  if (lastAsks && (!asked || cleanLast === asked || cleanLast.startsWith(asked))) {
+    return { rest: paragraphs.slice(0, -1).join('\n\n'), question: cleanLast }
+  }
+  if (!asked) return { rest: text, question: '' }
+  return { rest: cleanLast === asked ? paragraphs.slice(0, -1).join('\n\n') : text, question: asked }
 }
