@@ -100,7 +100,6 @@ import {
   type SectionNodeApplication,
 } from '@/lib/api/workflowAutomationApi'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { WorkspaceSelectionFields, workspaceSelectionIds } from './WorkspaceSelectionFields'
 import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import {
   DEFAULT_IDEA_SECTION_AUDIENCE,
@@ -213,7 +212,6 @@ const PRO_OPTIONS = { hideAttribution: true as const }
 const WORKFLOW_EDGE_TYPES: EdgeTypes = { routed: WorkflowRoutedEdge }
 
 const WORKFLOW_NODE_TYPES: NodeTypes = {
-  workspaceSelection: WorkflowBuilderNode,
   trigger: WorkflowBuilderNode,
   action: WorkflowBuilderNode,
   ifElse: WorkflowBuilderNode,
@@ -229,7 +227,7 @@ const WORKFLOW_NODE_TYPES: NodeTypes = {
 
 const WORKFLOW_PALETTE_GROUPS: Array<{ label: string; kinds: WorkflowNodeKind[] }> = [
   { label: 'Start & Flow Control', kinds: ['trigger', 'ifElse', 'loop', 'parallel', 'delay', 'retry', 'end'] },
-  { label: 'Project Work', kinds: ['workspaceSelection', 'action', 'assignOwner'] },
+  { label: 'Project Work', kinds: ['action', 'assignOwner'] },
   { label: 'Governance & Intelligence', kinds: ['approval', 'aiProcess'] },
 ]
 
@@ -587,12 +585,6 @@ function validateWorkflowGraph(
 ): WorkflowIssue[] {
   const issues: WorkflowIssue[] = []
   const triggers = nodes.filter((n) => n.data.kind === 'trigger')
-  const selectors = nodes.filter((n) => n.data.kind === 'workspaceSelection' && !n.data.disabled)
-  if (selectors.length > 1) issues.push({ level: 'error', message: 'Use only one Workspace Selection node per workflow.' })
-  for (const selector of selectors) {
-    if (!workspaceSelectionIds(selector.data.config.allowedWorkspaceIds).length) issues.push({ level: 'error', nodeId: selector.id, message: 'Select at least one allowed workspace.' })
-    if (!triggers.some((trigger) => trigger.data.config.triggerType === 'Event' && trigger.data.config.triggerDomain === 'AI Idea & Prioritization' && trigger.data.config.triggerEntity === 'Idea' && trigger.data.config.triggerEvent === 'Before Idea Creation' && edges.some((edge) => edge.source === trigger.id && edge.target === selector.id))) issues.push({ level: 'error', nodeId: selector.id, message: 'Connect Workspace Selection directly after an Idea / Before Idea Creation trigger.' })
-  }
   if (triggers.length === 0) issues.push({ level: 'error', message: 'Workflow has no Trigger node — add an entry point.' })
   if (triggers.length > 1) issues.push({ level: 'warning', message: `Multiple triggers (${triggers.length}); only one entry point is recommended.` })
   if (!nodes.some((n) => n.data.kind === 'end')) issues.push({ level: 'warning', message: 'Workflow has no End node.' })
@@ -3200,10 +3192,6 @@ function WorkflowBuilderCanvasInner({
                       })}
                     />
                   </>
-                ) : null}
-
-                {selectedNode.data.kind === 'workspaceSelection' ? (
-                  <WorkspaceSelectionFields key={selectedNode.id} config={selectedNode.data.config} options={scopeCandidates.filter((item) => item.status_code !== 'archived')} onChange={(config) => updateSelectedNode({ config })} />
                 ) : null}
 
                 {selectedMeta.fields

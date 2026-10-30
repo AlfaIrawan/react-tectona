@@ -1455,8 +1455,6 @@ import {
   wacRoleCodeToUiRole,
 } from '@/lib/api/workspaceAccessControlApi'
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
-import { IdeaWorkspaceSelectionModal } from '../components/IdeaWorkspaceSelectionModal'
-import { loadIdeaWorkspaceSelectionPolicy, selectableIdeaWorkspaces, type IdeaWorkspaceSelectionPolicy } from '../lib/ideaWorkspaceSelection'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { brainstormTypingCutoff, isTechnicalViewSource, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
 import { useTypingReveal } from '@/lib/chat/useTypingReveal'
@@ -2250,10 +2248,6 @@ export function IdeaBacklogManagementPage() {
     foldersError,
   } = useIdeaFolderStore()
   const userWorkspaceOptions = useUserWorkspaceOptions()
-  const [ideaWorkspacePolicy, setIdeaWorkspacePolicy] = useState<IdeaWorkspaceSelectionPolicy | null>(null)
-  const [workspaceSelectionOpen, setWorkspaceSelectionOpen] = useState(false)
-  const createPolicyInFlight = useRef(false)
-  const createSourceWorkspaceId = useRef<string | null>(null)
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [projectNameById, setProjectNameById] = useState<Record<string, string>>({})
   const projectNameByIdRef = useRef(projectNameById)
@@ -3428,6 +3422,14 @@ export function IdeaBacklogManagementPage() {
     if (!isCreateIdeaDrawerOpen) return
 
     const activeWorkspaceId = resolveWorkspaceApiId(tenant?.workspaceId) ?? ''
+    if (activeWorkspaceId) {
+      setCreateIdeaForm((prev) => (
+        prev.workspaceId === activeWorkspaceId
+          ? prev
+          : { ...prev, workspaceId: activeWorkspaceId, reviewer: '' }
+      ))
+    }
+
     setIsCreateIdeaWorkspaceLoading(userWorkspaceOptions.loading)
     setCreateIdeaWorkspaceError('')
 
@@ -3443,7 +3445,7 @@ export function IdeaBacklogManagementPage() {
       return
     }
 
-    const options = (ideaWorkspacePolicy ? selectableIdeaWorkspaces(userWorkspaceOptions.options, ideaWorkspacePolicy) : userWorkspaceOptions.options)
+    const options = userWorkspaceOptions.options
       .map((option) => ({ id: option.workspaceId, name: option.workspaceName.trim() }))
       .filter((option) => option.id && option.name)
       .sort((a, b) => {
@@ -3463,7 +3465,6 @@ export function IdeaBacklogManagementPage() {
     setIsCreateIdeaWorkspaceLoading(false)
   }, [
     isCreateIdeaDrawerOpen,
-    ideaWorkspacePolicy,
     tenant?.workspaceId,
     userWorkspaceOptions.error,
     userWorkspaceOptions.loading,
@@ -3954,7 +3955,7 @@ export function IdeaBacklogManagementPage() {
     })
   }
 
-  const showCreateIdeaForm = (selectedWorkspaceId = '') => {
+  const openCreateIdeaDrawer = () => {
     if (draftBackupStatus === 'failed' && brainstormMessages.length) {
       setAiAssistanceError('The draft backup could not be saved on this device. Keep this draft open and retry before switching ideas.')
       return
@@ -3967,7 +3968,7 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaForm({
       title: '',
       description: '',
-      workspaceId: selectedWorkspaceId,
+      workspaceId: '',
       type: 'Innovation',
       reviewer: '',
     })
@@ -3997,35 +3998,6 @@ export function IdeaBacklogManagementPage() {
     setAiAssistanceWarning('')
     setCreateIdeaTitleError('')
     setIsCreateIdeaDrawerOpen(true)
-  }
-
-  const openCreateIdeaDrawer = async () => {
-    if (createPolicyInFlight.current) return
-    if (userWorkspaceOptions.loading || userWorkspaceOptions.error) {
-      addToast({ variant: 'warning', title: 'Workspaces unavailable', description: userWorkspaceOptions.error || 'Wait for workspaces to finish loading.' })
-      return
-    }
-    const sourceWorkspaceId = resolveWorkspaceApiId(tenant?.workspaceId)
-    if (!sourceWorkspaceId) {
-      addToast({ variant: 'warning', title: 'Select a workspace', description: 'Choose a workspace before creating an idea.' })
-      return
-    }
-    createPolicyInFlight.current = true
-    try {
-      const policy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
-      createSourceWorkspaceId.current = sourceWorkspaceId
-      setIdeaWorkspacePolicy(policy)
-      if (!policy) { showCreateIdeaForm(); return }
-      const choices = selectableIdeaWorkspaces(userWorkspaceOptions.options, policy)
-      if (!choices.length) throw new Error('None of the configured workspaces are available to you. Contact the workflow administrator.')
-      if (choices.length === 1) { showCreateIdeaForm(choices[0].workspaceId); return }
-      if (!policy.selection_required && choices.some((option) => option.workspaceId === policy.default_workspace_id)) {
-        showCreateIdeaForm(policy.default_workspace_id!); return
-      }
-      setWorkspaceSelectionOpen(true)
-    } catch (error) {
-      addToast({ variant: 'error', title: 'Cannot create idea', description: error instanceof Error ? error.message : 'Workspace selection could not be verified.' })
-    } finally { createPolicyInFlight.current = false }
   }
 
   const openDeleteIdeaDialog = (idea: Idea) => {
@@ -4186,11 +4158,6 @@ export function IdeaBacklogManagementPage() {
     if (createIdeaSubmitInFlight.current) return
     createIdeaSubmitInFlight.current = true
     try {
-      const sourceWorkspaceId = createSourceWorkspaceId.current ?? resolveWorkspaceApiId(tenant?.workspaceId)
-      if (!sourceWorkspaceId) throw new Error('Select a workspace before creating an idea.')
-      const latestPolicy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
-      if (latestPolicy && !latestPolicy.allowed_workspace_ids.includes(createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer allowed by the workflow. Reopen Create Idea to choose another workspace.')
-      if (!userWorkspaceOptions.options.some((option) => option.workspaceId === createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer available to you.')
       const created = await apiCreateIdea({
         title: normalizeIdeaTitle(createIdeaForm.title),
         description: appendProcessDiagramsToText(
@@ -4202,7 +4169,7 @@ export function IdeaBacklogManagementPage() {
         workspace_id: createIdeaForm.workspaceId,
         owner_id: currentUserId || undefined,
         assignee_id: createIdeaForm.reviewer || undefined,
-        folder_id: createIdeaForm.workspaceId === sourceWorkspaceId && sourceWorkspaceId === resolveWorkspaceApiId(tenant?.workspaceId) ? currentFolderId ?? null : null,
+        folder_id: currentFolderId ?? null,
       })
       const newIdea = {
         ...toIdea(created),
@@ -6442,13 +6409,6 @@ export function IdeaBacklogManagementPage() {
           newIdeas.forEach((idea) => void runAgentAnalysisForIdea(idea))
         }}
       />
-
-      {workspaceSelectionOpen && ideaWorkspacePolicy ? <IdeaWorkspaceSelectionModal
-        policy={ideaWorkspacePolicy}
-        options={selectableIdeaWorkspaces(userWorkspaceOptions.options, ideaWorkspacePolicy)}
-        onClose={() => setWorkspaceSelectionOpen(false)}
-        onContinue={(workspaceId) => { setWorkspaceSelectionOpen(false); showCreateIdeaForm(workspaceId) }}
-      /> : null}
 
       {typeof document !== 'undefined' &&
         createPortal(

@@ -1,6 +1,5 @@
 import {
   GitBranch,
-  Building2,
   Play,
   Repeat2,
   RotateCcw,
@@ -22,7 +21,6 @@ import {
 
 export type WorkflowNodeKind =
   | 'trigger'
-  | 'workspaceSelection'
   | 'action'
   | 'ifElse'
   | 'approval'
@@ -126,7 +124,7 @@ export const WORKFLOW_TRIGGER_EVENT_CATALOG = {
   },
   'AI Idea & Prioritization': {
     // Submitted is raised once the idea's AI analysis has finished (workflow-automation analysis-completed).
-    Idea: ['Before Idea Creation', 'Submitted', 'Created', 'Scored', 'Prioritized', 'Approved', 'Converted to Project'],
+    Idea: ['Submitted', 'Created', 'Scored', 'Prioritized', 'Approved', 'Converted to Project'],
     Recommendation: ['Created', 'Approved', 'Rejected'],
     'Decision Matrix': ['Updated', 'Threshold Breached'],
   },
@@ -292,18 +290,6 @@ const ACTION_TARGET_LABELS: Record<string, string> = {
 }
 
 export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
-  workspaceSelection: {
-    kind: 'workspaceSelection',
-    label: 'Workspace Selection',
-    hint: 'Choose the owning workspace before creating an idea',
-    icon: Building2,
-    accent: '#0891b2',
-    chipClass: 'bg-cyan-50 text-cyan-600 ring-cyan-100',
-    fields: [
-      { key: 'popupTitle', label: 'Popup Title', type: 'text' },
-    ],
-    defaultConfig: { allowedWorkspaceIds: '[]', defaultWorkspaceId: '', popupTitle: 'Select Workspace', selectionRequired: 'Yes' },
-  },
   trigger: {
     kind: 'trigger',
     label: 'Trigger',
@@ -456,7 +442,6 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
 /** Order the palette renders the kinds in. */
 export const WORKFLOW_PALETTE_ORDER: readonly WorkflowNodeKind[] = [
   'trigger',
-  'workspaceSelection',
   'action',
   'ifElse',
   'approval',
@@ -476,11 +461,6 @@ export const WORKFLOW_PALETTE_MIME = 'application/tectona-workflow-node'
 export function workflowNodeSummary(data: WorkflowNodeData): string {
   const c = data.config
   switch (data.kind) {
-    case 'workspaceSelection':
-      try {
-        const ids: unknown = JSON.parse(c.allowedWorkspaceIds || '[]')
-        return Array.isArray(ids) && ids.length ? `${ids.length} workspace(s) available` : 'Select allowed workspaces'
-      } catch { return 'Select allowed workspaces' }
     case 'trigger':
       if (!c.triggerType) return 'Configure trigger'
       if (c.triggerType === 'Event') return `${c.triggerType} · ${c.triggerDomain || 'Select module'} / ${c.triggerEntity || 'Select entity'} / ${c.triggerEvent || c.event || 'Select event'}`
