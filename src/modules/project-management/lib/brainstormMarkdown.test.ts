@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeBrainstormMarkdown, splitBrainstormQuestion } from './brainstormMarkdown'
+import { normalizeBrainstormMarkdown, parseNotedAnswer, splitBrainstormQuestion } from './brainstormMarkdown'
 import { attachLatestSummaryDiagrams, confirmedSummaryDiagrams, latestSummaryDiagrams } from './brainstormLiveSummary'
 import type { IdeaDraftBrainstormMessage } from '@/lib/api/tectonaAgentRuntimeApi'
 
@@ -28,6 +28,15 @@ describe('brainstorm Markdown and question delivery', () => {
   })
   it('does not interpret code as a question', () => {
     expect(splitBrainstormQuestion('```text\nquestion?\n```').question).toBe('')
+  })
+  it('splits a noted answer from the question it confirms', () => {
+    expect(parseNotedAnswer(
+      'Untuk pertanyaan "Jelaskan tujuan utama dari project ini", dari ceritamu aku catat: Membantu collector field memperoleh jawaban kebijakan secara cepat dan aman melalui Gen AI.',
+    )).toEqual({
+      question: 'Jelaskan tujuan utama dari project ini',
+      answer: 'Membantu collector field memperoleh jawaban kebijakan secara cepat dan aman melalui Gen AI.',
+    })
+    expect(parseNotedAnswer('Oke, aku catat: metriknya 30 detik.')).toBeNull()
   })
   it('keeps an example in parentheses as part of the question', () => {
     const asked = 'Dari mana saja data kebijakan yang akan dijawab oleh Chat Gen AI? (misalnya dokumen kebijakan internal, database regulasi, atau sumber lain)'

@@ -77,6 +77,18 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
   )
 }
 
+/** The question being confirmed, then the answer taken from the user's own words. */
+export function BrainstormNotedAnswer({ question, answer }: { question: string; answer: string }) {
+  return (
+    <div className="my-3">
+      <p className="text-[13px] font-semibold leading-5 text-sky-800 dark:text-sky-300">{question}</p>
+      <p className="mt-1 w-fit max-w-full border-b border-sky-400 pb-1 text-[15px] leading-7 text-foreground">
+        {answer}
+      </p>
+    </div>
+  )
+}
+
 /** One decision waiting for confirmation, such as a phase boundary. */
 export function BrainstormDecisionNote({ title, text }: { title: string; text: string }) {
   const body = text.trim()

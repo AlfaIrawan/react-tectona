@@ -35,6 +35,21 @@ export function normalizeBrainstormMarkdown(text: string): string {
   }).join('')
 }
 
+export type NotedAnswer = { question: string; answer: string }
+
+const NOTED_ANSWER = /^(?:Untuk pertanyaan|For)\s+["“«]([\s\S]+?)["”»]\s*,\s*(?:dari ceritamu aku catat|from what you told me I noted)\s*:\s*([\s\S]+)$/i
+
+/** "Untuk pertanyaan \"…\", dari ceritamu aku catat: …" is one question plus the answer being confirmed. */
+export function parseNotedAnswer(paragraph: string): NotedAnswer | null {
+  const clean = paragraph.replace(/(?<!\\)\*\*/g, '').trim()
+  const match = clean.match(NOTED_ANSWER)
+  if (!match) return null
+  const question = match[1].trim()
+  const answer = match[2].trim()
+  if (!question || !answer) return null
+  return { question, answer }
+}
+
 function isClosingQuestion(paragraph: string): boolean {
   return paragraph.endsWith('?') || /\?\s*(?:\([^)]*\)\s*)+$/.test(paragraph)
 }

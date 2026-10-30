@@ -104,7 +104,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
-import { BrainstormDecisionNote, BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
+import { BrainstormDecisionNote, BrainstormNotedAnswer, BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
@@ -114,7 +114,7 @@ import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOpt
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
 import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
-import { normalizeBrainstormMarkdown, splitBrainstormQuestion } from '../lib/brainstormMarkdown'
+import { normalizeBrainstormMarkdown, parseNotedAnswer, splitBrainstormQuestion } from '../lib/brainstormMarkdown'
 import { fetchAllIdeaFolders, type IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
   enterpriseDestructiveOutlineButtonClass,
@@ -1237,6 +1237,25 @@ function BrainstormCopyButton({ text }: { text: string }) {
   )
 }
 
+function sameNotedText(left: string, right: string) {
+  const fold = (value: string) => value.replace(/\s+/g, ' ').replace(/[.]+$/, '').trim().toLowerCase()
+  return Boolean(fold(left) && fold(left) === fold(right))
+}
+
+function BrainstormNotedProse({ text }: { text: string }) {
+  const paragraphs = text.trim() ? text.trim().split(/\n{2,}/) : []
+  if (paragraphs.length === 0) return null
+  return (
+    <>
+      {paragraphs.map((paragraph, index) => {
+        const noted = parseNotedAnswer(paragraph)
+        if (noted) return <BrainstormNotedAnswer key={`noted-${index}`} question={noted.question} answer={noted.answer} />
+        return <BrainstormAssistantMessageBody key={`prose-${index}`} text={paragraph} />
+      })}
+    </>
+  )
+}
+
 function BrainstormAssistantMessageBody({ text }: { text: string }) {
   const displayText = text
   const parts = splitBrainstormDisplayParts(displayText)
@@ -1337,18 +1356,20 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   const text = hideInternalNote(message.text)
   const summary = hideInternalNote(message.summary ?? '')
   const hasSummary = Boolean(summary)
-  const at = summary ? text.indexOf(summary) : -1
-  const before = at >= 0 ? text.slice(0, at).trim() : ''
-  const after = at >= 0 ? text.slice(at + summary.length).trim() : ''
   const recordedKind = brainstormQuestionKind(message)
   // The closing question is the last paragraph when it asks something (and is not a diagram).
-  let rest = at >= 0 ? after : text
+  let rest = text
   let question = ''
   if (recordedKind || followupWhileMandatory || message.question_kind === 'mandatory' || message.question_text) {
     const split = splitBrainstormQuestion(rest, message.question_text)
     question = split.question
     rest = split.rest
   }
+  const notedAnswer = rest.split(/\n{2,}/).map(parseNotedAnswer).find(item => item !== null)
+  const summaryRepeatsNotedAnswer = Boolean(notedAnswer && sameNotedText(summary, notedAnswer.answer))
+  const at = !summaryRepeatsNotedAnswer && summary ? rest.indexOf(summary) : -1
+  const before = at >= 0 ? rest.slice(0, at).trim() : ''
+  const after = at >= 0 ? rest.slice(at + summary.length).trim() : rest
   // A parenthetical example used to leave question_kind empty, so the badge and amber text
   // never appeared even though the skip control already treated the reply as a challenge.
   const kind = recordedKind ?? (followupWhileMandatory && question ? BRAINSTORM_QUESTION_KIND.challenge : null)
@@ -1359,23 +1380,23 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
           {kind.label}
         </span>
       ) : null}
-      {hasSummary ? (
+      {hasSummary && !summaryRepeatsNotedAnswer ? (
         <>
-          {before ? <BrainstormAssistantMessageBody text={before} /> : null}
+          {before ? <BrainstormNotedProse text={before} /> : null}
           <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS}>
             <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} />
           </BrainstormSummaryBox>
           {message.revision_text ? <BrainstormRevisionNote text={message.revision_text} indonesian={indonesian} /> : null}
+          {after ? <BrainstormNotedProse text={after} /> : null}
         </>
       ) : rest ? (
-        <BrainstormAssistantMessageBody text={rest} />
+        <BrainstormNotedProse text={rest} />
       ) : null}
-      {!hasSummary ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
+      {!hasSummary || summaryRepeatsNotedAnswer ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
       {message.ai_advice ? <div className="my-3 border-l-2 border-teal-500 pl-3 text-sm leading-6">
         <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Pertimbangan Tambahan' : 'Additional Considerations'}</p>
         <BrainstormAssistantMessageBody text={message.ai_advice} />
       </div> : null}
-      {hasSummary && rest ? <BrainstormAssistantMessageBody text={rest} /> : null}
       <BrainstormCatalogComparison matches={message.catalog_matches} mode={message.catalog_mode} status={message.catalog_status} indonesian={indonesian} />
       {message.decision_text ? (
         <BrainstormDecisionNote
