@@ -46,7 +46,7 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
       >
         <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !open && '-rotate-90')} aria-hidden />
         {title}
-        {total > 0 ? (
+        {total > 1 ? (
           <span className="ml-auto font-normal normal-case tracking-normal text-sky-700/80 dark:text-sky-300/70">
             {indonesian ? `${total} catatan` : `${total} notes`}
           </span>
@@ -55,7 +55,7 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
       {open ? (
         <div id={contentId} className="mt-2">
           {notes.length > 0 ? (
-            <UnderstandingNoteList notes={visible} plain={total === 1} />
+            <UnderstandingNoteList notes={visible} plain={notes.length === 1 && notes[0].children.length === 0} />
           ) : (
             <AssistantChatMarkdown content={normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))} className={className} />
           )}
