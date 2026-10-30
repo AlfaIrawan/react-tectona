@@ -23,6 +23,7 @@ import {
 export type WorkflowNodeKind =
   | 'trigger'
   | 'workspaceSelection'
+  | 'userInput'
   | 'action'
   | 'ifElse'
   | 'approval'
@@ -291,19 +292,28 @@ const ACTION_TARGET_LABELS: Record<string, string> = {
   'project.assignments': 'Current project',
 }
 
-export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
-  workspaceSelection: {
-    kind: 'workspaceSelection',
-    label: 'Workspace Selection',
-    hint: 'Choose the owning workspace before creating an idea',
+const USER_INPUT_META: WorkflowKindMeta = {
+    kind: 'userInput',
+    label: 'User Input',
+    hint: 'Collect information from the user',
     icon: Building2,
     accent: '#0891b2',
     chipClass: 'bg-cyan-50 text-cyan-600 ring-cyan-100',
     fields: [
+      { key: 'inputType', label: 'Input Type', type: 'select', options: ['Workspace Selection'] },
       { key: 'popupTitle', label: 'Popup Title', type: 'text' },
     ],
-    defaultConfig: { allowedWorkspaceIds: '[]', defaultWorkspaceId: '', popupTitle: 'Select Workspace', selectionRequired: 'Yes' },
-  },
+    defaultConfig: { inputType: 'Workspace Selection', allowedWorkspaceIds: '[]', defaultWorkspaceId: '', popupTitle: 'Select Workspace', selectionRequired: 'Yes' },
+}
+
+export function isWorkspaceSelectionInput(data: Pick<WorkflowNodeData, 'kind' | 'config'>): boolean {
+  return data.kind === 'workspaceSelection' || (data.kind === 'userInput' && data.config.inputType === 'Workspace Selection')
+}
+
+export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
+  userInput: USER_INPUT_META,
+  // Older saved definitions remain readable, but only User Input is offered in the palette.
+  workspaceSelection: { ...USER_INPUT_META, kind: 'workspaceSelection' },
   trigger: {
     kind: 'trigger',
     label: 'Trigger',
@@ -456,7 +466,7 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
 /** Order the palette renders the kinds in. */
 export const WORKFLOW_PALETTE_ORDER: readonly WorkflowNodeKind[] = [
   'trigger',
-  'workspaceSelection',
+  'userInput',
   'action',
   'ifElse',
   'approval',
@@ -476,6 +486,7 @@ export const WORKFLOW_PALETTE_MIME = 'application/tectona-workflow-node'
 export function workflowNodeSummary(data: WorkflowNodeData): string {
   const c = data.config
   switch (data.kind) {
+    case 'userInput':
     case 'workspaceSelection':
       try {
         const ids: unknown = JSON.parse(c.allowedWorkspaceIds || '[]')

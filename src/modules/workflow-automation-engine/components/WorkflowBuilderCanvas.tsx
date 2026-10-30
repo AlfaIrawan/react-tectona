@@ -101,6 +101,7 @@ import {
 } from '@/lib/api/workflowAutomationApi'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WorkspaceSelectionFields, workspaceSelectionIds } from './WorkspaceSelectionFields'
+import { isWorkspaceSelectionInput } from './workflowNodeKinds'
 import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import {
   DEFAULT_IDEA_SECTION_AUDIENCE,
@@ -214,6 +215,7 @@ const WORKFLOW_EDGE_TYPES: EdgeTypes = { routed: WorkflowRoutedEdge }
 
 const WORKFLOW_NODE_TYPES: NodeTypes = {
   workspaceSelection: WorkflowBuilderNode,
+  userInput: WorkflowBuilderNode,
   trigger: WorkflowBuilderNode,
   action: WorkflowBuilderNode,
   ifElse: WorkflowBuilderNode,
@@ -229,8 +231,8 @@ const WORKFLOW_NODE_TYPES: NodeTypes = {
 
 const WORKFLOW_PALETTE_GROUPS: Array<{ label: string; kinds: WorkflowNodeKind[] }> = [
   { label: 'Start & Flow Control', kinds: ['trigger', 'ifElse', 'loop', 'parallel', 'delay', 'retry', 'end'] },
-  { label: 'Project Work', kinds: ['workspaceSelection', 'action', 'assignOwner'] },
-  { label: 'Governance & Intelligence', kinds: ['approval', 'aiProcess'] },
+  { label: 'Project Work', kinds: ['action', 'assignOwner'] },
+  { label: 'Governance & Intelligence', kinds: ['userInput', 'approval', 'aiProcess'] },
 ]
 
 const ACTION_TARGET_OPTIONS = [
@@ -587,7 +589,10 @@ function validateWorkflowGraph(
 ): WorkflowIssue[] {
   const issues: WorkflowIssue[] = []
   const triggers = nodes.filter((n) => n.data.kind === 'trigger')
-  const selectors = nodes.filter((n) => n.data.kind === 'workspaceSelection' && !n.data.disabled)
+  const selectors = nodes.filter((n) => isWorkspaceSelectionInput(n.data) && !n.data.disabled)
+  for (const node of nodes.filter((n) => n.data.kind === 'userInput' && !n.data.disabled)) {
+    if (!isWorkspaceSelectionInput(node.data)) issues.push({ level: 'error', nodeId: node.id, message: 'Select a supported User Input type.' })
+  }
   if (selectors.length > 1) issues.push({ level: 'error', message: 'Use only one Workspace Selection node per workflow.' })
   for (const selector of selectors) {
     if (!workspaceSelectionIds(selector.data.config.allowedWorkspaceIds).length) issues.push({ level: 'error', nodeId: selector.id, message: 'Select at least one allowed workspace.' })
@@ -3202,7 +3207,7 @@ function WorkflowBuilderCanvasInner({
                   </>
                 ) : null}
 
-                {selectedNode.data.kind === 'workspaceSelection' ? (
+                {isWorkspaceSelectionInput(selectedNode.data) ? (
                   <WorkspaceSelectionFields key={selectedNode.id} config={selectedNode.data.config} options={scopeCandidates.filter((item) => item.status_code !== 'archived')} onChange={(config) => updateSelectedNode({ config })} />
                 ) : null}
 
@@ -3218,7 +3223,8 @@ function WorkflowBuilderCanvasInner({
                     return true
                   })
                   .map((field) => {
-                  const value = selectedNode.data.config[field.key] ?? ''
+                  const value = selectedNode.data.config[field.key]
+                    ?? (field.key === 'inputType' && selectedNode.data.kind === 'workspaceSelection' ? 'Workspace Selection' : '')
                   return (
                     <div key={field.key} className="space-y-1.5">
                       <label className={FIELD_LABEL_CLASS}>{field.label}</label>
