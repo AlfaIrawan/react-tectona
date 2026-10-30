@@ -55,7 +55,7 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
       {open ? (
         <div id={contentId} className="mt-2">
           {notes.length > 0 ? (
-            <UnderstandingNoteList notes={visible} />
+            <UnderstandingNoteList notes={visible} plain={total === 1} />
           ) : (
             <AssistantChatMarkdown content={normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))} className={className} />
           )}
@@ -103,20 +103,22 @@ export function BrainstormRevisionNote({ text, indonesian }: { text: string; ind
   )
 }
 
-function UnderstandingNoteList({ notes, prefix = '' }: { notes: UnderstandingNote[]; prefix?: string }) {
+function UnderstandingNoteList({ notes, prefix = '', plain = false }: { notes: UnderstandingNote[]; prefix?: string; plain?: boolean }) {
   return (
     <ol className={cn('m-0 list-none space-y-2 p-0', prefix && 'mt-2')}>
       {notes.map((note, index) => {
         const number = prefix ? `${prefix}.${index + 1}` : String(index + 1)
         return (
           <li key={`${number}-${note.text.slice(0, 24)}`}>
-            <div className="flex items-start gap-2.5">
-              <span className={cn(
-                'mt-0.5 inline-flex h-5 shrink-0 items-center justify-center rounded-full bg-white px-1.5 font-semibold tabular-nums text-sky-800 ring-1 ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-800',
-                number.length > 2 ? 'min-w-8 text-[10px]' : 'w-5 text-[10px]',
-              )}>
-                {number}
-              </span>
+            <div className={cn('flex items-start', plain ? '' : 'gap-2.5')}>
+              {plain ? null : (
+                <span className={cn(
+                  'mt-0.5 inline-flex h-5 shrink-0 items-center justify-center rounded-full bg-white px-1.5 font-semibold tabular-nums text-sky-800 ring-1 ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-800',
+                  number.length > 2 ? 'min-w-8 text-[10px]' : 'w-5 text-[10px]',
+                )}>
+                  {number}
+                </span>
+              )}
               <div className="min-w-0 flex-1">
                 <AssistantChatMarkdown content={note.text} className={NOTE_CLASS} />
                 {note.children.length > 0 ? <UnderstandingNoteList notes={note.children} prefix={number} /> : null}
