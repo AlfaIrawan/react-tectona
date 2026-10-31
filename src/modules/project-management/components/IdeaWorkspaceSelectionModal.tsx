@@ -15,7 +15,8 @@ export function IdeaWorkspaceSelectionModal({ policy, options, onClose, onContin
   const [selected, setSelected] = useState(options.some((option) => option.workspaceId === policy.default_workspace_id) ? policy.default_workspace_id! : '')
   const matches = options.filter((option) => option.workspaceName.toLowerCase().includes(query.toLowerCase()))
   return <EnterpriseActionConfirmModal
-    open busy={busy} title={policy.popup_title} description="Choose the workspace that will own this idea."
+    open busy={busy} title={policy.popup_title}
+    description={<span className="block max-h-[20vh] overflow-y-auto whitespace-pre-line [overflow-wrap:anywhere]">{policy.popup_description?.trim() || 'Choose the workspace that will own this idea.'}</span>}
     entityLabel="Workspace" entityValue={options.find((option) => option.workspaceId === selected)?.workspaceName ?? 'No workspace selected'}
     icon={Building2} iconContainerClassName="bg-cyan-500/12 text-cyan-700 ring-cyan-500/25"
     dialogTitleId="idea-workspace-selection-title"

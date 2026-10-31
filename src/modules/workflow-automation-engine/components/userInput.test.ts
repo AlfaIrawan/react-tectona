@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { WORKFLOW_KIND_META, WORKFLOW_PALETTE_ORDER, isWorkspaceSelectionInput, workflowNodeSummary } from './workflowNodeKinds'
 
 describe('User Input nodes', () => {
+  it('offers an optional multiline popup description for current and legacy nodes', () => {
+    for (const kind of ['userInput', 'workspaceSelection'] as const) {
+      expect(WORKFLOW_KIND_META[kind].fields).toContainEqual(expect.objectContaining({ key: 'popupDescription', label: 'Popup Description', type: 'textarea' }))
+      expect(WORKFLOW_KIND_META[kind].defaultConfig.popupDescription).toBe('')
+    }
+  })
   it('offers versioned child calls and submission checkpoints', () => {
     expect(WORKFLOW_PALETTE_ORDER).toContain('callWorkflow')
     expect(WORKFLOW_PALETTE_ORDER).toContain('waitForEvent')

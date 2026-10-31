@@ -7,6 +7,7 @@ export type IdeaWorkspaceSelectionPolicy = {
   default_workspace_id: string | null
   selection_required: boolean
   popup_title: string
+  popup_description?: string
   orchestrated?: boolean
 }
 
