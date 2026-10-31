@@ -8,6 +8,7 @@ export type IdeaWorkspaceSelectionPolicy = {
   selection_required: boolean
   popup_title: string
   popup_description?: string
+  option_descriptions?: Record<string, string>
   orchestrated?: boolean
 }
 

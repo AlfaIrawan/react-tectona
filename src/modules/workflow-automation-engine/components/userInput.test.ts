@@ -6,6 +6,7 @@ describe('User Input nodes', () => {
     for (const kind of ['userInput', 'workspaceSelection'] as const) {
       expect(WORKFLOW_KIND_META[kind].fields).toContainEqual(expect.objectContaining({ key: 'popupDescription', label: 'Popup Description', type: 'textarea' }))
       expect(WORKFLOW_KIND_META[kind].defaultConfig.popupDescription).toBe('')
+      expect(WORKFLOW_KIND_META[kind].defaultConfig.optionDescriptions).toBe('{}')
     }
   })
   it('offers versioned child calls and submission checkpoints', () => {

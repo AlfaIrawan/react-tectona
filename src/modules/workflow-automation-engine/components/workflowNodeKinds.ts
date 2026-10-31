@@ -307,7 +307,7 @@ const USER_INPUT_META: WorkflowKindMeta = {
       { key: 'popupTitle', label: 'Popup Title', type: 'text' },
       { key: 'popupDescription', label: 'Popup Description', type: 'textarea', placeholder: 'Choose the workspace that will own this idea.' },
     ],
-    defaultConfig: { inputType: 'Workspace Selection', allowedWorkspaceIds: '[]', defaultWorkspaceId: '', popupTitle: 'Select Workspace', popupDescription: '', selectionRequired: 'Yes' },
+    defaultConfig: { inputType: 'Workspace Selection', allowedWorkspaceIds: '[]', defaultWorkspaceId: '', popupTitle: 'Select Workspace', popupDescription: '', optionDescriptions: '{}', selectionRequired: 'Yes' },
 }
 
 export function isWorkspaceSelectionInput(data: Pick<WorkflowNodeData, 'kind' | 'config'>): boolean {
