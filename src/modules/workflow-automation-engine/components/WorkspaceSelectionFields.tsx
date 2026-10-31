@@ -62,7 +62,7 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
       <Input aria-label="Search allowed workspaces" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search workspaces..." />
     </label>
     <div className="max-h-40 overflow-y-auto rounded-lg border border-border" role="group" aria-label="Available workspaces">
-      {available.map((option) => <button key={option.id} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted" onClick={() => { onChange({ allowedWorkspaceIds: JSON.stringify([...selected, option.id]) }); setQuery('') }}>
+      {available.map((option) => <button key={option.id} type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs hover:bg-muted" onClick={() => { onChange({ allowedWorkspaceIds: JSON.stringify([...selected, option.id]) }); setQuery('') }}>
         <WorkspaceAvatar id={option.id} name={option.name} />
         <span className="min-w-0 [overflow-wrap:anywhere]">{option.name}</span>
       </button>)}
