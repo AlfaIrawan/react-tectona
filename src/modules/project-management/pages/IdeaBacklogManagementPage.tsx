@@ -1456,7 +1456,7 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { IdeaWorkspaceSelectionModal } from '../components/IdeaWorkspaceSelectionModal'
-import { loadIdeaWorkspaceSelectionPolicy, selectableIdeaWorkspaces, type IdeaWorkspaceSelectionPolicy } from '../lib/ideaWorkspaceSelection'
+import { loadIdeaWorkspaceSelectionPolicy, selectableIdeaWorkspaces, startIdeaIntake, createIdeaInIntake, type IdeaWorkspaceSelectionPolicy } from '../lib/ideaWorkspaceSelection'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { brainstormTypingCutoff, isTechnicalViewSource, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
 import { useTypingReveal } from '@/lib/chat/useTypingReveal'
@@ -2254,6 +2254,8 @@ export function IdeaBacklogManagementPage() {
   const [workspaceSelectionOpen, setWorkspaceSelectionOpen] = useState(false)
   const createPolicyInFlight = useRef(false)
   const createSourceWorkspaceId = useRef<string | null>(null)
+  const intakeRun = useRef<{ id: string; workspaceId: string } | null>(null)
+  const [intakeBusy, setIntakeBusy] = useState(false)
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [projectNameById, setProjectNameById] = useState<Record<string, string>>({})
   const projectNameByIdRef = useRef(projectNameById)
@@ -3999,6 +4001,20 @@ export function IdeaBacklogManagementPage() {
     setIsCreateIdeaDrawerOpen(true)
   }
 
+  const continueIdeaIntake = async (workspaceId: string, policy: IdeaWorkspaceSelectionPolicy | null) => {
+    if (intakeBusy) return
+    setIntakeBusy(true)
+    try {
+      intakeRun.current = policy?.orchestrated
+        ? { id: await startIdeaIntake(createSourceWorkspaceId.current!, workspaceId), workspaceId }
+        : null
+      setWorkspaceSelectionOpen(false)
+      showCreateIdeaForm(workspaceId)
+    } catch (error) {
+      addToast({ variant: 'error', title: 'Could not start intake', description: error instanceof Error ? error.message : 'Please try again.' })
+    } finally { setIntakeBusy(false) }
+  }
+
   const openCreateIdeaDrawer = async () => {
     if (createPolicyInFlight.current) return
     if (userWorkspaceOptions.loading || userWorkspaceOptions.error) {
@@ -4015,12 +4031,12 @@ export function IdeaBacklogManagementPage() {
       const policy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
       createSourceWorkspaceId.current = sourceWorkspaceId
       setIdeaWorkspacePolicy(policy)
-      if (!policy) { showCreateIdeaForm(); return }
+      if (!policy) { intakeRun.current = null; showCreateIdeaForm(); return }
       const choices = selectableIdeaWorkspaces(userWorkspaceOptions.options, policy)
       if (!choices.length) throw new Error('None of the configured workspaces are available to you. Contact the workflow administrator.')
-      if (choices.length === 1) { showCreateIdeaForm(choices[0].workspaceId); return }
+      if (choices.length === 1) { await continueIdeaIntake(choices[0].workspaceId, policy); return }
       if (!policy.selection_required && choices.some((option) => option.workspaceId === policy.default_workspace_id)) {
-        showCreateIdeaForm(policy.default_workspace_id!); return
+        await continueIdeaIntake(policy.default_workspace_id!, policy); return
       }
       setWorkspaceSelectionOpen(true)
     } catch (error) {
@@ -4191,7 +4207,7 @@ export function IdeaBacklogManagementPage() {
       const latestPolicy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
       if (latestPolicy && !latestPolicy.allowed_workspace_ids.includes(createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer allowed by the workflow. Reopen Create Idea to choose another workspace.')
       if (!userWorkspaceOptions.options.some((option) => option.workspaceId === createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer available to you.')
-      const created = await apiCreateIdea({
+      const payload = {
         title: normalizeIdeaTitle(createIdeaForm.title),
         description: appendProcessDiagramsToText(
           createIdeaForm.description.trim() || 'Define business problem, expected value, and target outcomes for governance review.',
@@ -4203,7 +4219,13 @@ export function IdeaBacklogManagementPage() {
         owner_id: currentUserId || undefined,
         assignee_id: createIdeaForm.reviewer || undefined,
         folder_id: createIdeaForm.workspaceId === sourceWorkspaceId && sourceWorkspaceId === resolveWorkspaceApiId(tenant?.workspaceId) ? currentFolderId ?? null : null,
-      })
+      }
+      if (latestPolicy?.orchestrated && (!intakeRun.current || intakeRun.current.workspaceId !== createIdeaForm.workspaceId)) {
+        intakeRun.current = { id: await startIdeaIntake(sourceWorkspaceId, createIdeaForm.workspaceId), workspaceId: createIdeaForm.workspaceId }
+      }
+      const created = (latestPolicy?.orchestrated || intakeRun.current)
+        ? await createIdeaInIntake<IdeaApi>(intakeRun.current!.id, payload, currentUserId)
+        : await apiCreateIdea(payload)
       const newIdea = {
         ...toIdea(created),
         submittedBy: created.owner_id?.trim() || currentUserId,
@@ -5075,6 +5097,9 @@ export function IdeaBacklogManagementPage() {
           draftSessionId: status.draft_session_id ?? snapshot.draftSessionId ?? jobId }
         if (status.job_id !== jobId) useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, resumed)
         else useIdeaDraftBrainstormPointerStore.getState().setPointer(resumed)
+        intakeRun.current = null
+        createSourceWorkspaceId.current = null
+        setIdeaWorkspacePolicy(null)
         setIsCreateIdeaDrawerOpen(true)
         setCreateIdeaDraftMode('ai')
         const pointerTitle = snapshot?.title
@@ -6444,10 +6469,11 @@ export function IdeaBacklogManagementPage() {
       />
 
       {workspaceSelectionOpen && ideaWorkspacePolicy ? <IdeaWorkspaceSelectionModal
+        busy={intakeBusy}
         policy={ideaWorkspacePolicy}
         options={selectableIdeaWorkspaces(userWorkspaceOptions.options, ideaWorkspacePolicy)}
         onClose={() => setWorkspaceSelectionOpen(false)}
-        onContinue={(workspaceId) => { setWorkspaceSelectionOpen(false); showCreateIdeaForm(workspaceId) }}
+        onContinue={(workspaceId) => { void continueIdeaIntake(workspaceId, ideaWorkspacePolicy) }}
       /> : null}
 
       {typeof document !== 'undefined' &&
@@ -7022,7 +7048,7 @@ export function IdeaBacklogManagementPage() {
                           id="idea-workspace"
                           value={createIdeaForm.workspaceId}
                           onChange={(e) => setCreateIdeaForm((prev) => ({ ...prev, workspaceId: e.target.value, reviewer: '' }))}
-                          disabled={isCreateIdeaWorkspaceLoading || createIdeaWorkspaceOptions.length === 0}
+                          disabled={Boolean(ideaWorkspacePolicy?.orchestrated) || isCreateIdeaWorkspaceLoading || createIdeaWorkspaceOptions.length === 0}
                           className="h-11 w-full rounded-lg border border-input/80 bg-background px-3 text-sm shadow-sm transition focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         >
                           <option value="">

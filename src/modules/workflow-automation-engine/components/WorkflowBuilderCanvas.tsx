@@ -102,6 +102,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WorkspaceSelectionFields, workspaceSelectionIds } from './WorkspaceSelectionFields'
 import { isWorkspaceSelectionInput } from './workflowNodeKinds'
+import { CallWorkflowFields } from './CallWorkflowFields'
 import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import {
   DEFAULT_IDEA_SECTION_AUDIENCE,
@@ -216,6 +217,8 @@ const WORKFLOW_EDGE_TYPES: EdgeTypes = { routed: WorkflowRoutedEdge }
 const WORKFLOW_NODE_TYPES: NodeTypes = {
   workspaceSelection: WorkflowBuilderNode,
   userInput: WorkflowBuilderNode,
+  callWorkflow: WorkflowBuilderNode,
+  waitForEvent: WorkflowBuilderNode,
   trigger: WorkflowBuilderNode,
   action: WorkflowBuilderNode,
   ifElse: WorkflowBuilderNode,
@@ -230,7 +233,7 @@ const WORKFLOW_NODE_TYPES: NodeTypes = {
 }
 
 const WORKFLOW_PALETTE_GROUPS: Array<{ label: string; kinds: WorkflowNodeKind[] }> = [
-  { label: 'Start & Flow Control', kinds: ['trigger', 'ifElse', 'loop', 'parallel', 'delay', 'retry', 'end'] },
+  { label: 'Start & Flow Control', kinds: ['trigger', 'ifElse', 'callWorkflow', 'waitForEvent', 'loop', 'parallel', 'delay', 'retry', 'end'] },
   { label: 'Project Work', kinds: ['action', 'assignOwner'] },
   { label: 'Governance & Intelligence', kinds: ['userInput', 'approval', 'aiProcess'] },
 ]
@@ -588,6 +591,9 @@ function validateWorkflowGraph(
   rolesWithHolders?: Set<string>,
 ): WorkflowIssue[] {
   const issues: WorkflowIssue[] = []
+  for (const node of nodes.filter((n) => n.data.kind === 'callWorkflow' && !n.data.disabled)) {
+    if (!node.data.config.workflowId || !node.data.config.workflowVersion) issues.push({ level: 'error', nodeId: node.id, message: 'Select a child workflow and its published version.' })
+  }
   const triggers = nodes.filter((n) => n.data.kind === 'trigger')
   const selectors = nodes.filter((n) => isWorkspaceSelectionInput(n.data) && !n.data.disabled)
   for (const node of nodes.filter((n) => n.data.kind === 'userInput' && !n.data.disabled)) {
@@ -1638,6 +1644,7 @@ function WorkflowBuilderCanvasInner({
   const inherited = Boolean(workflowId && activeWorkspaceId && ownerWorkspaceId && ownerWorkspaceId !== activeWorkspaceId)
   const [orgWorkspaces, setOrgWorkspaces] = useState<WorkspaceOrgWorkspaceDto[]>([])
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [childWorkflow, setChildWorkflow] = useState<{ id: string; name: string } | null>(null)
   const [tab, setTab] = useState<'builder' | 'debug'>(initialView === 'builder' ? 'builder' : 'debug')
   const [runs, setRuns] = useState<WorkflowRunSummaryDto[]>([])
   const [activeRun, setActiveRun] = useState<WorkflowRunDto | null>(null)
@@ -2324,7 +2331,7 @@ function WorkflowBuilderCanvasInner({
         setActiveRun(run)
         refreshRuns()
         addToast({
-          variant: run.status === 'failed' ? 'warning' : run.status === 'waiting_approval' ? 'info' : 'success',
+          variant: run.status === 'failed' ? 'warning' : run.status.startsWith('waiting_') ? 'info' : 'success',
           title: `Run ${run.status.replace('_', ' ')}`,
           description: run.id,
         })
@@ -3056,7 +3063,7 @@ function WorkflowBuilderCanvasInner({
                           Run <span className="font-mono">{activeRun.id}</span> · <span className="font-semibold text-slate-700">{activeRun.status.replace('_', ' ')}</span>
                           {activeRun.error ? <span className="text-rose-500"> · {activeRun.error}</span> : null}
                         </span>
-                        {activeRun.status === 'failed' && activeRun.error !== 'approval rejected' ? (
+                        {activeRun.status === 'failed' && activeRun.error !== 'approval rejected' && !activeRun.child_runs?.length ? (
                           <Button type="button" size="sm" variant="outline" className="h-7 shrink-0 rounded-lg px-2.5 text-xs" disabled={retryingRun} onClick={handleRetryRun}>
                             {retryingRun ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                             Retry from failed step
@@ -3069,6 +3076,12 @@ function WorkflowBuilderCanvasInner({
                           </span>
                         ) : null}
                       </div>
+                      {activeRun.parent_run_id ? <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => { getWorkflowRun(activeRun.parent_run_id!).then(setActiveRun) }}>Open parent run</Button> : null}
+                      {activeRun.child_runs?.length ? <div className="mt-2 divide-y divide-border border-y border-border">
+                        {activeRun.child_runs.map((child) => <button type="button" key={child.child_run_id} className="flex w-full items-center justify-between gap-3 px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { getWorkflowRun(child.child_run_id).then(setActiveRun) }}>
+                          <span className="min-w-0 truncate">{child.workflow_name || child.workflow_id} · v{child.workflow_version}</span><span>{child.status.replaceAll('_', ' ')}</span>
+                        </button>)}
+                      </div> : null}
                       {activeRun.parallel_branches?.length ? (
                         <div className="mt-2 grid grid-cols-2 gap-1.5">
                           {activeRun.parallel_branches.map((branch) => (
@@ -3211,6 +3224,9 @@ function WorkflowBuilderCanvasInner({
                   <WorkspaceSelectionFields key={selectedNode.id} config={selectedNode.data.config} options={scopeCandidates.filter((item) => item.status_code !== 'archived')} onChange={(config) => updateSelectedNode({ config })} />
                 ) : null}
 
+                {selectedNode.data.kind === 'callWorkflow' ? (
+                  <CallWorkflowFields key={selectedNode.id} workspaceId={ownerWorkspaceId} currentWorkflowId={workflowId} config={selectedNode.data.config} onChange={(config) => updateSelectedNode({ config })} onOpen={() => setChildWorkflow({ id: selectedNode.data.config.workflowId, name: selectedNode.data.config.workflowName })} />
+                ) : null}
                 {selectedMeta.fields
                   .filter((field) => {
                     if (field.type === 'approvalTarget' || field.type === 'approvalMembers' || field.type === 'emailRecipients' || field.type === 'emailBody') return false
@@ -3830,6 +3846,7 @@ function WorkflowBuilderCanvasInner({
         ) : null}
       </ContextMenu>
 
+      {childWorkflow ? <WorkflowBuilderCanvas open workflowId={childWorkflow.id} workflowName={childWorkflow.name} workspaceId={activeWorkspaceId} onClose={() => setChildWorkflow(null)} /> : null}
       <Dialog
         open={Boolean(publishCheck)}
         onOpenChange={(open) => {

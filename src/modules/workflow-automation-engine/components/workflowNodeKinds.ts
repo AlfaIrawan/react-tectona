@@ -1,6 +1,7 @@
 import {
   GitBranch,
   Building2,
+  Workflow,
   Play,
   Repeat2,
   RotateCcw,
@@ -24,6 +25,8 @@ export type WorkflowNodeKind =
   | 'trigger'
   | 'workspaceSelection'
   | 'userInput'
+  | 'callWorkflow'
+  | 'waitForEvent'
   | 'action'
   | 'ifElse'
   | 'approval'
@@ -311,6 +314,21 @@ export function isWorkspaceSelectionInput(data: Pick<WorkflowNodeData, 'kind' | 
 }
 
 export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
+  callWorkflow: {
+    kind: 'callWorkflow', label: 'Call Workflow', hint: 'Run a published workflow and wait for its result',
+    icon: Workflow, accent: '#0d9488', chipClass: 'bg-teal-50 text-teal-600 ring-teal-100',
+    fields: [
+      { key: 'inputKeys', label: 'Input Keys (optional)', type: 'text', placeholder: 'Context keys to pass, comma separated' },
+      { key: 'outputKeys', label: 'Output Keys (optional)', type: 'text', placeholder: 'Context keys returned by the child' },
+    ],
+    defaultConfig: { workflowId: '', workflowVersion: '', workflowName: '', inputKeys: '', outputKeys: '' },
+  },
+  waitForEvent: {
+    kind: 'waitForEvent', label: 'Wait for Event', hint: 'Pause until the idea is submitted and its AI analysis completes',
+    icon: Timer, accent: '#d97706', chipClass: 'bg-amber-50 text-amber-600 ring-amber-100',
+    fields: [{ key: 'event', label: 'Event', type: 'select', options: ['Idea Submitted'] }],
+    defaultConfig: { event: 'Idea Submitted' },
+  },
   userInput: USER_INPUT_META,
   // Older saved definitions remain readable, but only User Input is offered in the palette.
   workspaceSelection: { ...USER_INPUT_META, kind: 'workspaceSelection' },
@@ -467,6 +485,8 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
 export const WORKFLOW_PALETTE_ORDER: readonly WorkflowNodeKind[] = [
   'trigger',
   'userInput',
+  'callWorkflow',
+  'waitForEvent',
   'action',
   'ifElse',
   'approval',
@@ -486,6 +506,10 @@ export const WORKFLOW_PALETTE_MIME = 'application/tectona-workflow-node'
 export function workflowNodeSummary(data: WorkflowNodeData): string {
   const c = data.config
   switch (data.kind) {
+    case 'callWorkflow':
+      return c.workflowId ? `${c.workflowName || c.workflowId} · v${c.workflowVersion || '?'}` : 'Select a child workflow'
+    case 'waitForEvent':
+      return c.event || 'Select an event'
     case 'userInput':
     case 'workspaceSelection':
       try {

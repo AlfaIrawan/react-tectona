@@ -135,6 +135,8 @@ type WorkflowStatus = 'Active' | 'Draft' | 'Paused' | 'Needs Approval'
 type PanelId = 'overview' | 'catalog' | 'agentCatalog' | 'automation' | 'monitoring'
 
 type WorkflowRecord = {
+  childWorkflowIds?: string[]
+  parentWorkflowIds?: string[]
   id: string
   name: string
   project: string
@@ -834,6 +836,8 @@ function workflowScopeLabel(item: WorkflowRecord): string {
 function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOption[] = []): WorkflowRecord {
   const owner = resolveWorkflowOwner(dto.owner, ownerOptions, -1)
   return {
+    childWorkflowIds: dto.child_workflow_ids ?? [],
+    parentWorkflowIds: dto.parent_workflow_ids ?? [],
     id: dto.id,
     name: dto.name,
     project: dto.category,
@@ -853,6 +857,7 @@ function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOpti
 }
 
 export function WorkflowAutomationEnginePage() {
+  const [expandedCalls, setExpandedCalls] = useState<Set<string>>(new Set())
   const { addToast } = useToast()
   const { workspaceId, selectedWorkspaceIds } = useTenantContext()
   const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)
@@ -1306,6 +1311,8 @@ export function WorkflowAutomationEnginePage() {
         ? [
             { label: 'Waiting approval', value: overview.queue.waiting_approval, color: '#f59e0b' },
             { label: 'Waiting delay', value: overview.queue.waiting_delay, color: '#8b5cf6' },
+            { label: 'Waiting event', value: overview.queue.waiting_event ?? 0, color: '#d97706' },
+            { label: 'Waiting child', value: overview.queue.waiting_child ?? 0, color: '#0d9488' },
             { label: 'Running', value: overview.queue.running, color: '#3b82f6' },
             { label: 'Pending approvals', value: overview.queue.pending_approvals, color: '#f97316' },
           ]
@@ -1689,6 +1696,46 @@ export function WorkflowAutomationEnginePage() {
             </div>
             <div className="mt-0.5 truncate text-[10px] text-slate-500" title={item.project}>{item.project}</div>
             <div className="mt-0.5 truncate text-[10px] text-slate-500" title="Where this workflow fires">{workflowScopeLabel(item)}</div>
+            {item.childWorkflowIds?.length ? (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-teal-700"
+                  aria-expanded={expandedCalls.has(item.id)}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setExpandedCalls((current) => {
+                      const next = new Set(current)
+                      if (next.has(item.id)) next.delete(item.id)
+                      else next.add(item.id)
+                      return next
+                    })
+                  }}
+                >
+                  <ChevronRight className={cn('h-3 w-3 transition-transform', expandedCalls.has(item.id) && 'rotate-90')} />
+                  Parent: {item.childWorkflowIds.length} child workflows
+                </button>
+                {expandedCalls.has(item.id) ? (
+                  <div className="ml-1 mt-1 space-y-1 border-l border-border pl-3">
+                    {item.childWorkflowIds.map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className="block max-w-full truncate text-left text-[11px] text-slate-600 hover:text-primary"
+                        onClick={(event) => { event.stopPropagation(); setBuilder({ open: true, workflowId: id }) }}
+                      >
+                        {workflows.find((row) => row.id === id)?.name || id}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {item.parentWorkflowIds?.length ? (
+              <div className="mt-1 truncate text-[10px] text-teal-700" title={item.parentWorkflowIds.map((id) => workflows.find((row) => row.id === id)?.name || id).join(', ')}>
+                Child of {item.parentWorkflowIds.map((id) => workflows.find((row) => row.id === id)?.name || id).join(', ')}
+              </div>
+            ) : null}
             <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{workflowCode(item)}</div>
           </div>
         )

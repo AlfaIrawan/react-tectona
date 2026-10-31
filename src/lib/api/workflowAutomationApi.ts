@@ -39,6 +39,8 @@ export type WorkflowGraph = {
 
 /** Row shape returned by GET /workflows (no heavy `definition`). */
 export type WorkflowSummaryDto = {
+  child_workflow_ids?: string[]
+  parent_workflow_ids?: string[]
   id: string
   name: string
   category: string
@@ -151,7 +153,7 @@ export type WorkflowOverviewDto = {
   }
   triggers: Array<{ label: string; value: number; pct: number }>
   status_mix: Array<{ label: string; value: number }>
-  queue: { waiting_approval: number; waiting_delay: number; running: number; pending_approvals: number }
+  queue: { waiting_approval: number; waiting_delay: number; waiting_event?: number; waiting_child?: number; running: number; pending_approvals: number }
   insights: Array<{ level: 'Critical' | 'Warning' | 'Info'; text: string }>
   /** What the run figures cover: every workspace, or the selected one plus all under it. */
   scope?: { runs: 'all' | 'workspace'; workspaces: number | null }
@@ -296,7 +298,7 @@ export async function dispatchWorkflowWebhook(eventName: string, context: Record
 
 // ── Execution engine (Phase B) ────────────────────────────────────────────
 
-export type WorkflowRunStatus = 'running' | 'waiting_approval' | 'waiting_delay' | 'completed' | 'failed' | 'cancelled'
+export type WorkflowRunStatus = 'running' | 'waiting_approval' | 'waiting_delay' | 'waiting_event' | 'waiting_child' | 'completed' | 'failed' | 'cancelled'
 export type WorkflowRunStepStatus = 'succeeded' | 'failed' | 'skipped' | 'waiting' | 'running'
 
 export type WorkflowRunStepDto = {
@@ -337,6 +339,8 @@ export type WorkflowRunSummaryDto = {
 }
 
 export type WorkflowRunDto = WorkflowRunSummaryDto & {
+  parent_run_id?: string | null
+  child_runs?: Array<{ parent_node_id: string; child_run_id: string; workflow_id: string; workflow_name?: string; workflow_version: number; status: WorkflowRunStatus }>
   context: Record<string, unknown>
   steps: WorkflowRunStepDto[]
   parallel_branches: WorkflowParallelBranchDto[]
