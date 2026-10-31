@@ -71,18 +71,14 @@ function PersonalHarness() {
 
 it('hides personal search results by classification, not by name, while preserving selected badges', async () => {
   await act(async () => root.render(createElement(PersonalHarness)))
-  const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!
-  expect(toggle.getAttribute('aria-checked')).toBe('false')
+  expect(container.querySelector('[role="switch"]')).toBeNull()
+  expect(container.textContent).not.toContain('Include personal workspaces')
   expect(container.querySelector('[aria-label="Selected scope workspaces"]')?.textContent).toContain('Alfa Personal WS')
   await search('Alfa')
   const results = () => container.querySelector('[aria-label="Scope workspace search results"]')!
   expect(results().textContent).toContain('Alfa Team')
   expect(results().textContent).not.toContain('Alfa Profile')
   expect(results().textContent).not.toContain('Alfa Work')
-  await act(async () => toggle.click())
-  expect(results().querySelectorAll('button')).toHaveLength(3)
-  expect(results().textContent).not.toContain('Alfa Personal WS')
-  await act(async () => toggle.click())
   expect(results().querySelectorAll('button')).toHaveLength(1)
   expect(container.querySelector('[aria-label="Selected scope workspaces"]')?.textContent).toContain('Alfa Personal WS')
   await search('Personal Research')
@@ -90,15 +86,19 @@ it('hides personal search results by classification, not by name, while preservi
   expect(changed).not.toHaveBeenCalled()
 })
 
-it('keeps a newly selected personal workspace when the filter is turned off', async () => {
-  await act(async () => root.render(createElement(PersonalHarness)))
-  const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!
-  await act(async () => toggle.click())
-  await search('Alfa Profile')
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Scope workspace search results"] button')!.click())
-  expect(changed).toHaveBeenCalledWith(['chosen-personal', 'mode-personal'])
-  changed.mockClear()
-  await act(async () => toggle.click())
-  expect(container.querySelector('[aria-label="Selected scope workspaces"]')?.textContent).toContain('Alfa Profile')
+it('places differently colored badges before the mode control and search', async () => {
+  await act(async () => root.render(createElement(ScopeWorkspacePicker, {
+    selectedIds: ['bp', 'pf'], options: [{ id: 'bp', name: 'Business Partner' }, { id: 'pf', name: 'Portfolio' }], onChange: changed,
+  }, createElement('select', { 'aria-label': 'Scope mode' }))))
+  const badges = container.querySelector('[aria-label="Selected scope workspaces"]')!
+  expect(badges.children[0].className).not.toBe(badges.children[1].className)
+  expect(badges.nextElementSibling?.getAttribute('aria-label')).toBe('Scope mode')
+  expect(badges.nextElementSibling?.nextElementSibling?.getAttribute('aria-label')).toBe('Search scope workspaces')
   expect(changed).not.toHaveBeenCalled()
+})
+
+it('does not show workspace search in organization mode', async () => {
+  await act(async () => root.render(createElement(ScopeWorkspacePicker, { selectedIds: [], options: [], onChange: changed, searchEnabled: false })))
+  expect(container.querySelector('input')).toBeNull()
+  expect(container.textContent).not.toContain('No workspaces found')
 })

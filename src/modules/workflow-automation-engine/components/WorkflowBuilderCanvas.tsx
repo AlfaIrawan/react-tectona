@@ -3629,6 +3629,7 @@ function WorkflowBuilderCanvasInner({
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Applies to</label>
+                  <ScopeWorkspacePicker key={`${workflowId}-${scopeMode}`} selectedIds={scopeMode === 'organization' ? [] : scopeWorkspaceIds} options={scopeCandidates} onChange={setScopeWorkspaceIds} searchEnabled={scopeMode !== 'organization'}>
                   <Select
                     value={scopeMode}
                     onChange={(event) => setScopeMode(event.target.value as WorkflowScopeMode)}
@@ -3638,9 +3639,9 @@ function WorkflowBuilderCanvasInner({
                     <SelectItem value="include">Only the selected workspaces</SelectItem>
                     <SelectItem value="exclude">All except the selected workspaces</SelectItem>
                   </Select>
+                  </ScopeWorkspacePicker>
                   {scopeMode !== 'organization' ? (
                     <div className="space-y-1.5">
-                      <ScopeWorkspacePicker key={`${workflowId}-${scopeMode}`} selectedIds={scopeWorkspaceIds} options={scopeCandidates} onChange={setScopeWorkspaceIds} />
                       {scopeWorkspaceIds.length === 0 ? (
                         <p className="text-[11px] text-amber-700">Choose at least one workspace. Nothing is saved until you do.</p>
                       ) : null}
