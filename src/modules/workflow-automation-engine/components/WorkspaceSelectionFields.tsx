@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { ChevronDown, StickyNote, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -37,6 +37,7 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
   onChange: (config: Record<string, string>) => void
 }) {
   const [query, setQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [expandedWorkspaceId, setExpandedWorkspaceId] = useState<string | null>(null)
   const accordionId = useId()
   const selected = workspaceSelectionIds(config.allowedWorkspaceIds)
@@ -51,7 +52,8 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
       ...(config.defaultWorkspaceId === id ? { defaultWorkspaceId: '' } : {}),
     })
   }
-  const available = options.filter((option) => !selected.includes(option.id) && option.name.toLowerCase().includes(query.toLowerCase()))
+  const search = query.trim().toLowerCase()
+  const available = options.filter((option) => !selected.includes(option.id) && option.name.toLowerCase().includes(search))
   return <div className="space-y-3">
     <div className="space-y-2 text-xs text-muted-foreground">
       <p>Allowed Workspaces</p>
@@ -63,7 +65,7 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
           const triggerId = `${accordionId}-${id}-trigger`
           return (
             <div key={id} className="min-w-0">
-              <div className="inline-flex max-w-full items-center rounded-md bg-muted pr-1 text-foreground">
+              <div className="flex w-full items-center rounded-md bg-muted pr-1 text-foreground">
                 <button
                   type="button"
                   id={triggerId}
@@ -71,11 +73,11 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
                   title={`Edit description for ${name}`}
                   aria-expanded={expanded}
                   aria-controls={panelId}
-                  className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   onClick={() => setExpandedWorkspaceId(expanded ? null : id)}
                 >
                   <WorkspaceAvatar id={id} name={name} />
-                  <span className="truncate">{name}</span>
+                  <span className="min-w-0 flex-1 truncate">{name}</span>
                   {descriptions[id]?.trim() ? <span title="Description added"><StickyNote className="h-3 w-3 shrink-0 text-cyan-700" aria-hidden="true" /></span> : null}
                   <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
                 </button>
@@ -99,15 +101,15 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
           )
         })}
       </div>
-      <Input aria-label="Search allowed workspaces" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search workspaces..." />
+      <Input ref={searchInputRef} aria-label="Search allowed workspaces" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search workspaces..." />
     </div>
-    <div className="max-h-40 overflow-y-auto rounded-lg border border-border" role="group" aria-label="Available workspaces">
-      {available.map((option) => <button key={option.id} type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs hover:bg-muted" onClick={() => { onChange({ allowedWorkspaceIds: JSON.stringify([...selected, option.id]) }); setQuery('') }}>
+    {search ? <div className="max-h-40 overflow-y-auto rounded-lg border border-border" role="group" aria-label="Available workspaces">
+      {available.map((option) => <button key={option.id} type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs hover:bg-muted" onClick={() => { onChange({ allowedWorkspaceIds: JSON.stringify([...selected, option.id]) }); setQuery(''); searchInputRef.current?.focus() }}>
         <WorkspaceAvatar id={option.id} name={option.name} />
         <span className="min-w-0 [overflow-wrap:anywhere]">{option.name}</span>
       </button>)}
-      {!available.length && <p className="px-3 py-2 text-xs text-muted-foreground">No workspaces available.</p>}
-    </div>
+      {!available.length && <p role="status" className="px-3 py-2 text-xs text-muted-foreground">No matching workspaces.</p>}
+    </div> : null}
     <label className="block space-y-2 text-xs text-muted-foreground">
       <span>Default Workspace</span>
       <select className="h-9 w-full rounded-lg border border-input bg-background px-2 text-foreground" value={config.defaultWorkspaceId || ''} onChange={(event) => onChange({ defaultWorkspaceId: event.target.value })}>

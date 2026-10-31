@@ -26,9 +26,19 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
+async function searchWorkspaces(value: string) {
+  const input = container.querySelector<HTMLInputElement>('[aria-label="Search allowed workspaces"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
 describe('workspace option description configuration', () => {
   it('shows decorative avatars without changing the selected workspace ids', async () => {
     await act(async () => root.render(createElement(Harness)))
+    expect(container.querySelector('[aria-label="Available workspaces"]')).toBeNull()
+    await searchWorkspaces('  ADITYA  ')
     const available = container.querySelector('[aria-label="Available workspaces"]')!
     const button = available.querySelector<HTMLButtonElement>('button')!
     expect(button.querySelector('[aria-hidden="true"]')?.textContent).toBe('AK')
@@ -37,6 +47,23 @@ describe('workspace option description configuration', () => {
     await act(async () => button.click())
     expect(JSON.parse(changed.mock.calls[0][0].allowedWorkspaceIds)).toEqual(['bp', 'portfolio', 'aditya'])
     expect(Object.keys(changed.mock.calls[0][0])).toEqual(['allowedWorkspaceIds'])
+    expect(container.querySelector('[aria-label="Available workspaces"]')).toBeNull()
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Search allowed workspaces"]')?.value).toBe('')
+    expect(document.activeElement).toBe(container.querySelector('[aria-label="Search allowed workspaces"]'))
+  })
+
+  it('shows results only for nonblank searches and excludes selected workspaces', async () => {
+    await act(async () => root.render(createElement(Harness)))
+    await searchWorkspaces('   ')
+    expect(container.querySelector('[aria-label="Available workspaces"]')).toBeNull()
+    await searchWorkspaces('Business')
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('No matching workspaces.')
+    expect(container.querySelector('[aria-label="Available workspaces"] button')).toBeNull()
+    await searchWorkspaces('Aditya')
+    expect(container.querySelectorAll('[aria-label="Available workspaces"] button')).toHaveLength(1)
+    await searchWorkspaces('')
+    expect(container.querySelector('[aria-label="Available workspaces"]')).toBeNull()
+    expect(changed).not.toHaveBeenCalled()
   })
 
   it('handles missing, malformed and non-object legacy values', () => {
