@@ -33,7 +33,7 @@ describe('workspace option description configuration', () => {
     const button = available.querySelector<HTMLButtonElement>('button')!
     expect(button.querySelector('[aria-hidden="true"]')?.textContent).toBe('AK')
     expect(button.textContent).toContain('Aditya Kristianto WS')
-    expect(container.querySelector('label [aria-hidden="true"]')?.textContent).toBe('BP')
+    expect(container.querySelector('[aria-label="Edit description for Business Partner"] [aria-hidden="true"]')?.textContent).toBe('BP')
     await act(async () => button.click())
     expect(JSON.parse(changed.mock.calls[0][0].allowedWorkspaceIds)).toEqual(['bp', 'portfolio', 'aditya'])
     expect(Object.keys(changed.mock.calls[0][0])).toEqual(['allowedWorkspaceIds'])
@@ -46,6 +46,7 @@ describe('workspace option description configuration', () => {
 
   it('edits multiline descriptions independently without changing routing fields', async () => {
     await act(async () => root.render(createElement(Harness)))
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Business Partner"]')!.click())
     const textarea = container.querySelector<HTMLTextAreaElement>('[aria-label="Option Description for Business Partner"]')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Business initiatives\nReview required')
@@ -55,16 +56,55 @@ describe('workspace option description configuration', () => {
     const update = changed.mock.calls[0][0]
     expect(Object.keys(update)).toEqual(['optionDescriptions'])
     expect(JSON.parse(update.optionDescriptions)).toEqual({ bp: 'Business initiatives\nReview required', portfolio: 'Portfolio review' })
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Portfolio"]')!.click())
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Portfolio review')
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Business Partner"]')!.click())
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Business initiatives\nReview required')
+    expect(changed).toHaveBeenCalledTimes(1)
   })
 
   it('removes only the description of the workspace that was removed', async () => {
     await act(async () => root.render(createElement(Harness)))
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Business Partner"]')!.click())
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Remove Business Partner"]')!.click())
     const update = changed.mock.calls[0][0]
     expect(JSON.parse(update.allowedWorkspaceIds)).toEqual(['portfolio'])
     expect(update.defaultWorkspaceId).toBe('')
     expect(JSON.parse(update.optionDescriptions)).toEqual({ portfolio: 'Portfolio review' })
     expect(container.querySelector('[aria-label="Option Description for Business Partner"]')).toBeNull()
+    expect(container.querySelector('textarea')).toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Portfolio"]')!.click())
     expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Option Description for Portfolio"]')?.value).toBe('Portfolio review')
+  })
+
+  it('starts collapsed and opens only one workspace without marking the config dirty', async () => {
+    await act(async () => root.render(createElement(Harness)))
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(container.querySelector('button button')).toBeNull()
+    const bp = container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Business Partner"]')!
+    const portfolio = container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Portfolio"]')!
+    expect(bp.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => bp.click())
+    expect(bp.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(bp.getAttribute('aria-controls')!)?.getAttribute('aria-labelledby')).toBe(bp.id)
+    await act(async () => portfolio.click())
+    expect(bp.getAttribute('aria-expanded')).toBe('false')
+    expect(portfolio.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('textarea')).toHaveLength(1)
+    await act(async () => portfolio.click())
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(changed).not.toHaveBeenCalled()
+  })
+
+  it('shows the note indicator only when a description contains text', async () => {
+    await act(async () => root.render(createElement(Harness)))
+    expect(container.querySelectorAll('[title="Description added"]')).toHaveLength(2)
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit description for Business Partner"]')!.click())
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '  \n ')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(container.querySelectorAll('[title="Description added"]')).toHaveLength(1)
   })
 })

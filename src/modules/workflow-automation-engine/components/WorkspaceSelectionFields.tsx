@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { X } from 'lucide-react'
+import { useId, useState } from 'react'
+import { ChevronDown, StickyNote, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -37,9 +37,12 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
   onChange: (config: Record<string, string>) => void
 }) {
   const [query, setQuery] = useState('')
+  const [expandedWorkspaceId, setExpandedWorkspaceId] = useState<string | null>(null)
+  const accordionId = useId()
   const selected = workspaceSelectionIds(config.allowedWorkspaceIds)
   const descriptions = workspaceOptionDescriptions(config.optionDescriptions)
   const removeWorkspace = (id: string) => {
+    if (expandedWorkspaceId === id) setExpandedWorkspaceId(null)
     const nextDescriptions = { ...descriptions }
     delete nextDescriptions[id]
     onChange({
@@ -50,17 +53,54 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
   }
   const available = options.filter((option) => !selected.includes(option.id) && option.name.toLowerCase().includes(query.toLowerCase()))
   return <div className="space-y-3">
-    <label className="block space-y-2 text-xs text-muted-foreground">
-      <span>Allowed Workspaces</span>
-      <div className="flex flex-wrap gap-1">
-        {selected.map((id) => <span key={id} className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted px-2 py-1 text-foreground">
-          <WorkspaceAvatar id={id} name={options.find((option) => option.id === id)?.name ?? id} />
-          <span className="truncate">{options.find((option) => option.id === id)?.name ?? id}</span>
-          <button type="button" title="Remove workspace" aria-label={`Remove ${options.find((option) => option.id === id)?.name ?? id}`} onClick={() => removeWorkspace(id)}><X className="h-3 w-3" /></button>
-        </span>)}
+    <div className="space-y-2 text-xs text-muted-foreground">
+      <p>Allowed Workspaces</p>
+      <div className="space-y-1">
+        {selected.map((id) => {
+          const name = options.find((option) => option.id === id)?.name ?? id
+          const expanded = expandedWorkspaceId === id
+          const panelId = `${accordionId}-${id}-description`
+          const triggerId = `${accordionId}-${id}-trigger`
+          return (
+            <div key={id} className="min-w-0">
+              <div className="inline-flex max-w-full items-center rounded-md bg-muted pr-1 text-foreground">
+                <button
+                  type="button"
+                  id={triggerId}
+                  aria-label={`Edit description for ${name}`}
+                  title={`Edit description for ${name}`}
+                  aria-expanded={expanded}
+                  aria-controls={panelId}
+                  className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  onClick={() => setExpandedWorkspaceId(expanded ? null : id)}
+                >
+                  <WorkspaceAvatar id={id} name={name} />
+                  <span className="truncate">{name}</span>
+                  {descriptions[id]?.trim() ? <span title="Description added"><StickyNote className="h-3 w-3 shrink-0 text-cyan-700" aria-hidden="true" /></span> : null}
+                  <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+                </button>
+                <button type="button" title="Remove workspace" aria-label={`Remove ${name}`} className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => removeWorkspace(id)}><X className="h-3 w-3" /></button>
+              </div>
+              {expanded ? (
+                <div id={panelId} role="region" aria-labelledby={triggerId} className="mb-2 mt-2 space-y-1.5 border-l border-border pl-3">
+                  <label htmlFor={`${panelId}-input`} className="block text-xs text-muted-foreground">Option Description</label>
+                  <Textarea
+                    id={`${panelId}-input`}
+                    aria-label={`Option Description for ${name}`}
+                    placeholder="Description (optional)"
+                    rows={3}
+                    className="resize-y text-xs text-foreground"
+                    value={descriptions[id] || ''}
+                    onChange={(event) => onChange({ optionDescriptions: JSON.stringify({ ...descriptions, [id]: event.target.value }) })}
+                  />
+                </div>
+              ) : null}
+            </div>
+          )
+        })}
       </div>
       <Input aria-label="Search allowed workspaces" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search workspaces..." />
-    </label>
+    </div>
     <div className="max-h-40 overflow-y-auto rounded-lg border border-border" role="group" aria-label="Available workspaces">
       {available.map((option) => <button key={option.id} type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs hover:bg-muted" onClick={() => { onChange({ allowedWorkspaceIds: JSON.stringify([...selected, option.id]) }); setQuery('') }}>
         <WorkspaceAvatar id={option.id} name={option.name} />
@@ -68,27 +108,6 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
       </button>)}
       {!available.length && <p className="px-3 py-2 text-xs text-muted-foreground">No workspaces available.</p>}
     </div>
-    {selected.length ? (
-      <div className="space-y-3">
-        <p className="text-xs font-medium text-muted-foreground">Option Descriptions</p>
-        {selected.map((id) => {
-          const name = options.find((option) => option.id === id)?.name ?? id
-          return (
-            <label key={id} className="block space-y-1.5 text-xs text-foreground">
-              <span className="block [overflow-wrap:anywhere]">{name}</span>
-              <Textarea
-                aria-label={`Option Description for ${name}`}
-                placeholder="Description (optional)"
-                rows={3}
-                className="resize-y text-xs"
-                value={descriptions[id] || ''}
-                onChange={(event) => onChange({ optionDescriptions: JSON.stringify({ ...descriptions, [id]: event.target.value }) })}
-              />
-            </label>
-          )
-        })}
-      </div>
-    ) : null}
     <label className="block space-y-2 text-xs text-muted-foreground">
       <span>Default Workspace</span>
       <select className="h-9 w-full rounded-lg border border-input bg-background px-2 text-foreground" value={config.defaultWorkspaceId || ''} onChange={(event) => onChange({ defaultWorkspaceId: event.target.value })}>
