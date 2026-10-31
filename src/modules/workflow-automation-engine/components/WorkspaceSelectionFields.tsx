@@ -3,6 +3,19 @@ import { X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
+const WORKSPACE_AVATAR_COLORS = [
+  'bg-sky-100 text-sky-700', 'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-800', 'bg-rose-100 text-rose-700',
+  'bg-violet-100 text-violet-700', 'bg-cyan-100 text-cyan-700',
+]
+
+function WorkspaceAvatar({ id, name }: { id: string; name: string }) {
+  const words = name.replace(/\s+(?:ws|workspace)$/i, '').trim().split(/\s+/).filter(Boolean)
+  const initials = words.length > 1 ? words[0][0] + words[words.length - 1][0] : words[0]?.slice(0, 2) || '?'
+  const hash = Array.from(id).reduce((value, character) => (value * 31 + character.charCodeAt(0)) >>> 0, 0)
+  return <span aria-hidden="true" className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold uppercase ${WORKSPACE_AVATAR_COLORS[hash % WORKSPACE_AVATAR_COLORS.length]}`}>{initials.toUpperCase()}</span>
+}
+
 export function workspaceSelectionIds(value?: string): string[] {
   try {
     const ids: unknown = JSON.parse(value || '[]')
@@ -41,6 +54,7 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
       <span>Allowed Workspaces</span>
       <div className="flex flex-wrap gap-1">
         {selected.map((id) => <span key={id} className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted px-2 py-1 text-foreground">
+          <WorkspaceAvatar id={id} name={options.find((option) => option.id === id)?.name ?? id} />
           <span className="truncate">{options.find((option) => option.id === id)?.name ?? id}</span>
           <button type="button" title="Remove workspace" aria-label={`Remove ${options.find((option) => option.id === id)?.name ?? id}`} onClick={() => removeWorkspace(id)}><X className="h-3 w-3" /></button>
         </span>)}
@@ -48,7 +62,10 @@ export function WorkspaceSelectionFields({ config, options, onChange }: {
       <Input aria-label="Search allowed workspaces" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search workspaces..." />
     </label>
     <div className="max-h-40 overflow-y-auto rounded-lg border border-border" role="group" aria-label="Available workspaces">
-      {available.map((option) => <button key={option.id} type="button" className="block w-full px-3 py-2 text-left text-xs hover:bg-muted" onClick={() => { onChange({ allowedWorkspaceIds: JSON.stringify([...selected, option.id]) }); setQuery('') }}>{option.name}</button>)}
+      {available.map((option) => <button key={option.id} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted" onClick={() => { onChange({ allowedWorkspaceIds: JSON.stringify([...selected, option.id]) }); setQuery('') }}>
+        <WorkspaceAvatar id={option.id} name={option.name} />
+        <span className="min-w-0 [overflow-wrap:anywhere]">{option.name}</span>
+      </button>)}
       {!available.length && <p className="px-3 py-2 text-xs text-muted-foreground">No workspaces available.</p>}
     </div>
     {selected.length ? (

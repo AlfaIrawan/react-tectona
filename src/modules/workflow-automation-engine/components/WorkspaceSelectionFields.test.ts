@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceSelectionFields, workspaceOptionDescriptions } from './WorkspaceSelectionFields'
 
-const options = [{ id: 'bp', name: 'Business Partner' }, { id: 'portfolio', name: 'Portfolio' }]
+const options = [{ id: 'bp', name: 'Business Partner' }, { id: 'portfolio', name: 'Portfolio' }, { id: 'aditya', name: 'Aditya Kristianto WS' }]
 let container: HTMLDivElement
 let root: Root
 let changed = vi.fn()
@@ -27,6 +27,18 @@ afterEach(async () => {
 })
 
 describe('workspace option description configuration', () => {
+  it('shows decorative avatars without changing the selected workspace ids', async () => {
+    await act(async () => root.render(createElement(Harness)))
+    const available = container.querySelector('[aria-label="Available workspaces"]')!
+    const button = available.querySelector<HTMLButtonElement>('button')!
+    expect(button.querySelector('[aria-hidden="true"]')?.textContent).toBe('AK')
+    expect(button.textContent).toContain('Aditya Kristianto WS')
+    expect(container.querySelector('label [aria-hidden="true"]')?.textContent).toBe('BP')
+    await act(async () => button.click())
+    expect(JSON.parse(changed.mock.calls[0][0].allowedWorkspaceIds)).toEqual(['bp', 'portfolio', 'aditya'])
+    expect(Object.keys(changed.mock.calls[0][0])).toEqual(['allowedWorkspaceIds'])
+  })
+
   it('handles missing, malformed and non-object legacy values', () => {
     for (const value of [undefined, '', '{invalid', 'null', '[]', 'false']) expect(workspaceOptionDescriptions(value)).toEqual({})
     expect(workspaceOptionDescriptions('{"bp":"Business review","portfolio":42}')).toEqual({ bp: 'Business review' })
