@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals() })
 async function search(value: string) {
   await act(async () => {
-    const input = container.querySelector('input')!
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Search scope workspaces"]')!
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
@@ -55,5 +55,50 @@ it('removes only the chosen badge and preserves unknown selected ids while the d
   changed.mockClear()
   await act(async () => root.render(createElement(ScopeWorkspacePicker, { selectedIds: ['unloaded-id'], options: [], onChange: changed })))
   expect(container.textContent).toContain('unloaded-id')
+  expect(changed).not.toHaveBeenCalled()
+})
+
+function PersonalHarness() {
+  const [ids, setIds] = useState(['chosen-personal'])
+  return createElement(ScopeWorkspacePicker, { selectedIds: ids, options: [
+    { id: 'chosen-personal', name: 'Alfa Personal WS', tenant_mode: 'personal' },
+    { id: 'mode-personal', name: 'Alfa Profile', tenant_mode: 'personal' },
+    { id: 'metadata-personal', name: 'Alfa Work', tenant_mode: 'organization', metadata: { tectona_workspace_classification: 'Personal' } },
+    { id: 'organization', name: 'Alfa Team', tenant_mode: 'organization', metadata: { tectona_workspace_classification: 'Division' } },
+    { id: 'legacy', name: 'Personal Research WS' },
+  ], onChange: (next: string[]) => { changed(next); setIds(next) } })
+}
+
+it('hides personal search results by classification, not by name, while preserving selected badges', async () => {
+  await act(async () => root.render(createElement(PersonalHarness)))
+  const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!
+  expect(toggle.getAttribute('aria-checked')).toBe('false')
+  expect(container.querySelector('[aria-label="Selected scope workspaces"]')?.textContent).toContain('Alfa Personal WS')
+  await search('Alfa')
+  const results = () => container.querySelector('[aria-label="Scope workspace search results"]')!
+  expect(results().textContent).toContain('Alfa Team')
+  expect(results().textContent).not.toContain('Alfa Profile')
+  expect(results().textContent).not.toContain('Alfa Work')
+  await act(async () => toggle.click())
+  expect(results().querySelectorAll('button')).toHaveLength(3)
+  expect(results().textContent).not.toContain('Alfa Personal WS')
+  await act(async () => toggle.click())
+  expect(results().querySelectorAll('button')).toHaveLength(1)
+  expect(container.querySelector('[aria-label="Selected scope workspaces"]')?.textContent).toContain('Alfa Personal WS')
+  await search('Personal Research')
+  expect(results().textContent).toContain('Personal Research WS')
+  expect(changed).not.toHaveBeenCalled()
+})
+
+it('keeps a newly selected personal workspace when the filter is turned off', async () => {
+  await act(async () => root.render(createElement(PersonalHarness)))
+  const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!
+  await act(async () => toggle.click())
+  await search('Alfa Profile')
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Scope workspace search results"] button')!.click())
+  expect(changed).toHaveBeenCalledWith(['chosen-personal', 'mode-personal'])
+  changed.mockClear()
+  await act(async () => toggle.click())
+  expect(container.querySelector('[aria-label="Selected scope workspaces"]')?.textContent).toContain('Alfa Profile')
   expect(changed).not.toHaveBeenCalled()
 })
