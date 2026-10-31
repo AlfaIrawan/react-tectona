@@ -101,6 +101,7 @@ import {
 } from '@/lib/api/workflowAutomationApi'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WorkspaceSelectionFields, workspaceSelectionIds } from './WorkspaceSelectionFields'
+import { ScopeWorkspacePicker } from './ScopeWorkspacePicker'
 import { isWorkspaceSelectionInput } from './workflowNodeKinds'
 import { CallWorkflowFields } from './CallWorkflowFields'
 import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
@@ -3639,25 +3640,7 @@ function WorkflowBuilderCanvasInner({
                   </Select>
                   {scopeMode !== 'organization' ? (
                     <div className="space-y-1.5">
-                      {scopeCandidates.length === 0 ? (
-                        <p className="text-[11px] text-slate-500">No workspaces found in this organization.</p>
-                      ) : (
-                        <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
-                          {scopeCandidates.map((item) => (
-                            <label key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
-                              <input
-                                type="checkbox"
-                                checked={scopeWorkspaceIds.includes(item.id)}
-                                onChange={() => setScopeWorkspaceIds((current) => (
-                                  current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
-                                ))}
-                              />
-                              <span className="truncate">{item.name}</span>
-                              {item.slug ? <span className="shrink-0 truncate text-[10px] text-slate-400">{item.slug}</span> : null}
-                            </label>
-                          ))}
-                        </div>
-                      )}
+                      <ScopeWorkspacePicker key={`${workflowId}-${scopeMode}`} selectedIds={scopeWorkspaceIds} options={scopeCandidates} onChange={setScopeWorkspaceIds} />
                       {scopeWorkspaceIds.length === 0 ? (
                         <p className="text-[11px] text-amber-700">Choose at least one workspace. Nothing is saved until you do.</p>
                       ) : null}
