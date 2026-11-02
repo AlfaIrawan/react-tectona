@@ -19,7 +19,7 @@ async function main() {
 import {BrainstormConfirmationPanel} from '@/modules/project-management/components/BrainstormConfirmationPanel';
 import {BrainstormConfirmationOptions} from '@/modules/project-management/components/BrainstormConfirmationOptions';
 import {BrainstormSummaryBox} from '@/modules/project-management/components/BrainstormSummaryBox';
-const text='**Yang ingin aku konfirmasi: Jelaskan tujuan utama dari project ini**\\n\\nPemahamanku untuk poin ini: Membantu **collector field** menanyakan kebijakan secara aman melalui **Generative AI**.\\n\\nJika ada yang kurang atau keliru, tulis perbaikan atau tambahannya.';
+const text='**Yang ingin aku konfirmasi: Jelaskan tujuan utama dari project ini**\\n\\nPemahamanku untuk poin ini: Tujuan utama: \u2022 Membantu **collector field** menanyakan kebijakan secara aman. \u2022 Mempercepat pencarian kebijakan melalui **Generative AI**.\\n\\nJika ada yang kurang atau keliru, tulis perbaikan atau tambahannya.';
 window.sends=[];createRoot(document.getElementById('root')).render(<main className="mx-auto max-w-3xl px-3 py-5">
 <BrainstormSummaryBox text={'- Chat Gen AI membantu collector field menanyakan policy.\\n- Pencarian memo saat ini masih manual.'} indonesian/>
 <BrainstormConfirmationPanel text={text} question="Apakah rangkuman tujuan proyek sudah benar dan lengkap?" indonesian renderText={value=><p className="text-sm leading-6">{value}</p>}>
@@ -57,6 +57,9 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
       assert.ok(advice.y >= block.y + block.height)
       assert.equal(await panel.locator('input[type=radio]').count(), 2)
       assert.equal(await panel.locator('strong').count(), 2)
+      assert.equal(await panel.locator('ul > li').count(), 2)
+      assert.equal(await panels.nth(2).locator('ul > li').count(), 2)
+      assert.equal((await panel.textContent()).includes('\u2022'), false)
       assert.equal((await panel.textContent()).includes('**'), false)
       assert.equal(await panels.nth(2).locator('strong').count(), 2)
       assert.equal(await panels.nth(1).getByRole('button', { name: 'Kirim' }).isDisabled(), true)

@@ -48,4 +48,31 @@ describe('confirmation answer Markdown', () => {
     expect(container.querySelector('a')?.getAttribute('href') ?? '').not.toMatch(/^javascript:/)
     expect(container.querySelector('strong')?.textContent).toBe('Collector Field')
   })
+
+  it.each(['amber', 'emerald'] as const)('renders flattened explicit bullets as separate list items in %s panels', async tone => {
+    const points = [
+      'Collector Field bertanya melalui WhatsApp, berisiko membocorkan data kebijakan.',
+      'Collector Field harus membaca Memo Internal atau Ketetapan Sementara secara manual.',
+    ]
+    const answer = `Masalah utama saat ini adalah: \u2022 ${points[0]} \u2022 ${points[1]}`
+    await render(answer, tone)
+    expect(container.querySelectorAll('ul')).toHaveLength(1)
+    expect(Array.from(container.querySelectorAll('li')).map(li => li.textContent)).toEqual(points)
+    expect(container.textContent).toContain('Masalah utama saat ini adalah:')
+    expect(container.textContent).not.toContain('\u2022')
+    expect(answer).toContain('\u2022')
+  })
+
+  it('preserves existing nested lists and literal bullets inside code', async () => {
+    await render('- Masalah utama\n  - Pencarian manual\n  - WhatsApp\n\nKode: `a \u2022 b`')
+    expect(container.querySelectorAll('ul')).toHaveLength(2)
+    expect(container.querySelectorAll('li')).toHaveLength(3)
+    expect(container.querySelector('code')?.textContent).toBe('a \u2022 b')
+  })
+
+  it('does not guess a list from an ordinary sentence containing a bullet glyph', async () => {
+    await render('Simbol \u2022 digunakan sebagai pemisah pada dokumen.')
+    expect(container.querySelector('ul')).toBeNull()
+    expect(container.textContent).toContain('Simbol \u2022 digunakan')
+  })
 })
