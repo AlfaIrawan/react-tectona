@@ -2,6 +2,7 @@
 export const UI_DESIGN_WIDTH_PX = 1920
 
 const SCALE_EPSILON = 0.995
+const MOBILE_NATIVE_QUERY = '(max-width: 767px), (max-width: 1023px) and (pointer: coarse)'
 
 function readScaleVar(root: HTMLElement): number | null {
   const raw =
@@ -74,7 +75,7 @@ export function syncUiScaleLock(): void {
   clearLegacyBodyScaleInlineStyles()
   clearRootScaleInlineStyles()
 
-  if (vw >= UI_DESIGN_WIDTH_PX * SCALE_EPSILON) {
+  if (vw >= UI_DESIGN_WIDTH_PX * SCALE_EPSILON || window.matchMedia(MOBILE_NATIVE_QUERY).matches) {
     clearScaleLock(root)
     return
   }

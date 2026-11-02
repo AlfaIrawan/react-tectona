@@ -476,7 +476,7 @@ export async function upsertWorkspacePresenceWithToken(
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ status }),
   })
@@ -495,7 +495,7 @@ export function sendOfflinePresenceBeacon(
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ status: 'offline' }),
     keepalive: true,

@@ -83,19 +83,19 @@ class IdentitySessionRealtimeController {
     this.reconnectTimer = window.setTimeout(() => this.connect(), delay)
   }
 
-  private handleRevoked(payload: SessionRevokedPayload | undefined, boundAccessToken: string): void {
+  private handleRevoked(payload: SessionRevokedPayload | undefined, boundSessionId: string): void {
     const currentSession = getSession()
-    if (!currentSession?.token) return
+    if (!currentSession) return
 
-    const boundSid = sessionIdFromAccessToken(boundAccessToken)
-    const currentSid = sessionIdFromAccessToken(currentSession.token)
-    // Token rotation issues a new access token; ignore revoke events tied to the old sid.
+    const currentSid = currentSession.sessionId ?? sessionIdFromAccessToken(currentSession.token)
+    const boundSid = boundSessionId || null
+    // Token rotation issues a new session id; ignore revoke events tied to the old one.
     if (boundSid && currentSid && boundSid !== currentSid) {
       this.connect()
       return
     }
 
-    if (!shouldHandleRevoked(payload, currentSession.token)) return
+    if (payload?.except_session_id && currentSid && payload.except_session_id === currentSid) return
     notifySessionExpiredIfNeeded({
       reason: payload?.reason ?? 'session_revoked_elsewhere',
     })
@@ -120,12 +120,12 @@ class IdentitySessionRealtimeController {
     void (async () => {
       if (this.disposed || generation !== this.socketGeneration) return
       const session = (await ensureFreshSession()) ?? getSession()
-      if (this.disposed || generation !== this.socketGeneration || !session?.token) return
+      if (this.disposed || generation !== this.socketGeneration || !session) return
 
-      const url = createIdentitySessionWebSocketUrl({ token: session.token })
+      const url = createIdentitySessionWebSocketUrl()
       const ws = new WebSocket(url)
       this.socket = ws
-      const accessToken = session.token
+      const sessionId = session.sessionId ?? ''
 
       ws.onopen = () => {
         if (this.disposed || generation !== this.socketGeneration || this.socket !== ws) return
@@ -140,7 +140,7 @@ class IdentitySessionRealtimeController {
             payload?: SessionRevokedPayload
           }
           if (parsed.type === 'identity.session.revoked') {
-            this.handleRevoked(parsed.payload, accessToken)
+            this.handleRevoked(parsed.payload, sessionId)
           }
         } catch {
           // ignore malformed frames

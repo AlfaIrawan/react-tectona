@@ -1,7 +1,12 @@
+// @refresh reset
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { getSession } from '@/auth/authService'
+import { useMobileLayout } from '@/hooks/useMobileLayout'
+import { MobileIdeaControls } from '../components/MobileIdeaControls'
+import { MobileIdeaList } from '../components/MobileIdeaList'
+import { MobileIdeaFolders } from '../components/MobileIdeaFolders'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import {
   belongsToActiveWorkspaceScope,
@@ -109,6 +114,7 @@ import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagra
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
 import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame'
+import { resizeBrainstormComposer } from '../lib/resizeBrainstormComposer'
 import { closeBrainstorm } from '../lib/closeBrainstorm'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
@@ -917,6 +923,8 @@ function BrainstormEvidenceRail({
   onToggleCollapsed,
   indonesian = false,
   inline = false,
+  inlineExpanded,
+  onToggleInline,
 }: {
   confidencePercent: number
   progress: IdeaDraftEvidenceProgress | null
@@ -929,6 +937,8 @@ function BrainstormEvidenceRail({
   onToggleCollapsed: () => void
   indonesian?: boolean
   inline?: boolean
+  inlineExpanded?: boolean
+  onToggleInline?: () => void
 }) {
   const resolvedConfidence = resolveBrainstormConfidencePercent(
     confidencePercent,
@@ -971,7 +981,7 @@ function BrainstormEvidenceRail({
   const discoveryPercent = discoveryTotal > 0 ? Math.round((discoveryCovered / discoveryTotal) * 100) : 0
 
   return (
-    <BrainstormReadinessFrame collapsed={collapsed} onToggleCollapsed={onToggleCollapsed} confidence={resolvedConfidence} inline={inline}>
+    <BrainstormReadinessFrame collapsed={collapsed} onToggleCollapsed={onToggleCollapsed} confidence={resolvedConfidence} inline={inline} inlineExpanded={inlineExpanded} onToggleInline={onToggleInline}>
               <p className="shrink-0 text-[11px] leading-snug text-muted-foreground">
                 AI confidence and AS-IS evidence progress before draft generation.
               </p>
@@ -2238,6 +2248,7 @@ export function IdeaBacklogManagementPage() {
   const tenant = useTenantContextOptional()
   const { addToast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
+  const isMobileLayout = useMobileLayout()
   const currentFolderId = searchParams.get('folder')
   const {
     folders,
@@ -2388,6 +2399,10 @@ export function IdeaBacklogManagementPage() {
   const [brainstormConfidencePercent, setBrainstormConfidencePercent] = useState(0)
   const [brainstormOfferGenerateAnyway, setBrainstormOfferGenerateAnyway] = useState(false)
   const [brainstormEvidenceRailCollapsed, setBrainstormEvidenceRailCollapsed] = useState(false)
+  const [brainstormMobilePanel, setBrainstormMobilePanel] = useState<'readiness' | 'summary' | null>(null)
+  useEffect(() => {
+    setBrainstormMobilePanel(null)
+  }, [ideaDraftJob?.job_id, isEvidenceDialogOpen])
   // Re-analysis of an already generated draft: the resulting version is shown
   // as a card in the conversation and only replaces the description once the
   // user says so, so an unsaved manual edit is never overwritten silently.
@@ -4836,19 +4851,13 @@ export function IdeaBacklogManagementPage() {
   const syncBrainstormComposerHeight = () => {
     const el = brainstormComposerRef.current
     if (!el) return
-    // Collapse first so scrollHeight reflects content, not a stale tall box.
-    el.style.height = '0px'
-    el.style.overflowY = 'hidden'
-    const contentHeight = el.scrollHeight
-    const next = Math.min(Math.max(contentHeight, 24), 200)
-    el.style.height = `${next}px`
-    el.style.overflowY = contentHeight > 200 ? 'auto' : 'hidden'
+    resizeBrainstormComposer(el, isMobileLayout)
   }
 
   useLayoutEffect(() => {
     if (!isBrainstormMode) return
     syncBrainstormComposerHeight()
-  }, [isBrainstormMode, brainstormInput])
+  }, [isBrainstormMode, brainstormInput, isEvidenceDialogOpen, isMobileLayout])
 
   const brainstormComposerDisabled = isBrainstormSending || isDraftContinuing || isResumingDraft
   const brainstormComposerWasDisabledRef = useRef(false)
@@ -5287,7 +5296,7 @@ export function IdeaBacklogManagementPage() {
 
   return (
     <div
-      className="flex min-h-full flex-col gap-6"
+      className="idea-backlog-page flex min-h-full min-w-0 flex-col gap-4 md:gap-6"
       onContextMenu={openContextMenu}
       onMouseDown={(event) => {
         if (event.button !== 0) return
@@ -5340,7 +5349,19 @@ export function IdeaBacklogManagementPage() {
         }
       `}</style>
 
-      <PageHeader
+      {isMobileLayout ? <MobileIdeaControls
+        query={query} onQueryChange={setQuery}
+        ideaCount={contentCounts.ideas} folderCount={contentCounts.folders}
+        content={contentFilterTags.size === 2 ? 'all' : contentFilterTags.has('folders') ? 'folders' : 'ideas'}
+        onContentChange={(value) => setContentFilterTags(new Set(value === 'all' ? ALL_CONTENT_FILTER_TAGS : [value]))}
+        groups={[
+          { label: 'Type', options: IDEA_TYPES, selected: typeFilterTags, onChange: (values) => setTypeFilterTags(values as Set<IdeaType>) },
+          { label: 'Status', options: IDEA_STATUSES, selected: statusFilterTags, onChange: (values) => setStatusFilterTags(values as Set<IdeaStatus>) },
+        ]}
+        onCreate={openCreateIdeaDrawer}
+        onCreateFolder={() => void handleCreateFolderWithDefaultName()}
+        onUpload={() => setIsUploadIdeaPanelOpen(true)}
+      /> : <PageHeader
         title="Idea & Backlog"
         description="Strategic intake and prioritization hub connecting business demand to executable projects, epics, and tasks."
         right={
@@ -5397,9 +5418,9 @@ export function IdeaBacklogManagementPage() {
             </button>
           </div>
         }
-      />
+      />}
 
-      {showScoringPanels && selectedIdea && (
+      {!isMobileLayout && showScoringPanels && selectedIdea && (
         <section id="idea-evaluation-panel" className="grid grid-cols-1 xl:grid-cols-12 gap-4 scroll-mt-4">
           <Card className={cn('xl:col-span-8', ideaBacklogLiquidGlassPanelClass)}>
           <CardHeader className="pb-3">
@@ -5640,7 +5661,7 @@ export function IdeaBacklogManagementPage() {
         </section>
       )}
 
-      {showIntakePanel && (
+      {!isMobileLayout && showIntakePanel && (
         <section>
           <Card className={ideaBacklogLiquidGlassPanelClass}>
           <CardHeader className="pb-3">
@@ -5824,7 +5845,7 @@ export function IdeaBacklogManagementPage() {
         </section>
       )}
 
-      {showFiltersPanel && (
+      {!isMobileLayout && showFiltersPanel && (
           <div className={ideaBacklogLiquidGlassFilterPanelClass}>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -6020,7 +6041,14 @@ export function IdeaBacklogManagementPage() {
           onDragCancel={handleIdeaDragCancel}
         >
         <div className="flex min-h-0 flex-1 flex-col gap-8">
-        {showFoldersSection && (
+        {showFoldersSection && isMobileLayout && (foldersWithVisibleCounts.length > 0 || !showIdeasSection) && (
+          <section aria-label="Folders" className="space-y-2">
+            {foldersWithVisibleCounts.length > 0 && <h2 className="font-semibold">Folders ({foldersWithVisibleCounts.length})</h2>}
+            <MobileIdeaFolders folders={[...foldersWithVisibleCounts].sort((a, b) => folderSortOrder === 'name-asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name))} onOpen={handleOpenFolder} onRename={handleRenameIdeaFolder} onDelete={(folder) => void handleDeleteIdeaFolder(folder)} />
+            {foldersWithVisibleCounts.length === 0 && !showIdeasSection && <div className="py-10 text-center text-sm text-muted-foreground"><p>No folders found</p><button type="button" className="mt-3 min-h-11 rounded-md border bg-background px-4 text-foreground" onClick={() => void handleCreateFolderWithDefaultName()}>New folder</button></div>}
+          </section>
+        )}
+        {showFoldersSection && !isMobileLayout && (
           <IdeaBacklogFoldersSection
             folders={foldersWithVisibleCounts}
             sortOrder={folderSortOrder}
@@ -6039,13 +6067,13 @@ export function IdeaBacklogManagementPage() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-foreground">
-                Idea Submission Stream ({orderedSortedFilteredIdeas.length})
+                {isMobileLayout ? 'Ideas' : 'Idea Submission Stream'} ({orderedSortedFilteredIdeas.length})
               </h2>
             </div>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2 shrink-0">
+                <Button variant="outline" size="sm" className="gap-2 shrink-0 max-md:min-h-11">
                   <ArrowUpDown className="w-4 h-4" />
                   {submissionSortOrder === 'name-asc' ? 'A → Z' : 'Z → A'}
                 </Button>
@@ -6061,7 +6089,13 @@ export function IdeaBacklogManagementPage() {
             </DropdownMenu>
           </div>
 
-          <SortableContext items={orderedSortedFilteredIdeas.map((idea) => `idea-${idea.id}`)} strategy={rectSortingStrategy}>
+          {isMobileLayout ? <MobileIdeaList
+            items={orderedSortedFilteredIdeas}
+            owner={(idea) => resolveSubmittedByDisplayName(idea.submittedBy)}
+            onOpen={openIdeaDetail} onCreate={openCreateIdeaDrawer}
+            filtered={Boolean(query.trim()) || typeFilterTags.size !== IDEA_TYPES.length || statusFilterTags.size !== IDEA_STATUSES.length}
+            onReset={() => { setQuery(''); setTypeFilterTags(new Set(IDEA_TYPES)); setStatusFilterTags(new Set(IDEA_STATUSES)) }}
+          /> : <SortableContext items={orderedSortedFilteredIdeas.map((idea) => `idea-${idea.id}`)} strategy={rectSortingStrategy}>
               <SlidingCardGrid
                 items={orderedSortedFilteredIdeas}
                 getKey={(idea) => idea.id}
@@ -6103,7 +6137,7 @@ export function IdeaBacklogManagementPage() {
                   />
                 )}
               />
-            </SortableContext>
+            </SortableContext>}
         </div>
         )}
         </div>
@@ -7257,7 +7291,8 @@ export function IdeaBacklogManagementPage() {
                       role="dialog"
                       aria-modal="true"
                       aria-labelledby="idea-evidence-dialog-title"
-                      className="fixed inset-0 z-[1450] flex flex-col bg-background"
+                      className="brainstorm-dialog fixed inset-0 z-[1450] flex flex-col bg-background"
+                      data-mobile={isMobileLayout || undefined}
                     >
                       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3 sm:px-4">
                         <div className="flex min-w-0 items-center gap-1">
@@ -7287,7 +7322,7 @@ export function IdeaBacklogManagementPage() {
                               disabled={isBrainstormSending || isDraftContinuing}
                               className={cn(
                                 enterprisePrimarySolidButtonClass(),
-                                'hidden h-9 px-3 sm:inline-flex',
+                                'h-9 px-3', isMobileLayout ? 'hidden' : 'inline-flex',
                                 'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
                               )}
                               onClick={() => void handleContinueIdeaDraft(
@@ -7316,7 +7351,7 @@ export function IdeaBacklogManagementPage() {
                       </header>
 
                       <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
-                        <div className="hidden min-h-0 md:flex">
+                        {!isMobileLayout && <div className="flex min-h-0">
                           <BrainstormEvidenceRail
                             confidencePercent={brainstormConfidencePercent}
                             progress={brainstormEvidenceProgress}
@@ -7329,11 +7364,13 @@ export function IdeaBacklogManagementPage() {
                             onToggleCollapsed={() => setBrainstormEvidenceRailCollapsed((current) => !current)}
                             indonesian={brainstormThreadIndonesian}
                           />
-                        </div>
+                        </div>}
                         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-                          <div className="max-h-[42vh] shrink-0 overflow-hidden border-b border-border/60 md:hidden">
+                          {isMobileLayout && <div className="shrink-0">
                             <BrainstormEvidenceRail
                               inline
+                              inlineExpanded={brainstormMobilePanel === 'readiness'}
+                              onToggleInline={() => setBrainstormMobilePanel(value => value === 'readiness' ? null : 'readiness')}
                               confidencePercent={brainstormConfidencePercent}
                               progress={brainstormEvidenceProgress}
                               discoveryProgress={brainstormDiscoveryProgress}
@@ -7345,20 +7382,28 @@ export function IdeaBacklogManagementPage() {
                               onToggleCollapsed={() => setBrainstormEvidenceRailCollapsed((current) => !current)}
                               indonesian={brainstormThreadIndonesian}
                             />
-                          </div>
+                          </div>}
+                          {isMobileLayout && <BrainstormLiveSummaryPanel
+                            mobileExpanded={brainstormMobilePanel === 'summary'}
+                            onToggleMobile={() => setBrainstormMobilePanel(value => value === 'summary' ? null : 'summary')}
+                            key={ideaDraftJob?.draft_session_id ?? ideaDraftJob?.job_id ?? 'new-brainstorm'}
+                            job={ideaDraftJob}
+                            busy={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
+                            error={brainstormError}
+                          />}
                           <div
                             ref={brainstormScrollRef}
                             role="region"
                             aria-label="Brainstorm conversation"
                             tabIndex={0}
-                            className="scrollbar-hide min-h-0 flex-1 overflow-y-auto"
+                            className="brainstorm-conversation scrollbar-hide min-h-0 flex-1 overflow-y-auto overscroll-contain"
                           >
                             <div
                               className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-8 lg:px-10"
                             >
                           {brainstormMessages.length === 0 ? (
                             <div
-                              className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center"
+                              className="brainstorm-empty-state flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center"
                               aria-live="polite"
                             >
                               <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -7783,22 +7828,22 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           </div>
 
-                      <div className="shrink-0 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
+                      <div className="brainstorm-composer shrink-0 border-t border-border/60 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
                         <div className="mx-auto w-full max-w-4xl space-y-2">
                           {brainstormError && <p className="px-3 text-xs text-destructive">{brainstormError}</p>}
-                          {brainstormReady ? (
+                          {(brainstormReady || brainstormOfferGenerateAnyway) ? (
                             <button
                               type="button"
                               disabled={isBrainstormSending || isDraftContinuing}
                               className={cn(
                                 enterprisePrimarySolidButtonClass(),
-                                'h-11 w-full justify-center sm:hidden',
+                                'h-11 w-full justify-center', !isMobileLayout && 'hidden',
                                 'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none disabled:active:scale-100',
                               )}
-                              onClick={() => void handleContinueIdeaDraft('use_brainstorm')}
+                              onClick={() => void handleContinueIdeaDraft(brainstormReady ? 'use_brainstorm' : 'generate_anyway')}
                             >
                               <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                              {isDraftContinuing ? 'Generating…' : 'Generate draft'}
+                              {isDraftContinuing ? 'Generating…' : brainstormReady ? 'Generate draft' : 'Generate anyway'}
                             </button>
                           ) : null}
                           {/* The composer stays mounted after the draft becomes generatable.
@@ -7830,6 +7875,7 @@ export function IdeaBacklogManagementPage() {
                             ) : null}
                             <textarea
                               ref={brainstormComposerRef}
+                              aria-label="Brainstorm message"
                               value={brainstormInput}
                               onChange={(event) => setBrainstormInput(event.target.value)}
                               placeholder={
@@ -7980,12 +8026,12 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       </div>
                         </div>
-                        <BrainstormLiveSummaryPanel
+                        {!isMobileLayout && <BrainstormLiveSummaryPanel
                           key={ideaDraftJob?.draft_session_id ?? ideaDraftJob?.job_id ?? 'new-brainstorm'}
                           job={ideaDraftJob}
                           busy={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
                           error={brainstormError}
-                        />
+                        />}
                       </div>
                     </div>
                   ) : (

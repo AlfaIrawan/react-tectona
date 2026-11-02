@@ -132,7 +132,7 @@ export function AuthTourButton({ page }: AuthTourButtonProps) {
 
   return (
     <div className="tectona-auth-tour-fab flex items-center gap-2">
-      <span className="text-xs text-muted-foreground" title={`Build ${__APP_BUILD_HASH__}`}>
+      <span className="tectona-auth-build text-xs text-muted-foreground" title={`Build ${__APP_BUILD_HASH__}`}>
         Build Version v{__APP_VERSION__}
       </span>
       <DropdownMenu>

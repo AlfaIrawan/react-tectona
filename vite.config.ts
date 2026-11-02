@@ -4,8 +4,17 @@ import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
+import { devCookieAuth } from './scripts/dev-cookie-auth'
 
 const stripGatewayRuntime = (p: string) => p.replace(/^\/api\/gateway-runtime/, '')
+
+function localDevHttps() {
+  if (process.env.TECTONA_DEV_HTTPS !== '1') return undefined
+  const key = process.env.TECTONA_DEV_TLS_KEY
+  const cert = process.env.TECTONA_DEV_TLS_CERT
+  if (!key || !cert) throw new Error('Local HTTPS requires TECTONA_DEV_TLS_KEY and TECTONA_DEV_TLS_CERT')
+  return { key: readFileSync(key), cert: readFileSync(cert) }
+}
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
 
@@ -25,6 +34,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    devCookieAuth(),
     {
       name: 'tectona-cache-background-media-dev',
       configureServer(server) {
@@ -160,7 +170,8 @@ export default defineConfig({
     }),
   ],
   server: {
-    allowedHosts: ['host.docker.internal'],
+    https: localDevHttps(),
+    allowedHosts: ['host.docker.internal', ...(process.env.TECTONA_DEV_HOST ? [process.env.TECTONA_DEV_HOST] : [])],
     host: true,
     port: 9411,
     strictPort: true,

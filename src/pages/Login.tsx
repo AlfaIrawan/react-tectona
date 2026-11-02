@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAuthMobileViewport } from '@/modules/auth/useAuthMobileViewport'
 import type { FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, EyeOff, Fingerprint } from 'lucide-react'
@@ -50,6 +51,7 @@ function readInitialAuthNotice(): LoginAuthNotice | null {
 }
 
 export function LoginPage() {
+  const mobileLayoutRef = useAuthMobileViewport()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [email, setEmail] = useState('')
@@ -176,9 +178,9 @@ export function LoginPage() {
 
   return (
     <>
-      <div className="min-h-screen w-full flex items-center justify-center p-4">
+      <div ref={mobileLayoutRef} className="mobile-login w-full flex items-center justify-center px-4 py-16 sm:p-4">
         <div className="w-full max-w-md mx-auto">
-          <div className="liquid-glass-enterprise-panel rounded-lg p-8 space-y-6">
+          <div className="liquid-glass-enterprise-panel rounded-lg p-6 sm:p-8 space-y-6">
             <div id="login-card-header" className="space-y-2 text-center">
               <img
                 src="/images/logo.png"
@@ -267,8 +269,8 @@ export function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    tabIndex={-1}
+                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                     disabled={isSubmitting}
                   >
                     {showPassword ? (
@@ -312,10 +314,11 @@ export function LoginPage() {
             </p>
           </div>
         </div>
+        <footer className="login-footer">
+          <AuthCopyrightNotice />
+          <AuthTourButton page="login" />
+        </footer>
       </div>
-
-      <AuthTourButton page="login" />
-      <AuthCopyrightNotice />
 
       <SessionConflictModal
         open={conflictOpen}

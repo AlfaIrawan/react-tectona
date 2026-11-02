@@ -229,6 +229,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
     }
 
     const pollInboxForNewMessages = async () => {
+      if (disposed || navigator.onLine === false) return
       const session = getSession()
       if (!session?.user?.id) return
       if (inboxPollInFlight) return
@@ -365,7 +366,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
     const connect = () => {
       if (disposed) return
       const session = getSession()
-      if (!session?.token) {
+      if (!session) {
         scheduleReconnect()
         return
       }
@@ -392,6 +393,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
     inboxPollTimer = window.setInterval(() => void pollInboxForNewMessages(), INBOX_POLL_MS)
     document.addEventListener('visibilitychange', onVisibilityOrFocus)
     window.addEventListener('focus', onVisibilityOrFocus)
+    window.addEventListener('online', onVisibilityOrFocus)
 
     return () => {
       disposed = true
@@ -401,6 +403,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
       clearInboxPoll()
       document.removeEventListener('visibilitychange', onVisibilityOrFocus)
       window.removeEventListener('focus', onVisibilityOrFocus)
+      window.removeEventListener('online', onVisibilityOrFocus)
       closeAllSockets()
     }
   }, [])

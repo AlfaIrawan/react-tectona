@@ -5748,7 +5748,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
   }, [contactInfoConversationId, messagesById])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-transparent pl-3">
+    <div className="chat-sidebar-panel flex h-full min-h-0 flex-col bg-transparent pl-3">
       <div
         className={cn(
           'flex shrink-0 justify-between gap-3 border-b border-white/40 dark:border-white/10',
@@ -5761,7 +5761,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               <MessageSquare className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
               Chat
             </h2>
-            <p className="max-w-[min(320px,100%)] text-xs leading-snug text-muted-foreground">
+            <p data-chat-intro className="max-w-[min(320px,100%)] text-xs leading-snug text-muted-foreground">
               Message your team, talk to Gen AI, and keep conversations organized in one place.
             </p>
           </div>

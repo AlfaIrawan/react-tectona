@@ -22,7 +22,7 @@
         var root = document.documentElement
         if (vw <= 0) return
         var scale = vw / DESIGN
-        if (scale >= EPS) {
+        if (scale >= EPS || window.matchMedia('(max-width: 767px), (max-width: 1023px) and (pointer: coarse)').matches) {
           root.classList.remove('ui-scale-lock')
           root.style.removeProperty('--ui-scale')
           root.style.removeProperty('--app-vw')

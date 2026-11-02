@@ -1,5 +1,6 @@
 import { ensureFreshSession, getSession, clearSession, validateActiveServerSessionIfDue, notifySessionExpiredIfNeeded } from '@/auth/authService'
 import { recordApiFailure } from '@/lib/platformHealth/recentApiFailureStore'
+import { fetchWithNetworkRecovery } from './networkRecovery'
 
 /** Attach Bearer token when present. */
 export function authHeadersForToken(token?: string | null, extra?: HeadersInit): HeadersInit {
@@ -84,7 +85,7 @@ export async function apiFetch(
   timeoutMs: number = DEFAULT_API_FETCH_TIMEOUT_MS,
 ): Promise<Response> {
   let session = await ensureFreshSession()
-  if (session?.token) {
+  if (session?.token || session?.cookieSession) {
     await validateActiveServerSessionIfDue()
   }
 
@@ -92,12 +93,12 @@ export async function apiFetch(
     // Respect a caller-supplied signal (e.g. for cancellable uploads) instead of racing it
     // against our own timeout — only install a timeout when the caller didn't ask to control it.
     if (init?.signal) {
-      return fetch(input, { ...init, headers: mergeRequestHeaders(accessToken, init) })
+      return fetchWithNetworkRecovery(input, { ...init, headers: mergeRequestHeaders(accessToken, init) })
     }
     const controller = new AbortController()
     const timer = window.setTimeout(() => controller.abort(), timeoutMs)
     try {
-      return await fetch(input, {
+      return await fetchWithNetworkRecovery(input, {
         ...init,
         headers: mergeRequestHeaders(accessToken, init),
         signal: controller.signal,
@@ -117,9 +118,9 @@ export async function apiFetch(
 
   let response = await doFetch(session?.token)
 
-  if (isUnauthenticated(response) && session?.refreshToken) {
+  if (isUnauthenticated(response) && (session?.refreshToken || session?.cookieSession)) {
     session = await ensureFreshSession({ force: true })
-    if (session?.token) {
+    if (session) {
       response = await doFetch(session.token)
     }
   }

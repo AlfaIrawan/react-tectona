@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { columnsForWidth, slidingLayout } from './SlidingCardGrid'
+import { columnsForWidth, slidingLayout, wheelPageDelta } from './SlidingCardGrid'
+
+describe('wheelPageDelta', () => {
+  const wheel = { deltaX: 0, deltaY: 100, deltaMode: 0, ctrlKey: false, metaKey: false }
+  it('maps mouse wheel down/up to right/left', () => {
+    expect(wheelPageDelta(wheel, 500)).toBe(100)
+    expect(wheelPageDelta({ ...wheel, deltaY: -100 }, 500)).toBe(-100)
+  })
+  it('preserves horizontal and Shift-wheel direction', () => {
+    expect(wheelPageDelta({ ...wheel, deltaX: -120, deltaY: 2 }, 500)).toBe(-120)
+  })
+  it('normalizes line and page scroll units', () => {
+    expect(wheelPageDelta({ ...wheel, deltaY: 3, deltaMode: 1 }, 500)).toBe(48)
+    expect(wheelPageDelta({ ...wheel, deltaY: -1, deltaMode: 2 }, 500)).toBe(-500)
+  })
+  it('does not intercept browser zoom', () => {
+    expect(wheelPageDelta({ ...wheel, ctrlKey: true }, 500)).toBe(0)
+    expect(wheelPageDelta({ ...wheel, metaKey: true }, 500)).toBe(0)
+  })
+})
 
 describe('columnsForWidth', () => {
   it('follows the grid breakpoints', () => {

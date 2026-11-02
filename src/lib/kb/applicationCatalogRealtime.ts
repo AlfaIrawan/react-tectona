@@ -65,8 +65,8 @@ class ApplicationCatalogRealtimeController {
     if (this.stopped || !navigator.onLine || this.socket) return
     void (async () => {
       const session = (await ensureFreshSession()) ?? getSession()
-      if (this.stopped || !session?.token || this.socket) return
-      const url = createTectonaKbEventsWebSocketUrl({ token: session.token })
+      if (this.stopped || !session || this.socket) return
+      const url = createTectonaKbEventsWebSocketUrl({ token: session.token || undefined })
       if (!url) return
       const socket = new WebSocket(url)
       this.socket = socket

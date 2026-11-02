@@ -85,7 +85,7 @@ export function isSocialProviderEnabled(id: SocialAuthProviderId): boolean {
 export function buildOidcAuthorizeUrl(
   provider: SocialAuthProviderId,
   redirectUri: string,
-  opts?: { state?: string; codeChallenge?: string; codeVerifier?: string; oauthIntent?: 'signin' | 'signup' | 'graph' },
+  opts?: { state?: string; codeChallenge?: string; oauthIntent?: 'signin' | 'signup' | 'graph' },
 ): string {
   const base = (envFlag('VITE_IDENTITY_LITE_API_URL') ?? '/api/identity-lite').replace(/\/$/, '')
   const clientId = envFlag('VITE_TECTONA_OIDC_CLIENT_ID') ?? 'tectona-spa'
@@ -100,9 +100,6 @@ export function buildOidcAuthorizeUrl(
   if (opts?.codeChallenge) {
     params.set('code_challenge', opts.codeChallenge)
     params.set('code_challenge_method', 'S256')
-  }
-  if (opts?.codeVerifier && provider === 'microsoft') {
-    params.set('idp_code_verifier', opts.codeVerifier)
   }
   if (opts?.oauthIntent) {
     params.set('oauth_intent', opts.oauthIntent)
@@ -129,7 +126,6 @@ export async function startSocialOAuthLogin(
   window.location.href = buildOidcAuthorizeUrl(provider, redirectUri, {
     state,
     codeChallenge: challenge,
-    codeVerifier: verifier,
     oauthIntent,
   })
 }

@@ -36,6 +36,7 @@ build
 .env*.local
 
 # Local scratch / one-off patches
+public/tectona-local-ca.cer
 __test_fixed.tsx
 _snippet.txt
 .claude/

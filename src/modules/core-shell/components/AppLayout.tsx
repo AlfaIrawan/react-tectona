@@ -8,6 +8,8 @@ import { useEmailPanelStore, clampEmailWidthPct } from '@/stores/email-panel-sto
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
 import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 import { syncUiScaleLock } from '@/lib/uiScale'
+import { useMobileLayout } from '@/hooks/useMobileLayout'
+import { mobileCommunicationPanelStyle, useCommunicationViewport } from '@/hooks/useCommunicationViewport'
 import { cn } from '@/lib/utils'
 import { Outlet, useLocation } from 'react-router-dom'
 import ThemeSettingsPanel from '@/components/settings/ThemeSettingsPanel'
@@ -87,16 +89,34 @@ export function AppLayout({ children }: AppLayoutProps) {
   const activeCommPanel: 'chat' | 'email' | null = emailOpen ? 'email' : chatOpen ? 'chat' : null
   const isChatCommPanel = activeCommPanel === 'chat'
   const commPanelOpen = activeCommPanel !== null
+  const isMobileLayout = useMobileLayout()
+  const mobileCommOpen = isMobileLayout && commPanelOpen
+  const mobileTodoOpen = isMobileLayout && todoPanelOpen
+  const communicationViewport = useCommunicationViewport(mobileCommOpen || mobileTodoOpen)
   // A right-side detail panel (Project/Idea menu, Workspace Details drawer, etc.) would cover a
   // docked chat — float the chat while it's open; it returns to docked when the panel closes.
   const rightDrawerOpen = useRightDrawerStore((s) => s.open)
   const rightDrawerWidth = useRightDrawerStore((s) => s.width)
   const useFloatingChatPanel =
-    activeCommPanel === 'chat' && (rightDrawerOpen || requestJoinOpen)
+    !isMobileLayout && activeCommPanel === 'chat' && (rightDrawerOpen || requestJoinOpen)
   const commPanelWidthPct = activeCommPanel === 'email' ? emailWidthPct : chatWidthPct
   const hideCommResizeLine = useUiOverlayStore((s) => s.blockingOverlayCount > 0)
   const [panelContentEl, setPanelContentEl] = useState<HTMLElement | null>(null)
   const setPanelContentRef = useCallback((el: HTMLDivElement | null) => setPanelContentEl(el), [])
+
+  useEffect(() => {
+    if (!mobileCommOpen) return
+    const panel = commPanelRef.current
+    const previousFocus = document.activeElement as HTMLElement | null
+    const background = [mainBodyRef.current].filter((element): element is HTMLDivElement => Boolean(element))
+    const previousInert = background.map((element) => element.inert)
+    background.forEach((element) => { element.inert = true })
+    panel?.focus({ preventScroll: true })
+    return () => {
+      background.forEach((element, index) => { element.inert = previousInert[index] })
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+    }
+  }, [mobileCommOpen])
 
   useEffect(() => {
     syncUiScaleLock()
@@ -363,7 +383,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     useFloatingChatPanel && floatingChatPosition ? clampFloatingChatPosition(floatingChatPosition) : floatingChatPosition
 
   return (
-    <div className="relative flex h-[var(--app-vh,100dvh)] min-h-0 w-full min-w-0 flex-col pt-12">
+    <div className="app-shell relative flex h-[var(--app-vh,100dvh)] min-h-0 w-full min-w-0 flex-col pt-12">
       <Topbar
         sidebarCollapsed={false}
         accentColor={accentColor}
@@ -380,7 +400,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           className="relative flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-auto scrollbar-hide"
         >
           <main className="relative flex min-h-full w-full min-w-0 flex-1 flex-col">
-            <div className="relative flex min-h-full min-w-0 w-full max-w-none flex-1 flex-col self-stretch px-10 py-3">
+            <div className="app-page-content relative flex min-h-full min-w-0 w-full max-w-none flex-1 flex-col self-stretch px-4 md:px-10 py-3">
               <AppErrorBoundary>{children || <Outlet />}</AppErrorBoundary>
             </div>
           </main>
@@ -397,6 +417,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           }}
           className={cn(
             'flex min-h-0 overflow-hidden',
+            mobileCommOpen && 'mobile-comm-panel',
             isChatCommPanel ? 'liquid-glass-chat-panel' : 'bg-card',
             useFloatingChatPanel
               ? 'fixed z-[1150] rounded-2xl border border-border/80 opacity-100 shadow-2xl ring-1 ring-black/[0.06] dark:ring-white/[0.08]'
@@ -411,7 +432,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 )
           )}
           style={
-            useFloatingChatPanel
+            mobileCommOpen ? mobileCommunicationPanelStyle(communicationViewport) : useFloatingChatPanel
               ? {
                   // `.liquid-glass-chat-panel` (index.css) hardcodes `position: relative` for its
                   // own glass-effect layering (needed in docked mode, where no Tailwind position
@@ -443,6 +464,9 @@ export function AppLayout({ children }: AppLayoutProps) {
                 }
           }
           aria-hidden={false}
+          role={mobileCommOpen ? 'dialog' : undefined}
+          aria-label={mobileCommOpen ? (isChatCommPanel ? 'Chat' : 'Email') : undefined}
+          tabIndex={mobileCommOpen ? -1 : undefined}
         >
           {useFloatingChatPanel ? (
             <button
@@ -469,7 +493,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 Drag chat panel
               </span>
             </button>
-          ) : (
+          ) : !mobileCommOpen ? (
             <div
               role="separator"
               aria-orientation="vertical"
@@ -521,7 +545,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 ))}
               </div>
             </div>
-          )}
+          ) : null}
           <aside
             className={cn(
               'flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
@@ -547,6 +571,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           aria-hidden="true"
           role="button"
           tabIndex={-1}
+          style={mobileTodoOpen ? { top: communicationViewport.top, height: communicationViewport.height, bottom: 'auto', zIndex: 54 } : undefined}
         />
       ) : null}
 
@@ -555,14 +580,20 @@ export function AppLayout({ children }: AppLayoutProps) {
         className={cn(
           'fixed top-0 right-0 h-full transform z-[1100] transition-all duration-300',
           'bg-white dark:bg-slate-900 shadow-2xl',
+          mobileTodoOpen && 'mobile-todo-drawer flex min-h-0 flex-col',
           todoPanelOpen ? 'w-[480px]' : 'w-80',
           settingsPanel ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'
         )}
         style={{
           boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
+          ...(mobileTodoOpen ? mobileCommunicationPanelStyle(communicationViewport) : {}),
         }}
+        role={settingsPanel ? 'dialog' : undefined}
+        aria-label={todoPanelOpen ? 'Todo List' : themeSettingsOpen ? 'Theme Settings' : undefined}
+        aria-hidden={!settingsPanel}
+        inert={!settingsPanel}
       >
-        <div className="flex items-center justify-between p-4 border-b border-border backdrop-blur-sm">
+        <div className="settings-drawer-header flex shrink-0 items-center justify-between p-4 border-b border-border backdrop-blur-sm">
           <div className="flex flex-col gap-0.5 min-w-0">
             <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               {themeSettingsOpen && <Palette className="h-5 w-5 text-muted-foreground" aria-hidden />}
@@ -575,7 +606,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               </p>
             )}
             {todoPanelOpen && (
-              <p className="text-xs text-muted-foreground leading-snug max-w-[320px]">
+              <p data-todo-intro className="text-xs text-muted-foreground leading-snug max-w-[320px]">
                 Add tasks, set due dates and priorities, organize by category, and filter by status to stay on top of your work.
               </p>
             )}
@@ -592,6 +623,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         <div
           ref={setPanelContentRef}
           className="relative p-4 overflow-y-auto h-[calc(100%-4rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          data-settings-content
         >
           {themeSettingsOpen && <ThemeSettingsPanel />}
           {todoPanelOpen && <TodoListPanel panelContainerEl={panelContentEl} />}

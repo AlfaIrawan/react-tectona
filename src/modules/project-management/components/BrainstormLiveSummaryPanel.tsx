@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { BookOpenText, Loader2, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
+// @refresh reset
+import { useEffect, useId, useRef, useState } from 'react'
+import { BookOpenText, ChevronDown, Loader2, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
+import { useMobileLayout } from '@/hooks/useMobileLayout'
 import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import type { IdeaDraftJobStatusResponse } from '@/lib/api/tectonaAgentRuntimeApi'
@@ -92,14 +94,19 @@ function SummarySection({ section, reduced, active }: { section: LiveSummarySect
   )
 }
 
-export function BrainstormLiveSummaryPanel({ job, busy, error }: {
+export function BrainstormLiveSummaryPanel({ job, busy, error, mobileExpanded, onToggleMobile }: {
   job: IdeaDraftJobStatusResponse | null
   busy: boolean
   error?: string
+  mobileExpanded?: boolean
+  onToggleMobile?: () => void
 }) {
+  const mobile = useMobileLayout()
+  const contentId = useId()
   const reduced = useReducedMotion()
   const [expanded, setExpanded] = useState(true)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const inlineOpen = mobileExpanded ?? mobileOpen
   const [present, setPresent] = useState(false)
   const [entered, setEntered] = useState(false)
   const [textReady, setTextReady] = useState(false)
@@ -155,12 +162,12 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
     const wide = window.matchMedia?.('(min-width: 1440px)').matches
     if (!firstSummarySeen.current) {
       firstSummarySeen.current = true
-      if (!wide) setMobileOpen(true)
-    } else if (summaryText !== previousSummary.current && (!wide ? !mobileOpen : !expanded)) {
+      if (!wide && !mobile) setMobileOpen(true)
+    } else if (summaryText !== previousSummary.current && (mobile ? !inlineOpen : !wide ? !mobileOpen : !expanded)) {
       setUnread(true)
     }
     previousSummary.current = summaryText
-  }, [summaryText, expanded, mobileOpen])
+  }, [summaryText, expanded, mobileOpen, mobile, inlineOpen])
   useEffect(() => {
     const wide = window.matchMedia?.('(min-width: 1440px)')
     const update = () => { if (wide?.matches) setMobileOpen(false) }
@@ -168,7 +175,7 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
     return () => wide?.removeEventListener('change', update)
   }, [])
   useEffect(() => {
-    if (!mobileOpen || !present) return
+    if (!mobileOpen || !present || mobile) return
     const previous = document.activeElement as HTMLElement | null
     panelRef.current?.querySelector<HTMLButtonElement>('[aria-label="Close summary"]')?.focus()
     const keydown = (event: KeyboardEvent) => {
@@ -188,17 +195,17 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
     }
     window.addEventListener('keydown', keydown, true)
     return () => { window.removeEventListener('keydown', keydown, true); (previous ?? triggerRef.current)?.focus() }
-  }, [mobileOpen, present])
+  }, [mobileOpen, present, mobile])
   if (!present) return null
   const openDesktop = () => { setExpanded(true); setUnread(false) }
   const openMobile = () => { setMobileOpen(true); setUnread(false) }
   const content = (
     <>
-      <header className={BRAINSTORM_FLOATING_HEADER_CLASS}>
+      {!mobile && <header className={BRAINSTORM_FLOATING_HEADER_CLASS}>
         <h2 id="brainstorm-live-summary-title" className="flex min-w-0 items-center gap-2 text-sm font-semibold"><BookOpenText className="h-4 w-4 shrink-0" />Live AI Summary</h2>
         <button type="button" title="Collapse summary" aria-label="Collapse summary" onClick={() => { setExpanded(false); setMobileOpen(false) }} className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:inline-flex"><PanelRightClose className="h-4 w-4" /></button>
         <button type="button" title="Close summary" aria-label="Close summary" onClick={() => setMobileOpen(false)} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:hidden"><X className="h-4 w-4" /></button>
-      </header>
+      </header>}
       {busy || error || summaryUnavailable ? <div className="shrink-0 border-b border-border/70 px-4 py-3">
         <p role="status" className={cn('flex items-start gap-1.5 text-xs leading-5', error || summaryUnavailable ? 'text-destructive' : 'text-muted-foreground')}>
           {busy ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : null}
@@ -211,6 +218,22 @@ export function BrainstormLiveSummaryPanel({ job, busy, error }: {
       </div>
     </>
   )
+  if (mobile) {
+    return (
+      <aside aria-label="Live AI Summary" className="brainstorm-summary-inline min-w-0 shrink-0 border-b border-border/70 bg-background/70 backdrop-blur-xl">
+        <button ref={triggerRef} type="button" aria-expanded={inlineOpen} aria-controls={contentId} onClick={() => { if (onToggleMobile) onToggleMobile(); else setMobileOpen(value => !value); setUnread(false) }} className="flex min-h-11 w-full items-center gap-3 px-4 py-2 text-left" title={inlineOpen ? 'Collapse Live AI Summary' : 'Open Live AI Summary'}>
+          <BookOpenText className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <span className="min-w-0 flex-1 text-sm font-semibold">Live AI Summary</span>
+          {unread ? <span role="status" className="h-2 w-2 shrink-0 rounded-full bg-emerald-600" aria-label="Summary updated" /> : null}
+          {busy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin motion-reduce:animate-none" aria-label="Updating summary" /> : null}
+          <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', inlineOpen && 'rotate-180')} aria-hidden />
+        </button>
+        <div id={contentId} hidden={!inlineOpen} className="max-h-[28dvh] overflow-y-auto overscroll-contain border-t border-border/60">
+          {content}
+        </div>
+      </aside>
+    )
+  }
   return (
     <>
       <div aria-hidden="true" data-summary-space className={cn('hidden shrink-0 transition-[width] duration-[240ms] motion-reduce:transition-none min-[1440px]:block', !entered ? 'w-0' : expanded ? 'w-[432px]' : 'w-[72px]')} />

@@ -15,7 +15,7 @@ async function main() {
   let reduced = false
   let wide = true
   const motionListeners = new Set()
-  window.matchMedia = query => ({ get matches() { return query.includes('reduced-motion') ? reduced : wide }, addEventListener: (_, fn) => motionListeners.add(fn), removeEventListener: (_, fn) => motionListeners.delete(fn) })
+  window.matchMedia = query => ({ get matches() { return query.includes('reduced-motion') ? reduced : query.includes('max-width') ? false : wide }, addEventListener: (_, fn) => motionListeners.add(fn), removeEventListener: (_, fn) => motionListeners.delete(fn) })
   global.IS_REACT_ACT_ENVIRONMENT = true
   const React = require('react'), { act } = React, { createRoot } = require('react-dom/client')
   const built = await esbuild.build({

@@ -1,15 +1,40 @@
-import type { ReactNode } from 'react'
-import { PanelLeftClose, PanelLeftOpen, Target } from 'lucide-react'
+import { useId, useState, type ReactNode } from 'react'
+import { ChevronDown, PanelLeftClose, PanelLeftOpen, Target } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BRAINSTORM_FLOATING_HEADER_CLASS, BRAINSTORM_FLOATING_PANEL_CLASS } from '../lib/brainstormFloatingPanel'
 
-export function BrainstormReadinessFrame({ collapsed, onToggleCollapsed, confidence, inline = false, children }: {
+export function BrainstormReadinessFrame({ collapsed, onToggleCollapsed, confidence, inline = false, inlineExpanded, onToggleInline, children }: {
   collapsed: boolean
   onToggleCollapsed: () => void
   confidence: number
   inline?: boolean
+  inlineExpanded?: boolean
+  onToggleInline?: () => void
   children: ReactNode
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const bodyId = useId()
+  const inlineOpen = inlineExpanded ?? expanded
+  if (inline) {
+    return (
+      <aside aria-label="Draft Readiness" className="brainstorm-readiness-inline min-w-0 border-b border-border/70 bg-background/70 backdrop-blur-xl">
+        <button type="button" aria-expanded={inlineOpen} aria-controls={bodyId} onClick={onToggleInline ?? (() => setExpanded(value => !value))} className="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left" title={inlineOpen ? 'Collapse readiness panel' : 'Expand readiness panel'}>
+          <Target className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">Draft Readiness</span>
+            <span className="block text-xs tabular-nums text-muted-foreground">{confidence}% confidence</span>
+          </span>
+          <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', inlineOpen && 'rotate-180')} aria-hidden />
+        </button>
+        <div className="mx-4 mb-2 h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Draft confidence" aria-valuemin={0} aria-valuemax={100} aria-valuenow={confidence}>
+          <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.max(0, Math.min(100, confidence))}%` }} />
+        </div>
+        <div id={bodyId} hidden={!inlineOpen} className="max-h-[32dvh] overflow-y-auto overscroll-contain border-t border-border/60" tabIndex={inlineOpen ? 0 : undefined}>
+          <div data-readiness-body className="flex flex-col gap-3 p-4">{children}</div>
+        </div>
+      </aside>
+    )
+  }
   return (
     <div data-readiness-space className={cn('relative min-h-0 shrink-0 transition-[width] duration-[240ms] motion-reduce:transition-none', inline ? 'w-full' : collapsed ? 'w-[72px]' : 'w-[432px]')}>
       <aside aria-label="Draft Readiness" data-readiness-floating className={cn(

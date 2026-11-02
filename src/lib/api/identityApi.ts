@@ -1,9 +1,10 @@
 /**
- * Shared Identity Lite (Ilex) — OIDC password grant + userinfo for Tectona login.
+ * Shared Identity Lite (Ilex) — authorization code + PKCE login, and userinfo.
  */
 
 import { getClientEnvironmentHintsAsync } from '@/lib/clientEnvironment'
 import { FetchTimeoutError, fetchWithTimeout } from '@/lib/fetchWithTimeout'
+import { createPkcePair } from '@/lib/oauthPkce'
 import { IDENTITY_API_BASE, TECTONA_OIDC_CLIENT_ID, tectonaAgentRuntimeApiBase } from './gatewayBase'
 import { formatAuthErrorMessage } from '@/lib/authErrorMessages'
 import { SessionConflictError, SessionRevokedError } from '@/lib/sessionConflict'
@@ -18,8 +19,14 @@ export class IdentityServiceUnavailableError extends Error {
 }
 
 async function identityFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  headers.set('X-Token-Delivery', 'cookie')
+  const authorization = headers.get('Authorization')
+  if (authorization && !authorization.replace(/^Bearer\s+/i, '').trim()) {
+    headers.delete('Authorization')
+  }
   try {
-    return await fetchWithTimeout(input, init)
+    return await fetchWithTimeout(input, { ...init, headers })
   } catch (err) {
     if (err instanceof FetchTimeoutError) {
       throw new IdentityServiceUnavailableError()
@@ -42,9 +49,10 @@ export class OidcTokenExchangeError extends Error {
 }
 
 export interface SsoBootstrapTokenResponse {
-  access_token: string
+  access_token?: string
   expires_in: number
   refresh_token?: string
+  session_id?: string
 }
 
 export async function fetchTokenAudit(accessToken: string, limit = 500, userId?: string, offset = 0): Promise<TokenTelemetryEvent[]> {
@@ -130,7 +138,7 @@ export async function bootstrapSsoSession(
     )
     if (!res.ok) return null
     const data = (await res.json()) as SsoBootstrapTokenResponse
-    return data?.access_token ? data : null
+    return data?.expires_in ? data : null
   } catch {
     return null
   }
@@ -160,10 +168,11 @@ export function createIdentitySessionWebSocketUrl(options?: { token?: string }):
 }
 
 export interface OidcTokenResponse {
-  access_token: string
+  access_token?: string
   token_type: string
   expires_in: number
   refresh_token?: string
+  session_id?: string
   scope?: string
 }
 
@@ -341,32 +350,41 @@ export async function loginWithPassword(
   password: string,
   opts?: OidcLoginOptions,
 ): Promise<OidcTokenResponse> {
-  const body = new URLSearchParams({
-    grant_type: 'password',
+  const { verifier, challenge } = await createPkcePair()
+  const redirectUri = `${window.location.origin}/login/oauth/callback`
+  const authorizeBody = new URLSearchParams({
+    response_type: 'code',
     client_id: TECTONA_OIDC_CLIENT_ID,
-    username: normalizeLoginEmail(email),
+    redirect_uri: redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    email: normalizeLoginEmail(email),
     password,
+    scope: 'openid profile email',
   })
-  if (opts?.sessionPolicy === 'replace') {
-    body.set('session_policy', 'replace')
-  }
-  await appendClientEnvironmentHints(body)
-  const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/token`, {
+  const authorized = await identityFetch(`${IDENTITY_API_BASE}/oauth2/authorize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body,
+    body: authorizeBody,
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throwTokenError(res.status, text)
+  if (!authorized.ok) {
+    const text = await authorized.text().catch(() => '')
+    throwTokenError(authorized.status, text)
   }
-  return res.json() as Promise<OidcTokenResponse>
+  const issued = (await authorized.json()) as { code?: string }
+  if (!issued.code) {
+    throw new OidcTokenExchangeError('We could not complete sign-in. Please try again.', 'invalid_request', authorized.status)
+  }
+  return exchangeAuthorizationCode(
+    { code: issued.code, redirectUri, codeVerifier: verifier },
+    opts,
+  )
 }
 
-export async function fetchUserInfo(accessToken: string): Promise<OidcUserInfo> {
-  const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/userinfo`, {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
-  })
+export async function fetchUserInfo(accessToken?: string | null): Promise<OidcUserInfo> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (accessToken?.trim()) headers.Authorization = `Bearer ${accessToken.trim()}`
+  const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/userinfo`, { headers })
   if (!res.ok) {
     throw new Error(`userinfo failed (${res.status})`)
   }
@@ -473,12 +491,12 @@ export async function exchangeAuthorizationCode(
 }
 
 /** OIDC refresh_token grant — rotates access + refresh token via identity-lite. */
-export async function refreshAccessToken(refreshToken: string): Promise<OidcTokenResponse> {
+export async function refreshAccessToken(refreshToken?: string | null): Promise<OidcTokenResponse> {
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: TECTONA_OIDC_CLIENT_ID,
-    refresh_token: refreshToken,
   })
+  if (refreshToken?.trim()) body.set('refresh_token', refreshToken.trim())
   const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -492,10 +510,10 @@ export async function refreshAccessToken(refreshToken: string): Promise<OidcToke
 }
 
 /** Validates server-side session (sid) — detects remote sign-out before refresh is needed. */
-export async function checkSessionStatus(accessToken: string): Promise<{ active: boolean }> {
-  const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/session/status`, {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
-  })
+export async function checkSessionStatus(accessToken?: string | null): Promise<{ active: boolean }> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (accessToken?.trim()) headers.Authorization = `Bearer ${accessToken.trim()}`
+  const res = await identityFetch(`${IDENTITY_API_BASE}/oauth2/session/status`, { headers })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throwTokenError(res.status, text)
@@ -508,7 +526,6 @@ export async function revokeServerSession(
   refreshToken?: string | null,
   accessToken?: string | null,
 ): Promise<void> {
-  if (!refreshToken?.trim() && !accessToken?.trim()) return
   const body = new URLSearchParams()
   if (refreshToken?.trim()) {
     body.set('refresh_token', refreshToken.trim())

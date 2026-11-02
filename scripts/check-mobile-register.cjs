@@ -1,0 +1,31 @@
+const assert=require('node:assert/strict')
+const fs=require('node:fs/promises')
+const os=require('node:os')
+const path=require('node:path')
+async function main(){
+ const{chromium}=require(process.argv[2]||'playwright')
+ const b=await chromium.launch({headless:true,channel:'chrome'})
+ const output=await fs.mkdtemp(path.join(os.tmpdir(),'tectona-register-'))
+ try{for(const width of [390,320,844,1440]){
+  const context=await b.newContext({viewport:{width,height:width===844?390:740},isMobile:width<1024,hasTouch:width<1024})
+  const p=await context.newPage(),errors=[];p.on('pageerror',e=>errors.push(e.message))
+  await p.goto('http://127.0.0.1:5173/register',{waitUntil:'networkidle'})
+  await p.locator('#register-email').waitFor()
+  if(width<1024){
+   const m=await p.evaluate(()=>{const card=document.querySelector('#register-card-header').parentElement.getBoundingClientRect();const foot=document.querySelector('.login-footer').getBoundingClientRect();const c=document.querySelector('.tectona-auth-copyright').getBoundingClientRect();const v=document.querySelector('.tectona-auth-build').getBoundingClientRect();return{top:card.top,bottom:card.bottom,footer:foot.top,copyBottom:c.bottom,versionTop:v.top,overflow:document.documentElement.scrollWidth>innerWidth,font:getComputedStyle(document.querySelector('#register-email')).fontSize}})
+   assert.ok(m.top>=0);assert.ok(m.footer>=m.bottom);assert.ok(m.versionTop>=m.copyBottom);assert.equal(m.overflow,false);assert.equal(m.font,'16px')
+   await p.locator('#register-email').fill('mobile@example.com')
+   await p.locator('#register-password').fill('Example!234567')
+   await p.getByRole('button',{name:'Show password',exact:true}).click()
+   assert.equal(await p.locator('#register-password').getAttribute('type'),'text')
+   await p.locator('#register-confirm').fill('different')
+   await p.getByText('Passwords do not match.',{exact:true}).waitFor()
+   await p.locator('#register-confirm').fill('Example!234567')
+   await p.getByText('Passwords do not match.',{exact:true}).waitFor({state:'hidden'})
+   await p.evaluate(()=>scrollTo(0,0))
+   console.log(width,m)
+  }
+  await p.screenshot({path:path.join(output,`${width}.png`),fullPage:true})
+  assert.deepEqual(errors,[]);await context.close()
+ }console.log('PASS mobile registration layout, footer, password visibility and validation:',output)}finally{await b.close()}
+}main().catch(e=>{console.error(e);process.exitCode=1})

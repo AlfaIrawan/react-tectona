@@ -38,17 +38,15 @@ import { useVoiceRecordRequestStore } from '@/stores/voice-record-request-store'
 import { clearSensitiveRuntimeCaches } from '@/lib/pwa/initPwa'
 import { maskToken, recordTokenEvent } from '@/lib/tokenTelemetry'
 
-/** Default Tectona accounts (identity-lite bootstrap). */
+/** Bootstrap account labels. Passwords stay on the server, never in the client bundle. */
 export const DEFAULT_ACCOUNTS = [
   {
     email: 'root@tectona.local',
-    password: 'RootPass1!',
     name: 'Root',
     role: 'root',
   },
   {
     email: 'administrator@tectona.local',
-    password: 'AdminPass1!',
     name: 'Administrator',
     role: 'admin',
   },
@@ -68,6 +66,9 @@ export interface Session {
   }
   token: string
   refreshToken?: string
+  /** Access and refresh tokens live in HttpOnly cookies, not in this object. */
+  cookieSession?: boolean
+  sessionId?: string
   expiresAt?: string
   loginAt: string
 }
@@ -108,14 +109,29 @@ function readStoredSession(): Session | null {
   try {
     const stored = localStorage.getItem(SESSION_KEY)
     if (!stored) return null
-    return JSON.parse(stored) as Session
+    const session = JSON.parse(stored) as Session
+    if (!session.cookieSession && (session.token || session.refreshToken)) {
+      localStorage.removeItem(SESSION_KEY)
+      return null
+    }
+    if (session.cookieSession) {
+      session.token = ''
+      session.refreshToken = undefined
+    }
+    return session
   } catch {
     return null
   }
 }
 
 function persistSession(session: Session): void {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+  const stored: Session = {
+    ...session,
+    token: '',
+    refreshToken: undefined,
+    cookieSession: true,
+  }
+  localStorage.setItem(SESSION_KEY, JSON.stringify(stored))
 }
 
 export function getAccessTokenExpiryMs(session: Session): number | null {
@@ -137,14 +153,17 @@ export function needsTokenRefresh(session: Session, bufferMs = REFRESH_BUFFER_MS
 }
 
 function applyTokenResponse(session: Session, tokenResponse: {
-  access_token: string
+  access_token?: string
   expires_in: number
   refresh_token?: string
+  session_id?: string
 }): Session {
   return {
     ...session,
-    token: tokenResponse.access_token,
-    refreshToken: tokenResponse.refresh_token ?? session.refreshToken,
+    token: '',
+    refreshToken: undefined,
+    cookieSession: true,
+    sessionId: tokenResponse.session_id ?? session.sessionId,
     expiresAt: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
   }
 }
@@ -152,7 +171,7 @@ function applyTokenResponse(session: Session, tokenResponse: {
 function buildSessionFromUserinfo(
   userinfo: { sub: string; email?: string; display_name?: string | null; roles?: string[]; job_title?: string | null; organizational_unit?: string | null; account_status?: string | null; created_at?: string | null },
   normalizedEmail: string,
-  tokenResponse: { access_token: string; expires_in: number; refresh_token?: string },
+  tokenResponse: { access_token?: string; expires_in: number; refresh_token?: string; session_id?: string },
 ): Session {
   const resolvedEmail = userinfo.email ?? normalizedEmail
   const uiRole =
@@ -171,8 +190,9 @@ function buildSessionFromUserinfo(
       accountStatus: userinfo.account_status ?? null,
       createdAt: userinfo.created_at ?? null,
     },
-    token: tokenResponse.access_token,
-    refreshToken: tokenResponse.refresh_token,
+    token: '',
+    cookieSession: true,
+    sessionId: tokenResponse.session_id,
     expiresAt: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
     loginAt: new Date().toISOString(),
   }
@@ -189,7 +209,7 @@ export async function attemptSilentSso(): Promise<Session | null> {
   if (existing) return existing
   try {
     const tokenResponse = await bootstrapSsoSession()
-    if (!tokenResponse?.access_token) return null
+    if (!tokenResponse?.expires_in && !tokenResponse?.access_token) return null
     const userinfo = await fetchUserInfo(tokenResponse.access_token)
     const session = buildSessionFromUserinfo(userinfo, userinfo.email ?? '', tokenResponse)
     persistSession(session)
@@ -210,7 +230,7 @@ export async function attemptSilentSso(): Promise<Session | null> {
 /** Enrol a passkey for the currently signed-in user (call while authenticated). */
 export async function registerPasskey(label?: string): Promise<void> {
   const session = getSession()
-  if (!session?.token) throw new Error('not_authenticated')
+  if (!session?.cookieSession && !session?.token) throw new Error('not_authenticated')
   await enrollPasskey(session.token, label)
   recordTokenEvent(session.user.id, {
     source: 'user',
@@ -241,7 +261,7 @@ export async function loginWithPasskey(): Promise<Session> {
 }
 
 async function performRefresh(session: Session): Promise<Session | null> {
-  if (!session.refreshToken) {
+  if (!session.refreshToken && !session.cookieSession) {
     clearSession()
     if (shouldPropagateSessionExpired()) {
       notifySessionExpiredIfNeeded({ reason: 'no_refresh_token' })
@@ -281,11 +301,15 @@ export async function ensureFreshSession(options?: { force?: boolean }): Promise
   if (!session) return null
 
   const force = options?.force === true
-  if (!force && !needsTokenRefresh(session) && !isAccessTokenExpired(session)) {
+  if (session.cookieSession) {
+    if (!force && !needsTokenRefresh(session) && !isAccessTokenExpired(session)) {
+      return session
+    }
+  } else if (!force && !needsTokenRefresh(session) && !isAccessTokenExpired(session)) {
     return session
   }
 
-  if (!session.refreshToken) {
+  if (!session.refreshToken && !session.cookieSession) {
     if (isAccessTokenExpired(session)) {
       clearSession()
       if (shouldPropagateSessionExpired()) {
@@ -306,7 +330,7 @@ export async function ensureFreshSession(options?: { force?: boolean }): Promise
 
 async function completeLogin(
   normalizedEmail: string,
-  tokenResponse: { access_token: string; expires_in: number; refresh_token?: string },
+  tokenResponse: { access_token?: string; expires_in: number; refresh_token?: string; session_id?: string },
 ): Promise<Session> {
   const userinfo = await fetchUserInfo(tokenResponse.access_token)
   const session = buildSessionFromUserinfo(userinfo, normalizedEmail, tokenResponse)
@@ -415,21 +439,19 @@ async function publishOfflinePresence(
   options?: { allowRefresh?: boolean },
 ): Promise<void> {
   if (!session) return
-  let token = session.token
+  if (!session.token && !session.cookieSession) return
   if (
     options?.allowRefresh !== false &&
-    session.refreshToken &&
+    (session.refreshToken || session.cookieSession) &&
     isAccessTokenExpired(session)
   ) {
     try {
-      const refreshed = await refreshAccessToken(session.refreshToken)
-      token = refreshed.access_token
+      await refreshAccessToken(session.refreshToken)
     } catch {
       // access + refresh invalid (session_expired) — server TTL will clear stale online
     }
   }
-  if (!token) return
-  await upsertWorkspacePresenceWithToken(token, TECTONA_CHAT_WORKSPACE_ID, 'offline')
+  await upsertWorkspacePresenceWithToken(session.token, TECTONA_CHAT_WORKSPACE_ID, 'offline')
 }
 
 function clearLocalSession(session: Session | null): void {
@@ -468,7 +490,7 @@ export function logout(): void {
   }
   clearLocalSession(session)
   void publishOfflinePresence(session, { allowRefresh: false }).catch(() => undefined)
-  if (refreshToken || accessToken) {
+  if (refreshToken || accessToken || session?.cookieSession) {
     void revokeServerSession(refreshToken, accessToken).catch(() => undefined)
   }
 }
@@ -494,7 +516,7 @@ export async function logoutAsync(): Promise<void> {
     // ignore
   }
   try {
-    if (refreshToken || accessToken) {
+    if (refreshToken || accessToken || session?.cookieSession) {
       await revokeServerSession(refreshToken, accessToken)
     }
   } catch {
@@ -505,7 +527,7 @@ export async function logoutAsync(): Promise<void> {
 export function publishOfflinePresenceOnPageHide(): void {
   const session = readStoredSession()
   useMyPresenceStore.getState().setStatus('offline')
-  if (!session?.token) return
+  if (!session?.token && !session?.cookieSession) return
   sendOfflinePresenceBeacon(session.token, TECTONA_CHAT_WORKSPACE_ID)
 }
 
@@ -516,6 +538,7 @@ export function publishOfflinePresenceOnPageHide(): void {
 export function getSession(): Session | null {
   const session = readStoredSession()
   if (!session) return null
+  if (session.cookieSession) return session
   if (isAccessTokenExpired(session) && !session.refreshToken) {
     clearSession()
     return null
@@ -546,7 +569,7 @@ function invalidateServerSession(reason: string): false {
 
 export async function validateActiveServerSession(): Promise<boolean> {
   const session = readStoredSession()
-  if (!session?.token) return false
+  if (!session?.token && !session?.cookieSession) return false
   try {
     await checkSessionStatus(session.token)
     recordTokenEvent(session.user.id, {
@@ -579,7 +602,7 @@ const SERVER_SESSION_CHECK_THROTTLE_MS = 4_000
  */
 export async function validateActiveServerSessionIfDue(options?: { force?: boolean }): Promise<boolean> {
   const session = readStoredSession()
-  if (!session?.token) return false
+  if (!session?.token && !session?.cookieSession) return false
 
   const now = Date.now()
   if (!options?.force && now - lastServerSessionCheckAt < SERVER_SESSION_CHECK_THROTTLE_MS) {
@@ -597,9 +620,8 @@ export async function maintainActiveSession(options?: { forceStatusCheck?: boole
 }
 
 export function getDevelopmentAccounts() {
-  return DEFAULT_ACCOUNTS.map(({ email, password, role, name }) => ({
+  return DEFAULT_ACCOUNTS.map(({ email, role, name }) => ({
     email,
-    password,
     role,
     name,
   }))

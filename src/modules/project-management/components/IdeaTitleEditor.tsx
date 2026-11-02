@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { History, Loader2 } from 'lucide-react'
+import { History, Loader2, X } from 'lucide-react'
 
 import {
   listIdeaTitleVersions,
@@ -110,7 +110,7 @@ export function IdeaTitleEditor({
   const latestVersionNo = versions?.[0]?.version_no
 
   return (
-    <div className="group flex items-start gap-1.5">
+    <div className="idea-title-editor group flex min-w-0 items-start gap-1.5">
       <h1 className="min-w-0 text-2xl font-semibold leading-tight text-slate-900">
         {editing ? (
           <input
@@ -160,7 +160,8 @@ export function IdeaTitleEditor({
           {latestVersionNo ? `v${latestVersionNo}` : null}
         </button>
         {historyOpen ? (
-          <div className="absolute left-0 top-full z-40 mt-1 w-[360px] rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+          <div className="idea-title-history absolute left-0 top-full z-40 mt-1 w-[360px] rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+            <button type="button" aria-label="Close title history" title="Close title history" className="float-right flex h-9 w-9 items-center justify-center rounded-md hover:bg-slate-100" onClick={() => setHistoryOpen(false)}><X className="h-4 w-4" /></button>
             <p className="px-1 pb-1 text-[11px] font-semibold text-slate-700">
               Title history
               <span className="block text-[10px] font-normal text-slate-400">One shared title for Idea, URD, BRD, and FSD</span>

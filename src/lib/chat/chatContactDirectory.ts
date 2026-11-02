@@ -598,6 +598,7 @@ export async function publishMyCollaborationPresence(
   workspaceId: string = TECTONA_CHAT_WORKSPACE_ID,
   status?: 'online' | 'away' | 'offline',
 ): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return
   if (!getCurrentChatActorId()) return
   const resolved =
     status

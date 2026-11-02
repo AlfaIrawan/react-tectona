@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { useAuthMobileViewport } from '@/modules/auth/useAuthMobileViewport'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -18,6 +19,7 @@ import { AuthTourButton } from '@/modules/auth/components/AuthTourButton'
 import { AuthCopyrightNotice } from '@/modules/auth/components/AuthCopyrightNotice'
 
 export function RegisterPage() {
+  const mobileLayoutRef = useAuthMobileViewport()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -64,7 +66,7 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4">
+    <div ref={mobileLayoutRef} className="mobile-login mobile-register w-full flex items-center justify-center p-4">
       <div className="w-full max-w-md mx-auto">
         <div className="liquid-glass-enterprise-panel rounded-lg p-8 space-y-6">
           <AuthBackToLoginLink />
@@ -133,7 +135,8 @@ export function RegisterPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-muted-foreground"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                     tabIndex={-1}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -179,8 +182,10 @@ export function RegisterPage() {
         </div>
       </div>
 
-      <AuthTourButton page="register" />
-      <AuthCopyrightNotice />
+      <footer className="login-footer">
+        <AuthCopyrightNotice />
+        <AuthTourButton page="register" />
+      </footer>
     </div>
   )
 }

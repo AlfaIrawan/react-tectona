@@ -1,5 +1,7 @@
 import { useLocation } from 'react-router-dom'
 import { useMemo, useState } from 'react'
+import { useMobileLayout } from '@/hooks/useMobileLayout'
+import { MobileModuleMenu } from './MobileModuleMenu'
 import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate'
 import { legacyAppPathFromLocation } from '@/lib/workspaceRouting'
 import {
@@ -241,12 +243,17 @@ export function AppLauncher() {
     return existingNavItems.filter((i) => access.canAccess(i.moduleId))
   }, [access.canAccess, access.isPlatformAdmin, tenant?.uiProfile.hiddenModuleIds, tenant?.tenantMode])
 
+  const isMobile = useMobileLayout()
   const useAdminGrid = access.isPlatformAdmin
   const columns = useAdminGrid ? PLATFORM_ADMIN_LAUNCHER_COLUMNS : END_USER_LAUNCHER_COLUMNS
   const lastRowStartIndex =
     visibleItems.length > columns
       ? Math.floor((visibleItems.length - 1) / columns) * columns
       : 0
+
+  if (isMobile) {
+    return <MobileModuleMenu items={visibleItems} isActive={isItemActive} onSelect={handleItemClick} />
+  }
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>

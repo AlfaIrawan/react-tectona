@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, LogOut, Settings, Bell, Circle, Command, Palette, ListTodo, Mail, MessageSquare } from 'lucide-react'
+import { User, LogOut, Settings, Bell, Circle, Command, Palette, ListTodo, Mail, MessageSquare, MoreHorizontal } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +31,19 @@ import { WorkspaceManagementGuideTopbarButton } from '@/modules/workspace-manage
 import { useModuleAccess } from '@/auth/useModuleAccess'
 import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate'
 import { fetchMicrosoftProfilePhoto } from '@/lib/api/microsoftGraphApi'
+
+function resolveTopbarEnvironment(hostname: string): { tone: 'production' | 'other'; label: string } {
+  const host = hostname.trim().toLowerCase()
+  if (host === 'tectona-uat.adira.co.id') return { tone: 'other', label: 'UAT' }
+  if (host === 'tectona-dev.adira.co.id') return { tone: 'other', label: 'Development' }
+  const configured = (import.meta.env.VITE_APP_ENV as string | undefined)?.trim().toLowerCase()
+  if (configured === 'uat') return { tone: 'other', label: 'UAT' }
+  if (configured === 'development' || configured === 'dev') return { tone: 'other', label: 'Development' }
+  if (configured === 'production' || configured === 'prod' || import.meta.env.PROD) {
+    return { tone: 'production', label: 'Production' }
+  }
+  return { tone: 'other', label: 'Development' }
+}
 
 interface TopbarProps {
   sidebarCollapsed: boolean
@@ -113,10 +126,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
     }
   }, [refreshNotificationUnreadCount])
 
-  const configuredEnvironment = (import.meta.env.VITE_APP_ENV as string | undefined)?.trim().toLowerCase()
-  const environment = window.location.hostname.toLowerCase() === 'tectona-dev.adira.co.id'
-    ? 'development'
-    : configuredEnvironment || (import.meta.env.PROD ? 'production' : 'development')
+  const topbarEnvironment = resolveTopbarEnvironment(window.location.hostname)
   const userName = normalizeUserDisplayName(session?.user.name || session?.user.email || 'User')
   const { label: topbarTenantLabel, loading: topbarTenantLabelLoading } = useTopbarTenantLabel()
 
@@ -129,7 +139,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
     <header
       className={cn(
         'absolute top-0 right-0 left-0 h-12 z-[60] transition-all duration-300',
-        'glass-topbar',
+        'glass-topbar responsive-topbar',
         'left-0'
       )}
     >
@@ -170,31 +180,31 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
             />
           </div>
 
-          <WorkspaceSwitcher compact menuAlign="end" />
+          <div className="topbar-workspace-switcher"><WorkspaceSwitcher compact menuAlign="end" /></div>
 
           {/* Environment Indicator - class agar teks tetap gelap di tema topbar gelap */}
           <div className="environment-indicator flex items-center gap-1.5 h-8 px-3 rounded-md bg-white/90 backdrop-blur-sm border border-slate-200/80 shadow-sm">
             <Circle className={cn(
               'h-2 w-2 shrink-0',
-              environment === 'production' 
-                ? 'text-red-500 fill-red-500' 
+              topbarEnvironment.tone === 'production'
+                ? 'text-red-500 fill-red-500'
                 : 'text-green-500 fill-green-500'
             )} />
-            <span className="text-xs font-medium text-slate-800 capitalize">
-              {environment}
+            <span className="text-xs font-medium text-slate-800">
+              {topbarEnvironment.label}
             </span>
           </div>
 
-          <PlatformHealthBadge />
+          <div className="mobile-topbar-secondary"><PlatformHealthBadge /></div>
 
-          <WorkspaceManagementGuideTopbarButton />
+          <div className="mobile-topbar-secondary"><WorkspaceManagementGuideTopbarButton /></div>
 
           <Tooltip content="Chat" side="bottom" size="compact" sideOffset={6}>
             <Button
               variant="ghost"
               size="icon"
               className={cn(
-                'topbar-action-btn hover:bg-gray-100',
+                'topbar-action-btn mobile-topbar-secondary hover:bg-gray-100',
                 chatOpen && 'bg-gray-100 ring-1 ring-slate-300/80'
               )}
               aria-label="Open chat"
@@ -215,7 +225,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
               variant="ghost"
               size="icon"
               className={cn(
-                'topbar-action-btn hover:bg-gray-100',
+                'topbar-action-btn mobile-topbar-secondary hover:bg-gray-100',
                 emailOpen && 'bg-gray-100 ring-1 ring-slate-300/80'
               )}
               aria-label="Open email"
@@ -262,7 +272,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
             <Button
               variant="ghost"
               size="icon"
-              className="topbar-action-btn hover:bg-gray-100"
+              className="topbar-action-btn mobile-topbar-secondary hover:bg-gray-100"
               aria-label="Todo list"
               onClick={onToggleTodoPanel}
             >
@@ -276,7 +286,7 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
               variant="ghost"
               size="icon"
               onClick={onToggleThemeSettings || (() => {})}
-              className="topbar-action-btn hover:bg-gray-100"
+              className="topbar-action-btn mobile-topbar-secondary hover:bg-gray-100"
               aria-label="Open theme settings"
             >
               <Palette className="h-4 w-4 text-gray-600 topbar-action-icon" />
@@ -285,6 +295,15 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
 
           {/* App Launcher - Before Account */}
           <AppLauncher />
+
+          <div className="mobile-topbar-more hidden">
+            <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More tools" title="More tools"><MoreHorizontal className="h-5 w-5" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => { setEmailOpen(false); toggleChat() }}><MessageSquare className="mr-2 h-4 w-4" />Chat</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setChatOpen(false); toggleEmail() }}><Mail className="mr-2 h-4 w-4" />Email</DropdownMenuItem>
+              <DropdownMenuItem onClick={onToggleTodoPanel}><ListTodo className="mr-2 h-4 w-4" />Todo list</DropdownMenuItem>
+              <DropdownMenuItem onClick={onToggleThemeSettings}><Palette className="mr-2 h-4 w-4" />Theme Settings</DropdownMenuItem>
+            </DropdownMenuContent></DropdownMenu>
+          </div>
 
           {/* User Menu */}
           <DropdownMenu open={userMenuOpen} onOpenChange={setUserMenuOpen}>

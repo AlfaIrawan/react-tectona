@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode, type WheelEvent } from 'react'
+import { useCallback, useLayoutEffect, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -13,6 +13,26 @@ const SWIPE_COMMIT_RATIO = 0.15
 const SWIPE_COMMIT_MIN_PX = 60
 /** A trackpad flick turns one page; further flicks wait this long. */
 const WHEEL_PAGE_LOCK_MS = 450
+const WHEEL_COMMIT_PX = 40
+const WHEEL_GESTURE_GAP_MS = 180
+
+/** Normalize mouse wheels (including Shift+wheel) and trackpad horizontal movement. */
+export function wheelPageDelta(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'ctrlKey' | 'metaKey'>, viewportHeight: number): number {
+  if (event.ctrlKey || event.metaKey) return 0
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+  return delta * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportHeight : 1)
+}
+
+function hasNestedWheelTarget(target: EventTarget | null, viewport: HTMLElement): boolean {
+  if (!(target instanceof Element)) return false
+  if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="slider"], [role="spinbutton"]')) return true
+  for (let node = target; node !== viewport && viewport.contains(node); node = node.parentElement!) {
+    const style = getComputedStyle(node)
+    if ((/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight)
+        || (/(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth)) return true
+  }
+  return false
+}
 
 /** Columns at a viewport-based width, matching the grid breakpoints (md = 768px, lg = 1024px). */
 export function columnsForWidth(width: number, listView: boolean): number {
@@ -81,6 +101,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const gestureRef = useRef<Gesture | null>(null)
   const swipeEndedRef = useRef(false)
   const wheelLockedUntilRef = useRef(0)
+  const wheelGestureRef = useRef({ delta: 0, lastAt: 0 })
 
   const measure = useCallback(() => {
     const element = containerRef.current
@@ -113,6 +134,39 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const layout = slidingLayout({ itemCount: items.length, columns, rowHeight, gap, availableHeight })
   const currentPage = Math.min(page, Math.max(0, layout.pageCount - 1))
   const gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!layout.sliding || !viewport) return
+    // React wheel handlers are passive. Cancel native page scroll only when this
+    // grid can consume the gesture; release it at either end and for nested controls.
+    const handleWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || isSwiping || hasNestedWheelTarget(event.target, viewport)) return
+      const delta = wheelPageDelta(event, viewport.clientHeight)
+      if (!delta) return
+      const now = Date.now()
+      if (now < wheelLockedUntilRef.current) {
+        event.preventDefault()
+        return
+      }
+      const next = currentPage + Math.sign(delta)
+      if (next < 0 || next >= layout.pageCount) {
+        wheelGestureRef.current.delta = 0
+        return
+      }
+      event.preventDefault()
+      const gesture = wheelGestureRef.current
+      if (now - gesture.lastAt > WHEEL_GESTURE_GAP_MS || Math.sign(gesture.delta) !== Math.sign(delta)) gesture.delta = 0
+      gesture.delta += delta
+      gesture.lastAt = now
+      if (Math.abs(gesture.delta) < WHEEL_COMMIT_PX) return
+      gesture.delta = 0
+      wheelLockedUntilRef.current = now + WHEEL_PAGE_LOCK_MS
+      setPage(next)
+    }
+    viewport.addEventListener('wheel', handleWheel, { passive: false })
+    return () => viewport.removeEventListener('wheel', handleWheel)
+  }, [currentPage, layout.pageCount, layout.sliding, isSwiping])
 
   const goToPage = (next: number) => {
     setPage(Math.min(Math.max(0, next), Math.max(0, layout.pageCount - 1)))
@@ -188,14 +242,6 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
     }
   }
 
-  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (Math.abs(event.deltaX) < 20 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
-    const now = Date.now()
-    if (now < wheelLockedUntilRef.current) return
-    wheelLockedUntilRef.current = now + WHEEL_PAGE_LOCK_MS
-    goToPage(currentPage + (event.deltaX > 0 ? 1 : -1))
-  }
-
   if (!layout.sliding) {
     return (
       <div ref={containerRef}>
@@ -228,7 +274,6 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerEnd}
         onPointerCancel={handlePointerEnd}
-        onWheel={handleWheel}
         onClickCapture={handleClickCapture}
       >
         <div

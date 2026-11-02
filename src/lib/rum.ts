@@ -57,6 +57,13 @@ let lastSentSignature: string | null = null
 let latestObservedLcp: number | null = null
 let lastSentLcpValue: number | null = null
 let ingestDisabled = false
+let retryAfter = 0
+let consecutiveFailures = 0
+
+function deferRumRetry(): void {
+  consecutiveFailures += 1
+  retryAfter = Date.now() + Math.min(120_000, FLUSH_INTERVAL_MS * 2 ** Math.min(consecutiveFailures - 1, 3))
+}
 
 function roundMetric(value: number | null): number | null {
   if (value == null || !Number.isFinite(value)) return null
@@ -106,7 +113,7 @@ function isRumIngestRequest(input: Parameters<typeof fetch>[0]): boolean {
 
   try {
     const requestUrl = new URL(rawUrl, window.location.origin)
-    return requestUrl.toString() === currentRumIngestUrl()
+    return requestUrl.toString() === new URL(currentRumIngestUrl(), window.location.origin).toString()
   } catch {
     return false
   }
@@ -160,7 +167,7 @@ function flushObservedLcpFallback(): void {
 }
 
 async function postRumSample(): Promise<void> {
-  if (flushInFlight || ingestDisabled) return
+  if (flushInFlight || ingestDisabled || navigator.onLine === false || Date.now() < retryAfter) return
 
   const apiLatencyMs = average(bucket.apiLatencySamples)
   const apiLatencySampleCount = bucket.apiLatencySamples.length
@@ -236,7 +243,10 @@ async function postRumSample(): Promise<void> {
       ingestDisabled = true
       return
     }
-    if (!response.ok) return
+    if (!response.ok) { deferRumRetry(); return }
+
+    consecutiveFailures = 0
+    retryAfter = 0
 
     lastSentSignature = payloadSignature
     bucket.apiLatencySamples = []
@@ -251,6 +261,7 @@ async function postRumSample(): Promise<void> {
     if (shouldSendCls) bucket.dirtyVitals.cls = false
   } catch {
     // RUM collection must never block app usage.
+    deferRumRetry()
   } finally {
     flushInFlight = false
   }

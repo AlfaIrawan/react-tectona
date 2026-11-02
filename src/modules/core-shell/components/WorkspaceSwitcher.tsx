@@ -129,7 +129,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
 
   const triggerClassName = compact
     ? cn(
-        'inline-flex h-8 max-w-[12rem] items-center gap-1 rounded-md border border-slate-200/80 bg-white/90 px-3',
+        'inline-flex h-8 max-w-[12rem] items-center gap-2 rounded-md border border-slate-200/80 bg-white/90 px-3',
         'text-xs font-medium text-slate-800 shadow-sm backdrop-blur-sm transition-colors hover:bg-white',
       )
     : cn(
@@ -150,8 +150,9 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
           type="button"
           className={triggerClassName}
           aria-label="Switch workspace"
+          title={triggerLabel}
         >
-          <span className="truncate">{triggerLabel}</span>
+          <span className="min-w-0 truncate">{triggerLabel}</span>
           <ChevronDown
             className={cn('shrink-0 text-slate-500', compact ? 'h-3.5 w-3.5' : 'h-4 w-4')}
             aria-hidden
@@ -160,7 +161,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align={menuAlign}
-        className="z-[120] w-80 border border-border/80 bg-popover p-0 shadow-xl"
+        className="z-[120] w-80 max-w-[calc(100vw-2rem)] border border-border/80 bg-popover p-0 shadow-xl"
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <div className="px-3 pt-2.5 pb-2">

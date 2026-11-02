@@ -2,6 +2,7 @@
 import { getSession } from '@/auth/authService'
 import { createNotification, TECTONA_APP_ID } from '@/lib/api/notificationApi'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
@@ -98,6 +99,10 @@ import {
   YAxis,
 } from 'recharts'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
+import { useMobileLayout } from '@/hooks/useMobileLayout'
+import { useCommunicationViewport } from '@/hooks/useCommunicationViewport'
+import { MobileIdeaSectionNav } from '../components/MobileIdeaSectionNav'
+import { ideaDocsFolderErrorMessage } from '../lib/ideaDocsFolderError'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -2898,7 +2903,7 @@ function renderIdeaPanelWithOptionalFullscreen(
     // intended: those menus render above it, the way "fullscreen content, chrome-level UI on top"
     // is supposed to work.
     return (
-      <div className="fixed inset-x-0 top-12 bottom-0 z-50 flex min-h-0 w-screen flex-col overflow-hidden bg-background">
+      <div className="idea-detail-fullscreen fixed inset-x-0 top-12 bottom-0 z-50 flex min-h-0 w-screen flex-col overflow-hidden bg-background">
         {panel}
       </div>
     )
@@ -3513,6 +3518,7 @@ function IdeaDetailSidebar({
   publishedAtLabel,
   onWidthChange,
 }: IdeaDetailSidebarProps) {
+  const isMobile = useMobileLayout()
   const asideRef = useRef<HTMLElement>(null)
   const activeMenu = getIdeaPanelCatalogEntry(activePanel)
   const isEditable = actionControlMode === 'editable'
@@ -3532,7 +3538,7 @@ function IdeaDetailSidebar({
   useLayoutEffect(() => {
     const el = asideRef.current
     if (el) onWidthChange(el.getBoundingClientRect().width)
-  }, [collapsed, onWidthChange])
+  }, [collapsed, onWidthChange, isMobile])
 
   useEffect(() => {
     const el = asideRef.current
@@ -3543,7 +3549,7 @@ function IdeaDetailSidebar({
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [onWidthChange])
+  }, [onWidthChange, isMobile])
 
   const handleMenuDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
@@ -3552,6 +3558,15 @@ function IdeaDetailSidebar({
     const newIndex = menuSections.indexOf(over.id as PanelKey)
     if (oldIndex === -1 || newIndex === -1) return
     onReorderMenuSections(arrayMove(menuSections, oldIndex, newIndex))
+  }
+
+  if (isMobile) {
+    return <MobileIdeaSectionNav
+      sections={menuSections.map((key) => ({ key, label: getIdeaPanelCatalogEntry(key).label }))}
+      active={activePanel} onChange={onNavigatePanel}
+      publishing={isPublishingToOrganization}
+      publish={showManualPublishFooter ? { disabled: !canPublishToOrganization, hint: publishShareHint, onClick: onPublishToOrganization, publishedAt: publishedAtLabel } : undefined}
+    />
   }
 
   return (
@@ -3777,6 +3792,8 @@ const IDEA_DOC_GENERATE_STEPS = [
 const IDEA_DOC_GENERATE_STEP_INTERVAL_MS = 2200
 
 export function IdeaDetailPage() {
+  const isMobileLayout = useMobileLayout()
+  const detailViewport = useCommunicationViewport(isMobileLayout)
   const { ideaId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -3895,6 +3912,8 @@ export function IdeaDetailPage() {
   const [ideaDocSubfolders, setIdeaDocSubfolders] = useState<DocumentFolder[]>([])
   const [ideaDocFolderCreateBusy, setIdeaDocFolderCreateBusy] = useState(false)
   const [ideaDocFolderInitBusy, setIdeaDocFolderInitBusy] = useState(false)
+  const [ideaDocFolderError, setIdeaDocFolderError] = useState<string | null>(null)
+  const [ideaDocFolderRetry, setIdeaDocFolderRetry] = useState(0)
   const [ideaDocFolderContextMenu, setIdeaDocFolderContextMenu] = useState<{
     folder: DocumentFolder
     x: number
@@ -5239,12 +5258,12 @@ export function IdeaDetailPage() {
   const setRightDrawerOpen = useRightDrawerStore((s) => s.setOpen)
   const setRightDrawerWidth = useRightDrawerStore((s) => s.setWidth)
   useEffect(() => {
-    setRightDrawerOpen(true)
+    setRightDrawerOpen(!isMobileLayout)
     return () => {
       setRightDrawerOpen(false)
       setRightDrawerWidth(DEFAULT_RIGHT_DRAWER_WIDTH)
     }
-  }, [setRightDrawerOpen, setRightDrawerWidth])
+  }, [setRightDrawerOpen, setRightDrawerWidth, isMobileLayout])
   const [activePanel, setActivePanel] = useState<PanelKey>(() => readPersistedIdeaNavTop(idea.id))
   const [navStoreHydrated, setNavStoreHydrated] = useState(() => useIdeaNavSectionsStore.persist.hasHydrated())
   const userChosePanelRef = useRef(false)
@@ -6118,8 +6137,8 @@ export function IdeaDetailPage() {
               }
             }
             if (!regenerate) {
-              applyIntegrationState(analysis, record, sourceIdea.id)
-              return
+            applyIntegrationState(analysis, record, sourceIdea.id)
+            return
             }
           }
         } catch (error) {
@@ -6746,7 +6765,7 @@ export function IdeaDetailPage() {
           const api = await getIdeaById(ideaId)
           hydratedIdea = ideaFromApi(api)
           if (!cancelled) {
-            setIdea(hydratedIdea)
+          setIdea(hydratedIdea)
             setResolvedIdeaId(hydratedIdea.id)
           }
         } catch {
@@ -7617,6 +7636,7 @@ export function IdeaDetailPage() {
     if (resolvedIdeaId !== idea.id) return
     let cancelled = false
     setIdeaDocFolderInitBusy(true)
+    setIdeaDocFolderError(null)
     void (async () => {
       try {
         const existing = await resolveExistingIdeaDocsFolder({ ideaId: idea.id, workspaceId: idea.workspace, documents: ideaGeneratedDocs })
@@ -7645,13 +7665,7 @@ export function IdeaDetailPage() {
         if (!cancelled) {
           setIdeaDocFolderStack([])
           setIdeaDocSubfolders([])
-          addToast({
-            title: 'Failed to load idea docs folder',
-            description: error instanceof Error && /workspace access forbidden/i.test(error.message)
-              ? 'Project service denied access to this idea workspace. Existing documents remain available; workspace permissions must be checked before creating folders.'
-              : error instanceof Error ? error.message : '',
-            variant: 'error',
-          })
+          setIdeaDocFolderError(ideaDocsFolderErrorMessage(error))
         }
       } finally {
         if (!cancelled) setIdeaDocFolderInitBusy(false)
@@ -7662,7 +7676,7 @@ export function IdeaDetailPage() {
     }
   // Folder resolution only changes when a document moves, not when its content or version changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePanel, addToast, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject, ideaDocsLoadedScope, ideaDocsFolderSignature, resolvedIdeaId])
+  }, [activePanel, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject, ideaDocsLoadedScope, ideaDocsFolderSignature, resolvedIdeaId, ideaDocFolderRetry])
 
   useEffect(() => {
     if (activePanel !== 'document' || !ideaDocCurrentFolder) return
@@ -12688,7 +12702,7 @@ export function IdeaDetailPage() {
         : 'Diagram'
 
   return (
-    <>
+    <div className="idea-detail-page min-w-0" style={{ '--idea-detail-top': `${detailViewport.top}px` } as CSSProperties}>
       {brdBulletMenu}
       {brdNumberMenu}
       {brdMultilevelMenu}
@@ -12736,26 +12750,27 @@ export function IdeaDetailPage() {
 
       <div
         className={cn(
-          'space-y-5 pb-8 transition-all duration-300',
+          'idea-detail-content min-w-0 space-y-5 pb-8 transition-all duration-300',
           'mr-0 md:mr-12',
           sidebarCollapsed ? 'lg:mr-12' : 'lg:mr-72'
         )}
       >
         <Breadcrumb
         items={[
-          { label: 'Workspace', href: workspaceManagementPath },
+          ...(!isMobileLayout ? [{ label: 'Workspace', href: workspaceManagementPath }] : []),
           { label: 'Idea & Backlog', href: ideaBacklogPath },
-          { label: idea.id },
+          { label: isMobileLayout ? 'Details' : idea.id },
         ]}
         />
 
-      <div className="space-y-4">
-          <div className="flex items-start justify-between gap-4">
+      <div className="idea-detail-heading space-y-4">
+          <div className="idea-detail-heading-row flex items-start justify-between gap-4">
             <div className="flex items-start gap-3 flex-1 min-w-0">
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => navigate('/idea-backlog')}
+                aria-label="Back to ideas"
+                onClick={() => navigate(ideaBacklogPath)}
               >
                 <ArrowLeft className="h-4 w-4" />
               </Button>
@@ -12764,7 +12779,7 @@ export function IdeaDetailPage() {
                 style={{ backgroundColor: typeAccent[idea.type] }}
                 aria-hidden="true"
               />
-              <div className="space-y-2 min-w-0 flex-1">
+              <div className="idea-detail-title-block space-y-2 min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge variant="outline" className={cn('text-[10px] font-semibold', headerStatusBadgeClass)}>
                   {headerStatusLabel}
@@ -12799,23 +12814,23 @@ export function IdeaDetailPage() {
                 }}
                 onError={(message) => addToast({ title: 'Judul gagal disimpan', description: message, variant: 'error' })}
               />
-              <p className="text-sm text-muted-foreground">
-                Workspace: <span className="font-medium text-slate-700">{workspaceDisplayName}</span>
+              <p className="idea-detail-metadata text-sm text-muted-foreground">
+                <span>Workspace: <span className="font-medium text-slate-700">{workspaceDisplayName}</span></span>
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
-                Submitted by <span className="font-medium text-slate-700">{submittedByDisplayName}</span>
+                <span>Submitted by <span className="font-medium text-slate-700">{submittedByDisplayName}</span></span>
                 {actionControlReviewerLabel ? (
                   <>
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
-                    Reviewer <span className="font-medium text-slate-700">{actionControlReviewerLabel}</span>
+                    <span>Reviewer <span className="font-medium text-slate-700">{actionControlReviewerLabel}</span></span>
                   </>
                 ) : null}
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
-                {idea.createdAt}
+                <time>{idea.createdAt}</time>
               </p>
             </div>
             </div>
 
-            <div className="flex shrink-0 flex-col items-end gap-2">
+            <div className="idea-detail-refresh-meta flex shrink-0 flex-col items-end gap-2">
               {visiblePanel === 'summary' && (
                 <div className="self-end text-[11px] text-slate-600">
                   <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right">
@@ -12868,7 +12883,7 @@ export function IdeaDetailPage() {
 
       </div>
 
-      <div className="space-y-4">
+      <div className="idea-detail-panels min-w-0 space-y-4">
         {visiblePanel === null && (
           <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-border/60 bg-card/60" aria-busy="true">
             <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -15042,15 +15057,15 @@ export function IdeaDetailPage() {
                           <p className="font-semibold">Perubahan tidak disimpan</p>
                           <p className="mt-1">Diagram ini sudah diubah di tab atau sesi lain. Muat ulang untuk melihat versi terbaru.</p>
                           <button type="button" className="mt-1 font-semibold underline" onClick={() => window.location.reload()}>Muat ulang</button>
-                        </div>
+                            </div>
                       ) : integrationChecks.length > 0 ? (
                         <div className="max-w-xl rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow-sm">
                           <p className="font-semibold">Perlu dicek ({integrationChecks.length})</p>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
                             {integrationChecks.slice(0, 6).map((check) => <li key={check}>{check}</li>)}
-                          </ul>
+                                    </ul>
                           {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
-                        </div>
+                                </div>
                       ) : null}
                     />
                     <DiagramHistoryDialog
@@ -15612,7 +15627,7 @@ export function IdeaDetailPage() {
                       {ideaDocsView === 'documents' ? 'Idea Docs' : 'Templates & reusable content'}
                     </h2>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="idea-docs-toolbar flex shrink-0 items-center gap-2">
                     <div className="inline-flex h-10 items-center rounded-lg border border-slate-300/90 bg-background/95 p-1 shadow-sm" role="group" aria-label="Idea document view">
                       <button
                         type="button"
@@ -15633,10 +15648,10 @@ export function IdeaDetailPage() {
                         Templates
                       </button>
                     </div>
-                    <RepositoryViewModeSwitch
+                    {!isMobileLayout && <RepositoryViewModeSwitch
                       value={ideaDocsView === 'documents' ? ideaDocsLayout : ideaTemplateLayout}
                       onChange={ideaDocsView === 'documents' ? setIdeaDocsLayout : setIdeaTemplateLayout}
-                    />
+                    />}
                     <button
                       type="button"
                       aria-pressed={isIdeaDocsPanelFullscreen}
@@ -15658,7 +15673,7 @@ export function IdeaDetailPage() {
                     </button>
                   </div>
                 </div>
-                <div className={cn('space-y-2', ideaDocsView === 'documents' ? 'pb-4' : 'pb-1')}>
+                <div className={cn('idea-docs-description space-y-2', ideaDocsView === 'documents' ? 'pb-4' : 'pb-1')}>
                   <p className="w-full text-[11px] leading-snug text-muted-foreground">
                     {ideaDocsView === 'documents'
                       ? 'Upload supporting documents or diagrams to auto-generate a knowledge base entry, or pick a Document & Knowledge Management template to draft a new document for this idea.'
@@ -15667,6 +15682,7 @@ export function IdeaDetailPage() {
                 </div>
                 {ideaDocsView === 'documents' ? (
                   <>
+                {ideaDocFolderError && <div role="alert" className="my-3 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-5 text-amber-950"><p>{ideaDocFolderError}</p><button type="button" disabled={ideaDocFolderInitBusy} onClick={() => setIdeaDocFolderRetry((value) => value + 1)} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-amber-300 bg-white px-3 font-medium"><RefreshCcw className="h-4 w-4" />Retry folder access</button></div>}
                 {!isIdeaDocAtProjectRoot && ideaDocFolderStack.length > 0 ? (
                   <div className="flex flex-wrap items-center gap-1 text-sm">
                     <button
@@ -15694,7 +15710,7 @@ export function IdeaDetailPage() {
                     ))}
                   </div>
                 ) : null}
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="idea-docs-actions flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     {/* Shown without a folder too: generating or adding a folder creates the
                         idea's document container when it has none yet. */}
@@ -15704,7 +15720,7 @@ export function IdeaDetailPage() {
                           type="button"
                           className={enterprisePrimarySolidButtonClass()}
                           title="Generate a document from a DKM master template"
-                          disabled={ideaDocTemplatesLoading || ideaDocGenerateBusy}
+                          disabled={ideaDocTemplatesLoading || ideaDocGenerateBusy || Boolean(ideaDocFolderError)}
                           onClick={() => void openIdeaDocGenerateDialog()}
                         >
                           {ideaDocGenerateBusy ? (
@@ -15717,7 +15733,7 @@ export function IdeaDetailPage() {
                         <button
                           type="button"
                           className={enterpriseSecondaryButtonClass()}
-                          disabled={ideaDocFolderCreateBusy}
+                          disabled={ideaDocFolderCreateBusy || Boolean(ideaDocFolderError)}
                           onClick={() => void handleIdeaDocCreateFolder()}
                           title="Create a subfolder to organize documents"
                         >
@@ -15752,6 +15768,7 @@ export function IdeaDetailPage() {
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {ideaDocsTotalCount > 0 ? (
                     <DocumentRepositoryPaginationControls
+                      mobile={isMobileLayout}
                       page={ideaDocsPage}
                       pageSize={ideaDocsPageSize}
                       totalCount={ideaDocsTotalCount}
@@ -15774,7 +15791,7 @@ export function IdeaDetailPage() {
                   templates={ideaDocTemplates}
                   documents={ideaGeneratedDocs}
                   loading={ideaDocTemplatesLoading}
-                  layout={ideaTemplateLayout}
+                  layout={isMobileLayout ? 'folders' : ideaTemplateLayout}
                   onUseTemplate={(templateId) => { void openIdeaDocGenerateDialog(templateId) }}
                   onUploadTemplate={() => openTemplateManagementAction('upload')}
                   onNewTemplate={() => openTemplateManagementAction('new-template')}
@@ -15816,9 +15833,9 @@ export function IdeaDetailPage() {
                   ) : (
                     <div className={cn(
                       'flex min-h-0 flex-1 overflow-hidden',
-                      ideaDocsLayout === 'split' ? 'flex-row gap-3' : 'flex-col',
+                      !isMobileLayout && ideaDocsLayout === 'split' ? 'flex-row gap-3' : 'flex-col',
                     )}>
-                      {ideaDocsLayout === 'explorer' ? (
+                      {!isMobileLayout && ideaDocsLayout === 'explorer' ? (
                         <DocumentRepositoryExplorerView
                           folders={ideaDocSubfolders}
                           documents={ideaDocsPaginatedItems.map((item) => ({
@@ -15853,7 +15870,8 @@ export function IdeaDetailPage() {
                         />
                       ) : (
                         <>
-                          {ideaDocsLayout === 'folders' && ideaDocSubfolders.length > 0 ? (
+                          {isMobileLayout && ideaDocSubfolders.length > 0 && <div className="mb-3 divide-y rounded-md border bg-background">{ideaDocSubfolders.map((folder) => <button key={folder.id} type="button" className="flex min-h-12 w-full items-center gap-2 px-3 py-2 text-left text-sm" onClick={() => openIdeaDocSubfolder(folder)}><Folder className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 break-words">{folder.name}</span><ChevronRight className="h-4 w-4 shrink-0" /></button>)}</div>}
+                          {!isMobileLayout && ideaDocsLayout === 'folders' && ideaDocSubfolders.length > 0 ? (
                             <div className="mb-3 flex min-w-0 shrink-0 items-center gap-2">
                               <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-hide">
                                 {ideaDocSubfolders.map((folder) => (
@@ -15882,7 +15900,7 @@ export function IdeaDetailPage() {
                               </div>
                             </div>
                           ) : null}
-                          {ideaDocsLayout === 'split' ? (
+                          {!isMobileLayout && ideaDocsLayout === 'split' ? (
                             <div className="flex w-60 shrink-0 flex-col overflow-y-auto rounded-xl border border-border/60 bg-background/70">
                               {ideaDocSubfolders.length === 0 ? (
                                 <p className="px-3 py-4 text-xs text-muted-foreground">No subfolders here.</p>
@@ -15907,6 +15925,8 @@ export function IdeaDetailPage() {
                           {ideaRepositoryItems.length > 0 ? (
                             <div className="min-h-0 min-w-0 flex-1 overflow-auto scrollbar-hide">
                               <DocumentRepositoryTableView
+                                mobileCards={isMobileLayout}
+                                onItemMenu={(event, item) => openIdeaDocContextMenu(event, item)}
                                 hiddenColumnKeys={['linked', 'access']}
                                 items={ideaDocsPaginatedItems}
                                 showTags={false}
@@ -16090,41 +16110,41 @@ export function IdeaDetailPage() {
                       <div className="shrink-0 space-y-2 border-b border-border/70 px-5 py-3 sm:px-6">
                         <div className={cn('flex gap-2', ideaDocWorkspaceNarrow ? 'flex-col' : 'flex-row items-end gap-4')}>
                           <div className="min-w-0 flex-1 space-y-1.5">
-                            <Label
-                              htmlFor="idea-doc-template"
-                              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
-                            >
-                              Template
-                            </Label>
+                        <Label
+                          htmlFor="idea-doc-template"
+                          className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                        >
+                          Template
+                        </Label>
                             <div className="flex min-w-0 items-center gap-3">
-                              <Select
-                                id="idea-doc-template"
+                        <Select
+                          id="idea-doc-template"
                                 className="min-w-0 flex-1 rounded-xl"
-                                value={ideaDocGenerateTemplateId}
-                                disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
-                                onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
-                              >
-                                <option value="" disabled>
-                                  {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
-                                    ? 'Loading templates…'
-                                    : ideaDocGenerateTemplates.length === 0
-                                      ? 'No template is available at this stage'
-                                      : 'Select template…'}
-                                </option>
-                                {ideaDocGenerateTemplates.map((template) => (
-                                  <option key={template.id} value={template.id}>
-                                    {template.name}
-                                  </option>
-                                ))}
-                              </Select>
-                              {selectedIdeaDocGenerateTemplate ? (
+                          value={ideaDocGenerateTemplateId}
+                          disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
+                          onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
+                        >
+                          <option value="" disabled>
+                            {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
+                              ? 'Loading templates…'
+                              : ideaDocGenerateTemplates.length === 0
+                                ? 'No template is available at this stage'
+                                : 'Select template…'}
+                          </option>
+                          {ideaDocGenerateTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name}
+                            </option>
+                          ))}
+                        </Select>
+                        {selectedIdeaDocGenerateTemplate ? (
                                 <span className="hidden shrink-0 text-[11px] text-muted-foreground xl:inline">
-                                  {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
-                                  {' · '}
-                                  v{selectedIdeaDocGenerateTemplate.version}
-                                  {selectedIdeaDocGenerateTemplate.category_code
-                                    ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
-                                    : ''}
+                                {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
+                                {' · '}
+                                v{selectedIdeaDocGenerateTemplate.version}
+                                {selectedIdeaDocGenerateTemplate.category_code
+                                  ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
+                                  : ''}
                                 </span>
                               ) : null}
                             </div>
@@ -16286,12 +16306,12 @@ export function IdeaDetailPage() {
                         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 px-5 py-3">
                           <div className="min-w-0">
                             <h4 id="idea-doc-source-title" className="text-sm font-semibold text-foreground">
-                              Source context
+                            Source context
                             </h4>
                             <p className="text-[11px] tabular-nums text-muted-foreground">
                               {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars sent to the generator
                             </p>
-                          </div>
+                        </div>
                           <button
                             type="button"
                             className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -16337,15 +16357,15 @@ export function IdeaDetailPage() {
                             </div>
                           </div>
                           {ideaDocSourceMode === 'edit' ? (
-                            <Textarea
-                              id="idea-doc-source"
-                              rows={9}
+                        <Textarea
+                          id="idea-doc-source"
+                          rows={9}
                               className="scroll-reveal min-h-0 w-full flex-1 resize-none rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-sm"
-                              value={ideaDocGenerateSource}
-                              disabled={ideaDocGenerateBusy}
-                              onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
-                              placeholder="Idea description / requirements used to fill the template"
-                            />
+                          value={ideaDocGenerateSource}
+                          disabled={ideaDocGenerateBusy}
+                          onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
+                          placeholder="Idea description / requirements used to fill the template"
+                        />
                           ) : (
                             <div
                               role="tabpanel"
@@ -16429,11 +16449,11 @@ export function IdeaDetailPage() {
                           )}
                         </div>
                       </div>
-                    </div>
+                      </div>
 
                     <div className="flex shrink-0 flex-col gap-3 border-t border-border/70 bg-muted/20 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0 flex-1">
-                        {ideaDocGenerateBusy ? (
+                      {ideaDocGenerateBusy ? (
                           <ul className="flex flex-wrap items-center gap-x-4 gap-y-1" aria-label="Agent progress">
                             {IDEA_DOC_GENERATE_STEPS.map((step, index) => {
                               const isDone = index < ideaDocGenerateStepIndex
@@ -16460,37 +16480,37 @@ export function IdeaDetailPage() {
                               )
                             })}
                           </ul>
-                        ) : (
-                          <p className="text-xs leading-relaxed text-muted-foreground">
-                            Enterprise note: generated files are saved to Document repository and can be downloaded
-                            after the editor opens.
-                          </p>
-                        )}
-                      </div>
+                      ) : (
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          Enterprise note: generated files are saved to Document repository and can be downloaded
+                          after the editor opens.
+                        </p>
+                      )}
+                    </div>
                       <div className="flex shrink-0 items-center justify-end gap-3">
-                          <Button
-                            type="button"
-                            variant="outline"
+                      <Button
+                        type="button"
+                        variant="outline"
                             className={cn(enterpriseSecondaryButtonClass(), 'min-w-[140px] justify-center gap-2')}
-                            disabled={ideaDocGenerateBusy}
-                            onClick={() => setIdeaDocGenerateOpen(false)}
-                          >
-                            <X className="h-4 w-4 shrink-0" aria-hidden />
-                            Cancel
-                          </Button>
-                          <Button
-                            type="button"
+                        disabled={ideaDocGenerateBusy}
+                        onClick={() => setIdeaDocGenerateOpen(false)}
+                      >
+                        <X className="h-4 w-4 shrink-0" aria-hidden />
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
                             className={cn(registerServicePrimaryButtonClass(), 'min-w-[200px] justify-center gap-2')}
-                            disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
-                            onClick={() => { void handleIdeaDocGenerate() }}
-                          >
-                            {ideaDocGenerateBusy ? (
-                              <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-                            ) : (
-                              <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
-                            )}
-                            {ideaDocGenerateBusy ? 'Generating…' : 'Generate & open'}
-                          </Button>
+                        disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
+                        onClick={() => { void handleIdeaDocGenerate() }}
+                      >
+                        {ideaDocGenerateBusy ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        ) : (
+                          <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                        )}
+                        {ideaDocGenerateBusy ? 'Generating…' : 'Generate & open'}
+                      </Button>
                       </div>
                     </div>
                   </div>
@@ -17073,6 +17093,6 @@ export function IdeaDetailPage() {
         )}
       </div>
       </div>
-    </>
+    </div>
   )
 }
