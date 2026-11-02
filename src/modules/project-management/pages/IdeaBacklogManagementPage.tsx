@@ -109,6 +109,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu 
 import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
+import { BrainstormConfirmationPanel } from '../components/BrainstormConfirmationPanel'
 import { BrainstormDecisionNote, BrainstormNotedAnswer, BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
@@ -1369,10 +1370,11 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   const summary = hideInternalNote(message.summary ?? '')
   const hasSummary = Boolean(summary)
   const recordedKind = brainstormQuestionKind(message)
+  const isConfirmation = message.question_kind === 'confirm' && !message.suggestion_options?.length
   // The closing question is the last paragraph when it asks something (and is not a diagram).
   let rest = text
   let question = ''
-  if (recordedKind || followupWhileMandatory || message.question_kind === 'mandatory' || message.question_text) {
+  if (isConfirmation || recordedKind || followupWhileMandatory || message.question_kind === 'mandatory' || message.question_text) {
     const split = splitBrainstormQuestion(rest, message.question_text)
     question = split.question
     rest = split.rest
@@ -1399,12 +1401,19 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
             <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} />
           </BrainstormSummaryBox>
           {message.revision_text ? <BrainstormRevisionNote text={message.revision_text} indonesian={indonesian} /> : null}
-          {after ? <BrainstormNotedProse text={after} /> : null}
+          {after && !isConfirmation ? <BrainstormNotedProse text={after} /> : null}
         </>
-      ) : rest ? (
+      ) : rest && !isConfirmation ? (
         <BrainstormNotedProse text={rest} />
       ) : null}
       {!hasSummary || summaryRepeatsNotedAnswer ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
+      {isConfirmation ? (
+        <BrainstormConfirmationPanel text={hasSummary && !summaryRepeatsNotedAnswer ? after : rest} question={question} indonesian={indonesian} renderText={(value) => <BrainstormNotedProse text={value} />}>
+          {onConfirm && message.confirmation_choices?.length ? (
+            <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+          ) : null}
+        </BrainstormConfirmationPanel>
+      ) : null}
       {message.ai_advice ? <div className="my-3 border-l-2 border-teal-500 pl-3 text-sm leading-6">
         <p className="font-semibold text-teal-800 dark:text-teal-300">{indonesian ? 'Pertimbangan Tambahan' : 'Additional Considerations'}</p>
         <BrainstormAssistantMessageBody text={message.ai_advice} />
@@ -1416,7 +1425,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
           text={message.decision_text}
         />
       ) : null}
-      {question ? (
+      {question && !isConfirmation ? (
         <div className={kind?.text}>
           <p className="my-3 font-semibold">{question}</p>
         </div>
@@ -1425,8 +1434,6 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
         <BrainstormPainPointOptions key={message.text} options={message.suggestion_options} baseline={message.suggestion_baseline} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
       ) : message.suggestion_options?.length && onConfirm ? (
         <BrainstormConfirmationOptions key={JSON.stringify(message.suggestion_options)} choices={message.suggestion_options.map(option => option.label)} explanations={message.suggestion_options.map(option => option.explanation)} actions={message.suggestion_options.map(option => option.action)} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
-      ) : message.question_kind === 'confirm' && onConfirm && message.confirmation_choices?.length ? (
-        <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
       ) : null}
     </>
   )

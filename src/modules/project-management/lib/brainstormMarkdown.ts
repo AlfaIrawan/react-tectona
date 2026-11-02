@@ -50,6 +50,21 @@ export function parseNotedAnswer(paragraph: string): NotedAnswer | null {
   return { question, answer }
 }
 
+/** Presentation only: recognize stored scoped confirmations without rewriting the transcript. */
+export function splitScopedConfirmation(text: string) {
+  const heading = /(?:^|\n)(?:\*\*)?(?:Yang ingin aku konfirmasi|Please confirm):\s*([^\n]+)\n+/i.exec(text)
+  if (!heading) return null
+  const tail = text.slice(heading.index + heading[0].length)
+  const answer = /^(?:Pemahamanku untuk poin ini|My understanding of this point):\s*([\s\S]+?)(?=\n\s*\n|$)/i.exec(tail)
+  if (!answer) return null
+  return {
+    before: text.slice(0, heading.index).trim(),
+    question: heading[1].replace(/(?<!\\)\*\*/g, '').trim(),
+    answer: answer[1].trim(),
+    after: tail.slice(answer[0].length).trim(),
+  }
+}
+
 function isClosingQuestion(paragraph: string): boolean {
   return paragraph.endsWith('?') || /\?\s*(?:\([^)]*\)\s*)+$/.test(paragraph)
 }
