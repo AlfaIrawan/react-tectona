@@ -15,6 +15,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
 
     return (
       <input
+        data-theme-control="input"
         type={type}
         id={resolvedId}
         name={resolvedName}

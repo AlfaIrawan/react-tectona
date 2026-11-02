@@ -479,6 +479,7 @@ export function DocumentRepositoryPreviewDrawer({
 
   return createPortal(
     <div
+      data-theme-surface="drawer"
       className={cn(
         'fixed inset-y-0 right-0 z-[1110] flex w-[min(820px,94vw)] max-w-[94vw] flex-col transition-all duration-300',
         'border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl',
@@ -489,7 +490,7 @@ export function DocumentRepositoryPreviewDrawer({
         bottom: 0,
         margin: 0,
         padding: 0,
-        boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
+        boxShadow: 'var(--tectona-overlay-shadow, 0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1))',
       }}
     >
       <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">

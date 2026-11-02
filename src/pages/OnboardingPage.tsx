@@ -240,7 +240,7 @@ export function OnboardingPage() {
       <div className="w-full max-w-lg mx-auto">
         <div className="liquid-glass-enterprise-panel rounded-lg p-8">
           <div className="mb-6 space-y-2 text-center">
-            <img src="/images/logo.png" alt="Tectona" className="mx-auto h-20 w-auto object-contain" />
+            <img src="/images/tectona-wordmark.svg" alt="Tectona" className="mx-auto h-20 max-w-full w-auto object-contain" />
             <p className="text-sm text-muted-foreground">Complete onboarding to start using Tectona</p>
             {session?.user.email && (
               <p className="text-xs text-muted-foreground">

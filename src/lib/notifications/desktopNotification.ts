@@ -50,7 +50,7 @@ export function showDesktopNotification(options: ShowDesktopNotificationOptions)
     const n = new Notification(options.title, {
       body: options.body,
       tag: options.tag,
-      icon: '/images/logo.png',
+      icon: '/images/tectona-icon.svg',
     })
     n.onclick = () => {
       window.focus()

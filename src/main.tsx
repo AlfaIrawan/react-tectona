@@ -8,6 +8,8 @@ import { initRum } from './lib/rum'
 import { selfRegisterWithRegistryCore } from './lib/selfRegister'
 import { initPwa } from './lib/pwa/initPwa'
 import { initUiScaleLock, syncUiScaleLock } from './lib/uiScale'
+import { normalizeAccent } from './lib/tectonaThemes'
+import './tectona-themes.css'
 
 // Ensure light mode is set immediately before React renders
 if (typeof window !== 'undefined') {
@@ -33,8 +35,7 @@ if (typeof window !== 'undefined') {
   const animationSpeed = prefs.animationSpeed || 300
   const fontSize = prefs.fontSize || 14
   const rawAccent = prefs.accentColor
-  const validAccents = ['gradient', 'deep-cosmic', 'indigo-command', 'frosted-steel', 'blue-granite']
-  const accentColor = validAccents.includes(rawAccent) ? rawAccent : 'gradient'
+  const accentColor = normalizeAccent(rawAccent)
   if (accentColor) {
     document.documentElement.dataset.accent = accentColor
   }

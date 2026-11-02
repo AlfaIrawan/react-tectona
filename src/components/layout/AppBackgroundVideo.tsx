@@ -1,148 +1,99 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { usePreferencesStore } from '@/stores/preferences-store'
+import { getTectonaTheme } from '@/lib/tectonaThemes'
 
-const BACKGROUND_VIDEO_SRC = '/images/background-1.mp4'
-const BACKGROUND_VIDEO_POSTER = '/images/background-1.png'
-/** Crossfade length — hides the hard cut when the clip restarts. */
-const LOOP_CROSSFADE_MS = 1600
-/** Start crossfade this many seconds before the clip ends. */
-const LOOP_CROSSFADE_LEAD_SEC = 1.6
+const CROSSFADE_MS = 1600
+type Theme = ReturnType<typeof getTectonaTheme>
 
-type VideoSlot = 'primary' | 'secondary'
-
-function otherSlot(slot: VideoSlot): VideoSlot {
-  return slot === 'primary' ? 'secondary' : 'primary'
-}
-
-/** Full-viewport ambient background with seamless crossfade looping. */
-export function AppBackgroundVideo() {
+/** Remount per theme to release obsolete decoders and asynchronous work. */
+function ThemeVideoLoop({ theme, reduced }: { theme: Theme; reduced: boolean }) {
   const primaryRef = useRef<HTMLVideoElement>(null)
   const secondaryRef = useRef<HTMLVideoElement>(null)
-  const activeSlotRef = useRef<VideoSlot>('primary')
-  const crossfadingRef = useRef(false)
+  const [failed, setFailed] = useState(false)
+  const seamless = 'seamless' in theme && theme.seamless
 
   useEffect(() => {
     const primary = primaryRef.current
     const secondary = secondaryRef.current
-    if (!primary || !secondary) return
-
-    const slots = { primary, secondary }
-    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
-
-    const videoFor = (slot: VideoSlot) => slots[slot]
-
-    const setOpacity = (slot: VideoSlot, opacity: number) => {
-      videoFor(slot).style.opacity = String(opacity)
+    if (reduced || failed || !primary || (!seamless && !secondary)) return
+    const slots = seamless ? [primary] : [primary, secondary!]
+    let active = 0
+    let fading = false
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const play = async (video: HTMLVideoElement) => {
+      try { await video.play(); if (disposed) video.pause(); return !disposed } catch { return false }
     }
-
-    const resetSlot = (slot: VideoSlot) => {
-      const el = videoFor(slot)
-      el.pause()
-      el.currentTime = 0
-      setOpacity(slot, 0)
-    }
-
-    const startInitialPlayback = async () => {
-      crossfadingRef.current = false
-      activeSlotRef.current = 'primary'
-      resetSlot('secondary')
-      const lead = videoFor('primary')
-      lead.currentTime = 0
-      setOpacity('primary', 1)
-      if (motionQuery.matches) {
-        lead.pause()
-        return
-      }
-      try {
-        await lead.play()
-      } catch {
-        // Autoplay blocked — poster remains visible.
-      }
-    }
-
     const beginCrossfade = async () => {
-      if (crossfadingRef.current || motionQuery.matches) return
-
-      const outgoingSlot = activeSlotRef.current
-      const incomingSlot = otherSlot(outgoingSlot)
-      const outgoing = videoFor(outgoingSlot)
-      const incoming = videoFor(incomingSlot)
-      const duration = outgoing.duration
-
-      if (!Number.isFinite(duration) || duration <= LOOP_CROSSFADE_LEAD_SEC) return
-
-      crossfadingRef.current = true
+      if (seamless || fading || disposed || document.hidden) return
+      const outgoing = slots[active]
+      const incoming = slots[1 - active]
+      if (!Number.isFinite(outgoing.duration) || outgoing.duration <= 1.6) return
+      fading = true
       incoming.currentTime = 0
-
-      try {
-        await incoming.play()
-      } catch {
-        crossfadingRef.current = false
-        return
-      }
-
-      setOpacity(outgoingSlot, 0)
-      setOpacity(incomingSlot, 1)
-
-      window.setTimeout(() => {
+      if (!await play(incoming)) { fading = false; return }
+      if (disposed) return
+      outgoing.style.opacity = '0'
+      incoming.style.opacity = '1'
+      timer = setTimeout(() => {
+        if (disposed) return
         outgoing.pause()
         outgoing.currentTime = 0
-        activeSlotRef.current = incomingSlot
-        crossfadingRef.current = false
-      }, LOOP_CROSSFADE_MS)
+        active = 1 - active
+        fading = false
+      }, CROSSFADE_MS)
     }
-
     const onTimeUpdate = (event: Event) => {
-      if (crossfadingRef.current || motionQuery.matches) return
-
-      const el = event.currentTarget as HTMLVideoElement
-      if (el !== videoFor(activeSlotRef.current)) return
-
-      const duration = el.duration
-      if (!Number.isFinite(duration)) return
-      if (el.currentTime >= duration - LOOP_CROSSFADE_LEAD_SEC) {
-        void beginCrossfade()
-      }
+      const video = event.currentTarget as HTMLVideoElement
+      if (video === slots[active] && video.currentTime >= video.duration - 1.6) void beginCrossfade()
     }
-
-    const onMotionPreferenceChange = () => {
-      void startInitialPlayback()
+    const onVisibilityChange = () => {
+      if (document.hidden) slots.forEach(video => video.pause())
+      else { void play(slots[active]); if (fading) void play(slots[1 - active]) }
     }
-
-    void startInitialPlayback()
-
-    primary.addEventListener('timeupdate', onTimeUpdate)
-    secondary.addEventListener('timeupdate', onTimeUpdate)
-    motionQuery.addEventListener('change', onMotionPreferenceChange)
-
+    primary.style.opacity = '1'
+    if (secondary) secondary.style.opacity = '0'
+    if (!document.hidden) void play(primary)
+    slots.forEach(video => video.addEventListener('timeupdate', onTimeUpdate))
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
-      primary.removeEventListener('timeupdate', onTimeUpdate)
-      secondary.removeEventListener('timeupdate', onTimeUpdate)
-      motionQuery.removeEventListener('change', onMotionPreferenceChange)
+      disposed = true
+      clearTimeout(timer)
+      slots.forEach(video => { video.pause(); video.removeEventListener('timeupdate', onTimeUpdate) })
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [])
-
-  if (typeof document === 'undefined') return null
+  }, [theme.video, reduced, failed, seamless])
 
   const videoProps = {
-    className: 'app-background-video',
-    muted: true,
-    playsInline: true,
-    preload: 'auto' as const,
-    poster: BACKGROUND_VIDEO_POSTER,
-    'aria-hidden': true,
-    tabIndex: -1,
+    className: 'app-background-video', muted: true, playsInline: true, loop: true,
+    preload: 'auto' as const, poster: theme.poster, 'aria-hidden': true as const,
+    tabIndex: -1, src: theme.video, onError: () => setFailed(true),
   }
-
-  return createPortal(
-    <div className="app-background-video-layer" aria-hidden>
-      <video ref={primaryRef} {...videoProps} style={{ opacity: 1 }}>
-        <source src={BACKGROUND_VIDEO_SRC} type="video/mp4" />
-      </video>
-      <video ref={secondaryRef} {...videoProps} style={{ opacity: 0 }}>
-        <source src={BACKGROUND_VIDEO_SRC} type="video/mp4" />
-      </video>
-    </div>,
-    document.body,
+  return (
+    <div className="app-background-video-layer" data-background-theme={theme.id} aria-hidden style={{ backgroundImage: `url("${theme.poster}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+      {!reduced && !failed && <>
+        <video ref={primaryRef} {...videoProps} style={{ opacity: 1 }} />
+        {!seamless && <video ref={secondaryRef} {...videoProps} style={{ opacity: 0 }} />}
+      </>}
+    </div>
   )
+}
+
+/** Default retains its original MP4 and poster. Only the active theme is loaded. */
+export function AppBackgroundVideo() {
+  const accent = usePreferencesStore(state => state.preferences.accentColor)
+  const reduceAnimations = usePreferencesStore(state => state.preferences.reduceAnimations)
+  const highContrast = usePreferencesStore(state => state.preferences.highContrast)
+  const [systemReduced, setSystemReduced] = useState(() => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  const theme = getTectonaTheme(accent)
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setSystemReduced(query.matches)
+    update(); query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+  useEffect(() => { document.documentElement.dataset.accent = theme.id }, [theme.id])
+  if (typeof document === 'undefined') return null
+  return createPortal(<ThemeVideoLoop key={theme.id} theme={theme} reduced={Boolean(systemReduced || reduceAnimations || highContrast)} />, document.body)
 }

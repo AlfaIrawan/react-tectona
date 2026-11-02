@@ -72,7 +72,7 @@ export function RegisterPage() {
           <AuthBackToLoginLink />
 
           <div id="register-card-header" className="space-y-2 text-center">
-            <img src="/images/logo.png" alt="Tectona" className="mx-auto h-24 w-auto object-contain" />
+            <img src="/images/tectona-wordmark.svg" alt="Tectona" className="mx-auto h-24 max-w-full w-auto object-contain" />
             <p className="text-sm text-muted-foreground">Create your Tectona account</p>
           </div>
 

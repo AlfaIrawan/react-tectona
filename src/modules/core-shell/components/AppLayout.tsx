@@ -3,6 +3,7 @@ import { Topbar } from './Topbar'
 import { useThemeStore } from '@/stores/theme-store'
 import { useSettingsPanelStore } from '@/stores/settings-panel-store'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { normalizeAccent } from '@/lib/tectonaThemes'
 import { useChatPanelStore, clampChatWidthPct } from '@/stores/chat-panel-store'
 import { useEmailPanelStore, clampEmailWidthPct } from '@/stores/email-panel-store'
 import { useUiOverlayStore } from '@/stores/ui-overlay-store'
@@ -81,8 +82,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const requestJoinOpen = useRequestJoinWorkspaceStore((s) => s.open)
   const closeRequestJoin = useRequestJoinWorkspaceStore((s) => s.closePanel)
   const rawAccent = usePreferencesStore((s) => s.preferences?.accentColor)
-  const validAccents = ['gradient', 'deep-cosmic', 'indigo-command', 'frosted-steel', 'blue-granite']
-  const accentColor = validAccents.includes(rawAccent as string) ? rawAccent : 'gradient'
+  const accentColor = normalizeAccent(rawAccent)
 
   const themeSettingsOpen = settingsPanel === 'theme'
   const todoPanelOpen = settingsPanel === 'todo'
@@ -567,6 +567,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       {settingsPanel ? (
         <div
           className="fixed inset-0 z-[1050] bg-black/20 backdrop-blur-sm"
+          data-theme-overlay
           onClick={closePanel}
           aria-hidden="true"
           role="button"
@@ -585,7 +586,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           settingsPanel ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'
         )}
         style={{
-          boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
+          boxShadow: 'var(--tectona-overlay-shadow, 0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1))',
           ...(mobileTodoOpen ? mobileCommunicationPanelStyle(communicationViewport) : {}),
         }}
         role={settingsPanel ? 'dialog' : undefined}

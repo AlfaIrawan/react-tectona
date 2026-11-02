@@ -28,7 +28,7 @@ export function NoWorkspaceAccessPage() {
           {/* Header — selaras dengan LoginPage */}
           <div className="space-y-2 text-center">
             <img
-              src="/images/logo.png"
+              src="/images/tectona-wordmark.svg"
               alt="Tectona"
               className="mx-auto h-24 w-auto object-contain"
             />

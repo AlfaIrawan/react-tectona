@@ -12,7 +12,7 @@ function ResetShell({ children }: { children: ReactNode }) {
       <div className="w-full max-w-[520px] overflow-hidden rounded-sm shadow-2xl">
         <div className="h-[5px] bg-[#c9a227]" />
         <div className="bg-[#0b1f3a] px-8 py-8 text-center">
-          <img src="/images/logo-white.png" alt="Tectona" className="mx-auto h-14 w-auto object-contain" />
+          <img src="/images/tectona-wordmark.svg" alt="Tectona" className="mx-auto h-14 max-w-full w-auto object-contain" />
           <p className="mt-3 text-[11px] uppercase tracking-[0.36em] text-[#c9a227]">
             Project Management Platform
           </p>

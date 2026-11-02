@@ -16,6 +16,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 
     return (
       <textarea
+        data-theme-control="textarea"
         id={resolvedId}
         name={resolvedName}
         className={cn(

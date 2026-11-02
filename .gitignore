@@ -79,3 +79,6 @@ Desktop.ini
 .vercel
 .netlify
 .firebase
+
+# Intermediate frames for the original cinematic theme renderer (not shipped).
+.theme-render/

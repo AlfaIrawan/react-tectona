@@ -36,7 +36,7 @@ interface TabsListProps {
 
 export function TabsList({ children, className }: TabsListProps) {
   return (
-    <div className={cn(
+    <div data-theme-part="tabs-list" className={cn(
       "inline-flex h-10 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground",
       className
     )}>
@@ -60,6 +60,8 @@ export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
   return (
     <button
       type="button"
+      data-theme-part="tab"
+      data-state={isActive ? 'active' : 'inactive'}
       onClick={() => context.onValueChange(value)}
       className={cn(
         "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ring-offset-background transition-all outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",

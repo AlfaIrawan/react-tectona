@@ -214,6 +214,7 @@ export function Tooltip({
         createPortal(
           <div
             ref={tooltipRef}
+            data-theme-surface="tooltip"
             className={cn(
               'fixed z-[9999]',
               compact

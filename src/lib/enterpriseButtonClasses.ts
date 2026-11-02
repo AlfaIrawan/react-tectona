@@ -18,6 +18,7 @@ const GRADIENT_ACTION_FOCUS = enterpriseControlFocusClass()
 /** Tombol aksi gradient (Assign Governance, New Workspace, …) — tanpa outline hitam browser saat fokus. */
 export function enterpriseCyanGradientActionButtonClass(): string {
   return cn(
+    'tectona-satin-primary',
     'group relative inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
     GRADIENT_ACTION_FOCUS,
     'border border-cyan-200/80 bg-gradient-to-br from-sky-400 via-blue-500 to-blue-700',
@@ -32,6 +33,7 @@ export function enterpriseCyanGradientActionButtonClass(): string {
 
 export function enterpriseIndigoGradientActionButtonClass(): string {
   return cn(
+    'tectona-satin-primary',
     'group relative inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap overflow-hidden rounded-2xl px-4 text-[13.5px] font-semibold tracking-tight text-white',
     GRADIENT_ACTION_FOCUS,
     'border border-indigo-200/80 bg-gradient-to-br from-indigo-400 via-violet-500 to-purple-700',
@@ -77,6 +79,7 @@ export function enterpriseEmeraldGradientActionButtonClass(): string {
 /** Theme-aware primary CTA (`--primary`). Use for create/edit; follows data-accent. */
 export function enterprisePrimarySolidButtonClass(): string {
   return cn(
+    'tectona-satin-primary',
     'group relative inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold tracking-tight',
     'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
     'transition-colors duration-150',
@@ -101,6 +104,7 @@ export function enterpriseDestructiveOutlineButtonClass(): string {
 /** Secondary / cancel — selaras Tilia `enterpriseSecondaryButtonClass`. */
 export function enterpriseSecondaryButtonClass(): string {
   return cn(
+    'tectona-satin-secondary',
     'inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 rounded-lg text-sm font-semibold tracking-tight',
     'border border-slate-300/90 bg-background/95 text-foreground',
     'shadow-sm hover:shadow-md',

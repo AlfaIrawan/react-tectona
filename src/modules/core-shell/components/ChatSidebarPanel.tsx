@@ -8275,7 +8275,7 @@ function ConversationRowAvatar({
         >
           {!logoFailed ? (
             <img
-              src="/images/logo.png"
+              src="/images/tectona-icon.svg"
               alt=""
               className={cn('object-contain p-0.5', sm ? 'h-6 w-6' : 'h-8 w-8')}
               onError={() => setLogoFailed(true)}

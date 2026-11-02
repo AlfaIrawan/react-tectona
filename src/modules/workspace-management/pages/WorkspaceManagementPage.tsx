@@ -4013,6 +4013,7 @@ function WorkspaceMainPanel({
     <section
       id={id}
       ref={panelRef}
+      data-theme-panel="workspace"
       style={style}
       className={cn(
         'liquid-glass-enterprise-panel flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-2xl border transition-all',
@@ -4047,7 +4048,7 @@ function WorkspaceMainPanel({
 /** Card inside main panel — `div` to avoid nested `<section>` landmarks. */
 function InsetDashboardCard({ title, description, children, right }: { title: string; description: string; children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-[0_8px_32px_rgba(15,23,42,0.06)]">
+    <div data-theme-surface="inset-card" className="overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-[0_8px_32px_rgba(15,23,42,0.06)]">
       <div className="flex items-start justify-between gap-3 border-b border-slate-200/90 px-4 py-3 sm:px-5 sm:py-4">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
@@ -4084,7 +4085,7 @@ function IntelligenceChartPanel({
   children: ReactNode
 }) {
   return (
-    <Card style={style} className={cn('relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl p-5 shadow-[0_12px_34px_rgba(15,23,42,0.08)]', palette.cardBg, palette.cardBorder)}>
+    <Card data-theme-panel="chart" style={style} className={cn('relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl p-5 shadow-[0_12px_34px_rgba(15,23,42,0.08)]', palette.cardBg, palette.cardBorder)}>
       <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-[2px] rounded-t-2xl bg-gradient-to-r opacity-85', accent)} />
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -4839,6 +4840,8 @@ function IntelligenceDonut({
                       ? 'border-slate-300 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]'
                       : 'border-slate-200/90 bg-white/80 hover:border-slate-300 hover:bg-white'
                 )}
+                data-theme-surface="chart-row"
+                data-active={isActive || rowSelected}
                 style={isVivid && (isActive || rowSelected) ? { borderLeftColor: sc, borderLeftWidth: 3 } : undefined}
                 onMouseEnter={() => setActiveIndex((prev) => (prev === idx ? prev : idx))}
                 onMouseLeave={() => setActiveIndex((prev) => (prev === null ? prev : null))}
@@ -5056,6 +5059,8 @@ function WorkspaceHealthExecutiveDonut({
                   ? 'border-slate-300 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]'
                   : 'border-slate-200 bg-white/80 hover:border-slate-300 hover:bg-white'
               )}
+              data-theme-surface="chart-row"
+              data-active={activeIndex === idx || selectedBand === item.name}
             >
               <div className="flex min-w-0 items-center gap-2.5">
                 <span

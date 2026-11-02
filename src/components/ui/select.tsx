@@ -409,6 +409,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           id={resolvedId ? `${resolvedId}-trigger` : undefined}
           disabled={disabled}
           aria-haspopup="listbox"
+          data-theme-control="select"
           aria-expanded={open}
           onClick={() => {
             if (disabled) return

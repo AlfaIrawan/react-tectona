@@ -183,9 +183,9 @@ export function LoginPage() {
           <div className="liquid-glass-enterprise-panel rounded-lg p-6 sm:p-8 space-y-6">
             <div id="login-card-header" className="space-y-2 text-center">
               <img
-                src="/images/logo.png"
+                src="/images/tectona-wordmark.svg"
                 alt="Tectona"
-                className="mx-auto h-24 w-auto object-contain"
+                className="mx-auto h-24 max-w-full w-auto object-contain"
               />
               <p className="text-sm text-muted-foreground">
                 Sign in to your account

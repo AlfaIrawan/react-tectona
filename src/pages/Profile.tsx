@@ -922,7 +922,7 @@ export function ProfilePage() {
             <ArrowLeft className="h-4 w-4" aria-hidden />
             Back to Tectona
           </Link>
-          <img src="/images/logo.png" alt="Tectona" className="h-8 w-auto object-contain opacity-80" />
+          <img src="/images/tectona-wordmark.svg" alt="Tectona" className="h-8 w-auto object-contain opacity-80" />
         </header>
 
         {/* Profile hero */}

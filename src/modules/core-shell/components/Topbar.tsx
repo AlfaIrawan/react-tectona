@@ -52,7 +52,7 @@ interface TopbarProps {
   onToggleTodoPanel?: () => void
 }
 
-export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, onToggleTodoPanel }: TopbarProps) {
+export function Topbar({ sidebarCollapsed, onToggleThemeSettings, onToggleTodoPanel }: TopbarProps) {
   const navigate = useNavigate()
   const workspaceNavigate = useWorkspaceNavigate()
   const moduleAccess = useModuleAccess()
@@ -147,9 +147,9 @@ export function Topbar({ sidebarCollapsed, accentColor, onToggleThemeSettings, o
         {/* Left Side: Logo + pembatas + nama tenant */}
         <div className="flex items-center gap-3">
           <img
-            src={accentColor === 'deep-cosmic' || accentColor === 'blue-granite' ? '/images/logo-white.png' : '/images/logo.png'}
+            src="/images/tectona-wordmark.svg"
             alt="Tectona"
-            className="h-12 w-auto object-contain"
+            className="h-10 w-auto shrink-0 object-contain"
           />
           <div
             className="topbar-tenant-sep h-6 w-px flex-shrink-0 bg-slate-300"

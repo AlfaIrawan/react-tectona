@@ -104,6 +104,7 @@ function ToastItem({
   return (
     <div
       role="status"
+      data-theme-toast={toast.variant ?? 'default'}
       tabIndex={clickable ? 0 : undefined}
       onClick={
         clickable
