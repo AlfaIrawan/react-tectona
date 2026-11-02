@@ -1466,7 +1466,8 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { IdeaWorkspaceSelectionModal } from '../components/IdeaWorkspaceSelectionModal'
-import { loadIdeaWorkspaceSelectionPolicy, selectableIdeaWorkspaces, startIdeaIntake, createIdeaInIntake, type IdeaWorkspaceSelectionPolicy } from '../lib/ideaWorkspaceSelection'
+import { loadIdeaReviewerPolicy, loadIdeaWorkspaceSelectionPolicy, selectableIdeaWorkspaces, startIdeaIntake, createIdeaInIntake, type IdeaWorkspaceSelectionPolicy } from '../lib/ideaWorkspaceSelection'
+import { useIdeaReviewerPolicy } from '../lib/useIdeaReviewerPolicy'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { brainstormTypingCutoff, isTechnicalViewSource, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
 import { useTypingReveal } from '@/lib/chat/useTypingReveal'
@@ -2432,6 +2433,10 @@ export function IdeaBacklogManagementPage() {
   const [reviewerOptions, setReviewerOptions] = useState<IdeaReviewerOption[]>([])
   const [isReviewerOptionsLoading, setIsReviewerOptionsLoading] = useState(false)
   const [reviewerOptionsError, setReviewerOptionsError] = useState('')
+  const reviewerPolicy = useIdeaReviewerPolicy(isCreateIdeaDrawerOpen, createIdeaForm.workspaceId, createSourceWorkspaceId.current ?? resolveWorkspaceApiId(tenant?.workspaceId))
+  useEffect(() => {
+    if (reviewerPolicy.managed) setCreateIdeaForm((prev) => prev.reviewer ? { ...prev, reviewer: '' } : prev)
+  }, [reviewerPolicy.managed])
   const [identityUserNameById, setIdentityUserNameById] = useState<Record<string, string>>({})
   const [createIdeaDescriptionHtml, setCreateIdeaDescriptionHtml] = useState('')
   const [createIdeaProcessDiagrams, setCreateIdeaProcessDiagrams] = useState<ExtractedProcessDiagram[]>([])
@@ -3493,6 +3498,12 @@ export function IdeaBacklogManagementPage() {
     setIsReviewerOptionsLoading(true)
     setReviewerOptionsError('')
 
+    if (reviewerPolicy.managed || reviewerPolicy.loading || reviewerPolicy.error) {
+      setReviewerOptions([])
+      setIsReviewerOptionsLoading(false)
+      return
+    }
+
     const selectedWorkspaceId = createIdeaForm.workspaceId.trim()
 
     if (!selectedWorkspaceId) {
@@ -3560,7 +3571,7 @@ export function IdeaBacklogManagementPage() {
     return () => {
       cancelled = true
     }
-  }, [isCreateIdeaDrawerOpen, createIdeaForm.workspaceId])
+  }, [isCreateIdeaDrawerOpen, createIdeaForm.workspaceId, reviewerPolicy.managed, reviewerPolicy.loading, reviewerPolicy.error])
 
   useEffect(() => {
     if (!isCreateIdeaDrawerOpen) return
@@ -4222,6 +4233,7 @@ export function IdeaBacklogManagementPage() {
       const latestPolicy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
       if (latestPolicy && !latestPolicy.allowed_workspace_ids.includes(createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer allowed by the workflow. Reopen Create Idea to choose another workspace.')
       if (!userWorkspaceOptions.options.some((option) => option.workspaceId === createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer available to you.')
+      const reviewerManaged = await loadIdeaReviewerPolicy(createIdeaForm.workspaceId, sourceWorkspaceId)
       const payload = {
         title: normalizeIdeaTitle(createIdeaForm.title),
         description: appendProcessDiagramsToText(
@@ -4232,7 +4244,7 @@ export function IdeaBacklogManagementPage() {
         tags: tags.length > 0 ? tags : ['New', 'Intake'],
         workspace_id: createIdeaForm.workspaceId,
         owner_id: currentUserId || undefined,
-        assignee_id: createIdeaForm.reviewer || undefined,
+        assignee_id: reviewerManaged ? undefined : createIdeaForm.reviewer || undefined,
         folder_id: createIdeaForm.workspaceId === sourceWorkspaceId && sourceWorkspaceId === resolveWorkspaceApiId(tenant?.workspaceId) ? currentFolderId ?? null : null,
       }
       if (latestPolicy?.orchestrated && (!intakeRun.current || intakeRun.current.workspaceId !== createIdeaForm.workspaceId)) {
@@ -7068,7 +7080,7 @@ export function IdeaBacklogManagementPage() {
                     <div className="mb-3 flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-foreground">Routing and Ownership</p>
-                        <p className="text-xs text-muted-foreground">Set workspace scope, idea type, and reviewer assignment.</p>
+                        <p className="text-xs text-muted-foreground">Set workspace scope and idea type.</p>
                       </div>
                     </div>
 
@@ -7098,12 +7110,12 @@ export function IdeaBacklogManagementPage() {
                         </select>
                         {createIdeaWorkspaceError ? (
                           <p className="text-[11px] text-rose-600">{createIdeaWorkspaceError}</p>
-                        ) : (
+                        ) : !reviewerPolicy.managed ? (
                           <p className="text-[11px] text-muted-foreground/90">Reviewer list will follow this selected workspace.</p>
-                        )}
+                        ) : null}
                       </div>
 
-                      <div className="space-y-1.5 sm:col-span-1 lg:col-span-2">
+                      <div className={cn('space-y-1.5 sm:col-span-1', reviewerPolicy.managed ? 'lg:col-span-6' : 'lg:col-span-2')}>
                         <Label htmlFor="idea-type" className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Sparkles className="h-3.5 w-3.5" />
                           Type
@@ -7123,7 +7135,7 @@ export function IdeaBacklogManagementPage() {
                         </select>
                       </div>
 
-                      <div className="space-y-1.5 sm:col-span-1 lg:col-span-4">
+                      {!reviewerPolicy.managed ? <div className="space-y-1.5 sm:col-span-1 lg:col-span-4">
                         <Label htmlFor="idea-reviewer" className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Users className="h-3.5 w-3.5" />
                           Reviewer <span className="text-[10px] text-muted-foreground/70">(Optional)</span>
@@ -7132,11 +7144,13 @@ export function IdeaBacklogManagementPage() {
                           id="idea-reviewer"
                           value={createIdeaForm.reviewer}
                           onChange={(e) => setCreateIdeaForm((prev) => ({ ...prev, reviewer: e.target.value }))}
-                          disabled={isReviewerOptionsLoading || reviewerOptions.length === 0}
+                          disabled={reviewerPolicy.loading || !!reviewerPolicy.error || isReviewerOptionsLoading || reviewerOptions.length === 0}
                           className="h-11 w-full rounded-lg border border-input/80 bg-background px-3 text-sm shadow-sm transition focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         >
                           <option value="">
-                            {isReviewerOptionsLoading
+                            {reviewerPolicy.loading ? 'Checking reviewer assignment...'
+                              : reviewerPolicy.error ? 'Reviewer assignment unavailable'
+                              : isReviewerOptionsLoading
                               ? 'Loading workspace members...'
                               : reviewerOptionsError
                                 ? 'Failed to load members'
@@ -7148,12 +7162,12 @@ export function IdeaBacklogManagementPage() {
                             </option>
                           ))}
                         </select>
-                        {reviewerOptionsError ? (
-                          <p className="text-[11px] text-rose-600">{reviewerOptionsError}</p>
+                        {reviewerPolicy.error || reviewerOptionsError ? (
+                          <p className="text-[11px] text-rose-600">{reviewerPolicy.error || reviewerOptionsError}</p>
                         ) : (
                           <p className="text-[11px] text-muted-foreground/90">Assign the first reviewer to accelerate triage.</p>
                         )}
-                      </div>
+                      </div> : null}
 
                       <div className="space-y-1.5 sm:col-span-2 lg:col-span-6">
                         <Label htmlFor="idea-tags" className="flex items-center gap-1.5 text-xs text-muted-foreground">

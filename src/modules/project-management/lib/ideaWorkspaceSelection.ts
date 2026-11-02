@@ -50,6 +50,16 @@ export async function loadIdeaWorkspaceSelectionPolicy(workspaceId: string): Pro
   return (await response.json()).policy
 }
 
+export async function loadIdeaReviewerPolicy(workspaceId: string, sourceWorkspaceId?: string | null): Promise<boolean> {
+  const query = new URLSearchParams({ workspace_id: workspaceId })
+  if (sourceWorkspaceId) query.set('source_workspace_id', sourceWorkspaceId)
+  const response = await apiFetch(`${workflowBase()}/v1/idea-reviewer-policy?${query}`, { headers: tectonaServiceHeaders() })
+  if (!response.ok) throw new Error('Reviewer assignment could not be verified. Please try again.')
+  const result = await response.json()
+  if (typeof result.managed_by_workflow !== 'boolean') throw new Error('Invalid reviewer assignment policy. Please try again.')
+  return result.managed_by_workflow
+}
+
 export function selectableIdeaWorkspaces<T extends { workspaceId: string }>(options: T[], policy: IdeaWorkspaceSelectionPolicy): T[] {
   return options.filter((option) => policy.allowed_workspace_ids.includes(option.workspaceId))
 }
