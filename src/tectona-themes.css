@@ -279,6 +279,44 @@ html[data-accent="tectona-slate"] [data-theme-part="tab"][data-state="active"] {
 html[data-accent="tectona-slate"] :is(.tectona-satin-primary,button.bg-primary:not([class*="bg-gradient-"])) {
   --tw-ring-color: rgba(137,180,234,.35);
 }
+/* Explicit workspace surfaces pair foreground and fill; legacy white gradients
+   must not inherit the dark theme's pale text without also changing their fill. */
+html[data-accent="tectona-slate"] .liquid-glass-enterprise-nav {
+  background: var(--theme-sidebar-fill); color: hsl(var(--foreground));
+  border-color: var(--theme-edge);
+  backdrop-filter: blur(24px) saturate(115%);
+  -webkit-backdrop-filter: blur(24px) saturate(115%);
+}
+html[data-accent="tectona-slate"] [data-theme-nav-item] {
+  background: linear-gradient(145deg,rgba(42,62,88,.88),rgba(22,42,69,.88));
+  color: hsl(var(--foreground)); border-color: var(--theme-edge);
+}
+html[data-accent="tectona-slate"] [data-theme-nav-item]:is(:hover,[aria-current="page"]) {
+  background: linear-gradient(145deg,rgba(63,94,134,.96),rgba(30,65,109,.96));
+  border-color: rgba(154,197,246,.65);
+}
+html[data-accent="tectona-slate"] :is([data-theme-part="nav-icon"],[data-theme-part="nav-badge"],[data-theme-part="nav-toggle"],[data-theme-surface="nav-summary"],[data-theme-surface="chart-badge"],[data-theme-surface="chart-empty"]) {
+  background: var(--theme-inset-fill); color: hsl(var(--foreground)); border-color: var(--theme-edge);
+}
+html[data-accent="tectona-slate"] [data-theme-surface="nav-summary"] .text-blue-800 { color: #bfdbfe; }
+html[data-accent="tectona-slate"] :is([data-theme-surface="inset-card"],[data-theme-surface="chart-center"],.liquid-glass-enterprise-nav) .text-slate-400 { color: hsl(var(--muted-foreground)); }
+html[data-accent="tectona-slate"] [data-theme-surface="chart-center"] {
+  background: var(--theme-solid-fill) !important;
+  color: hsl(var(--foreground)); border-color: var(--theme-edge);
+}
+html[data-accent="tectona-slate"] [data-theme-value] {
+  background: none !important; color: hsl(var(--foreground)); -webkit-text-fill-color: currentColor !important;
+}
+html[data-accent="tectona-slate"] [data-theme-tone="positive"] { color: #6ee7b7; }
+html[data-accent="tectona-slate"] [data-theme-tone="negative"] { color: #fda4af; }
+html[data-accent="tectona-slate"] [data-theme-surface="status-positive"] .text-emerald-500 { color: #047857; }
+html[data-accent="tectona-slate"] [data-theme-surface="status-negative"] .text-rose-500 { color: #be123c; }
+html[data-accent="tectona-slate"] :is([data-theme-surface="chart-tooltip"],.recharts-default-tooltip) {
+  background: var(--theme-overlay-fill) !important;
+  border-color: var(--theme-edge) !important; color: hsl(var(--foreground)) !important;
+}
+html[data-accent="tectona-slate"] .recharts-tooltip-label { color: hsl(var(--foreground)) !important; }
+html[data-accent="tectona-slate"] .recharts-cartesian-axis-tick-value { fill: hsl(var(--muted-foreground)); }
 /* Authentication keeps one light-steel glass card, not a white logo rectangle. */
 html:is([data-accent="tectona-slate"],[data-accent="tectona-midnight"]) .liquid-glass-enterprise-panel:has(#login-card-header,#register-card-header) {
   --background: 214 30% 97%; --foreground: 218 35% 17%;

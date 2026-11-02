@@ -15,32 +15,32 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../src/components/ui/t
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '../src/components/ui/dialog'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../src/components/ui/dropdown-menu'
 import { enterpriseCyanGradientActionButtonClass, enterpriseIndigoGradientActionButtonClass, enterpriseSecondaryButtonClass } from '../src/lib/enterpriseButtonClasses'
+import { WorkspaceKpiCard, WorkspaceHealthExecutiveDonut, IntelligenceDonut, WORKSPACE_OVERVIEW_PALETTES } from '../src/modules/workspace-management/pages/WorkspaceManagementPage'
+import { BarChart3 } from 'lucide-react'
 
-function FrostedDashboardSamples() {
-  const panels = [
-    { title: 'Workspace Health Distribution', subtitle: 'Health and compliance signals.', colors: ['#fbbf24','#fb7185'], split: .733, rows: [['Healthy',0,'#34d399'],['At Risk',11,'#fbbf24'],['Critical',4,'#fb7185']] as const },
-    { title: 'Workspace Lifecycle Distribution', subtitle: 'Maturity across lifecycle stages.', colors: ['#34d399','#94a3b8'], split: .933, rows: [['Draft',1,'#94a3b8'],['Onboarding',0,'#38bdf8'],['Active',14,'#34d399']] as const },
+/** Exercise real production chart/KPI markup, including legacy light surfaces. */
+function WorkspaceContrastSamples() {
+  const health = [
+    {name:'Healthy',value:0,color:'#34d399',pct:'0%'},
+    {name:'At Risk',value:54,color:'#fbbf24',pct:'93%'},
+    {name:'Critical',value:4,color:'#fb7185',pct:'7%'},
   ]
-  return <section data-theme-panel="workspace" className="liquid-glass-enterprise-panel space-y-4 rounded-2xl border p-5">
-    <div><h2 className="font-semibold">Workspace Intelligence Control Tower</h2><p className="mt-1 text-xs text-muted-foreground">Nested chart surfaces · frosted glass preview</p></div>
-    <div className="grid grid-cols-2 gap-4">
-      {panels.map(panel=><Card key={panel.title} data-theme-panel="chart" className="relative space-y-4 overflow-hidden rounded-2xl bg-white/90 p-4">
-        <div className="absolute inset-x-0 top-0 h-[2px]" style={{background:`linear-gradient(90deg,${panel.colors[0]},${panel.colors[1]})`}} />
-        <h3 className="text-xs font-semibold">{panel.title}</h3><p className="text-[10px] text-muted-foreground">{panel.subtitle}</p>
-        <div className="flex items-center gap-3">
-          <svg className="h-24 w-24 shrink-0" viewBox="0 0 100 100" role="img" aria-label={panel.title}>
-            <circle cx="50" cy="50" r="40" fill="none" stroke={panel.colors[1]} strokeWidth="12" opacity=".85" />
-            <circle cx="50" cy="50" r="40" fill="none" stroke={panel.colors[0]} strokeWidth="12" strokeDasharray={`${251.33*panel.split} 251.33`} transform="rotate(-90 50 50)" strokeLinecap="round" />
-            <text x="50" y="51" textAnchor="middle" fill="currentColor" fontSize="22" fontWeight="600">15</text><text x="50" y="65" textAnchor="middle" fill="currentColor" fontSize="7">WORKSPACES</text>
-          </svg>
-          <div className="min-w-0 flex-1 space-y-2">{panel.rows.map(([label,value,color])=><div key={label} data-theme-surface="chart-row" className="rounded-xl border border-slate-200 bg-white/80 px-2 py-2">
-            <div className="flex items-center gap-2 text-[10px]"><span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{background:color}}/><span className="flex-1">{label}</span><strong>{value}</strong></div>
-            <div className="mt-1 h-1 rounded-full bg-muted"><div className="h-full rounded-full" style={{width:`${value/15*100}%`,background:color}}/></div>
-          </div>)}</div>
-        </div>
-      </Card>)}
+  const lifecycle = [
+    {name:'Draft',value:1,color:'#94a3b8',pct:'2%'},
+    {name:'Active',value:57,color:'#34d399',pct:'98%'},
+  ]
+  return <>
+    <div className="grid grid-cols-3 gap-3">
+      {['Total Workspaces','Active Workspaces','At Risk'].map((label,i) => <WorkspaceKpiCard key={label} label={label} value={String([58,57,54][i])} subtitle="Registered workspace boundaries" trend={i===2?'-0.8%':'+6.2%'} trendSeries={[35,36,40,42,47,52,58]} trendColor={i===2?'#fb7185':'#38bdf8'} icon={BarChart3}/>)}
     </div>
-  </section>
+    <section data-theme-panel="workspace" className="liquid-glass-enterprise-panel space-y-4 rounded-2xl border p-5">
+      <h2 className="font-semibold">Workspace Intelligence Control Tower</h2>
+      <Card className="space-y-3 p-4"><h3 className="font-semibold">Workspace Health Distribution</h3><WorkspaceHealthExecutiveDonut data={health} palette={WORKSPACE_OVERVIEW_PALETTES.pastel}/></Card>
+      <Card className="space-y-3 p-4"><h3 className="font-semibold">Workspace Lifecycle Distribution</h3><IntelligenceDonut data={lifecycle} centerLabel="Lifecycle" pieColors={['#94a3b8','#34d399']}/></Card>
+      <Card className="space-y-3 p-4"><h3 className="font-semibold">Vivid chart center</h3><IntelligenceDonut data={lifecycle} centerLabel="Purpose" pieColors={['#94a3b8','#34d399']} isVivid/></Card>
+      <div data-theme-surface="chart-empty" className="rounded-xl border bg-slate-50/60 p-4 text-sm text-slate-500">No linked projects in the current workspace scope yet.</div>
+    </section>
+  </>
 }
 
 function ComponentSamples() {
@@ -108,9 +108,9 @@ createRoot(document.getElementById('root')!).render(<>
   <AppBackgroundVideo />
   <header className="glass-topbar flex h-16 items-center gap-8 px-8"><img src="/images/tectona-wordmark.svg" alt="Tectona" className="h-12"/><span className="topbar-tenant-name">Tectona · Theme Preview</span></header>
   <div className="grid gap-6 p-6" style={{ gridTemplateColumns: '11rem minmax(0,1fr) 22rem', height: 'calc(100vh - 4rem)' }}>
-    <aside className="glass-sidebar rounded-2xl p-5"><h2 className="mb-8 font-semibold">Workspace</h2><p className="mb-5">Overview</p><p className="mb-5">Projects</p><p className="mb-5">Knowledge</p><p>Settings</p></aside>
+    <aside className="liquid-glass-enterprise-nav space-y-3 rounded-2xl p-3"><h2 className="mb-5 font-semibold">Workspace</h2>{['Overview','Workspace Directory','Governance','Members'].map((label,i)=><button key={label} data-theme-nav-item aria-current={i===0?'page':undefined} className="block w-full rounded-2xl border bg-white/55 p-3 text-left"><span className="text-sm font-semibold text-slate-900">{label}</span><span className="mt-1 block text-[11px] text-slate-500">Executive summary and health posture</span></button>)}<div data-theme-surface="nav-summary" className="rounded-xl bg-blue-50/70 p-3"><div className="text-sm text-blue-800">Workspace health</div><strong className="text-3xl text-slate-900">49%</strong></div></aside>
     <main className="min-w-0 space-y-5 overflow-y-auto">
-      <FrostedDashboardSamples />
+      <WorkspaceContrastSamples />
       <section className="glass-panel space-y-5 rounded-2xl p-6"><p className="text-xs uppercase tracking-[.2em] text-muted-foreground">AI Project Management</p><h1 className="text-3xl font-light">Theme components</h1><p className="text-sm text-muted-foreground">Shared buttons, forms, menus, dialogs and drawers.</p><ComponentSamples /></section>
       <section className="glass-card rounded-2xl p-5"><h2 className="mb-3 font-semibold">Delivery overview</h2><div className="grid grid-cols-3 gap-3">{['Active projects','Knowledge assets','Workflows'].map((label,i)=><div key={label} className="rounded-xl border border-border p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-2xl">{[18,81,12][i]}</p></div>)}</div></section>
     </main>
