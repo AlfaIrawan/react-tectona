@@ -123,7 +123,7 @@ import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOpt
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
 import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
-import { normalizeBrainstormMarkdown, parseNotedAnswer, splitBrainstormQuestion } from '../lib/brainstormMarkdown'
+import { normalizeBrainstormMarkdown, parseNotedAnswer, scopedConfirmationAnswerMissing, splitBrainstormQuestion } from '../lib/brainstormMarkdown'
 import { fetchAllIdeaFolders, type IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
   enterpriseDestructiveOutlineButtonClass,
@@ -1384,6 +1384,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   const at = !summaryRepeatsNotedAnswer && summary ? rest.indexOf(summary) : -1
   const before = at >= 0 ? rest.slice(0, at).trim() : ''
   const after = at >= 0 ? rest.slice(at + summary.length).trim() : rest
+  const confirmationText = hasSummary && !summaryRepeatsNotedAnswer ? after : rest
   // A parenthetical example used to leave question_kind empty, so the badge and amber text
   // never appeared even though the skip control already treated the reply as a challenge.
   const kind = recordedKind ?? (followupWhileMandatory && question ? BRAINSTORM_QUESTION_KIND.challenge : null)
@@ -1408,9 +1409,9 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
       ) : null}
       {!hasSummary || summaryRepeatsNotedAnswer ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
       {isConfirmation ? (
-        <BrainstormConfirmationPanel text={hasSummary && !summaryRepeatsNotedAnswer ? after : rest} question={question} indonesian={indonesian} renderText={(value) => <BrainstormNotedProse text={value} />}>
+        <BrainstormConfirmationPanel text={confirmationText} question={question} indonesian={indonesian} renderText={(value) => <BrainstormNotedProse text={value} />}>
           {onConfirm && message.confirmation_choices?.length ? (
-            <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
+            <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled || scopedConfirmationAnswerMissing(confirmationText)} onSubmit={onConfirm} />
           ) : null}
         </BrainstormConfirmationPanel>
       ) : null}

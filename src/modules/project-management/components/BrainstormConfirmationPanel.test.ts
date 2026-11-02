@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrainstormConfirmationPanel } from './BrainstormConfirmationPanel'
 import { BrainstormConfirmationOptions } from './BrainstormConfirmationOptions'
-import { splitScopedConfirmation } from '../lib/brainstormMarkdown'
+import { scopedConfirmationAnswerMissing, splitScopedConfirmation } from '../lib/brainstormMarkdown'
 
 vi.mock('@/modules/core-shell/components/AssistantChatMarkdown', () => ({ AssistantChatMarkdown: () => null }))
 
@@ -77,5 +77,43 @@ describe('confirmation presentation for existing transcripts', () => {
       renderText: (value: string) => createElement('p', null, value),
     })))
     expect(container.textContent).toContain(legacy)
+  })
+
+  it('warns and blocks approval when a stored scoped confirmation has no visible answer', async () => {
+    const missing = `**Yang ingin aku konfirmasi: ${topic}**\n\nJika ada yang kurang, tulis perbaikannya.`
+    expect(scopedConfirmationAnswerMissing(missing)).toBe(true)
+    expect(scopedConfirmationAnswerMissing(text)).toBe(false)
+    const onSubmit = vi.fn()
+    await act(async () => root.render(createElement(BrainstormConfirmationPanel, {
+      text: missing, question: 'Apakah sudah benar?', indonesian: true,
+      renderText: (value: string) => createElement('p', null, value),
+      children: createElement(BrainstormConfirmationOptions, {
+        choices: ['Sudah tepat', 'Perbaiki'], indonesian: true,
+        disabled: scopedConfirmationAnswerMissing(missing), onSubmit,
+      }),
+    })))
+    expect(container.querySelector('[role=alert]')?.textContent).toContain('Jawaban yang perlu dikonfirmasi belum tersedia')
+    expect(container.textContent).not.toContain('Yang ingin aku konfirmasi:')
+    expect(container.textContent).toContain('Jawaban belum tersedia.')
+    expect(container.querySelector('p.text-sky-800.font-semibold')?.textContent).toBe(topic)
+    expect(container.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled).toBe(true)
+    await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('uses the same topic and answer styles for complete, missing and English confirmations', async () => {
+    let topicStyle = '', answerStyle = ''
+    for (const stored of [text, `**Yang ingin aku konfirmasi: ${topic}**`, `**Please confirm: ${topic}**\n\nMy understanding of this point: ${answer}`]) {
+      await act(async () => root.render(createElement(BrainstormConfirmationPanel, {
+        text: stored, question: 'Apakah sudah tepat?', indonesian: true,
+        renderText: (value: string) => createElement('p', null, value),
+      })))
+      const title = Array.from(container.querySelectorAll('p')).find(p => p.textContent === topic)!
+      expect(title).toBeTruthy()
+      const body = title.nextElementSibling!
+      if (!topicStyle) { topicStyle = title.className; answerStyle = body.className }
+      expect(title.className).toBe(topicStyle)
+      expect(body.className).toBe(answerStyle)
+    }
   })
 })

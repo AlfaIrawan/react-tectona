@@ -52,17 +52,27 @@ export function parseNotedAnswer(paragraph: string): NotedAnswer | null {
 
 /** Presentation only: recognize stored scoped confirmations without rewriting the transcript. */
 export function splitScopedConfirmation(text: string) {
-  const heading = /(?:^|\n)(?:\*\*)?(?:Yang ingin aku konfirmasi|Please confirm):\s*([^\n]+)\n+/i.exec(text)
+  const content = splitScopedConfirmationContent(text)
+  return content?.answer ? content : null
+}
+
+/** Keep a recognized topic styled consistently even when its answer is unavailable. */
+export function splitScopedConfirmationContent(text: string) {
+  const heading = /(?:^|\n)(?:\*\*)?(?:Yang ingin aku konfirmasi|Please confirm):[^\S\n]*([^\n]+)(?:\n+|$)/i.exec(text)
   if (!heading) return null
   const tail = text.slice(heading.index + heading[0].length)
   const answer = /^(?:Pemahamanku untuk poin ini|My understanding of this point):\s*([\s\S]+?)(?=\n\s*\n|$)/i.exec(tail)
-  if (!answer) return null
   return {
     before: text.slice(0, heading.index).trim(),
     question: heading[1].replace(/(?<!\\)\*\*/g, '').trim(),
-    answer: answer[1].trim(),
-    after: tail.slice(answer[0].length).trim(),
+    answer: answer?.[1].trim() ?? '',
+    after: answer ? tail.slice(answer[0].length).trim() : tail.trim(),
   }
+}
+
+export function scopedConfirmationAnswerMissing(text: string): boolean {
+  return /(?:^|\n)(?:\*\*)?(?:Yang ingin aku konfirmasi|Please confirm):/i.test(text)
+    && !splitScopedConfirmation(text)
 }
 
 function isClosingQuestion(paragraph: string): boolean {

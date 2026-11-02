@@ -14,6 +14,7 @@ async function main() {
   await esbuild.transform(source, { loader: 'tsx' })
   assert.ok(source.indexOf('<BrainstormConfirmationPanel') < source.indexOf('{message.ai_advice ?'))
   assert.ok(source.includes('{question && !isConfirmation ?'))
+  assert.ok(source.includes('disabled={disabled || scopedConfirmationAnswerMissing(confirmationText)}'))
   const fixture = `import React from 'react';import {createRoot} from 'react-dom/client';
 import {BrainstormConfirmationPanel} from '@/modules/project-management/components/BrainstormConfirmationPanel';
 import {BrainstormConfirmationOptions} from '@/modules/project-management/components/BrainstormConfirmationOptions';
@@ -23,7 +24,10 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
 <BrainstormSummaryBox text={'- Chat Gen AI membantu collector field menanyakan policy.\\n- Pencarian memo saat ini masih manual.'} indonesian/>
 <BrainstormConfirmationPanel text={text} question="Apakah rangkuman tujuan proyek sudah benar dan lengkap?" indonesian renderText={value=><p className="text-sm leading-6">{value}</p>}>
 <BrainstormConfirmationOptions choices={['Rangkuman tujuan sudah tepat','Perbaiki atau tambahkan tujuan']} explanations={['Hanya mengonfirmasi tujuan proyek.','Tulis koreksi atau tambahan tujuan.']} indonesian onSubmit={value=>{window.sends.push(value)}}/>
-</BrainstormConfirmationPanel><aside data-advice className="mt-3 border-l-2 border-teal-500 pl-3 text-sm leading-6"><b>Pertimbangan Tambahan</b><p>Pertimbangkan kontrol akses dan audit pada integrasi data.</p></aside></main>);`
+</BrainstormConfirmationPanel><aside data-advice className="mt-3 border-l-2 border-teal-500 pl-3 text-sm leading-6"><b>Pertimbangan Tambahan</b><p>Pertimbangkan kontrol akses dan audit pada integrasi data.</p></aside>
+<BrainstormConfirmationPanel text={'**Yang ingin aku konfirmasi: Sebutkan User Bisnis terdampak dari project ini**\\n\\nJika ada yang kurang, tulis perbaikannya.'} question="Apakah rangkuman pengguna bisnis sudah lengkap?" indonesian renderText={value=><p className="text-sm leading-6">{value}</p>}>
+<BrainstormConfirmationOptions choices={['Pengguna bisnis sudah tepat','Perbaiki pengguna bisnis']} indonesian disabled onSubmit={value=>{window.sends.push(value)}}/>
+</BrainstormConfirmationPanel></main>);`
   const bundle = await esbuild.build({ stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, jsx: 'automatic', platform: 'browser', alias: { '@': path.resolve('src') }, define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'isolate-diagrams', setup(build) {
     build.onResolve({ filter: /\/Assistant(?:Mermaid|Chart)Block$/ }, args => ({ path: args.path, namespace: 'visual' }))
     build.onLoad({ filter: /.*/, namespace: 'visual' }, () => ({ contents: 'export const AssistantMermaidBlock=()=>null;export const AssistantChartBlock=()=>null;', loader: 'js' }))
@@ -42,13 +46,17 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
       const page = await browser.newPage({ viewport: { width, height: 960 } })
       const errors = []; page.on('pageerror', error => errors.push(error.message))
       await page.goto('http://127.0.0.1:' + server.address().port)
-      const panel = page.locator('[data-brainstorm-confirmation]')
+      const panels = page.locator('[data-brainstorm-confirmation]')
+      const panel = panels.first()
       await panel.waitFor().catch(error => { throw new Error(errors.join('; ') || error.message) })
       assert.deepEqual(errors, [])
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
       const block = await panel.boundingBox(), advice = await page.locator('[data-advice]').boundingBox()
       assert.ok(advice.y >= block.y + block.height)
       assert.equal(await panel.locator('input[type=radio]').count(), 2)
+      assert.equal(await panels.nth(1).getByRole('button', { name: 'Kirim' }).isDisabled(), true)
+      assert.equal(await panels.nth(1).getByText('Yang ingin aku konfirmasi:', { exact: false }).count(), 0)
+      assert.equal(await panels.nth(1).locator('p').filter({hasText:'Sebutkan User Bisnis terdampak dari project ini'}).first().getAttribute('class'), await panel.locator('p').filter({hasText:'Jelaskan tujuan utama dari project ini'}).first().getAttribute('class'))
       assert.equal(await page.evaluate(() => window.sends.length), 0)
       await page.screenshot({ path: path.join(output, width + '.png'), fullPage: true })
       await panel.locator('input[type=radio]').first().check()
