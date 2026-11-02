@@ -8,6 +8,7 @@ import path from 'node:path'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const base = path.join(root, 'public/images/themes/tectona-slate-botanical-v1')
+const source = path.join(root, 'design/theme-sources/tectona-slate-botanical-v1.png')
 const phase = '2*PI*T/10'
 const border = 'pow(2*X/W-1,2)'
 // Round around neutral 128 so tiny negative offsets cannot create a loop-seam step.
@@ -21,7 +22,7 @@ const filter = [
   '[source][xmap][ymap]displace=edge=mirror,format=yuv420p[out]',
 ].join(';')
 const result = spawnSync(process.argv[2] || process.env.FFMPEG_PATH || 'ffmpeg', [
-  '-hide_banner', '-loglevel', 'warning', '-y', '-loop', '1', '-framerate', '24', '-i', `${base}.png`,
+  '-hide_banner', '-loglevel', 'warning', '-y', '-loop', '1', '-framerate', '24', '-i', source,
   '-filter_complex_threads', '2', '-filter_complex', filter, '-map', '[out]', '-t', '10', '-an',
   '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-row-mt', '1', '-cpu-used', '4', '-threads', '4',
   `${base}.webm`,

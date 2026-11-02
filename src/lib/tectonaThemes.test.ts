@@ -30,7 +30,7 @@ describe('Tectona Gray-to-Blue themes', () => {
   it.each([undefined, null, '', 'removed', '__proto__', 42])('safely falls back for %s', value => {
     expect(normalizeAccent(value)).toBe('gradient')
   })
-  it('ships a distinct local WebM and PNG poster for every replacement theme', () => {
+  it('ships a distinct local WebM and poster for every replacement theme', () => {
     const themes = TECTONA_THEMES.slice(1)
     expect(new Set(themes.map(t => t.video)).size).toBe(4)
     const payloads = []
