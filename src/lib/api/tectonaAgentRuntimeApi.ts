@@ -613,6 +613,7 @@ export interface IdeaDraftBrainstormMessage {
   evidence?: string | null
   /** The part of the text that summarises what was understood, shown in a "Rangkuman Pemahaman" box. */
   summary?: string | null
+  intake_review_ready?: boolean
   /** The sentence a correction just changed, shown as Revisi beside the full understanding. */
   revision_text?: string | null
   /** A decision waiting for confirmation, shown under its own title instead of the understanding summary. */
@@ -2851,7 +2852,7 @@ export async function getIdeaDraftVersion(
   return handleResponse<IdeaDraftVersionDetail>(res)
 }
 
-function fitBrainstormSummary(value: string | null | undefined, limit = 4000): string | null | undefined {
+function fitBrainstormSummary(value: string | null | undefined, limit = 12000): string | null | undefined {
   if (value == null) return value
   const silent = value
     .replace(/\n*Detail tambahan tetap tersimpan dalam jawaban brainstorming\./g, '')

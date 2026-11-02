@@ -41,7 +41,6 @@ import {
   Italic,
   Underline,
   CircleHelp,
-  BriefcaseBusiness,
   Building2,
   Sparkles,
   Users,
@@ -60,7 +59,6 @@ import {
   FolderPlus,
   Folder as FolderIcon,
   RefreshCw,
-  Wrench,
   Copy,
   Pencil,
   Send,
@@ -110,6 +108,7 @@ import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import { BrainstormConfirmationPanel } from '../components/BrainstormConfirmationPanel'
+import { BrainstormIntakeReview, completedIntakeReviewAvailable } from '../components/BrainstormIntakeReview'
 import { brainstormConfirmationStatus, type BrainstormConfirmationStatus } from '../lib/brainstormConfirmationStatus'
 import { BrainstormDecisionNote, BrainstormNotedAnswer, BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
@@ -1340,14 +1339,6 @@ function brainstormQuestionKind(message: IdeaDraftBrainstormMessage) {
   if (message.question_focus === 'business') return BRAINSTORM_QUESTION_KIND.extended_business
   if (message.question_focus === 'technical') return BRAINSTORM_QUESTION_KIND.extended_technical
   return BRAINSTORM_QUESTION_KIND.extended
-}
-
-function activeExtendedQuestionFocus(
-  messages: IdeaDraftBrainstormMessage[],
-): 'business' | 'technical' | null {
-  const last = [...messages].reverse().find((message) => message.role === 'assistant')
-  if (last?.question_kind !== 'extended') return null
-  return last.question_focus === 'business' || last.question_focus === 'technical' ? last.question_focus : null
 }
 
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
@@ -7702,72 +7693,15 @@ export function IdeaBacklogManagementPage() {
                             </div>
                           )}
 
-                          {brainstormReady && ideaDraftJob?.status === 'awaiting_input' && (
-                            <div className="space-y-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-950">
-                              <div>
-                                <p className="text-sm font-semibold">
-                                  {brainstormThreadIndonesian
-                                    ? 'Konteks wajib sudah cukup'
-                                    : 'Required context is complete'}
-                                </p>
-                                <p className="mt-0.5 text-xs leading-5 text-emerald-900/80">
-                                  {brainstormThreadIndonesian
-                                    ? 'Pilih fokus pertanyaan berikutnya, atau generate draft sekarang.'
-                                    : 'Choose the focus for the next questions, or generate the draft now.'}
-                                </p>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing || activeExtendedQuestionFocus(brainstormMessages) === 'business'}
-                                  title={activeExtendedQuestionFocus(brainstormMessages) === 'business'
-                                    ? (brainstormThreadIndonesian ? 'Jalur pertanyaan yang sedang berjalan' : 'The question track already in progress')
-                                    : undefined}
-                                  className={cn(
-                                    enterpriseSecondaryButtonClass(),
-                                    'inline-flex h-9 items-center gap-2 border-emerald-300 bg-white text-emerald-950 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60',
-                                  )}
-                                  // Only the choice is sent; how the questions are asked and labelled is agent-runtime's.
-                                  onClick={() => void handleSendBrainstormMessage(
-                                    brainstormThreadIndonesian ? 'Pertanyaan bisnis' : 'Business questions',
-                                  )}
-                                >
-                                  <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden />
-                                  Extended Question · Business
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing || activeExtendedQuestionFocus(brainstormMessages) === 'technical'}
-                                  title={activeExtendedQuestionFocus(brainstormMessages) === 'technical'
-                                    ? (brainstormThreadIndonesian ? 'Jalur pertanyaan yang sedang berjalan' : 'The question track already in progress')
-                                    : undefined}
-                                  className={cn(
-                                    enterpriseSecondaryButtonClass(),
-                                    'inline-flex h-9 items-center gap-2 border-sky-300 bg-white text-sky-950 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60',
-                                  )}
-                                  onClick={() => void handleSendBrainstormMessage(
-                                    brainstormThreadIndonesian ? 'Pertanyaan teknis' : 'Technical questions',
-                                  )}
-                                >
-                                  <Wrench className="h-4 w-4 shrink-0" aria-hidden />
-                                  Extended Question · Technical
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isBrainstormSending || isDraftContinuing}
-                                  className={cn(
-                                    enterprisePrimarySolidButtonClass(),
-                                    'h-9 disabled:cursor-not-allowed disabled:opacity-60',
-                                  )}
-                                  onClick={() => void handleContinueIdeaDraft('use_brainstorm')}
-                                >
-                                  <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                                  {isDraftContinuing
-                                    ? (brainstormThreadIndonesian ? 'Membuat draft…' : 'Generating…')
-                                    : (brainstormThreadIndonesian ? 'Generate draft' : 'Generate draft')}
-                                </button>
-                              </div>
-                            </div>
+                          {ideaDraftJob?.status === 'awaiting_input' && completedIntakeReviewAvailable(brainstormMessages, brainstormChecklist, brainstormReady) && (
+                            <BrainstormIntakeReview
+                              key={ideaDraftJob.job_id}
+                              indonesian={brainstormThreadIndonesian}
+                              disabled={isBrainstormSending}
+                              generating={isDraftContinuing}
+                              onSend={handleSendBrainstormMessage}
+                              onGenerate={() => handleContinueIdeaDraft('use_brainstorm')}
+                            />
                           )}
                           {!isBrainstormSending && !brainstormReady && !brainstormOfferGenerateAnyway && !waitingToConfirm && brainstormNextHint && brainstormMessages.length > 0 && !brainstormMessages.some((message) => message.role === 'assistant' && message.text.toLowerCase().includes(brainstormNextHint.toLowerCase())) && (
                             <p className="px-10 text-xs leading-5 text-muted-foreground">

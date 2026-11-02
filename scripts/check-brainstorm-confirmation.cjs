@@ -20,6 +20,7 @@ async function main() {
 import {BrainstormConfirmationPanel} from '@/modules/project-management/components/BrainstormConfirmationPanel';
 import {BrainstormConfirmationOptions} from '@/modules/project-management/components/BrainstormConfirmationOptions';
 import {BrainstormSummaryBox} from '@/modules/project-management/components/BrainstormSummaryBox';
+import {BrainstormIntakeReview} from '@/modules/project-management/components/BrainstormIntakeReview';
 import {brainstormConfirmationContent} from '@/modules/project-management/lib/brainstormConfirmationContent';
 const phase='Fase pertama dokumen diunggah melalui modul Document & Knowledge Management di Tectona. Gen AI menggunakan API Knowledge Index. Belum ada integrasi ke Ad1ForFlow.';
 const phaseMessage={role:'assistant',question_kind:'confirm',text:'Apakah batasan fase ini sudah tepat?',question_text:'Apakah batasan fase ini sudah tepat?',decision_label:'Batasan fase',decision_text:phase,confirmation_choices:['Konfirmasi batasan fase','Koreksi batasan fase']};
@@ -41,6 +42,7 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
 <BrainstormConfirmationPanel text={systems} question="Apakah daftar sistem terdampak ini sudah lengkap dan tepat?" indonesian renderText={value=><p>{value}</p>}>
 <BrainstormConfirmationOptions choices={['Daftar sistem ini sudah lengkap','Ada sistem yang kurang atau keliru']} indonesian onSubmit={value=>{window.sends.push(value)}}/>
 </BrainstormConfirmationPanel>
+<BrainstormIntakeReview indonesian onSend={value=>{window.sends.push(value)}} onGenerate={()=>{window.generated=true}}/>
 </main>);`
   const bundle = await esbuild.build({ stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, jsx: 'automatic', platform: 'browser', alias: { '@': path.resolve('src') }, define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'isolate-diagrams', setup(build) {
     build.onResolve({ filter: /\/Assistant(?:Mermaid|Chart)Block$/ }, args => ({ path: args.path, namespace: 'visual' }))
@@ -98,6 +100,12 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
       assert.equal(await panels.nth(1).getByText('Yang ingin aku konfirmasi:', { exact: false }).count(), 0)
       assert.equal(await panels.nth(1).locator('p').filter({hasText:'Sebutkan User Bisnis terdampak dari project ini'}).first().getAttribute('class'), await panel.locator('p').filter({hasText:'Jelaskan tujuan utama dari project ini'}).first().getAttribute('class'))
       assert.equal(await page.evaluate(() => window.sends.length), 0)
+      const review = page.locator('[data-intake-review]')
+      assert.equal(await review.locator('textarea').count(), 1)
+      assert.equal(await review.getByRole('button', { name: 'Generate draft', exact: true }).count(), 1)
+      assert.equal(await review.getByRole('button', { name: 'Kirim revisi' }).isDisabled(), true)
+      const area = await review.locator('textarea').boundingBox()
+      assert.ok(area.height >= 80 && area.height < 160)
       await page.screenshot({ path: path.join(output, width + '.png'), fullPage: true })
       await panel.locator('input[type=radio]').first().check()
       await panel.getByRole('button', { name: 'Kirim' }).click()
