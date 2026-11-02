@@ -114,6 +114,7 @@ import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagra
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
 import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame'
+import { readBrainstormSessionConflict } from '../lib/brainstormSessionConflict'
 import { resizeBrainstormComposer } from '../lib/resizeBrainstormComposer'
 import { closeBrainstorm } from '../lib/closeBrainstorm'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
@@ -4706,13 +4707,37 @@ export function IdeaBacklogManagementPage() {
         if (attached) setBrainstormDiagramImage(attached)
       }
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
-      setBrainstormError(/IDEA_DRAFT_SESSION_CHANGED|IDEA_DRAFT_SESSION_BUSY/.test(rawMessage)
-        ? 'This draft changed or is being updated in another tab. Reopen it from Chat before sending again. Your message has not been saved.'
-        : friendlyBrainstormError(rawMessage))
-      if (edit) {
+      let refreshed = false
+      try {
+        const conflict = await readBrainstormSessionConflict(error, () => getIdeaDraftJob(ideaDraftJob.job_id))
+        if (conflict.latest) {
+          const latest = conflict.latest
+          setIdeaDraftJob(latest)
+          setBrainstormMessages(mergeBrainstormUiMessages(fullHistory, latest.brainstorm_messages ?? [], new Date().toISOString()))
+          setBrainstormReady(Boolean(latest.brainstorm_ready))
+          setBrainstormRemainingGaps(latest.brainstorm_remaining_gaps ?? [])
+          setBrainstormLatestKind(latest.brainstorm_latest_kind ?? null)
+          setBrainstormOfferGenerateAnyway(Boolean(latest.offer_generate_anyway))
+          syncBrainstormEvidenceState(latest)
+          setBrainstormInput(message)
+          if (attached) setBrainstormDiagramImage(attached)
+          if (edit) setBrainstormEdit(null)
+          refreshed = true
+        }
+      } catch {
+        // Keep the unsent input and the existing transcript if the refresh fails.
+      }
+      setBrainstormError(refreshed
+        ? (indonesian ? 'Draft sudah disinkronkan. Pesan Anda belum dikirim dan tetap tersedia di kolom pesan. Periksa pertanyaan terbaru sebelum mengirim kembali.' : 'Draft refreshed. Your unsent message is preserved below. Review the latest question before sending again.')
+        : rawMessage.includes('IDEA_DRAFT_SESSION_BUSY')
+          ? (indonesian ? 'Asisten masih memproses pesan sebelumnya. Pesan Anda belum dikirim; tunggu sebentar lalu coba kembali.' : 'The assistant is still processing the previous message. Your message was not sent; wait briefly and try again.')
+          : rawMessage.includes('IDEA_DRAFT_SESSION_CHANGED')
+            ? (indonesian ? 'Draft berubah, tetapi versi terbaru belum bisa dimuat. Pesan Anda belum dikirim. Coba lagi saat koneksi tersedia.' : 'The draft changed, but the latest version could not be loaded. Your message was not sent. Try again when connected.')
+            : friendlyBrainstormError(rawMessage))
+      if (!refreshed && edit) {
         // The session is unchanged on the server when an edit fails: show it as it was.
         setBrainstormMessages(fullHistory)
-      } else {
+      } else if (!refreshed) {
         setBrainstormMessages((current) => current.filter(
           (_item, index) => index !== current.length - 1,
         ))
