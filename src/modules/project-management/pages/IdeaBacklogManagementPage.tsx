@@ -117,6 +117,7 @@ import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame
 import { readBrainstormSessionConflict } from '../lib/brainstormSessionConflict'
 import { resizeBrainstormComposer } from '../lib/resizeBrainstormComposer'
 import { closeBrainstorm } from '../lib/closeBrainstorm'
+import { captureBrainstormReturnContext, restoreBrainstormReturnContext, type BrainstormReturnContext } from '../lib/brainstormReturnContext'
 import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOptions'
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
@@ -2268,6 +2269,7 @@ export function IdeaBacklogManagementPage() {
   const createPolicyInFlight = useRef(false)
   const createSourceWorkspaceId = useRef<string | null>(null)
   const createSourceWorkspaceName = useRef<string | null>(null)
+  const brainstormReturnContext = useRef<BrainstormReturnContext | null>(null)
   const draftSourceContext = () => ({
     source_workspace_id: createSourceWorkspaceId.current ?? resolveWorkspaceApiId(tenant?.workspaceId),
     source_workspace_name: createSourceWorkspaceName.current ?? tenant?.displayName ?? null,
@@ -4059,8 +4061,10 @@ export function IdeaBacklogManagementPage() {
       return
     }
     createPolicyInFlight.current = true
+    const returnContext = captureBrainstormReturnContext(tenant, location)
     try {
       const policy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
+      brainstormReturnContext.current = returnContext
       createSourceWorkspaceId.current = sourceWorkspaceId
       createSourceWorkspaceName.current = tenant?.displayName ?? null
       setIdeaWorkspacePolicy(policy)
@@ -5049,6 +5053,8 @@ export function IdeaBacklogManagementPage() {
       setIsEvidenceDialogOpen(false)
       setIsBrainstormMode(false)
       setIsCreateIdeaDrawerOpen(false)
+      restoreBrainstormReturnContext(brainstormReturnContext.current, tenant, location, tenant?.setActiveTenant, navigate)
+      brainstormReturnContext.current = null
     }
     if (!ideaDraftJob || ideaDraftJob.status === 'cancelled') {
       closePanels()
@@ -5106,6 +5112,7 @@ export function IdeaBacklogManagementPage() {
     }
 
     let cancelled = false
+    brainstormReturnContext.current = captureBrainstormReturnContext(tenant, location)
     setIsResumingDraft(true)
     void (async () => {
       const snapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === jobId && item.ownerId === currentUserId)
