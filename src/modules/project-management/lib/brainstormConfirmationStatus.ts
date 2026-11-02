@@ -1,5 +1,6 @@
 import type { IdeaDraftBrainstormMessage } from '@/lib/api/tectonaAgentRuntimeApi'
 import { scopedConfirmationAnswerMissing, splitScopedConfirmationContent } from './brainstormMarkdown'
+import { brainstormConfirmationAnswerMissing, brainstormConfirmationContent } from './brainstormConfirmationContent'
 
 export type BrainstormConfirmationStatus = 'pending' | 'confirmed'
 const fold = (value: string) => value.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
@@ -8,6 +9,8 @@ const fold = (value: string) => value.replace(/\*\*/g, '').replace(/\s+/g, ' ').
 export function brainstormConfirmationStatus(messages: IdeaDraftBrainstormMessage[], index: number): BrainstormConfirmationStatus {
   const message = messages[index]
   if (!message || message.role !== 'assistant' || message.question_kind !== 'confirm' || scopedConfirmationAnswerMissing(message.text)) return 'pending'
+  const content = brainstormConfirmationContent(message)
+  if (!content.isConfirmation || brainstormConfirmationAnswerMissing(content.text, message.decision_text)) return 'pending'
   const reply = messages[index + 1]
   // Do not color an optimistic send green before the server has replied.
   if (reply?.role !== 'user' || messages[index + 2]?.role !== 'assistant') return 'pending'

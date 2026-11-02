@@ -14,11 +14,16 @@ async function main() {
   await esbuild.transform(source, { loader: 'tsx' })
   assert.ok(source.indexOf('<BrainstormConfirmationPanel') < source.indexOf('{message.ai_advice ?'))
   assert.ok(source.includes('{question && !isConfirmation ?'))
-  assert.ok(source.includes('disabled={disabled || scopedConfirmationAnswerMissing(confirmationText)}'))
+  assert.ok(source.includes('decisionText={message.decision_text} decisionLabel={message.decision_label}'))
+  assert.ok(source.includes('{message.decision_text && !isConfirmation ?'))
   const fixture = `import React from 'react';import {createRoot} from 'react-dom/client';
 import {BrainstormConfirmationPanel} from '@/modules/project-management/components/BrainstormConfirmationPanel';
 import {BrainstormConfirmationOptions} from '@/modules/project-management/components/BrainstormConfirmationOptions';
 import {BrainstormSummaryBox} from '@/modules/project-management/components/BrainstormSummaryBox';
+import {brainstormConfirmationContent} from '@/modules/project-management/lib/brainstormConfirmationContent';
+const phase='Fase pertama dokumen diunggah melalui modul Document & Knowledge Management di Tectona. Gen AI menggunakan API Knowledge Index. Belum ada integrasi ke Ad1ForFlow.';
+const phaseMessage={role:'assistant',question_kind:'confirm',text:'Apakah batasan fase ini sudah tepat?',question_text:'Apakah batasan fase ini sudah tepat?',decision_label:'Batasan fase',decision_text:phase,confirmation_choices:['Konfirmasi batasan fase','Koreksi batasan fase']};
+function StoredPhase({message,status}){const content=brainstormConfirmationContent(message);return <div data-phase-case>{content.isConfirmation?<BrainstormConfirmationPanel text={content.text} question={content.question} decisionText={message.decision_text} decisionLabel={message.decision_label} indonesian status={status} renderText={value=><p>{value}</p>}/>:<p data-completion>{message.text}</p>}</div>}
 const text='**Yang ingin aku konfirmasi: Jelaskan tujuan utama dari project ini**\\n\\nPemahamanku untuk poin ini: Tujuan utama: \u2022 Membantu **collector field** menanyakan kebijakan secara aman. \u2022 Mempercepat pencarian kebijakan melalui **Generative AI**.\\n\\nJika ada yang kurang atau keliru, tulis perbaikan atau tambahannya.';
 window.sends=[];createRoot(document.getElementById('root')).render(<main className="mx-auto max-w-3xl px-3 py-5">
 <BrainstormSummaryBox text={'- Chat Gen AI membantu collector field menanyakan policy.\\n- Pencarian memo saat ini masih manual.'} indonesian/>
@@ -29,6 +34,9 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
 <BrainstormConfirmationOptions choices={['Pengguna bisnis sudah tepat','Perbaiki pengguna bisnis']} indonesian disabled onSubmit={value=>{window.sends.push(value)}}/>
 </BrainstormConfirmationPanel>
 <BrainstormConfirmationPanel text={text} question="Apakah rangkuman tujuan proyek sudah benar dan lengkap?" indonesian status="confirmed" renderText={value=><p className="text-sm leading-6">{value}</p>}/>
+<StoredPhase message={phaseMessage} status="pending"/>
+<StoredPhase message={phaseMessage} status="confirmed"/>
+<StoredPhase message={{role:'assistant',question_kind:'confirm',summary:'Rangkuman yang sudah diterima.',text:'Rangkuman yang sudah diterima.\\n\\nKlarifikasi sudah dicatat. Pertanyaan wajib sudah selesai.'}} status="confirmed"/>
 </main>);`
   const bundle = await esbuild.build({ stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, jsx: 'automatic', platform: 'browser', alias: { '@': path.resolve('src') }, define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'isolate-diagrams', setup(build) {
     build.onResolve({ filter: /\/Assistant(?:Mermaid|Chart)Block$/ }, args => ({ path: args.path, namespace: 'visual' }))
@@ -52,6 +60,15 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
       const panel = panels.first()
       await panel.waitFor().catch(error => { throw new Error(errors.join('; ') || error.message) })
       assert.deepEqual(errors, [])
+      assert.equal(await panels.count(), 5)
+      assert.equal(await page.locator('[data-completion]').count(), 1)
+      for (const index of [3, 4]) {
+        const phasePanel = panels.nth(index)
+        assert.equal(await phasePanel.getByText('Batasan fase', { exact: true }).count(), 1)
+        assert.equal(await phasePanel.getByText('Fase pertama dokumen diunggah', { exact: false }).count(), 1)
+        assert.equal(await phasePanel.locator('[role=alert]').count(), 0)
+        assert.equal(await phasePanel.getAttribute('data-confirmation-status'), index === 3 ? 'pending' : 'confirmed')
+      }
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
       const block = await panel.boundingBox(), advice = await page.locator('[data-advice]').boundingBox()
       assert.ok(advice.y >= block.y + block.height)

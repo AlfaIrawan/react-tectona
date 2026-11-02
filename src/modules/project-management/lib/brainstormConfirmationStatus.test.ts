@@ -29,4 +29,15 @@ describe('confirmation color is based on the matching reply, not message age', (
   it('does not confirm an answer that was never visible', () => {
     expect(brainstormConfirmationStatus([{ ...confirm, text: '**Yang ingin aku konfirmasi: Tujuan proyek**' }, user('Ya'), assistant], 0)).toBe('pending')
   })
+  it('does not confirm an empty or recap-only legacy completion', () => {
+    for (const text of ['', 'Rangkuman proses saat ini.']) {
+      expect(brainstormConfirmationStatus([{ role: 'assistant', question_kind: 'confirm', text, summary: text }, user('Ya'), assistant], 0)).toBe('pending')
+    }
+  })
+  it('confirms the phase scope decision only after its exact confirm action is accepted', () => {
+    const phase: Message = { role: 'assistant', question_kind: 'confirm', text: 'Apakah batasan fase ini sudah tepat?', decision_text: 'Belum ada integrasi ke Ad1ForFlow.', confirmation_choices: ['Konfirmasi batasan fase', 'Koreksi batasan fase'], confirmation_actions: ['confirm', 'adjust'] }
+    expect(brainstormConfirmationStatus([phase, user('Konfirmasi batasan fase'), assistant], 0)).toBe('confirmed')
+    expect(brainstormConfirmationStatus([phase, user('Koreksi batasan fase'), assistant], 0)).toBe('pending')
+    expect(brainstormConfirmationStatus([{ ...phase, decision_text: null }, user('Konfirmasi batasan fase'), assistant], 0)).toBe('pending')
+  })
 })

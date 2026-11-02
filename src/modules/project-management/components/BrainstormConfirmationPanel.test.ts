@@ -128,4 +128,44 @@ describe('confirmation presentation for existing transcripts', () => {
     expect(panel.className).not.toContain('bg-sky-50')
     expect(panel.textContent).toContain(status === 'confirmed' ? 'Sudah dikonfirmasi' : 'Belum dikonfirmasi')
   })
+
+  it.each(['pending', 'confirmed'] as const)('shows the phase scope inside the %s confirmation, before the question and choices', async (status) => {
+    const phase = 'Fase pertama dokumen diunggah ke Tectona. Belum ada integrasi ke Ad1ForFlow.'
+    const onSubmit = vi.fn()
+    await act(async () => root.render(createElement(BrainstormConfirmationPanel, {
+      text: '', question: 'Apakah batasan fase ini sudah tepat?', decisionText: phase, decisionLabel: 'Batasan fase', indonesian: true, status,
+      renderText: (value: string) => createElement('p', null, value),
+      children: createElement(BrainstormConfirmationOptions, {
+        choices: ['Konfirmasi batasan fase', 'Koreksi batasan fase'], actions: ['confirm', 'adjust'], indonesian: true, onSubmit,
+      }),
+    })))
+    const panel = container.querySelector('[data-brainstorm-confirmation]')!
+    expect(panel.getAttribute('data-confirmation-status')).toBe(status)
+    expect(panel.textContent!.split(phase)).toHaveLength(2)
+    expect(panel.textContent!.indexOf(phase)).toBeLessThan(panel.textContent!.indexOf('Apakah batasan fase'))
+    expect(panel.querySelector('[role=alert]')).toBeNull()
+    expect(panel.querySelector('fieldset[disabled]')).toBeNull()
+    await act(async () => panel.querySelector<HTMLInputElement>('input[type=radio]')!.click())
+    await act(async () => panel.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(onSubmit).toHaveBeenCalledWith('Konfirmasi batasan fase')
+  })
+
+  it('does not render an empty confirmed shell', async () => {
+    await act(async () => root.render(createElement(BrainstormConfirmationPanel, {
+      text: '', question: '', indonesian: true, status: 'confirmed', renderText: value => value,
+    })))
+    expect(container.querySelector('[data-brainstorm-confirmation]')).toBeNull()
+  })
+
+  it('keeps a question-only confirmation pending and prevents submitting unseen content', async () => {
+    await act(async () => root.render(createElement(BrainstormConfirmationPanel, {
+      text: '', question: 'Apakah batasan fase ini sudah tepat?', indonesian: true, status: 'confirmed', renderText: value => value,
+      children: createElement(BrainstormConfirmationOptions, {
+        choices: ['Konfirmasi batasan fase', 'Koreksi batasan fase'], indonesian: true, onSubmit: vi.fn(),
+      }),
+    })))
+    expect(container.querySelector('[data-brainstorm-confirmation]')?.getAttribute('data-confirmation-status')).toBe('pending')
+    expect(container.querySelector('[role=alert]')).toBeTruthy()
+    expect(container.querySelector('input[type=radio]')?.matches(':disabled')).toBe(true)
+  })
 })

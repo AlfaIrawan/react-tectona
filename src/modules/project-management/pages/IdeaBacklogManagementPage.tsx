@@ -124,7 +124,8 @@ import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOpt
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
 import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
-import { normalizeBrainstormMarkdown, parseNotedAnswer, scopedConfirmationAnswerMissing, splitBrainstormQuestion } from '../lib/brainstormMarkdown'
+import { normalizeBrainstormMarkdown, parseNotedAnswer } from '../lib/brainstormMarkdown'
+import { brainstormConfirmationAnswerMissing, brainstormConfirmationContent } from '../lib/brainstormConfirmationContent'
 import { fetchAllIdeaFolders, type IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
   enterpriseDestructiveOutlineButtonClass,
@@ -1251,11 +1252,6 @@ function BrainstormCopyButton({ text }: { text: string }) {
   )
 }
 
-function sameNotedText(left: string, right: string) {
-  const fold = (value: string) => value.replace(/\s+/g, ' ').replace(/[.]+$/, '').trim().toLowerCase()
-  return Boolean(fold(left) && fold(left) === fold(right))
-}
-
 function BrainstormNotedProse({ text }: { text: string }) {
   const paragraphs = text.trim() ? text.trim().split(/\n{2,}/) : []
   if (paragraphs.length === 0) return null
@@ -1372,21 +1368,9 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   const summary = hideInternalNote(message.summary ?? '')
   const hasSummary = Boolean(summary)
   const recordedKind = brainstormQuestionKind(message)
-  const isConfirmation = message.question_kind === 'confirm' && !message.suggestion_options?.length
-  // The closing question is the last paragraph when it asks something (and is not a diagram).
-  let rest = text
-  let question = ''
-  if (isConfirmation || recordedKind || followupWhileMandatory || message.question_kind === 'mandatory' || message.question_text) {
-    const split = splitBrainstormQuestion(rest, message.question_text)
-    question = split.question
-    rest = split.rest
-  }
-  const notedAnswer = rest.split(/\n{2,}/).map(parseNotedAnswer).find(item => item !== null)
-  const summaryRepeatsNotedAnswer = Boolean(notedAnswer && sameNotedText(summary, notedAnswer.answer))
-  const at = !summaryRepeatsNotedAnswer && summary ? rest.indexOf(summary) : -1
-  const before = at >= 0 ? rest.slice(0, at).trim() : ''
-  const after = at >= 0 ? rest.slice(at + summary.length).trim() : rest
-  const confirmationText = hasSummary && !summaryRepeatsNotedAnswer ? after : rest
+  const { rest, question, before, after, text: confirmationText, summaryRepeatsNotedAnswer, isConfirmation } = brainstormConfirmationContent(
+    { ...message, text, summary }, Boolean(recordedKind || followupWhileMandatory || message.question_kind === 'mandatory' || message.question_text),
+  )
   // A parenthetical example used to leave question_kind empty, so the badge and amber text
   // never appeared even though the skip control already treated the reply as a challenge.
   const kind = recordedKind ?? (followupWhileMandatory && question ? BRAINSTORM_QUESTION_KIND.challenge : null)
@@ -1411,9 +1395,9 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
       ) : null}
       {!hasSummary || summaryRepeatsNotedAnswer ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
       {isConfirmation ? (
-        <BrainstormConfirmationPanel text={confirmationText} question={question} indonesian={indonesian} status={confirmationStatus} renderText={(value) => <BrainstormNotedProse text={value} />}>
+        <BrainstormConfirmationPanel text={confirmationText} question={question} decisionText={message.decision_text} decisionLabel={message.decision_label} indonesian={indonesian} status={confirmationStatus} renderText={(value) => <BrainstormNotedProse text={value} />}>
           {onConfirm && message.confirmation_choices?.length ? (
-            <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled || scopedConfirmationAnswerMissing(confirmationText)} onSubmit={onConfirm} />
+            <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled || brainstormConfirmationAnswerMissing(confirmationText, message.decision_text)} onSubmit={onConfirm} />
           ) : null}
         </BrainstormConfirmationPanel>
       ) : null}
@@ -1422,7 +1406,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
         <BrainstormAssistantMessageBody text={message.ai_advice} />
       </div> : null}
       <BrainstormCatalogComparison matches={message.catalog_matches} mode={message.catalog_mode} status={message.catalog_status} indonesian={indonesian} />
-      {message.decision_text ? (
+      {message.decision_text && !isConfirmation ? (
         <BrainstormDecisionNote
           title={message.decision_label || (indonesian ? 'Batasan fase' : 'Phase scope')}
           text={message.decision_text}
