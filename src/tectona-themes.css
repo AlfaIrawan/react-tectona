@@ -317,6 +317,23 @@ html[data-accent="tectona-slate"] :is([data-theme-surface="chart-tooltip"],.rech
 }
 html[data-accent="tectona-slate"] .recharts-tooltip-label { color: hsl(var(--foreground)) !important; }
 html[data-accent="tectona-slate"] .recharts-cartesian-axis-tick-value { fill: hsl(var(--muted-foreground)); }
+/* Route, page, data and service loaders use paired theme colors, including portals. */
+html[data-accent^="tectona-"] [data-theme-surface="loading-backdrop"] {
+  background: radial-gradient(ellipse at 20% 15%,hsl(var(--primary) / .14),transparent 55%),linear-gradient(145deg,hsl(var(--background)),hsl(var(--card)));
+  color: hsl(var(--foreground));
+}
+html[data-accent^="tectona-"] [data-theme-surface="loading-card"] {
+  background: var(--theme-overlay-fill,var(--tectona-panel));
+  color: hsl(var(--foreground)); border-color: var(--theme-edge,var(--tectona-line));
+  box-shadow: 0 16px 42px var(--tectona-shadow);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+html[data-accent^="tectona-"] [data-theme-part="loading-title"] { color: hsl(var(--foreground)); }
+html[data-accent^="tectona-"] [data-theme-part="loading-description"] { color: hsl(var(--muted-foreground)); }
+html[data-accent^="tectona-"] [data-theme-part="loading-wash"] { background: linear-gradient(145deg,hsl(var(--primary) / .05),transparent); }
+html[data-accent^="tectona-"] [data-theme-part="loading-spinner"] { border-color: hsl(var(--muted-foreground) / .3); border-top-color: hsl(var(--primary)); }
+html[data-accent^="tectona-"] [data-theme-part="loading-icon"] { color: hsl(var(--primary)); }
 /* Authentication keeps one light-steel glass card, not a white logo rectangle. */
 html:is([data-accent="tectona-slate"],[data-accent="tectona-midnight"]) .liquid-glass-enterprise-panel:has(#login-card-header,#register-card-header) {
   --background: 214 30% 97%; --foreground: 218 35% 17%;

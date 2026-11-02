@@ -5634,17 +5634,18 @@ function governanceMatrixSearchBlob(
     .toLowerCase()
 }
 
-function WorkspaceManagementPageSkeleton({ className }: { className?: string }) {
+export function WorkspaceManagementPageSkeleton({ className }: { className?: string }) {
   return (
     <div
+      data-theme-surface="loading-card"
       className={cn(
-        'liquid-glass-enterprise-panel flex min-h-[280px] animate-pulse items-center justify-center rounded-2xl border border-border/60 bg-muted/20',
+        'liquid-glass-enterprise-panel flex min-h-[280px] items-center justify-center rounded-2xl border border-border/60 bg-muted/20',
         className,
       )}
     >
       <div className="flex flex-col items-center gap-3 px-6 text-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
-        <p className="text-sm text-muted-foreground">Loading workspace data…</p>
+        <Loader2 data-theme-part="loading-icon" className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
+        <p data-theme-part="loading-description" className="text-sm text-muted-foreground">Loading workspace data…</p>
       </div>
     </div>
   )

@@ -15,7 +15,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../src/components/ui/t
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '../src/components/ui/dialog'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../src/components/ui/dropdown-menu'
 import { enterpriseCyanGradientActionButtonClass, enterpriseIndigoGradientActionButtonClass, enterpriseSecondaryButtonClass } from '../src/lib/enterpriseButtonClasses'
-import { WorkspaceKpiCard, WorkspaceHealthExecutiveDonut, IntelligenceDonut, WORKSPACE_OVERVIEW_PALETTES } from '../src/modules/workspace-management/pages/WorkspaceManagementPage'
+import { WorkspaceKpiCard, WorkspaceHealthExecutiveDonut, IntelligenceDonut, WORKSPACE_OVERVIEW_PALETTES, WorkspaceManagementPageSkeleton } from '../src/modules/workspace-management/pages/WorkspaceManagementPage'
+import { PlatformServiceLoadingPanel, PlatformDataLoadingState, PlatformPageLoadingOverlay, PlatformRouteLoadingFallback } from '../src/components/loading'
 import { BarChart3 } from 'lucide-react'
 
 /** Exercise real production chart/KPI markup, including legacy light surfaces. */
@@ -41,6 +42,18 @@ function WorkspaceContrastSamples() {
       <div data-theme-surface="chart-empty" className="rounded-xl border bg-slate-50/60 p-4 text-sm text-slate-500">No linked projects in the current workspace scope yet.</div>
     </section>
   </>
+}
+
+function LoadingSamples() {
+  const [route, setRoute] = useState(false)
+  return <div className="space-y-5">
+    <section className="glass-panel rounded-2xl p-4"><h1 className="mb-3 text-lg font-semibold">Loading states</h1><Button onClick={()=>setRoute(true)}>Preview route loading</Button></section>
+    <WorkspaceManagementPageSkeleton />
+    <section className="glass-panel space-y-3 rounded-2xl p-4"><h2 className="font-semibold">Service loading</h2><PlatformServiceLoadingPanel title="Loading workspace directory" description="Fetching workspace records from the service."/></section>
+    <PlatformDataLoadingState title="Loading governance matrix" description="Fetching the latest governance data." compact/>
+    <PlatformPageLoadingOverlay title="Loading page..." description="Preparing Tectona module."/>
+    {route && <><PlatformRouteLoadingFallback/><Button className="fixed left-6 top-6 z-[200]" onClick={()=>setRoute(false)}>Close route preview</Button></>}
+  </div>
 }
 
 function ComponentSamples() {
@@ -110,7 +123,7 @@ createRoot(document.getElementById('root')!).render(<>
   <div className="grid gap-6 p-6" style={{ gridTemplateColumns: '11rem minmax(0,1fr) 22rem', height: 'calc(100vh - 4rem)' }}>
     <aside className="liquid-glass-enterprise-nav space-y-3 rounded-2xl p-3"><h2 className="mb-5 font-semibold">Workspace</h2>{['Overview','Workspace Directory','Governance','Members'].map((label,i)=><button key={label} data-theme-nav-item aria-current={i===0?'page':undefined} className="block w-full rounded-2xl border bg-white/55 p-3 text-left"><span className="text-sm font-semibold text-slate-900">{label}</span><span className="mt-1 block text-[11px] text-slate-500">Executive summary and health posture</span></button>)}<div data-theme-surface="nav-summary" className="rounded-xl bg-blue-50/70 p-3"><div className="text-sm text-blue-800">Workspace health</div><strong className="text-3xl text-slate-900">49%</strong></div></aside>
     <main className="min-w-0 space-y-5 overflow-y-auto">
-      <WorkspaceContrastSamples />
+      {new URLSearchParams(location.search).has('loading') ? <LoadingSamples/> : <WorkspaceContrastSamples />}
       <section className="glass-panel space-y-5 rounded-2xl p-6"><p className="text-xs uppercase tracking-[.2em] text-muted-foreground">AI Project Management</p><h1 className="text-3xl font-light">Theme components</h1><p className="text-sm text-muted-foreground">Shared buttons, forms, menus, dialogs and drawers.</p><ComponentSamples /></section>
       <section className="glass-card rounded-2xl p-5"><h2 className="mb-3 font-semibold">Delivery overview</h2><div className="grid grid-cols-3 gap-3">{['Active projects','Knowledge assets','Workflows'].map((label,i)=><div key={label} className="rounded-xl border border-border p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-2xl">{[18,81,12][i]}</p></div>)}</div></section>
     </main>

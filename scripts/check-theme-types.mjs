@@ -4,6 +4,9 @@ import path from 'node:path'
 const config = ts.readConfigFile('tsconfig.app.json', ts.sys.readFile)
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd())
 const names = [
+  'src/components/loading/PlatformLoadingBackdrop.tsx', 'src/components/loading/PlatformServiceLoadingPanel.tsx',
+  'src/components/loading/PlatformRouteLoadingFallback.tsx', 'src/components/loading/PlatformPageLoadingOverlay.tsx',
+  'src/components/loading/PlatformDataLoadingState.tsx',
   'src/lib/tectonaThemes.ts', 'src/stores/preferences-store.ts',
   'src/components/settings/ThemeSettingsPanel.tsx', 'src/components/layout/AppBackgroundVideo.tsx',
   'src/components/ui/button.tsx', 'src/components/ui/input.tsx', 'src/components/ui/textarea.tsx',
