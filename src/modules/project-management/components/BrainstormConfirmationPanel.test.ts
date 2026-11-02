@@ -95,7 +95,7 @@ describe('confirmation presentation for existing transcripts', () => {
     expect(container.querySelector('[role=alert]')?.textContent).toContain('Jawaban yang perlu dikonfirmasi belum tersedia')
     expect(container.textContent).not.toContain('Yang ingin aku konfirmasi:')
     expect(container.textContent).toContain('Jawaban belum tersedia.')
-    expect(container.querySelector('p.text-sky-800.font-semibold')?.textContent).toBe(topic)
+    expect(container.querySelector('p.text-amber-900.font-semibold')?.textContent).toBe(topic)
     expect(container.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled).toBe(true)
     await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
     expect(onSubmit).not.toHaveBeenCalled()
@@ -115,5 +115,17 @@ describe('confirmation presentation for existing transcripts', () => {
       expect(title.className).toBe(topicStyle)
       expect(body.className).toBe(answerStyle)
     }
+  })
+
+  it.each(['pending', 'confirmed'] as const)('distinguishes %s from the blue understanding summary', async (status) => {
+    await act(async () => root.render(createElement(BrainstormConfirmationPanel, {
+      text, question: 'Apakah sudah tepat?', indonesian: true, status,
+      renderText: (value: string) => createElement('p', null, value),
+    })))
+    const panel = container.querySelector('[data-brainstorm-confirmation]')!
+    expect(panel.getAttribute('data-confirmation-status')).toBe(status)
+    expect(panel.className).toContain(status === 'confirmed' ? 'bg-emerald-50' : 'bg-amber-50')
+    expect(panel.className).not.toContain('bg-sky-50')
+    expect(panel.textContent).toContain(status === 'confirmed' ? 'Sudah dikonfirmasi' : 'Belum dikonfirmasi')
   })
 })

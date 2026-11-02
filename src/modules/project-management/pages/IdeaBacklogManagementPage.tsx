@@ -110,6 +110,7 @@ import { cn } from '@/lib/utils'
 import { createIdeaDraftError } from '../lib/createIdeaDraftValidation'
 import { BrainstormConfirmationOptions } from '../components/BrainstormConfirmationOptions'
 import { BrainstormConfirmationPanel } from '../components/BrainstormConfirmationPanel'
+import { brainstormConfirmationStatus, type BrainstormConfirmationStatus } from '../lib/brainstormConfirmationStatus'
 import { BrainstormDecisionNote, BrainstormNotedAnswer, BrainstormRevisionNote, BrainstormSummaryBox } from '../components/BrainstormSummaryBox'
 import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagrams'
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
@@ -1355,12 +1356,13 @@ function activeExtendedQuestionFocus(
 
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
  *  extended question badged and coloured. The text itself is the server's, unchanged. */
-function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [], followupWhileMandatory = false }: {
+function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [], followupWhileMandatory = false, confirmationStatus = 'pending' }: {
   message: IdeaDraftBrainstormMessage; indonesian: boolean
   onConfirm?: (choice: string) => Promise<void> | void; disabled?: boolean
   diagrams?: SummaryDiagramAttachment[]
   /** The latest reply is a sub-question while a mandatory question is still open. */
   followupWhileMandatory?: boolean
+  confirmationStatus?: BrainstormConfirmationStatus
 }) {
   const hideInternalNote = (value: string) => value
     .replace(/\n*Detail tambahan tetap tersimpan dalam jawaban brainstorming\./g, '')
@@ -1409,7 +1411,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
       ) : null}
       {!hasSummary || summaryRepeatsNotedAnswer ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
       {isConfirmation ? (
-        <BrainstormConfirmationPanel text={confirmationText} question={question} indonesian={indonesian} renderText={(value) => <BrainstormNotedProse text={value} />}>
+        <BrainstormConfirmationPanel text={confirmationText} question={question} indonesian={indonesian} status={confirmationStatus} renderText={(value) => <BrainstormNotedProse text={value} />}>
           {onConfirm && message.confirmation_choices?.length ? (
             <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled || scopedConfirmationAnswerMissing(confirmationText)} onSubmit={onConfirm} />
           ) : null}
@@ -7539,6 +7541,7 @@ export function IdeaBacklogManagementPage() {
                                       ) : (
                                         <BrainstormAssistantContent
                                           message={message}
+                                          confirmationStatus={brainstormConfirmationStatus(brainstormMessages, index)}
                                           diagrams={brainstormSummaryDiagrams[index]}
                                           indonesian={isBrainstormThreadIndonesian(brainstormMessages)}
                                           onConfirm={index === brainstormMessages.length - 1 ? (choice) => handleSendBrainstormMessage(choice) : undefined}

@@ -27,7 +27,9 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
 </BrainstormConfirmationPanel><aside data-advice className="mt-3 border-l-2 border-teal-500 pl-3 text-sm leading-6"><b>Pertimbangan Tambahan</b><p>Pertimbangkan kontrol akses dan audit pada integrasi data.</p></aside>
 <BrainstormConfirmationPanel text={'**Yang ingin aku konfirmasi: Sebutkan User Bisnis terdampak dari project ini**\\n\\nJika ada yang kurang, tulis perbaikannya.'} question="Apakah rangkuman pengguna bisnis sudah lengkap?" indonesian renderText={value=><p className="text-sm leading-6">{value}</p>}>
 <BrainstormConfirmationOptions choices={['Pengguna bisnis sudah tepat','Perbaiki pengguna bisnis']} indonesian disabled onSubmit={value=>{window.sends.push(value)}}/>
-</BrainstormConfirmationPanel></main>);`
+</BrainstormConfirmationPanel>
+<BrainstormConfirmationPanel text={text} question="Apakah rangkuman tujuan proyek sudah benar dan lengkap?" indonesian status="confirmed" renderText={value=><p className="text-sm leading-6">{value}</p>}/>
+</main>);`
   const bundle = await esbuild.build({ stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, jsx: 'automatic', platform: 'browser', alias: { '@': path.resolve('src') }, define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'isolate-diagrams', setup(build) {
     build.onResolve({ filter: /\/Assistant(?:Mermaid|Chart)Block$/ }, args => ({ path: args.path, namespace: 'visual' }))
     build.onLoad({ filter: /.*/, namespace: 'visual' }, () => ({ contents: 'export const AssistantMermaidBlock=()=>null;export const AssistantChartBlock=()=>null;', loader: 'js' }))
@@ -55,6 +57,10 @@ window.sends=[];createRoot(document.getElementById('root')).render(<main classNa
       assert.ok(advice.y >= block.y + block.height)
       assert.equal(await panel.locator('input[type=radio]').count(), 2)
       assert.equal(await panels.nth(1).getByRole('button', { name: 'Kirim' }).isDisabled(), true)
+      assert.equal(await panel.getAttribute('data-confirmation-status'), 'pending')
+      assert.equal(await panels.nth(2).getAttribute('data-confirmation-status'), 'confirmed')
+      assert.ok((await panel.getAttribute('class')).includes('bg-amber-50'))
+      assert.ok((await panels.nth(2).getAttribute('class')).includes('bg-emerald-50'))
       assert.equal(await panels.nth(1).getByText('Yang ingin aku konfirmasi:', { exact: false }).count(), 0)
       assert.equal(await panels.nth(1).locator('p').filter({hasText:'Sebutkan User Bisnis terdampak dari project ini'}).first().getAttribute('class'), await panel.locator('p').filter({hasText:'Jelaskan tujuan utama dari project ini'}).first().getAttribute('class'))
       assert.equal(await page.evaluate(() => window.sends.length), 0)

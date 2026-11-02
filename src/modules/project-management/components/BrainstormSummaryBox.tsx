@@ -78,11 +78,13 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
 }
 
 /** The question being confirmed, then the answer taken from the user's own words. */
-export function BrainstormNotedAnswer({ question, answer }: { question: string; answer: string }) {
+export function BrainstormNotedAnswer({ question, answer, tone = 'sky' }: { question: string; answer: string; tone?: 'sky' | 'amber' | 'emerald' }) {
+  const topicColor = { sky: 'text-sky-800 dark:text-sky-300', amber: 'text-amber-900 dark:text-amber-200', emerald: 'text-emerald-900 dark:text-emerald-200' }[tone]
+  const ruleColor = { sky: 'border-sky-400', amber: 'border-amber-400', emerald: 'border-emerald-400' }[tone]
   return (
     <div className="my-3">
-      <p className="text-[13px] font-semibold leading-5 text-sky-800 dark:text-sky-300">{question}</p>
-      <p className="mt-1 w-fit max-w-full border-b border-sky-400 pb-1 text-[15px] leading-7 text-foreground">
+      <p className={cn('text-[13px] font-semibold leading-5', topicColor)}>{question}</p>
+      <p className={cn('mt-1 w-fit max-w-full border-b pb-1 text-[15px] leading-7 text-foreground', ruleColor)}>
         {answer}
       </p>
     </div>

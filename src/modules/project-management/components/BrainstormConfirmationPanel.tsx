@@ -1,25 +1,31 @@
 import type { ReactNode } from 'react'
-import { CircleHelp } from 'lucide-react'
+import { CircleCheck, Clock3 } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import type { BrainstormConfirmationStatus } from '../lib/brainstormConfirmationStatus'
 import { BrainstormNotedAnswer } from './BrainstormSummaryBox'
 import { scopedConfirmationAnswerMissing, splitScopedConfirmationContent } from '../lib/brainstormMarkdown'
 
-export function BrainstormConfirmationPanel({ text, question, indonesian, renderText, children }: {
+export function BrainstormConfirmationPanel({ text, question, indonesian, renderText, children, status = 'pending' }: {
   text: string
   question: string
   indonesian: boolean
   renderText: (text: string) => ReactNode
   children?: ReactNode
+  status?: BrainstormConfirmationStatus
 }) {
   const scoped = splitScopedConfirmationContent(text)
+  const confirmed = status === 'confirmed' && !scopedConfirmationAnswerMissing(text)
+  const Icon = confirmed ? CircleCheck : Clock3
   return (
-    <section data-brainstorm-confirmation className="my-3 min-w-0 rounded-lg border border-sky-200/90 bg-sky-50/50 px-4 py-3 text-foreground backdrop-blur-sm [overflow-wrap:anywhere] dark:border-sky-800 dark:bg-sky-950/25">
-      <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-sky-800 dark:text-sky-200">
-        <CircleHelp className="h-4 w-4 shrink-0" aria-hidden />
+    <section data-brainstorm-confirmation data-confirmation-status={confirmed ? 'confirmed' : 'pending'} className={cn('my-3 min-w-0 rounded-lg border px-4 py-3 text-foreground backdrop-blur-sm [overflow-wrap:anywhere]', confirmed ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/30' : 'border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30')}>
+      <h3 className={cn('mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold', confirmed ? 'text-emerald-900 dark:text-emerald-200' : 'text-amber-900 dark:text-amber-200')}>
+        <Icon className="h-4 w-4 shrink-0" aria-hidden />
         {indonesian ? 'Konfirmasi Pemahaman' : 'Confirm Understanding'}
+        <span className="ml-auto font-medium">{confirmed ? (indonesian ? 'Sudah dikonfirmasi' : 'Confirmed') : (indonesian ? 'Belum dikonfirmasi' : 'Not confirmed')}</span>
       </h3>
       {scoped ? <>
         {scoped.before ? renderText(scoped.before) : null}
-        <BrainstormNotedAnswer question={scoped.question} answer={scoped.answer || (indonesian ? 'Jawaban belum tersedia.' : 'Answer unavailable.')} />
+        <BrainstormNotedAnswer question={scoped.question} answer={scoped.answer || (indonesian ? 'Jawaban belum tersedia.' : 'Answer unavailable.')} tone={confirmed ? 'emerald' : 'amber'} />
         {scoped.after ? renderText(scoped.after) : null}
       </> : text ? renderText(text) : null}
       {scopedConfirmationAnswerMissing(text) ? <p role="alert" className="mt-3 text-sm leading-6 text-amber-800 dark:text-amber-200">
