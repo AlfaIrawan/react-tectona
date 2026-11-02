@@ -84,9 +84,9 @@ export function BrainstormNotedAnswer({ question, answer, tone = 'sky' }: { ques
   return (
     <div className="my-3">
       <p className={cn('text-[13px] font-semibold leading-5', topicColor)}>{question}</p>
-      <p className={cn('mt-1 w-fit max-w-full border-b pb-1 text-[15px] leading-7 text-foreground', ruleColor)}>
-        {answer}
-      </p>
+      <div className={cn('mt-1 w-fit max-w-full border-b pb-1 text-[15px] leading-7 text-foreground', ruleColor)}>
+        <AssistantChatMarkdown content={normalizeBrainstormMarkdown(answer)} className="text-[15px] leading-7 [&_p]:m-0 [&_strong]:!text-inherit dark:[&_strong]:!text-inherit" />
+      </div>
     </div>
   )
 }

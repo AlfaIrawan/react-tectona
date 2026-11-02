@@ -5,7 +5,7 @@ import { BrainstormConfirmationPanel } from './BrainstormConfirmationPanel'
 import { BrainstormConfirmationOptions } from './BrainstormConfirmationOptions'
 import { scopedConfirmationAnswerMissing, splitScopedConfirmation } from '../lib/brainstormMarkdown'
 
-vi.mock('@/modules/core-shell/components/AssistantChatMarkdown', () => ({ AssistantChatMarkdown: () => null }))
+vi.mock('@/modules/core-shell/components/AssistantChatMarkdown', () => ({ AssistantChatMarkdown: ({ content, className }: { content: string; className?: string }) => createElement('div', { className }, content) }))
 
 const topic = 'Jelaskan tujuan utama dari project ini'
 const answer = 'Membantu collector field menanyakan kebijakan secara aman melalui Gen AI.'
