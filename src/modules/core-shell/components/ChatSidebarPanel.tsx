@@ -8,6 +8,7 @@ import { randomUuid } from '@/lib/randomId'
 import { useIdeaDraftBrainstormPointerStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import { indexIdeaDraftSessions, isActiveIdeaDraft, ideaDraftSessionPreview } from '@/lib/chat/ideaDraftSessionIndex'
 import { listIdeaDraftSessions, linkIdeaDraftJobToIdea } from '@/lib/api/tectonaAgentRuntimeApi'
+import { workspaceScopedPath } from '@/lib/workspaceRouting'
 import {
   DndContext,
   DragOverlay,
@@ -2533,6 +2534,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             draftSessionId: entry.draft_session_id, relatedJobIds: entry.related_job_ids,
             workspaceId: entry.workspace_id, status: entry.status, ideaId: entry.idea_id,
             tags: entry.tags ?? [], workspaceName: entry.workspace_name,
+            sourceWorkspaceId: entry.source_workspace_id, sourceWorkspaceName: entry.source_workspace_name,
             sessionId: entry.correlation_id, updatedAt: new Date(entry.updated_date).getTime(),
           })))
           if (!page.has_more) break
@@ -3887,7 +3889,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       if (!saved) return
       close()
       if (saved.ideaId) { navigate(`/idea-backlog/${saved.ideaId}`); return }
-      navigate('/idea-backlog', { state: { resumeBrainstormJobId: jobId } })
+      navigate(workspaceScopedPath(tenant?.slug ?? null, '/idea-backlog', tenant?.workspaceId), { state: { resumeBrainstormJobId: jobId } })
       return
     }
     if (current?.isBlocked) return

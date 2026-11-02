@@ -15,6 +15,14 @@ beforeEach(() => {
 })
 
 describe('brainstorm recovery snapshot lifecycle', () => {
+  it('preserves origin when merging legacy server metadata and after creating the idea', () => {
+    store.getState().setPointer({ ...snapshot, ownerId: 'alice', sourceWorkspaceId: 'origin', sourceWorkspaceName: 'Original workspace' })
+    store.getState().mergePointers([{ ...snapshot, ownerId: 'alice', sourceWorkspaceId: undefined, updatedAt: 2 }])
+    store.getState().markCreated(snapshot.jobId, 'new-idea')
+    expect(store.getState().pointers[0].sourceWorkspaceId).toBe('origin')
+    expect(store.getState().pointers[0].workspaceId).toBe('workspace-alfa')
+    expect(store.getState().pointers[0].ideaId).toBe('new-idea')
+  })
   it.each(['queued', 'running', 'failed', 'completed', 'awaiting_input'])(
     'keeps the conversation when the job is %s',
     (status) => {

@@ -2267,6 +2267,11 @@ export function IdeaBacklogManagementPage() {
   const [workspaceSelectionOpen, setWorkspaceSelectionOpen] = useState(false)
   const createPolicyInFlight = useRef(false)
   const createSourceWorkspaceId = useRef<string | null>(null)
+  const createSourceWorkspaceName = useRef<string | null>(null)
+  const draftSourceContext = () => ({
+    source_workspace_id: createSourceWorkspaceId.current ?? resolveWorkspaceApiId(tenant?.workspaceId),
+    source_workspace_name: createSourceWorkspaceName.current ?? tenant?.displayName ?? null,
+  })
   const intakeRun = useRef<{ id: string; workspaceId: string } | null>(null)
   const [intakeBusy, setIntakeBusy] = useState(false)
   const [ideas, setIdeas] = useState<Idea[]>([])
@@ -4057,6 +4062,7 @@ export function IdeaBacklogManagementPage() {
     try {
       const policy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
       createSourceWorkspaceId.current = sourceWorkspaceId
+      createSourceWorkspaceName.current = tenant?.displayName ?? null
       setIdeaWorkspacePolicy(policy)
       if (!policy) { intakeRun.current = null; showCreateIdeaForm(); return }
       const choices = selectableIdeaWorkspaces(userWorkspaceOptions.options, policy)
@@ -4427,6 +4433,7 @@ export function IdeaBacklogManagementPage() {
           tags: effectiveCreateIdeaTags,
           source_text: createIdeaForm.description.trim().slice(0, 10000),
           context: {
+            ...draftSourceContext(),
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
             workspace_name: createIdeaWorkspaceOptions.find(
               (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
@@ -4545,6 +4552,7 @@ export function IdeaBacklogManagementPage() {
           title: createIdeaForm.title.trim() || 'Untitled idea',
           tags: effectiveCreateIdeaTags,
           context: {
+            ...draftSourceContext(),
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
             workspace_name: createIdeaWorkspaceOptions.find(
               (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
@@ -4801,6 +4809,7 @@ export function IdeaBacklogManagementPage() {
           title: createIdeaForm.title.trim() || 'Untitled idea',
           tags: effectiveCreateIdeaTags,
           context: {
+            ...draftSourceContext(),
             workspace_id: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
             workspace_name: createIdeaWorkspaceOptions.find(
               (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
@@ -5021,6 +5030,8 @@ export function IdeaBacklogManagementPage() {
       // Recovery snapshot survives jobs being evicted from the runtime.
       tags: effectiveCreateIdeaTags,
       workspaceId: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
+      sourceWorkspaceId: createSourceWorkspaceId.current ?? currentPointer?.sourceWorkspaceId ?? createIdeaForm.workspaceId,
+      sourceWorkspaceName: createSourceWorkspaceName.current ?? currentPointer?.sourceWorkspaceName ?? null,
       workspaceName: createIdeaWorkspaceOptions.find(
         (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
       )?.name ?? null,
@@ -5109,6 +5120,8 @@ export function IdeaBacklogManagementPage() {
         title: snapshot?.title || 'Untitled idea',
         tags: snapshot?.tags ?? [],
         context: {
+          source_workspace_id: snapshot.sourceWorkspaceId || snapshot.workspaceId || null,
+          source_workspace_name: snapshot.sourceWorkspaceName ?? snapshot.workspaceName ?? null,
           workspace_id: snapshot?.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
           workspace_name: snapshot?.workspaceName ?? null,
           user_id: currentUserId || null,
@@ -5144,7 +5157,8 @@ export function IdeaBacklogManagementPage() {
         if (status.job_id !== jobId) useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, resumed)
         else useIdeaDraftBrainstormPointerStore.getState().setPointer(resumed)
         intakeRun.current = null
-        createSourceWorkspaceId.current = null
+        createSourceWorkspaceId.current = snapshot.sourceWorkspaceId || snapshot.workspaceId || null
+        createSourceWorkspaceName.current = snapshot.sourceWorkspaceName ?? snapshot.workspaceName ?? null
         setIdeaWorkspacePolicy(null)
         setIsCreateIdeaDrawerOpen(true)
         setCreateIdeaDraftMode('ai')

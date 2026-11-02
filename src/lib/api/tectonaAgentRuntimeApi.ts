@@ -524,6 +524,8 @@ export interface GenerateIdeaDraftRequest {
   context?: {
     workspace_id?: string | null
     workspace_name?: string | null
+    source_workspace_id?: string | null
+    source_workspace_name?: string | null
     organization_name?: string | null
     user_id?: string | null
     user_name?: string | null
@@ -669,6 +671,8 @@ export interface RestoreIdeaDraftBrainstormRequest {
   context?: {
     workspace_id?: string | null
     workspace_name?: string | null
+    source_workspace_id?: string | null
+    source_workspace_name?: string | null
     organization_name?: string | null
     user_id?: string | null
     user_name?: string | null
@@ -2518,6 +2522,8 @@ export interface IdeaDraftSessionEntry {
   updated_date: string
   tags?: string[]
   workspace_name?: string | null
+  source_workspace_id?: string | null
+  source_workspace_name?: string | null
 }
 
 export async function listIdeaDraftSessions(offset = 0, workspaceId?: string): Promise<{ items: IdeaDraftSessionEntry[]; has_more: boolean }> {

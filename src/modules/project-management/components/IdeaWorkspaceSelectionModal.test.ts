@@ -33,6 +33,17 @@ async function render(description?: string, onContinue = vi.fn(), optionDescript
 }
 
 describe('workspace popup description', () => {
+  it('chooses an idea destination without navigating away from the active workspace', async () => {
+    const before = window.location.href
+    const onContinue = vi.fn()
+    const dialog = await render('', onContinue)
+    await act(async () => dialog.querySelector<HTMLInputElement>('input[value="portfolio"]')!.click())
+    expect(window.location.href).toBe(before)
+    expect(onContinue).not.toHaveBeenCalled()
+    await act(async () => Array.from(dialog.querySelectorAll('button')).find(button => button.textContent?.includes('Continue'))!.click())
+    expect(onContinue).toHaveBeenCalledWith('portfolio')
+    expect(window.location.href).toBe(before)
+  })
   it('shows each option description as plain text without changing its workspace id', async () => {
     const onContinue = vi.fn()
     const dialog = await render('General guidance', onContinue, {

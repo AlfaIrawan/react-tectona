@@ -35,6 +35,8 @@ export type IdeaDraftBrainstormPointer = {
   tags?: string[]
   workspaceId?: string | null
   workspaceName?: string | null
+  sourceWorkspaceId?: string | null
+  sourceWorkspaceName?: string | null
   sessionId?: string | null
   messages?: IdeaDraftBrainstormMessage[]
   remainingGaps?: string[]
@@ -109,9 +111,13 @@ export const useIdeaDraftBrainstormPointerStore = create<IdeaDraftBrainstormPoin
           pointers = upsert(pointers, previous && previous.updatedAt > pointer.updatedAt
             ? { ...pointer, ...previous, jobId: pointer.jobId, status: pointer.status ?? previous.status, relatedJobIds: pointer.relatedJobIds,
               messages: pointer.messages?.length ? pointer.messages : previous.messages,
-              draftSessionId: pointer.draftSessionId || previous.draftSessionId, ideaId: pointer.ideaId || previous.ideaId }
+              draftSessionId: pointer.draftSessionId || previous.draftSessionId, ideaId: pointer.ideaId || previous.ideaId,
+              sourceWorkspaceId: pointer.sourceWorkspaceId || previous.sourceWorkspaceId,
+              sourceWorkspaceName: pointer.sourceWorkspaceName || previous.sourceWorkspaceName }
             : { ...previous, ...pointer, messages: pointer.messages?.length ? pointer.messages : previous?.messages,
-              draftSessionId: pointer.draftSessionId || previous?.draftSessionId, ideaId: pointer.ideaId || previous?.ideaId })
+              draftSessionId: pointer.draftSessionId || previous?.draftSessionId, ideaId: pointer.ideaId || previous?.ideaId,
+              sourceWorkspaceId: pointer.sourceWorkspaceId || previous?.sourceWorkspaceId,
+              sourceWorkspaceName: pointer.sourceWorkspaceName || previous?.sourceWorkspaceName })
         }
         return { pointers, removedJobIds: [...removed] }
       }),
