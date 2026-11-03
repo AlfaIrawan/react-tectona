@@ -7,7 +7,7 @@ import { normalizeBrainstormMarkdown } from '../lib/brainstormMarkdown'
 import { classifyUnderstandingNotes, countUnderstandingNotes, parseUnderstandingNotes, previewUnderstandingNotes, UNDERSTANDING_PREVIEW_COUNT, understandingStartsCollapsed, type UnderstandingNote } from '../lib/understandingNotes'
 import type { ReactNode } from 'react'
 
-const NOTE_CLASS = 'text-[13px] leading-6 text-sky-950 [&_p]:m-0 [&_strong]:font-semibold dark:text-sky-50'
+const NOTE_CLASS = 'text-[13px] leading-6 text-sky-950 [&_p]:m-0 [&_strong]:font-semibold [&_strong]:!text-inherit dark:text-sky-50 dark:[&_strong]:!text-inherit'
 
 /** The "Rangkuman Pemahaman" box: numbered notes, not the Live AI Summary sections.
  *  A long note list starts collapsed to the first few. */

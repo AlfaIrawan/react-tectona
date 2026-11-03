@@ -1,7 +1,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BrainstormNotedAnswer } from './BrainstormSummaryBox'
+import { BrainstormNotedAnswer, BrainstormSummaryBox } from './BrainstormSummaryBox'
 
 vi.mock('@/modules/core-shell/components/AssistantMermaidBlock', () => ({ AssistantMermaidBlock: () => null }))
 vi.mock('@/modules/core-shell/components/AssistantChartBlock', () => ({ AssistantChartBlock: () => null }))
@@ -25,6 +25,16 @@ async function render(answer: string, tone: 'amber' | 'emerald' = 'amber') {
 }
 
 describe('confirmation answer Markdown', () => {
+  it('renders screenshot summary topics without inventing a systems heading', async () => {
+    const text = '- **Tujuan utama:** memberi jawaban kebijakan cepat\n- **Masalah utama:** pertanyaan lewat WhatsApp tidak compliant\n- **Pengguna bisnis terdampak:** Collector Field; Tim HO Collection'
+    await act(async () => root.render(createElement(BrainstormSummaryBox, { text, indonesian: true })))
+    expect(container.textContent).toContain('Masalah utama:')
+    expect(container.textContent).toContain('Pengguna bisnis terdampak:')
+    expect(container.textContent).not.toContain('Sistem dan saluran yang tercatat:')
+    expect(container.textContent).not.toContain('**')
+    expect(container.querySelectorAll('ol')).toHaveLength(1)
+  })
+
   it.each(['amber', 'emerald'] as const)('renders stored emphasis, not raw delimiters, in %s confirmations', async tone => {
     const answer = 'Pengguna bisnis adalah **Collector Field**, serta **Tim Collection** melalui WhatsApp.'
     await render(answer, tone)
