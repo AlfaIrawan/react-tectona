@@ -14,6 +14,7 @@ async function main() {
   assert.ok(source.includes('data-mobile={isMobileLayout || undefined}'))
   assert.ok(source.includes('{!isMobileLayout && <div className="flex min-h-0">'))
   assert.ok(source.includes('{isMobileLayout && <div className="shrink-0">'))
+  assert.ok(source.includes('<BrainstormSessionHeading title={createIdeaForm.title} workspaceId={createIdeaForm.workspaceId} workspaceName={brainstormWorkspaceName} />'))
   const fixture = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{BrainstormReadinessFrame}from'./src/modules/project-management/components/BrainstormReadinessFrame';import{useMobileLayout}from'./src/hooks/useMobileLayout';
   function App(){const mobile=useMobileLayout(),[collapsed,setCollapsed]=useState(false),[sent,setSent]=useState(false);return <div role="dialog" className="brainstorm-dialog fixed inset-0 flex flex-col bg-background" data-mobile={mobile||undefined}><header className="flex h-14 shrink-0 items-center justify-between border-b px-3"><div><h1 className="text-sm font-semibold">Tectona Assistant</h1><p className="text-xs text-muted-foreground">Pembuatan Aplikasi Helpdesk</p></div><button aria-label="Close chat">X</button></header><div className="relative flex min-h-0 flex-1 overflow-hidden"><div className="flex min-h-0 min-w-0 flex-1 flex-col"><BrainstormReadinessFrame inline={mobile} collapsed={collapsed} onToggleCollapsed={()=>setCollapsed(!collapsed)} confidence={25}><p className="text-xs">AI confidence and AS-IS evidence progress before draft generation.</p><div className="shrink-0 border-b pb-3"><strong>25% confidence</strong></div><div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden"><h2>Evidence progress</h2><div data-readiness-scroll className="min-h-0 flex-1 overflow-y-auto">{Array.from({length:10},(_,i)=><p key={i} className="py-3 text-sm">{i+1}. Jelaskan alur proses yang berjalan saat ini dan sistem yang digunakan.</p>)}</div></div><div data-readiness-initiative className="shrink-0"><h2>Initiative direction</h2><p className="text-xs">Productivity 100%</p></div></BrainstormReadinessFrame><div className="brainstorm-conversation min-h-0 flex-1 overflow-y-auto" role="region" aria-label="Brainstorm conversation"><div className="mx-auto flex max-w-4xl flex-col p-6">{Array.from({length:8},(_,i)=><p key={i} className="py-3 text-sm leading-6">{i%2?'Kami ingin mengurangi waktu respons tiket dan memusatkan permintaan bantuan.':'Apa tantangan utama pada proses helpdesk saat ini?'}</p>)}{sent&&<p>Pesan terkirim</p>}</div></div><form className="brainstorm-composer shrink-0 border-t bg-background p-3" onSubmit={e=>{e.preventDefault();setSent(true)}}><div><div className="rounded-2xl border p-2"><textarea aria-label="Message" placeholder="Ask Tectona Assistant" className="block w-full resize-none" rows={1}/><div className="flex justify-between"><button type="button" aria-label="Upload a diagram image">+</button><button aria-label="Send message">Send</button></div></div></div></form></div></div></div>};createRoot(document.getElementById('root')).render(<App/>);`
   const layoutFixture = fixture.replace('<BrainstormReadinessFrame inline=', '<div className={mobile?"shrink-0":"absolute inset-y-0 left-0 flex"}><BrainstormReadinessFrame inline=').replace('</BrainstormReadinessFrame>', '</BrainstormReadinessFrame></div>')
@@ -25,9 +26,12 @@ async function main() {
     .replace('function App(){', "import{BrainstormLiveSummaryPanel}from'./src/modules/project-management/components/BrainstormLiveSummaryPanel';function App(){const[activePanel,setActivePanel]=useState(null),[job,setJob]=useState(null);window.publishSummary=()=>setJob({job_id:'test',revision:'r1',live_summary:{status:'ready',source_revision:'r1',sections:[{key:'objective',title:'Tujuan',body:'Membangun aplikasi helpdesk untuk meningkatkan layanan dukungan pengguna.',evidence_ids:[]}]}});")
     .replace('<BrainstormReadinessFrame inline=', '<BrainstormReadinessFrame inlineExpanded={activePanel==="readiness"} onToggleInline={()=>setActivePanel(value=>value==="readiness"?null:"readiness")} inline=')
     .replace('</BrainstormReadinessFrame></div>', '</BrainstormReadinessFrame></div>{mobile&&<BrainstormLiveSummaryPanel job={job} busy={false} mobileExpanded={activePanel==="summary"} onToggleMobile={()=>setActivePanel(value=>value==="summary"?null:"summary")}/>}')
-  const bundle = await esbuild.build({stdin:{contents:summaryFixture,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,jsx:'automatic',platform:'browser',alias:{'@':path.resolve('src')},define:{'process.env.NODE_ENV':'"production"'},plugins:[{name:'isolate-diagrams',setup(build){build.onResolve({filter:/\/Assistant(?:Mermaid|Chart)Block$/},args=>({path:args.path,namespace:'visual'}));build.onLoad({filter:/.*/,namespace:'visual'},()=>({contents:'export const AssistantMermaidBlock=()=>null;export const AssistantChartBlock=()=>null;',loader:'js'}))}}]})
+  const workspaceFixture = summaryFixture
+    .replace('function App(){', "import{BrainstormSessionHeading}from'./src/modules/project-management/components/BrainstormSessionHeading';function App(){const[workspaceName,setWorkspaceName]=useState('IT Business Partner WS');window.renameWorkspace=setWorkspaceName;")
+    .replace('<header className="flex h-14 shrink-0 items-center justify-between border-b px-3"><div><h1 className="text-sm font-semibold">Tectona Assistant</h1><p className="text-xs text-muted-foreground">Pembuatan Aplikasi Helpdesk</p></div><button aria-label="Close chat">X</button></header>', '<header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b px-3 py-2"><div className="flex min-w-0 flex-1 items-center gap-1"><button className="h-9 w-9 shrink-0" aria-label="Save and close brainstorm">Back</button><BrainstormSessionHeading title="Pembuatan Aplikasi Helpdesk untuk Dukungan Pengguna" workspaceId="target" workspaceName={workspaceName}/></div><button className="h-9 w-9 shrink-0" aria-label="Close chat">X</button></header>')
+  const bundle = await esbuild.build({stdin:{contents:workspaceFixture,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,jsx:'automatic',platform:'browser',alias:{'@':path.resolve('src')},define:{'process.env.NODE_ENV':'"production"'},plugins:[{name:'isolate-diagrams',setup(build){build.onResolve({filter:/\/Assistant(?:Mermaid|Chart)Block$/},args=>({path:args.path,namespace:'visual'}));build.onLoad({filter:/.*/,namespace:'visual'},()=>({contents:'export const AssistantMermaidBlock=()=>null;export const AssistantChartBlock=()=>null;',loader:'js'}))}}]})
   const config = (await import(pathToFileURL(path.resolve('tailwind.config.js')))).default
-  const css = await postcss([tailwind({...config,content:[...config.content,{raw:summaryFixture,extension:'tsx'}]})]).process(await fs.readFile('src/index.css','utf8'),{from:path.resolve('src/index.css')})
+  const css = await postcss([tailwind({...config,content:[...config.content,{raw:workspaceFixture,extension:'tsx'}]})]).process(await fs.readFile('src/index.css','utf8'),{from:path.resolve('src/index.css')})
   const server = http.createServer((req,res)=>{res.setHeader('Content-Type',(req.url==='/app.js'?'text/javascript':req.url==='/style.css'?'text/css':'text/html')+'; charset=utf-8');res.end(req.url==='/app.js'?bundle.outputFiles[0].text:req.url==='/style.css'?css.css:'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>')})
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
   let browser
@@ -39,6 +43,23 @@ async function main() {
       const errors=[];page.on('pageerror',e=>errors.push(e.message))
       await page.goto('http://127.0.0.1:'+server.address().port)
       await page.getByRole('heading',{name:'Tectona Assistant'}).waitFor({timeout:10000}).catch(error=>{throw new Error(errors.join('; ') || error.message)})
+      const workspace = page.locator('[data-brainstorm-workspace]')
+      assert.equal(await workspace.textContent(),'IT Business Partner WS')
+      const checkHeader = async () => {
+        const bounds = await workspace.boundingBox(), close = await page.getByRole('button',{name:'Close chat',exact:true}).boundingBox(), header = await page.locator('.brainstorm-dialog > header').boundingBox()
+        assert.ok(bounds.width > 0 && bounds.x + bounds.width <= close.x, 'Workspace label never overlaps close')
+        assert.ok(bounds.y + bounds.height <= header.y + header.height, 'Workspace fits inside header')
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Header never widens the viewport')
+      }
+      await checkHeader()
+      await page.screenshot({path:path.join(output,'workspace-'+width+'-'+height+'.png')})
+      const longName = 'IT Business Partner Workspace untuk Transformasi dan Pengembangan Layanan Collection Nasional'
+      await page.evaluate(name=>window.renameWorkspace(name),longName)
+      await page.waitForFunction(name=>document.querySelector('[data-brainstorm-workspace]').textContent===name,longName)
+      await checkHeader()
+      assert.equal(await workspace.locator('..').getAttribute('title'),'Workspace tujuan: '+longName)
+      await page.screenshot({path:path.join(output,'workspace-long-'+width+'-'+height+'.png')})
+      await page.evaluate(()=>window.renameWorkspace('IT Business Partner WS'))
       if(width===1440){assert.equal(await page.locator('[data-readiness-floating]').count(),1);await page.getByRole('button',{name:'Collapse readiness panel'}).click();await page.getByRole('button',{name:'Expand readiness panel'}).waitFor();await page.close();continue}
       const summary = page.locator('.brainstorm-readiness-inline > button')
       assert.equal(await summary.getAttribute('aria-expanded'),'false')
@@ -86,7 +107,7 @@ async function main() {
       assert.deepEqual(errors,[])
       await page.close()
     }
-    console.log('PASS mobile 320/390/430, short viewport, touch tablet, desktop collapse; readiness scrolling, composer, message submit. Screenshots: '+output)
+    console.log('PASS mobile 320/390/430, short viewport, touch tablet, desktop collapse; selected workspace and long names, readiness scrolling, composer, message submit. Screenshots: '+output)
   } finally {await browser?.close();await new Promise(resolve=>server.close(resolve))}
 }
 main().catch(error=>{console.error(error);process.exitCode=1})

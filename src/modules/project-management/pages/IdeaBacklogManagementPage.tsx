@@ -115,6 +115,7 @@ import { BrainstormSummaryDiagrams } from '../components/BrainstormSummaryDiagra
 import { buildSummaryDiagramAttachments, type SummaryDiagramAttachment } from '../lib/brainstormSummaryDiagrams'
 import { BrainstormLiveSummaryPanel } from '../components/BrainstormLiveSummaryPanel'
 import { BrainstormReadinessFrame } from '../components/BrainstormReadinessFrame'
+import { BrainstormSessionHeading, resolveBrainstormWorkspaceName } from '../components/BrainstormSessionHeading'
 import { readBrainstormSessionConflict } from '../lib/brainstormSessionConflict'
 import { resizeBrainstormComposer } from '../lib/resizeBrainstormComposer'
 import { closeBrainstorm } from '../lib/closeBrainstorm'
@@ -2469,6 +2470,15 @@ export function IdeaBacklogManagementPage() {
   const location = useLocation()
   const currentSession = getSession()
   const currentUserId = currentSession?.user.id.trim() ?? ''
+  const savedBrainstormWorkspaceName = useIdeaDraftBrainstormPointerStore(state => state.pointers.find(pointer =>
+    pointer.jobId === ideaDraftJob?.job_id && pointer.ownerId === currentUserId
+    && pointer.workspaceId === createIdeaForm.workspaceId,
+  )?.workspaceName)
+  const brainstormWorkspaceName = resolveBrainstormWorkspaceName(
+    createIdeaForm.workspaceId,
+    [...createIdeaWorkspaceOptions, ...userWorkspaceOptions.options.map(option => ({ id: option.workspaceId, name: option.workspaceName }))],
+    savedBrainstormWorkspaceName,
+  )
   const currentUserDisplayName =
     currentSession?.user.name.trim()
     || currentSession?.user.email.trim()
@@ -5023,9 +5033,7 @@ export function IdeaBacklogManagementPage() {
       workspaceId: createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID,
       sourceWorkspaceId: createSourceWorkspaceId.current ?? currentPointer?.sourceWorkspaceId ?? createIdeaForm.workspaceId,
       sourceWorkspaceName: createSourceWorkspaceName.current ?? currentPointer?.sourceWorkspaceName ?? null,
-      workspaceName: createIdeaWorkspaceOptions.find(
-        (option) => option.id === (createIdeaForm.workspaceId || DEFAULT_DRAFT_WORKSPACE_ID),
-      )?.name ?? null,
+      workspaceName: brainstormWorkspaceName,
       sessionId: ideaDraftJob.correlation_id || null,
       messages: brainstormMessages.map(({ sentAt: _sentAt, imagePreview: _imagePreview, ...message }) => message),
       remainingGaps: brainstormRemainingGaps,
@@ -7341,8 +7349,8 @@ export function IdeaBacklogManagementPage() {
                       className="brainstorm-dialog fixed inset-0 z-[1450] flex flex-col bg-background"
                       data-mobile={isMobileLayout || undefined}
                     >
-                      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3 sm:px-4">
-                        <div className="flex min-w-0 items-center gap-1">
+                      <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3 py-2 sm:px-4">
+                        <div className="flex min-w-0 flex-1 items-center gap-1">
                           <Button
                             type="button"
                             variant="ghost"
@@ -7353,14 +7361,7 @@ export function IdeaBacklogManagementPage() {
                           >
                             <ArrowLeft className="h-4 w-4" />
                           </Button>
-                          <div className="min-w-0">
-                            <h3 id="idea-evidence-dialog-title" className="truncate text-sm font-semibold text-foreground">
-                              Tectona Assistant
-                            </h3>
-                            <p className="truncate text-[11px] text-muted-foreground">
-                              {createIdeaForm.title.trim() || 'Brainstorm AS-IS context'}
-                            </p>
-                          </div>
+                          <BrainstormSessionHeading title={createIdeaForm.title} workspaceId={createIdeaForm.workspaceId} workspaceName={brainstormWorkspaceName} />
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           {(brainstormReady || brainstormOfferGenerateAnyway) ? (
