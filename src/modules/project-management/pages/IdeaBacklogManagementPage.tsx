@@ -7098,7 +7098,7 @@ export function IdeaBacklogManagementPage() {
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 {diagram.label}
                               </p>
-                              <AssistantMermaidBlock source={diagram.source} />
+                              <AssistantMermaidBlock source={diagram.source} notation="bpmn" />
                             </div>
                           ))}
                         </div>
