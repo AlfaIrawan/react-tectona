@@ -9,11 +9,11 @@ import { MobileIdeaList } from '../components/MobileIdeaList'
 import { MobileIdeaFolders } from '../components/MobileIdeaFolders'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import {
-  belongsToActiveWorkspaceScope,
   readActiveWorkspaceScope,
   resolveWorkspaceApiId,
 } from '@/lib/tenantWorkspaceScope'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
+import { isIdeaInFolder, isIdeaVisibleInScope } from '../lib/ideaVisibility'
 import { useIdeaDraftBrainstormPointerStore, useIdeaDraftSaveStatusStore } from '@/stores/idea-draft-brainstorm-pointer-store'
 import {
   GripVertical,
@@ -2879,8 +2879,9 @@ export function IdeaBacklogManagementPage() {
 
   const ideasInCurrentFolder = useMemo(() => {
     const normalizedFolderId = coerceFolderId(currentFolderId)
-    return ideas.filter((idea) => coerceFolderId(idea.folderId) === normalizedFolderId)
-  }, [ideas, currentFolderId])
+    const scope = readActiveWorkspaceScope()
+    return ideas.filter((idea) => isIdeaInFolder(idea, normalizedFolderId, scope))
+  }, [ideas, currentFolderId, tenant?.workspaceId])
 
   const ideaCountByFolderId = useMemo(() => {
     const ideaCountByFolder = new Map<string, number>()
@@ -3389,6 +3390,7 @@ export function IdeaBacklogManagementPage() {
     const listParams: Parameters<typeof fetchAllIdeas>[0] = {}
     if (workspaceApiId) {
       listParams.workspace_id = workspaceApiId
+      listParams.include_mine = true
     }
 
     Promise.all([
@@ -3411,12 +3413,12 @@ export function IdeaBacklogManagementPage() {
         if (Object.keys(identityNames).length > 0) {
           setIdentityUserNameById(identityNames)
         }
-        // Always enforce active workspace scope client-side (covers "All workspaces"
-        // + accessible-ID filtering, and legacy rows without workspace_id).
+        // Preserve workspace scoping for other users, and retain the current user's
+        // submissions even when governance routes them to another workspace.
         const scope = readActiveWorkspaceScope()
         const mapped = ideaItems
+          .filter((api) => isIdeaVisibleInScope(api, scope, currentUserId))
           .map((api) => fromApiIdea(api, namesByProjectId))
-          .filter((idea) => belongsToActiveWorkspaceScope(idea.workspace, scope))
         setIdeas(mapped)
         if (mapped.length > 0) {
           setSelectedIdeaId(mapped[0].id)

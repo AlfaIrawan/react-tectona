@@ -239,6 +239,7 @@ export interface IdeaApi {
   card_accent_color?: string | null
   tags: string[]
   owner_id?: string | null
+  created_by?: string | null
   assignee_id?: string | null
   folder_id?: string | null
   status_code: BackendIdeaStatus
@@ -726,6 +727,7 @@ export async function getIdeaById(ideaId: string): Promise<IdeaApi> {
 export async function listIdeas(params?: {
   status?: BackendIdeaStatus
   workspace_id?: string
+  include_mine?: boolean
   project_id?: string
   folder_id?: string | null
   q?: string
@@ -736,6 +738,7 @@ export async function listIdeas(params?: {
   const qs = new URLSearchParams()
   if (params?.status) qs.set('status', params.status)
   if (params?.workspace_id) qs.set('workspace_id', params.workspace_id)
+  if (params?.include_mine) qs.set('include_mine', 'true')
   if (params?.project_id) qs.set('project_id', params.project_id)
   if (params?.folder_id !== undefined) {
     qs.set('folder_id', params.folder_id === null ? 'null' : params.folder_id)
