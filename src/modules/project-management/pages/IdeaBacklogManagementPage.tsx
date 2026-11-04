@@ -1360,7 +1360,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
   const summary = hideInternalNote(message.summary ?? '')
   const hasSummary = Boolean(summary)
   const recordedKind = brainstormQuestionKind(message)
-  const { rest, question, before, after, text: confirmationText, summaryRepeatsNotedAnswer, isConfirmation } = brainstormConfirmationContent(
+  const { rest, question, before, after, text: confirmationText, summaryRepeatsNotedAnswer, isConfirmation, decisionText, decisionLabel, revisionInConfirmation } = brainstormConfirmationContent(
     { ...message, text, summary }, Boolean(recordedKind || followupWhileMandatory || message.question_kind === 'mandatory' || message.question_text),
   )
   // A parenthetical example used to leave question_kind empty, so the badge and amber text
@@ -1379,7 +1379,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
           <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS}>
             <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} />
           </BrainstormSummaryBox>
-          {message.revision_text ? <BrainstormRevisionNote text={message.revision_text} indonesian={indonesian} /> : null}
+          {message.revision_text && !revisionInConfirmation ? <BrainstormRevisionNote text={message.revision_text} indonesian={indonesian} /> : null}
           {after && !isConfirmation ? <BrainstormNotedProse text={after} /> : null}
         </>
       ) : rest && !isConfirmation ? (
@@ -1387,9 +1387,9 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
       ) : null}
       {!hasSummary || summaryRepeatsNotedAnswer ? <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} /> : null}
       {isConfirmation ? (
-        <BrainstormConfirmationPanel text={confirmationText} question={question} decisionText={message.decision_text} decisionLabel={message.decision_label} indonesian={indonesian} status={confirmationStatus} renderText={(value) => <BrainstormNotedProse text={value} />}>
+        <BrainstormConfirmationPanel text={confirmationText} question={question} decisionText={decisionText} decisionLabel={decisionLabel} indonesian={indonesian} status={confirmationStatus} renderText={(value) => <BrainstormNotedProse text={value} />}>
           {onConfirm && message.confirmation_choices?.length ? (
-            <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled || brainstormConfirmationAnswerMissing(confirmationText, message.decision_text)} onSubmit={onConfirm} />
+            <BrainstormConfirmationOptions choices={message.confirmation_choices} explanations={message.confirmation_explanations} actions={message.confirmation_actions?.length ? message.confirmation_actions : undefined} indonesian={indonesian} disabled={disabled || brainstormConfirmationAnswerMissing(confirmationText, decisionText)} onSubmit={onConfirm} />
           ) : null}
         </BrainstormConfirmationPanel>
       ) : null}

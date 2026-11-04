@@ -23,5 +23,14 @@ export function brainstormConfirmationContent(message: IdeaDraftBrainstormMessag
   const isConfirmation = confirmationKind
     && Boolean(question || message.decision_text?.trim() || message.confirmation_choices?.length
       || /(?:^|\n)(?:\*\*)?(?:Yang ingin aku konfirmasi|Please confirm):/i.test(text))
-  return { rest, question, before, after, text, summaryRepeatsNotedAnswer, isConfirmation }
+  // Stored correction previews keep the proposed answer in revision_text, not
+  // in the recap or question. Bind it only to its own revision confirmation.
+  const revisionInConfirmation = isConfirmation && !message.decision_text?.trim()
+    && Boolean(message.revision_text?.trim())
+    && /^(?:Apakah revisi ini sudah sesuai\?|Is this revision right\?)$/i.test(question.trim())
+  const decisionText = revisionInConfirmation ? message.revision_text : message.decision_text
+  const decisionLabel = revisionInConfirmation
+    ? (/^Apakah/i.test(question) ? 'Revisi yang perlu dikonfirmasi' : 'Revision to confirm')
+    : message.decision_label
+  return { rest, question, before, after, text, summaryRepeatsNotedAnswer, isConfirmation, decisionText, decisionLabel, revisionInConfirmation }
 }

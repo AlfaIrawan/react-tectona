@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IdeaDraftBrainstormMessage as Message } from '@/lib/api/tectonaAgentRuntimeApi'
-import { brainstormConfirmationContent } from './brainstormConfirmationContent'
+import { brainstormConfirmationAnswerMissing, brainstormConfirmationContent } from './brainstormConfirmationContent'
 
 const summary = 'Collector Field menanyakan kebijakan kepada Tim HO Collection.'
 const phase: Message = {
@@ -11,6 +11,40 @@ const phase: Message = {
 }
 
 describe('phase confirmation content in stored and new messages', () => {
+  it.each(['Apakah revisi ini sudah sesuai?', 'Is this revision right?'])('uses the stored revision answer for %s without changing the transcript', (question) => {
+    const message: Message = Object.freeze({ role: 'assistant', question_kind: 'confirm', summary,
+      text: `${summary}\n\n${question}`, question_text: question,
+      revision_text: 'Gen AI terintegrasi di DigiLearn untuk pencarian kebijakan.',
+      confirmation_choices: ['Penggantian ini sudah benar', 'Masih ada yang keliru'],
+    })
+    const before = JSON.stringify(message)
+    const content = brainstormConfirmationContent(message)
+    expect(content).toMatchObject({ isConfirmation: true, revisionInConfirmation: true, text: '', decisionText: message.revision_text })
+    expect(brainstormConfirmationAnswerMissing(content.text, content.decisionText)).toBe(false)
+    expect(JSON.stringify(message)).toBe(before)
+  })
+
+  it('does not use an unrelated revision to unlock an empty phase confirmation', () => {
+    const content = brainstormConfirmationContent({ ...phase, decision_text: null, revision_text: 'Old goal revision.' })
+    expect(content.revisionInConfirmation).toBe(false)
+    expect(brainstormConfirmationAnswerMissing(content.text, content.decisionText)).toBe(true)
+  })
+
+  it('retains phase content when a message also carries a revision note', () => {
+    const content = brainstormConfirmationContent({ ...phase, revision_text: 'Old goal revision.' })
+    expect(content.decisionText).toBe(phase.decision_text)
+    expect(content.revisionInConfirmation).toBe(false)
+  })
+
+  it('keeps a revision with no answer blocked rather than approving the old recap', () => {
+    const question = 'Apakah revisi ini sudah sesuai?'
+    const content = brainstormConfirmationContent({ role: 'assistant', question_kind: 'confirm', summary,
+      text: `${summary}\n\n${question}`, question_text: question, revision_text: '  ',
+    })
+    expect(content.revisionInConfirmation).toBe(false)
+    expect(brainstormConfirmationAnswerMissing(content.text, content.decisionText)).toBe(true)
+  })
+
   it('keeps a phase decision as a real confirmation even though its text is only the question', () => {
     const before = JSON.stringify(phase)
     expect(brainstormConfirmationContent(phase)).toMatchObject({ isConfirmation: true, text: '', question: phase.question_text })

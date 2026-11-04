@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrainstormConfirmationPanel } from './BrainstormConfirmationPanel'
 import { BrainstormConfirmationOptions } from './BrainstormConfirmationOptions'
 import { scopedConfirmationAnswerMissing, splitScopedConfirmation } from '../lib/brainstormMarkdown'
+import { brainstormConfirmationAnswerMissing, brainstormConfirmationContent } from '../lib/brainstormConfirmationContent'
 
 vi.mock('@/modules/core-shell/components/AssistantChatMarkdown', () => ({ AssistantChatMarkdown: ({ content, className }: { content: string; className?: string }) => createElement('div', { className }, content) }))
 
@@ -37,6 +38,47 @@ async function render(onSubmit = vi.fn()) {
 }
 
 describe('confirmation presentation for existing transcripts', () => {
+  it.each(['confirm', 'adjust', 'busy'] as const)('renders a stored revision and handles the %s action', async (action) => {
+    const summary = 'Membantu Collector Field mendapatkan jawaban kebijakan.'
+    const revision = 'Gen AI terintegrasi dalam DigiLearn untuk mencari kebijakan dan merangkum jawaban.'
+    const question = 'Apakah revisi ini sudah sesuai?'
+    const content = brainstormConfirmationContent({ role: 'assistant', question_kind: 'confirm',
+      text: `${summary}\n\n${question}`, summary, revision_text: revision, question_text: question,
+      confirmation_choices: ['Penggantian ini sudah benar', 'Masih ada yang keliru'],
+    })
+    const onSubmit = vi.fn()
+    await act(async () => root.render(createElement(BrainstormConfirmationPanel, {
+      text: content.text, question: content.question, decisionText: content.decisionText, decisionLabel: content.decisionLabel,
+      indonesian: true, renderText: value => value,
+      children: createElement(BrainstormConfirmationOptions, {
+        choices: ['Penggantian ini sudah benar', 'Masih ada yang keliru'], actions: ['confirm', 'adjust'],
+        indonesian: true, onSubmit, disabled: action === 'busy' || brainstormConfirmationAnswerMissing(content.text, content.decisionText),
+      }),
+    })))
+    const panel = container.querySelector('[data-brainstorm-confirmation]')!
+    expect(panel.textContent!.split(revision)).toHaveLength(2)
+    expect(panel.textContent!.indexOf(revision)).toBeLessThan(panel.textContent!.indexOf(question))
+    expect(panel.querySelector('[role=alert]')).toBeNull()
+    const radio = panel.querySelectorAll<HTMLInputElement>('input[type=radio]')[action === 'adjust' ? 1 : 0]
+    expect(radio.matches(':disabled')).toBe(action === 'busy')
+    if (action === 'busy') return
+    await act(async () => radio.click())
+    expect(radio.checked).toBe(true)
+    if (action === 'adjust') {
+      const input = panel.querySelector('textarea')!
+      expect(input).toBeTruthy()
+      expect(panel.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled).toBe(true)
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Belum ada integrasi Ad1ForFlow pada fase pertama.')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    expect(panel.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled).toBe(false)
+    await act(async () => panel.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(onSubmit).toHaveBeenCalledOnce()
+    expect(onSubmit).toHaveBeenCalledWith(action === 'confirm' ? 'Penggantian ini sudah benar' : 'Masih ada yang keliru: Belum ada integrasi Ad1ForFlow pada fase pertama.')
+  })
+
   it('groups the stored topic, answer, question and unchanged actions', async () => {
     const onSubmit = vi.fn()
     await render(onSubmit)
