@@ -263,6 +263,7 @@ import {
   upsertPersistentIdeaC4Architecture,
   getPersistentIdeaProcessDiagram,
   upsertPersistentIdeaProcessDiagram,
+  syncIdeaProcessDiagramDocuments,
   submitDiagramArchitectureReview,
   decideDiagramArchitectureReview,
   type ScoreDimensionApi,
@@ -5187,6 +5188,17 @@ export function IdeaDetailPage() {
   }
   const [processDetailsByKey, setProcessDetailsByKey] = useState<Record<string, ProcessDetailState>>({})
   const [brainstormCanvasByKey, setBrainstormCanvasByKey] = useState<Record<string, C4CanvasGraph>>({})
+  const [processDocumentSync, setProcessDocumentSync] = useState<Record<string, string>>({})
+  const processSaveQueue = useRef<Promise<void>>(Promise.resolve())
+  const processSaveRevision = useRef<Record<string, number>>({})
+  const processSaveFingerprint = useRef<Record<string, string>>({})
+  const processSaveIdeaId = useRef(idea.id)
+  processSaveIdeaId.current = idea.id
+  useEffect(() => {
+    processSaveRevision.current = {}
+    processSaveFingerprint.current = {}
+    setProcessDocumentSync({})
+  }, [idea.id])
   const bpmnHighAnalysisRef = useRef(bpmnHighAnalysis)
   const processDetailsByKeyRef = useRef(processDetailsByKey)
   bpmnHighAnalysisRef.current = bpmnHighAnalysis
@@ -6548,16 +6560,34 @@ export function IdeaDetailPage() {
         return
       }
       if (processKey.startsWith('brainstorm-')) {
+        const fingerprint = JSON.stringify(graph)
+        if (processSaveFingerprint.current[processKey] === fingerprint) return
+        processSaveFingerprint.current[processKey] = fingerprint
+        const revision = (processSaveRevision.current[processKey] ?? 0) + 1
+        processSaveRevision.current[processKey] = revision
         const next = applyCanvas({
           ...emptyRuntimeProcessDiagramAnalysis(),
           status: 'ok',
           bpmnXml: graph.source || '',
         })
         setBrainstormCanvasByKey((current) => ({ ...current, [processKey]: next.canvasGraph ?? graph }))
-        void upsertPersistentIdeaProcessDiagram(idea.id, processKey, {
-          ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'),
-          version: idea.version,
-        }).catch(() => undefined)
+        setProcessDocumentSync((current) => ({ ...current, [processKey]: 'pending' }))
+        processSaveQueue.current = processSaveQueue.current.catch(() => undefined).then(async () => {
+          if (processSaveIdeaId.current !== idea.id || processSaveRevision.current[processKey] !== revision) return
+          try {
+            const saved = await upsertPersistentIdeaProcessDiagram(idea.id, processKey, {
+              ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'), version: idea.version,
+            })
+            if (processSaveIdeaId.current !== idea.id || processSaveRevision.current[processKey] !== revision) return
+            const sync = saved.process_json.document_sync as { status?: string } | undefined
+            setProcessDocumentSync((current) => ({ ...current, [processKey]: sync?.status === 'synced' ? 'synced' : 'failed' }))
+            setIdeaDocsReloadKey((key) => key + 1)
+          } catch {
+            if (processSaveIdeaId.current !== idea.id || processSaveRevision.current[processKey] !== revision) return
+            processSaveFingerprint.current[processKey] = ''
+            setProcessDocumentSync((current) => ({ ...current, [processKey]: 'save_failed' }))
+          }
+        })
         return
       }
       const current = processDetailsByKeyRef.current[processKey]
@@ -7042,6 +7072,10 @@ export function IdeaDetailPage() {
         try {
           const persistent = await getPersistentIdeaProcessDiagram(idea.id, key)
           const graph = persistent ? runtimeProcessDiagramFromPersistent(persistent).canvasGraph : undefined
+          const sync = persistent?.process_json.document_sync as { status?: string } | undefined
+          if (!cancelled && sync?.status) setProcessDocumentSync((current) => ({
+            ...current, [key]: sync.status === 'pending' ? 'failed' : sync.status!,
+          }))
           return [key, graph] as const
         } catch {
           return [key, undefined] as const
@@ -14311,6 +14345,34 @@ export function IdeaDetailPage() {
                   const processKey = brainstormProcessPersistKey(diagram.label, index)
                   const savedGraph = brainstormCanvasByKey[processKey]
                   return (
+                  <div key={processKey} className="order-6 min-w-0 space-y-2">
+                  {processDocumentSync[processKey] ? (
+                    <div role="status" className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
+                      <span className={['failed', 'save_failed'].includes(processDocumentSync[processKey]) ? 'text-amber-700' : 'text-muted-foreground'}>
+                        {processDocumentSync[processKey] === 'pending' ? 'Menyimpan diagram dan memperbarui dokumen...'
+                          : processDocumentSync[processKey] === 'synced' ? 'Diagram dan dokumen tersinkronisasi'
+                            : processDocumentSync[processKey] === 'save_failed' ? 'Diagram belum berhasil disimpan. Dokumen belum diperbarui.'
+                              : 'Diagram tersimpan, tetapi dokumen belum tersinkronisasi.'}
+                      </span>
+                      {processDocumentSync[processKey] !== 'pending' && processDocumentSync[processKey] !== 'synced' ? (
+                        <button type="button" className="inline-flex items-center gap-1 text-primary underline" onClick={() => {
+                          if (processDocumentSync[processKey] === 'save_failed' && savedGraph) {
+                            persistBpmnCanvas(processKey, savedGraph)
+                            return
+                          }
+                          setProcessDocumentSync((current) => ({ ...current, [processKey]: 'pending' }))
+                          void syncIdeaProcessDiagramDocuments(idea.id, processKey).then((saved) => {
+                            if (processSaveIdeaId.current !== idea.id) return
+                            const sync = saved.process_json.document_sync as { status?: string } | undefined
+                            setProcessDocumentSync((current) => ({ ...current, [processKey]: sync?.status === 'synced' ? 'synced' : 'failed' }))
+                            setIdeaDocsReloadKey((key) => key + 1)
+                          }).catch(() => {
+                            if (processSaveIdeaId.current === idea.id) setProcessDocumentSync((current) => ({ ...current, [processKey]: 'failed' }))
+                          })
+                        }}><RefreshCcw className="h-3.5 w-3.5" aria-hidden />Coba lagi</button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <DiagramGalleryCard
                     key={processKey}
                     ideaId={idea.id}
@@ -14332,6 +14394,7 @@ export function IdeaDetailPage() {
                     onOpenStudio={setDiagramStudio}
                     className="order-6"
                   />
+                  </div>
                   )
                 })
               ) : showBpmnDiagrams && brainstormProcessDiagrams.length === 0 ? (
@@ -14464,12 +14527,21 @@ export function IdeaDetailPage() {
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-3 lg:px-5 lg:pb-4 lg:pt-3">
                   <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         {(() => {
                           const StudioIcon = diagramStudio.icon
                           return <StudioIcon className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                         })()}
                         <h2 className="text-lg font-semibold text-foreground">{diagramStudio.title}</h2>
+                        {processDocumentSync[diagramStudio.diagramKey] ? (
+                          <span role="status" className="w-full text-xs text-muted-foreground">
+                            {processDocumentSync[diagramStudio.diagramKey] === 'pending'
+                              ? 'Menyimpan diagram dan memperbarui dokumen...'
+                              : processDocumentSync[diagramStudio.diagramKey] === 'synced'
+                                ? 'Diagram dan dokumen tersinkronisasi'
+                                : 'Belum tersinkronisasi. Tutup editor untuk mencoba lagi.'}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                         {typeof diagramStudio.confidence === 'number' && diagramStudio.confidence > 0 ? (

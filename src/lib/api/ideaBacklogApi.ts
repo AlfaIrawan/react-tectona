@@ -715,6 +715,13 @@ export async function upsertPersistentIdeaProcessDiagram(
   return handleResponse<IdeaProcessDiagramPersistent>(res)
 }
 
+export async function syncIdeaProcessDiagramDocuments(ideaId: string, processKey: string): Promise<IdeaProcessDiagramPersistent> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/process-diagram/${processKey}/sync-documents`, {
+    method: 'POST', headers: defaultHeaders(),
+  })
+  return handleResponse<IdeaProcessDiagramPersistent>(res)
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export async function getIdeaById(ideaId: string): Promise<IdeaApi> {

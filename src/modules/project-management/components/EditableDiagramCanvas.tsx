@@ -1101,6 +1101,8 @@ function EditableDiagramCanvasInner({
   } | null>(null)
   const persistTimerRef = useRef<number | null>(null)
   const skipPersistRef = useRef(true)
+  const onPersistGraphRef = useRef(onPersistGraph)
+  onPersistGraphRef.current = onPersistGraph
   const appliedStorageKeyRef = useRef<string | null>(null)
   const nodeClipboardRef = useRef<Node<ArchimateNodeData> | null>(null)
   const appliedSavedGraphRef = useRef(false)
@@ -1266,19 +1268,19 @@ function EditableDiagramCanvasInner({
   }, [c4DrilldownTargets, c4Level, format, setNodes])
   useEffect(() => {
     if (editable) saveGraph(storageKey, { nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid })
-    if (!editable || !onPersistGraph) return
+    if (!editable || !onPersistGraphRef.current) return
     if (skipPersistRef.current) {
       skipPersistRef.current = false
       return
     }
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current)
     persistTimerRef.current = window.setTimeout(() => {
-      onPersistGraph({ nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid })
+      onPersistGraphRef.current?.({ nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid })
     }, 700)
     return () => {
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current)
     }
-  }, [editable, edges, nodes, onPersistGraph, snapToGrid, sourceDraft, storageKey])
+  }, [editable, edges, nodes, snapToGrid, sourceDraft, storageKey])
   useEffect(() => {
     if (format !== 'c4') return
     setSourceDraft((current) => {
