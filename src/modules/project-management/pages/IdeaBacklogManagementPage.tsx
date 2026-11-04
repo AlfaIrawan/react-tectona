@@ -3424,7 +3424,7 @@ export function IdeaBacklogManagementPage() {
           setIdentityUserNameById(identityNames)
         }
         // Preserve workspace scoping for other users, and retain the current user's
-        // submissions even when governance routes them to another workspace.
+        // submissions in their origin when governance routes them to another workspace.
         const scope = readActiveWorkspaceScope()
         const mapped = ideaItems
           .filter((api) => isIdeaVisibleInScope(api, scope, currentUserId))
@@ -4251,6 +4251,7 @@ export function IdeaBacklogManagementPage() {
         category: createIdeaForm.type,
         tags: tags.length > 0 ? tags : ['New', 'Intake'],
         workspace_id: createIdeaForm.workspaceId,
+        source_workspace_id: sourceWorkspaceId,
         owner_id: currentUserId || undefined,
         assignee_id: reviewerManaged ? undefined : createIdeaForm.reviewer || undefined,
         folder_id: createIdeaForm.workspaceId === sourceWorkspaceId && sourceWorkspaceId === resolveWorkspaceApiId(tenant?.workspaceId) ? currentFolderId ?? null : null,

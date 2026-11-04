@@ -10,10 +10,10 @@ const home: WorkspaceScope = { mode: 'single', workspaceId: 'home', tenantMode: 
 
 describe('owner-inclusive idea visibility', () => {
   it('keeps an owner submission routed to IT Business Partner in Alfa workspace', () => {
-    expect(isIdeaVisibleInScope({ workspace_id: 'business-partner', owner_id: 'alfa' }, home, 'alfa')).toBe(true)
+    expect(isIdeaVisibleInScope({ workspace_id: 'business-partner', source_workspace_id: 'home', owner_id: 'alfa' }, home, 'alfa')).toBe(true)
   })
   it('retains the original creator after owner reassignment', () => {
-    expect(isIdeaVisibleInScope({ workspace_id: 'target', owner_id: 'reviewer', created_by: 'alfa' }, home, 'alfa')).toBe(true)
+    expect(isIdeaVisibleInScope({ workspace_id: 'target', source_workspace_id: 'home', owner_id: 'reviewer', created_by: 'alfa' }, home, 'alfa')).toBe(true)
   })
   it('does not expose unrelated ideas, missing identities, or partial ID matches', () => {
     const row = { workspace_id: 'target', owner_id: 'someone', created_by: 'someone' }
@@ -25,9 +25,17 @@ describe('owner-inclusive idea visibility', () => {
   it('keeps normal target-workspace visibility', () => {
     expect(isIdeaVisibleInScope({ workspace_id: 'home', owner_id: 'someone' }, home, 'alfa')).toBe(true)
   })
+  it('never includes an own idea in unrelated workspaces or guesses a legacy origin', () => {
+    const row = { workspace_id: 'target', source_workspace_id: 'home', owner_id: 'alfa' }
+    expect(isIdeaVisibleInScope(row, { ...home, workspaceId: 'collection' }, 'alfa')).toBe(false)
+    expect(isIdeaVisibleInScope({ ...row, source_workspace_id: null }, home, 'alfa')).toBe(false)
+    expect(isIdeaVisibleInScope({ ...row, source_workspace_id: 'another-origin' }, home, 'alfa')).toBe(false)
+    expect(isIdeaVisibleInScope(row, home, 'other-user')).toBe(false)
+  })
   it('retains own ideas in a selected workspace set, but not other users outside it', () => {
     const scope: WorkspaceScope = { mode: 'all', workspaceIds: ['home'] }
-    expect(isIdeaVisibleInScope({ workspace_id: 'target', owner_id: 'alfa' }, scope, 'alfa')).toBe(true)
+    expect(isIdeaVisibleInScope({ workspace_id: 'target', source_workspace_id: 'home', owner_id: 'alfa' }, scope, 'alfa')).toBe(true)
+    expect(isIdeaVisibleInScope({ workspace_id: 'target', source_workspace_id: 'elsewhere', owner_id: 'alfa' }, scope, 'alfa')).toBe(false)
     expect(isIdeaVisibleInScope({ workspace_id: 'target', owner_id: 'other' }, scope, 'alfa')).toBe(false)
   })
   it('shows a cross-workspace idea at the list root without changing its real folder', () => {

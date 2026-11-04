@@ -2,6 +2,7 @@ import { belongsToActiveWorkspaceScope, type WorkspaceScope } from '@/lib/tenant
 
 type IdeaIdentity = {
   workspace_id?: string | null
+  source_workspace_id?: string | null
   owner_id?: string | null
   created_by?: string | null
 }
@@ -10,7 +11,9 @@ type IdeaIdentity = {
 export function isIdeaVisibleInScope(idea: IdeaIdentity, scope: WorkspaceScope, userId?: string | null): boolean {
   if (belongsToActiveWorkspaceScope(idea.workspace_id, scope)) return true
   const subject = userId?.trim()
-  return Boolean(subject && (idea.owner_id === subject || idea.created_by === subject))
+  return Boolean(subject && idea.source_workspace_id
+    && belongsToActiveWorkspaceScope(idea.source_workspace_id, scope)
+    && (idea.owner_id === subject || idea.created_by === subject))
 }
 
 export function isIdeaInFolder(

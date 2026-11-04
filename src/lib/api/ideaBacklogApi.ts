@@ -228,6 +228,7 @@ export interface IdeaApi {
   title_sync?: { status: 'synced' | 'failed' | 'disabled'; updated?: number; error?: string } | null
   id: string
   workspace_id?: string | null
+  source_workspace_id?: string | null
   project_id?: string | null
   portfolio_id?: string | null
   title: string
@@ -790,6 +791,7 @@ export async function createIdea(body: {
   card_accent_color?: string
   tags?: string[]
   workspace_id?: string
+  source_workspace_id?: string
   /** Creates the idea already linked to this project (one project can hold many ideas). */
   project_id?: string
   owner_id?: string
