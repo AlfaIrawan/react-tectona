@@ -25,6 +25,22 @@ async function render(answer: string, tone: 'amber' | 'emerald' = 'amber') {
 }
 
 describe('confirmation answer Markdown', () => {
+  it.each(['amber', 'emerald'] as const)('shows feature bullets in %s confirmations without changing emphasis or scope', async tone => {
+    const answer = 'Fitur yang dibutuhkan: Integrasi **Gen AI** di DigiLearn; Pencarian kebijakan (fase pertama: dokumen Tectona; belum terintegrasi Ad1ForFlow), ringkasan dan rekomendasi; Fallback ke grup Email Collection.'
+    await act(async () => root.render(createElement(BrainstormNotedAnswer, {
+      question: 'Sebutkan fitur yang dibutuhkan dalam project ini', answer, tone,
+    })))
+    expect(container.querySelectorAll('ul')).toHaveLength(1)
+    expect(Array.from(container.querySelectorAll('li')).map(item => item.textContent)).toEqual([
+      'Integrasi Gen AI di DigiLearn',
+      'Pencarian kebijakan (fase pertama: dokumen Tectona; belum terintegrasi Ad1ForFlow), ringkasan dan rekomendasi',
+      'Fallback ke grup Email Collection.',
+    ])
+    expect(container.querySelector('strong')?.textContent).toBe('Gen AI')
+    expect(container.querySelector(`.border-${tone}-400`)).toBeTruthy()
+    expect(container.textContent).not.toContain('**')
+  })
+
   it('renders screenshot summary topics without inventing a systems heading', async () => {
     const text = '- **Tujuan utama:** memberi jawaban kebijakan cepat\n- **Masalah utama:** pertanyaan lewat WhatsApp tidak compliant\n- **Pengguna bisnis terdampak:** Collector Field; Tim HO Collection'
     await act(async () => root.render(createElement(BrainstormSummaryBox, { text, indonesian: true })))

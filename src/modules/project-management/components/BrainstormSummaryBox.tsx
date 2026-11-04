@@ -4,6 +4,7 @@ import { AssistantChatMarkdown } from '@/modules/core-shell/components/Assistant
 import { cn } from '@/lib/utils'
 import { normalizeBrainstormSummary } from '../lib/normalizeBrainstormSummary'
 import { normalizeBrainstormMarkdown } from '../lib/brainstormMarkdown'
+import { formatBrainstormFeatureAnswer } from '../lib/brainstormFeatureAnswer'
 import { classifyUnderstandingNotes, countUnderstandingNotes, parseUnderstandingNotes, previewUnderstandingNotes, UNDERSTANDING_PREVIEW_COUNT, understandingStartsCollapsed, type UnderstandingNote } from '../lib/understandingNotes'
 import type { ReactNode } from 'react'
 
@@ -85,7 +86,7 @@ export function BrainstormNotedAnswer({ question, answer, tone = 'sky' }: { ques
     <div className="my-3">
       <p className={cn('text-[13px] font-semibold leading-5', topicColor)}>{question}</p>
       <div className={cn('mt-1 w-fit max-w-full border-b pb-1 text-[15px] leading-7 text-foreground', ruleColor)}>
-        <AssistantChatMarkdown content={normalizeBrainstormMarkdown(normalizeBrainstormSummary(answer))} className="text-[15px] leading-7 [&_p]:m-0 [&_strong]:!text-inherit dark:[&_strong]:!text-inherit" />
+        <AssistantChatMarkdown content={formatBrainstormFeatureAnswer(question, normalizeBrainstormMarkdown(normalizeBrainstormSummary(answer)))} className="text-[15px] leading-7 [&_p]:m-0 [&_li]:leading-7 [&_strong]:!text-inherit dark:[&_strong]:!text-inherit" />
       </div>
     </div>
   )
