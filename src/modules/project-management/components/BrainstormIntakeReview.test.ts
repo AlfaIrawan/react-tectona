@@ -63,6 +63,43 @@ it('blocks all actions while sending', async () => {
   expect([...container.querySelectorAll('button')].every(node => node.disabled)).toBe(true)
 })
 
+it('disables a successfully requested track without blocking draft generation', async () => {
+  const { onSend, onGenerate } = await render()
+  await act(async () => button('Business').click())
+  await act(async () => root.render(createElement(BrainstormIntakeReview, {
+    indonesian: true, onSend, onGenerate,
+    discoveryProgress: { covered: 0, total: 20, business_status: 'pending', technical_status: 'available' },
+  })))
+  expect(button('Business').disabled).toBe(true)
+  await act(async () => button('Business').click())
+  expect(onSend).toHaveBeenCalledOnce()
+  expect(button('Technical').disabled).toBe(false)
+  await act(async () => button('Generate draft').click())
+  expect(onGenerate).toHaveBeenCalledOnce()
+})
+
+it.each(['pending', 'exhausted'] as const)('uses persisted %s track status after reopening', async status => {
+  const onSend = vi.fn()
+  await act(async () => root.render(createElement(BrainstormIntakeReview, {
+    indonesian: true, onSend, onGenerate: vi.fn(),
+    discoveryProgress: { covered: 4, total: 20, business_status: status, technical_status: 'available' },
+  })))
+  expect(button('Business').disabled).toBe(true)
+  expect(button('Business').parentElement?.title).toBeTruthy()
+  expect(button('Technical').disabled).toBe(false)
+  expect(button('Generate draft').disabled).toBe(false)
+  await act(async () => button('Business').click())
+  expect(onSend).not.toHaveBeenCalled()
+})
+
+it('allows retrying the track when sending fails', async () => {
+  const onSend = vi.fn().mockRejectedValue(new Error('offline'))
+  await render(onSend)
+  await act(async () => button('Business').click())
+  expect(button('Business').disabled).toBe(false)
+  expect(container.querySelector('[role=alert]')).toBeTruthy()
+})
+
 it('offers final review only at a completed and unblocked review boundary', () => {
   const core = [{ id: 'goal', required: true, status: 'answered' }] as IdeaDraftChecklistItem[]
   const message: IdeaDraftBrainstormMessage = { role: 'assistant', text: 'Review rangkuman.', intake_review_ready: true }

@@ -11,6 +11,19 @@ const phase: Message = {
 }
 
 describe('phase confirmation content in stored and new messages', () => {
+  it('enables an additional-information confirmation only when its scoped decision is supplied', () => {
+    const question = 'Apakah tambahan informasi ini sudah tepat?'
+    const message: Message = { role: 'assistant', question_kind: 'confirm', text: question, question_text: question,
+      summary, decision_label: 'Tambahan informasi',
+      decision_text: 'Alert melalui Email, bukan Ad1Falcon. Log disimpan di Elastic, bukan Ad1Report.',
+      confirmation_choices: ['Konfirmasi tambahan informasi', 'Koreksi tambahan informasi'],
+    }
+    const content = brainstormConfirmationContent(message)
+    expect(content.decisionText).toBe(message.decision_text)
+    expect(brainstormConfirmationAnswerMissing(content.text, content.decisionText)).toBe(false)
+    const missing = brainstormConfirmationContent({ ...message, decision_text: null })
+    expect(brainstormConfirmationAnswerMissing(missing.text, missing.decisionText)).toBe(true)
+  })
   it.each(['Apakah revisi ini sudah sesuai?', 'Is this revision right?'])('uses the stored revision answer for %s without changing the transcript', (question) => {
     const message: Message = Object.freeze({ role: 'assistant', question_kind: 'confirm', summary,
       text: `${summary}\n\n${question}`, question_text: question,

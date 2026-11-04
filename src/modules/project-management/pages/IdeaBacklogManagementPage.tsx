@@ -4699,6 +4699,7 @@ export function IdeaBacklogManagementPage() {
             brainstorm_remaining_gaps: response.remaining_gaps,
             intake_checklist: response.intake_checklist ?? current.intake_checklist,
             evidence_progress: response.evidence_progress ?? current.evidence_progress,
+            discovery_progress: response.discovery_progress ?? current.discovery_progress,
             confidence_percent: response.confidence_percent ?? current.confidence_percent,
             offer_generate_anyway: Boolean(response.offer_generate_anyway) && !response.ready_to_continue,
           }
@@ -7702,6 +7703,7 @@ export function IdeaBacklogManagementPage() {
                               indonesian={brainstormThreadIndonesian}
                               disabled={isBrainstormSending}
                               generating={isDraftContinuing}
+                              discoveryProgress={brainstormDiscoveryProgress}
                               onSend={handleSendBrainstormMessage}
                               onGenerate={() => handleContinueIdeaDraft('use_brainstorm')}
                             />

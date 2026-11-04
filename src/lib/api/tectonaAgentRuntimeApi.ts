@@ -600,10 +600,12 @@ export interface IdeaDraftEvidenceProgress {
 }
 
 // Stage 5 (explainable readiness): how many deep-discovery dimensions (the post-checklist
-// "Continue Discovery" loop) have been covered so far — just a count, not which ones.
+// "Continue Discovery" loop) have been covered and whether each track can be requested.
 export interface IdeaDraftDiscoveryProgress {
   covered: number
   total: number
+  business_status?: 'available' | 'pending' | 'exhausted'
+  technical_status?: 'available' | 'pending' | 'exhausted'
 }
 
 export interface IdeaDraftBrainstormMessage {
