@@ -4,6 +4,7 @@ import {
   allowedDocumentKinds,
   documentKindsAllowedByWorkflows,
   documentStagesFromGraph,
+  requestDocumentKindsFromGraph,
   templateAllowedByWorkflow,
   templateDocumentKind,
 } from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
@@ -69,6 +70,17 @@ function approval(nodeId: string, status: WorkflowApprovalDto['status'], runId =
 }
 
 describe('idea document workflow gate', () => {
+  it('uses the request document kind of each workflow, including SRD', () => {
+    expect(requestDocumentKindsFromGraph({ nodes: [node('req-srd', 'action', {
+      actionOperation: 'Request for Approval', parameter: 'SRD',
+    })], edges: [] })).toEqual(['SRD'])
+    expect(requestDocumentKindsFromGraph({ nodes: [node('req-urd', 'action', {
+      actionOperation: 'Request for Approval',
+    })], edges: [] })).toEqual(['URD'])
+    expect(requestDocumentKindsFromGraph({ nodes: [{ id: 'disabled', data: {
+      kind: 'action', disabled: true, config: { actionOperation: 'Request for Approval', parameter: 'SRD' },
+    } }], edges: [] })).toEqual([])
+  })
   it('unlocks URD first, then BRD, then FSD', () => {
     const stages = documentStagesFromGraph(approvalWorkflow)
     expect(stages.map((stage) => stage.kind)).toEqual(['URD', 'BRD', 'FSD'])

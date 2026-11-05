@@ -388,7 +388,7 @@ import {
   type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
-import { ideaAudienceMatches, parseEmailRecipientBy, sendUrdForBusinessReview, urdReviewSummaryText } from '@/modules/project-management/lib/urdReviewHeads'
+import { ideaAudienceMatches, parseEmailRecipientBy } from '@/modules/project-management/lib/urdReviewHeads'
 import { readPersistedIdeaNavTop, useIdeaNavSectionsStore } from '@/modules/project-management/store/ideaNavSectionsStore'
 import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 
@@ -3905,7 +3905,6 @@ export function IdeaDetailPage() {
   const [ideaDocSourceTab, setIdeaDocSourceTab] = useState<'brainstorm' | 'summary'>('brainstorm')
   const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
-  const [urdSendBusy, setUrdSendBusy] = useState(false)
   const [ideaDocGenerateStepIndex, setIdeaDocGenerateStepIndex] = useState(0)
   const ideaDocGenerateTimerRef = useRef<number | null>(null)
   type IdeaDocFolderStackEntry = { id: string; name: string }
@@ -8310,67 +8309,6 @@ export function IdeaDetailPage() {
       }
     }
   }, [])
-
-  const sendUrdToHeads = useCallback(async () => {
-    if (urdSendBusy) return
-    setUrdSendBusy(true)
-    try {
-      const summary = urdReviewSummaryText([
-        runtimeSummary.executive_brief,
-        runtimeSummary.core_pressure,
-        runtimeSummary.strategic_response,
-        runtimeSummary.value_thesis,
-        runtimeSummary.board_note,
-      ]) || (idea.description || idea.title).trim()
-      const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
-      const result = await sendUrdForBusinessReview({
-        ideaId: idea.id,
-        ideaTitle: idea.title,
-        summaryText: summary,
-        linkUrl,
-        createdBy: currentUserId || runtimeUserId || 'unknown',
-        workspaceId: idea.workspace,
-      })
-      if (result.notified.length === 0) {
-        addToast({
-          title: 'Reviewers were not found',
-          description: `Set the job title to ${result.missing.join(' and ')}.`,
-          variant: 'warning',
-        })
-        return
-      }
-      addToast({
-        title: 'URD sent for review',
-        description: result.mailErrors.length
-          ? `Notification sent to ${result.notified.join(' and ')}. Email: ${result.mailErrors.join('; ')}`
-          : `Email and notification sent to ${result.notified.join(' and ')}.`,
-        variant: result.mailErrors.length ? 'warning' : 'success',
-      })
-    } catch (error) {
-      addToast({
-        title: 'Could not send the URD review',
-        description: error instanceof Error ? error.message : '',
-        variant: 'error',
-      })
-    } finally {
-      setUrdSendBusy(false)
-    }
-  }, [
-    addToast,
-    currentUserId,
-    idea.description,
-    idea.id,
-    idea.title,
-    runtimeSummary.board_note,
-    runtimeSummary.core_pressure,
-    runtimeSummary.executive_brief,
-    runtimeSummary.strategic_response,
-    runtimeSummary.value_thesis,
-    runtimeUserId,
-    tenant?.workspaceId,
-    tenant?.workspaceSlug,
-    urdSendBusy,
-  ])
 
   const openIdeaDocContextMenu = useCallback((event: { clientX: number; clientY: number }, item: RepositoryItem) => {
     const menuWidth = 224
@@ -15818,24 +15756,6 @@ export function IdeaDetailPage() {
                         </button>
                       </>
                     ) : null}
-                    {/* The published workflow's URD approval already goes to these heads; the
-                        manual send stays only for workspaces without that workflow. */}
-                    {showBpmnDiagrams && !workflowRequestDocumentKinds.includes('URD') ? (
-                      <button
-                        type="button"
-                        className={enterpriseSecondaryButtonClass()}
-                        title="Send the URD to Head of Business Project & Research and Head of Business Project Management Office"
-                        disabled={urdSendBusy}
-                        onClick={() => void sendUrdToHeads()}
-                      >
-                        {urdSendBusy ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
-                        Send to Head of Business Project &amp; Research and Head of PMO
-                      </button>
-                    ) : null}
                   </div>
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {ideaDocsTotalCount > 0 ? (
@@ -16067,7 +15987,7 @@ export function IdeaDetailPage() {
                                           {ideaApprovalStatus.emailDeliveries.map((item) => `${item.name} ${item.ok ? '✓' : '✗'}`).join(' · ')}
                                         </p>
                                       ) : null}
-                                      {ideaApprovalStatus.error && ideaApprovalStatus.awaitingRequest ? <p className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
+                                      {ideaApprovalStatus.error ? <p role="alert" className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
                                       </>
                                       ) : null}
                                       <IdeaApprovalBanner

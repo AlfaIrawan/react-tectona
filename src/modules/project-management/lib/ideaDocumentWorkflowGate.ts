@@ -248,7 +248,8 @@ export type PublishedIdeaSectionPolicy = {
 
 export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | undefined): string[] {
   const kinds: string[] = []
-  for (const node of asNodes(graph ?? {})) {
+  for (const node of asNodes(graph ?? { nodes: [], edges: [] })) {
+    if (node.data?.disabled === true) continue
     const config = node.data?.config ?? {}
     if (config.actionOperation !== 'Request for Approval') continue
     const fromParameter = emailDocumentKindFromTemplateCode(config.parameter)
@@ -263,7 +264,7 @@ export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | unde
 const OPEN_AUDIENCE: IdeaWorkflowAudience = { by: 'jobTitle', values: [] }
 
 function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkflowAudience {
-  const trigger = asNodes(graph ?? {}).find((node) => {
+  const trigger = asNodes(graph ?? { nodes: [], edges: [] }).find((node) => {
     const config = node.data?.config ?? {}
     return node.data?.kind === 'trigger'
       && config.triggerType === 'Event'

@@ -5,6 +5,7 @@ import { Loader2, Mail, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { enterpriseSecondaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import { cn } from '@/lib/utils'
+import { ideaApprovalRequestDeliveries } from '@/modules/project-management/lib/ideaApprovalRequestResult'
 import {
   approveWorkflowRun,
   listIdeaWorkflowRuns,
@@ -80,9 +81,9 @@ export function useIdeaApprovalStatus(ideaId: string, workspaceId: string | unde
     setError('')
     try {
       const run = await requestIdeaApproval(ideaId, workspaceId)
-      const rows = await reload()
+      await reload()
       onChanged()
-      return rows.find((item) => item.id === run.id)?.email_deliveries ?? []
+      return ideaApprovalRequestDeliveries(run)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request for Approval failed.')
       return null
