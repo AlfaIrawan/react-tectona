@@ -5,12 +5,43 @@ import {
   latestRevisedProcessDiagrams,
   latestValidatedTechnicalDiagrams,
   stripProcessDiagramsFromText,
+  technicalDiagramGallery,
+  TECHNICAL_DIAGRAM_SLOTS,
 } from './extractProcessDiagrams'
 
 const AS_IS_SOURCE = '@startuml\n() "Mulai" as start\nrectangle "Cek policy" as check\nstart --> check\n@enduml'
 const TO_BE_SOURCE = '@startuml\n() "Mulai" as start\nrectangle "Tanya AI" as ask\nstart --> ask\n@enduml'
 
 describe('process diagram editor helpers', () => {
+  it('keeps both C4 levels and only replaces revisions of the same level', () => {
+    const l1 = '@startuml\n!include <C4/C4_Context>\nSystem(app, "Application")\n@enduml'
+    const l2 = '@startuml\n!include <C4/C4_Container>\nContainer(api, "API")\n@enduml'
+    const revised = l1.replace('Application', 'Revised Application')
+    const text = [l1, l2, revised].map(source => `\`\`\`plantuml\n${source}\n\`\`\``).join('\n')
+    expect(latestValidatedTechnicalDiagrams(text).map(d => [d.label, d.source]))
+      .toEqual([['C4 Level 1', revised], ['C4 Level 2', l2]])
+  })
+
+  it('lists every technical slot without relying on a browser brainstorming cache', () => {
+    const gallery = technicalDiagramGallery([], {})
+    expect(gallery.map(d => d.label)).toEqual(['C4 Level 1', 'C4 Level 2', 'Sequence', 'Class', 'ERD'])
+    expect(gallery.every(d => d.source === '')).toBe(true)
+    expect(TECHNICAL_DIAGRAM_SLOTS.map(d => d.persistKey)).toEqual([
+      'brainstorm-c4-level-1', 'brainstorm-c4-level-2', 'brainstorm-sequence', 'brainstorm-class', 'brainstorm-erd',
+    ])
+  })
+
+  it('uses server sources absent from prose and prefers saved edits over old text', () => {
+    const sequence = '@startuml\nparticipant User\nUser -> API : latest\n@enduml'
+    const erd = '@startuml\nentity Policy\n@enduml'
+    const gallery = technicalDiagramGallery([{ kind: 'sequence', label: 'Sequence', source: 'old sequence' }], {
+      'brainstorm-sequence': { source: sequence }, 'brainstorm-erd': { source: erd },
+    })
+    expect(gallery.find(d => d.kind === 'sequence')?.source).toBe(sequence)
+    expect(gallery.find(d => d.kind === 'erd')?.source).toBe(erd)
+    expect(gallery).toHaveLength(5)
+  })
+
   it('removes fenced implementation source from the editor prose', () => {
     const draft = `Ringkasan proses\n\nAS-IS\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\`\n\nTO-BE\n\`\`\`plantuml\n${TO_BE_SOURCE}\n\`\`\``
 

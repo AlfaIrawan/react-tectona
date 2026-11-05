@@ -299,7 +299,8 @@ import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextR
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import {
   brainstormProcessPersistKey,
-  brainstormTechnicalPersistKey,
+  TECHNICAL_DIAGRAM_SLOTS,
+  technicalDiagramGallery,
   extractProcessDiagramsFromText,
   latestRevisedProcessDiagrams,
   latestValidatedTechnicalDiagrams,
@@ -2432,6 +2433,7 @@ function DiagramGalleryCard({
   isRegenerating,
   onGenerateDraft,
   onGenerateAlternative,
+  onRetryLoad,
   onOpenStudio,
   c4DrilldownTargets,
   onOpenC4Drilldown,
@@ -2456,6 +2458,7 @@ function DiagramGalleryCard({
   isRegenerating: boolean
   onGenerateDraft?: () => void
   onGenerateAlternative?: () => void
+  onRetryLoad?: () => void
   onOpenStudio: (session: DiagramStudioSession) => void
   c4DrilldownTargets?: C4DiagramDrilldownTarget[]
   onOpenC4Drilldown?: (diagramKey: string) => void
@@ -2506,6 +2509,18 @@ function DiagramGalleryCard({
             {confidence}%
           </Badge>
         ) : null}
+        {onRetryLoad && (
+          <button
+            type="button"
+            onClick={onRetryLoad}
+            disabled={isRegenerating}
+            title="Retry loading diagram"
+            aria-label={`Retry loading ${title}`}
+            className="shrink-0 rounded-md p-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCcw className="h-4 w-4" aria-hidden />
+          </button>
+        )}
       </div>
       <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
       <div className="relative mt-2 aspect-[16/10] overflow-hidden rounded-lg border border-border/30 bg-slate-50">
@@ -2553,7 +2568,7 @@ function DiagramGalleryCard({
             ) : imageError || generationError ? (
               <span className="text-rose-600">{imageError || generationError}</span>
             ) : missing ? (
-              "AI couldn't produce a diagram — not enough evidence in this idea yet"
+              'Diagram belum tersedia.'
             ) : (
               'No diagram yet'
             )}
@@ -5204,6 +5219,9 @@ export function IdeaDetailPage() {
   }
   const [processDetailsByKey, setProcessDetailsByKey] = useState<Record<string, ProcessDetailState>>({})
   const [brainstormCanvasByKey, setBrainstormCanvasByKey] = useState<Record<string, C4CanvasGraph>>({})
+  const [diagramSourcesLoading, setDiagramSourcesLoading] = useState(true)
+  const [diagramSourceErrors, setDiagramSourceErrors] = useState<Record<string, string>>({})
+  const [diagramSourcesReloadKey, setDiagramSourcesReloadKey] = useState(0)
   const [processDocumentSync, setProcessDocumentSync] = useState<Record<string, string>>({})
   const processSaveQueue = useRef<Promise<void>>(Promise.resolve())
   const processSaveRevision = useRef<Record<string, number>>({})
@@ -7086,17 +7104,20 @@ export function IdeaDetailPage() {
       : description
     return latestValidatedTechnicalDiagrams(corpus)
   }, [brainstormPointer, idea.description, idea.title])
+  const technicalGallery = useMemo(
+    () => technicalDiagramGallery(validatedTechnicalDiagrams, brainstormCanvasByKey),
+    [validatedTechnicalDiagrams, brainstormCanvasByKey],
+  )
 
   useEffect(() => {
     let cancelled = false
+    setDiagramSourcesLoading(true)
+    setDiagramSourceErrors({})
+    setBrainstormCanvasByKey({})
     const keys = [...new Set([
       ...brainstormProcessDiagrams.map((diagram, index) => brainstormProcessPersistKey(diagram.label, index)),
-      ...validatedTechnicalDiagrams.map(brainstormTechnicalPersistKey),
+      ...TECHNICAL_DIAGRAM_SLOTS.map(slot => slot.persistKey),
     ])]
-    if (!keys.length) {
-      setBrainstormCanvasByKey({})
-      return
-    }
     void Promise.all(
       keys.map(async (key) => {
         try {
@@ -7107,7 +7128,8 @@ export function IdeaDetailPage() {
             ...current, [key]: sync.status === 'pending' ? 'failed' : sync.status!,
           }))
           return [key, graph] as const
-        } catch {
+        } catch (error) {
+          if (!cancelled) setDiagramSourceErrors(current => ({ ...current, [key]: error instanceof Error ? error.message : 'Diagram could not be loaded.' }))
           return [key, undefined] as const
         }
       }),
@@ -7115,14 +7137,15 @@ export function IdeaDetailPage() {
       if (cancelled) return
       const next: Record<string, C4CanvasGraph> = {}
       for (const [key, graph] of entries) {
-        if (graph?.nodes?.length) next[key] = graph
+        if (graph?.nodes?.length || graph?.source?.trim()) next[key] = graph!
       }
       setBrainstormCanvasByKey(next)
+      setDiagramSourcesLoading(false)
     })
     return () => {
       cancelled = true
     }
-  }, [brainstormProcessDiagrams, validatedTechnicalDiagrams, idea.id])
+  }, [brainstormProcessDiagrams, idea.id, diagramSourcesReloadKey])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -14263,7 +14286,7 @@ export function IdeaDetailPage() {
               </div>
               ) : null}
 
-              {(showTechnicalDiagrams ? validatedTechnicalDiagrams : []).map((diagram) => {
+              {(showTechnicalDiagrams ? technicalGallery.filter(diagram => diagram.kind !== 'c4' || diagram.source) : []).map((diagram) => {
                 const canvasFormat = diagram.kind === 'c4'
                   ? 'c4'
                   : diagram.kind === 'class'
@@ -14271,14 +14294,14 @@ export function IdeaDetailPage() {
                     : diagram.kind === 'erd'
                       ? 'erd'
                       : 'plantuml'
-                const technicalKey = brainstormTechnicalPersistKey(diagram)
+                const technicalKey = diagram.persistKey
                 const technicalMeta = diagram.kind === 'c4'
-                  ? { icon: Layers, description: 'Gambaran sistem (C4) terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                  ? { icon: Layers, description: 'Gambaran sistem dan container.' }
                   : diagram.kind === 'class'
-                    ? { icon: Boxes, description: 'Class diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                    ? { icon: Boxes, description: 'Struktur class dan relasinya.' }
                     : diagram.kind === 'sequence'
-                      ? { icon: Workflow, description: 'Sequence diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
-                      : { icon: Database, description: 'ERD terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                      ? { icon: Workflow, description: 'Urutan interaksi antar komponen.' }
+                      : { icon: Database, description: 'Entitas data dan relasinya.' }
                 return (
                   <div key={technicalKey} className="order-6 min-w-0 space-y-2">
                   {processDocumentSync[technicalKey] ? (
@@ -14304,15 +14327,16 @@ export function IdeaDetailPage() {
                     savedGraph={brainstormCanvasByKey[technicalKey]}
                     onPersistGraph={contentLocked ? undefined : (graph) => persistBpmnCanvas(technicalKey, graph)}
                     diagramFormat={canvasFormat}
-                    renderAsImage={canvasFormat === 'plantuml'}
+                    renderAsImage={canvasFormat === 'plantuml' && Boolean(diagram.source)}
                     title={diagram.label}
                     icon={technicalMeta.icon}
                     description={technicalMeta.description}
                     imageSrc={null}
-                    missing={false}
-                    generationError={null}
+                    missing={!diagram.source}
+                    generationError={diagramSourceErrors[technicalKey] || null}
+                    onRetryLoad={diagramSourceErrors[technicalKey] ? () => setDiagramSourcesReloadKey(key => key + 1) : undefined}
                     confidence={null}
-                    isRegenerating={false}
+                    isRegenerating={diagramSourcesLoading && !diagram.source}
                     onOpenStudio={setDiagramStudio}
                     className="order-6"
                   />
@@ -14387,7 +14411,7 @@ export function IdeaDetailPage() {
                 </div>
               ) : null}
 
-              {(showTechnicalDiagrams && (regenerating.c4Level1 || Boolean(c4Level1Analysis.plantumlSource?.trim()) || (c4Level1Analysis.canvasGraph?.nodes.length ?? 0) > 0)) ? (
+              {showTechnicalDiagrams && !technicalGallery.some(diagram => diagram.persistKey === 'brainstorm-c4-level-1' && diagram.source) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-1"
@@ -14402,18 +14426,19 @@ export function IdeaDetailPage() {
                 imageLoading={c4Level1Preview.isLoading}
                 imageError={c4Level1Preview.error}
                 missing={c4Level1Missing}
-                generationError={c4Level1GenerationError}
+                generationError={c4Level1GenerationError || diagramSourceErrors['brainstorm-c4-level-1'] || null}
+                onRetryLoad={c4Level1GenerationError || diagramSourceErrors['brainstorm-c4-level-1'] ? () => { setDiagramSourcesReloadKey(key => key + 1); void loadRuntimeC4Architecture('L1', idea) } : undefined}
                 confidence={c4Level1Loaded ? confidence.c4Level1 : null}
-                isRegenerating={regenerating.c4Level1}
-                onGenerateDraft={() => void loadRuntimeC4Architecture('L1', idea, { forceRefresh: true })}
-                onGenerateAlternative={() => void generateC4Alternative('L1')}
+                isRegenerating={regenerating.c4Level1 || (!c4Level1Loaded && !c4Level1GenerationError) || diagramSourcesLoading}
+                onGenerateDraft={contentLocked ? undefined : () => void loadRuntimeC4Architecture('L1', idea, { forceRefresh: true })}
+                onGenerateAlternative={contentLocked ? undefined : () => void generateC4Alternative('L1')}
                 onOpenStudio={setDiagramStudio}
                 c4DrilldownTargets={c4Level1DrilldownTargets}
                 onOpenC4Drilldown={openC4Drilldown}
                 className="order-1"
               />
               ) : null}
-              {(showTechnicalDiagrams && (regenerating.c4Level2 || Boolean(c4Level2Analysis.plantumlSource?.trim()) || (c4Level2Analysis.canvasGraph?.nodes.length ?? 0) > 0)) ? (
+              {showTechnicalDiagrams && !technicalGallery.some(diagram => diagram.persistKey === 'brainstorm-c4-level-2' && diagram.source) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-2"
@@ -14428,11 +14453,12 @@ export function IdeaDetailPage() {
                 imageLoading={c4Level2Preview.isLoading}
                 imageError={c4Level2Preview.error}
                 missing={c4Level2Missing}
-                generationError={c4Level2GenerationError}
+                generationError={c4Level2GenerationError || diagramSourceErrors['brainstorm-c4-level-2'] || null}
+                onRetryLoad={c4Level2GenerationError || diagramSourceErrors['brainstorm-c4-level-2'] ? () => { setDiagramSourcesReloadKey(key => key + 1); void loadRuntimeC4Architecture('L2', idea) } : undefined}
                 confidence={c4Level2Loaded ? confidence.c4Level2 : null}
-                isRegenerating={regenerating.c4Level2}
-                onGenerateDraft={() => void loadRuntimeC4Architecture('L2', idea, { forceRefresh: true })}
-                onGenerateAlternative={() => void generateC4Alternative('L2')}
+                isRegenerating={regenerating.c4Level2 || (!c4Level2Loaded && !c4Level2GenerationError) || diagramSourcesLoading}
+                onGenerateDraft={contentLocked ? undefined : () => void loadRuntimeC4Architecture('L2', idea, { forceRefresh: true })}
+                onGenerateAlternative={contentLocked ? undefined : () => void generateC4Alternative('L2')}
                 onOpenStudio={setDiagramStudio}
                 className="order-2"
               />

@@ -63,7 +63,7 @@ export function runtimeProcessDiagramFromAgentResponse(
 
 function canvasGraphFromJson(json: Record<string, unknown>, source: string): ProcessCanvasGraph | undefined {
   const nodes = Array.isArray(json.nodes) ? (json.nodes as Node<ArchimateNodeData>[]) : []
-  if (!nodes.length) return undefined
+  if (!nodes.length && !source.trim()) return undefined
   return {
     nodes,
     edges: Array.isArray(json.edges) ? (json.edges as Edge[]) : [],

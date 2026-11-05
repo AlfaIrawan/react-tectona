@@ -171,7 +171,14 @@ const TECHNICAL_LABEL: Record<TechnicalDiagramKind, string> = {
   sequence: 'Sequence',
 }
 
-/** Last confirmed C4, class, and ERD picture from brainstorming. Earlier sketches are dropped. */
+export const TECHNICAL_DIAGRAM_SLOTS = [
+  { kind: 'c4', label: 'C4 Level 1', persistKey: 'brainstorm-c4-level-1' },
+  { kind: 'c4', label: 'C4 Level 2', persistKey: 'brainstorm-c4-level-2' },
+  { kind: 'sequence', label: 'Sequence', persistKey: 'brainstorm-sequence' },
+  { kind: 'class', label: 'Class', persistKey: 'brainstorm-class' },
+  { kind: 'erd', label: 'ERD', persistKey: 'brainstorm-erd' },
+] as const
+
 export function brainstormTechnicalPersistKey(diagram: ExtractedProcessDiagram): string {
   if (diagram.kind === 'c4') {
     return /!include\s*<\s*C4\/C4_Container|\bContainer\s*\(/i.test(diagram.source)
@@ -181,15 +188,31 @@ export function brainstormTechnicalPersistKey(diagram: ExtractedProcessDiagram):
 }
 
 export function latestValidatedTechnicalDiagrams(text: string): ExtractedProcessDiagram[] {
-  const latest: Partial<Record<TechnicalDiagramKind, ExtractedProcessDiagram>> = {}
+  const latest = new Map<string, ExtractedProcessDiagram>()
   for (const diagram of extractProcessDiagramsFromText(text)) {
-    const kind = diagram.kind === 'c4' || diagram.kind === 'class' || diagram.kind === 'erd'
+    const kind = diagram.kind === 'c4' || diagram.kind === 'class' || diagram.kind === 'erd' || diagram.kind === 'sequence'
       ? diagram.kind
       : technicalDiagramKind(diagram.source)
     if (!kind) continue
-    latest[kind] = { ...diagram, kind, label: TECHNICAL_LABEL[kind] }
+    const entry = { ...diagram, kind, label: TECHNICAL_LABEL[kind] }
+    latest.set(brainstormTechnicalPersistKey(entry), entry)
   }
-  return [latest.c4, latest.sequence, latest.class, latest.erd].filter((diagram): diagram is ExtractedProcessDiagram => Boolean(diagram))
+  return TECHNICAL_DIAGRAM_SLOTS.flatMap(slot => {
+    const entry = latest.get(slot.persistKey)
+    return entry ? [{ ...entry, label: slot.label }] : []
+  })
+}
+
+/** Stored server sources win; absent diagrams retain their slot instead of disappearing. */
+export function technicalDiagramGallery(
+  diagrams: ExtractedProcessDiagram[],
+  saved: Record<string, { source?: string } | undefined>,
+) {
+  const byKey = new Map(diagrams.map(diagram => [brainstormTechnicalPersistKey(diagram), diagram]))
+  return TECHNICAL_DIAGRAM_SLOTS.map(slot => ({
+    ...slot,
+    source: saved[slot.persistKey]?.source?.trim() || byKey.get(slot.persistKey)?.source || '',
+  }))
 }
 
 /** Remove diagram implementation text from prose that is shown in a rich-text editor. */
