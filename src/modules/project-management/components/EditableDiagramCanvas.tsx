@@ -784,11 +784,12 @@ function graphFromUml(source: string, view: UmlView): { nodes: Node<ArchimateNod
     const rowCount = erd ? Math.max(1, box.members.length) : attributes.length
     const boxKind = erd ? 'entity' : box.kind === 'interface' || box.kind === 'enumeration' ? box.kind : 'class'
     const stereotypeExtra = boxKind === 'interface' || boxKind === 'enumeration' ? 14 : 0
-    const height = erd
-      ? 34 + rowCount * 18 + 10
-      : 32 + stereotypeExtra + (attributes.length ? attributes.length * 16 + 8 : 0) + (methods.length ? methods.length * 16 + 8 : 0)
     const longest = Math.max(box.title.length + 2, ...box.members.map((line) => erdMemberName(line).length + (erd ? 0 : 10)))
     const width = Math.min(280, Math.max(erd ? 168 : 148, longest * 6.6 + (erd ? 28 : 40)))
+    const memberLines = (members: string[]) => members.reduce((total, line) => total + Math.max(1, Math.ceil(line.length * 6.6 / (width - 48))), 0)
+    const height = erd
+      ? 34 + rowCount * 18 + 10
+      : 32 + stereotypeExtra + (attributes.length ? memberLines(attributes) * 16 + 8 : 0) + (methods.length ? memberLines(methods) * 16 + 8 : 0)
     if (column === columns) {
       column = 0
       x = 48
@@ -1226,7 +1227,9 @@ function EditableDiagramCanvasInner({
         const attributes = node.data.description.filter((line) => !line.includes('('))
         const methods = node.data.description.filter((line) => line.includes('('))
         const stereotypeExtra = node.data.stereotype === 'interface' || node.data.stereotype === 'enumeration' ? 14 : 0
-        const height = 32 + stereotypeExtra + (attributes.length ? attributes.length * 16 + 8 : 0) + (methods.length ? methods.length * 16 + 8 : 0)
+        const width = Number(node.style?.width ?? node.width ?? 180)
+        const memberLines = (members: string[]) => members.reduce((total, line) => total + Math.max(1, Math.ceil(line.length * 6.6 / Math.max(40, width - 48))), 0)
+        const height = 32 + stereotypeExtra + (attributes.length ? memberLines(attributes) * 16 + 8 : 0) + (methods.length ? memberLines(methods) * 16 + 8 : 0)
         const currentHeight = Number(node.style?.height ?? node.height ?? 0)
         if (Math.abs(currentHeight - height) < 4) return node
         changed = true
