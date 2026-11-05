@@ -1,0 +1,50 @@
+import { useState } from 'react'
+import { Save } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { PlantUmlSourceEditor } from './PlantUmlSourceEditor'
+import { usePlantUmlPngPreview } from '../lib/usePlantUmlPngPreview'
+import { fetchPlantUmlPng } from '../lib/plantumlRenderClient'
+import type { C4CanvasGraph } from '../lib/c4ArchitectureService'
+
+export function EditableSequenceDiagram({ source, locked, ideaId, diagramKey, onSave }: {
+  source: string; locked: boolean; ideaId: string; diagramKey: string; onSave?: (graph: C4CanvasGraph) => void
+}) {
+  const [draft, setDraft] = useState(source)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const preview = usePlantUmlPngPreview(draft)
+  const save = async () => {
+    if (locked || saving || !onSave) return
+    setSaving(true)
+    setError(null)
+    try {
+      const blob = await fetchPlantUmlPng(draft)
+      const encoded = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1])
+        reader.onerror = () => reject(new Error('SEQUENCE_IMAGE_READ_FAILED'))
+        reader.readAsDataURL(blob)
+      })
+      onSave({ nodes: [], edges: [], source: draft, canvasPngBase64: encoded })
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Sequence could not be saved.')
+    } finally { setSaving(false) }
+  }
+  return <div className="flex h-full min-h-0 flex-col gap-2 p-3">
+    {!locked && <>
+      <fieldset disabled={saving} className="h-48 shrink-0 overflow-auto rounded-md border">
+        <PlantUmlSourceEditor value={draft} onBlur={() => undefined} onChange={value => {
+          setDraft(value)
+          window.dispatchEvent(new CustomEvent('tectona-diagram-content-pending', { detail: { ideaId, diagramKey } }))
+        }} />
+      </fieldset>
+      <Button className="self-end" onClick={() => void save()} disabled={saving || !draft.trim() || !onSave}>
+        <Save className="mr-2 h-4 w-4" />{saving ? 'Saving...' : 'Save'}
+      </Button>
+    </>}
+    {(error || preview.error) && <p role="alert" className="text-sm text-destructive">{error || preview.error}</p>}
+    <div className="min-h-0 flex-1 overflow-auto bg-white">
+      {preview.objectUrl && <img src={preview.objectUrl} alt="Sequence" className="mx-auto max-w-full" />}
+    </div>
+  </div>
+}

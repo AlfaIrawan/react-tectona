@@ -250,6 +250,7 @@ import {
   PROJECT_PANEL_MIN_HEIGHT_PX,
 } from '@/modules/projects/lib/projectPanelLayout'
 import { Label } from '@/components/ui/label'
+import { EditableSequenceDiagram } from '@/modules/project-management/components/EditableSequenceDiagram'
 import {
   extractScoringDimensions,
   getIdeaById,
@@ -5236,7 +5237,7 @@ export function IdeaDetailPage() {
       if (detail?.ideaId !== idea.id) return
       const key = detail.diagramKey === 'c4-level-1' ? 'brainstorm-c4-level-1'
         : detail.diagramKey === 'c4-level-2' ? 'brainstorm-c4-level-2' : detail.diagramKey
-      if (key.startsWith('brainstorm-')) setProcessDocumentSync(current => ({ ...current, [key]: 'pending' }))
+      if (key.startsWith('brainstorm-') || key === 'high') setProcessDocumentSync(current => ({ ...current, [key]: 'pending' }))
     }
     window.addEventListener('tectona-diagram-content-pending', pending)
     return () => window.removeEventListener('tectona-diagram-content-pending', pending)
@@ -6614,15 +6615,8 @@ export function IdeaDetailPage() {
       if (processKey === 'high') {
         const next = applyCanvas(bpmnHighAnalysisRef.current)
         setBpmnHighAnalysis(next)
-        void upsertPersistentIdeaProcessDiagram(idea.id, 'high', {
-          ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'),
-          version: idea.version,
-        }).catch((error) => {
-          setBpmnHighGenerationError(error instanceof Error ? error.message : 'PROCESS_DIAGRAM_PERSIST_FAILED')
-        })
-        return
       }
-      if (processKey.startsWith('brainstorm-')) {
+      if (processKey.startsWith('brainstorm-') || processKey === 'high') {
         const fingerprint = JSON.stringify(graph)
         if (processSaveFingerprint.current[processKey] === fingerprint) {
           setProcessDocumentSync(current => ({ ...current, [processKey]: processSaveOutcomeRef.current[processKey] || 'pending' }))
@@ -14764,7 +14758,16 @@ export function IdeaDetailPage() {
                   </div>
 
                   <div className="min-h-0 flex-1 overflow-hidden">
-                    {diagramStudio.renderAsImage ? (
+                    {diagramStudio.diagramKey === 'brainstorm-sequence' && diagramStudio.diagramSource ? (
+                      <EditableSequenceDiagram
+                        key={diagramStudio.diagramKey}
+                        source={diagramStudio.diagramSource}
+                        ideaId={idea.id}
+                        diagramKey={diagramStudio.diagramKey}
+                        locked={contentLocked}
+                        onSave={diagramStudio.onPersistGraph}
+                      />
+                    ) : diagramStudio.renderAsImage ? (
                       studioPlantUmlPreview.objectUrl ? (
                         <StudioImageSurface
                           src={studioPlantUmlPreview.objectUrl}
