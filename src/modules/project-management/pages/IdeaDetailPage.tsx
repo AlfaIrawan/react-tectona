@@ -386,6 +386,7 @@ import {
   getIdeaPanelCatalogEntry,
   applyIdeaSectionOverrides,
   ideaDiagramTypesFor,
+  isIdeaDiagramOwner,
   ideaMenuForWorkflowAudience,
   resolveIdeaNavSections,
   type IdeaPanelKey,
@@ -408,6 +409,7 @@ type Idea = {
   riskSummary?: string
   type: IdeaType
   submittedBy: string
+  createdBy?: string
   workspace?: string
   project_id?: string | null
   tags: string[]
@@ -626,6 +628,7 @@ function ideaFromApi(api: IdeaApi): Idea {
     riskSummary: api.risk_summary ?? undefined,
     type,
     submittedBy: api.owner_id?.trim() ?? '',
+    createdBy: api.created_by?.trim() || undefined,
     workspace: api.workspace_id ?? undefined,
     project_id: api.project_id ?? null,
     tags: api.tags,
@@ -5399,17 +5402,19 @@ export function IdeaDetailPage() {
       ])
       .filter((label): label is string => Boolean(label))
   }, [currentUserId, reviewerMemberships])
+  const isDiagramOwner = isIdeaDiagramOwner(currentUserId, idea.submittedBy, idea.createdBy)
+  const showCreatorDiagrams = isDiagramOwner && creatorDiagramsEnabled
   const diagramTypes = useMemo(
-    () => ideaDiagramTypesFor(viewerTeamLabels, workflowSectionAudience),
-    [viewerTeamLabels, workflowSectionAudience],
+    () => ideaDiagramTypesFor(viewerTeamLabels, workflowSectionAudience, isDiagramOwner),
+    [viewerTeamLabels, workflowSectionAudience, isDiagramOwner],
   )
-  const showTechnicalDiagrams = diagramTypes.technical || (isIdeaCreator && creatorDiagramsEnabled)
-  const showBpmnDiagrams = diagramTypes.bpmn || (isIdeaCreator && creatorDiagramsEnabled)
+  const showTechnicalDiagrams = diagramTypes.technical
+  const showBpmnDiagrams = diagramTypes.bpmn
   const menuSections = useMemo(
     () => ideaMenuForWorkflowAudience(savedMenuSections,
-      isIdeaCreator && creatorDiagramsEnabled ? { ...workflowSectionVisibility, diagrams: 'show' } : workflowSectionVisibility,
-      viewerTeamLabels, workflowSectionAudience, workflowSectionOrder, isIdeaCreator && creatorDiagramsEnabled),
-    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility, workflowSectionOrder, isIdeaCreator, creatorDiagramsEnabled],
+      workflowSectionVisibility,
+      viewerTeamLabels, workflowSectionAudience, workflowSectionOrder, showCreatorDiagrams, isDiagramOwner),
+    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility, workflowSectionOrder, showCreatorDiagrams, isDiagramOwner],
   )
   useEffect(() => {
     userChosePanelRef.current = false

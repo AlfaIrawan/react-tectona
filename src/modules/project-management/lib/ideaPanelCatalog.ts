@@ -237,11 +237,19 @@ export function audienceIncludes(viewerLabels: Array<string | null | undefined>,
   })
 }
 
-/** Which diagram types the viewer sees inside Diagrams. */
+/** Ownership is based on stored identities, never a display name or a missing owner. */
+export function isIdeaDiagramOwner(viewerId: string | null | undefined, ownerId?: string | null, creatorId?: string | null): boolean {
+  const viewer = viewerId?.trim()
+  return Boolean(viewer && [ownerId, creatorId].some(id => id?.trim() === viewer))
+}
+
+/** Owners review all types inside an accessible Diagrams section; other viewers keep team rules. */
 export function ideaDiagramTypesFor(
   viewerLabels: Array<string | null | undefined>,
   audience: IdeaSectionAudience | null,
+  isIdeaOwner = false,
 ): Record<IdeaDiagramType, boolean> {
+  if (isIdeaOwner) return { technical: true, bpmn: true }
   const types = (audience ?? DEFAULT_IDEA_SECTION_AUDIENCE).diagramTypes
   return {
     technical: types.technical.length === 0 || audienceIncludes(viewerLabels, types.technical),
@@ -261,12 +269,13 @@ export function ideaMenuForWorkflowAudience(
   audience: IdeaSectionAudience | null,
   workflowOrder?: IdeaPanelKey[],
   showCreatorDiagrams = false,
+  isIdeaOwner = false,
 ): IdeaPanelKey[] {
   const order = workflowOrder ?? saved
   const governed = Object.values(visibility ?? {}).some((value) => value === 'show' || value === 'hide')
   if (!governed) return visibleIdeaNavSections(order, visibility)
   const rules = audience ?? DEFAULT_IDEA_SECTION_AUDIENCE
-  const diagramTypes = ideaDiagramTypesFor(viewerLabels, audience)
+  const diagramTypes = ideaDiagramTypesFor(viewerLabels, audience, isIdeaOwner)
   return resolveIdeaNavSections(order).filter((key) => {
     const seen = visibility?.[key] !== 'hide' || audienceIncludes(viewerLabels, rules.alsoShowTo[key])
     // Diagrams without a diagram type this viewer may see would be an empty page.
