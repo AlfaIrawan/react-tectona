@@ -260,6 +260,7 @@ export function ideaMenuForWorkflowAudience(
   viewerLabels: Array<string | null | undefined>,
   audience: IdeaSectionAudience | null,
   workflowOrder?: IdeaPanelKey[],
+  showCreatorDiagrams = false,
 ): IdeaPanelKey[] {
   const order = workflowOrder ?? saved
   const governed = Object.values(visibility ?? {}).some((value) => value === 'show' || value === 'hide')
@@ -269,6 +270,7 @@ export function ideaMenuForWorkflowAudience(
   return resolveIdeaNavSections(order).filter((key) => {
     const seen = visibility?.[key] !== 'hide' || audienceIncludes(viewerLabels, rules.alsoShowTo[key])
     // Diagrams without a diagram type this viewer may see would be an empty page.
-    return seen && (key !== 'diagrams' || diagramTypes.technical || diagramTypes.bpmn)
+    return (seen || (key === 'diagrams' && showCreatorDiagrams))
+      && (key !== 'diagrams' || showCreatorDiagrams || diagramTypes.technical || diagramTypes.bpmn)
   })
 }

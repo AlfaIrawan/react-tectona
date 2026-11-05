@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { IdeaApprovalContentControls } from './IdeaApprovalContentControls'
 import {
   Background,
   BackgroundVariant,
@@ -3499,6 +3500,11 @@ function WorkflowBuilderCanvasInner({
                       : undefined}
                     onChange={(kind) => updateSelectedNode({ config: { parameter: kind } })}
                   />
+                ) : null}
+
+                {selectedNode.data.kind === 'action' && selectedNode.data.config.actionOperation === 'Request for Approval' ? (
+                  <IdeaApprovalContentControls config={selectedNode.data.config}
+                    onChange={config => updateSelectedNode({ config })} />
                 ) : null}
 
                 {selectedNode.data.kind === 'ifElse' && nodes.some((node) => node.data.kind === 'aiProcess') ? (

@@ -19,6 +19,20 @@ import { serviceApiBase, tectonaAgentRuntimeApiBase } from './gatewayBase'
 
 const BASE_URL = serviceApiBase('/api/idea-backlog', import.meta.env.VITE_IDEA_BACKLOG_API_URL)
 
+export type IdeaContentLock = {
+  state: 'draft' | 'submitted' | 'approved' | 'revision' | 'rejected'
+  locked: boolean
+  run_id: string | null
+}
+
+export async function getIdeaContentLock(ideaId: string): Promise<IdeaContentLock> {
+  const response = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/content-lock`, {
+    headers: tectonaServiceHeaders(),
+  })
+  if (!response.ok) throw new Error('Approval lock status could not be verified.')
+  return response.json() as Promise<IdeaContentLock>
+}
+
 export type DiagramArchitectureReviewApi = {
   id: string
   idea_id: string

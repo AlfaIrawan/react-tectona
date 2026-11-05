@@ -172,6 +172,14 @@ const TECHNICAL_LABEL: Record<TechnicalDiagramKind, string> = {
 }
 
 /** Last confirmed C4, class, and ERD picture from brainstorming. Earlier sketches are dropped. */
+export function brainstormTechnicalPersistKey(diagram: ExtractedProcessDiagram): string {
+  if (diagram.kind === 'c4') {
+    return /!include\s*<\s*C4\/C4_Container|\bContainer\s*\(/i.test(diagram.source)
+      ? 'brainstorm-c4-level-2' : 'brainstorm-c4-level-1'
+  }
+  return `brainstorm-${diagram.kind}`
+}
+
 export function latestValidatedTechnicalDiagrams(text: string): ExtractedProcessDiagram[] {
   const latest: Partial<Record<TechnicalDiagramKind, ExtractedProcessDiagram>> = {}
   for (const diagram of extractProcessDiagramsFromText(text)) {

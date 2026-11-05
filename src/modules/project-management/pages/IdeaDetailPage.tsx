@@ -299,6 +299,7 @@ import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextR
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import {
   brainstormProcessPersistKey,
+  brainstormTechnicalPersistKey,
   extractProcessDiagramsFromText,
   latestRevisedProcessDiagrams,
   latestValidatedTechnicalDiagrams,
@@ -323,6 +324,8 @@ import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-mana
 import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
 import { describeEmailDeliveries, IdeaApprovalBanner, useIdeaApprovalStatus } from '@/modules/project-management/components/IdeaApprovalBanner'
 import { docApprovalState, useIdeaDocApprovals } from '@/modules/project-management/lib/ideaDocApprovals'
+import { useIdeaContentLock } from '@/modules/project-management/hooks/useIdeaContentLock'
+import { updateIdeaContentRevision } from '@/lib/api/workflowAutomationApi'
 import {
   approveWorkflowRun,
   continueWorkflowAfterGeneratedDocument,
@@ -3826,6 +3829,14 @@ export function IdeaDetailPage() {
   const [ideaGeneratedDocs, setIdeaGeneratedDocs] = useState<DocumentResponse[]>([])
   const [ideaDocHistoryTarget, setIdeaDocHistoryTarget] = useState<DocumentResponse | null>(null)
   const [ideaDocsReloadKey, setIdeaDocsReloadKey] = useState(0)
+  const [contentReviewEnabled, setContentReviewEnabled] = useState(true)
+  const [contentRevisionBusy, setContentRevisionBusy] = useState(false)
+  const [creatorDiagramsEnabled, setCreatorDiagramsEnabled] = useState(false)
+  const [contentSubmitting, setContentSubmitting] = useState(false)
+  const ideaContentLock = useIdeaContentLock(idea.id, ideaDocsReloadKey, contentReviewEnabled)
+  const contentLocked = ideaContentLock.locked || contentSubmitting
+  const contentLockedRef = useRef(contentLocked)
+  contentLockedRef.current = contentLocked
   const [ideaDocApprovalTarget, setIdeaDocApprovalTarget] = useState<
     { item: RepositoryItem; mode: 'submit' | 'approve' | 'reject' } | null
   >(null)
@@ -4860,6 +4871,7 @@ export function IdeaDetailPage() {
   }, [integrationLatestGraph, integrationWarnings])
   const persistIntegrationGraph = useCallback(
     (graph: IntegrationGraphRecord, change?: IntegrationGraphChange | { source: 'restored'; note: string }) => {
+      if (contentLockedRef.current) return Promise.reject(new Error('Idea content is locked for approval.'))
       const current = runtimeIntegrationAnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -4909,6 +4921,7 @@ export function IdeaDetailPage() {
   c4Level2AnalysisRef.current = c4Level2Analysis
   const persistC4Canvas = useCallback(
     (level: C4ArchitectureLevel, graph: C4CanvasGraph) => {
+      if (contentLockedRef.current) return
       const current = level === 'L1' ? c4Level1AnalysisRef.current : c4Level2AnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -5309,6 +5322,8 @@ export function IdeaDetailPage() {
       .then(async (policy) => {
         if (cancelled) return
         setWorkflowRequestDocumentKinds(policy.requestDocumentKinds)
+        setContentReviewEnabled(Boolean(policy.contentReviewEnabled))
+        setCreatorDiagramsEnabled(Boolean(policy.creatorDiagramsEnabled))
         // The idea's own changes: "Set Section Visibility" nodes its newest run of that workflow passed.
         const runs = policy.workflowId ? await listIdeaWorkflowRuns(idea.id).catch(() => []) : []
         const overrides = runs.find((run) => run.workflow_id === policy.workflowId)?.idea_sections
@@ -5388,11 +5403,13 @@ export function IdeaDetailPage() {
     () => ideaDiagramTypesFor(viewerTeamLabels, workflowSectionAudience),
     [viewerTeamLabels, workflowSectionAudience],
   )
-  const showTechnicalDiagrams = diagramTypes.technical
-  const showBpmnDiagrams = diagramTypes.bpmn
+  const showTechnicalDiagrams = diagramTypes.technical || (isIdeaCreator && creatorDiagramsEnabled)
+  const showBpmnDiagrams = diagramTypes.bpmn || (isIdeaCreator && creatorDiagramsEnabled)
   const menuSections = useMemo(
-    () => ideaMenuForWorkflowAudience(savedMenuSections, workflowSectionVisibility, viewerTeamLabels, workflowSectionAudience, workflowSectionOrder),
-    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility, workflowSectionOrder],
+    () => ideaMenuForWorkflowAudience(savedMenuSections,
+      isIdeaCreator && creatorDiagramsEnabled ? { ...workflowSectionVisibility, diagrams: 'show' } : workflowSectionVisibility,
+      viewerTeamLabels, workflowSectionAudience, workflowSectionOrder, isIdeaCreator && creatorDiagramsEnabled),
+    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility, workflowSectionOrder, isIdeaCreator, creatorDiagramsEnabled],
   )
   useEffect(() => {
     userChosePanelRef.current = false
@@ -6533,6 +6550,7 @@ export function IdeaDetailPage() {
 
   const persistBpmnCanvas = useCallback(
     (processKey: string, graph: C4CanvasGraph) => {
+      if (contentLockedRef.current) return
       const applyCanvas = (current: RuntimeProcessDiagramAnalysis): RuntimeProcessDiagramAnalysis => {
         const currentReview = current.architectureReview
         const actor = {
@@ -7066,7 +7084,10 @@ export function IdeaDetailPage() {
 
   useEffect(() => {
     let cancelled = false
-    const keys = brainstormProcessDiagrams.map((diagram, index) => brainstormProcessPersistKey(diagram.label, index))
+    const keys = [...new Set([
+      ...brainstormProcessDiagrams.map((diagram, index) => brainstormProcessPersistKey(diagram.label, index)),
+      ...validatedTechnicalDiagrams.map(brainstormTechnicalPersistKey),
+    ])]
     if (!keys.length) {
       setBrainstormCanvasByKey({})
       return
@@ -7096,7 +7117,7 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [brainstormProcessDiagrams, idea.id])
+  }, [brainstormProcessDiagrams, validatedTechnicalDiagrams, idea.id])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -12655,7 +12676,7 @@ export function IdeaDetailPage() {
     : diagramStudioC4Level === 'L2'
       ? c4Level2Analysis.architectureReview
       : undefined
-  const diagramStudioReviewTarget: ArchitectureReviewTarget | null = diagramStudioC4Level === 'L1'
+  const diagramStudioReviewTarget: ArchitectureReviewTarget | null = contentReviewEnabled || contentLocked ? null : diagramStudioC4Level === 'L1'
     ? 'c4-l1'
     : diagramStudioC4Level === 'L2'
       ? 'c4-l2'
@@ -14135,6 +14156,7 @@ export function IdeaDetailPage() {
                     <div className="flex min-w-0 items-center gap-2">
                       <Workflow className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                       <h2 className="text-lg font-semibold text-foreground">Diagrams</h2>
+                      {contentLocked && <span role="status" className="text-xs text-muted-foreground">Read-only</span>}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <button
@@ -14237,7 +14259,6 @@ export function IdeaDetailPage() {
               ) : null}
 
               {(showTechnicalDiagrams ? validatedTechnicalDiagrams : []).map((diagram) => {
-                const isBrainstormC4 = diagram.kind === 'c4'
                 const canvasFormat = diagram.kind === 'c4'
                   ? 'c4'
                   : diagram.kind === 'class'
@@ -14245,17 +14266,7 @@ export function IdeaDetailPage() {
                     : diagram.kind === 'erd'
                       ? 'erd'
                       : 'plantuml'
-                const technicalKey = isBrainstormC4
-                  ? (/!include\s*<\s*C4\/C4_Container|\bContainer\s*\(/i.test(diagram.source)
-                    ? 'brainstorm-c4-level-2'
-                    : 'brainstorm-c4-level-1')
-                  : diagram.kind === 'class'
-                    ? 'brainstorm-class'
-                    : diagram.kind === 'erd'
-                      ? 'brainstorm-erd'
-                      : diagram.kind === 'sequence'
-                        ? 'brainstorm-sequence'
-                        : brainstormProcessPersistKey(diagram.label, 0)
+                const technicalKey = brainstormTechnicalPersistKey(diagram)
                 const technicalMeta = diagram.kind === 'c4'
                   ? { icon: Layers, description: 'Gambaran sistem (C4) terakhir yang sudah dikonfirmasi saat brainstorming.' }
                   : diagram.kind === 'class'
@@ -14264,11 +14275,29 @@ export function IdeaDetailPage() {
                       ? { icon: Workflow, description: 'Sequence diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
                       : { icon: Database, description: 'ERD terakhir yang sudah dikonfirmasi saat brainstorming.' }
                 return (
+                  <div key={technicalKey} className="order-6 min-w-0 space-y-2">
+                  {processDocumentSync[technicalKey] ? (
+                    <div role="status" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>{processDocumentSync[technicalKey] === 'synced' ? 'Diagram dan dokumen tersinkronisasi'
+                        : processDocumentSync[technicalKey] === 'pending' ? 'Menyimpan diagram dan memperbarui dokumen...'
+                          : 'Perubahan belum tersinkronisasi dengan dokumen.'}</span>
+                      {!contentLocked && ['failed', 'save_failed'].includes(processDocumentSync[technicalKey]) ? (
+                        <button type="button" className="inline-flex items-center gap-1 text-primary underline" onClick={() => {
+                          const graph = brainstormCanvasByKey[technicalKey]
+                          if (!graph) return
+                          processSaveFingerprint.current[technicalKey] = ''
+                          persistBpmnCanvas(technicalKey, graph)
+                        }}><RefreshCcw className="h-3.5 w-3.5" aria-hidden />Coba lagi</button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <DiagramGalleryCard
                     key={technicalKey}
                     ideaId={idea.id}
                     diagramKey={technicalKey}
-                    diagramSource={diagram.source}
+                    diagramSource={brainstormCanvasByKey[technicalKey]?.source || diagram.source}
+                    savedGraph={brainstormCanvasByKey[technicalKey]}
+                    onPersistGraph={contentLocked ? undefined : (graph) => persistBpmnCanvas(technicalKey, graph)}
                     diagramFormat={canvasFormat}
                     renderAsImage={canvasFormat === 'plantuml'}
                     title={diagram.label}
@@ -14282,6 +14311,7 @@ export function IdeaDetailPage() {
                     onOpenStudio={setDiagramStudio}
                     className="order-6"
                   />
+                  </div>
                 )
               })}
 
@@ -14299,7 +14329,7 @@ export function IdeaDetailPage() {
                             : processDocumentSync[processKey] === 'save_failed' ? 'Diagram belum berhasil disimpan. Dokumen belum diperbarui.'
                               : 'Diagram tersimpan, tetapi dokumen belum tersinkronisasi.'}
                       </span>
-                      {processDocumentSync[processKey] !== 'pending' && processDocumentSync[processKey] !== 'synced' ? (
+                      {!contentLocked && processDocumentSync[processKey] !== 'pending' && processDocumentSync[processKey] !== 'synced' ? (
                         <button type="button" className="inline-flex items-center gap-1 text-primary underline" onClick={() => {
                           if (processDocumentSync[processKey] === 'save_failed' && savedGraph) {
                             persistBpmnCanvas(processKey, savedGraph)
@@ -14612,7 +14642,7 @@ export function IdeaDetailPage() {
                             ) : null}
                           </div>
                         ) : null}
-                        {diagramStudio.missing && diagramStudio.onGenerateDraft ? (
+                        {!contentLocked && diagramStudio.missing && diagramStudio.onGenerateDraft ? (
                           <Button
                             type="button"
                             className="h-9 rounded-md bg-[#0b5fd7] px-3 text-xs font-semibold shadow-none hover:bg-[#094fad]"
@@ -14625,7 +14655,7 @@ export function IdeaDetailPage() {
                             <Sparkles className="h-3.5 w-3.5" aria-hidden />
                             Generate draft
                           </Button>
-                        ) : diagramStudio.onGenerateAlternative ? (
+                        ) : !contentLocked && diagramStudio.onGenerateAlternative ? (
                           <Button
                             type="button"
                             variant="outline"
@@ -14692,7 +14722,7 @@ export function IdeaDetailPage() {
                         onPersistGraph={diagramStudio.onPersistGraph}
                         c4DrilldownTargets={diagramStudio.c4DrilldownTargets}
                         onOpenC4Drilldown={diagramStudio.onOpenC4Drilldown}
-                        editable
+                        editable={!contentLocked}
                         fillHeight
                         hideStudioHeader
                       />
@@ -14958,17 +14988,17 @@ export function IdeaDetailPage() {
                           <ShieldCheck className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
                           {c4ReviewStatusMeta(runtimeIntegrationAnalysis.architectureReview?.status).label}
                         </Badge>
-                        {(!runtimeIntegrationAnalysis.architectureReview || ['draft', 'revision_requested', 'rejected', 'cancelled', 'superseded'].includes(runtimeIntegrationAnalysis.architectureReview.status)) ? (
+                        {!contentReviewEnabled && !contentLocked && (!runtimeIntegrationAnalysis.architectureReview || ['draft', 'revision_requested', 'rejected', 'cancelled', 'superseded'].includes(runtimeIntegrationAnalysis.architectureReview.status)) ? (
                           <Button type="button" className={cn(enterpriseCyanGradientActionButtonClass(), 'h-10 gap-2')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'submit' }) }}>
                             <ShieldCheck className="h-4 w-4" aria-hidden /> Submit for review
                           </Button>
                         ) : null}
-                        {runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && runtimeIntegrationAnalysis.architectureReview.submittedBy === currentUserId ? (
+                        {!contentReviewEnabled && !contentLocked && runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && runtimeIntegrationAnalysis.architectureReview.submittedBy === currentUserId ? (
                           <Button type="button" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'h-10 gap-2')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'cancel' }) }}>
                             <Undo2 className="h-4 w-4" aria-hidden /> Cancel review
                           </Button>
                         ) : null}
-                        {runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && currentArchitectureMembership && runtimeIntegrationAnalysis.architectureReview.submittedBy !== currentUserId ? (
+                        {!contentReviewEnabled && !contentLocked && runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && currentArchitectureMembership && runtimeIntegrationAnalysis.architectureReview.submittedBy !== currentUserId ? (
                           <div className="flex shrink-0 items-center gap-1">
                             <Button type="button" size="sm" className="h-9 gap-1.5" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'approve' }) }}><Check className="h-3.5 w-3.5" aria-hidden /> Approve</Button>
                             <Button type="button" size="sm" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'h-9 gap-1.5')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'revision_requested' }) }}><Undo2 className="h-3.5 w-3.5" aria-hidden /> Revision</Button>
@@ -15059,7 +15089,9 @@ export function IdeaDetailPage() {
 
                   <div className="min-h-0 flex-1 overflow-hidden">
                     {reviewedSection('integration')}
-                    <EditableIntegrationArchitectureCanvas
+                    {contentLocked ? (
+                      <IntegrationArchitecturePreview nodes={integrationLatestGraph?.nodes ?? []} edges={integrationLatestGraph?.edges ?? []} />
+                    ) : <EditableIntegrationArchitectureCanvas
                       ideaId={idea.id}
                       bootstrapKey={integrationBootstrapKey}
                       bootstrapRecord={integrationBootstrapRecord}
@@ -15084,8 +15116,8 @@ export function IdeaDetailPage() {
                           {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
                                 </div>
                       ) : null}
-                    />
-                    <DiagramHistoryDialog
+                    />}
+                    {!contentLocked && <DiagramHistoryDialog
                       open={isIntegrationHistoryOpen}
                       onOpenChange={setIsIntegrationHistoryOpen}
                       ideaId={idea.id}
@@ -15094,7 +15126,7 @@ export function IdeaDetailPage() {
                       reviewHistory={runtimeIntegrationAnalysis.architectureReview?.history ?? []}
                       resolveName={resolveIdentityDisplayName}
                       onRestore={restoreIntegrationVersion}
-                    />
+                    />}
                   </div>
                 </div>
               </div>
@@ -15727,6 +15759,22 @@ export function IdeaDetailPage() {
                     ))}
                   </div>
                 ) : null}
+                {contentLocked ? <p role="status" className="mb-3 text-sm text-amber-800">
+                  {ideaContentLock.error || (ideaContentLock.value?.state === 'approved'
+                    ? 'Approved version. Start a new revision to edit.'
+                    : 'Content is read-only while approval is in progress.')}
+                </p> : null}
+                {isIdeaCreator && ideaContentLock.value?.state === 'approved' && ideaContentLock.value.run_id ? (
+                  <Button type="button" variant="outline" className="mb-3 gap-2" disabled={contentRevisionBusy} onClick={() => {
+                    const runId = ideaContentLock.value?.run_id?.split(':')[0]
+                    if (!runId || contentRevisionBusy) return
+                    setContentRevisionBusy(true)
+                    void updateIdeaContentRevision(runId, 'content-revision').then(() => {
+                      setIdeaDocsReloadKey((key) => key + 1)
+                    }).catch((error) => addToast({ title: 'Revision could not be opened', description: String(error), variant: 'error' }))
+                      .finally(() => setContentRevisionBusy(false))
+                  }}><Undo2 className="h-4 w-4" aria-hidden />Start new revision</Button>
+                ) : null}
                 <div className="idea-docs-actions flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     {/* Shown without a folder too: generating or adding a folder creates the
@@ -15737,7 +15785,7 @@ export function IdeaDetailPage() {
                           type="button"
                           className={enterprisePrimarySolidButtonClass()}
                           title="Generate a document from a DKM master template"
-                          disabled={ideaDocTemplatesLoading || ideaDocGenerateBusy || Boolean(ideaDocFolderError)}
+                          disabled={contentLocked || ideaDocTemplatesLoading || ideaDocGenerateBusy || Boolean(ideaDocFolderError)}
                           onClick={() => void openIdeaDocGenerateDialog()}
                         >
                           {ideaDocGenerateBusy ? (
@@ -15750,7 +15798,7 @@ export function IdeaDetailPage() {
                         <button
                           type="button"
                           className={enterpriseSecondaryButtonClass()}
-                          disabled={ideaDocFolderCreateBusy || Boolean(ideaDocFolderError)}
+                          disabled={contentLocked || ideaDocFolderCreateBusy || Boolean(ideaDocFolderError)}
                           onClick={() => void handleIdeaDocCreateFolder()}
                           title="Create a subfolder to organize documents"
                         >
@@ -15952,7 +16000,7 @@ export function IdeaDetailPage() {
                                   // The approval of this document lives on its row: the request
                                   // button for the owner, then who it waits on (and, for an
                                   // approver, the Approve / Revision / Reject controls).
-                                  const showRequest = isIdeaCreator && ideaApprovalStatus.canRequest
+                                  const showRequest = isIdeaCreator && (ideaApprovalStatus.canRequest || ideaContentLock.value?.state === 'revision')
                                   if (!showRequest && ideaApprovalStatus.awaitingRequest) return null
                                   return (
                                     <div className="mt-2 space-y-1" onClick={(event) => event.stopPropagation()}>
@@ -15963,9 +16011,10 @@ export function IdeaDetailPage() {
                                         size="sm"
                                         className="h-10 rounded-lg border-primary/30 bg-primary/10 px-4 text-sm font-semibold text-primary shadow-sm hover:bg-primary/15 hover:text-primary"
                                         variant="outline"
-                                        disabled={ideaApprovalStatus.busy}
+                                        disabled={ideaApprovalStatus.busy || contentSubmitting || Object.values(processDocumentSync).some(value => value !== 'synced')}
                                         onClick={(event) => {
                                           event.stopPropagation()
+                                          setContentSubmitting(true)
                                           void ideaApprovalStatus.request().then((deliveries) => {
                                             if (!deliveries) return
                                             const { sent, failed } = describeEmailDeliveries(deliveries)
@@ -15977,12 +16026,18 @@ export function IdeaDetailPage() {
                                             if (failed) {
                                               addToast({ variant: 'warning', title: 'Email not delivered', description: failed })
                                             }
+                                          }).finally(() => {
+                                            setContentSubmitting(false)
+                                            setIdeaDocsReloadKey(key => key + 1)
                                           })
                                         }}
                                       >
                                         {ideaApprovalStatus.busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                                         Request for Approval
                                       </Button>
+                                      {Object.values(processDocumentSync).some(value => value !== 'synced') ? (
+                                        <p role="status" className="text-xs text-amber-800">Synchronize diagram changes with the document before requesting approval.</p>
+                                      ) : null}
                                       {ideaApprovalStatus.emailDeliveries.length > 0 ? (
                                         <p
                                           className="mt-1 text-[11px] text-slate-500"

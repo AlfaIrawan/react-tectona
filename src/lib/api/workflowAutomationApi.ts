@@ -391,6 +391,13 @@ export async function getWorkflowRun(runId: string): Promise<WorkflowRunDto> {
   return readJson<WorkflowRunDto>(res)
 }
 
+export async function updateIdeaContentRevision(runId: string, action: 'content-revision' | 'reconcile-content-lock'): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/${action}`, {
+    method: 'POST', headers: defaultHeaders(),
+  })
+  if (!res.ok) throw new Error((await res.text()) || 'Approval content could not be updated.')
+}
+
 export async function approveWorkflowRun(runId: string, note?: string, expectedApprovalId?: string): Promise<WorkflowRunDto> {
   const res = await apiFetch(`${BASE_URL}/v1/runs/${encodeURIComponent(runId)}/approve`, {
     method: 'POST',

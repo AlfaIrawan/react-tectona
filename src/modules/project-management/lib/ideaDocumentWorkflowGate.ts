@@ -1,5 +1,6 @@
 import {
   getWorkflow,
+  getWorkflowVersion,
   listWorkflowApprovals,
   listWorkflows,
   type WorkflowApprovalDto,
@@ -237,6 +238,8 @@ export type IdeaWorkflowAudience = {
 }
 
 export type PublishedIdeaSectionPolicy = {
+  contentReviewEnabled?: boolean
+  creatorDiagramsEnabled?: boolean
   sectionOrder?: IdeaPanelKey[]
   map: IdeaSectionVisibilityMap
   /** Who still sees hidden sections and which diagram types; null keeps the default rule. */
@@ -262,6 +265,32 @@ export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | unde
     if (!kinds.includes(kind)) kinds.push(kind)
   }
   return kinds
+}
+
+export function ideaContentReviewPolicy(graph: WorkflowGraph | null | undefined) {
+  const requests = asNodes(graph ?? { nodes: [], edges: [] }).filter((node) =>
+    node.data?.kind === 'action' && !node.data.disabled && node.data.config?.actionOperation === 'Request for Approval')
+  return {
+    contentReviewEnabled: requests.some((node) => node.data?.config?.lockIdeaContentOnApproval === 'true'),
+    creatorDiagramsEnabled: requests.some((node) => node.data?.config?.showIdeaDiagramsBeforeApproval === 'true'),
+  }
+}
+
+async function approvalGraphs(graph: WorkflowGraph, visited = new Set<string>()): Promise<WorkflowGraph[]> {
+  const result = [graph]
+  for (const node of asNodes(graph)) {
+    if (node.data?.kind !== 'callWorkflow' || node.data.disabled) continue
+    const config = node.data.config ?? {}
+    const id = config.workflowId?.trim()
+    const version = Number(config.workflowVersion)
+    const key = `${id}:${version}`
+    if (!id || !Number.isInteger(version) || version < 1 || visited.has(key)) continue
+    if (visited.size >= 20) throw new Error('Workflow approval nesting exceeds the supported limit')
+    visited.add(key)
+    const child = await getWorkflowVersion(id, version)
+    if (child.definition) result.push(...await approvalGraphs(child.definition, visited))
+  }
+  return result
 }
 
 const OPEN_AUDIENCE: IdeaWorkflowAudience = { by: 'jobTitle', values: [] }
@@ -306,8 +335,14 @@ export async function loadPublishedIdeaSectionPolicy(
       const published = full.published_definition ?? full.definition
       const map = readIdeaSectionVisibility(published?.ideaSections)
       const sectionOrder = ideaSectionOrderFromGraph(published)
-      if (Object.keys(map).length > 0 || sectionOrder) {
-        const requestDocumentKinds = requestDocumentKindsFromGraph(published)
+      const graphs = await approvalGraphs(published ?? { nodes: [], edges: [] })
+      const contentPolicies = graphs.map(ideaContentReviewPolicy)
+      const contentPolicy = {
+        contentReviewEnabled: contentPolicies.some(policy => policy.contentReviewEnabled),
+        creatorDiagramsEnabled: contentPolicies.some(policy => policy.creatorDiagramsEnabled),
+      }
+      if (Object.keys(map).length > 0 || sectionOrder || contentPolicy.contentReviewEnabled || contentPolicy.creatorDiagramsEnabled) {
+        const requestDocumentKinds = [...new Set(graphs.flatMap(requestDocumentKindsFromGraph))]
         return {
           map,
           sectionOrder,
@@ -316,6 +351,7 @@ export async function loadPublishedIdeaSectionPolicy(
           requestsApproval: requestDocumentKinds.length > 0,
           requestDocumentKinds,
           workflowId: summary.id,
+          ...(contentPolicy.contentReviewEnabled || contentPolicy.creatorDiagramsEnabled ? contentPolicy : {}),
         }
       }
     } catch {
