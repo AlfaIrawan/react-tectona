@@ -102,6 +102,8 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WorkspaceSelectionFields, workspaceSelectionIds } from './WorkspaceSelectionFields'
 import { ScopeWorkspacePicker } from './ScopeWorkspacePicker'
+import { IdeaSectionOrderControls } from './IdeaSectionOrderControls'
+import { RotateCcw } from 'lucide-react'
 import { isWorkspaceSelectionInput } from './workflowNodeKinds'
 import { CallWorkflowFields } from './CallWorkflowFields'
 import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
@@ -111,6 +113,9 @@ import {
   IDEA_PANEL_CATALOG,
   readIdeaSectionAudience,
   readIdeaSectionVisibility,
+  readIdeaSectionOrder,
+  resolveIdeaNavSections,
+  getIdeaPanelCatalogEntry,
   type IdeaDiagramType,
   type IdeaPanelKey,
   type IdeaSectionAudience,
@@ -1132,12 +1137,14 @@ function TeamNamesInput({
   )
 }
 
-function IdeaSectionVisibilityEditor({
+export function IdeaSectionVisibilityEditor({
   value,
   onChange,
   audience,
   onAudienceChange,
   changedBy = {},
+  order,
+  onOrderChange,
 }: {
   value: IdeaSectionVisibilityMap
   onChange: (key: IdeaPanelKey, visibility: IdeaSectionVisibility) => void
@@ -1145,21 +1152,37 @@ function IdeaSectionVisibilityEditor({
   onAudienceChange: (next: IdeaSectionAudience) => void
   /** Section → "Show"/"Hide" + node label, for the Set Section Visibility nodes on the canvas. */
   changedBy?: Partial<Record<IdeaPanelKey, string[]>>
+  order?: IdeaPanelKey[]
+  onOrderChange: (next: IdeaPanelKey[] | undefined) => void
 }) {
+  const orderedSections = resolveIdeaNavSections(order)
   const setAlsoShowTo = (key: IdeaPanelKey, names: string[]) =>
     onAudienceChange({ ...audience, alsoShowTo: { ...audience.alsoShowTo, [key]: names } })
   const setDiagramType = (key: IdeaDiagramType, names: string[]) =>
     onAudienceChange({ ...audience, diagramTypes: { ...audience.diagramTypes, [key]: names } })
   return (
     <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Idea sections</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Idea sections</p>
+        <button type="button" title="Reset section order" aria-label="Reset section order"
+          disabled={!order} onClick={() => onOrderChange(resolveIdeaNavSections())}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-100 disabled:opacity-30">
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      </div>
+      <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+        <input type="checkbox" checked={Boolean(order)}
+          onChange={(event) => onOrderChange(event.target.checked ? orderedSections : undefined)} />
+        Workflow order
+      </label>
       <p className="mt-1 text-xs leading-relaxed text-slate-500">
         Show or hide each section on Idea Detail. A published Active workflow applies this to its workspace.
         A hidden section can still be shown to the teams or roles named under it, matched against each
         person&apos;s roles and operational teams.
       </p>
       <ul className="mt-3 space-y-1">
-        {IDEA_PANEL_CATALOG.map((entry) => {
+        {orderedSections.map((key) => {
+          const entry = getIdeaPanelCatalogEntry(key)
           const shown = value[entry.key] !== 'hide'
           const Icon = entry.icon
           return (
@@ -1169,16 +1192,19 @@ function IdeaSectionVisibilityEditor({
                   <Icon className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{entry.label}</span>
                 </span>
-                <button
-                  type="button"
-                  className={cn(
-                    'shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold',
-                    shown ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
-                  )}
-                  onClick={() => onChange(entry.key, shown ? 'hide' : 'show')}
-                >
-                  {shown ? 'Show' : 'Hide'}
-                </button>
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  <IdeaSectionOrderControls section={entry.key} order={orderedSections} onChange={onOrderChange} />
+                  <button
+                    type="button"
+                    className={cn(
+                      'shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold',
+                      shown ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
+                    )}
+                    onClick={() => onChange(entry.key, shown ? 'hide' : 'show')}
+                  >
+                    {shown ? 'Show' : 'Hide'}
+                  </button>
+                </div>
               </div>
               {changedBy[entry.key]?.length ? (
                 <p className="mt-1 text-[10px] leading-4 text-violet-700">
@@ -3605,6 +3631,8 @@ function WorkflowBuilderCanvasInner({
                     <div className="border-t border-slate-100 pt-3">
                       <IdeaSectionVisibilityEditor
                         value={ideaSections}
+                        order={readIdeaSectionOrder(selectedNode.data.config.ideaSectionOrder)}
+                        onOrderChange={(order) => updateSelectedNode({ config: { ideaSectionOrder: order ? JSON.stringify(order) : '' } })}
                         onChange={setIdeaSectionVisibility}
                         audience={ideaSectionAudience ?? DEFAULT_IDEA_SECTION_AUDIENCE}
                         onAudienceChange={setIdeaSectionAudience}

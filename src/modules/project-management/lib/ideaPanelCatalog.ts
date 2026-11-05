@@ -52,11 +52,34 @@ export function getIdeaPanelCatalogEntry(key: IdeaPanelKey): IdeaPanelCatalogEnt
 export function resolveIdeaNavSections(saved?: IdeaPanelKey[]): IdeaPanelKey[] {
   if (!saved?.length) return [...DEFAULT_IDEA_NAV_SECTIONS]
   const known = new Set(DEFAULT_IDEA_NAV_SECTIONS)
-  const ordered = saved.filter((key) => known.has(key))
+  const ordered = [...new Set(saved.filter((key) => known.has(key)))]
   for (const key of DEFAULT_IDEA_NAV_SECTIONS) {
     if (!ordered.includes(key)) ordered.push(key)
   }
   return ordered
+}
+
+/** Node configs store strings; also accept arrays from imported definitions. */
+export function readIdeaSectionOrder(value: unknown): IdeaPanelKey[] | undefined {
+  let raw = value
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw) } catch { return undefined }
+  }
+  if (!Array.isArray(raw)) return undefined
+  const known = raw.filter((key): key is IdeaPanelKey =>
+    typeof key === 'string' && DEFAULT_IDEA_NAV_SECTIONS.includes(key as IdeaPanelKey))
+  return known.length ? resolveIdeaNavSections(known) : undefined
+}
+
+export function moveIdeaSection(order: IdeaPanelKey[], key: IdeaPanelKey, direction: -1 | 1): IdeaPanelKey[] {
+  const next = resolveIdeaNavSections(order)
+  const index = next.indexOf(key)
+  const target = index + direction
+  if (index < 0 || target < 0 || target >= next.length) return next
+  const moved = next[index]
+  next[index] = next[target]
+  next[target] = moved
+  return next
 }
 
 export type IdeaSectionVisibility = 'show' | 'hide'
@@ -228,20 +251,22 @@ export function ideaDiagramTypesFor(
 
 /**
  * The Idea menu while a published workflow governs it: every section the workflow shows, plus a
- * hidden section for the teams/roles the workflow still shows it to, in the user's saved order.
+ * hidden section for the teams/roles the workflow still shows it to. A configured workflow order
+ * takes precedence over the user's saved order; it never changes which sections they can see.
  */
 export function ideaMenuForWorkflowAudience(
   saved: IdeaPanelKey[] | undefined,
   visibility: IdeaSectionVisibilityMap | undefined,
   viewerLabels: Array<string | null | undefined>,
   audience: IdeaSectionAudience | null,
+  workflowOrder?: IdeaPanelKey[],
 ): IdeaPanelKey[] {
+  const order = workflowOrder ?? saved
   const governed = Object.values(visibility ?? {}).some((value) => value === 'show' || value === 'hide')
-  if (!governed) return visibleIdeaNavSections(saved, visibility)
+  if (!governed) return visibleIdeaNavSections(order, visibility)
   const rules = audience ?? DEFAULT_IDEA_SECTION_AUDIENCE
   const diagramTypes = ideaDiagramTypesFor(viewerLabels, audience)
-  // In the user's saved order: a fixed list here put a dragged section straight back.
-  return resolveIdeaNavSections(saved).filter((key) => {
+  return resolveIdeaNavSections(order).filter((key) => {
     const seen = visibility?.[key] !== 'hide' || audienceIncludes(viewerLabels, rules.alsoShowTo[key])
     // Diagrams without a diagram type this viewer may see would be an empty page.
     return seen && (key !== 'diagrams' || diagramTypes.technical || diagramTypes.bpmn)

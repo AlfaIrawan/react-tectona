@@ -8,6 +8,8 @@ import {
 import {
   readIdeaSectionAudience,
   readIdeaSectionVisibility,
+  readIdeaSectionOrder,
+  type IdeaPanelKey,
   type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
@@ -235,6 +237,7 @@ export type IdeaWorkflowAudience = {
 }
 
 export type PublishedIdeaSectionPolicy = {
+  sectionOrder?: IdeaPanelKey[]
   map: IdeaSectionVisibilityMap
   /** Who still sees hidden sections and which diagram types; null keeps the default rule. */
   sectionAudience: IdeaSectionAudience | null
@@ -263,15 +266,23 @@ export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | unde
 
 const OPEN_AUDIENCE: IdeaWorkflowAudience = { by: 'jobTitle', values: [] }
 
-function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkflowAudience {
-  const trigger = asNodes(graph ?? { nodes: [], edges: [] }).find((node) => {
+function ideaTrigger(graph: WorkflowGraph | null | undefined): GraphNode | undefined {
+  return asNodes(graph ?? { nodes: [], edges: [] }).find((node) => {
     const config = node.data?.config ?? {}
     return node.data?.kind === 'trigger'
       && config.triggerType === 'Event'
       && config.triggerDomain === 'AI Idea & Prioritization'
       && config.triggerEntity === 'Idea'
   })
-  const config = trigger?.data?.config ?? {}
+}
+
+export function ideaSectionOrderFromGraph(graph: WorkflowGraph | null | undefined): IdeaPanelKey[] | undefined {
+  const trigger = ideaTrigger(graph)
+  return trigger?.data?.disabled ? undefined : readIdeaSectionOrder(trigger?.data?.config?.ideaSectionOrder)
+}
+
+function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkflowAudience {
+  const config = ideaTrigger(graph)?.data?.config ?? {}
   return {
     by: parseEmailRecipientBy(config.audienceBy),
     values: parseJobTitles(config.audienceValues),
@@ -279,8 +290,8 @@ function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkf
 }
 
 /**
- * Newest published Active workflow that stored an Idea section map.
- * Workflows with no map are skipped, so a team branch cannot wipe the page.
+ * Newest published Active workflow that stored an Idea section map or order.
+ * Workflows with neither are skipped, so a team branch cannot wipe the page.
  * Missing map means every section stays visible.
  * An empty audience includes everyone. Badges limit the map to matching people.
  */
@@ -294,10 +305,12 @@ export async function loadPublishedIdeaSectionPolicy(
       const full = await getWorkflow(summary.id)
       const published = full.published_definition ?? full.definition
       const map = readIdeaSectionVisibility(published?.ideaSections)
-      if (Object.keys(map).length > 0) {
+      const sectionOrder = ideaSectionOrderFromGraph(published)
+      if (Object.keys(map).length > 0 || sectionOrder) {
         const requestDocumentKinds = requestDocumentKindsFromGraph(published)
         return {
           map,
+          sectionOrder,
           sectionAudience: readIdeaSectionAudience(published?.ideaSectionAudience),
           audience: ideaTriggerAudience(published),
           requestsApproval: requestDocumentKinds.length > 0,

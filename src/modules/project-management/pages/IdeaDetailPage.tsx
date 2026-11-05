@@ -286,6 +286,7 @@ import {
   templateAllowedByWorkflow,
   type IdeaDocumentWorkflowGate,
 } from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
+import { ideaDocumentMatchesApproval, ideaDocumentType } from '@/modules/project-management/lib/ideaDocumentKind'
 import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
 import {
@@ -575,13 +576,6 @@ function isWorkspaceUuid(value: string | null | undefined): value is string {
 /** "brd-adirafinancews-…" → "BRD": what the document is, next to the shared idea title. */
 function ideaDocTypeLabel(templateCode: string | null | undefined): string {
   return (templateCode ?? '').split('-', 1)[0]?.trim().toUpperCase() || 'DOC'
-}
-
-function ideaDocumentType(doc: DocumentResponse): string | null {
-  const metadata = doc.metadata ?? {}
-  const candidate = metadata.doc_type_label || metadata.template_code || doc.document_type_code
-  const label = typeof candidate === 'string' ? ideaDocTypeLabel(candidate) : ''
-  return ['URD', 'BRD', 'FSD'].includes(label) ? label : null
 }
 
 function ideaDocFileName(label: string, title: string): string {
@@ -2918,6 +2912,7 @@ type IdeaDetailSidebarProps = {
   activePanel: PanelKey
   onNavigatePanel: (key: PanelKey) => void
   menuSections: PanelKey[]
+  menuOrderLocked: boolean
   onReorderMenuSections: (orderedKeys: PanelKey[]) => void
   actionControlMode: ActionControlSidebarMode
   actionControlGroups: IdeaActionControlGroup[]
@@ -3441,16 +3436,19 @@ function SortableIdeaNavItem({
   collapsed,
   active,
   onNavigate,
+  orderLocked,
 }: {
   sectionKey: PanelKey
   collapsed: boolean
   active: boolean
   onNavigate: (key: PanelKey) => void
+  orderLocked: boolean
 }) {
   const item = getIdeaPanelCatalogEntry(sectionKey)
   const Icon = item.icon
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sectionKey,
+    disabled: orderLocked,
   })
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -3470,7 +3468,7 @@ function SortableIdeaNavItem({
         )}
         title={collapsed ? item.label : undefined}
       >
-        {!collapsed && (
+        {!collapsed && !orderLocked && (
           <span
             {...attributes}
             {...listeners}
@@ -3494,6 +3492,7 @@ function IdeaDetailSidebar({
   activePanel,
   onNavigatePanel,
   menuSections,
+  menuOrderLocked,
   onReorderMenuSections,
   actionControlMode,
   actionControlGroups,
@@ -3553,6 +3552,7 @@ function IdeaDetailSidebar({
   }, [onWidthChange, isMobile])
 
   const handleMenuDragEnd = (event: DragEndEvent) => {
+    if (menuOrderLocked) return
     const { active, over } = event
     if (!over || active.id === over.id) return
     const oldIndex = menuSections.indexOf(active.id as PanelKey)
@@ -3607,6 +3607,7 @@ function IdeaDetailSidebar({
                 <SortableIdeaNavItem
                   key={sectionKey}
                   sectionKey={sectionKey}
+                  orderLocked={menuOrderLocked}
                   collapsed={collapsed}
                   active={activePanel === sectionKey}
                   onNavigate={onNavigatePanel}
@@ -5284,6 +5285,7 @@ export function IdeaDetailPage() {
   const reorderIdeaMenuSections = useIdeaNavSectionsStore((state) => state.reorderSections)
   const savedMenuSections = useIdeaNavSectionsStore((state) => state.sectionsByIdea[idea.id])
   const [workflowSectionVisibility, setWorkflowSectionVisibility] = useState<IdeaSectionVisibilityMap>({})
+  const [workflowSectionOrder, setWorkflowSectionOrder] = useState<PanelKey[] | undefined>()
   // Who still sees hidden sections and which diagram types, from the workflow's Idea trigger.
   const [workflowSectionAudience, setWorkflowSectionAudience] = useState<IdeaSectionAudience | null>(null)
   // False until the workflow's section rules are read: showing the full menu first and then
@@ -5333,6 +5335,7 @@ export function IdeaDetailPage() {
         )
         if (cancelled) return
         if (policy.audience.values.length === 0) {
+          setWorkflowSectionOrder(policy.sectionOrder)
           setWorkflowSectionVisibility(sections.visibility)
           setWorkflowSectionAudience(sections.audience)
           setIdeaSectionPolicyReady(true)
@@ -5348,6 +5351,7 @@ export function IdeaDetailPage() {
         })
         if (!cancelled) {
           setWorkflowSectionVisibility(matches ? sections.visibility : {})
+          setWorkflowSectionOrder(matches ? policy.sectionOrder : undefined)
           setWorkflowSectionAudience(matches ? sections.audience : null)
           setIdeaSectionPolicyReady(true)
         }
@@ -5355,6 +5359,7 @@ export function IdeaDetailPage() {
       .catch(() => {
         if (!cancelled) {
           setWorkflowSectionVisibility({})
+          setWorkflowSectionOrder(undefined)
           setWorkflowSectionAudience(null)
           setWorkflowRequestDocumentKinds([])
           setIdeaSectionPolicyReady(true)
@@ -5386,8 +5391,8 @@ export function IdeaDetailPage() {
   const showTechnicalDiagrams = diagramTypes.technical
   const showBpmnDiagrams = diagramTypes.bpmn
   const menuSections = useMemo(
-    () => ideaMenuForWorkflowAudience(savedMenuSections, workflowSectionVisibility, viewerTeamLabels, workflowSectionAudience),
-    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility],
+    () => ideaMenuForWorkflowAudience(savedMenuSections, workflowSectionVisibility, viewerTeamLabels, workflowSectionAudience, workflowSectionOrder),
+    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility, workflowSectionOrder],
   )
   useEffect(() => {
     userChosePanelRef.current = false
@@ -7613,7 +7618,7 @@ export function IdeaDetailPage() {
       const item = mapDocumentToRepositoryItem(doc, idea.title)
       const label = ideaDocumentType(doc)
       const displayName = label
-        ? `${label} - ${doc.title.replace(/^(?:URD|BRD|FSD)\s*[-:]\s*/i, '')}`
+        ? `${label} - ${doc.title.replace(/^(?:URD|BRD|FSD|SRD)\s*[-:]\s*/i, '')}`
         : (item.displayName || item.name)
       return {
         ...item,
@@ -12692,7 +12697,9 @@ export function IdeaDetailPage() {
         activePanel={activePanel}
         onNavigatePanel={navigateToPanel}
         menuSections={ideaSectionPolicyReady ? menuSections : []}
+        menuOrderLocked={Boolean(workflowSectionOrder)}
         onReorderMenuSections={(orderedKeys) => {
+          if (workflowSectionOrder) return
           const hidden = resolveIdeaNavSections(savedMenuSections).filter((key) => !orderedKeys.includes(key))
           reorderIdeaMenuSections(idea.id, [...orderedKeys, ...hidden])
         }}
@@ -15939,10 +15946,8 @@ export function IdeaDetailPage() {
                                 }}
                                 onRowContextMenu={(event, item) => openIdeaDocContextMenu(event, item)}
                                 rowAction={(item) => {
-                                  const label = `${item.name} ${item.displayName ?? ''} ${item.type}`
-                                  const matchesRequestedDocument = workflowRequestDocumentKinds.some((kind) => (
-                                    new RegExp(`\\b${kind}\\b`, 'i').test(label)
-                                  ))
+                                  const document = ideaGeneratedDocs.find((doc) => doc.id === item.id)
+                                  const matchesRequestedDocument = ideaDocumentMatchesApproval(document, item, workflowRequestDocumentKinds)
                                   if (!matchesRequestedDocument) return null
                                   // The approval of this document lives on its row: the request
                                   // button for the owner, then who it waits on (and, for an
