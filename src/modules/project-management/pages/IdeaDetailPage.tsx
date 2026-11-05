@@ -262,6 +262,7 @@ import {
   getPersistentIdeaC4Architecture,
   upsertPersistentIdeaC4Architecture,
   getPersistentIdeaProcessDiagram,
+  getIdeaDocumentDiagramSources,
   upsertPersistentIdeaProcessDiagram,
   syncIdeaProcessDiagramDocuments,
   submitDiagramArchitectureReview,
@@ -7133,12 +7134,26 @@ export function IdeaDetailPage() {
           return [key, undefined] as const
         }
       }),
-    ).then((entries) => {
+    ).then(async (entries) => {
       if (cancelled) return
       const next: Record<string, C4CanvasGraph> = {}
       for (const [key, graph] of entries) {
         if (graph?.nodes?.length || graph?.source?.trim()) next[key] = graph!
       }
+      try {
+        const recovered = await getIdeaDocumentDiagramSources(idea.id)
+        for (const slot of TECHNICAL_DIAGRAM_SLOTS) {
+          if (!next[slot.persistKey]?.source && recovered[slot.persistKey]) {
+            next[slot.persistKey] = { nodes: [], edges: [], source: recovered[slot.persistKey] }
+          }
+        }
+      } catch (error) {
+        if (!cancelled) setDiagramSourceErrors(current => ({ ...current, ...Object.fromEntries(
+          TECHNICAL_DIAGRAM_SLOTS.filter(slot => !next[slot.persistKey]?.source).map(slot => [slot.persistKey,
+            error instanceof Error ? error.message : 'Document diagram sources could not be loaded.']),
+        ) }))
+      }
+      if (cancelled) return
       setBrainstormCanvasByKey(next)
       setDiagramSourcesLoading(false)
     })
@@ -8281,6 +8296,7 @@ export function IdeaDetailPage() {
       })
 
       setIdeaGeneratedDocs((prev) => [created, ...prev.filter((doc) => doc.id !== created.id)])
+      setDiagramSourcesReloadKey(key => key + 1)
       // The accepted comment texts are in this version now: their threads become history.
       const appliedThreads = ideaDocPartComments.filter((thread) => thread.status === 'accepted' && draftKeys.includes(thread.part_key))
       void Promise.allSettled(appliedThreads.map((thread) =>

@@ -19,6 +19,13 @@ import { serviceApiBase, tectonaAgentRuntimeApiBase } from './gatewayBase'
 
 const BASE_URL = serviceApiBase('/api/idea-backlog', import.meta.env.VITE_IDEA_BACKLOG_API_URL)
 
+export async function getIdeaDocumentDiagramSources(ideaId: string): Promise<Record<string, string>> {
+  const base = serviceApiBase('/api/document-knowledge', import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL)
+  const response = await apiFetch(`${base}/v1/ideas/${encodeURIComponent(ideaId)}/document-diagram-sources`, { headers: defaultHeaders() })
+  const result = await handleResponse<{ sources: Record<string, string> }>(response)
+  return result.sources
+}
+
 export type IdeaContentLock = {
   state: 'draft' | 'submitted' | 'approved' | 'revision' | 'rejected'
   locked: boolean
