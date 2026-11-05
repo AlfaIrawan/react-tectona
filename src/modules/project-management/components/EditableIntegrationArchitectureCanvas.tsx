@@ -1,3 +1,4 @@
+import { canvasDocumentSnapshot } from '@/modules/project-management/lib/canvasDocumentSnapshot'
 import {
   useCallback,
   useEffect,
@@ -282,6 +283,7 @@ function EditableIntegrationArchitectureCanvasInner({
   const [applyError, setApplyError] = useState<string | null>(null)
   const [applyWarnings, setApplyWarnings] = useState<string[]>([])
 
+  const snapshotRevisionRef = useRef(0)
   const persistGraph = useCallback(
     (
       nextNodes: Node<ArchimateNodeData>[],
@@ -302,7 +304,12 @@ function EditableIntegrationArchitectureCanvasInner({
       saveIntegrationGraph(ideaId, graph)
       const change = nextChangeRef.current ?? undefined
       nextChangeRef.current = null
-      onPersistGraph?.(graph, change)
+      window.dispatchEvent(new CustomEvent('tectona-diagram-content-pending', { detail: { ideaId, diagramKey: 'brainstorm-archimate' } }))
+      const snapshotRevision = ++snapshotRevisionRef.current
+      void canvasDocumentSnapshot(reactFlowWrapperRef.current, nextNodes).then(
+        canvasPngBase64 => { if (snapshotRevision === snapshotRevisionRef.current) onPersistGraph?.({ ...graph, canvasPngBase64 }, change) },
+        () => { if (snapshotRevision === snapshotRevisionRef.current) onPersistGraph?.({ ...graph, canvasExportError: true }, change) },
+      )
     },
     [ideaId, onPersistGraph, snapToGrid],
   )

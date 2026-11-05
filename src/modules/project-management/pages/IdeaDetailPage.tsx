@@ -4888,9 +4888,13 @@ export function IdeaDetailPage() {
         .map((warning) => warning.slice('INTEGRATION_CHECK: '.length))
     return [...unrelated, ...generated]
   }, [integrationLatestGraph, integrationWarnings])
+  const persistCanonicalCanvasRef = useRef<(key: string, graph: C4CanvasGraph) => void>(() => undefined)
   const persistIntegrationGraph = useCallback(
     (graph: IntegrationGraphRecord, change?: IntegrationGraphChange | { source: 'restored'; note: string }) => {
       if (contentLockedRef.current) return Promise.reject(new Error('Idea content is locked for approval.'))
+      if (graph.canvasPngBase64 || graph.canvasExportError) {
+        persistCanonicalCanvasRef.current('brainstorm-archimate', { ...graph, source: graph.plantumlSource })
+      }
       const current = runtimeIntegrationAnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -4941,6 +4945,7 @@ export function IdeaDetailPage() {
   const persistC4Canvas = useCallback(
     (level: C4ArchitectureLevel, graph: C4CanvasGraph) => {
       if (contentLockedRef.current) return
+      persistCanonicalCanvasRef.current(level === 'L1' ? 'brainstorm-c4-level-1' : 'brainstorm-c4-level-2', graph)
       const current = level === 'L1' ? c4Level1AnalysisRef.current : c4Level2AnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -5224,6 +5229,18 @@ export function IdeaDetailPage() {
   const [diagramSourceErrors, setDiagramSourceErrors] = useState<Record<string, string>>({})
   const [diagramSourcesReloadKey, setDiagramSourcesReloadKey] = useState(0)
   const [processDocumentSync, setProcessDocumentSync] = useState<Record<string, string>>({})
+  const processSaveOutcomeRef = useRef<Record<string, string>>({})
+  useEffect(() => {
+    const pending = (event: Event) => {
+      const detail = (event as CustomEvent<{ ideaId: string; diagramKey: string }>).detail
+      if (detail?.ideaId !== idea.id) return
+      const key = detail.diagramKey === 'c4-level-1' ? 'brainstorm-c4-level-1'
+        : detail.diagramKey === 'c4-level-2' ? 'brainstorm-c4-level-2' : detail.diagramKey
+      if (key.startsWith('brainstorm-')) setProcessDocumentSync(current => ({ ...current, [key]: 'pending' }))
+    }
+    window.addEventListener('tectona-diagram-content-pending', pending)
+    return () => window.removeEventListener('tectona-diagram-content-pending', pending)
+  }, [idea.id])
   const processSaveQueue = useRef<Promise<void>>(Promise.resolve())
   const processSaveRevision = useRef<Record<string, number>>({})
   const processSaveFingerprint = useRef<Record<string, string>>({})
@@ -6607,8 +6624,12 @@ export function IdeaDetailPage() {
       }
       if (processKey.startsWith('brainstorm-')) {
         const fingerprint = JSON.stringify(graph)
-        if (processSaveFingerprint.current[processKey] === fingerprint) return
+        if (processSaveFingerprint.current[processKey] === fingerprint) {
+          setProcessDocumentSync(current => ({ ...current, [processKey]: processSaveOutcomeRef.current[processKey] || 'pending' }))
+          return
+        }
         processSaveFingerprint.current[processKey] = fingerprint
+        processSaveOutcomeRef.current[processKey] = 'pending'
         const revision = (processSaveRevision.current[processKey] ?? 0) + 1
         processSaveRevision.current[processKey] = revision
         const next = applyCanvas({
@@ -6626,6 +6647,7 @@ export function IdeaDetailPage() {
             })
             if (processSaveIdeaId.current !== idea.id || processSaveRevision.current[processKey] !== revision) return
             const sync = saved.process_json.document_sync as { status?: string } | undefined
+            processSaveOutcomeRef.current[processKey] = sync?.status === 'synced' ? 'synced' : 'failed'
             setProcessDocumentSync((current) => ({ ...current, [processKey]: sync?.status === 'synced' ? 'synced' : 'failed' }))
             setIdeaDocsReloadKey((key) => key + 1)
           } catch {
@@ -6660,6 +6682,8 @@ export function IdeaDetailPage() {
     },
     [idea.id, idea.version, runtimeUserId, setProcessDetailState],
   )
+
+  persistCanonicalCanvasRef.current = persistBpmnCanvas
 
   const loadRuntimeProcessDetail = useCallback(
     async (

@@ -15,6 +15,8 @@ export type C4CanvasGraph = {
   userCustomized?: boolean
   source?: string
   snapToGrid?: boolean
+  canvasPngBase64?: string
+  canvasExportError?: boolean
 }
 
 export type C4ArchitectureReviewStatus =

@@ -15,6 +15,7 @@ import {
   type OnSelectionChangeFunc,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { canvasDocumentSnapshot } from '@/modules/project-management/lib/canvasDocumentSnapshot'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -942,7 +943,7 @@ type EditableDiagramCanvasProps = {
   hideStudioHeader?: boolean
   className?: string
   savedGraph?: { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; viewport?: CanvasViewport; snapToGrid?: boolean }
-  onPersistGraph?: (graph: { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source: string; viewport?: CanvasViewport; snapToGrid?: boolean }) => void
+  onPersistGraph?: (graph: { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source: string; viewport?: CanvasViewport; snapToGrid?: boolean; canvasPngBase64?: string; canvasExportError?: boolean }) => void
   c4DrilldownTargets?: C4DiagramDrilldownTarget[]
   onOpenC4Drilldown?: (diagramKey: string) => void
 }
@@ -1274,10 +1275,19 @@ function EditableDiagramCanvasInner({
       return
     }
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current)
-    persistTimerRef.current = window.setTimeout(() => {
-      onPersistGraphRef.current?.({ nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid })
+    let cancelled = false
+    window.dispatchEvent(new CustomEvent('tectona-diagram-content-pending', { detail: { ideaId, diagramKey } }))
+    persistTimerRef.current = window.setTimeout(async () => {
+      const graph = { nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid }
+      try {
+        const canvasPngBase64 = await canvasDocumentSnapshot(reactFlowWrapperRef.current, nodes)
+        if (!cancelled) onPersistGraphRef.current?.({ ...graph, canvasPngBase64 })
+      } catch {
+        if (!cancelled) onPersistGraphRef.current?.({ ...graph, canvasExportError: true })
+      }
     }, 700)
     return () => {
+      cancelled = true
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current)
     }
   }, [editable, edges, nodes, snapToGrid, sourceDraft, storageKey])
@@ -2546,11 +2556,7 @@ function EditableDiagramCanvasInner({
         viewportRef.current = next
         setSavedViewport(next)
         saveGraph(storageKey, { nodes, edges, source: sourceDraft, viewport: next, snapToGrid })
-        if (!onPersistGraph) return
-        if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current)
-        persistTimerRef.current = window.setTimeout(() => {
-          onPersistGraph({ nodes, edges, source: sourceDraft, viewport: next, snapToGrid })
-        }, 700)
+        // Panning is view state only; it must not replace a synchronized content snapshot.
       } : undefined}
     />
   )

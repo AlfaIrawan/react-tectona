@@ -11,6 +11,8 @@ export type CanvasViewport = {
 }
 
 export type IntegrationGraphRecord = {
+  canvasPngBase64?: string
+  canvasExportError?: boolean
   nodes: Node<ArchimateNodeData>[]
   edges: Edge[]
   plantumlSource?: string
