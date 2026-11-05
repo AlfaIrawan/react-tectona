@@ -2512,6 +2512,7 @@ function DiagramGalleryCard({
           <Icon className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
           <span className="text-sm font-semibold text-foreground">{title}</span>
         </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <DiagramSyncIndicator status={syncStatus} onRetry={onRetrySync} />
         {typeof confidence === 'number' && confidence > 0 ? (
           <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence))}>
@@ -2530,6 +2531,7 @@ function DiagramGalleryCard({
             <RefreshCcw className="h-4 w-4" aria-hidden />
           </button>
         )}
+        </div>
       </div>
       <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
       <div className="relative mt-2 aspect-[16/10] overflow-hidden rounded-lg border border-border/30 bg-slate-50">
@@ -14290,12 +14292,14 @@ export function IdeaDetailPage() {
                     <GitBranch className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
                     <span className="text-sm font-semibold text-foreground">ArchiMate Integration</span>
                   </div>
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
                   <DiagramSyncIndicator status={processDocumentSync['brainstorm-archimate']} onRetry={contentLocked ? undefined : () => retryDiagramSync('brainstorm-archimate')} />
                   {integrationLoaded && typeof confidence.integration === 'number' && confidence.integration > 0 ? (
                     <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence.integration))}>
                       {confidence.integration}%
                     </Badge>
                   ) : null}
+                  </div>
                 </div>
                 <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
                   Integration architecture recommendation with ArchiMate canvas and PlantUML source.
