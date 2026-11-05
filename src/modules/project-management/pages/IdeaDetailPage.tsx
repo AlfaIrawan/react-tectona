@@ -251,6 +251,7 @@ import {
 } from '@/modules/projects/lib/projectPanelLayout'
 import { Label } from '@/components/ui/label'
 import { EditableSequenceDiagram } from '@/modules/project-management/components/EditableSequenceDiagram'
+import { DiagramSyncIndicator, diagramSyncKey } from '@/modules/project-management/components/DiagramSyncIndicator'
 import {
   extractScoringDimensions,
   getIdeaById,
@@ -2436,6 +2437,8 @@ function DiagramGalleryCard({
   onGenerateDraft,
   onGenerateAlternative,
   onRetryLoad,
+  syncStatus,
+  onRetrySync,
   onOpenStudio,
   c4DrilldownTargets,
   onOpenC4Drilldown,
@@ -2461,13 +2464,16 @@ function DiagramGalleryCard({
   onGenerateDraft?: () => void
   onGenerateAlternative?: () => void
   onRetryLoad?: () => void
+  syncStatus?: string
+  onRetrySync?: () => void
   onOpenStudio: (session: DiagramStudioSession) => void
   c4DrilldownTargets?: C4DiagramDrilldownTarget[]
   onOpenC4Drilldown?: (diagramKey: string) => void
   className?: string
 }) {
-  const renderedPreview = usePlantUmlPngPreview(renderAsImage ? diagramSource : null)
-  const previewSrc = renderAsImage ? renderedPreview.objectUrl : imageSrc
+  const savedImage = savedGraph?.canvasPngBase64 ? `data:image/png;base64,${savedGraph.canvasPngBase64}` : null
+  const renderedPreview = usePlantUmlPngPreview(renderAsImage && !savedImage ? diagramSource : null)
+  const previewSrc = renderAsImage ? savedImage || renderedPreview.objectUrl : imageSrc
   const previewLoading = renderAsImage ? renderedPreview.isLoading : imageLoading
   const previewError = renderAsImage ? renderedPreview.error : imageError
   const hasDiagram = Boolean(previewSrc || (!renderAsImage && diagramSource))
@@ -2506,6 +2512,7 @@ function DiagramGalleryCard({
           <Icon className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
           <span className="text-sm font-semibold text-foreground">{title}</span>
         </div>
+        <DiagramSyncIndicator status={syncStatus} onRetry={onRetrySync} />
         {typeof confidence === 'number' && confidence > 0 ? (
           <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence))}>
             {confidence}%
@@ -3892,9 +3899,11 @@ export function IdeaDetailPage() {
   const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
   const integrationPreviewMenu = useDiagramSurfaceMenu()
   const [diagramStudio, setDiagramStudio] = useState<DiagramStudioSession | null>(null)
+  const studioSavedImage = diagramStudio?.savedGraph?.canvasPngBase64 ? `data:image/png;base64,${diagramStudio.savedGraph.canvasPngBase64}` : null
   const studioPlantUmlPreview = usePlantUmlPngPreview(
-    diagramStudio?.renderAsImage ? diagramStudio.diagramSource : null,
+    diagramStudio?.renderAsImage && diagramStudio.diagramKey !== 'brainstorm-sequence' && !studioSavedImage ? diagramStudio.diagramSource : null,
   )
+  const studioImageSrc = studioSavedImage || studioPlantUmlPreview.objectUrl
   const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
   const [isIntegrationExportMenuOpen, setIsIntegrationExportMenuOpen] = useState(false)
   const [isIntegrationHistoryOpen, setIsIntegrationHistoryOpen] = useState(false)
@@ -5235,8 +5244,7 @@ export function IdeaDetailPage() {
     const pending = (event: Event) => {
       const detail = (event as CustomEvent<{ ideaId: string; diagramKey: string }>).detail
       if (detail?.ideaId !== idea.id) return
-      const key = detail.diagramKey === 'c4-level-1' ? 'brainstorm-c4-level-1'
-        : detail.diagramKey === 'c4-level-2' ? 'brainstorm-c4-level-2' : detail.diagramKey
+      const key = diagramSyncKey(detail.diagramKey)
       if (key.startsWith('brainstorm-') || key === 'high') setProcessDocumentSync(current => ({ ...current, [key]: 'pending' }))
     }
     window.addEventListener('tectona-diagram-content-pending', pending)
@@ -6679,6 +6687,27 @@ export function IdeaDetailPage() {
 
   persistCanonicalCanvasRef.current = persistBpmnCanvas
 
+  const retryDiagramSync = (key: string) => {
+    if (contentLockedRef.current) return
+    const graph = brainstormCanvasByKey[key]
+    if (processDocumentSync[key] === 'save_failed' && graph) {
+      processSaveFingerprint.current[key] = ''
+      persistBpmnCanvas(key, graph)
+      return
+    }
+    setProcessDocumentSync(current => ({ ...current, [key]: 'pending' }))
+    void syncIdeaProcessDiagramDocuments(idea.id, key).then(saved => {
+      if (processSaveIdeaId.current !== idea.id) return
+      const sync = saved.process_json.document_sync as { status?: string } | undefined
+      const status = sync?.status === 'synced' ? 'synced' : 'failed'
+      processSaveOutcomeRef.current[key] = status
+      setProcessDocumentSync(current => ({ ...current, [key]: status }))
+      setIdeaDocsReloadKey(value => value + 1)
+    }).catch(() => {
+      if (processSaveIdeaId.current === idea.id) setProcessDocumentSync(current => ({ ...current, [key]: 'failed' }))
+    })
+  }
+
   const loadRuntimeProcessDetail = useCallback(
     async (
       taskKey: string,
@@ -7136,6 +7165,7 @@ export function IdeaDetailPage() {
     const keys = [...new Set([
       ...brainstormProcessDiagrams.map((diagram, index) => brainstormProcessPersistKey(diagram.label, index)),
       ...TECHNICAL_DIAGRAM_SLOTS.map(slot => slot.persistKey),
+      'brainstorm-archimate', 'high',
     ])]
     void Promise.all(
       keys.map(async (key) => {
@@ -14260,6 +14290,7 @@ export function IdeaDetailPage() {
                     <GitBranch className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
                     <span className="text-sm font-semibold text-foreground">ArchiMate Integration</span>
                   </div>
+                  <DiagramSyncIndicator status={processDocumentSync['brainstorm-archimate']} onRetry={contentLocked ? undefined : () => retryDiagramSync('brainstorm-archimate')} />
                   {integrationLoaded && typeof confidence.integration === 'number' && confidence.integration > 0 ? (
                     <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence.integration))}>
                       {confidence.integration}%
@@ -14338,23 +14369,10 @@ export function IdeaDetailPage() {
                       : { icon: Database, description: 'Entitas data dan relasinya.' }
                 return (
                   <div key={technicalKey} className="order-6 min-w-0 space-y-2">
-                  {processDocumentSync[technicalKey] ? (
-                    <div role="status" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span>{processDocumentSync[technicalKey] === 'synced' ? 'Diagram dan dokumen tersinkronisasi'
-                        : processDocumentSync[technicalKey] === 'pending' ? 'Menyimpan diagram dan memperbarui dokumen...'
-                          : 'Perubahan belum tersinkronisasi dengan dokumen.'}</span>
-                      {!contentLocked && ['failed', 'save_failed'].includes(processDocumentSync[technicalKey]) ? (
-                        <button type="button" className="inline-flex items-center gap-1 text-primary underline" onClick={() => {
-                          const graph = brainstormCanvasByKey[technicalKey]
-                          if (!graph) return
-                          processSaveFingerprint.current[technicalKey] = ''
-                          persistBpmnCanvas(technicalKey, graph)
-                        }}><RefreshCcw className="h-3.5 w-3.5" aria-hidden />Coba lagi</button>
-                      ) : null}
-                    </div>
-                  ) : null}
                   <DiagramGalleryCard
                     key={technicalKey}
+                    syncStatus={processDocumentSync[technicalKey]}
+                    onRetrySync={contentLocked ? undefined : () => retryDiagramSync(technicalKey)}
                     ideaId={idea.id}
                     diagramKey={technicalKey}
                     diagramSource={brainstormCanvasByKey[technicalKey]?.source || diagram.source}
@@ -14384,35 +14402,10 @@ export function IdeaDetailPage() {
                   const savedGraph = brainstormCanvasByKey[processKey]
                   return (
                   <div key={processKey} className="order-6 min-w-0 space-y-2">
-                  {processDocumentSync[processKey] ? (
-                    <div role="status" className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
-                      <span className={['failed', 'save_failed'].includes(processDocumentSync[processKey]) ? 'text-amber-700' : 'text-muted-foreground'}>
-                        {processDocumentSync[processKey] === 'pending' ? 'Menyimpan diagram dan memperbarui dokumen...'
-                          : processDocumentSync[processKey] === 'synced' ? 'Diagram dan dokumen tersinkronisasi'
-                            : processDocumentSync[processKey] === 'save_failed' ? 'Diagram belum berhasil disimpan. Dokumen belum diperbarui.'
-                              : 'Diagram tersimpan, tetapi dokumen belum tersinkronisasi.'}
-                      </span>
-                      {!contentLocked && processDocumentSync[processKey] !== 'pending' && processDocumentSync[processKey] !== 'synced' ? (
-                        <button type="button" className="inline-flex items-center gap-1 text-primary underline" onClick={() => {
-                          if (processDocumentSync[processKey] === 'save_failed' && savedGraph) {
-                            persistBpmnCanvas(processKey, savedGraph)
-                            return
-                          }
-                          setProcessDocumentSync((current) => ({ ...current, [processKey]: 'pending' }))
-                          void syncIdeaProcessDiagramDocuments(idea.id, processKey).then((saved) => {
-                            if (processSaveIdeaId.current !== idea.id) return
-                            const sync = saved.process_json.document_sync as { status?: string } | undefined
-                            setProcessDocumentSync((current) => ({ ...current, [processKey]: sync?.status === 'synced' ? 'synced' : 'failed' }))
-                            setIdeaDocsReloadKey((key) => key + 1)
-                          }).catch(() => {
-                            if (processSaveIdeaId.current === idea.id) setProcessDocumentSync((current) => ({ ...current, [processKey]: 'failed' }))
-                          })
-                        }}><RefreshCcw className="h-3.5 w-3.5" aria-hidden />Coba lagi</button>
-                      ) : null}
-                    </div>
-                  ) : null}
                   <DiagramGalleryCard
                     key={processKey}
+                    syncStatus={processDocumentSync[processKey]}
+                    onRetrySync={contentLocked ? undefined : () => retryDiagramSync(processKey)}
                     ideaId={idea.id}
                     diagramKey={processKey}
                     diagramSource={savedGraph?.source || diagram.source}
@@ -14449,6 +14442,8 @@ export function IdeaDetailPage() {
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-1"
+                syncStatus={processDocumentSync['brainstorm-c4-level-1']}
+                onRetrySync={contentLocked ? undefined : () => retryDiagramSync('brainstorm-c4-level-1')}
                 diagramSource={c4Level1Analysis.plantumlSource}
                 diagramFormat="c4"
                 savedGraph={c4Level1Analysis.canvasGraph}
@@ -14476,6 +14471,8 @@ export function IdeaDetailPage() {
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-2"
+                syncStatus={processDocumentSync['brainstorm-c4-level-2']}
+                onRetrySync={contentLocked ? undefined : () => retryDiagramSync('brainstorm-c4-level-2')}
                 diagramSource={c4Level2Analysis.plantumlSource}
                 diagramFormat="c4"
                 savedGraph={c4Level2Analysis.canvasGraph}
@@ -14501,6 +14498,8 @@ export function IdeaDetailPage() {
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="bpmn-high-level"
+                syncStatus={processDocumentSync.high}
+                onRetrySync={contentLocked ? undefined : () => retryDiagramSync('high')}
                 diagramSource={bpmnHighAnalysis.canvasGraph?.source || bpmnHighAnalysis.bpmnXml}
                 diagramFormat="bpmn"
                 savedGraph={bpmnHighAnalysis.canvasGraph}
@@ -14573,15 +14572,7 @@ export function IdeaDetailPage() {
                           return <StudioIcon className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                         })()}
                         <h2 className="text-lg font-semibold text-foreground">{diagramStudio.title}</h2>
-                        {processDocumentSync[diagramStudio.diagramKey] ? (
-                          <span role="status" className="w-full text-xs text-muted-foreground">
-                            {processDocumentSync[diagramStudio.diagramKey] === 'pending'
-                              ? 'Menyimpan diagram dan memperbarui dokumen...'
-                              : processDocumentSync[diagramStudio.diagramKey] === 'synced'
-                                ? 'Diagram dan dokumen tersinkronisasi'
-                                : 'Belum tersinkronisasi. Tutup editor untuk mencoba lagi.'}
-                          </span>
-                        ) : null}
+                        <DiagramSyncIndicator status={processDocumentSync[diagramSyncKey(diagramStudio.diagramKey)]} onRetry={contentLocked ? undefined : () => retryDiagramSync(diagramSyncKey(diagramStudio.diagramKey))} />
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                         {typeof diagramStudio.confidence === 'number' && diagramStudio.confidence > 0 ? (
@@ -14762,15 +14753,16 @@ export function IdeaDetailPage() {
                       <EditableSequenceDiagram
                         key={diagramStudio.diagramKey}
                         source={diagramStudio.diagramSource}
+                        savedPngBase64={brainstormCanvasByKey[diagramStudio.diagramKey]?.canvasPngBase64}
                         ideaId={idea.id}
                         diagramKey={diagramStudio.diagramKey}
                         locked={contentLocked}
                         onSave={diagramStudio.onPersistGraph}
                       />
                     ) : diagramStudio.renderAsImage ? (
-                      studioPlantUmlPreview.objectUrl ? (
+                      studioImageSrc ? (
                         <StudioImageSurface
-                          src={studioPlantUmlPreview.objectUrl}
+                          src={studioImageSrc}
                           title={diagramStudio.title}
                           source={diagramStudio.diagramSource}
                         />
@@ -15042,6 +15034,7 @@ export function IdeaDetailPage() {
                       <div className="flex min-w-0 items-center gap-2">
                         <GitBranch className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                         <h2 className="text-lg font-semibold text-foreground">AI Integration Recommendation</h2>
+                        <DiagramSyncIndicator status={processDocumentSync['brainstorm-archimate']} onRetry={contentLocked ? undefined : () => retryDiagramSync('brainstorm-archimate')} />
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         {integrationLoaded && typeof confidence.integration === 'number' ? (

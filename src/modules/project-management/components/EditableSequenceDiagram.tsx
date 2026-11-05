@@ -6,25 +6,29 @@ import { usePlantUmlPngPreview } from '../lib/usePlantUmlPngPreview'
 import { fetchPlantUmlPng } from '../lib/plantumlRenderClient'
 import type { C4CanvasGraph } from '../lib/c4ArchitectureService'
 
-export function EditableSequenceDiagram({ source, locked, ideaId, diagramKey, onSave }: {
-  source: string; locked: boolean; ideaId: string; diagramKey: string; onSave?: (graph: C4CanvasGraph) => void
+export function EditableSequenceDiagram({ source, locked, ideaId, diagramKey, onSave, savedPngBase64 }: {
+  source: string; locked: boolean; ideaId: string; diagramKey: string; onSave?: (graph: C4CanvasGraph) => void; savedPngBase64?: string
 }) {
   const [draft, setDraft] = useState(source)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const preview = usePlantUmlPngPreview(draft)
+  const savedImage = draft === source && savedPngBase64 ? `data:image/png;base64,${savedPngBase64}` : null
+  const preview = usePlantUmlPngPreview(savedImage ? null : draft)
   const save = async () => {
     if (locked || saving || !onSave) return
     setSaving(true)
     setError(null)
     try {
-      const blob = await fetchPlantUmlPng(draft)
-      const encoded = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result).split(',')[1])
-        reader.onerror = () => reject(new Error('SEQUENCE_IMAGE_READ_FAILED'))
-        reader.readAsDataURL(blob)
-      })
+      let encoded = draft === source ? savedPngBase64 : undefined
+      if (!encoded) {
+        const blob = await fetchPlantUmlPng(draft)
+        encoded = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result).split(',')[1])
+          reader.onerror = () => reject(new Error('SEQUENCE_IMAGE_READ_FAILED'))
+          reader.readAsDataURL(blob)
+        })
+      }
       onSave({ nodes: [], edges: [], source: draft, canvasPngBase64: encoded })
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Sequence could not be saved.')
@@ -44,7 +48,7 @@ export function EditableSequenceDiagram({ source, locked, ideaId, diagramKey, on
     </>}
     {(error || preview.error) && <p role="alert" className="text-sm text-destructive">{error || preview.error}</p>}
     <div className="min-h-0 flex-1 overflow-auto bg-white">
-      {preview.objectUrl && <img src={preview.objectUrl} alt="Sequence" className="mx-auto max-w-full" />}
+      {(savedImage || preview.objectUrl) && <img src={savedImage || preview.objectUrl!} alt="Sequence" className="mx-auto max-w-full" />}
     </div>
   </div>
 }
