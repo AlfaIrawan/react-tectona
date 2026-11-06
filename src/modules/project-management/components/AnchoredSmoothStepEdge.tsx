@@ -1,15 +1,16 @@
+import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
   getSmoothStepPath,
   getStraightPath,
-  Position,
   useReactFlow,
   useStore,
   type EdgeProps,
 } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { diagramTerminalPoint, canUseStraightOrthogonalPath } from '@/modules/project-management/lib/diagramConnections'
 import type { IntegrationEdgeArrow } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import {
   readEdgeData,
@@ -53,16 +54,6 @@ function firstPathVector(path: string): { dx: number; dy: number; x: number; y: 
 function unit(dx: number, dy: number) {
   const length = Math.hypot(dx, dy) || 1
   return { ux: dx / length, uy: dy / length }
-}
-
-const ALIGN_TOLERANCE_PX = 24
-
-function isHorizontalHandle(position: Position) {
-  return position === Position.Left || position === Position.Right
-}
-
-function isVerticalHandle(position: Position) {
-  return position === Position.Top || position === Position.Bottom
 }
 
 function arrowMarker(
@@ -195,10 +186,11 @@ export function AnchoredSmoothStepEdge({
   const startOffset = visual.startSpacing + terminal
   const endOffset = visual.endSpacing + terminal
   const startVec = unit(targetX - sourceX, targetY - sourceY)
-  const adjustedSourceX = sourceX + startVec.ux * startOffset
-  const adjustedSourceY = sourceY + startVec.uy * startOffset
-  const adjustedTargetX = targetX - startVec.ux * endOffset
-  const adjustedTargetY = targetY - startVec.uy * endOffset
+  const straight = arrange.orthogonal === false && visual.waypoints === 'sharp'
+  const sourcePoint = straight ? { x: sourceX + startVec.ux * startOffset, y: sourceY + startVec.uy * startOffset } : diagramTerminalPoint(sourceX, sourceY, sourcePosition, startOffset)
+  const targetPoint = straight ? { x: targetX - startVec.ux * endOffset, y: targetY - startVec.uy * endOffset } : diagramTerminalPoint(targetX, targetY, targetPosition, endOffset)
+  const adjustedSourceX = sourcePoint.x, adjustedSourceY = sourcePoint.y
+  const adjustedTargetX = targetPoint.x, adjustedTargetY = targetPoint.y
 
   const pathArgs = {
     sourceX: adjustedSourceX,
@@ -216,24 +208,11 @@ export function AnchoredSmoothStepEdge({
     if (visual.waypoints === 'curved') {
       return getBezierPath(pathArgs)
     }
-    const alignedHorizontally =
-      isHorizontalHandle(sourcePosition) &&
-      isHorizontalHandle(targetPosition) &&
-      Math.abs(adjustedSourceY - adjustedTargetY) <= ALIGN_TOLERANCE_PX
-    if (alignedHorizontally) {
-      return getStraightPath(pathArgs)
-    }
-    const alignedVertically =
-      isVerticalHandle(sourcePosition) &&
-      isVerticalHandle(targetPosition) &&
-      Math.abs(adjustedSourceX - adjustedTargetX) <= ALIGN_TOLERANCE_PX
-    if (alignedVertically) {
-      return getStraightPath(pathArgs)
-    }
+    if (canUseStraightOrthogonalPath(pathArgs)) return getStraightPath(pathArgs)
     return getSmoothStepPath({
       ...pathArgs,
       borderRadius: visual.waypoints === 'rounded' ? Math.max(0, arrange.arcSize) : 0,
-      offset: 8,
+      offset: 18,
     })
   })()
 
@@ -361,6 +340,17 @@ export function AnchoredSmoothStepEdge({
     })
   }
 
+  const cancelLabelInteract = () => {
+    labelInteractRef.current = null
+    setLiveLabel(null)
+  }
+
+  useEffect(() => {
+    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') cancelLabelInteract() }
+    window.addEventListener('keydown', cancel)
+    return () => window.removeEventListener('keydown', cancel)
+  }, [])
+
   const endLabelInteract = (event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = labelInteractRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
@@ -430,10 +420,12 @@ export function AnchoredSmoothStepEdge({
       />
       {arrowMarker(visual.startArrow, startDirection.x, startDirection.y, -startDirection.dx, -startDirection.dy, visual.startSize, visual.startFill, stroke)}
       {arrowMarker(visual.endArrow, endDirection.x, endDirection.y, endDirection.dx, endDirection.dy, visual.endSize, visual.endFill, stroke)}
+      <DiagramEdgeEndpointControls sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       {labelText && !arrange.ignoreEdge ? (
         <EdgeLabelRenderer>
           <div
             className="nodrag nopan"
+            data-diagram-edge-id={id}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${placedLabelX + offsetX}px, ${placedLabelY + offsetY}px) rotate(${textStyle.angle}deg)`,
@@ -491,7 +483,7 @@ export function AnchoredSmoothStepEdge({
               onPointerDown={isEditingLabel ? undefined : beginLabelInteract('move')}
               onPointerMove={isEditingLabel ? undefined : moveLabelInteract}
               onPointerUp={isEditingLabel ? undefined : endLabelInteract}
-              onPointerCancel={isEditingLabel ? undefined : endLabelInteract}
+              onPointerCancel={isEditingLabel ? undefined : cancelLabelInteract}
             >
               {isEditingLabel ? (
                 <input
@@ -516,7 +508,7 @@ export function AnchoredSmoothStepEdge({
                   onPointerDown={beginLabelInteract('e')}
                   onPointerMove={moveLabelInteract}
                   onPointerUp={endLabelInteract}
-                  onPointerCancel={endLabelInteract}
+                  onPointerCancel={cancelLabelInteract}
                 />
                 <div
                   role="separator"
@@ -525,7 +517,7 @@ export function AnchoredSmoothStepEdge({
                   onPointerDown={beginLabelInteract('s')}
                   onPointerMove={moveLabelInteract}
                   onPointerUp={endLabelInteract}
-                  onPointerCancel={endLabelInteract}
+                  onPointerCancel={cancelLabelInteract}
                 />
                 <div
                   role="separator"
@@ -534,7 +526,7 @@ export function AnchoredSmoothStepEdge({
                   onPointerDown={beginLabelInteract('se')}
                   onPointerMove={moveLabelInteract}
                   onPointerUp={endLabelInteract}
-                  onPointerCancel={endLabelInteract}
+                  onPointerCancel={cancelLabelInteract}
                 />
               </>
             ) : null}

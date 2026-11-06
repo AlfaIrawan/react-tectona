@@ -1,3 +1,7 @@
+import { c4GraphFromCanvas, mapC4Relations } from '@/modules/project-management/lib/c4CanvasPersistence'
+import { mergeDiagramSourceNodes, mergeDiagramSourceEdges } from '@/modules/project-management/lib/diagramSourceMerge'
+import { isStoredDiagramGraph } from '@/modules/project-management/lib/diagramGraphPersistence'
+import { useDiagramHistory } from '@/modules/project-management/lib/useDiagramHistory'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { AppWindow, ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, ExternalLink, Grid3X3, GripVertical, History, ImageDown, Layers, LayoutTemplate, Link2, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, RotateCcw, Ruler, Scissors, Settings2, Sparkles, Trash2, Unlink, Waypoints } from 'lucide-react'
 import {
@@ -15,7 +19,7 @@ import {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { reconnectDiagramEdge, hasManualConnectionHandles } from '@/modules/project-management/lib/diagramConnections'
-import { canvasDocumentSnapshot } from '@/modules/project-management/lib/canvasDocumentSnapshot'
+import { canvasDocumentSnapshot, renderDiagramViewportImage, renderDiagramViewportSvg } from '@/modules/project-management/lib/canvasDocumentSnapshot'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -51,9 +55,8 @@ import {
   copyDiagramImage,
   downloadDiagramImage,
   downloadDiagramPdf,
-  downloadDiagramSvg,
+  downloadDiagramSvgDataUrl,
   printDiagram,
-  renderDiagramCanvasImage,
 } from '@/modules/project-management/lib/diagramCanvasExport'
 
 type DiagramFormat = 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
@@ -178,9 +181,9 @@ function createUmlPaletteNode(item: UmlPaletteItem, position: { x: number; y: nu
   }
 }
 
-function c4RelationEdgeStyle(): Pick<Edge, 'style' | 'markerEnd' | 'markerStart' | 'data'> {
+function c4RelationEdgeStyle(macro?: string): Pick<Edge, 'style' | 'markerEnd' | 'markerStart' | 'data'> {
   return {
-    markerStart: undefined,
+    markerStart: macro === 'BiRel' ? { type: MarkerType.ArrowClosed, color: '#64748b', width: 9, height: 9 } : undefined,
     markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 9, height: 9 },
     style: { stroke: '#64748b', strokeWidth: 1.5, strokeDasharray: '4 4' },
     data: {
@@ -189,7 +192,7 @@ function c4RelationEdgeStyle(): Pick<Edge, 'style' | 'markerEnd' | 'markerStart'
         lineColor: '#64748b',
         lineWidth: 1.5,
         lineStyle: 'dashed',
-        startArrow: 'none',
+        startArrow: macro === 'BiRel' ? 'classic' : 'none',
         endArrow: 'classic',
         startFill: false,
         endFill: true,
@@ -202,19 +205,16 @@ function c4RelationEdgeStyle(): Pick<Edge, 'style' | 'markerEnd' | 'markerStart'
 }
 
 function normalizeC4RelationEdges(edges: Edge[]): Edge[] {
-  const relatedPairs = new Set<string>()
-  return edges.flatMap((edge) => {
-    const pair = [edge.source, edge.target].sort().join('\u0000')
-    if (relatedPairs.has(pair)) return []
-    relatedPairs.add(pair)
-    return [{
+  return mapC4Relations(edges, (edge) => {
+    return {
       ...edge,
-      ...c4RelationEdgeStyle(),
+      ...c4RelationEdgeStyle(edge.data?.c4Relation?.macro),
+      style: { ...c4RelationEdgeStyle().style, ...edge.style },
       data: {
+        ...c4RelationEdgeStyle(edge.data?.c4Relation?.macro).data,
         ...(edge.data as Record<string, unknown> | undefined),
-        ...c4RelationEdgeStyle().data,
       },
-    }]
+    }
   })
 }
 
@@ -517,37 +517,28 @@ function toC4ElementNode(
 function graphFromC4(source: string): { nodes: Node<ArchimateNodeData>[]; edges: Edge[] } {
   const parsed = parseC4Graph(source)
   const nodes: Node<ArchimateNodeData>[] = []
-  const parent = parsed.boundaries[0]
-  const children = parent ? parsed.elements.filter((item) => item.parentId === parent.id) : []
-  const outside = parent ? parsed.elements.filter((item) => item.parentId !== parent.id) : parsed.elements
-
-  if (parent) {
-    nodes.push({
-      id: parent.id,
-      type: 'archimateBoundary',
-      position: { x: 280, y: 32 },
-      style: { width: 300, height: Math.max(220, 56 + children.length * 148) },
-      zIndex: 0,
-      data: {
-        kind: 'boundary',
-        title: parent.title,
-        visual: {
-          fillEnabled: false,
-          lineEnabled: true,
-          lineColor: '#64748b',
-          lineStyle: 'dashed',
-          rounded: true,
-        },
-      },
-    })
-    children.forEach((item, index) => {
-      nodes.push({ ...toC4ElementNode(item, { x: 28, y: 40 + index * 148 }), zIndex: 1 })
-    })
+  const sizes = new Map<string, { width: number; height: number }>()
+  const measure = (id: string): { width: number; height: number } => {
+    const existing = sizes.get(id)
+    if (existing) return existing
+    const nested = parsed.boundaries.filter(item => item.parentId === id).map(item => measure(item.id))
+    const size = { width: Math.max(300, ...nested.map(item => item.width + 56)), height: Math.max(220, 56 + parsed.elements.filter(item => item.parentId === id).length * 148 + nested.reduce((sum, item) => sum + item.height + 32, 0)) }
+    sizes.set(id, size)
+    return size
   }
-
-  outside.forEach((item, index) => {
-    const isPerson = item.kind.startsWith('Person')
-    nodes.push(toC4ElementNode(item, isPerson ? { x: 24, y: 72 + index * 150 } : { x: 640, y: 72 + index * 150 }))
+  const appendBoundary = (parent: C4ParsedGraph['boundaries'][number], position: { x: number; y: number }) => {
+    nodes.push({ id: parent.id, type: 'archimateBoundary', position, parentNode: parent.parentId,
+      extent: parent.parentId ? 'parent' : undefined, style: measure(parent.id), zIndex: 0,
+      data: { kind: 'boundary', title: parent.title, visual: { fillEnabled: false, lineEnabled: true, lineColor: '#64748b', lineStyle: 'dashed', rounded: true } } })
+    const children = parsed.elements.filter(item => item.parentId === parent.id)
+    children.forEach((item, index) => nodes.push({ ...toC4ElementNode(item, { x: 28, y: 40 + index * 148 }), zIndex: 1 }))
+    let y = 40 + children.length * 148
+    parsed.boundaries.filter(item => item.parentId === parent.id).forEach(item => { appendBoundary(item, { x: 28, y }); y += measure(item.id).height + 32 })
+  }
+  let boundaryX = 280
+  parsed.boundaries.filter(item => !item.parentId).forEach(parent => { appendBoundary(parent, { x: boundaryX, y: 32 }); boundaryX += measure(parent.id).width + 64 })
+  parsed.elements.filter(item => !item.parentId).forEach((item, index) => {
+    nodes.push(toC4ElementNode(item, { x: item.kind.startsWith('Person') ? 24 : boundaryX, y: 72 + index * 150 }))
   })
 
   const edges: Edge[] = withFacingHandles(
@@ -560,50 +551,18 @@ function graphFromC4(source: string): { nodes: Node<ArchimateNodeData>[]; edges:
         target: relation.target,
         label: relation.technology ? `${relation.label} [${relation.technology}]` : relation.label,
         type: 'smoothstep',
-        ...c4RelationEdgeStyle(),
+        ...c4RelationEdgeStyle(relation.macro),
+        data: { ...c4RelationEdgeStyle(relation.macro).data, c4Relation: relation },
       })),
   )
 
   return { nodes, edges }
 }
 
-function flowToC4Graph(nodes: Node<ArchimateNodeData>[], edges: Edge[], previous: string): C4ParsedGraph {
-  const normalized = normalizeC4PlantUml(previous, 'L2')
-  const title = parseC4Graph(normalized).title
-  const boundaries = nodes
-    .filter((node) => node.type === 'archimateBoundary' && node.data.kind === 'boundary')
-    .map((node) => ({ id: node.id, title: node.data.title }))
-  const elements = nodes
-    .filter((node) => node.type === 'c4Element' && node.data.kind === 'element')
-    .map((node) => {
-      const data = node.data
-      const kind = (ELEMENT_KIND_SET.has(data.notationId) ? data.notationId : 'System') as C4ElementKind
-      const techLine = data.description.find((line) => line.startsWith('[') && line.endsWith(']'))
-      return {
-        id: node.id,
-        kind,
-        title: data.title,
-        technology: techLine ? techLine.slice(1, -1) : '',
-        description: data.description.filter((line) => line !== techLine).join(' '),
-        parentId: node.parentNode,
-      }
-    })
-  const relations = edges.map((edge, index) => {
-    const raw = String(edge.label ?? 'uses')
-    const techMatch = /\s*\[([^\]]+)\]\s*$/.exec(raw)
-    return {
-      id: edge.id || `rel-${index}`,
-      source: edge.source,
-      target: edge.target,
-      label: techMatch ? raw.slice(0, techMatch.index).trim() : raw,
-      technology: techMatch?.[1] ?? '',
-    }
-  })
-  return { title, boundaries, elements, relations }
-}
+const flowToC4Graph = c4GraphFromCanvas
 
 const ELEMENT_KIND_SET = new Set([
-  'Person', 'Person_Ext', 'System', 'System_Ext', 'SystemDb', 'Container', 'Container_Ext', 'ContainerDb', 'Component',
+  'Person', 'Person_Ext', 'System', 'System_Ext', 'SystemDb', 'Container', 'Container_Ext', 'ContainerDb', 'Component', 'Component_Ext', 'ComponentDb',
 ])
 
 function isStoredUmlGraph(nodes: Node<ArchimateNodeData>[]): boolean {
@@ -669,26 +628,9 @@ function mergeCanvasLayout(
   previous: Node<ArchimateNodeData>[],
   next: Node<ArchimateNodeData>[],
 ): Node<ArchimateNodeData>[] {
-  const previousById = new Map(previous.map((node) => [node.id, node]))
-  const merged = next.map((node) => {
-    const prior = previousById.get(node.id)
-    if (!prior) return node
-    return {
-      ...node,
-      position: prior.position,
-      parentNode: prior.parentNode,
-      extent: prior.extent,
-      zIndex: prior.zIndex,
-      style: { ...node.style, ...prior.style },
-      width: prior.width,
-      height: prior.height,
-    }
-  })
-  const generatedIds = new Set(merged.map((node) => node.id))
-  const decorations = previous.filter((node) => (
-    !generatedIds.has(node.id) && (node.type === 'archimateNote' || node.type === 'archimateImage')
-  ))
-  return [...merged, ...decorations]
+  const generatedIds = new Set(next.map(node => node.id))
+  const decorations = previous.filter(node => !generatedIds.has(node.id) && (node.type === 'archimateNote' || node.type === 'archimateImage'))
+  return mergeDiagramSourceNodes(previous, [...next, ...decorations])
 }
 
 function graphFromPlantUml(source: string): ParsedGraph {
@@ -884,10 +826,11 @@ function parseSource(source: string, format: DiagramFormat) {
 function loadGraph(key: string, fallback: { nodes: Node<ArchimateNodeData>[]; edges: Edge[] }) {
   try {
     const store = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as DiagramStore
-    if (!store[key]?.nodes?.length) return { ...fallback, viewport: undefined as CanvasViewport | undefined, snapToGrid: undefined as boolean | undefined }
+    if (!isStoredDiagramGraph(store[key])) return { ...fallback, viewport: undefined as CanvasViewport | undefined, snapToGrid: undefined as boolean | undefined }
     return {
       nodes: store[key].nodes,
       edges: store[key].edges,
+      source: store[key].source,
       viewport: isCanvasViewport(store[key].viewport) ? store[key].viewport : undefined,
       snapToGrid: typeof store[key].snapToGrid === 'boolean' ? store[key].snapToGrid : undefined,
     }
@@ -978,12 +921,11 @@ function EditableDiagramCanvasInner({
   )
   const imported = useMemo(() => parseSource(bpmnEditorSource, format), [bpmnEditorSource, format])
   const shouldMigrateStoredBpmnGraph = format === 'bpmn' && (
-    c4Source.trim() !== bpmnEditorSource
-    || (graphHasSwimlanes(imported.nodes) && Boolean(savedGraph?.nodes?.length) && !graphHasFittedSwimlanes(savedGraph.nodes))
+    (graphHasSwimlanes(imported.nodes) && Boolean(savedGraph?.nodes?.length) && !graphHasFittedSwimlanes(savedGraph.nodes))
   )
   const initial = useMemo(() => {
-    if (savedGraph?.nodes?.length) {
-      if (format === 'bpmn' && (!isStoredBpmnGraph(savedGraph.nodes) || shouldMigrateStoredBpmnGraph)) {
+    if (isStoredDiagramGraph(savedGraph)) {
+      if (format === 'bpmn' && savedGraph.nodes.length > 0 && (!isStoredBpmnGraph(savedGraph.nodes) || shouldMigrateStoredBpmnGraph)) {
         return {
           ...imported,
           viewport: savedGraph.viewport,
@@ -996,7 +938,7 @@ function EditableDiagramCanvasInner({
     }
     if (!editable) return imported
     const stored = loadGraph(storageKey, imported)
-    if (format === 'c4' && !isStoredC4Graph(stored.nodes)) {
+    if (format === 'c4' && stored.nodes.length > 0 && !isStoredC4Graph(stored.nodes)) {
       return {
         ...imported,
         viewport: stored.viewport,
@@ -1004,7 +946,7 @@ function EditableDiagramCanvasInner({
         edges: withFacingHandles(imported.nodes, imported.edges),
       }
     }
-    if (format === 'class' && !isStoredUmlGraph(stored.nodes)) {
+    if (format === 'class' && stored.nodes.length > 0 && !isStoredUmlGraph(stored.nodes)) {
       return {
         ...imported,
         viewport: stored.viewport,
@@ -1012,7 +954,7 @@ function EditableDiagramCanvasInner({
         edges: withFacingHandles(imported.nodes, imported.edges),
       }
     }
-    if (format === 'erd' && !stored.nodes.some((node) => node.type === 'erdEntity')) {
+    if (format === 'erd' && stored.nodes.length > 0 && !stored.nodes.some((node) => node.type === 'erdEntity')) {
       return {
         ...imported,
         viewport: stored.viewport,
@@ -1020,7 +962,7 @@ function EditableDiagramCanvasInner({
         edges: withFacingHandles(imported.nodes, imported.edges),
       }
     }
-    if (format === 'bpmn' && (!isStoredBpmnGraph(stored.nodes) || shouldMigrateStoredBpmnGraph || (graphHasSwimlanes(imported.nodes) && !graphHasFittedSwimlanes(stored.nodes)))) {
+    if (format === 'bpmn' && stored.nodes.length > 0 && (!isStoredBpmnGraph(stored.nodes) || (graphHasSwimlanes(imported.nodes) && !graphHasFittedSwimlanes(stored.nodes)))) {
       return {
         ...imported,
         viewport: stored.viewport,
@@ -1038,7 +980,7 @@ function EditableDiagramCanvasInner({
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(
     format === 'c4' || format === 'class' || format === 'erd' ? 'diagram' : 'source',
   )
-  const [sourceDraft, setSourceDraft] = useState(() => bpmnEditorSource)
+  const [sourceDraft, setSourceDraft] = useState(() => 'source' in initial && typeof initial.source === 'string' ? initial.source : bpmnEditorSource)
   const c4Level = c4LevelFromDiagramKey(diagramKey)
   const applicationCatalogScope = useMemo(() => tenant ? buildWorkspaceScopeFromTenant(tenant) : null, [tenant])
   const [applicationCatalog, setApplicationCatalog] = useState<C4ApplicationCatalogItem[]>([])
@@ -1078,6 +1020,12 @@ function EditableDiagramCanvasInner({
   const [showRuler, setShowRuler] = useState(true)
   const [showConnectionArrows, setShowConnectionArrows] = useState(true)
   const [showConnectionPoints, setShowConnectionPoints] = useState(true)
+  const history = useDiagramHistory({ nodes, edges, source: sourceDraft }, (snapshot) => {
+    setNodes(snapshot.nodes)
+    setEdges(snapshot.edges)
+    setSourceDraft(snapshot.source)
+  }, storageKey, reactFlowWrapperRef, editable)
+
   const canvasZoneRef = useRef<HTMLDivElement | null>(null)
   const studioPanelShellRef = useRef<HTMLDivElement | null>(null)
   const propertiesPanelShellRef = useRef<HTMLDivElement | null>(null)
@@ -1207,17 +1155,17 @@ function EditableDiagramCanvasInner({
 
   useEffect(() => {
     if (appliedStorageKeyRef.current !== storageKey) appliedSavedGraphRef.current = false
-  const shouldApplySaved = Boolean(savedGraph?.nodes?.length) && !appliedSavedGraphRef.current
+  const shouldApplySaved = isStoredDiagramGraph(savedGraph) && !appliedSavedGraphRef.current
     if (appliedStorageKeyRef.current === storageKey && !shouldApplySaved) return
     skipPersistRef.current = true
     appliedStorageKeyRef.current = storageKey
-    appliedSavedGraphRef.current = Boolean(savedGraph?.nodes?.length)
+    appliedSavedGraphRef.current = isStoredDiagramGraph(savedGraph)
     setNodes(initial.nodes)
     setEdges(initial.edges)
     viewportRef.current = initial.viewport
     setSavedViewport(initial.viewport)
     setSnapToGrid(false)
-    setSourceDraft(bpmnEditorSource)
+    setSourceDraft('source' in initial && typeof initial.source === 'string' ? initial.source : bpmnEditorSource)
   }, [bpmnEditorSource, initial.edges, initial.nodes, initial.snapToGrid, initial.viewport, savedGraph, setEdges, setNodes, storageKey])
   useEffect(() => {
     if (format !== 'class') return
@@ -1717,7 +1665,7 @@ function EditableDiagramCanvasInner({
     setSourceDraft(normalized)
     setNodes((current) => {
       const merged = mergeCanvasLayout(current, graph.nodes)
-      setEdges(withFacingHandles(merged, graph.edges))
+      setEdges(current => withFacingHandles(merged, mergeDiagramSourceEdges(current, graph.edges)))
       return merged
     })
     setSelectedNodeId(null)
@@ -1888,9 +1836,14 @@ function EditableDiagramCanvasInner({
   }, [setEdges, setNodes])
 
   const handleNodeDoubleClick = useCallback((event: ReactMouseEvent | MouseEvent, node: Node<ArchimateNodeData>) => {
-    if (format !== 'c4' || !isArchimateElementData(node.data) || !node.data.diagramLink) return
     event.preventDefault()
-    onOpenC4Drilldown?.(node.data.diagramLink)
+    if (format === 'c4' && isArchimateElementData(node.data) && node.data.diagramLink) {
+      onOpenC4Drilldown?.(node.data.diagramLink)
+      return
+    }
+    setSelectedNodeId(node.id)
+    setSelectedEdgeId(null)
+    setIsPropertiesPanelOpen(true)
   }, [format, onOpenC4Drilldown])
 
   const openNodeProperties = useCallback(() => {
@@ -2186,32 +2139,32 @@ function EditableDiagramCanvasInner({
   }, [c4Level, canvasMenu, format, setEdges, setNodes])
 
   const renderCanvasImage = useCallback(
-    (nodeIds?: string[]) => renderDiagramCanvasImage(nodes, edges, nodeIds),
+    (nodeIds?: string[]) => renderDiagramViewportImage(reactFlowWrapperRef.current, nodes, edges, nodeIds),
     [edges, nodes],
   )
 
   const downloadCanvasImage = useCallback(async (mimeType: 'image/png' | 'image/jpeg') => {
-    const canvas = renderCanvasImage()
+    const canvas = await renderCanvasImage()
     if (canvas) await downloadDiagramImage(canvas, diagramKey, mimeType)
   }, [diagramKey, renderCanvasImage])
 
-  const downloadCanvasSvg = useCallback(() => {
-    const canvas = renderCanvasImage()
-    if (canvas) downloadDiagramSvg(canvas, diagramKey)
-  }, [diagramKey, renderCanvasImage])
+  const downloadCanvasSvg = useCallback(async () => {
+    const uri = await renderDiagramViewportSvg(reactFlowWrapperRef.current, nodes, edges)
+    if (uri) await downloadDiagramSvgDataUrl(uri, diagramKey)
+  }, [diagramKey, nodes, edges])
 
-  const downloadCanvasPdf = useCallback(() => {
-    const canvas = renderCanvasImage()
+  const downloadCanvasPdf = useCallback(async () => {
+    const canvas = await renderCanvasImage()
     if (canvas) downloadDiagramPdf(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
-  const printCanvas = useCallback(() => {
-    const canvas = renderCanvasImage()
+  const printCanvas = useCallback(async () => {
+    const canvas = await renderCanvasImage()
     if (canvas) printDiagram(canvas, diagramKey)
   }, [diagramKey, renderCanvasImage])
 
   const copyCanvasAsImage = useCallback(async (nodeIds?: string[]) => {
-    const canvas = renderCanvasImage(nodeIds)
+    const canvas = await renderCanvasImage(nodeIds)
     try {
       if (canvas) await copyDiagramImage(canvas, diagramKey)
     } finally {
@@ -2279,7 +2232,7 @@ function EditableDiagramCanvasInner({
         pasteCopiedNode()
         return
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd' && selectedNodeId) {
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'd' && selectedNodeId) {
         event.preventDefault()
         duplicateNode(selectedNodeId)
         return
@@ -2533,6 +2486,10 @@ function EditableDiagramCanvasInner({
       onNodesChange={editable ? handleNodesChange : () => undefined}
       onEdgesChange={editable ? onEdgesChange : () => undefined}
       onConnect={editable ? onConnect : () => undefined}
+      onUndo={history.undo}
+      onRedo={history.redo}
+      canUndo={history.canUndo}
+      canRedo={history.canRedo}
       onEdgeUpdate={editable ? onEdgeUpdate : undefined}
       onSelectionChange={editable ? handleSelectionChange : () => undefined}
       onEdgeClick={editable ? handleEdgeClick : undefined}

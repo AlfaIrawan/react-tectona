@@ -1,3 +1,4 @@
+import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
 import { BaseEdge, getSmoothStepPath, type EdgeProps } from 'reactflow'
 
 type ErdEdgeData = {
@@ -98,6 +99,7 @@ export function ErdCrowfootEdge({
   return (
     <>
       <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.25 }} />
+      <DiagramEdgeEndpointControls sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       <g>
         {crowfoot(sourceX, sourceY, sourceAway.x, sourceAway.y, Boolean(ends.sourceMany), Boolean(ends.sourceOptional), color)}
         {crowfoot(targetX, targetY, targetAway.x, targetAway.y, Boolean(ends.targetMany), Boolean(ends.targetOptional), color)}

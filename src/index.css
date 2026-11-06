@@ -1914,10 +1914,11 @@
   stroke: transparent !important;
 }
 
+/* Reconnect circles remain invisible 20px hit targets. Small painted endpoints
+   are rendered separately at the real anchors and stay the same size at any zoom. */
 .integration-flow-canvas .react-flow__edge.selected .react-flow__edgeupdater {
-  fill: #ffffff !important;
-  stroke: #0284c7 !important;
-  stroke-width: 2px !important;
+  fill: transparent !important;
+  stroke: transparent !important;
 }
 
 .integration-flow-canvas .react-flow__edgeupdater:active {

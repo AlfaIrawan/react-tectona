@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectionAnchor, connectionClientPoint, hasManualConnectionHandles, reconnectDiagramEdge } from './diagramConnections'
+import { canUseStraightOrthogonalPath, retainConnectionHandlePercents, connectionAnchor, connectionClientPoint, hasManualConnectionHandles, reconnectDiagramEdge } from './diagramConnections'
 import type { Edge } from 'reactflow'
 
 describe('diagram connections', () => {
@@ -29,7 +29,7 @@ describe('diagram connections', () => {
           const p = connectionAnchor(side, percent, shape)
           const x = (p.x - 50) / 50, y = (p.y - 50) / 50
           expect(shape === 'ellipse' ? x * x + y * y : Math.abs(x) + Math.abs(y)).toBeCloseTo(1)
-          for (const zoom of [0.55, 1, 1.4]) {
+          for (const zoom of [0.1, 0.55, 1, 1.4, 4]) {
             for (const size of [40, 96, 180]) {
               const screenX = 123 + p.x / 100 * size * zoom
               expect((screenX - 123) / zoom / size * 100).toBeCloseTo(p.x)
@@ -39,5 +39,20 @@ describe('diagram connections', () => {
       }
     }
     expect(connectionAnchor('right', 25)).toEqual({ x: 100, y: 25 })
+  })
+})
+
+describe('resizing and orthogonal routing', () => {
+  it('retains used dots when a shape shrinks and its suggested dots change', () => {
+    expect(retainConnectionHandlePercents('right', [50], ['source-right-12', 'target-right-88', 'source-top-20', 'source-right-999'])).toEqual([12, 50, 88])
+    expect(retainConnectionHandlePercents('right', [12, 50, 88], ['source-right-12'])).toEqual([12, 50, 88])
+  })
+  it('keeps only exactly aligned, opposite-facing terminals straight', () => {
+    const path = { sourceX: 100, sourceY: 20, targetX: 300, targetY: 20, sourcePosition: 'right', targetPosition: 'left' }
+    expect(canUseStraightOrthogonalPath(path)).toBe(true)
+    expect(canUseStraightOrthogonalPath({ ...path, targetY: 24 })).toBe(false)
+    expect(canUseStraightOrthogonalPath({ ...path, targetPosition: 'right' })).toBe(false)
+    expect(canUseStraightOrthogonalPath({ ...path, targetX: 50 })).toBe(false)
+    expect(canUseStraightOrthogonalPath({ ...path, sourcePosition: 'bottom', targetPosition: 'top', sourceX: 100, targetX: 100, targetY: 200 })).toBe(true)
   })
 })

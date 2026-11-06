@@ -1,3 +1,4 @@
+import { isStoredDiagramGraph } from './diagramGraphPersistence'
 import type { Edge, Node } from 'reactflow'
 import type { ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
@@ -59,10 +60,10 @@ function writeStore(key: string, store: IntegrationGraphStore): void {
 
 export function loadIntegrationGraph(ideaId: string): IntegrationGraphRecord | null {
   const current = readStore(IDEA_INTEGRATION_GRAPH_STORAGE_KEY)[ideaId]
-  if (current?.nodes?.length) return current
+  if (isStoredDiagramGraph(current)) return current
 
   const legacy = readStore(IDEA_INTEGRATION_GRAPH_STORAGE_KEY_V1)[ideaId]
-  if (!legacy?.nodes?.length) return null
+  if (!isStoredDiagramGraph(legacy)) return null
 
   return {
     nodes: legacy.nodes,

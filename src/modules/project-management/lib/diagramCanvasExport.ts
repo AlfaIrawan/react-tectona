@@ -1,3 +1,4 @@
+import { renderDiagramViewportImage, renderDiagramViewportSvg } from './canvasDocumentSnapshot'
 import { jsPDF } from 'jspdf'
 import type { Edge, Node } from 'reactflow'
 import { resolveEdgeTextStyle } from '@/modules/project-management/lib/integrationEdgeAppearance'
@@ -245,6 +246,11 @@ export function downloadDiagramSvg(canvas: HTMLCanvasElement, name: string) {
   downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${name}.svg`)
 }
 
+export async function downloadDiagramSvgDataUrl(uri: string, name: string) {
+  const response = await fetch(uri)
+  downloadBlob(await response.blob(), `${name}.svg`)
+}
+
 export function downloadDiagramPdf(canvas: HTMLCanvasElement, name: string) {
   const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait'
   const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] })
@@ -278,8 +284,14 @@ export async function runDiagramExportAction(
   nodes: Node<ArchimateNodeData>[],
   edges: Edge[],
   name: string,
+  root?: HTMLElement | null,
 ) {
-  const canvas = renderDiagramCanvasImage(nodes, edges)
+  if (action === 'svg' && root !== undefined) {
+    const uri = await renderDiagramViewportSvg(root, nodes, edges)
+    if (uri) await downloadDiagramSvgDataUrl(uri, name)
+    return
+  }
+  const canvas = root !== undefined ? await renderDiagramViewportImage(root, nodes, edges) : renderDiagramCanvasImage(nodes, edges)
   if (!canvas) return
   if (action === 'png') await downloadDiagramImage(canvas, name, 'image/png')
   if (action === 'jpeg') await downloadDiagramImage(canvas, name, 'image/jpeg')

@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { Hand, ImagePlus, Type } from 'lucide-react'
+import { DiagramConnectionLine } from './DiagramConnectionLine'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { Hand, ImagePlus, Type, Undo2, Redo2 } from 'lucide-react'
 import {
-  getSmoothStepPath,
   useStore,
   ConnectionLineType,
   ConnectionMode,
@@ -12,7 +12,6 @@ import {
   ReactFlowProvider,
   useStoreApi,
   type Connection,
-  type ConnectionLineComponentProps,
   type Edge,
   type EdgeTypes,
   type Node,
@@ -30,7 +29,7 @@ import { integrationArchimateNodeTypes } from '@/modules/project-management/comp
 import { isArchimateElementData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
 const INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS = { type: 'smoothstep' as const }
-const INTEGRATION_FLOW_FIT_VIEW_OPTIONS = { padding: 0.08, minZoom: 0.7 }
+const INTEGRATION_FLOW_FIT_VIEW_OPTIONS = { padding: 0.08, minZoom: 0.1, maxZoom: 1.4 }
 const INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS = { padding: 0.22, maxZoom: 1 }
 const INTEGRATION_FLOW_PRO_OPTIONS = { hideAttribution: true as const }
 const INTEGRATION_EDGE_TYPES: EdgeTypes = { smoothstep: AnchoredSmoothStepEdge, erd: ErdCrowfootEdge }
@@ -38,28 +37,6 @@ const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
 const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
 const EDGE_UPDATE_DRAG_THRESHOLD_PX = 8
 
-function DiagramConnectionLine({ fromX, fromY, toX, toY, fromPosition, toPosition }: ConnectionLineComponentProps) {
-  const [path] = getSmoothStepPath({ sourceX: fromX, sourceY: fromY, targetX: toX, targetY: toY,
-    sourcePosition: fromPosition, targetPosition: toPosition, borderRadius: 0, offset: 8 })
-
-  return (
-    <g>
-      <defs>
-        <marker id="tectona-connection-preview-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
-          <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#64748b" />
-        </marker>
-      </defs>
-      <path
-        d={path}
-        fill="none"
-        stroke="#64748b"
-        strokeWidth={1.5}
-        strokeDasharray="4 4"
-        markerEnd="url(#tectona-connection-preview-arrow)"
-      />
-    </g>
-  )
-}
 
 function handleReactFlowError(messageId: string, message: string) {
   if (messageId === '002') return
@@ -117,6 +94,10 @@ type IntegrationArchitectureFlowProps = {
   preview?: boolean
   defaultViewport?: Viewport
   controlsStyle?: CSSProperties
+  onUndo?: () => void
+  onRedo?: () => void
+  canUndo?: boolean
+  canRedo?: boolean
   onAddText?: () => void
   onInsertImage?: () => void
   onMoveEnd?: (event: MouseEvent | TouchEvent, viewport: Viewport) => void
@@ -144,6 +125,10 @@ function IntegrationArchitectureFlowInner({
   preview = false,
   defaultViewport,
   controlsStyle,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
   onAddText,
   onInsertImage,
   onMoveEnd,
@@ -160,6 +145,7 @@ function IntegrationArchitectureFlowInner({
   } | null>(null)
   const reconnectingEdgeRef = useRef(false)
   const [panMode, setPanMode] = useState(false)
+  const displayedEdges = useMemo(() => edges.map(edge => ({ ...edge, updatable: !preview && Boolean(edge.selected) })), [edges, preview])
   const hasSelectedEdge = !preview && edges.some((edge) => edge.selected)
 
   const finishEdgeReconnect = useCallback(() => {
@@ -243,7 +229,7 @@ function IntegrationArchitectureFlowInner({
       <ReactFlow
         className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}${panMode ? ' pan-mode' : ''}`}
         nodes={nodes}
-        edges={edges}
+        edges={displayedEdges}
         nodeTypes={INTEGRATION_NODE_TYPES}
         edgeTypes={INTEGRATION_EDGE_TYPES}
         onNodesChange={onNodesChange}
@@ -278,7 +264,7 @@ function IntegrationArchitectureFlowInner({
         nodesConnectable={!preview && showConnectionPoints}
         elementsSelectable={!preview}
         edgesFocusable={!preview}
-        edgesUpdatable={!preview ? 'selected' : false}
+        edgesUpdatable={!preview}
         edgeUpdaterRadius={10 / zoom}
         panOnDrag={preview ? false : panMode ? [0, 1, 2] : [1, 2]}
         selectionOnDrag={!preview && !panMode}
@@ -287,8 +273,8 @@ function IntegrationArchitectureFlowInner({
         zoomOnScroll={!preview}
         zoomOnPinch={!preview}
         zoomOnDoubleClick={false}
-        minZoom={preview ? 0.2 : 0.55}
-        maxZoom={preview ? 1 : 1.4}
+        minZoom={preview ? 0.2 : 0.1}
+        maxZoom={preview ? 1 : 4}
         proOptions={INTEGRATION_FLOW_PRO_OPTIONS}
         defaultEdgeOptions={INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS}
       >
@@ -303,6 +289,8 @@ function IntegrationArchitectureFlowInner({
       ) : null}
       {!preview ? (
         <Controls showInteractive className="canvas-flow-controls" position="bottom-left" style={controlsStyle}>
+          {onUndo ? <ControlButton onClick={onUndo} disabled={!canUndo} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 /></ControlButton> : null}
+          {onRedo ? <ControlButton onClick={onRedo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><Redo2 /></ControlButton> : null}
           <ControlButton
             onClick={() => setPanMode((current) => !current)}
             className={panMode ? 'is-active' : undefined}

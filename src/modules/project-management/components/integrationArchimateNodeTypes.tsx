@@ -1,4 +1,5 @@
-import { connectionAnchor } from '@/modules/project-management/lib/diagramConnections'
+import { InlineDiagramNodeTitle } from './InlineDiagramNodeTitle'
+import { connectionAnchor, retainConnectionHandlePercents } from '@/modules/project-management/lib/diagramConnections'
 import { Handle, NodeResizer, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Library, Link2 } from 'lucide-react'
@@ -71,6 +72,10 @@ function handlePlacement(side: 'top' | 'right' | 'bottom' | 'left', percent: num
 
 function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }: { nodeId: string; selected: boolean; layoutKey?: string; shape?: 'rectangle' | 'ellipse' | 'diamond' }) {
   const updateNodeInternals = useUpdateNodeInternals()
+  const connectedHandleKey = useStore(state => state.edges.flatMap(edge => [
+    ...(edge.source === nodeId && edge.sourceHandle ? [edge.sourceHandle] : []),
+    ...(edge.target === nodeId && edge.targetHandle ? [edge.targetHandle] : []),
+  ]).join('|'))
   const measuredKey = useStore((state) => {
     const node = state.nodeInternals.get(nodeId)
     return `${Number(node?.width ?? 0)}x${Number(node?.height ?? 0)}`
@@ -93,7 +98,7 @@ function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }:
     updateNodeInternals(nodeId)
     const frame = window.requestAnimationFrame(() => updateNodeInternals(nodeId))
     return () => window.cancelAnimationFrame(frame)
-  }, [nodeId, sizeKey, shape, updateNodeInternals])
+  }, [nodeId, sizeKey, shape, connectedHandleKey, updateNodeInternals])
 
   const sides: Array<{ side: 'top' | 'right' | 'bottom' | 'left'; position: Position }> = [
     { side: 'top', position: Position.Top },
@@ -106,7 +111,7 @@ function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }:
     <>
       {sides.flatMap(({ side, position }) => {
         const length = side === 'top' || side === 'bottom' ? width : height
-        return connectionHandlePercentsForLength(length).flatMap((percent) => {
+        return retainConnectionHandlePercents(side, connectionHandlePercentsForLength(length), connectedHandleKey.split('|')).flatMap((percent) => {
           const idSuffix = percent === 50 ? side : `${side}-${percent}`
           const offsetStyle = handlePlacement(side, percent, shape)
           return [
@@ -520,6 +525,7 @@ function ExternalNodeLabel({
     >
       <div
         ref={labelBoxRef}
+        data-diagram-node-label=""
         role="button"
         tabIndex={0}
         style={{
@@ -554,7 +560,7 @@ function ExternalNodeLabel({
         onPointerUp={end}
         onPointerCancel={end}
       >
-        {title}
+        <InlineDiagramNodeTitle nodeId={nodeId} value={title} multiline />
       </div>
       {selected ? (
         <>
@@ -647,14 +653,14 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
             className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words pl-2 text-[12px] leading-4 text-slate-800 [line-clamp:unset] [-webkit-line-clamp:unset]"
             style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
           >
-            {data.title}
+            <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
           </p>
         </div>
       ) : kind.family === 'pool' || kind.family === 'lane' ? (
         <div className="flex h-full w-full overflow-hidden border-2 bg-white/70" style={{ borderColor: stroke }}>
           <div className="flex w-7 shrink-0 items-center justify-center border-r-2 bg-slate-50" style={{ borderColor: stroke }}>
             <p className="rotate-180 truncate text-[11px] font-semibold tracking-wide text-slate-700" style={{ writingMode: 'vertical-rl' }}>
-              {data.title}
+              <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
             </p>
           </div>
         </div>
@@ -664,7 +670,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
             className="min-w-0 w-full overflow-visible whitespace-pre-wrap break-words text-[11px] font-medium text-slate-600"
             style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
           >
-            {data.title}
+            <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
           </p>
         </div>
       ) : (
@@ -689,7 +695,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
             className="min-h-0 min-w-0 w-full max-h-full overflow-hidden break-words text-[12px] font-medium leading-4 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:4]"
             style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
           >
-            {data.title}
+            <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
           </p>
         </div>
       )}
@@ -765,7 +771,7 @@ export function UmlClassNode({ id, data, selected, width, height }: NodeProps<Ar
             {data.stereotype === 'interface' || data.stereotype === 'enumeration' ? (
               <div className="text-[10px] font-normal leading-3 text-slate-500">«{data.stereotype}»</div>
             ) : null}
-            <div className="text-[12px] font-bold leading-4">{data.title}</div>
+            <div className="text-[12px] font-bold leading-4"><InlineDiagramNodeTitle nodeId={id} value={data.title} /></div>
           </div>
           <span className="w-3.5 shrink-0" />
         </div>
@@ -819,7 +825,7 @@ export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<A
         style={{ background: fill, border: `1.5px solid ${stroke}`, fontFamily: 'Arial, Helvetica, sans-serif' }}
       >
         <div className="px-2 py-1.5 text-center text-[13px] font-bold" style={{ borderBottom: `1.5px solid ${stroke}` }}>
-          {data.title}
+          <InlineDiagramNodeTitle nodeId={id} value={data.title} />
         </div>
         <div className="px-2 py-1 text-[11px] leading-[18px]">
           {columns.map((column, index) => (

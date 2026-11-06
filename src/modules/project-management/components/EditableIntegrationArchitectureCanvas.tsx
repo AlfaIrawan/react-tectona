@@ -1,5 +1,6 @@
+import { useDiagramHistory } from '@/modules/project-management/lib/useDiagramHistory'
 import { reconnectDiagramEdge } from '@/modules/project-management/lib/diagramConnections'
-import { canvasDocumentSnapshot } from '@/modules/project-management/lib/canvasDocumentSnapshot'
+import { canvasDocumentSnapshot, renderDiagramViewportImage } from '@/modules/project-management/lib/canvasDocumentSnapshot'
 import {
   useCallback,
   useEffect,
@@ -75,7 +76,6 @@ import {
 import type { ArchimateElementNodeData, ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import {
   copyDiagramImage,
-  renderDiagramCanvasImage,
   runDiagramExportAction,
   type DiagramExportAction,
 } from '@/modules/project-management/lib/diagramCanvasExport'
@@ -272,6 +272,14 @@ function EditableIntegrationArchitectureCanvasInner({
   const [showRuler, setShowRuler] = useState(true)
   const [showConnectionArrows, setShowConnectionArrows] = useState(true)
   const [showConnectionPoints, setShowConnectionPoints] = useState(true)
+  const history = useDiagramHistory({ nodes, edges, source: plantumlSource }, (snapshot) => {
+    skipSourceApplyRef.current = true
+    setUserCustomized(true)
+    setNodes(snapshot.nodes)
+    setEdges(snapshot.edges)
+    setPlantumlSource(snapshot.source)
+  }, ideaId, reactFlowWrapperRef, true)
+
   const [studioPanelPosition, setStudioPanelPosition] = useState(STUDIO_PANEL_DEFAULT_POSITION)
   const [isStudioPanelDragging, setIsStudioPanelDragging] = useState(false)
   const [isStudioPanelCollapsed, setIsStudioPanelCollapsed] = useState(false)
@@ -1443,7 +1451,7 @@ function EditableIntegrationArchitectureCanvasInner({
   }, [canvasMenu, markCustomized, pasteCopiedNode, setEdges, setNodes])
 
   const copyCanvasAsImage = useCallback(async (nodeIds?: string[]) => {
-    const canvas = renderDiagramCanvasImage(nodes, edges, nodeIds)
+    const canvas = await renderDiagramViewportImage(reactFlowWrapperRef.current, nodes, edges, nodeIds)
     try {
       if (canvas) await copyDiagramImage(canvas, exportName)
     } finally {
@@ -1457,7 +1465,7 @@ function EditableIntegrationArchitectureCanvasInner({
     const handleExport = (event: Event) => {
       const detail = (event as CustomEvent<{ diagramKey?: string; action?: DiagramExportAction }>).detail
       if (detail?.diagramKey !== diagramKey || !detail.action) return
-      void runDiagramExportAction(detail.action, nodes, edges, exportName)
+      void runDiagramExportAction(detail.action, nodes, edges, exportName, reactFlowWrapperRef.current)
     }
     window.addEventListener('tectona-diagram-export', handleExport)
     return () => window.removeEventListener('tectona-diagram-export', handleExport)
@@ -1863,6 +1871,10 @@ function EditableIntegrationArchitectureCanvasInner({
       onNodeDragStop={handleNodeDragStop}
       onEdgesChange={handleEdgesChange}
       onConnect={onConnect}
+      onUndo={history.undo}
+      onRedo={history.redo}
+      canUndo={history.canUndo}
+      canRedo={history.canRedo}
       onEdgeUpdate={onEdgeUpdate}
       onSelectionChange={handleSelectionChange}
       onPaneClick={() => { setCanvasMenu(null); setEdgeMenu(null) }}
