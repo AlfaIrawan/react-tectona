@@ -1,3 +1,4 @@
+import { useDiagramReconnectPreview } from '@/modules/project-management/lib/useDiagramReconnect'
 import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
 import { BaseEdge, getSmoothStepPath, type EdgeProps } from 'reactflow'
@@ -69,21 +70,24 @@ function crowfoot(
 }
 
 export function ErdCrowfootEdge({
+  id,
   sourceX: rawSourceX,
   sourceY: rawSourceY,
   targetX: rawTargetX,
   targetY: rawTargetY,
   sourceHandleId,
   targetHandleId,
-  sourcePosition,
-  targetPosition,
+  sourcePosition: rawSourcePosition,
+  targetPosition: rawTargetPosition,
   data,
   selected,
 }: EdgeProps) {
-  const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, sourcePosition, sourceHandleId)
-  const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, targetPosition, targetHandleId)
-  const sourceX = sourcePointAtHandle.x, sourceY = sourcePointAtHandle.y
-  const targetX = targetPointAtHandle.x, targetY = targetPointAtHandle.y
+  const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, rawSourcePosition, sourceHandleId)
+  const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, rawTargetPosition, targetHandleId)
+  const live = useDiagramReconnectPreview(id)
+  const sourceX = live?.source.x ?? sourcePointAtHandle.x, sourceY = live?.source.y ?? sourcePointAtHandle.y
+  const targetX = live?.target.x ?? targetPointAtHandle.x, targetY = live?.target.y ?? targetPointAtHandle.y
+  const sourcePosition = live?.source.position ?? rawSourcePosition, targetPosition = live?.target.position ?? rawTargetPosition
 
   const [path] = getSmoothStepPath({
     sourceX,
@@ -107,7 +111,7 @@ export function ErdCrowfootEdge({
   return (
     <>
       <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.25 }} />
-      <DiagramEdgeEndpointControls sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
+      <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       <g>
         {crowfoot(sourceX, sourceY, sourceAway.x, sourceAway.y, Boolean(ends.sourceMany), Boolean(ends.sourceOptional), color)}
         {crowfoot(targetX, targetY, targetAway.x, targetAway.y, Boolean(ends.targetMany), Boolean(ends.targetOptional), color)}

@@ -44,6 +44,7 @@ describe('diagram connections', () => {
 
 describe('resizing and orthogonal routing', () => {
   it('retains used dots when a shape shrinks and its suggested dots change', () => {
+    expect(retainConnectionHandlePercents('right', [50], ['target-right-50.5'])).toEqual([50, 50.5])
     expect(retainConnectionHandlePercents('right', [50], ['source-right-12', 'target-right-88', 'source-top-20', 'source-right-999'])).toEqual([12, 50, 88])
     expect(retainConnectionHandlePercents('right', [12, 50, 88], ['source-right-12'])).toEqual([12, 50, 88])
   })

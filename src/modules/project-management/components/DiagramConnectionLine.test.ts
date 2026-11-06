@@ -71,14 +71,14 @@ describe('relation endpoint preview and controls', () => {
   it('keeps visible endpoints 6.5 screen pixels across zoom, centered over the larger invisible reconnect targets', async () => {
     for (const zoom of [0.1,0.55,1,1.4,4]) {
       state.zoom=zoom
-      await act(async () => root.render(createElement('svg', null, createElement(DiagramEdgeEndpointControls,{sourceX:100,sourceY:40,targetX:400,targetY:200,selected:true}))))
+      await act(async () => root.render(createElement('svg', null, createElement(DiagramEdgeEndpointControls,{edgeId:'flow',sourcePosition:Position.Bottom,targetPosition:Position.Top,sourceX:100,sourceY:40,targetX:400,targetY:200,selected:true}))))
       const circles = [...host.querySelectorAll('circle')]
       expect(circles).toHaveLength(2)
       expect(Number(circles[0].getAttribute('r'))*zoom*2).toBeCloseTo(6.5)
       expect(circles.map(c=>[c.getAttribute('cx'),c.getAttribute('cy')])).toEqual([['100','40'],['400','200']])
-      expect(host.querySelector('style')!.textContent).toContain('cx: 400px; cy: 200px;')
+      expect(host.querySelector('[data-diagram-endpoint-dot=target]')!.getAttribute('cx')).toBe('400')
     }
-    await act(async () => root.render(createElement('svg', null, createElement(DiagramEdgeEndpointControls,{sourceX:100,sourceY:40,targetX:400,targetY:200,selected:false}))))
+    await act(async () => root.render(createElement('svg', null, createElement(DiagramEdgeEndpointControls,{edgeId:'flow',sourcePosition:Position.Bottom,targetPosition:Position.Top,sourceX:100,sourceY:40,targetX:400,targetY:200,selected:false}))))
     expect(host.querySelector('circle')).toBeNull()
   })
 })

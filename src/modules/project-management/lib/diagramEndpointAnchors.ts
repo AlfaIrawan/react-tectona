@@ -4,7 +4,7 @@ import { classifyBpmnType } from './bpmnNotationSpec'
 export type MagneticDiagramAnchor = { nodeId: string; side: 'top'|'right'|'bottom'|'left'; percent: number; point: { x: number; y: number } }
 /** The renderer uses the outside of an 8px handle; previews/snap lookup use its center. */
 export function centeredDiagramEndpoint(x: number, y: number, side: string, handleId?: string | null) {
-  const half = /^(?:source|target)-(?:top|right|bottom|left)(?:-\d+)?$/.test(handleId ?? '') ? 4 : 0
+  const half = /^(?:source|target)-(?:top|right|bottom|left)(?:-\d+(?:\.\d+)?)?$/.test(handleId ?? '') ? 4 : 0
   return { x: x + (side === 'left' ? half : side === 'right' ? -half : 0), y: y + (side === 'top' ? half : side === 'bottom' ? -half : 0) }
 }
 export function magneticDiagramAnchor(point: { x:number; y:number }, nodes: Node[], fixedNodeId: string, zoom: number): MagneticDiagramAnchor | null {
@@ -27,7 +27,7 @@ export function magneticDiagramAnchor(point: { x:number; y:number }, nodes: Node
     const nx=(x-50)/50, ny=(y-50)/50
     const inside=shape==='ellipse' ? nx*nx+ny*ny<=1 : shape==='diamond' ? Math.abs(nx)+Math.abs(ny)<=1 : x>=0 && x<=100 && y>=0 && y<=100
     for (const side of ['top','right','bottom','left'] as const) {
-      const percent=Math.round(Math.max(0,Math.min(100,side==='top'||side==='bottom'?x:y)))
+      const percent=Math.round(Math.max(0,Math.min(100,side==='top'||side==='bottom'?x:y))*100)/100
       const anchor=connectionAnchor(side,percent,shape)
       const candidate={x:p.x+anchor.x/100*width,y:p.y+anchor.y/100*height}
       const distance=Math.hypot(point.x-candidate.x,point.y-candidate.y)

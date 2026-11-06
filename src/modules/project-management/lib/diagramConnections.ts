@@ -30,7 +30,7 @@ export function connectionAnchor(side: 'top' | 'right' | 'bottom' | 'left', perc
 /** Keep every attached handle address valid when resize changes the suggested dot density. */
 export function retainConnectionHandlePercents(side: string, suggested: number[], handles: string[]): number[] {
   const retained = handles.flatMap(handle => {
-    const match = /^(?:source|target)-(top|right|bottom|left)(?:-(\d+))?$/.exec(handle)
+    const match = /^(?:source|target)-(top|right|bottom|left)(?:-(\d+(?:\.\d+)?))?$/.exec(handle)
     if (!match || match[1] !== side) return []
     const percent = match[2] ? Number(match[2]) : 50
     return percent >= 0 && percent <= 100 ? [percent] : []
@@ -58,7 +58,7 @@ export function canUseStraightOrthogonalPath(args: {
 /** React Flow's default preview always faces opposite the start; honor the hovered side instead. */
 export function connectionPreviewTargetPosition(fromX: number, fromY: number, toX: number, toY: number,
   fallback: Position, handleId?: string | null): Position {
-  const side = /^(?:source|target)-(top|right|bottom|left)(?:-\d+)?$/.exec(handleId ?? '')?.[1]
+  const side = /^(?:source|target)-(top|right|bottom|left)(?:-\d+(?:\.\d+)?)?$/.exec(handleId ?? '')?.[1]
   if (side) return side as Position
   const dx = toX - fromX, dy = toY - fromY
   if (Math.abs(dx) + Math.abs(dy) < 0.001) return fallback

@@ -1,3 +1,4 @@
+import { useDiagramReconnectPreview } from '@/modules/project-management/lib/useDiagramReconnect'
 import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
 import {
@@ -157,17 +158,19 @@ export function AnchoredSmoothStepEdge({
   targetY: rawTargetY,
   sourceHandleId,
   targetHandleId,
-  sourcePosition,
-  targetPosition,
+  sourcePosition: rawSourcePosition,
+  targetPosition: rawTargetPosition,
   style,
   label,
   selected,
   data,
 }: EdgeProps) {
-  const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, sourcePosition, sourceHandleId)
-  const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, targetPosition, targetHandleId)
-  const sourceX = sourcePointAtHandle.x, sourceY = sourcePointAtHandle.y
-  const targetX = targetPointAtHandle.x, targetY = targetPointAtHandle.y
+  const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, rawSourcePosition, sourceHandleId)
+  const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, rawTargetPosition, targetHandleId)
+  const live = useDiagramReconnectPreview(id)
+  const sourceX = live?.source.x ?? sourcePointAtHandle.x, sourceY = live?.source.y ?? sourcePointAtHandle.y
+  const targetX = live?.target.x ?? targetPointAtHandle.x, targetY = live?.target.y ?? targetPointAtHandle.y
+  const sourcePosition = live?.source.position ?? rawSourcePosition, targetPosition = live?.target.position ?? rawTargetPosition
 
   const { setEdges, setNodes } = useReactFlow()
   const zoom = useStore((state) => state.transform[2]) || 1
@@ -428,7 +431,7 @@ export function AnchoredSmoothStepEdge({
       />
       {arrowMarker(visual.startArrow, startDirection.x, startDirection.y, -startDirection.dx, -startDirection.dy, visual.startSize, visual.startFill, stroke)}
       {arrowMarker(visual.endArrow, endDirection.x, endDirection.y, endDirection.dx, endDirection.dy, visual.endSize, visual.endFill, stroke)}
-      <DiagramEdgeEndpointControls sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
+      <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       {labelText && !arrange.ignoreEdge ? (
         <EdgeLabelRenderer>
           <div

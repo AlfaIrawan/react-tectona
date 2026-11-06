@@ -1,4 +1,4 @@
-import { magneticDiagramAnchor, magneticAnchorHandle } from '@/modules/project-management/lib/diagramEndpointAnchors'
+import { DiagramReconnectContext, useDiagramReconnect } from '@/modules/project-management/lib/useDiagramReconnect'
 import { DiagramConnectionLine } from './DiagramConnectionLine'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Hand, ImagePlus, Type, Undo2, Redo2 } from 'lucide-react'
@@ -23,7 +23,6 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from 'reactflow'
-import { connectionClientPoint } from '@/modules/project-management/lib/diagramConnections'
 import { CanvasViewportGrid, CanvasViewportRulers } from '@/modules/project-management/components/CanvasViewportRulers'
 import { AnchoredSmoothStepEdge } from '@/modules/project-management/components/AnchoredSmoothStepEdge'
 import { ErdCrowfootEdge } from '@/modules/project-management/components/ErdCrowfootEdge'
@@ -37,7 +36,6 @@ const INTEGRATION_FLOW_PRO_OPTIONS = { hideAttribution: true as const }
 const INTEGRATION_EDGE_TYPES: EdgeTypes = { smoothstep: AnchoredSmoothStepEdge, erd: ErdCrowfootEdge }
 const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
 const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
-const EDGE_UPDATE_DRAG_THRESHOLD_PX = 8
 
 
 function handleReactFlowError(messageId: string, message: string) {
@@ -137,86 +135,31 @@ function IntegrationArchitectureFlowInner({
 }: IntegrationArchitectureFlowProps) {
   const store = useStoreApi()
   const { getNodes, screenToFlowPosition } = useReactFlow()
-  const zoom = useStore((state) => state.transform[2]) || 1
+  const transform = useStore((state) => state.transform)
+  const zoom = transform[2] || 1
   const cancelledRef = useRef(false)
-  const pendingEdgeUpdateRef = useRef<{
-    original: Edge
-    movingEnd: 'source' | 'target'
-    x: number
-    y: number
-    oldEdge?: Edge
-    connection?: Connection
-  } | null>(null)
-  const reconnectingEdgeRef = useRef(false)
-  const reconnectEndTimerRef = useRef<number | null>(null)
   const [panMode, setPanMode] = useState(false)
-  const displayedEdges = useMemo(() => edges.map(edge => ({ ...edge, updatable: !preview && Boolean(edge.selected) })), [edges, preview])
+  const displayedEdges = useMemo(() => edges.map(edge => ({ ...edge, updatable: false })), [edges])
   const hasSelectedEdge = !preview && edges.some((edge) => edge.selected)
-
-  const finishEdgeReconnect = useCallback(() => {
-    pendingEdgeUpdateRef.current = null
-    if (reconnectEndTimerRef.current !== null) window.clearTimeout(reconnectEndTimerRef.current)
-    reconnectEndTimerRef.current = window.setTimeout(() => {
-      reconnectingEdgeRef.current = false
-      reconnectEndTimerRef.current = null
-    }, 0)
-  }, [])
-
-  const handleEdgeUpdateStart = useCallback((event: MouseEvent | globalThis.MouseEvent | TouchEvent, edge: Edge, fixedHandleType: 'source' | 'target') => {
-    if (reconnectEndTimerRef.current !== null) window.clearTimeout(reconnectEndTimerRef.current)
-    reconnectEndTimerRef.current = null
-    cancelledRef.current = false
-    reconnectingEdgeRef.current = true
-    const point = connectionClientPoint(event)
-    pendingEdgeUpdateRef.current = {
-      original: edge,
-      movingEnd: fixedHandleType === 'source' ? 'target' : 'source',
-      x: point.x,
-      y: point.y,
-    }
-  }, [])
-
-  const handleEdgeUpdate = useCallback((oldEdge: Edge, connection: Connection) => {
-    if (cancelledRef.current) return
-    const pending = pendingEdgeUpdateRef.current
-    if (pending) {
-      pendingEdgeUpdateRef.current = { ...pending, oldEdge, connection }
-      return
-    }
-    onEdgeUpdate?.(oldEdge, connection)
-  }, [onEdgeUpdate])
-
-  const handleEdgeUpdateEnd = useCallback((event: globalThis.MouseEvent | TouchEvent) => {
-    const pending = pendingEdgeUpdateRef.current
-    if (!cancelledRef.current && pending) {
-      const point = connectionClientPoint(event)
-      const distance = Math.hypot(point.x - pending.x, point.y - pending.y)
-      if (distance >= EDGE_UPDATE_DRAG_THRESHOLD_PX) {
-        let connection = pending.connection
-        if (!connection) {
-          const moving = pending.movingEnd
-          const fixedNode = moving === 'target' ? pending.original.source : pending.original.target
-          const anchor = magneticDiagramAnchor(screenToFlowPosition(point), getNodes(), fixedNode, zoom)
-          if (anchor) connection = moving === 'target'
-            ? { source: pending.original.source, sourceHandle: pending.original.sourceHandle ?? null, target: anchor.nodeId, targetHandle: magneticAnchorHandle(anchor, 'target') }
-            : { source: anchor.nodeId, sourceHandle: magneticAnchorHandle(anchor, 'source'), target: pending.original.target, targetHandle: pending.original.targetHandle ?? null }
-        }
-        if (connection && (!store.getState().isValidConnection || store.getState().isValidConnection!(connection))) onEdgeUpdate?.(pending.oldEdge ?? pending.original, connection)
-      }
-    }
-    finishEdgeReconnect()
-  }, [finishEdgeReconnect, getNodes, onEdgeUpdate, screenToFlowPosition, store, zoom])
+  const reconnect = useDiagramReconnect(edges, getNodes, screenToFlowPosition, zoom, preview ? undefined : onEdgeUpdate,
+    connection => !store.getState().isValidConnection || store.getState().isValidConnection!(connection),
+    point => {
+      const state = store.getState(), bounds = state.domNode?.getBoundingClientRect()
+      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return false
+      const x = point.x < bounds.left + 32 ? 8 : point.x > bounds.right - 32 ? -8 : 0
+      const y = point.y < bounds.top + 32 ? 8 : point.y > bounds.bottom - 32 ? -8 : 0
+      return x || y ? state.panBy({ x, y }) : false
+    }, transform.join(':'))
 
   const handleConnect = useCallback((connection: Connection) => {
-    if (reconnectingEdgeRef.current || cancelledRef.current) return
+    if (cancelledRef.current) return
     onConnect?.(connection)
   }, [onConnect])
 
   useEffect(() => {
     const cancel = () => {
-      if (!store.getState().connectionStartHandle && !reconnectingEdgeRef.current && !pendingEdgeUpdateRef.current) return
+      if (!store.getState().connectionStartHandle) return
       cancelledRef.current = true
-      pendingEdgeUpdateRef.current = null
       store.getState().cancelConnection()
     }
     const keyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel() }
@@ -224,7 +167,6 @@ function IntegrationArchitectureFlowInner({
     window.addEventListener('blur', cancel)
     window.addEventListener('touchcancel', cancel)
     return () => {
-      if (reconnectEndTimerRef.current !== null) window.clearTimeout(reconnectEndTimerRef.current)
       window.removeEventListener('keydown', keyDown)
       window.removeEventListener('blur', cancel)
       window.removeEventListener('touchcancel', cancel)
@@ -244,7 +186,7 @@ function IntegrationArchitectureFlowInner({
   }, [defaultViewport, preview])
 
   return (
-    <>
+    <DiagramReconnectContext.Provider value={preview || !onEdgeUpdate ? null : reconnect}>
       <PatchReactFlowOnError />
       <ReactFlow
         className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}${panMode ? ' pan-mode' : ''}`}
@@ -257,12 +199,9 @@ function IntegrationArchitectureFlowInner({
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onConnectStart={() => { cancelledRef.current = false }}
-        onConnectEnd={() => { if (!reconnectingEdgeRef.current) cancelledRef.current = false }}
+        onConnectEnd={() => { cancelledRef.current = false }}
         connectionRadius={18 / zoom}
         autoPanOnConnect={!preview}
-        onEdgeUpdateStart={preview || !onEdgeUpdate ? undefined : handleEdgeUpdateStart}
-        onEdgeUpdate={preview || !onEdgeUpdate ? undefined : handleEdgeUpdate}
-        onEdgeUpdateEnd={preview || !onEdgeUpdate ? undefined : handleEdgeUpdateEnd}
         onSelectionChange={onSelectionChange}
         onEdgeClick={onEdgeClick}
         onPaneClick={onPaneClick}
@@ -284,7 +223,8 @@ function IntegrationArchitectureFlowInner({
         nodesConnectable={!preview && showConnectionPoints}
         elementsSelectable={!preview}
         edgesFocusable={!preview}
-        edgesUpdatable={!preview}
+        edgesUpdatable={false}
+        elevateEdgesOnSelect
         edgeUpdaterRadius={10 / zoom}
         panOnDrag={preview ? false : panMode ? [0, 1, 2] : [1, 2]}
         selectionOnDrag={!preview && !panMode}
@@ -326,7 +266,7 @@ function IntegrationArchitectureFlowInner({
         {showGrid && !preview ? <CanvasViewportGrid /> : null}
         {showRuler && !preview ? <CanvasViewportRulers /> : null}
       </ReactFlow>
-    </>
+    </DiagramReconnectContext.Provider>
   )
 }
 

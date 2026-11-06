@@ -1,16 +1,21 @@
-import { useId } from 'react'
-import { useStore } from 'reactflow'
+import { useContext } from 'react'
+import { useStore, type Position } from 'reactflow'
+import { DiagramReconnectContext } from '@/modules/project-management/lib/useDiagramReconnect'
 
-/** Paint a small endpoint independently of React Flow's larger reconnect hit area. */
-export function DiagramEdgeEndpointControls({ sourceX, sourceY, targetX, targetY, selected }: {
-  sourceX: number; sourceY: number; targetX: number; targetY: number; selected?: boolean
+/** The small painted dot and its larger hit target share the exact same anchor. */
+export function DiagramEdgeEndpointControls({ edgeId, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected }: {
+  edgeId: string; sourceX: number; sourceY: number; targetX: number; targetY: number; sourcePosition: Position; targetPosition: Position; selected?: boolean
 }) {
-  const id = useId()
+  const reconnect = useContext(DiagramReconnectContext)
   const zoom = useStore(state => state.transform[2]) || 1
   if (!selected) return null
-  return <g data-diagram-endpoints={id} pointerEvents="none">
-    <style>{`[data-diagram-endpoints="${id}"] ~ .react-flow__edgeupdater-source { cx: ${sourceX}px; cy: ${sourceY}px; }
-[data-diagram-endpoints="${id}"] ~ .react-flow__edgeupdater-target { cx: ${targetX}px; cy: ${targetY}px; }`}</style>
-    {[[sourceX, sourceY], [targetX, targetY]].map(([x,y], index) => <circle key={index} cx={x} cy={y} r={3.25 / zoom} fill="#fff" stroke="#0284c7" strokeWidth={1.25 / zoom} />)}
+  const source = { x: sourceX, y: sourceY, position: sourcePosition }, target = { x: targetX, y: targetY, position: targetPosition }
+  return <g data-diagram-endpoints pointerEvents="none">
+    {(['source', 'target'] as const).map(type => <g key={type}>
+      {reconnect ? <circle data-diagram-endpoint-hit={type} cx={type === 'source' ? sourceX : targetX} cy={type === 'source' ? sourceY : targetY} r={10 / zoom}
+        fill="transparent" stroke="none" style={{ pointerEvents: 'all', cursor: reconnect.getPreview(edgeId) ? 'grabbing' : 'grab', touchAction: 'none' }}
+        onPointerDown={event => reconnect.start({ edgeId, source, target, movingEnd: type }, event)} /> : null}
+      <circle data-diagram-endpoint-dot={type} cx={type === 'source' ? sourceX : targetX} cy={type === 'source' ? sourceY : targetY} r={3.25 / zoom} fill="#fff" stroke="#0284c7" strokeWidth={1.25 / zoom} />
+    </g>)}
   </g>
 }
