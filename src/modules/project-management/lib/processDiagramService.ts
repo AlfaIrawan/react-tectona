@@ -65,7 +65,8 @@ export function runtimeProcessDiagramFromAgentResponse(
 
 function canvasGraphFromJson(json: Record<string, unknown>, source: string): ProcessCanvasGraph | undefined {
   const nodes = Array.isArray(json.nodes) ? (json.nodes as Node<ArchimateNodeData>[]) : []
-  if (!nodes.length && !source.trim()) return undefined
+  const savedCanvas = Array.isArray(json.nodes) && Array.isArray(json.edges) && json.user_customized === true
+  if (!nodes.length && !source.trim() && !savedCanvas) return undefined
   return {
     nodes,
     edges: Array.isArray(json.edges) ? (json.edges as Edge[]) : [],
@@ -74,7 +75,7 @@ function canvasGraphFromJson(json: Record<string, unknown>, source: string): Pro
     snapToGrid: readOptionalBoolean(json.snap_to_grid),
     canvasPngBase64: typeof json.canvas_png_base64 === 'string' ? json.canvas_png_base64 : undefined,
     canvasExportError: Boolean(json.canvas_export_error),
-    source: typeof json.plantuml_source === 'string' && json.plantuml_source.trim() ? json.plantuml_source : source,
+    source: typeof json.plantuml_source === 'string' && (savedCanvas || json.plantuml_source.trim()) ? json.plantuml_source : source,
   }
 }
 

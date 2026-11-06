@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 
 /** Space kept free under the grid so the page's bottom edge is never cut off. */
 export const SLIDING_GRID_BOTTOM_RESERVE_PX = 24
+/** Blank space on each page lets selection rings and blurred shadows fade before the horizontal clip. */
+export const SLIDING_GRID_SHADOW_BLEED_PX = 48
 /** Height assumed before the first card has been measured. */
 const FALLBACK_ROW_HEIGHT_PX = 220
 /** Movement of the two fingers' midpoint before a swipe is recognised as horizontal. */
@@ -58,21 +60,34 @@ export type SlidingLayout = {
  * Measures the grid against the space it has. Sliding is only on when the whole grid is taller
  * than that space; otherwise every card is shown at once and there is no pager.
  */
+export function gridAvailableLayoutHeight(input: { viewportHeight: number; top: number; renderedWidth: number; layoutWidth: number }): number {
+  const scale = input.layoutWidth > 0 && input.renderedWidth > 0 ? input.renderedWidth / input.layoutWidth : 1
+  return Math.max(0, input.viewportHeight - input.top - SLIDING_GRID_BOTTOM_RESERVE_PX) / scale
+}
+
 export function slidingLayout(input: {
-  itemCount: number
-  columns: number
-  rowHeight: number
-  gap: number
-  availableHeight: number
+  itemCount: number; columns: number; rowHeight: number; rowHeights?: number[]; gap: number; availableHeight: number
 }): SlidingLayout {
-  const { itemCount, columns, rowHeight, gap, availableHeight } = input
-  const rowStep = Math.max(1, rowHeight + gap)
-  const rowsFit = Math.max(1, Math.floor((availableHeight + gap) / rowStep))
-  const totalRows = Math.ceil(itemCount / Math.max(1, columns))
-  const sliding = totalRows > rowsFit
-  const pageSize = Math.max(1, columns) * rowsFit
-  const pageCount = sliding ? Math.ceil(itemCount / pageSize) : 1
-  return { rowsFit, totalRows, sliding, pageSize, pageCount }
+  const columns = Math.max(1, input.columns), gap = Math.max(0, input.gap)
+  const totalRows = Math.ceil(input.itemCount / columns)
+  const heights = Array.from({ length: totalRows }, (_, i) => Math.max(1, input.rowHeights?.[i] ?? input.rowHeight))
+  const prefix = [0]
+  for (const height of heights) prefix.push(prefix[prefix.length - 1] + height)
+  const heightOf = (start: number, end: number) => prefix[end] - prefix[start] + Math.max(0, end - start - 1) * gap
+  const fits = (height: number) => height <= input.availableHeight + 0.001
+  const sliding = totalRows > 1 && !fits(heightOf(0, totalRows))
+  let rowsFit = Math.max(1, totalRows)
+  if (sliding) {
+    rowsFit = 1
+    // A uniform page size must fit every page, including later pages with taller cards.
+    for (let rows = totalRows - 1; rows > 1; rows--) {
+      let allFit = true
+      for (let start = 0; start < totalRows; start += rows) if (!fits(heightOf(start, Math.min(totalRows, start + rows)))) { allFit = false; break }
+      if (allFit) { rowsFit = rows; break }
+    }
+  }
+  const pageSize = columns * rowsFit
+  return { rowsFit, totalRows, sliding, pageSize, pageCount: sliding ? Math.ceil(input.itemCount / pageSize) : 1 }
 }
 
 type SlidingCardGridProps<T> = {
@@ -91,7 +106,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const viewportRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [availableHeight, setAvailableHeight] = useState(Number.POSITIVE_INFINITY)
-  const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT_PX)
+  const [rowHeights, setRowHeights] = useState<number[]>([])
   const [page, setPage] = useState(0)
   const [dragOffset, setDragOffset] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
@@ -106,32 +121,40 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const measure = useCallback(() => {
     const element = containerRef.current
     if (!element) return
-    setWidth(element.clientWidth)
-    const top = element.getBoundingClientRect().top
-    setAvailableHeight(Math.max(0, window.innerHeight - top - SLIDING_GRID_BOTTOM_RESERVE_PX))
-    // The tallest card of the first row stands for a row.
-    const firstRow = Array.from(element.querySelectorAll<HTMLElement>('[data-sliding-card]')).slice(0, 4)
-    if (firstRow.length > 0) {
-      setRowHeight(Math.max(...firstRow.map((card) => card.offsetHeight)) || FALLBACK_ROW_HEIGHT_PX)
-    }
-  }, [])
+    const rect = element.getBoundingClientRect(), layoutWidth = element.clientWidth
+    setWidth(layoutWidth)
+    setAvailableHeight(gridAvailableLayoutHeight({ viewportHeight: window.innerHeight, top: rect.top, renderedWidth: rect.width, layoutWidth }))
+    const columns = columnsForWidth(layoutWidth, isListView)
+    const cards = Array.from(element.querySelectorAll<HTMLElement>('[data-sliding-card]'))
+    const heights: number[] = []
+    for (let index = 0; index < cards.length; index += columns) heights.push(Math.max(...cards.slice(index, index + columns).map(card => card.offsetHeight || FALLBACK_ROW_HEIGHT_PX)))
+    setRowHeights(current => current.length === heights.length && current.every((value, index) => value === heights[index]) ? current : heights)
+  }, [isListView])
 
-  useLayoutEffect(() => {
-    measure()
-  }, [measure, items.length, isListView])
-
-  useEffect(() => {
-    window.addEventListener('resize', measure)
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
-    if (observer && containerRef.current) observer.observe(containerRef.current)
-    return () => {
-      window.removeEventListener('resize', measure)
-      observer?.disconnect()
-    }
-  }, [measure])
+  // Also remeasure when surrounding panels move the grid without changing its own dimensions.
+  useLayoutEffect(() => { measure() })
 
   const columns = columnsForWidth(width, isListView)
-  const layout = slidingLayout({ itemCount: items.length, columns, rowHeight, gap, availableHeight })
+  const layout = slidingLayout({ itemCount: items.length, columns, rowHeight: FALLBACK_ROW_HEIGHT_PX, rowHeights, gap, availableHeight })
+
+  useEffect(() => {
+    let frame = 0
+    const schedule = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(measure) }
+    window.addEventListener('resize', schedule)
+    window.addEventListener('scroll', schedule, true)
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null
+    if (observer && containerRef.current) {
+      observer.observe(containerRef.current)
+      for (const card of containerRef.current.querySelectorAll<HTMLElement>('[data-sliding-card]')) observer.observe(card)
+    }
+    return () => {
+      window.removeEventListener('resize', schedule)
+      window.removeEventListener('scroll', schedule, true)
+      window.cancelAnimationFrame(frame)
+      observer?.disconnect()
+    }
+  }, [measure, items.length, layout.sliding, layout.pageSize])
+
   const currentPage = Math.min(page, Math.max(0, layout.pageCount - 1))
   const gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`
 
@@ -270,7 +293,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
         // Clip neighboring pages horizontally while letting card shadows fade vertically.
         className="overflow-x-clip overflow-y-visible"
         // Vertical scrolling stays native; the two-finger horizontal swipe is handled here.
-        style={{ touchAction: 'pan-y' }}
+        style={{ touchAction: 'pan-y', marginInline: -SLIDING_GRID_SHADOW_BLEED_PX, width: `calc(100% + ${SLIDING_GRID_SHADOW_BLEED_PX * 2}px)` }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerEnd}
@@ -288,7 +311,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
             <div
               key={pageIndex}
               className="grid min-w-0 shrink-0 content-start"
-              style={{ width: `${100 / layout.pageCount}%`, gridTemplateColumns, gap }}
+              style={{ width: `${100 / layout.pageCount}%`, gridTemplateColumns, gap, paddingInline: SLIDING_GRID_SHADOW_BLEED_PX }}
               aria-hidden={pageIndex !== currentPage}
             >
               {pageItems.map((item) => (

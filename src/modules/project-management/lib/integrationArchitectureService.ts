@@ -95,9 +95,10 @@ export function graphRecordFromPersistentIntegration(
   const plantumlSource = typeof json.plantuml_source === 'string' ? json.plantuml_source : ''
   const userCustomized = Boolean(json.user_customized)
 
-  if (nodes?.length) {
+  const savedCanvas = nodes !== null && edges !== null && json.user_customized === true
+  if (nodes?.length || savedCanvas) {
     return {
-      nodes: normalizeIntegrationNodesForCanvas(nodes),
+      nodes: normalizeIntegrationNodesForCanvas(nodes ?? []),
       edges: edges ?? [],
       plantumlSource,
       userCustomized,
@@ -221,8 +222,8 @@ export function runtimeIntegrationFromPersistent(
  */
 export function storedIntegrationNeedsRegeneration(
   analysis: Pick<RuntimeIntegrationAnalysis, 'status'>,
-  record: Pick<IntegrationGraphRecord, 'nodes'>,
+  record: Pick<IntegrationGraphRecord, 'nodes'> & Partial<Pick<IntegrationGraphRecord, 'userCustomized'>>,
 ): boolean {
-  if (analysis.status !== 'ok') return false
+  if (analysis.status !== 'ok' || record.userCustomized) return false
   return !record.nodes.some((node) => node.type === 'archimateElement')
 }

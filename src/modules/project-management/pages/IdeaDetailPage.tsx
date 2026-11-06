@@ -6320,7 +6320,7 @@ export function IdeaDetailPage() {
             // Legacy/failed L1 records can remain marked insufficient even after the
             // idea has enough evidence. Do not let that empty record permanently
             // suppress the first automatic generation while L2 can still succeed.
-            if (storedAnalysis.status === 'ok' && hasRenderableDiagram) {
+            if (storedAnalysis.canvasGraph?.userCustomized || (storedAnalysis.status === 'ok' && hasRenderableDiagram)) {
               applyC4ArchitectureState(level, storedAnalysis)
               return
             }

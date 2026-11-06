@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { columnsForWidth, slidingLayout, wheelPageDelta } from './SlidingCardGrid'
+import { columnsForWidth, gridAvailableLayoutHeight, slidingLayout, wheelPageDelta } from './SlidingCardGrid'
 
 describe('wheelPageDelta', () => {
   const wheel = { deltaX: 0, deltaY: 100, deltaMode: 0, ctrlKey: false, metaKey: false }
@@ -62,5 +62,29 @@ describe('slidingLayout', () => {
   it('a grid that exactly fills the space is not sliding', () => {
     const layout = slidingLayout({ itemCount: 4, columns: 4, rowHeight: card, gap, availableHeight: card })
     expect(layout.sliding).toBe(false)
+  })
+})
+
+
+describe('scaled and variable-height paging boundaries', () => {
+  it('compares viewport space and cards in the same coordinate system at every UI scale', () => {
+    for (const scale of [0.5,0.625,0.75,1,1.25,1.5]) {
+      const available = gridAvailableLayoutHeight({ viewportHeight: 100 + 24 + 464 * scale, top: 100, renderedWidth: 1200 * scale, layoutWidth: 1200 })
+      expect(available).toBeCloseTo(464)
+      expect(slidingLayout({itemCount:8,columns:4,rowHeight:224,gap:16,availableHeight:available}).sliding).toBe(false)
+      expect(slidingLayout({itemCount:8,columns:4,rowHeight:224,gap:16,availableHeight:available-1}).sliding).toBe(true)
+    }
+  })
+  it('does not page merely because the first row is taller than the remaining rows', () => {
+    expect(slidingLayout({itemCount:12,columns:4,rowHeight:300,rowHeights:[300,100,100],gap:16,availableHeight:532}).sliding).toBe(false)
+  })
+  it('accounts for tall cards on later pages and keeps each page within the bottom boundary', () => {
+    const layout=slidingLayout({itemCount:16,columns:4,rowHeight:100,rowHeights:[100,100,300,300],gap:16,availableHeight:450})
+    expect(layout).toMatchObject({sliding:true,rowsFit:1,pageSize:4,pageCount:4})
+  })
+  it('handles partial rows, list view and an empty grid without inventing extra pages', () => {
+    expect(slidingLayout({itemCount:5,columns:4,rowHeight:200,rowHeights:[200,120],gap:16,availableHeight:336}).sliding).toBe(false)
+    expect(slidingLayout({itemCount:3,columns:1,rowHeight:200,rowHeights:[100,80,120],gap:16,availableHeight:332}).sliding).toBe(false)
+    expect(slidingLayout({itemCount:0,columns:4,rowHeight:200,gap:16,availableHeight:0})).toMatchObject({sliding:false,pageCount:1})
   })
 })

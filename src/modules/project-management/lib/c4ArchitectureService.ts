@@ -104,7 +104,8 @@ export function runtimeC4FromAgentResponse(response: AnalyzeIdeaC4ArchitectureRe
 
 function canvasGraphFromJson(json: Record<string, unknown>, plantumlSource: string): C4CanvasGraph | undefined {
   const nodes = Array.isArray(json.nodes) ? (json.nodes as Node<ArchimateNodeData>[]) : []
-  if (!nodes.length) return undefined
+  const savedCanvas = Array.isArray(json.nodes) && Array.isArray(json.edges) && json.user_customized === true
+  if (!nodes.length && !savedCanvas) return undefined
   return {
     nodes,
     edges: Array.isArray(json.edges) ? (json.edges as Edge[]) : [],
@@ -161,7 +162,7 @@ export function buildPersistentC4Payload(
       status: analysis.status,
       summary_title: analysis.summaryTitle,
       executive_brief: analysis.executiveBrief,
-      plantuml_source: graph?.source || analysis.plantumlSource,
+      plantuml_source: graph?.source ?? analysis.plantumlSource,
       elements: analysis.elements,
       missing_evidence: analysis.missingEvidence,
       warnings: analysis.warnings,
