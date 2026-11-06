@@ -393,6 +393,48 @@
     }
   }
 
+  /* Match the scaled desktop canvas, then reserve equal space around the card.
+     Intrinsic grid rows grow on short screens so the card and footer stay reachable. */
+  .mobile-login.login-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 1fr auto 1fr;
+    min-height: var(--app-vh, 100dvh);
+  }
+  .login-page > .w-full {
+    grid-row: 2;
+    min-width: 0;
+  }
+  .login-page .login-footer {
+    grid-row: 3;
+    align-self: end;
+    justify-self: center;
+  }
+  html.ui-scale-lock body:has(.login-page),
+  html.ui-scale-lock #root:has(.login-page) {
+    height: auto;
+  }
+  @media (min-width: 1024px), (min-width: 768px) and (pointer: fine) {
+    .login-page .login-footer {
+      display: flex;
+      align-items: flex-end;
+      width: 100%;
+      justify-content: space-between;
+      gap: 16px;
+      padding-top: 16px;
+      min-width: 0;
+    }
+    .login-page .tectona-auth-copyright,
+    .login-page .tectona-auth-tour-fab {
+      position: static;
+    }
+  }
+  @media (max-width: 767px), (max-width: 1023px) and (pointer: coarse) {
+    .mobile-login.login-page {
+      min-height: var(--login-viewport-height, 100svh);
+    }
+  }
+
   /* Viewport < 1920: html zoom (set in uiScale.ts) scales the whole page uniformly.
      Keep the canvas transparent so the ambient video is not covered by a solid page fill. */
   html.ui-scale-lock {

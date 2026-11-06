@@ -178,7 +178,7 @@ export function LoginPage() {
 
   return (
     <>
-      <div ref={mobileLayoutRef} className="mobile-login w-full flex items-center justify-center px-4 py-16 sm:p-4">
+      <div ref={mobileLayoutRef} className="mobile-login login-page w-full flex items-center justify-center px-4 py-16 sm:p-4">
         <div className="w-full max-w-md mx-auto">
           <div className="liquid-glass-enterprise-panel rounded-lg p-6 sm:p-8 space-y-6">
             <div id="login-card-header" className="space-y-2 text-center">
