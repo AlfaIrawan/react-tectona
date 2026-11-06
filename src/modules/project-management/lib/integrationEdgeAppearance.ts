@@ -14,7 +14,7 @@ export function defaultIntegrationEdgeVisual(): Required<IntegrationEdgeVisualSt
     lineColor: '#334155',
     lineWidth: 2,
     lineStyle: 'solid',
-    waypoints: 'sharp',
+    waypoints: 'rounded',
     startArrow: 'none',
     endArrow: 'classic',
     startFill: true,
@@ -127,6 +127,6 @@ export function edgeStrokeStyle(visual: Required<IntegrationEdgeVisualStyle>, ar
     opacity: opacity * strokeOpacity,
     filter: visual.shadow ? 'drop-shadow(0 1px 2px rgba(15,23,42,0.35))' : undefined,
     strokeLinecap: visual.sketch || arrange.comic ? 'round' : 'butt',
-    strokeLinejoin: visual.sketch || arrange.comic ? 'round' : 'miter',
+    strokeLinejoin: visual.waypoints === 'rounded' || visual.sketch || arrange.comic ? 'round' : 'miter',
   }
 }

@@ -43,7 +43,17 @@ export function mergeDiagramSourceEdges(previous: Edge[], next: Edge[]): Edge[] 
   return next.map(edge => {
     const prior = previous.find(item => item.id === edge.id && item.source === edge.source && item.target === edge.target)
       ?? previous.find(item => item.source === edge.source && item.target === edge.target && item.label === edge.label)
-    return prior && hasManualConnectionHandles(prior) ? { ...edge, sourceHandle: prior.sourceHandle, targetHandle: prior.targetHandle,
-      data: { ...edge.data, manualConnectionHandles: true } } : edge
+    if (!prior) return edge
+    const pinned = hasManualConnectionHandles(prior)
+    if (!pinned && !prior.data?.segmentRoute) return edge
+    return { ...edge, ...(pinned ? { sourceHandle: prior.sourceHandle, targetHandle: prior.targetHandle } : {}),
+      style: { ...edge.style, ...prior.style }, data: { ...edge.data,
+        ...(pinned ? { manualConnectionHandles: true } : {}),
+        ...(prior.data?.segmentRoute ? { segmentRoute: prior.data.segmentRoute } : {}),
+        visual: prior.data?.visual ?? edge.data?.visual,
+        textStyle: prior.data?.textStyle ?? edge.data?.textStyle,
+        arrange: prior.data?.arrange ?? edge.data?.arrange } }
+
+
   })
 }

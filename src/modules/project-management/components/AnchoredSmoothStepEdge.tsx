@@ -1,3 +1,6 @@
+import { DiagramEdgeSegmentControls } from './DiagramEdgeSegmentControls'
+import { useDiagramSegmentDrag } from '@/modules/project-management/lib/useDiagramSegmentDrag'
+import { readSegmentRoute, segmentRoutePoints, roundedRoutePath, DIAGRAM_CORNER_RADIUS } from '@/modules/project-management/lib/diagramSegmentRouting'
 import { useDiagramReconnectPreview } from '@/modules/project-management/lib/useDiagramReconnect'
 import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
@@ -5,14 +8,13 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
-  getSmoothStepPath,
   getStraightPath,
   useReactFlow,
   useStore,
   type EdgeProps,
 } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { diagramTerminalPoint, canUseStraightOrthogonalPath } from '@/modules/project-management/lib/diagramConnections'
+import { diagramTerminalPoint } from '@/modules/project-management/lib/diagramConnections'
 import type { IntegrationEdgeArrow } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import {
   readEdgeData,
@@ -152,6 +154,8 @@ function arrowMarker(
 
 export function AnchoredSmoothStepEdge({
   id,
+  source,
+  target,
   sourceX: rawSourceX,
   sourceY: rawSourceY,
   targetX: rawTargetX,
@@ -212,6 +216,10 @@ export function AnchoredSmoothStepEdge({
     targetPosition,
   }
 
+  const routePoints = segmentRoutePoints(pathArgs, readSegmentRoute(readEdgeData({ data }).segmentRoute))
+  const segments = useDiagramSegmentDrag(id, routePoints, sourcePosition, targetPosition, { source, target, sourceHandleId, targetHandleId },
+    Boolean(selected) && !live && arrange.bendable && arrange.movable && arrange.orthogonal !== false && visual.waypoints !== 'curved')
+
   const [path, midX, midY] = (() => {
     if (arrange.orthogonal === false && visual.waypoints === 'sharp') {
       return getStraightPath(pathArgs)
@@ -219,12 +227,7 @@ export function AnchoredSmoothStepEdge({
     if (visual.waypoints === 'curved') {
       return getBezierPath(pathArgs)
     }
-    if (canUseStraightOrthogonalPath(pathArgs)) return getStraightPath(pathArgs)
-    return getSmoothStepPath({
-      ...pathArgs,
-      borderRadius: visual.waypoints === 'rounded' ? Math.max(0, arrange.arcSize) : 0,
-      offset: 18,
-    })
+    return roundedRoutePath(segments.points, visual.waypoints === 'rounded' ? Math.max(DIAGRAM_CORNER_RADIUS, arrange.arcSize) : 0)
   })()
 
   const strokeStyle = edgeStrokeStyle(visual, arrange)
@@ -431,6 +434,7 @@ export function AnchoredSmoothStepEdge({
       />
       {arrowMarker(visual.startArrow, startDirection.x, startDirection.y, -startDirection.dx, -startDirection.dy, visual.startSize, visual.startFill, stroke)}
       {arrowMarker(visual.endArrow, endDirection.x, endDirection.y, endDirection.dx, endDirection.dy, visual.endSize, visual.endFill, stroke)}
+      <DiagramEdgeSegmentControls points={segments.points} editable={segments.editable} start={segments.start} />
       <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       {labelText && !arrange.ignoreEdge ? (
         <EdgeLabelRenderer>

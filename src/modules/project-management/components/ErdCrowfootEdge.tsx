@@ -1,7 +1,10 @@
+import { DiagramEdgeSegmentControls } from './DiagramEdgeSegmentControls'
+import { useDiagramSegmentDrag } from '@/modules/project-management/lib/useDiagramSegmentDrag'
+import { readSegmentRoute, segmentRoutePoints, roundedRoutePath, DIAGRAM_CORNER_RADIUS } from '@/modules/project-management/lib/diagramSegmentRouting'
 import { useDiagramReconnectPreview } from '@/modules/project-management/lib/useDiagramReconnect'
 import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
-import { BaseEdge, getSmoothStepPath, type EdgeProps } from 'reactflow'
+import { BaseEdge, type EdgeProps } from 'reactflow'
 
 type ErdEdgeData = {
   sourceMany?: boolean
@@ -71,6 +74,8 @@ function crowfoot(
 
 export function ErdCrowfootEdge({
   id,
+  source,
+  target,
   sourceX: rawSourceX,
   sourceY: rawSourceY,
   targetX: rawTargetX,
@@ -89,15 +94,10 @@ export function ErdCrowfootEdge({
   const targetX = live?.target.x ?? targetPointAtHandle.x, targetY = live?.target.y ?? targetPointAtHandle.y
   const sourcePosition = live?.source.position ?? rawSourcePosition, targetPosition = live?.target.position ?? rawTargetPosition
 
-  const [path] = getSmoothStepPath({
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourcePosition,
-    targetPosition,
-    borderRadius: 0,
-  })
+  const routePoints = segmentRoutePoints({sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition}, readSegmentRoute(data?.segmentRoute))
+  const segments = useDiagramSegmentDrag(id, routePoints, sourcePosition, targetPosition, {source, target, sourceHandleId, targetHandleId}, Boolean(selected) && !live)
+  const [path] = roundedRoutePath(segments.points, DIAGRAM_CORNER_RADIUS)
+
   const ends = (data ?? {}) as ErdEdgeData
   const color = selected ? '#1D4ED8' : '#4B5563'
   const points = pathPoints(path)
@@ -111,6 +111,7 @@ export function ErdCrowfootEdge({
   return (
     <>
       <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.25 }} />
+      <DiagramEdgeSegmentControls points={segments.points} editable={segments.editable} start={segments.start} />
       <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       <g>
         {crowfoot(sourceX, sourceY, sourceAway.x, sourceAway.y, Boolean(ends.sourceMany), Boolean(ends.sourceOptional), color)}

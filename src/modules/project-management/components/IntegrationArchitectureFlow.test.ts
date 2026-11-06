@@ -165,11 +165,82 @@ describe('real endpoint pointer interactions',()=>{
  it('preserves ERD crowfoot and optionality markers during an endpoint drag',async()=>{
   initial=[{...original,type:'erd',data:{sourceMany:true,targetMany:true,targetOptional:true}}]
   await act(async()=>root.render(createElement(Harness)))
-  const markers=host.querySelectorAll('path:not(.react-flow__edge-path):not(.react-flow__edge-interaction),line,circle:not([data-diagram-endpoint-hit]):not([data-diagram-endpoint-dot])').length
+  const markers=host.querySelectorAll('path:not(.react-flow__edge-path):not(.react-flow__edge-interaction),line:not([data-diagram-segment]),circle:not([data-diagram-endpoint-hit]):not([data-diagram-endpoint-dot])').length
   await act(async()=>hit('target').dispatchEvent(pointer('pointerdown',screen(500,200))))
   await act(async()=>window.dispatchEvent(pointer('pointermove',screen(462,176))))
-  expect(host.querySelectorAll('path:not(.react-flow__edge-path):not(.react-flow__edge-interaction),line,circle:not([data-diagram-endpoint-hit]):not([data-diagram-endpoint-dot])')).toHaveLength(markers)
+  expect(host.querySelectorAll('path:not(.react-flow__edge-path):not(.react-flow__edge-interaction),line:not([data-diagram-segment]),circle:not([data-diagram-endpoint-hit]):not([data-diagram-endpoint-dot])')).toHaveLength(markers)
   await act(async()=>window.dispatchEvent(pointer('pointerup',screen(462,176))))
   expect(current[0].data).toMatchObject({sourceMany:true,targetMany:true,targetOptional:true,manualConnectionHandles:true})
+ })
+})
+
+describe('orthogonal segment pointer interactions',()=>{
+ const segment=(horizontal:boolean)=>[...host.querySelectorAll<SVGLineElement>('[data-diagram-segment]')].find(line=>(Number(line.getAttribute('y1'))===Number(line.getAttribute('y2')))===horizontal)!
+ const center=(line:SVGLineElement)=>({x:(Number(line.getAttribute('x1'))+Number(line.getAttribute('x2')))/2,y:(Number(line.getAttribute('y1'))+Number(line.getAttribute('y2')))/2})
+ it('keeps the original route and style on click without an actual drag',async()=>{
+  await act(async()=>root.render(createElement(Harness)))
+  const line=segment(true),point=center(line),before=path().getAttribute('d'),style=path().getAttribute('style')
+  await act(async()=>line.dispatchEvent(pointer('pointerdown',screen(point.x,point.y))))
+  expect(path().getAttribute('d')).toBe(before)
+  await act(async()=>window.dispatchEvent(pointer('pointerup',screen(point.x,point.y))))
+  expect(current[0]).toEqual(original);expect(path().getAttribute('style')).toBe(style)
+  expect(before).toContain('Q')
+ })
+ it('drags horizontal and terminal vertical tracks with pinned anchors across zoom/pan and reload',async()=>{
+  for(const zoom of [0.25,0.55,1,1.4,4])for(const horizontal of [true,false]){
+   state.zoom=zoom;state.panX=63;state.panY=-27;initial=[structuredClone(original)]
+   await act(async()=>root.render(createElement(Harness,{key:`segment-${zoom}-${horizontal}`})))
+   const line=segment(horizontal);expect(line).toBeTruthy()
+   const point=center(line),start=screen(point.x,point.y),before=path().getAttribute('d'),tip=host.querySelector('polygon')!.getAttribute('points')!.split(' ')[0]
+   if(horizontal)start.clientY+=3;else start.clientX+=3
+   await act(async()=>line.dispatchEvent(pointer('pointerdown',start)))
+   const moved=screen(point.x+(horizontal?0:75),point.y+(horizontal?55:0));if(horizontal)moved.clientY+=3;else moved.clientX+=3
+   await act(async()=>window.dispatchEvent(pointer('pointermove',moved)))
+   expect(path().getAttribute('d')).not.toBe(before);expect(current[0].data.segmentRoute).toBeUndefined()
+   expect(host.querySelector('polygon')!.getAttribute('points')!.split(' ')[0]).toBe(tip)
+   await act(async()=>window.dispatchEvent(pointer('pointerup',moved)))
+   expect(current[0]).toMatchObject({source:original.source,target:original.target,sourceHandle:original.sourceHandle,targetHandle:original.targetHandle,data:{visual:original.data.visual}})
+   const points=current[0].data.segmentRoute.points
+   expect(points[0]).toEqual({x:140,y:120});expect(points.at(-1)).toEqual({x:500,y:200})
+   const savedPath=path().getAttribute('d');initial=JSON.parse(JSON.stringify(current));state.panX+=200;state.panY-=75
+   await act(async()=>root.render(createElement(Harness,{key:`segment-reload-${zoom}-${horizontal}`})))
+   expect(path().getAttribute('d')).toBe(savedPath)
+   await act(async()=>state.flow!.onPaneClick());await act(async()=>state.flow!.onEdgeClick())
+   expect(path().getAttribute('d')).toBe(savedPath)
+  }
+ })
+ it.each(['Escape','pointercancel','blur'])('rolls back a segment drag on %s without persisting it',async(kind)=>{
+  await act(async()=>root.render(createElement(Harness)))
+  const line=segment(true),point=center(line),before=path().getAttribute('d')
+  await act(async()=>line.dispatchEvent(pointer('pointerdown',screen(point.x,point.y))))
+  await act(async()=>window.dispatchEvent(pointer('pointermove',screen(point.x,point.y+80))))
+  expect(path().getAttribute('d')).not.toBe(before)
+  await act(async()=>window.dispatchEvent(kind==='Escape'?new KeyboardEvent('keydown',{key:'Escape'}):kind==='pointercancel'?pointer('pointercancel',screen(point.x,point.y+80)):new Event('blur')))
+  expect(path().getAttribute('d')).toBe(before);expect(current[0]).toEqual(original)
+ })
+ it('uses the latest pan/zoom projection during a drag and retains concurrent style edits on release',async()=>{
+  await act(async()=>root.render(createElement(Harness)))
+  const line=segment(true),point=center(line),start=screen(point.x,point.y);start.clientY+=3
+  await act(async()=>line.dispatchEvent(pointer('pointerdown',start)))
+  await act(async()=>window.dispatchEvent(pointer('pointermove',screen(point.x,point.y+50))))
+  state.zoom=2;state.panX=80;state.panY=45
+  await act(async()=>root.render(createElement(Harness)))
+  const drop=screen(point.x,point.y+70);drop.clientY+=3
+  await act(async()=>window.dispatchEvent(pointer('pointermove',drop)))
+  await act(async()=>state.setEdges((edges:Edge[])=>edges.map(edge=>({...edge,data:{...edge.data,visual:{...edge.data.visual,lineStyle:'dashed',endArrow:'diamond'}}}))))
+  await act(async()=>window.dispatchEvent(pointer('pointerup',drop)))
+  expect(current[0].data.segmentRoute.points.some((p:{y:number})=>p.y===point.y+70)).toBe(true)
+  expect(current[0].data.visual).toMatchObject({lineStyle:'dashed',endArrow:'diamond'})
+ })
+ it('does not expose route edits in read-only preview and keeps ERD cardinality during segment edits',async()=>{
+  await act(async()=>root.render(createElement(IntegrationArchitectureFlow,{nodes:fixtureNodes,edges:initial,preview:true})))
+  expect(host.querySelector('[data-diagram-segment]')).toBeNull()
+  initial=[{...structuredClone(original),type:'erd',data:{sourceMany:true,targetMany:true,targetOptional:true}}]
+  await act(async()=>root.render(createElement(Harness)))
+  const line=segment(true),point=center(line),marks=host.querySelector('g[data-testid="real-edge"]')!.lastElementChild!.innerHTML
+  await act(async()=>line.dispatchEvent(pointer('pointerdown',screen(point.x,point.y))))
+  await act(async()=>window.dispatchEvent(pointer('pointerup',screen(point.x,point.y+50))))
+  expect(current[0].data).toMatchObject({sourceMany:true,targetMany:true,targetOptional:true,segmentRoute:{points:expect.any(Array)}})
+  expect(host.querySelector('g[data-testid="real-edge"]')!.lastElementChild!.innerHTML).toBe(marks)
  })
 })

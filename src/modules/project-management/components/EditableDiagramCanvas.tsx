@@ -198,7 +198,7 @@ function c4RelationEdgeStyle(macro?: string): Pick<Edge, 'style' | 'markerEnd' |
         endFill: true,
         startSize: 6,
         endSize: 6,
-        waypoints: 'sharp',
+        waypoints: 'rounded',
       },
     },
   }

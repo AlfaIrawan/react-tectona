@@ -1,3 +1,4 @@
+import { DIAGRAM_CORNER_RADIUS } from '@/modules/project-management/lib/diagramSegmentRouting'
 import { magneticDiagramAnchor, magneticAnchorHandle } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { useId } from 'react'
 import { getSmoothStepPath, useStore, type ConnectionLineComponentProps } from 'reactflow'
@@ -13,7 +14,7 @@ export function DiagramConnectionLine({ fromX, fromY, toX, toY, fromPosition, to
   const target = magnetic?.point ?? { x: toX, y: toY }
   const targetPosition = connectionPreviewTargetPosition(fromX, fromY, target.x, target.y, toPosition, magnetic ? magneticAnchorHandle(magnetic, 'target') : hoveredHandleId)
   const [path] = getSmoothStepPath({ sourceX: fromX, sourceY: fromY, targetX: target.x, targetY: target.y,
-    sourcePosition: fromPosition, targetPosition, borderRadius: 0, offset: 18 })
+    sourcePosition: fromPosition, targetPosition, borderRadius: DIAGRAM_CORNER_RADIUS, offset: 18 })
 
   return (
     <g>

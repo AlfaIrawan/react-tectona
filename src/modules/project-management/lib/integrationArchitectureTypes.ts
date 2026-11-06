@@ -112,6 +112,7 @@ export type IntegrationEdgeArrangeOptions = {
 }
 
 export type IntegrationEdgeData = {
+  segmentRoute?: import('./diagramSegmentRouting').DiagramSegmentRoute
   visual?: IntegrationEdgeVisualStyle
   textStyle?: IntegrationEdgeTextStyle
   arrange?: IntegrationEdgeArrangeOptions
